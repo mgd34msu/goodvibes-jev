@@ -1,6 +1,7 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { retryTransientInstall } from './install-retry.ts';
 import {
   cleanupStage,
   collectTarballs,
@@ -8,6 +9,7 @@ import {
   getAuthToken,
   getPublishRegistryOverride,
   getRootVersion,
+  packageNameForDir as manifestPackageName,
   packStage,
   publicPackageDirs,
   readPackage,
@@ -28,6 +30,7 @@ const TRANSPORT_HTTP_PACKAGE_NAME = packageNameForDir('transport-http');
 const TRANSPORT_REALTIME_PACKAGE_NAME = packageNameForDir('transport-realtime');
 const OPERATOR_SDK_PACKAGE_NAME = packageNameForDir('operator-sdk');
 const PEER_SDK_PACKAGE_NAME = packageNameForDir('peer-sdk');
+const JUDGMENT_PACKAGE_NAME = manifestPackageName('../judgment');
 
 function requirePackageName(dir: string): string {
   const name = readPackage(dir).name;
@@ -94,6 +97,8 @@ const transportHttpPackage = await import('${TRANSPORT_HTTP_PACKAGE_NAME}');
 const transportRealtimePackage = await import('${TRANSPORT_REALTIME_PACKAGE_NAME}');
 const operatorSdkPackage = await import('${OPERATOR_SDK_PACKAGE_NAME}');
 const peerSdkPackage = await import('${PEER_SDK_PACKAGE_NAME}');
+const judgmentDecisions = await import('${JUDGMENT_PACKAGE_NAME}/decisions');
+const engineErrors = await import('${ERRORS_PACKAGE_NAME}');
 
 const sdk = root.createGoodVibesSdk({ baseUrl: 'http://127.0.0.1:3210' });
 if (!sdk?.operator || !sdk?.peer || !sdk?.realtime) throw new Error('sdk entrypoint missing expected surfaces');
@@ -136,6 +141,9 @@ if (typeof transportHttpPackage.createHttpTransport !== 'function') throw new Er
 if (typeof transportRealtimePackage.createRemoteRuntimeEvents !== 'function') throw new Error('transport-realtime package export missing');
 if (typeof operatorSdkPackage.createOperatorSdk !== 'function') throw new Error('operator-sdk package export missing');
 if (typeof peerSdkPackage.createPeerSdk !== 'function') throw new Error('peer-sdk package export missing');
+if (typeof judgmentDecisions.defineBattery !== 'function') throw new Error('judgment decisions export missing');
+if (typeof engineErrors.readFailure !== 'function' || typeof engineErrors.installJudgmentPort !== 'function') throw new Error('engine errors judgment reading export missing');
+if (require.resolve('${JUDGMENT_PACKAGE_NAME}/package.json').includes(join('${ENGINE_PACKAGE_NAME}', 'node_modules'))) throw new Error('judgment installed nested under the engine instead of beside it');
 const packageRoot = dirname(require.resolve('${ENGINE_PACKAGE_NAME}/package.json'));
 const nestedInternalRoot = join(packageRoot, 'node_modules', '@goodvibes-jev');
 if (existsSync(nestedInternalRoot)) {
@@ -178,45 +186,16 @@ function writeRegistryConfig(projectDir: string): void {
   writeFileSync(resolve(projectDir, '.npmrc'), `${lines.join('\n')}\n`);
 }
 
-// Network-aware retry for the install step. npm + bun fetches are prone to
-// transient ECONNRESET / ETIMEDOUT on CI runners; without retry a single
-// network blip fails the release. Code-level errors (parse, missing entry)
-// are NOT retried.
-async function retryOnNetworkError(op: () => Promise<void> | void, label: string): Promise<void> {
-  const MAX_ATTEMPTS = 3;
-  const BACKOFF_MS = [0, 2000, 5000];
-  let lastErr;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      if (attempt > 1) {
-        const delay = BACKOFF_MS[attempt - 1] ?? 5000;
-        console.log(`[install-smoke] ${label}: attempt ${attempt}/${MAX_ATTEMPTS} after ${delay}ms backoff`);
-        await new Promise<void>((r) => setTimeout(r, delay));
-      }
-      await op();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      const isNetwork = /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network|aborted/i.test(msg);
-      if (!isNetwork || attempt === MAX_ATTEMPTS) throw err;
-      console.log(`[install-smoke] ${label}: transient network error detected, retrying. (${msg.slice(0, 200)})`);
-    }
-  }
-  throw lastErr;
-}
-
 async function installWithNpm(specs: readonly string[]): Promise<void> {
   const projectDir = createSdkTempDir('goodvibes-sdk-npm-smoke-');
   try {
     writeConsumerFiles(projectDir);
-    await retryOnNetworkError(() => {
-      run('npm', ['install', ...specs], projectDir, {
-        auth: REGISTRY_MODE,
-        registry: REGISTRY,
-        packageName: PUBLIC_PACKAGE_NAME,
-      });
-    }, 'npm install');
+    await retryTransientInstall(() => run('npm', ['install', ...specs], projectDir, {
+      auth: REGISTRY_MODE,
+      registry: REGISTRY,
+      packageName: PUBLIC_PACKAGE_NAME,
+      stdio: 'pipe',
+    }), { prefix: 'install-smoke', label: 'npm install', site: 'release.install-smoke.npm-install' });
     run('node', ['check.mjs'], projectDir);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
@@ -230,13 +209,12 @@ async function installWithBun(specs: readonly string[]): Promise<void> {
     // Pin zod@^4 explicitly so Bun resolves the dist's `zod/v4` subpath import
     // even when another dependency tree brings an older zod.
     const bunSpecs = [...specs, 'zod@^4'];
-    await retryOnNetworkError(() => {
-      run('bun', ['add', '--force', '--no-cache', ...bunSpecs], projectDir, {
-        auth: REGISTRY_MODE,
-        registry: REGISTRY,
-        packageName: PUBLIC_PACKAGE_NAME,
-      });
-    }, 'bun add');
+    await retryTransientInstall(() => run('bun', ['add', '--force', '--no-cache', ...bunSpecs], projectDir, {
+      auth: REGISTRY_MODE,
+      registry: REGISTRY,
+      packageName: PUBLIC_PACKAGE_NAME,
+      stdio: 'pipe',
+    }), { prefix: 'install-smoke', label: 'bun add', site: 'release.install-smoke.bun-add' });
     run('bun', ['run', 'check.mjs'], projectDir);
   } finally {
     rmSync(projectDir, { recursive: true, force: true });
@@ -245,7 +223,9 @@ async function installWithBun(specs: readonly string[]): Promise<void> {
 
 function buildRegistrySpecs(): string[] {
   const version = getRootVersion();
-  return publicPackageDirs.map((dir) => `${packageNameForDir(dir)}@${version}`);
+  // Every released package by its own manifest name: the engine and the
+  // judgment package it depends on.
+  return publicPackageDirs.map((dir) => `${manifestPackageName(dir)}@${version}`);
 }
 
 async function buildTarballSpecs() {

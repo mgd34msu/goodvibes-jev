@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/judgment" },
+    { "path": "packages/judgment/tsconfig.tests.json" },
     { "path": "packages/engine" },
     { "path": "packages/engine/tsconfig.tests.json" },
     { "path": "packages/engine/tsconfig.type-tests.json" }

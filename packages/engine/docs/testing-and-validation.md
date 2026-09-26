@@ -46,7 +46,7 @@ This is the canonical CI-gate reference for the workspace. Every push and PR to 
 | `security-audit` | `bun audit --audit-level high` + gitleaks scan (`gitleaks/gitleaks-action`) | Runs `bun audit --audit-level high` against the workspace dependency tree and a gitleaks secret scan; the CI job invokes these two steps directly (local `bun run security:audit` covers only the dependency-audit half) |
 | `build` | `bun run build` | Builds all workspace package `dist/` output once and uploads it as a single `workspace-build-output` artifact for downstream CI jobs |
 | `platform-matrix` | `bun packages/engine/scripts/test.ts` (bun leg) plus `bun run test:rn`, `bun run test:workers`, `bun run test:workers:wrangler` legs | Restores the shared `build` job artifact (no per-leg rebuild) and runs the full Bun test suite plus the companion-bundle scan and the two Workers runtime lanes as four matrix legs of one job (see legs below) |
-| `types-resolution-check` | `bunx attw --pack packages/engine/sdk --ignore-rules no-resolution cjs-resolves-to-esm` | Validates the `exports` map resolves cleanly for every published subpath |
+| `types-resolution-check` | `bun run types:resolution-check` (attw over the release stage of the engine and judgment packages, ignoring `no-resolution` and `cjs-resolves-to-esm`) | Validates the `exports` map resolves cleanly for every published subpath |
 | `publint-check` | `bun run publint:check` | Detects common `package.json` packaging hygiene issues before release |
 | `sbom-check` | `bun run sbom:check` | Generates the CycloneDX SBOM (`sbom.cdx.json`), asserts it is non-empty, validates the CycloneDX schema, and enforces the license policy |
 | `artifact-lane` | `bun run release:artifact-lane` | Packs every workspace package exactly as publish would, installs the tarballs into a scratch consumer, and runs the shipped conformance kit against a catalog/daemon composed from those packed artifacts, proving the tarballs are internally coherent before publish |
@@ -169,7 +169,7 @@ Maintainer-facing guidance for the most common release-gate failures:
 - **Contract drift.** The contract-artifact step (`contracts:check`) fails when the SDK-embedded contract JSON no longer matches `packages/engine/contracts/artifacts`. Run `bun run refresh:contracts`, then re-run `bun run validate`.
 - **Bundle overage.** `bundle:check` fails when a JavaScript export exceeds its gzip ceiling. Investigate the size increase. If it is legitimate, update `bundle-budgets.json` using `max(ceil(actual * 1.2), actual + 50)` and record the new measurement in the entry rationale.
 - **SBOM and license policy.** `sbom-check` fails when `sbom.cdx.json` is empty or schema-invalid, or when a dependency carries a blocked license family. Resolve the offending dependency, or update the license policy if the family is acceptable.
-- **Types resolution (attw).** `types-resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json` and re-run `bunx attw --pack packages/engine`.
+- **Types resolution (attw).** `types-resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json` and re-run `bun run types:resolution-check`.
 
 ## Workers runtime verification
 

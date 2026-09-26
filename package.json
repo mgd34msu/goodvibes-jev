@@ -10,6 +10,14 @@
   },
   "description": "The goodvibes platform with Jev judgment built in: the judgment foundation, the engine, and the daemon, TUI, agent and web UI products.",
   "license": "MIT",
+  "homepage": "https://github.com/mgd34msu/goodvibes-jev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-jev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mgd34msu/goodvibes-jev/issues"
+  },
   "workspaces": [
     "packages/*",
     "products/*"
@@ -70,7 +78,7 @@
     "todo:check": "bun packages/engine/scripts/no-todo-markers.ts",
     "typecheck": "bun packages/engine/scripts/typecheck.ts",
     "types:check": "node node_modules/typescript/bin/tsc --project packages/engine/tsconfig.type-tests.json",
-    "types:resolution-check": "bunx attw --pack packages/engine --ignore-rules no-resolution cjs-resolves-to-esm",
+    "types:resolution-check": "bun packages/engine/scripts/types-resolution-check.ts",
     "version:check": "bun packages/engine/scripts/version-consistency-check.ts",
     "validate": "bun packages/engine/scripts/validate.ts",
     "validate:strict": "bun run validate && bun run types:check && bun run contracts:check",

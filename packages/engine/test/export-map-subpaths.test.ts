@@ -60,16 +60,22 @@ const DIR_SUBPATH_SURFACE: Record<string, readonly string[]> = {
 };
 
 describe('export-map subpath resolution (committed manifest)', () => {
-  // The engine manifest; each ./sdk subpath points at its source module.
+  // The engine manifest; each ./sdk subpath names its source module under the
+  // workspace source condition and its built output under types and import.
   const manifest = JSON.parse(
     readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf8'),
-  ) as { exports: Record<string, string> };
+  ) as { exports: Record<string, Record<string, string>> };
+  const conditions = (module: string) => ({
+    bun: `./sdk/src${module}.ts`,
+    types: `./sdk/dist${module}.d.ts`,
+    import: `./sdk/dist${module}.js`,
+  });
 
   for (const [subpath, expectedExports] of Object.entries(SUBPATH_SURFACE)) {
     test(`${subpath} is declared in the exports map with its module target`, () => {
       const entry = manifest.exports[`./sdk${subpath.slice(1)}`];
       expect(entry).toBeDefined();
-      expect(entry).toBe(`./sdk/src${subpath.slice(1)}.ts`);
+      expect(entry).toEqual(conditions(subpath.slice(1)));
     });
 
     test(`${subpath} resolves and serves its composition surface through the package name`, async () => {
@@ -84,7 +90,7 @@ describe('export-map subpath resolution (committed manifest)', () => {
     test(`${subpath} is declared in the exports map with an index-shaped module target`, () => {
       const entry = manifest.exports[`./sdk${subpath.slice(1)}`];
       expect(entry).toBeDefined();
-      expect(entry).toBe(`./sdk/src${subpath.slice(1)}/index.ts`);
+      expect(entry).toEqual(conditions(`${subpath.slice(1)}/index`));
     });
 
     test(`${subpath} resolves and serves its composition surface through the package name`, async () => {

@@ -1,9 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
+  // The published build: JavaScript and declarations for src only, which the
+  // package's `types` and `import` conditions name. Tests and scripts are the
+  // tsconfig.tests.json project, so no test file lands in dist.
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "src",
     "outDir": "dist",
+    "emitDeclarationOnly": false,
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src", "test", "scripts"]
+  "include": ["src"]
 }

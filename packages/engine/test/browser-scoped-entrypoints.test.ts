@@ -115,9 +115,9 @@ async function bundleEntrypoint(entrypoint: string): Promise<string> {
 
 describe('scoped browser SDK entrypoints', () => {
   test('package exports expose knowledge, agent, and home assistant browser seams', () => {
-    expect(sdkPackage.exports['./sdk/browser/knowledge']).toBe('./sdk/src/browser-knowledge.ts');
-    expect(sdkPackage.exports['./sdk/browser/agent']).toBe('./sdk/src/browser-agent.ts');
-    expect(sdkPackage.exports['./sdk/browser/homeassistant']).toBe('./sdk/src/browser-homeassistant.ts');
+    expect(sdkPackage.exports['./sdk/browser/knowledge']).toEqual({ bun: './sdk/src/browser-knowledge.ts', types: './sdk/dist/browser-knowledge.d.ts', import: './sdk/dist/browser-knowledge.js' });
+    expect(sdkPackage.exports['./sdk/browser/agent']).toEqual({ bun: './sdk/src/browser-agent.ts', types: './sdk/dist/browser-agent.d.ts', import: './sdk/dist/browser-agent.js' });
+    expect(sdkPackage.exports['./sdk/browser/homeassistant']).toEqual({ bun: './sdk/src/browser-homeassistant.ts', types: './sdk/dist/browser-homeassistant.d.ts', import: './sdk/dist/browser-homeassistant.js' });
   });
 
   test('knowledge browser sdk routes only regular knowledge methods', async () => {

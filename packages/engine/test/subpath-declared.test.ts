@@ -24,7 +24,8 @@ const PLATFORM_DIR = join(PACKAGE_DIR, 'src', 'platform');
 
 /**
  * The sdk's subpaths, keyed as the old sdk package declared them (./platform/x):
- * they are the engine manifest's ./sdk/* exports, each naming a source module.
+ * they are the engine manifest's ./sdk/* exports, each naming its source module
+ * under the workspace source condition.
  */
 function exportsMap(): Record<string, unknown> {
   const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
@@ -55,8 +56,9 @@ describe('every shipped capability is importable from the published package', ()
     // Not just present, pointing somewhere that exists. A subpath declared
     // against a path that is not there fails at import time rather than
     // here, which is the worst place to find out.
-    expect(entry).toBe('./sdk/src/platform/payments/index.ts');
-    expect(existsSync(join(REPO_ROOT, entry as string))).toBe(true);
+    const source = (entry as Record<string, string>)['bun'];
+    expect(source).toBe('./sdk/src/platform/payments/index.ts');
+    expect(existsSync(join(REPO_ROOT, source!))).toBe(true);
   });
 
   test('the payments source module the entry names actually exists', () => {
@@ -64,12 +66,14 @@ describe('every shipped capability is importable from the published package', ()
   });
 
   test('every declared platform subpath names an existing sdk source module', () => {
-    // The engine is consumed from source through its exports map, so every
-    // ./sdk/platform entry must name a module under sdk/src that exists; one
-    // pointing anywhere else, or at nothing, fails every importer.
+    // The workspace consumes the engine from source through the exports map's
+    // source condition, so every ./sdk/platform entry must name a module under
+    // sdk/src that exists; one pointing anywhere else, or at nothing, fails
+    // every importer.
     const offenders: string[] = [];
-    for (const [subpath, target] of Object.entries(exportsMap())) {
+    for (const [subpath, entry] of Object.entries(exportsMap())) {
       if (!subpath.startsWith('./platform/')) continue;
+      const target = entry && typeof entry === 'object' ? (entry as Record<string, unknown>)['bun'] : undefined;
       if (typeof target !== 'string' || !target.startsWith('./sdk/src/') || !existsSync(join(REPO_ROOT, target))) {
         offenders.push(`${subpath} -> ${String(target)}`);
       }

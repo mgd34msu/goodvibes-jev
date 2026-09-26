@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkBunPins, isExactVersion, type PinSource } from './bun-pin-rule.ts';
+import { SOURCE_CONDITION } from './export-conditions.ts';
 import { packageDirs, publicPackageDirs, REPO_ROOT } from './release-shared.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,33 @@ function collectExportEntries(value: unknown, keyPath = 'exports'): ExportEntry[
   return Object.entries(value).flatMap(([key, entry]) => collectExportEntries(entry, `${keyPath}.${key}`));
 }
 
+/**
+ * The source condition names a workspace source file. The release stage drops
+ * it, so it never reaches a published manifest; it is checked for its own
+ * shape instead of the published-path rules: it comes first, so Bun and the
+ * typechecker take it over `types` and `import`, and its file exists.
+ */
+function isSourceConditionEntry(entry: ExportEntry): boolean {
+  return entry.keyPath.endsWith(`.${SOURCE_CONDITION}`);
+}
+
+function assertSourceConditionFirst(dir: string, exports: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(exports)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const conditions = Object.keys(value);
+    if (conditions.includes(SOURCE_CONDITION) && conditions[0] !== SOURCE_CONDITION) {
+      throw new Error(`${dir}/package.json exports.${key} must list the "${SOURCE_CONDITION}" condition first`);
+    }
+  }
+}
+
+function assertSourceTargetExists(dir: string, entry: ExportEntry): void {
+  if (!entry.target) return;
+  if (!existsSync(resolve(SDK_ROOT, dir, entry.target))) {
+    throw new Error(`${dir}/package.json source condition names a missing file: ${entry.keyPath} -> ${entry.target}`);
+  }
+}
+
 function assertCleanExportEntry(dir: string, entry: ExportEntry): void {
   const values = [entry.keyPath, entry.target].filter((value): value is string => typeof value === 'string');
   if (values.some((value) => value.includes('*'))) {
@@ -55,13 +83,14 @@ function resolveExportBackingPath(dir: string, target: string): string | null {
   if (target.startsWith('./artifacts/')) {
     return resolve(SDK_ROOT, dir, target);
   }
-  if (!target.startsWith('./dist/')) {
+  // The engine keeps each old package's output under its own directory
+  // (./sdk/dist, ./contracts/dist, ...), so the dist root is either ./dist or
+  // ./<pkg>/dist, and its artifacts either ./artifacts or ./<pkg>/artifacts.
+  const layout = /^\.\/(?:([^/]+)\/)?(dist|artifacts)\//.exec(target);
+  if (!layout) {
     return null;
   }
-  if (target.endsWith('.json')) {
-    if (dir === '.' && target.startsWith('./dist/contracts/artifacts/')) {
-      return resolve(SDK_ROOT, 'contracts/artifacts', target.split('/').at(-1) ?? '');
-    }
+  if (layout[2] === 'artifacts' || target.endsWith('.json')) {
     return resolve(SDK_ROOT, dir, target);
   }
   if (target.endsWith('.js') || target.endsWith('.d.ts')) {
@@ -70,11 +99,11 @@ function resolveExportBackingPath(dir: string, target: string): string | null {
     // unchanged. Check that form first; everything else in dist is emitted from
     // a .ts of the same stem.
     if (target.endsWith('.d.ts')) {
-      const declarationSource = resolve(SDK_ROOT, dir, target.replace('./dist/', './src/'));
+      const declarationSource = resolve(SDK_ROOT, dir, target.replace('/dist/', '/src/'));
       if (existsSync(declarationSource)) return declarationSource;
     }
     const sourcePath = target
-      .replace('./dist/', './src/')
+      .replace('/dist/', '/src/')
       .replace(/\.d\.ts$/, '.ts')
       .replace(/\.js$/, '.ts');
     return resolve(SDK_ROOT, dir, sourcePath);
@@ -285,7 +314,12 @@ for (const dir of packageDirs) {
   if (!pkg.exports || typeof pkg.exports !== 'object') {
     throw new Error(`${dir}/package.json is missing exports`);
   }
+  assertSourceConditionFirst(dir, pkg.exports);
   for (const entry of collectExportEntries(pkg.exports)) {
+    if (isSourceConditionEntry(entry)) {
+      assertSourceTargetExists(dir, entry);
+      continue;
+    }
     assertCleanExportEntry(dir, entry);
     assertExportTargetBacked(dir, entry);
   }

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Nothing here is emitted, so relative .ts imports into src need no rewrite.
+    "rewriteRelativeImportExtensions": false,
+    "tsBuildInfoFile": "dist/.tests.tsbuildinfo"
+  },
+  "include": ["test", "scripts"],
+  "references": [{ "path": "./tsconfig.json" }]
+}

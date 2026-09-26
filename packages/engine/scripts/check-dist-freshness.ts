@@ -25,6 +25,8 @@ const SDK_ROOT = resolve(__dirname, '..');
 const BUILT_PACKAGES = [
   'contracts', 'errors', 'daemon-sdk', 'transport-core', 'transport-http', 'transport-realtime',
   'operator-sdk', 'peer-sdk', 'sdk', 'terminal-shell', 'toolchain',
+  // The judgment package ships beside the engine and builds with it.
+  '../judgment',
 ];
 
 const filter = process.argv.slice(2).filter((a) => !a.startsWith('--'));

@@ -3,6 +3,9 @@
     "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    // Workspace packages resolve their source through the "bun" export
+    // condition; published manifests drop it and resolve dist.
+    "customConditions": ["bun"],
     "lib": ["ES2024", "ESNext.Disposable"],
     "types": ["bun"],
     "strict": true,

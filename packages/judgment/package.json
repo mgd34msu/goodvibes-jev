@@ -1,21 +1,62 @@
 {
   "name": "@goodvibes-jev/judgment",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module",
+  "version": "2.0.23",
   "description": "The level 0 Jev foundation: judgment port, typed readings, batteries, patterns, compound patterns, decision log and calibration.",
-  "exports": {
-    ".": "./src/index.ts",
-    "./decisions": "./src/decisions.ts",
-    "./testing": "./src/testing/index.ts"
+  "keywords": [
+    "goodvibes",
+    "judgment",
+    "jev",
+    "typesafe",
+    "calibration"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/mgd34msu/goodvibes-jev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-jev.git"
   },
-  "dependencies": {
-    "@typesafe-ai/sdk": "0.6.0"
+  "bugs": {
+    "url": "https://github.com/mgd34msu/goodvibes-jev/issues"
+  },
+  "engines": {
+    "bun": "1.3.14",
+    "node": ">=22.0.0"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./decisions": {
+      "bun": "./src/decisions.ts",
+      "types": "./dist/decisions.d.ts",
+      "import": "./dist/decisions.js"
+    },
+    "./testing": {
+      "bun": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "bun test",
     "probe": "bun run scripts/probe.ts",
     "proof": "bun run scripts/proof.ts",
     "calibrate": "bun run scripts/calibrate.ts"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
   }
 }

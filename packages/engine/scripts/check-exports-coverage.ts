@@ -33,6 +33,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { SOURCE_CONDITION } from './export-conditions.ts';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_JSON = join(ROOT, 'package.json');
 const PLATFORM_DIR = join(ROOT, 'sdk/src/platform');
@@ -117,16 +119,20 @@ function main(): void {
   // It resolves in the map and then fails at import time, which is a worse
   // symptom than a missing entry because the map itself looks correct. Only
   // checkable once dist exists, so it is skipped rather than guessed before a
-  // build. The engine package's targets are source files, so they are always
-  // checkable, and they are relative to the engine root.
+  // build. The workspace source condition names a source file, so it is always
+  // checkable. Targets are relative to the engine root.
   {
+    const distBuilt = existsSync(join(ROOT, 'sdk/dist'));
     const manifest = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
-      exports: Record<string, { import?: string; types?: string } | string>;
+      exports: Record<string, Record<string, string | undefined> | string>;
     };
     const missingTargets: string[] = [];
     for (const [subpath, value] of Object.entries(manifest.exports)) {
       if (subpath === './package.json') continue;
-      for (const target of typeof value === 'string' ? [value] : [value.import, value.types]) {
+      const targets = typeof value === 'string'
+        ? [value]
+        : [value[SOURCE_CONDITION], ...(distBuilt ? [value.import, value.types] : [])];
+      for (const target of targets) {
         if (target === undefined) continue;
         if (!existsSync(join(ROOT, target))) missingTargets.push(`${subpath} -> ${target}`);
       }

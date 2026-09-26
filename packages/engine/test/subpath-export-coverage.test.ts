@@ -108,9 +108,17 @@ describe('every public platform module has a subpath export', () => {
   test('every declared subpath points at a file that exists in the package', () => {
     // The manifest can name a module path that is not there, which fails at
     // import time and not before.
+    // Each entry is a string (a JSON asset) or conditions naming the source
+    // module and, once built, its dist output; the source must always exist.
     const broken: string[] = [];
-    for (const [subpath, target] of Object.entries(exportsMap())) {
-      if (typeof target !== 'string') continue;
+    for (const [subpath, entry] of Object.entries(exportsMap())) {
+      const target = typeof entry === 'string'
+        ? entry
+        : entry && typeof entry === 'object' ? (entry as Record<string, unknown>)['bun'] : undefined;
+      if (typeof target !== 'string') {
+        broken.push(`${subpath} -> (no source target)`);
+        continue;
+      }
       if (!existsSync(join(ENGINE_DIR, target))) broken.push(`${subpath} -> ${target}`);
     }
     expect(broken, `exports entries pointing at missing modules: ${broken.join(', ')}`).toEqual([]);

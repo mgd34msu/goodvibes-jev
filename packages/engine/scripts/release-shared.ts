@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withoutSourceCondition } from './export-conditions.ts';
 import { withWorkspaceLock } from './workspace-lock.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -11,7 +12,10 @@ export const REPO_ROOT = resolve(SDK_ROOT, '../..');
 // The repo root .tmp, as before: the stage copies the engine, so it cannot sit inside it.
 const SDK_TEMP_ROOT = resolve(REPO_ROOT, '.tmp');
 // The engine is one package: every old workspace package is a subpath of it.
-export const packageDirs = ['.'];
+// The judgment package it depends on is released with it, so a packed engine
+// always has the judgment tarball it resolves `@goodvibes-jev/judgment` to.
+// Dirs are relative to the engine root.
+export const packageDirs = ['.', '../judgment'];
 
 export const publicPackageDirs = packageDirs;
 
@@ -96,6 +100,18 @@ function assertAllowedPublishRegistry(registry: string): void {
   throw new Error(
     `Unsupported publish registry host: ${hostname}. Publish overrides are limited to npmjs.org or local Verdaccio dry-runs.`,
   );
+}
+
+/** The package's name, read from its manifest. */
+export function packageNameForDir(dir: string): string {
+  const name = readPackage(dir).name;
+  if (typeof name !== 'string' || !name) throw new Error(`Package ${dir} is missing a string name.`);
+  return name;
+}
+
+/** Where a package is copied inside a release stage: one directory per package, named after its source directory. */
+function stageDirName(dir: string): string {
+  return basename(getPackageDirectoryPath(dir));
 }
 
 export function isPublicPackageDir(dir: string): boolean {
@@ -188,6 +204,8 @@ export function normalizeManifest(pkg: PackageManifest, rootVersion = getRootVer
   return {
     ...pkg,
     repository: normalizeRepository(pkg.repository),
+    // The source condition names files the package does not ship.
+    exports: withoutSourceCondition(pkg.exports),
     dependencies: normalizeDependencyGroup(pkg.dependencies, rootVersion),
     devDependencies: normalizeDependencyGroup(pkg.devDependencies, rootVersion),
     peerDependencies: normalizeDependencyGroup(pkg.peerDependencies, rootVersion),
@@ -207,7 +225,7 @@ export async function stagePackages(): Promise<{ readonly tempRoot: string; read
     const stages: PackageStage[] = [];
     for (const dir of packageDirs) {
       const sourceDir = getPackageDirectoryPath(dir);
-      const stageDir = resolve(tempRoot, dir);
+      const stageDir = resolve(tempRoot, stageDirName(dir));
       cpSync(sourceDir, stageDir, { recursive: true, filter: shouldCopyPath });
       if (dir === '.') {
         stageSdkSecurityMitigationAssets(stageDir);

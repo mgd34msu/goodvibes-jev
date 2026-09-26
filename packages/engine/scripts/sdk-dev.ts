@@ -9,10 +9,12 @@
  * forwards to it with the consumer repo as cwd, see the alias template this
  * brief installs in TUI/agent/webui.
  *
- * `link`    Build the local SDK checkout and overlay dist + package.json for
- *           the public engine package (every old package is a subpath of it)
- *           into the caller's node_modules/@goodvibes-jev/engine, so SDK changes are
- *           testable immediately, no npm release round-trip.
+ * `link`    Build the local SDK checkout and overlay what each released package
+ *           publishes (its `files`: every old package's dist, the contract
+ *           artifacts) plus its published package.json, for the engine (every
+ *           old package is a subpath of it) and the judgment package it depends
+ *           on, into the caller's node_modules/@goodvibes-jev/*, so SDK changes
+ *           are testable immediately, no npm release round-trip.
  * `status`  Report whether the overlay is active and what it was built from.
  * `restore` Remove the overlay and reinstall the pinned npm version byte-exact.
  *
@@ -30,6 +32,12 @@
  *    rejected a new field because only goodvibes-sdk was overlaid). This was
  *    already true in the TUI's copy but NEVER true in agent/webui's copies,
  *    the live re-sync gap this brief closes.
+ *    In the engine the siblings are subpaths of one package, and the judgment
+ *    package is the one sibling left: it is released with the engine, so it
+ *    is overlaid with it (the package list is the release tooling's own).
+ *  - published manifest: the overlaid package.json is the one a release
+ *    stages, without the workspace `bun` source condition, whose src files
+ *    the overlay does not copy and a Bun consumer would otherwise resolve.
  *  - precise restore: the marker records exactly which packages were
  *    overlaid, so `restore` removes exactly those and nothing else.
  *
@@ -62,8 +70,11 @@
  */
 import { execSync } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { withoutSourceCondition } from './export-conditions.ts';
+import { packageDirs } from './release-shared.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -85,29 +96,40 @@ export interface WorkspacePackage {
   readonly dir: string;
 }
 
-/** The old packages, each with its own dist inside the engine package. */
-const ENGINE_DIST_PACKAGES: readonly string[] = [
-  'contracts', 'daemon-sdk', 'errors', 'operator-sdk', 'peer-sdk', 'sdk',
-  'terminal-shell', 'toolchain', 'transport-core', 'transport-http', 'transport-realtime',
-];
+interface PackageManifest {
+  readonly name?: string;
+  readonly private?: boolean;
+  readonly publishConfig?: { readonly access?: string };
+  readonly files?: readonly string[];
+  readonly exports?: unknown;
+}
+
+function readManifest(path: string): PackageManifest | null {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as PackageManifest;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * The public workspace package this checkout publishes: the engine itself,
- * whose subpaths are the old packages/*. Excluded when it is private or lacks
+ * The public packages this checkout releases, in release order: the engine
+ * (whose subpaths are the old packages/*) and the judgment package released
+ * with it. The list is the release tooling's own (release-shared.ts
+ * packageDirs), so a package added to the release is overlaid with no change
+ * here. A package is excluded when it is missing, private, or lacks
  * publishConfig.access:"public", as every private/internal package was.
  */
 export function enumerateWorkspacePackages(sdkRoot: string): WorkspacePackage[] {
-  const pkgJsonPath = join(sdkRoot, 'package.json');
-  if (!existsSync(pkgJsonPath)) return [];
-  let pkg: { name?: string; private?: boolean; publishConfig?: { access?: string } };
-  try {
-    pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
-  } catch {
-    return [];
+  const packages: WorkspacePackage[] = [];
+  for (const dir of packageDirs) {
+    const pkg = readManifest(join(sdkRoot, dir, 'package.json'));
+    if (!pkg?.name || pkg.private || pkg.publishConfig?.access !== 'public') continue;
+    const nm = pkg.name.startsWith('@goodvibes-jev/') ? pkg.name.slice('@goodvibes-jev/'.length) : pkg.name;
+    packages.push({ nm, dir });
   }
-  if (!pkg.name || pkg.private || pkg.publishConfig?.access !== 'public') return [];
-  const nm = pkg.name.startsWith('@goodvibes-jev/') ? pkg.name.slice('@goodvibes-jev/'.length) : pkg.name;
-  return [{ nm, dir: '.' }];
+  return packages;
 }
 
 /** Read the SDK pin: devDependencies first (agent bundles the SDK there), then dependencies. */
@@ -164,25 +186,33 @@ function fail(msg: string): never {
 }
 
 /**
- * Overlay one monorepo package's dist + package.json into a consumer's
- * node_modules. MUST unlink package.json (and the dist dir) before copying,
- * see the cache-safety note in the file header. Returns false when the
- * package is not installed in this consumer / not built in the SDK (skip;
- * not every consumer depends on every sibling package).
+ * Overlay one released package into a consumer's node_modules: every entry
+ * of its `files` list present in the checkout (each old package's dist, the
+ * contract artifacts, README, LICENSE) and its package.json as a release
+ * publishes it. MUST unlink every destination before copying, see the
+ * cache-safety note in the file header. Returns false when the package is not
+ * installed in this consumer, or not built in the SDK (a `files` dist
+ * directory is missing): skip, not every consumer depends on every package.
  */
 export function overlayPackage(consumerRoot: string, sdkRoot: string, pkg: WorkspacePackage): boolean {
   const installed = join(consumerRoot, 'node_modules/@goodvibes-jev', pkg.nm);
-  const pkgJson = join(sdkRoot, pkg.dir, 'package.json');
-  if (!existsSync(installed) || !existsSync(join(sdkRoot, pkg.dir, 'sdk', 'dist'))) return false;
-  // Every old package keeps its own dist inside the engine package.
-  for (const sub of ENGINE_DIST_PACKAGES) {
-    const dist = join(sdkRoot, pkg.dir, sub, 'dist');
-    if (!existsSync(dist)) continue;
-    rmSync(join(installed, sub, 'dist'), { recursive: true, force: true });
-    cpSync(dist, join(installed, sub, 'dist'), { recursive: true });
+  const packageRoot = join(sdkRoot, pkg.dir);
+  const manifest = readManifest(join(packageRoot, 'package.json'));
+  if (!existsSync(installed) || manifest === null) return false;
+  const published = manifest.files ?? [];
+  const distDirs = published.filter((entry) => basename(entry) === 'dist');
+  if (distDirs.length === 0 || distDirs.some((entry) => !existsSync(join(packageRoot, entry)))) return false;
+  for (const entry of published) {
+    const source = join(packageRoot, entry);
+    if (!existsSync(source)) continue;
+    rmSync(join(installed, entry), { recursive: true, force: true });
+    cpSync(source, join(installed, entry), { recursive: true });
   }
   rmSync(join(installed, 'package.json'), { force: true });
-  cpSync(pkgJson, join(installed, 'package.json'));
+  writeFileSync(
+    join(installed, 'package.json'),
+    `${JSON.stringify({ ...manifest, exports: withoutSourceCondition(manifest.exports) }, null, 2)}\n`,
+  );
   return true;
 }
 

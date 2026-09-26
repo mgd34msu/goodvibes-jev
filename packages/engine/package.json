@@ -1,8 +1,30 @@
 {
   "name": "@goodvibes-jev/engine",
   "version": "2.0.23",
-  "private": true,
+  "description": "The platform library: the old goodvibes-sdk packages, with Jev judgment at every decision point.",
+  "keywords": [
+    "goodvibes",
+    "sdk",
+    "engine",
+    "judgment",
+    "jev",
+    "control-plane"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/mgd34msu/goodvibes-jev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-jev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mgd34msu/goodvibes-jev/issues"
+  },
+  "engines": {
+    "bun": "1.3.14",
+    "node": ">=22.0.0"
+  },
   "type": "module",
+  "sideEffects": false,
   "bin": {
     "goodvibes-toolchain": "./toolchain/dist/bin/toolchain.js",
     "goodvibes-sdk-pin-gate": "./toolchain/dist/bin/sdk-pin-gate.js",
@@ -18,264 +40,1282 @@
     "goodvibes-sha256sums": "./toolchain/dist/bin/sha256sums.js",
     "goodvibes-train-status": "./toolchain/dist/bin/train-status.js"
   },
-  "description": "The platform library: the old goodvibes-sdk packages, with Jev judgment at every decision point.",
+  "files": [
+    "contracts/artifacts",
+    "contracts/dist",
+    "daemon-sdk/dist",
+    "errors/dist",
+    "operator-sdk/dist",
+    "peer-sdk/dist",
+    "sdk/dist",
+    "terminal-shell/dist",
+    "toolchain/dist",
+    "transport-core/dist",
+    "transport-http/dist",
+    "transport-realtime/dist",
+    "README.md",
+    "LICENSE"
+  ],
   "exports": {
-    "./contracts": "./contracts/src/index.ts",
-    "./contracts/testing": "./contracts/src/testing/index.ts",
-    "./contracts/generated/foundation-client-types": "./contracts/src/generated/foundation-client-types.ts",
-    "./contracts/generated/mock-daemon-fixtures": "./contracts/src/generated/mock-daemon-fixtures.ts",
-    "./contracts/generated/foundation-metadata": "./contracts/src/generated/foundation-metadata.ts",
-    "./contracts/generated/operator-contract": "./contracts/src/generated/operator-contract.ts",
-    "./contracts/generated/operator-method-ids": "./contracts/src/generated/operator-method-ids.ts",
-    "./contracts/generated/peer-contract": "./contracts/src/generated/peer-contract.ts",
-    "./contracts/generated/peer-endpoint-ids": "./contracts/src/generated/peer-endpoint-ids.ts",
-    "./contracts/generated/runtime-event-domains": "./contracts/src/generated/runtime-event-domains.ts",
-    "./contracts/generated/webui-facade": "./contracts/src/generated/webui-facade.ts",
-    "./contracts/node": "./contracts/src/node.ts",
-    "./contracts/zod-schemas/accounts": "./contracts/src/zod-schemas/accounts.ts",
-    "./contracts/zod-schemas/auth": "./contracts/src/zod-schemas/auth.ts",
-    "./contracts/zod-schemas/events": "./contracts/src/zod-schemas/events.ts",
-    "./contracts/zod-schemas/index": "./contracts/src/zod-schemas/index.ts",
-    "./contracts/zod-schemas/providers": "./contracts/src/zod-schemas/providers.ts",
-    "./contracts/zod-schemas/session": "./contracts/src/zod-schemas/session.ts",
+    "./contracts": {
+      "bun": "./contracts/src/index.ts",
+      "types": "./contracts/dist/index.d.ts",
+      "import": "./contracts/dist/index.js"
+    },
+    "./contracts/testing": {
+      "bun": "./contracts/src/testing/index.ts",
+      "types": "./contracts/dist/testing/index.d.ts",
+      "import": "./contracts/dist/testing/index.js"
+    },
+    "./contracts/generated/foundation-client-types": {
+      "bun": "./contracts/src/generated/foundation-client-types.ts",
+      "types": "./contracts/dist/generated/foundation-client-types.d.ts",
+      "import": "./contracts/dist/generated/foundation-client-types.js"
+    },
+    "./contracts/generated/mock-daemon-fixtures": {
+      "bun": "./contracts/src/generated/mock-daemon-fixtures.ts",
+      "types": "./contracts/dist/generated/mock-daemon-fixtures.d.ts",
+      "import": "./contracts/dist/generated/mock-daemon-fixtures.js"
+    },
+    "./contracts/generated/foundation-metadata": {
+      "bun": "./contracts/src/generated/foundation-metadata.ts",
+      "types": "./contracts/dist/generated/foundation-metadata.d.ts",
+      "import": "./contracts/dist/generated/foundation-metadata.js"
+    },
+    "./contracts/generated/operator-contract": {
+      "bun": "./contracts/src/generated/operator-contract.ts",
+      "types": "./contracts/dist/generated/operator-contract.d.ts",
+      "import": "./contracts/dist/generated/operator-contract.js"
+    },
+    "./contracts/generated/operator-method-ids": {
+      "bun": "./contracts/src/generated/operator-method-ids.ts",
+      "types": "./contracts/dist/generated/operator-method-ids.d.ts",
+      "import": "./contracts/dist/generated/operator-method-ids.js"
+    },
+    "./contracts/generated/peer-contract": {
+      "bun": "./contracts/src/generated/peer-contract.ts",
+      "types": "./contracts/dist/generated/peer-contract.d.ts",
+      "import": "./contracts/dist/generated/peer-contract.js"
+    },
+    "./contracts/generated/peer-endpoint-ids": {
+      "bun": "./contracts/src/generated/peer-endpoint-ids.ts",
+      "types": "./contracts/dist/generated/peer-endpoint-ids.d.ts",
+      "import": "./contracts/dist/generated/peer-endpoint-ids.js"
+    },
+    "./contracts/generated/runtime-event-domains": {
+      "bun": "./contracts/src/generated/runtime-event-domains.ts",
+      "types": "./contracts/dist/generated/runtime-event-domains.d.ts",
+      "import": "./contracts/dist/generated/runtime-event-domains.js"
+    },
+    "./contracts/generated/webui-facade": {
+      "bun": "./contracts/src/generated/webui-facade.ts",
+      "types": "./contracts/dist/generated/webui-facade.d.ts",
+      "import": "./contracts/dist/generated/webui-facade.js"
+    },
+    "./contracts/node": {
+      "bun": "./contracts/src/node.ts",
+      "types": "./contracts/dist/node.d.ts",
+      "import": "./contracts/dist/node.js"
+    },
+    "./contracts/zod-schemas/accounts": {
+      "bun": "./contracts/src/zod-schemas/accounts.ts",
+      "types": "./contracts/dist/zod-schemas/accounts.d.ts",
+      "import": "./contracts/dist/zod-schemas/accounts.js"
+    },
+    "./contracts/zod-schemas/auth": {
+      "bun": "./contracts/src/zod-schemas/auth.ts",
+      "types": "./contracts/dist/zod-schemas/auth.d.ts",
+      "import": "./contracts/dist/zod-schemas/auth.js"
+    },
+    "./contracts/zod-schemas/events": {
+      "bun": "./contracts/src/zod-schemas/events.ts",
+      "types": "./contracts/dist/zod-schemas/events.d.ts",
+      "import": "./contracts/dist/zod-schemas/events.js"
+    },
+    "./contracts/zod-schemas/index": {
+      "bun": "./contracts/src/zod-schemas/index.ts",
+      "types": "./contracts/dist/zod-schemas/index.d.ts",
+      "import": "./contracts/dist/zod-schemas/index.js"
+    },
+    "./contracts/zod-schemas/providers": {
+      "bun": "./contracts/src/zod-schemas/providers.ts",
+      "types": "./contracts/dist/zod-schemas/providers.d.ts",
+      "import": "./contracts/dist/zod-schemas/providers.js"
+    },
+    "./contracts/zod-schemas/session": {
+      "bun": "./contracts/src/zod-schemas/session.ts",
+      "types": "./contracts/dist/zod-schemas/session.d.ts",
+      "import": "./contracts/dist/zod-schemas/session.js"
+    },
     "./contracts/operator-contract.json": "./contracts/artifacts/operator-contract.json",
     "./contracts/operator-openapi.json": "./contracts/artifacts/operator-openapi.json",
     "./contracts/peer-contract.json": "./contracts/artifacts/peer-contract.json",
-    "./daemon-sdk": "./daemon-sdk/src/index.ts",
-    "./daemon-sdk/api-router": "./daemon-sdk/src/api-router.ts",
-    "./daemon-sdk/artifact-upload": "./daemon-sdk/src/artifact-upload.ts",
-    "./daemon-sdk/automation": "./daemon-sdk/src/automation.ts",
-    "./daemon-sdk/channel-route-types": "./daemon-sdk/src/channel-route-types.ts",
-    "./daemon-sdk/channel-routes": "./daemon-sdk/src/channel-routes.ts",
-    "./daemon-sdk/context": "./daemon-sdk/src/context.ts",
-    "./daemon-sdk/control-routes": "./daemon-sdk/src/control-routes.ts",
-    "./daemon-sdk/error-response": "./daemon-sdk/src/error-response.ts",
-    "./daemon-sdk/http-policy": "./daemon-sdk/src/http-policy.ts",
-    "./daemon-sdk/integration-route-types": "./daemon-sdk/src/integration-route-types.ts",
-    "./daemon-sdk/integration-routes": "./daemon-sdk/src/integration-routes.ts",
-    "./daemon-sdk/knowledge-refinement-routes": "./daemon-sdk/src/knowledge-refinement-routes.ts",
-    "./daemon-sdk/knowledge-route-types": "./daemon-sdk/src/knowledge-route-types.ts",
-    "./daemon-sdk/knowledge-routes": "./daemon-sdk/src/knowledge-routes.ts",
-    "./daemon-sdk/media-route-types": "./daemon-sdk/src/media-route-types.ts",
-    "./daemon-sdk/media-routes": "./daemon-sdk/src/media-routes.ts",
-    "./daemon-sdk/operator": "./daemon-sdk/src/operator.ts",
-    "./daemon-sdk/otlp-protobuf": "./daemon-sdk/src/otlp-protobuf.ts",
-    "./daemon-sdk/remote-routes": "./daemon-sdk/src/remote-routes.ts",
-    "./daemon-sdk/relay-server": "./daemon-sdk/src/relay-server.ts",
-    "./daemon-sdk/relay-registration": "./daemon-sdk/src/relay-registration.ts",
-    "./daemon-sdk/relay-server-entry": "./daemon-sdk/src/relay-server-entry.ts",
-    "./daemon-sdk/remote": "./daemon-sdk/src/remote.ts",
-    "./daemon-sdk/route-helpers": "./daemon-sdk/src/route-helpers.ts",
-    "./daemon-sdk/runtime-automation-routes": "./daemon-sdk/src/runtime-automation-routes.ts",
-    "./daemon-sdk/runtime-route-types": "./daemon-sdk/src/runtime-route-types.ts",
-    "./daemon-sdk/runtime-routes": "./daemon-sdk/src/runtime-routes.ts",
-    "./daemon-sdk/runtime-session-routes": "./daemon-sdk/src/runtime-session-routes.ts",
-    "./daemon-sdk/sessions": "./daemon-sdk/src/sessions.ts",
-    "./daemon-sdk/system-route-types": "./daemon-sdk/src/system-route-types.ts",
-    "./daemon-sdk/system-routes": "./daemon-sdk/src/system-routes.ts",
-    "./daemon-sdk/tasks": "./daemon-sdk/src/tasks.ts",
-    "./daemon-sdk/telemetry-routes": "./daemon-sdk/src/telemetry-routes.ts",
-    "./errors": "./errors/src/index.ts",
-    "./errors/daemon-error-contract": "./errors/src/daemon-error-contract.ts",
-    "./operator-sdk": "./operator-sdk/src/index.ts",
-    "./operator-sdk/client-core": "./operator-sdk/src/client-core.ts",
-    "./operator-sdk/client": "./operator-sdk/src/client.ts",
-    "./peer-sdk": "./peer-sdk/src/index.ts",
-    "./peer-sdk/client-core": "./peer-sdk/src/client-core.ts",
-    "./peer-sdk/client": "./peer-sdk/src/client.ts",
-    "./sdk": "./sdk/src/index.ts",
-    "./sdk/auth": "./sdk/src/auth.ts",
-    "./sdk/browser": "./sdk/src/browser.ts",
-    "./sdk/browser/agent": "./sdk/src/browser-agent.ts",
-    "./sdk/browser/homeassistant": "./sdk/src/browser-homeassistant.ts",
-    "./sdk/browser/knowledge": "./sdk/src/browser-knowledge.ts",
-    "./sdk/client-auth": "./sdk/src/client-auth/index.ts",
-    "./sdk/contracts": "./sdk/src/contracts.ts",
-    "./sdk/contracts/node": "./sdk/src/contracts-node.ts",
+    "./daemon-sdk": {
+      "bun": "./daemon-sdk/src/index.ts",
+      "types": "./daemon-sdk/dist/index.d.ts",
+      "import": "./daemon-sdk/dist/index.js"
+    },
+    "./daemon-sdk/api-router": {
+      "bun": "./daemon-sdk/src/api-router.ts",
+      "types": "./daemon-sdk/dist/api-router.d.ts",
+      "import": "./daemon-sdk/dist/api-router.js"
+    },
+    "./daemon-sdk/artifact-upload": {
+      "bun": "./daemon-sdk/src/artifact-upload.ts",
+      "types": "./daemon-sdk/dist/artifact-upload.d.ts",
+      "import": "./daemon-sdk/dist/artifact-upload.js"
+    },
+    "./daemon-sdk/automation": {
+      "bun": "./daemon-sdk/src/automation.ts",
+      "types": "./daemon-sdk/dist/automation.d.ts",
+      "import": "./daemon-sdk/dist/automation.js"
+    },
+    "./daemon-sdk/channel-route-types": {
+      "bun": "./daemon-sdk/src/channel-route-types.ts",
+      "types": "./daemon-sdk/dist/channel-route-types.d.ts",
+      "import": "./daemon-sdk/dist/channel-route-types.js"
+    },
+    "./daemon-sdk/channel-routes": {
+      "bun": "./daemon-sdk/src/channel-routes.ts",
+      "types": "./daemon-sdk/dist/channel-routes.d.ts",
+      "import": "./daemon-sdk/dist/channel-routes.js"
+    },
+    "./daemon-sdk/context": {
+      "bun": "./daemon-sdk/src/context.ts",
+      "types": "./daemon-sdk/dist/context.d.ts",
+      "import": "./daemon-sdk/dist/context.js"
+    },
+    "./daemon-sdk/control-routes": {
+      "bun": "./daemon-sdk/src/control-routes.ts",
+      "types": "./daemon-sdk/dist/control-routes.d.ts",
+      "import": "./daemon-sdk/dist/control-routes.js"
+    },
+    "./daemon-sdk/error-response": {
+      "bun": "./daemon-sdk/src/error-response.ts",
+      "types": "./daemon-sdk/dist/error-response.d.ts",
+      "import": "./daemon-sdk/dist/error-response.js"
+    },
+    "./daemon-sdk/http-policy": {
+      "bun": "./daemon-sdk/src/http-policy.ts",
+      "types": "./daemon-sdk/dist/http-policy.d.ts",
+      "import": "./daemon-sdk/dist/http-policy.js"
+    },
+    "./daemon-sdk/integration-route-types": {
+      "bun": "./daemon-sdk/src/integration-route-types.ts",
+      "types": "./daemon-sdk/dist/integration-route-types.d.ts",
+      "import": "./daemon-sdk/dist/integration-route-types.js"
+    },
+    "./daemon-sdk/integration-routes": {
+      "bun": "./daemon-sdk/src/integration-routes.ts",
+      "types": "./daemon-sdk/dist/integration-routes.d.ts",
+      "import": "./daemon-sdk/dist/integration-routes.js"
+    },
+    "./daemon-sdk/knowledge-refinement-routes": {
+      "bun": "./daemon-sdk/src/knowledge-refinement-routes.ts",
+      "types": "./daemon-sdk/dist/knowledge-refinement-routes.d.ts",
+      "import": "./daemon-sdk/dist/knowledge-refinement-routes.js"
+    },
+    "./daemon-sdk/knowledge-route-types": {
+      "bun": "./daemon-sdk/src/knowledge-route-types.ts",
+      "types": "./daemon-sdk/dist/knowledge-route-types.d.ts",
+      "import": "./daemon-sdk/dist/knowledge-route-types.js"
+    },
+    "./daemon-sdk/knowledge-routes": {
+      "bun": "./daemon-sdk/src/knowledge-routes.ts",
+      "types": "./daemon-sdk/dist/knowledge-routes.d.ts",
+      "import": "./daemon-sdk/dist/knowledge-routes.js"
+    },
+    "./daemon-sdk/media-route-types": {
+      "bun": "./daemon-sdk/src/media-route-types.ts",
+      "types": "./daemon-sdk/dist/media-route-types.d.ts",
+      "import": "./daemon-sdk/dist/media-route-types.js"
+    },
+    "./daemon-sdk/media-routes": {
+      "bun": "./daemon-sdk/src/media-routes.ts",
+      "types": "./daemon-sdk/dist/media-routes.d.ts",
+      "import": "./daemon-sdk/dist/media-routes.js"
+    },
+    "./daemon-sdk/operator": {
+      "bun": "./daemon-sdk/src/operator.ts",
+      "types": "./daemon-sdk/dist/operator.d.ts",
+      "import": "./daemon-sdk/dist/operator.js"
+    },
+    "./daemon-sdk/otlp-protobuf": {
+      "bun": "./daemon-sdk/src/otlp-protobuf.ts",
+      "types": "./daemon-sdk/dist/otlp-protobuf.d.ts",
+      "import": "./daemon-sdk/dist/otlp-protobuf.js"
+    },
+    "./daemon-sdk/remote-routes": {
+      "bun": "./daemon-sdk/src/remote-routes.ts",
+      "types": "./daemon-sdk/dist/remote-routes.d.ts",
+      "import": "./daemon-sdk/dist/remote-routes.js"
+    },
+    "./daemon-sdk/relay-server": {
+      "bun": "./daemon-sdk/src/relay-server.ts",
+      "types": "./daemon-sdk/dist/relay-server.d.ts",
+      "import": "./daemon-sdk/dist/relay-server.js"
+    },
+    "./daemon-sdk/relay-registration": {
+      "bun": "./daemon-sdk/src/relay-registration.ts",
+      "types": "./daemon-sdk/dist/relay-registration.d.ts",
+      "import": "./daemon-sdk/dist/relay-registration.js"
+    },
+    "./daemon-sdk/relay-server-entry": {
+      "bun": "./daemon-sdk/src/relay-server-entry.ts",
+      "types": "./daemon-sdk/dist/relay-server-entry.d.ts",
+      "import": "./daemon-sdk/dist/relay-server-entry.js"
+    },
+    "./daemon-sdk/remote": {
+      "bun": "./daemon-sdk/src/remote.ts",
+      "types": "./daemon-sdk/dist/remote.d.ts",
+      "import": "./daemon-sdk/dist/remote.js"
+    },
+    "./daemon-sdk/route-helpers": {
+      "bun": "./daemon-sdk/src/route-helpers.ts",
+      "types": "./daemon-sdk/dist/route-helpers.d.ts",
+      "import": "./daemon-sdk/dist/route-helpers.js"
+    },
+    "./daemon-sdk/runtime-automation-routes": {
+      "bun": "./daemon-sdk/src/runtime-automation-routes.ts",
+      "types": "./daemon-sdk/dist/runtime-automation-routes.d.ts",
+      "import": "./daemon-sdk/dist/runtime-automation-routes.js"
+    },
+    "./daemon-sdk/runtime-route-types": {
+      "bun": "./daemon-sdk/src/runtime-route-types.ts",
+      "types": "./daemon-sdk/dist/runtime-route-types.d.ts",
+      "import": "./daemon-sdk/dist/runtime-route-types.js"
+    },
+    "./daemon-sdk/runtime-routes": {
+      "bun": "./daemon-sdk/src/runtime-routes.ts",
+      "types": "./daemon-sdk/dist/runtime-routes.d.ts",
+      "import": "./daemon-sdk/dist/runtime-routes.js"
+    },
+    "./daemon-sdk/runtime-session-routes": {
+      "bun": "./daemon-sdk/src/runtime-session-routes.ts",
+      "types": "./daemon-sdk/dist/runtime-session-routes.d.ts",
+      "import": "./daemon-sdk/dist/runtime-session-routes.js"
+    },
+    "./daemon-sdk/sessions": {
+      "bun": "./daemon-sdk/src/sessions.ts",
+      "types": "./daemon-sdk/dist/sessions.d.ts",
+      "import": "./daemon-sdk/dist/sessions.js"
+    },
+    "./daemon-sdk/system-route-types": {
+      "bun": "./daemon-sdk/src/system-route-types.ts",
+      "types": "./daemon-sdk/dist/system-route-types.d.ts",
+      "import": "./daemon-sdk/dist/system-route-types.js"
+    },
+    "./daemon-sdk/system-routes": {
+      "bun": "./daemon-sdk/src/system-routes.ts",
+      "types": "./daemon-sdk/dist/system-routes.d.ts",
+      "import": "./daemon-sdk/dist/system-routes.js"
+    },
+    "./daemon-sdk/tasks": {
+      "bun": "./daemon-sdk/src/tasks.ts",
+      "types": "./daemon-sdk/dist/tasks.d.ts",
+      "import": "./daemon-sdk/dist/tasks.js"
+    },
+    "./daemon-sdk/telemetry-routes": {
+      "bun": "./daemon-sdk/src/telemetry-routes.ts",
+      "types": "./daemon-sdk/dist/telemetry-routes.d.ts",
+      "import": "./daemon-sdk/dist/telemetry-routes.js"
+    },
+    "./errors": {
+      "bun": "./errors/src/index.ts",
+      "types": "./errors/dist/index.d.ts",
+      "import": "./errors/dist/index.js"
+    },
+    "./errors/daemon-error-contract": {
+      "bun": "./errors/src/daemon-error-contract.ts",
+      "types": "./errors/dist/daemon-error-contract.d.ts",
+      "import": "./errors/dist/daemon-error-contract.js"
+    },
+    "./operator-sdk": {
+      "bun": "./operator-sdk/src/index.ts",
+      "types": "./operator-sdk/dist/index.d.ts",
+      "import": "./operator-sdk/dist/index.js"
+    },
+    "./operator-sdk/client-core": {
+      "bun": "./operator-sdk/src/client-core.ts",
+      "types": "./operator-sdk/dist/client-core.d.ts",
+      "import": "./operator-sdk/dist/client-core.js"
+    },
+    "./operator-sdk/client": {
+      "bun": "./operator-sdk/src/client.ts",
+      "types": "./operator-sdk/dist/client.d.ts",
+      "import": "./operator-sdk/dist/client.js"
+    },
+    "./peer-sdk": {
+      "bun": "./peer-sdk/src/index.ts",
+      "types": "./peer-sdk/dist/index.d.ts",
+      "import": "./peer-sdk/dist/index.js"
+    },
+    "./peer-sdk/client-core": {
+      "bun": "./peer-sdk/src/client-core.ts",
+      "types": "./peer-sdk/dist/client-core.d.ts",
+      "import": "./peer-sdk/dist/client-core.js"
+    },
+    "./peer-sdk/client": {
+      "bun": "./peer-sdk/src/client.ts",
+      "types": "./peer-sdk/dist/client.d.ts",
+      "import": "./peer-sdk/dist/client.js"
+    },
+    "./sdk": {
+      "bun": "./sdk/src/index.ts",
+      "types": "./sdk/dist/index.d.ts",
+      "import": "./sdk/dist/index.js"
+    },
+    "./sdk/auth": {
+      "bun": "./sdk/src/auth.ts",
+      "types": "./sdk/dist/auth.d.ts",
+      "import": "./sdk/dist/auth.js"
+    },
+    "./sdk/browser": {
+      "bun": "./sdk/src/browser.ts",
+      "types": "./sdk/dist/browser.d.ts",
+      "import": "./sdk/dist/browser.js"
+    },
+    "./sdk/browser/agent": {
+      "bun": "./sdk/src/browser-agent.ts",
+      "types": "./sdk/dist/browser-agent.d.ts",
+      "import": "./sdk/dist/browser-agent.js"
+    },
+    "./sdk/browser/homeassistant": {
+      "bun": "./sdk/src/browser-homeassistant.ts",
+      "types": "./sdk/dist/browser-homeassistant.d.ts",
+      "import": "./sdk/dist/browser-homeassistant.js"
+    },
+    "./sdk/browser/knowledge": {
+      "bun": "./sdk/src/browser-knowledge.ts",
+      "types": "./sdk/dist/browser-knowledge.d.ts",
+      "import": "./sdk/dist/browser-knowledge.js"
+    },
+    "./sdk/client-auth": {
+      "bun": "./sdk/src/client-auth/index.ts",
+      "types": "./sdk/dist/client-auth/index.d.ts",
+      "import": "./sdk/dist/client-auth/index.js"
+    },
+    "./sdk/contracts": {
+      "bun": "./sdk/src/contracts.ts",
+      "types": "./sdk/dist/contracts.d.ts",
+      "import": "./sdk/dist/contracts.js"
+    },
+    "./sdk/contracts/node": {
+      "bun": "./sdk/src/contracts-node.ts",
+      "types": "./sdk/dist/contracts-node.d.ts",
+      "import": "./sdk/dist/contracts-node.js"
+    },
     "./sdk/contracts/operator-contract.json": "./contracts/artifacts/operator-contract.json",
     "./sdk/contracts/operator-openapi.json": "./contracts/artifacts/operator-openapi.json",
     "./sdk/contracts/peer-contract.json": "./contracts/artifacts/peer-contract.json",
-    "./sdk/daemon": "./sdk/src/daemon.ts",
-    "./sdk/embed": "./sdk/src/embed.ts",
-    "./sdk/errors": "./sdk/src/errors.ts",
-    "./sdk/events": "./sdk/src/events/index.ts",
-    "./sdk/events/agents": "./sdk/src/events/agents.ts",
-    "./sdk/events/automation": "./sdk/src/events/automation.ts",
-    "./sdk/events/communication": "./sdk/src/events/communication.ts",
-    "./sdk/events/compaction": "./sdk/src/events/compaction.ts",
-    "./sdk/events/control-plane": "./sdk/src/events/control-plane.ts",
-    "./sdk/events/deliveries": "./sdk/src/events/deliveries.ts",
-    "./sdk/events/forensics": "./sdk/src/events/forensics.ts",
-    "./sdk/events/knowledge": "./sdk/src/events/knowledge.ts",
-    "./sdk/events/mcp": "./sdk/src/events/mcp.ts",
-    "./sdk/events/ops": "./sdk/src/events/ops.ts",
-    "./sdk/events/orchestration": "./sdk/src/events/orchestration.ts",
-    "./sdk/events/permissions": "./sdk/src/events/permissions.ts",
-    "./sdk/events/planner": "./sdk/src/events/planner.ts",
-    "./sdk/events/plugins": "./sdk/src/events/plugins.ts",
-    "./sdk/events/providers": "./sdk/src/events/providers.ts",
-    "./sdk/events/routes": "./sdk/src/events/routes.ts",
-    "./sdk/events/security": "./sdk/src/events/security.ts",
-    "./sdk/events/session": "./sdk/src/events/session.ts",
-    "./sdk/events/surfaces": "./sdk/src/events/surfaces.ts",
-    "./sdk/events/tasks": "./sdk/src/events/tasks.ts",
-    "./sdk/events/tools": "./sdk/src/events/tools.ts",
-    "./sdk/events/transport": "./sdk/src/events/transport.ts",
-    "./sdk/events/turn": "./sdk/src/events/turn.ts",
-    "./sdk/events/ui": "./sdk/src/events/ui.ts",
-    "./sdk/events/watchers": "./sdk/src/events/watchers.ts",
-    "./sdk/events/workflows": "./sdk/src/events/workflows.ts",
-    "./sdk/events/workspace": "./sdk/src/events/workspace.ts",
-    "./sdk/expo": "./sdk/src/expo.ts",
-    "./sdk/observer": "./sdk/src/observer/index.ts",
-    "./sdk/operator": "./sdk/src/operator.ts",
-    "./sdk/peer": "./sdk/src/peer.ts",
-    "./sdk/platform/acp": "./sdk/src/platform/acp/index.ts",
-    "./sdk/platform/adapters": "./sdk/src/platform/adapters/index.ts",
-    "./sdk/platform/agents": "./sdk/src/platform/agents/index.ts",
-    "./sdk/platform/artifacts": "./sdk/src/platform/artifacts/index.ts",
-    "./sdk/platform/automation": "./sdk/src/platform/automation/index.ts",
-    "./sdk/platform/batch": "./sdk/src/platform/batch/index.ts",
-    "./sdk/platform/bookmarks": "./sdk/src/platform/bookmarks/index.ts",
-    "./sdk/platform/browser": "./sdk/src/platform/browser/index.ts",
-    "./sdk/platform/calendar": "./sdk/src/platform/calendar/index.ts",
-    "./sdk/platform/channels": "./sdk/src/platform/channels/index.ts",
-    "./sdk/platform/cloudflare": "./sdk/src/platform/cloudflare/index.ts",
-    "./sdk/platform/cluster": "./sdk/src/platform/cluster/index.ts",
-    "./sdk/platform/companion": "./sdk/src/platform/companion/index.ts",
-    "./sdk/platform/config": "./sdk/src/platform/config/index.ts",
-    "./sdk/platform/payments": "./sdk/src/platform/payments/index.ts",
-    "./sdk/platform/contract": "./sdk/src/platform/contract/index.ts",
-    "./sdk/platform/control-plane": "./sdk/src/platform/control-plane/index.ts",
-    "./sdk/platform/core": "./sdk/src/platform/core/index.ts",
-    "./sdk/platform/daemon": "./sdk/src/platform/daemon/index.ts",
-    "./sdk/platform/daemon/auto-updater": "./sdk/src/platform/daemon/auto-updater.ts",
-    "./sdk/platform/daemon/receipts": "./sdk/src/platform/daemon/receipts.ts",
-    "./sdk/platform/devices": "./sdk/src/platform/devices/index.ts",
-    "./sdk/platform/discovery": "./sdk/src/platform/discovery/index.ts",
-    "./sdk/platform/email": "./sdk/src/platform/email/index.ts",
-    "./sdk/platform/email/node": "./sdk/src/platform/email/node.ts",
-    "./sdk/platform/export": "./sdk/src/platform/export/index.ts",
-    "./sdk/platform/git": "./sdk/src/platform/git/index.ts",
-    "./sdk/platform/google": "./sdk/src/platform/google/index.ts",
-    "./sdk/platform/google/node": "./sdk/src/platform/google/node.ts",
-    "./sdk/platform/hooks": "./sdk/src/platform/hooks/index.ts",
-    "./sdk/platform/integrations": "./sdk/src/platform/integrations/index.ts",
-    "./sdk/platform/intelligence": "./sdk/src/platform/intelligence/index.ts",
-    "./sdk/platform/hosted-sessions": "./sdk/src/platform/hosted-sessions/index.ts",
-    "./sdk/platform/knowledge": "./sdk/src/platform/knowledge/index.ts",
-    "./sdk/platform/knowledge/extensions": "./sdk/src/platform/knowledge/extensions.ts",
-    "./sdk/platform/knowledge/home-graph": "./sdk/src/platform/knowledge/home-graph/index.ts",
-    "./sdk/platform/mcp": "./sdk/src/platform/mcp/index.ts",
-    "./sdk/platform/mcp/server": "./sdk/src/platform/mcp/server/index.ts",
-    "./sdk/platform/media": "./sdk/src/platform/media/index.ts",
-    "./sdk/platform/multimodal": "./sdk/src/platform/multimodal/index.ts",
-    "./sdk/platform/node": "./sdk/src/platform/node/index.ts",
-    "./sdk/platform/node/runtime-boundary": "./sdk/src/platform/node/runtime-boundary.ts",
-    "./sdk/platform/occasions": "./sdk/src/platform/occasions/index.ts",
-    "./sdk/platform/orchestration": "./sdk/src/platform/orchestration/index.ts",
-    "./sdk/platform/owner-profile": "./sdk/src/platform/owner-profile/index.ts",
-    "./sdk/platform/personal-capture": "./sdk/src/platform/personal-capture/index.ts",
-    "./sdk/platform/pairing": "./sdk/src/platform/pairing/index.ts",
-    "./sdk/platform/permissions": "./sdk/src/platform/permissions/index.ts",
-    "./sdk/platform/plugins": "./sdk/src/platform/plugins/index.ts",
-    "./sdk/platform/power": "./sdk/src/platform/power/index.ts",
-    "./sdk/platform/presentation": "./sdk/src/platform/presentation/index.ts",
-    "./sdk/platform/profiles": "./sdk/src/platform/profiles/index.ts",
-    "./sdk/platform/providers": "./sdk/src/platform/providers/index.ts",
-    "./sdk/platform/relay": "./sdk/src/platform/relay/index.ts",
-    "./sdk/platform/rewind": "./sdk/src/platform/rewind/index.ts",
-    "./sdk/platform/runtime": "./sdk/src/platform/runtime/index.ts",
-    "./sdk/platform/runtime/bootstrap": "./sdk/src/platform/runtime/bootstrap.ts",
-    "./sdk/platform/runtime/security": "./sdk/src/platform/runtime/security.ts",
-    "./sdk/platform/runtime/shell": "./sdk/src/platform/runtime/shell.ts",
-    "./sdk/platform/runtime/transport": "./sdk/src/platform/runtime/transport.ts",
-    "./sdk/platform/runtime/client": "./sdk/src/platform/runtime/client/index.ts",
-    "./sdk/platform/runtime/client-services": "./sdk/src/platform/runtime/client-services.ts",
-    "./sdk/platform/runtime/disposal": "./sdk/src/platform/runtime/disposal.ts",
-    "./sdk/platform/runtime/ecosystem": "./sdk/src/platform/runtime/ecosystem/index.ts",
-    "./sdk/platform/runtime/emitters": "./sdk/src/platform/runtime/emitters/index.ts",
-    "./sdk/platform/runtime/feature-announcements": "./sdk/src/platform/runtime/feature-announcements.ts",
-    "./sdk/platform/runtime/feature-flags": "./sdk/src/platform/runtime/feature-flags/index.ts",
-    "./sdk/platform/runtime/fleet": "./sdk/src/platform/runtime/fleet/index.ts",
-    "./sdk/platform/runtime/fleet/observed": "./sdk/src/platform/runtime/fleet/observed/source.ts",
-    "./sdk/platform/runtime/memory": "./sdk/src/platform/runtime/memory/index.ts",
-    "./sdk/platform/runtime/memory-spine": "./sdk/src/platform/runtime/memory-spine/index.ts",
-    "./sdk/platform/runtime/observability": "./sdk/src/platform/runtime/observability.ts",
-    "./sdk/platform/runtime/operations": "./sdk/src/platform/runtime/operations.ts",
-    "./sdk/platform/runtime/permissions/exec-prompt-wiring": "./sdk/src/platform/runtime/permissions/exec-prompt-wiring.ts",
-    "./sdk/platform/runtime/permissions/localhost-fetch-approval": "./sdk/src/platform/runtime/permissions/localhost-fetch-approval.ts",
-    "./sdk/platform/runtime/permissions/sandbox-policy": "./sdk/src/platform/runtime/permissions/sandbox-policy.ts",
-    "./sdk/platform/runtime/sandbox": "./sdk/src/platform/runtime/sandbox.ts",
-    "./sdk/platform/runtime/self-update": "./sdk/src/platform/runtime/self-update.ts",
-    "./sdk/platform/runtime/session-spine": "./sdk/src/platform/runtime/session-spine/index.ts",
-    "./sdk/platform/runtime/settings": "./sdk/src/platform/runtime/settings.ts",
-    "./sdk/platform/runtime/path-shadow": "./sdk/src/platform/runtime/path-shadow.ts",
-    "./sdk/platform/runtime/config": "./sdk/src/platform/runtime/config/index.ts",
-    "./sdk/platform/runtime/state": "./sdk/src/platform/runtime/state.ts",
-    "./sdk/platform/runtime/store": "./sdk/src/platform/runtime/store/index.ts",
-    "./sdk/platform/runtime/ui": "./sdk/src/platform/runtime/ui.ts",
-    "./sdk/platform/runtime/voice-setup": "./sdk/src/platform/runtime/voice-setup.ts",
-    "./sdk/platform/scheduler": "./sdk/src/platform/scheduler/index.ts",
-    "./sdk/platform/security": "./sdk/src/platform/security/index.ts",
-    "./sdk/platform/sessions": "./sdk/src/platform/sessions/index.ts",
-    "./sdk/platform/skills": "./sdk/src/platform/skills/index.ts",
-    "./sdk/platform/state": "./sdk/src/platform/state/index.ts",
-    "./sdk/platform/state/store-snapshots": "./sdk/src/platform/state/store-snapshots.ts",
-    "./sdk/platform/templates": "./sdk/src/platform/templates/index.ts",
-    "./sdk/platform/tools": "./sdk/src/platform/tools/index.ts",
-    "./sdk/platform/tools/exec/sandbox": "./sdk/src/platform/tools/exec/sandbox.ts",
-    "./sdk/platform/triggers": "./sdk/src/platform/triggers/index.ts",
-    "./sdk/platform/types": "./sdk/src/platform/types/index.ts",
-    "./sdk/platform/utils": "./sdk/src/platform/utils/index.ts",
-    "./sdk/platform/version": "./sdk/src/platform/version.ts",
-    "./sdk/platform/voice": "./sdk/src/platform/voice/index.ts",
-    "./sdk/platform/voice/capture": "./sdk/src/platform/voice/capture/index.ts",
-    "./sdk/platform/voice/wake/runtime": "./sdk/src/platform/voice/wake/runtime.ts",
-    "./sdk/platform/watchers": "./sdk/src/platform/watchers/index.ts",
-    "./sdk/platform/web-search": "./sdk/src/platform/web-search/index.ts",
-    "./sdk/platform/workflow": "./sdk/src/platform/workflow/index.ts",
-    "./sdk/platform/workspace": "./sdk/src/platform/workspace/index.ts",
-    "./sdk/react-native": "./sdk/src/react-native.ts",
-    "./sdk/sql-js": "./sdk/src/platform/types/sql-js.d.ts",
-    "./sdk/transport-core": "./sdk/src/transport-core.ts",
-    "./sdk/transport-direct": "./sdk/src/transport-direct.ts",
-    "./sdk/transport-http": "./sdk/src/transport-http.ts",
-    "./sdk/transport-realtime": "./sdk/src/transport-realtime.ts",
-    "./sdk/web": "./sdk/src/web.ts",
-    "./sdk/workers": "./sdk/src/workers.ts",
-    "./terminal-shell": "./terminal-shell/src/index.ts",
-    "./terminal-shell/conformance": "./terminal-shell/src/conformance.ts",
-    "./terminal-shell/terminal-output-guard": "./terminal-shell/src/terminal-output-guard.ts",
-    "./toolchain": "./toolchain/src/index.ts",
-    "./toolchain/config": "./toolchain/src/config.ts",
-    "./transport-core": "./transport-core/src/index.ts",
-    "./transport-core/client-transport": "./transport-core/src/client-transport.ts",
-    "./transport-core/direct": "./transport-core/src/direct.ts",
-    "./transport-core/errors": "./transport-core/src/errors.ts",
-    "./transport-core/event-envelope": "./transport-core/src/event-envelope.ts",
-    "./transport-core/event-feeds": "./transport-core/src/event-feeds.ts",
-    "./transport-core/middleware": "./transport-core/src/middleware.ts",
-    "./transport-core/observer": "./transport-core/src/observer.ts",
-    "./transport-core/relay": "./transport-core/src/relay/index.ts",
-    "./transport-core/otel": "./transport-core/src/otel.ts",
-    "./transport-core/uuid": "./transport-core/src/uuid.ts",
-    "./transport-http": "./transport-http/src/index.ts",
-    "./transport-http/auth": "./transport-http/src/auth.ts",
-    "./transport-http/backoff": "./transport-http/src/backoff.ts",
-    "./transport-http/contract-client": "./transport-http/src/contract-client.ts",
-    "./transport-http/client-plumbing": "./transport-http/src/client-plumbing.ts",
-    "./transport-http/http-core": "./transport-http/src/http-core.ts",
-    "./transport-http/http": "./transport-http/src/http.ts",
-    "./transport-http/paths": "./transport-http/src/paths.ts",
-    "./transport-http/reconnect": "./transport-http/src/reconnect.ts",
-    "./transport-http/retry": "./transport-http/src/retry.ts",
-    "./transport-http/sse-stream": "./transport-http/src/sse-stream.ts",
-    "./transport-http/sse": "./transport-http/src/sse.ts",
-    "./transport-realtime": "./transport-realtime/src/index.ts",
-    "./transport-realtime/domain-events": "./transport-realtime/src/domain-events.ts",
-    "./transport-realtime/runtime-events": "./transport-realtime/src/runtime-events.ts",
-    "./transport-realtime/relay-transport": "./transport-realtime/src/relay-transport.ts"
+    "./sdk/daemon": {
+      "bun": "./sdk/src/daemon.ts",
+      "types": "./sdk/dist/daemon.d.ts",
+      "import": "./sdk/dist/daemon.js"
+    },
+    "./sdk/embed": {
+      "bun": "./sdk/src/embed.ts",
+      "types": "./sdk/dist/embed.d.ts",
+      "import": "./sdk/dist/embed.js"
+    },
+    "./sdk/errors": {
+      "bun": "./sdk/src/errors.ts",
+      "types": "./sdk/dist/errors.d.ts",
+      "import": "./sdk/dist/errors.js"
+    },
+    "./sdk/events": {
+      "bun": "./sdk/src/events/index.ts",
+      "types": "./sdk/dist/events/index.d.ts",
+      "import": "./sdk/dist/events/index.js"
+    },
+    "./sdk/events/agents": {
+      "bun": "./sdk/src/events/agents.ts",
+      "types": "./sdk/dist/events/agents.d.ts",
+      "import": "./sdk/dist/events/agents.js"
+    },
+    "./sdk/events/automation": {
+      "bun": "./sdk/src/events/automation.ts",
+      "types": "./sdk/dist/events/automation.d.ts",
+      "import": "./sdk/dist/events/automation.js"
+    },
+    "./sdk/events/communication": {
+      "bun": "./sdk/src/events/communication.ts",
+      "types": "./sdk/dist/events/communication.d.ts",
+      "import": "./sdk/dist/events/communication.js"
+    },
+    "./sdk/events/compaction": {
+      "bun": "./sdk/src/events/compaction.ts",
+      "types": "./sdk/dist/events/compaction.d.ts",
+      "import": "./sdk/dist/events/compaction.js"
+    },
+    "./sdk/events/control-plane": {
+      "bun": "./sdk/src/events/control-plane.ts",
+      "types": "./sdk/dist/events/control-plane.d.ts",
+      "import": "./sdk/dist/events/control-plane.js"
+    },
+    "./sdk/events/deliveries": {
+      "bun": "./sdk/src/events/deliveries.ts",
+      "types": "./sdk/dist/events/deliveries.d.ts",
+      "import": "./sdk/dist/events/deliveries.js"
+    },
+    "./sdk/events/forensics": {
+      "bun": "./sdk/src/events/forensics.ts",
+      "types": "./sdk/dist/events/forensics.d.ts",
+      "import": "./sdk/dist/events/forensics.js"
+    },
+    "./sdk/events/knowledge": {
+      "bun": "./sdk/src/events/knowledge.ts",
+      "types": "./sdk/dist/events/knowledge.d.ts",
+      "import": "./sdk/dist/events/knowledge.js"
+    },
+    "./sdk/events/mcp": {
+      "bun": "./sdk/src/events/mcp.ts",
+      "types": "./sdk/dist/events/mcp.d.ts",
+      "import": "./sdk/dist/events/mcp.js"
+    },
+    "./sdk/events/ops": {
+      "bun": "./sdk/src/events/ops.ts",
+      "types": "./sdk/dist/events/ops.d.ts",
+      "import": "./sdk/dist/events/ops.js"
+    },
+    "./sdk/events/orchestration": {
+      "bun": "./sdk/src/events/orchestration.ts",
+      "types": "./sdk/dist/events/orchestration.d.ts",
+      "import": "./sdk/dist/events/orchestration.js"
+    },
+    "./sdk/events/permissions": {
+      "bun": "./sdk/src/events/permissions.ts",
+      "types": "./sdk/dist/events/permissions.d.ts",
+      "import": "./sdk/dist/events/permissions.js"
+    },
+    "./sdk/events/planner": {
+      "bun": "./sdk/src/events/planner.ts",
+      "types": "./sdk/dist/events/planner.d.ts",
+      "import": "./sdk/dist/events/planner.js"
+    },
+    "./sdk/events/plugins": {
+      "bun": "./sdk/src/events/plugins.ts",
+      "types": "./sdk/dist/events/plugins.d.ts",
+      "import": "./sdk/dist/events/plugins.js"
+    },
+    "./sdk/events/providers": {
+      "bun": "./sdk/src/events/providers.ts",
+      "types": "./sdk/dist/events/providers.d.ts",
+      "import": "./sdk/dist/events/providers.js"
+    },
+    "./sdk/events/routes": {
+      "bun": "./sdk/src/events/routes.ts",
+      "types": "./sdk/dist/events/routes.d.ts",
+      "import": "./sdk/dist/events/routes.js"
+    },
+    "./sdk/events/security": {
+      "bun": "./sdk/src/events/security.ts",
+      "types": "./sdk/dist/events/security.d.ts",
+      "import": "./sdk/dist/events/security.js"
+    },
+    "./sdk/events/session": {
+      "bun": "./sdk/src/events/session.ts",
+      "types": "./sdk/dist/events/session.d.ts",
+      "import": "./sdk/dist/events/session.js"
+    },
+    "./sdk/events/surfaces": {
+      "bun": "./sdk/src/events/surfaces.ts",
+      "types": "./sdk/dist/events/surfaces.d.ts",
+      "import": "./sdk/dist/events/surfaces.js"
+    },
+    "./sdk/events/tasks": {
+      "bun": "./sdk/src/events/tasks.ts",
+      "types": "./sdk/dist/events/tasks.d.ts",
+      "import": "./sdk/dist/events/tasks.js"
+    },
+    "./sdk/events/tools": {
+      "bun": "./sdk/src/events/tools.ts",
+      "types": "./sdk/dist/events/tools.d.ts",
+      "import": "./sdk/dist/events/tools.js"
+    },
+    "./sdk/events/transport": {
+      "bun": "./sdk/src/events/transport.ts",
+      "types": "./sdk/dist/events/transport.d.ts",
+      "import": "./sdk/dist/events/transport.js"
+    },
+    "./sdk/events/turn": {
+      "bun": "./sdk/src/events/turn.ts",
+      "types": "./sdk/dist/events/turn.d.ts",
+      "import": "./sdk/dist/events/turn.js"
+    },
+    "./sdk/events/ui": {
+      "bun": "./sdk/src/events/ui.ts",
+      "types": "./sdk/dist/events/ui.d.ts",
+      "import": "./sdk/dist/events/ui.js"
+    },
+    "./sdk/events/watchers": {
+      "bun": "./sdk/src/events/watchers.ts",
+      "types": "./sdk/dist/events/watchers.d.ts",
+      "import": "./sdk/dist/events/watchers.js"
+    },
+    "./sdk/events/workflows": {
+      "bun": "./sdk/src/events/workflows.ts",
+      "types": "./sdk/dist/events/workflows.d.ts",
+      "import": "./sdk/dist/events/workflows.js"
+    },
+    "./sdk/events/workspace": {
+      "bun": "./sdk/src/events/workspace.ts",
+      "types": "./sdk/dist/events/workspace.d.ts",
+      "import": "./sdk/dist/events/workspace.js"
+    },
+    "./sdk/expo": {
+      "bun": "./sdk/src/expo.ts",
+      "types": "./sdk/dist/expo.d.ts",
+      "import": "./sdk/dist/expo.js"
+    },
+    "./sdk/observer": {
+      "bun": "./sdk/src/observer/index.ts",
+      "types": "./sdk/dist/observer/index.d.ts",
+      "import": "./sdk/dist/observer/index.js"
+    },
+    "./sdk/operator": {
+      "bun": "./sdk/src/operator.ts",
+      "types": "./sdk/dist/operator.d.ts",
+      "import": "./sdk/dist/operator.js"
+    },
+    "./sdk/peer": {
+      "bun": "./sdk/src/peer.ts",
+      "types": "./sdk/dist/peer.d.ts",
+      "import": "./sdk/dist/peer.js"
+    },
+    "./sdk/platform/acp": {
+      "bun": "./sdk/src/platform/acp/index.ts",
+      "types": "./sdk/dist/platform/acp/index.d.ts",
+      "import": "./sdk/dist/platform/acp/index.js"
+    },
+    "./sdk/platform/adapters": {
+      "bun": "./sdk/src/platform/adapters/index.ts",
+      "types": "./sdk/dist/platform/adapters/index.d.ts",
+      "import": "./sdk/dist/platform/adapters/index.js"
+    },
+    "./sdk/platform/agents": {
+      "bun": "./sdk/src/platform/agents/index.ts",
+      "types": "./sdk/dist/platform/agents/index.d.ts",
+      "import": "./sdk/dist/platform/agents/index.js"
+    },
+    "./sdk/platform/artifacts": {
+      "bun": "./sdk/src/platform/artifacts/index.ts",
+      "types": "./sdk/dist/platform/artifacts/index.d.ts",
+      "import": "./sdk/dist/platform/artifacts/index.js"
+    },
+    "./sdk/platform/automation": {
+      "bun": "./sdk/src/platform/automation/index.ts",
+      "types": "./sdk/dist/platform/automation/index.d.ts",
+      "import": "./sdk/dist/platform/automation/index.js"
+    },
+    "./sdk/platform/batch": {
+      "bun": "./sdk/src/platform/batch/index.ts",
+      "types": "./sdk/dist/platform/batch/index.d.ts",
+      "import": "./sdk/dist/platform/batch/index.js"
+    },
+    "./sdk/platform/bookmarks": {
+      "bun": "./sdk/src/platform/bookmarks/index.ts",
+      "types": "./sdk/dist/platform/bookmarks/index.d.ts",
+      "import": "./sdk/dist/platform/bookmarks/index.js"
+    },
+    "./sdk/platform/browser": {
+      "bun": "./sdk/src/platform/browser/index.ts",
+      "types": "./sdk/dist/platform/browser/index.d.ts",
+      "import": "./sdk/dist/platform/browser/index.js"
+    },
+    "./sdk/platform/calendar": {
+      "bun": "./sdk/src/platform/calendar/index.ts",
+      "types": "./sdk/dist/platform/calendar/index.d.ts",
+      "import": "./sdk/dist/platform/calendar/index.js"
+    },
+    "./sdk/platform/channels": {
+      "bun": "./sdk/src/platform/channels/index.ts",
+      "types": "./sdk/dist/platform/channels/index.d.ts",
+      "import": "./sdk/dist/platform/channels/index.js"
+    },
+    "./sdk/platform/cloudflare": {
+      "bun": "./sdk/src/platform/cloudflare/index.ts",
+      "types": "./sdk/dist/platform/cloudflare/index.d.ts",
+      "import": "./sdk/dist/platform/cloudflare/index.js"
+    },
+    "./sdk/platform/cluster": {
+      "bun": "./sdk/src/platform/cluster/index.ts",
+      "types": "./sdk/dist/platform/cluster/index.d.ts",
+      "import": "./sdk/dist/platform/cluster/index.js"
+    },
+    "./sdk/platform/companion": {
+      "bun": "./sdk/src/platform/companion/index.ts",
+      "types": "./sdk/dist/platform/companion/index.d.ts",
+      "import": "./sdk/dist/platform/companion/index.js"
+    },
+    "./sdk/platform/config": {
+      "bun": "./sdk/src/platform/config/index.ts",
+      "types": "./sdk/dist/platform/config/index.d.ts",
+      "import": "./sdk/dist/platform/config/index.js"
+    },
+    "./sdk/platform/payments": {
+      "bun": "./sdk/src/platform/payments/index.ts",
+      "types": "./sdk/dist/platform/payments/index.d.ts",
+      "import": "./sdk/dist/platform/payments/index.js"
+    },
+    "./sdk/platform/contract": {
+      "bun": "./sdk/src/platform/contract/index.ts",
+      "types": "./sdk/dist/platform/contract/index.d.ts",
+      "import": "./sdk/dist/platform/contract/index.js"
+    },
+    "./sdk/platform/control-plane": {
+      "bun": "./sdk/src/platform/control-plane/index.ts",
+      "types": "./sdk/dist/platform/control-plane/index.d.ts",
+      "import": "./sdk/dist/platform/control-plane/index.js"
+    },
+    "./sdk/platform/core": {
+      "bun": "./sdk/src/platform/core/index.ts",
+      "types": "./sdk/dist/platform/core/index.d.ts",
+      "import": "./sdk/dist/platform/core/index.js"
+    },
+    "./sdk/platform/daemon": {
+      "bun": "./sdk/src/platform/daemon/index.ts",
+      "types": "./sdk/dist/platform/daemon/index.d.ts",
+      "import": "./sdk/dist/platform/daemon/index.js"
+    },
+    "./sdk/platform/daemon/auto-updater": {
+      "bun": "./sdk/src/platform/daemon/auto-updater.ts",
+      "types": "./sdk/dist/platform/daemon/auto-updater.d.ts",
+      "import": "./sdk/dist/platform/daemon/auto-updater.js"
+    },
+    "./sdk/platform/daemon/receipts": {
+      "bun": "./sdk/src/platform/daemon/receipts.ts",
+      "types": "./sdk/dist/platform/daemon/receipts.d.ts",
+      "import": "./sdk/dist/platform/daemon/receipts.js"
+    },
+    "./sdk/platform/devices": {
+      "bun": "./sdk/src/platform/devices/index.ts",
+      "types": "./sdk/dist/platform/devices/index.d.ts",
+      "import": "./sdk/dist/platform/devices/index.js"
+    },
+    "./sdk/platform/discovery": {
+      "bun": "./sdk/src/platform/discovery/index.ts",
+      "types": "./sdk/dist/platform/discovery/index.d.ts",
+      "import": "./sdk/dist/platform/discovery/index.js"
+    },
+    "./sdk/platform/email": {
+      "bun": "./sdk/src/platform/email/index.ts",
+      "types": "./sdk/dist/platform/email/index.d.ts",
+      "import": "./sdk/dist/platform/email/index.js"
+    },
+    "./sdk/platform/email/node": {
+      "bun": "./sdk/src/platform/email/node.ts",
+      "types": "./sdk/dist/platform/email/node.d.ts",
+      "import": "./sdk/dist/platform/email/node.js"
+    },
+    "./sdk/platform/export": {
+      "bun": "./sdk/src/platform/export/index.ts",
+      "types": "./sdk/dist/platform/export/index.d.ts",
+      "import": "./sdk/dist/platform/export/index.js"
+    },
+    "./sdk/platform/git": {
+      "bun": "./sdk/src/platform/git/index.ts",
+      "types": "./sdk/dist/platform/git/index.d.ts",
+      "import": "./sdk/dist/platform/git/index.js"
+    },
+    "./sdk/platform/google": {
+      "bun": "./sdk/src/platform/google/index.ts",
+      "types": "./sdk/dist/platform/google/index.d.ts",
+      "import": "./sdk/dist/platform/google/index.js"
+    },
+    "./sdk/platform/google/node": {
+      "bun": "./sdk/src/platform/google/node.ts",
+      "types": "./sdk/dist/platform/google/node.d.ts",
+      "import": "./sdk/dist/platform/google/node.js"
+    },
+    "./sdk/platform/hooks": {
+      "bun": "./sdk/src/platform/hooks/index.ts",
+      "types": "./sdk/dist/platform/hooks/index.d.ts",
+      "import": "./sdk/dist/platform/hooks/index.js"
+    },
+    "./sdk/platform/integrations": {
+      "bun": "./sdk/src/platform/integrations/index.ts",
+      "types": "./sdk/dist/platform/integrations/index.d.ts",
+      "import": "./sdk/dist/platform/integrations/index.js"
+    },
+    "./sdk/platform/intelligence": {
+      "bun": "./sdk/src/platform/intelligence/index.ts",
+      "types": "./sdk/dist/platform/intelligence/index.d.ts",
+      "import": "./sdk/dist/platform/intelligence/index.js"
+    },
+    "./sdk/platform/hosted-sessions": {
+      "bun": "./sdk/src/platform/hosted-sessions/index.ts",
+      "types": "./sdk/dist/platform/hosted-sessions/index.d.ts",
+      "import": "./sdk/dist/platform/hosted-sessions/index.js"
+    },
+    "./sdk/platform/knowledge": {
+      "bun": "./sdk/src/platform/knowledge/index.ts",
+      "types": "./sdk/dist/platform/knowledge/index.d.ts",
+      "import": "./sdk/dist/platform/knowledge/index.js"
+    },
+    "./sdk/platform/knowledge/extensions": {
+      "bun": "./sdk/src/platform/knowledge/extensions.ts",
+      "types": "./sdk/dist/platform/knowledge/extensions.d.ts",
+      "import": "./sdk/dist/platform/knowledge/extensions.js"
+    },
+    "./sdk/platform/knowledge/home-graph": {
+      "bun": "./sdk/src/platform/knowledge/home-graph/index.ts",
+      "types": "./sdk/dist/platform/knowledge/home-graph/index.d.ts",
+      "import": "./sdk/dist/platform/knowledge/home-graph/index.js"
+    },
+    "./sdk/platform/mcp": {
+      "bun": "./sdk/src/platform/mcp/index.ts",
+      "types": "./sdk/dist/platform/mcp/index.d.ts",
+      "import": "./sdk/dist/platform/mcp/index.js"
+    },
+    "./sdk/platform/mcp/server": {
+      "bun": "./sdk/src/platform/mcp/server/index.ts",
+      "types": "./sdk/dist/platform/mcp/server/index.d.ts",
+      "import": "./sdk/dist/platform/mcp/server/index.js"
+    },
+    "./sdk/platform/media": {
+      "bun": "./sdk/src/platform/media/index.ts",
+      "types": "./sdk/dist/platform/media/index.d.ts",
+      "import": "./sdk/dist/platform/media/index.js"
+    },
+    "./sdk/platform/multimodal": {
+      "bun": "./sdk/src/platform/multimodal/index.ts",
+      "types": "./sdk/dist/platform/multimodal/index.d.ts",
+      "import": "./sdk/dist/platform/multimodal/index.js"
+    },
+    "./sdk/platform/node": {
+      "bun": "./sdk/src/platform/node/index.ts",
+      "types": "./sdk/dist/platform/node/index.d.ts",
+      "import": "./sdk/dist/platform/node/index.js"
+    },
+    "./sdk/platform/node/runtime-boundary": {
+      "bun": "./sdk/src/platform/node/runtime-boundary.ts",
+      "types": "./sdk/dist/platform/node/runtime-boundary.d.ts",
+      "import": "./sdk/dist/platform/node/runtime-boundary.js"
+    },
+    "./sdk/platform/occasions": {
+      "bun": "./sdk/src/platform/occasions/index.ts",
+      "types": "./sdk/dist/platform/occasions/index.d.ts",
+      "import": "./sdk/dist/platform/occasions/index.js"
+    },
+    "./sdk/platform/orchestration": {
+      "bun": "./sdk/src/platform/orchestration/index.ts",
+      "types": "./sdk/dist/platform/orchestration/index.d.ts",
+      "import": "./sdk/dist/platform/orchestration/index.js"
+    },
+    "./sdk/platform/owner-profile": {
+      "bun": "./sdk/src/platform/owner-profile/index.ts",
+      "types": "./sdk/dist/platform/owner-profile/index.d.ts",
+      "import": "./sdk/dist/platform/owner-profile/index.js"
+    },
+    "./sdk/platform/personal-capture": {
+      "bun": "./sdk/src/platform/personal-capture/index.ts",
+      "types": "./sdk/dist/platform/personal-capture/index.d.ts",
+      "import": "./sdk/dist/platform/personal-capture/index.js"
+    },
+    "./sdk/platform/pairing": {
+      "bun": "./sdk/src/platform/pairing/index.ts",
+      "types": "./sdk/dist/platform/pairing/index.d.ts",
+      "import": "./sdk/dist/platform/pairing/index.js"
+    },
+    "./sdk/platform/permissions": {
+      "bun": "./sdk/src/platform/permissions/index.ts",
+      "types": "./sdk/dist/platform/permissions/index.d.ts",
+      "import": "./sdk/dist/platform/permissions/index.js"
+    },
+    "./sdk/platform/plugins": {
+      "bun": "./sdk/src/platform/plugins/index.ts",
+      "types": "./sdk/dist/platform/plugins/index.d.ts",
+      "import": "./sdk/dist/platform/plugins/index.js"
+    },
+    "./sdk/platform/power": {
+      "bun": "./sdk/src/platform/power/index.ts",
+      "types": "./sdk/dist/platform/power/index.d.ts",
+      "import": "./sdk/dist/platform/power/index.js"
+    },
+    "./sdk/platform/presentation": {
+      "bun": "./sdk/src/platform/presentation/index.ts",
+      "types": "./sdk/dist/platform/presentation/index.d.ts",
+      "import": "./sdk/dist/platform/presentation/index.js"
+    },
+    "./sdk/platform/profiles": {
+      "bun": "./sdk/src/platform/profiles/index.ts",
+      "types": "./sdk/dist/platform/profiles/index.d.ts",
+      "import": "./sdk/dist/platform/profiles/index.js"
+    },
+    "./sdk/platform/providers": {
+      "bun": "./sdk/src/platform/providers/index.ts",
+      "types": "./sdk/dist/platform/providers/index.d.ts",
+      "import": "./sdk/dist/platform/providers/index.js"
+    },
+    "./sdk/platform/relay": {
+      "bun": "./sdk/src/platform/relay/index.ts",
+      "types": "./sdk/dist/platform/relay/index.d.ts",
+      "import": "./sdk/dist/platform/relay/index.js"
+    },
+    "./sdk/platform/rewind": {
+      "bun": "./sdk/src/platform/rewind/index.ts",
+      "types": "./sdk/dist/platform/rewind/index.d.ts",
+      "import": "./sdk/dist/platform/rewind/index.js"
+    },
+    "./sdk/platform/runtime": {
+      "bun": "./sdk/src/platform/runtime/index.ts",
+      "types": "./sdk/dist/platform/runtime/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/index.js"
+    },
+    "./sdk/platform/runtime/bootstrap": {
+      "bun": "./sdk/src/platform/runtime/bootstrap.ts",
+      "types": "./sdk/dist/platform/runtime/bootstrap.d.ts",
+      "import": "./sdk/dist/platform/runtime/bootstrap.js"
+    },
+    "./sdk/platform/runtime/security": {
+      "bun": "./sdk/src/platform/runtime/security.ts",
+      "types": "./sdk/dist/platform/runtime/security.d.ts",
+      "import": "./sdk/dist/platform/runtime/security.js"
+    },
+    "./sdk/platform/runtime/shell": {
+      "bun": "./sdk/src/platform/runtime/shell.ts",
+      "types": "./sdk/dist/platform/runtime/shell.d.ts",
+      "import": "./sdk/dist/platform/runtime/shell.js"
+    },
+    "./sdk/platform/runtime/transport": {
+      "bun": "./sdk/src/platform/runtime/transport.ts",
+      "types": "./sdk/dist/platform/runtime/transport.d.ts",
+      "import": "./sdk/dist/platform/runtime/transport.js"
+    },
+    "./sdk/platform/runtime/client": {
+      "bun": "./sdk/src/platform/runtime/client/index.ts",
+      "types": "./sdk/dist/platform/runtime/client/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/client/index.js"
+    },
+    "./sdk/platform/runtime/client-services": {
+      "bun": "./sdk/src/platform/runtime/client-services.ts",
+      "types": "./sdk/dist/platform/runtime/client-services.d.ts",
+      "import": "./sdk/dist/platform/runtime/client-services.js"
+    },
+    "./sdk/platform/runtime/disposal": {
+      "bun": "./sdk/src/platform/runtime/disposal.ts",
+      "types": "./sdk/dist/platform/runtime/disposal.d.ts",
+      "import": "./sdk/dist/platform/runtime/disposal.js"
+    },
+    "./sdk/platform/runtime/ecosystem": {
+      "bun": "./sdk/src/platform/runtime/ecosystem/index.ts",
+      "types": "./sdk/dist/platform/runtime/ecosystem/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/ecosystem/index.js"
+    },
+    "./sdk/platform/runtime/emitters": {
+      "bun": "./sdk/src/platform/runtime/emitters/index.ts",
+      "types": "./sdk/dist/platform/runtime/emitters/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/emitters/index.js"
+    },
+    "./sdk/platform/runtime/feature-announcements": {
+      "bun": "./sdk/src/platform/runtime/feature-announcements.ts",
+      "types": "./sdk/dist/platform/runtime/feature-announcements.d.ts",
+      "import": "./sdk/dist/platform/runtime/feature-announcements.js"
+    },
+    "./sdk/platform/runtime/feature-flags": {
+      "bun": "./sdk/src/platform/runtime/feature-flags/index.ts",
+      "types": "./sdk/dist/platform/runtime/feature-flags/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/feature-flags/index.js"
+    },
+    "./sdk/platform/runtime/fleet": {
+      "bun": "./sdk/src/platform/runtime/fleet/index.ts",
+      "types": "./sdk/dist/platform/runtime/fleet/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/fleet/index.js"
+    },
+    "./sdk/platform/runtime/fleet/observed": {
+      "bun": "./sdk/src/platform/runtime/fleet/observed/source.ts",
+      "types": "./sdk/dist/platform/runtime/fleet/observed/source.d.ts",
+      "import": "./sdk/dist/platform/runtime/fleet/observed/source.js"
+    },
+    "./sdk/platform/runtime/memory": {
+      "bun": "./sdk/src/platform/runtime/memory/index.ts",
+      "types": "./sdk/dist/platform/runtime/memory/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/memory/index.js"
+    },
+    "./sdk/platform/runtime/memory-spine": {
+      "bun": "./sdk/src/platform/runtime/memory-spine/index.ts",
+      "types": "./sdk/dist/platform/runtime/memory-spine/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/memory-spine/index.js"
+    },
+    "./sdk/platform/runtime/observability": {
+      "bun": "./sdk/src/platform/runtime/observability.ts",
+      "types": "./sdk/dist/platform/runtime/observability.d.ts",
+      "import": "./sdk/dist/platform/runtime/observability.js"
+    },
+    "./sdk/platform/runtime/operations": {
+      "bun": "./sdk/src/platform/runtime/operations.ts",
+      "types": "./sdk/dist/platform/runtime/operations.d.ts",
+      "import": "./sdk/dist/platform/runtime/operations.js"
+    },
+    "./sdk/platform/runtime/permissions/exec-prompt-wiring": {
+      "bun": "./sdk/src/platform/runtime/permissions/exec-prompt-wiring.ts",
+      "types": "./sdk/dist/platform/runtime/permissions/exec-prompt-wiring.d.ts",
+      "import": "./sdk/dist/platform/runtime/permissions/exec-prompt-wiring.js"
+    },
+    "./sdk/platform/runtime/permissions/localhost-fetch-approval": {
+      "bun": "./sdk/src/platform/runtime/permissions/localhost-fetch-approval.ts",
+      "types": "./sdk/dist/platform/runtime/permissions/localhost-fetch-approval.d.ts",
+      "import": "./sdk/dist/platform/runtime/permissions/localhost-fetch-approval.js"
+    },
+    "./sdk/platform/runtime/permissions/sandbox-policy": {
+      "bun": "./sdk/src/platform/runtime/permissions/sandbox-policy.ts",
+      "types": "./sdk/dist/platform/runtime/permissions/sandbox-policy.d.ts",
+      "import": "./sdk/dist/platform/runtime/permissions/sandbox-policy.js"
+    },
+    "./sdk/platform/runtime/sandbox": {
+      "bun": "./sdk/src/platform/runtime/sandbox.ts",
+      "types": "./sdk/dist/platform/runtime/sandbox.d.ts",
+      "import": "./sdk/dist/platform/runtime/sandbox.js"
+    },
+    "./sdk/platform/runtime/self-update": {
+      "bun": "./sdk/src/platform/runtime/self-update.ts",
+      "types": "./sdk/dist/platform/runtime/self-update.d.ts",
+      "import": "./sdk/dist/platform/runtime/self-update.js"
+    },
+    "./sdk/platform/runtime/session-spine": {
+      "bun": "./sdk/src/platform/runtime/session-spine/index.ts",
+      "types": "./sdk/dist/platform/runtime/session-spine/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/session-spine/index.js"
+    },
+    "./sdk/platform/runtime/settings": {
+      "bun": "./sdk/src/platform/runtime/settings.ts",
+      "types": "./sdk/dist/platform/runtime/settings.d.ts",
+      "import": "./sdk/dist/platform/runtime/settings.js"
+    },
+    "./sdk/platform/runtime/path-shadow": {
+      "bun": "./sdk/src/platform/runtime/path-shadow.ts",
+      "types": "./sdk/dist/platform/runtime/path-shadow.d.ts",
+      "import": "./sdk/dist/platform/runtime/path-shadow.js"
+    },
+    "./sdk/platform/runtime/config": {
+      "bun": "./sdk/src/platform/runtime/config/index.ts",
+      "types": "./sdk/dist/platform/runtime/config/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/config/index.js"
+    },
+    "./sdk/platform/runtime/state": {
+      "bun": "./sdk/src/platform/runtime/state.ts",
+      "types": "./sdk/dist/platform/runtime/state.d.ts",
+      "import": "./sdk/dist/platform/runtime/state.js"
+    },
+    "./sdk/platform/runtime/store": {
+      "bun": "./sdk/src/platform/runtime/store/index.ts",
+      "types": "./sdk/dist/platform/runtime/store/index.d.ts",
+      "import": "./sdk/dist/platform/runtime/store/index.js"
+    },
+    "./sdk/platform/runtime/ui": {
+      "bun": "./sdk/src/platform/runtime/ui.ts",
+      "types": "./sdk/dist/platform/runtime/ui.d.ts",
+      "import": "./sdk/dist/platform/runtime/ui.js"
+    },
+    "./sdk/platform/runtime/voice-setup": {
+      "bun": "./sdk/src/platform/runtime/voice-setup.ts",
+      "types": "./sdk/dist/platform/runtime/voice-setup.d.ts",
+      "import": "./sdk/dist/platform/runtime/voice-setup.js"
+    },
+    "./sdk/platform/scheduler": {
+      "bun": "./sdk/src/platform/scheduler/index.ts",
+      "types": "./sdk/dist/platform/scheduler/index.d.ts",
+      "import": "./sdk/dist/platform/scheduler/index.js"
+    },
+    "./sdk/platform/security": {
+      "bun": "./sdk/src/platform/security/index.ts",
+      "types": "./sdk/dist/platform/security/index.d.ts",
+      "import": "./sdk/dist/platform/security/index.js"
+    },
+    "./sdk/platform/sessions": {
+      "bun": "./sdk/src/platform/sessions/index.ts",
+      "types": "./sdk/dist/platform/sessions/index.d.ts",
+      "import": "./sdk/dist/platform/sessions/index.js"
+    },
+    "./sdk/platform/skills": {
+      "bun": "./sdk/src/platform/skills/index.ts",
+      "types": "./sdk/dist/platform/skills/index.d.ts",
+      "import": "./sdk/dist/platform/skills/index.js"
+    },
+    "./sdk/platform/state": {
+      "bun": "./sdk/src/platform/state/index.ts",
+      "types": "./sdk/dist/platform/state/index.d.ts",
+      "import": "./sdk/dist/platform/state/index.js"
+    },
+    "./sdk/platform/state/store-snapshots": {
+      "bun": "./sdk/src/platform/state/store-snapshots.ts",
+      "types": "./sdk/dist/platform/state/store-snapshots.d.ts",
+      "import": "./sdk/dist/platform/state/store-snapshots.js"
+    },
+    "./sdk/platform/templates": {
+      "bun": "./sdk/src/platform/templates/index.ts",
+      "types": "./sdk/dist/platform/templates/index.d.ts",
+      "import": "./sdk/dist/platform/templates/index.js"
+    },
+    "./sdk/platform/tools": {
+      "bun": "./sdk/src/platform/tools/index.ts",
+      "types": "./sdk/dist/platform/tools/index.d.ts",
+      "import": "./sdk/dist/platform/tools/index.js"
+    },
+    "./sdk/platform/tools/exec/sandbox": {
+      "bun": "./sdk/src/platform/tools/exec/sandbox.ts",
+      "types": "./sdk/dist/platform/tools/exec/sandbox.d.ts",
+      "import": "./sdk/dist/platform/tools/exec/sandbox.js"
+    },
+    "./sdk/platform/triggers": {
+      "bun": "./sdk/src/platform/triggers/index.ts",
+      "types": "./sdk/dist/platform/triggers/index.d.ts",
+      "import": "./sdk/dist/platform/triggers/index.js"
+    },
+    "./sdk/platform/types": {
+      "bun": "./sdk/src/platform/types/index.ts",
+      "types": "./sdk/dist/platform/types/index.d.ts",
+      "import": "./sdk/dist/platform/types/index.js"
+    },
+    "./sdk/platform/utils": {
+      "bun": "./sdk/src/platform/utils/index.ts",
+      "types": "./sdk/dist/platform/utils/index.d.ts",
+      "import": "./sdk/dist/platform/utils/index.js"
+    },
+    "./sdk/platform/version": {
+      "bun": "./sdk/src/platform/version.ts",
+      "types": "./sdk/dist/platform/version.d.ts",
+      "import": "./sdk/dist/platform/version.js"
+    },
+    "./sdk/platform/voice": {
+      "bun": "./sdk/src/platform/voice/index.ts",
+      "types": "./sdk/dist/platform/voice/index.d.ts",
+      "import": "./sdk/dist/platform/voice/index.js"
+    },
+    "./sdk/platform/voice/capture": {
+      "bun": "./sdk/src/platform/voice/capture/index.ts",
+      "types": "./sdk/dist/platform/voice/capture/index.d.ts",
+      "import": "./sdk/dist/platform/voice/capture/index.js"
+    },
+    "./sdk/platform/voice/wake/runtime": {
+      "bun": "./sdk/src/platform/voice/wake/runtime.ts",
+      "types": "./sdk/dist/platform/voice/wake/runtime.d.ts",
+      "import": "./sdk/dist/platform/voice/wake/runtime.js"
+    },
+    "./sdk/platform/watchers": {
+      "bun": "./sdk/src/platform/watchers/index.ts",
+      "types": "./sdk/dist/platform/watchers/index.d.ts",
+      "import": "./sdk/dist/platform/watchers/index.js"
+    },
+    "./sdk/platform/web-search": {
+      "bun": "./sdk/src/platform/web-search/index.ts",
+      "types": "./sdk/dist/platform/web-search/index.d.ts",
+      "import": "./sdk/dist/platform/web-search/index.js"
+    },
+    "./sdk/platform/workflow": {
+      "bun": "./sdk/src/platform/workflow/index.ts",
+      "types": "./sdk/dist/platform/workflow/index.d.ts",
+      "import": "./sdk/dist/platform/workflow/index.js"
+    },
+    "./sdk/platform/workspace": {
+      "bun": "./sdk/src/platform/workspace/index.ts",
+      "types": "./sdk/dist/platform/workspace/index.d.ts",
+      "import": "./sdk/dist/platform/workspace/index.js"
+    },
+    "./sdk/react-native": {
+      "bun": "./sdk/src/react-native.ts",
+      "types": "./sdk/dist/react-native.d.ts",
+      "import": "./sdk/dist/react-native.js"
+    },
+    "./sdk/sql-js": {
+      "bun": "./sdk/src/platform/types/sql-js.d.ts",
+      "types": "./sdk/dist/platform/types/sql-js.d.ts"
+    },
+    "./sdk/transport-core": {
+      "bun": "./sdk/src/transport-core.ts",
+      "types": "./sdk/dist/transport-core.d.ts",
+      "import": "./sdk/dist/transport-core.js"
+    },
+    "./sdk/transport-direct": {
+      "bun": "./sdk/src/transport-direct.ts",
+      "types": "./sdk/dist/transport-direct.d.ts",
+      "import": "./sdk/dist/transport-direct.js"
+    },
+    "./sdk/transport-http": {
+      "bun": "./sdk/src/transport-http.ts",
+      "types": "./sdk/dist/transport-http.d.ts",
+      "import": "./sdk/dist/transport-http.js"
+    },
+    "./sdk/transport-realtime": {
+      "bun": "./sdk/src/transport-realtime.ts",
+      "types": "./sdk/dist/transport-realtime.d.ts",
+      "import": "./sdk/dist/transport-realtime.js"
+    },
+    "./sdk/web": {
+      "bun": "./sdk/src/web.ts",
+      "types": "./sdk/dist/web.d.ts",
+      "import": "./sdk/dist/web.js"
+    },
+    "./sdk/workers": {
+      "bun": "./sdk/src/workers.ts",
+      "types": "./sdk/dist/workers.d.ts",
+      "import": "./sdk/dist/workers.js"
+    },
+    "./terminal-shell": {
+      "bun": "./terminal-shell/src/index.ts",
+      "types": "./terminal-shell/dist/index.d.ts",
+      "import": "./terminal-shell/dist/index.js"
+    },
+    "./terminal-shell/conformance": {
+      "bun": "./terminal-shell/src/conformance.ts",
+      "types": "./terminal-shell/dist/conformance.d.ts",
+      "import": "./terminal-shell/dist/conformance.js"
+    },
+    "./terminal-shell/terminal-output-guard": {
+      "bun": "./terminal-shell/src/terminal-output-guard.ts",
+      "types": "./terminal-shell/dist/terminal-output-guard.d.ts",
+      "import": "./terminal-shell/dist/terminal-output-guard.js"
+    },
+    "./toolchain": {
+      "bun": "./toolchain/src/index.ts",
+      "types": "./toolchain/dist/index.d.ts",
+      "import": "./toolchain/dist/index.js"
+    },
+    "./toolchain/config": {
+      "bun": "./toolchain/src/config.ts",
+      "types": "./toolchain/dist/config.d.ts",
+      "import": "./toolchain/dist/config.js"
+    },
+    "./transport-core": {
+      "bun": "./transport-core/src/index.ts",
+      "types": "./transport-core/dist/index.d.ts",
+      "import": "./transport-core/dist/index.js"
+    },
+    "./transport-core/client-transport": {
+      "bun": "./transport-core/src/client-transport.ts",
+      "types": "./transport-core/dist/client-transport.d.ts",
+      "import": "./transport-core/dist/client-transport.js"
+    },
+    "./transport-core/direct": {
+      "bun": "./transport-core/src/direct.ts",
+      "types": "./transport-core/dist/direct.d.ts",
+      "import": "./transport-core/dist/direct.js"
+    },
+    "./transport-core/errors": {
+      "bun": "./transport-core/src/errors.ts",
+      "types": "./transport-core/dist/errors.d.ts",
+      "import": "./transport-core/dist/errors.js"
+    },
+    "./transport-core/event-envelope": {
+      "bun": "./transport-core/src/event-envelope.ts",
+      "types": "./transport-core/dist/event-envelope.d.ts",
+      "import": "./transport-core/dist/event-envelope.js"
+    },
+    "./transport-core/event-feeds": {
+      "bun": "./transport-core/src/event-feeds.ts",
+      "types": "./transport-core/dist/event-feeds.d.ts",
+      "import": "./transport-core/dist/event-feeds.js"
+    },
+    "./transport-core/middleware": {
+      "bun": "./transport-core/src/middleware.ts",
+      "types": "./transport-core/dist/middleware.d.ts",
+      "import": "./transport-core/dist/middleware.js"
+    },
+    "./transport-core/observer": {
+      "bun": "./transport-core/src/observer.ts",
+      "types": "./transport-core/dist/observer.d.ts",
+      "import": "./transport-core/dist/observer.js"
+    },
+    "./transport-core/relay": {
+      "bun": "./transport-core/src/relay/index.ts",
+      "types": "./transport-core/dist/relay/index.d.ts",
+      "import": "./transport-core/dist/relay/index.js"
+    },
+    "./transport-core/otel": {
+      "bun": "./transport-core/src/otel.ts",
+      "types": "./transport-core/dist/otel.d.ts",
+      "import": "./transport-core/dist/otel.js"
+    },
+    "./transport-core/uuid": {
+      "bun": "./transport-core/src/uuid.ts",
+      "types": "./transport-core/dist/uuid.d.ts",
+      "import": "./transport-core/dist/uuid.js"
+    },
+    "./transport-http": {
+      "bun": "./transport-http/src/index.ts",
+      "types": "./transport-http/dist/index.d.ts",
+      "import": "./transport-http/dist/index.js"
+    },
+    "./transport-http/auth": {
+      "bun": "./transport-http/src/auth.ts",
+      "types": "./transport-http/dist/auth.d.ts",
+      "import": "./transport-http/dist/auth.js"
+    },
+    "./transport-http/backoff": {
+      "bun": "./transport-http/src/backoff.ts",
+      "types": "./transport-http/dist/backoff.d.ts",
+      "import": "./transport-http/dist/backoff.js"
+    },
+    "./transport-http/contract-client": {
+      "bun": "./transport-http/src/contract-client.ts",
+      "types": "./transport-http/dist/contract-client.d.ts",
+      "import": "./transport-http/dist/contract-client.js"
+    },
+    "./transport-http/client-plumbing": {
+      "bun": "./transport-http/src/client-plumbing.ts",
+      "types": "./transport-http/dist/client-plumbing.d.ts",
+      "import": "./transport-http/dist/client-plumbing.js"
+    },
+    "./transport-http/http-core": {
+      "bun": "./transport-http/src/http-core.ts",
+      "types": "./transport-http/dist/http-core.d.ts",
+      "import": "./transport-http/dist/http-core.js"
+    },
+    "./transport-http/http": {
+      "bun": "./transport-http/src/http.ts",
+      "types": "./transport-http/dist/http.d.ts",
+      "import": "./transport-http/dist/http.js"
+    },
+    "./transport-http/paths": {
+      "bun": "./transport-http/src/paths.ts",
+      "types": "./transport-http/dist/paths.d.ts",
+      "import": "./transport-http/dist/paths.js"
+    },
+    "./transport-http/reconnect": {
+      "bun": "./transport-http/src/reconnect.ts",
+      "types": "./transport-http/dist/reconnect.d.ts",
+      "import": "./transport-http/dist/reconnect.js"
+    },
+    "./transport-http/retry": {
+      "bun": "./transport-http/src/retry.ts",
+      "types": "./transport-http/dist/retry.d.ts",
+      "import": "./transport-http/dist/retry.js"
+    },
+    "./transport-http/sse-stream": {
+      "bun": "./transport-http/src/sse-stream.ts",
+      "types": "./transport-http/dist/sse-stream.d.ts",
+      "import": "./transport-http/dist/sse-stream.js"
+    },
+    "./transport-http/sse": {
+      "bun": "./transport-http/src/sse.ts",
+      "types": "./transport-http/dist/sse.d.ts",
+      "import": "./transport-http/dist/sse.js"
+    },
+    "./transport-realtime": {
+      "bun": "./transport-realtime/src/index.ts",
+      "types": "./transport-realtime/dist/index.d.ts",
+      "import": "./transport-realtime/dist/index.js"
+    },
+    "./transport-realtime/domain-events": {
+      "bun": "./transport-realtime/src/domain-events.ts",
+      "types": "./transport-realtime/dist/domain-events.d.ts",
+      "import": "./transport-realtime/dist/domain-events.js"
+    },
+    "./transport-realtime/runtime-events": {
+      "bun": "./transport-realtime/src/runtime-events.ts",
+      "types": "./transport-realtime/dist/runtime-events.d.ts",
+      "import": "./transport-realtime/dist/runtime-events.js"
+    },
+    "./transport-realtime/relay-transport": {
+      "bun": "./transport-realtime/src/relay-transport.ts",
+      "types": "./transport-realtime/dist/relay-transport.d.ts",
+      "import": "./transport-realtime/dist/relay-transport.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "bun scripts/test.ts",
@@ -323,5 +1363,13 @@
   "peerDependencies": {
     "expo-secure-store": ">=13.0.0",
     "react-native-keychain": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "expo-secure-store": {
+      "optional": true
+    },
+    "react-native-keychain": {
+      "optional": true
+    }
   }
 }

@@ -3,7 +3,8 @@
  * release-artifact-lane.ts, the packaged-artifact coherence gate.
  *
  * The manual release-train validation, formalized: pack every workspace package
- * exactly as publish would (`npm pack` over the normalized publish manifests),
+ * exactly as publish would (`npm pack` over the normalized publish manifests,
+ * the engine and the judgment package it depends on),
  * install the packed tarballs into a scratch consumer project, and run the
  * SHIPPED conformance kit (@goodvibes-jev/engine/contracts/testing) against a
  * catalog/daemon composed FROM THE PACKED ARTIFACTS, never from the workspace
@@ -34,6 +35,7 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { retryTransientInstall } from './install-retry.ts';
 import {
   cleanupStage,
   collectTarballs,
@@ -167,29 +169,6 @@ function writeConsumerFiles(projectDir: string): void {
   writeFileSync(resolve(projectDir, 'conformance.mjs'), `${CONFORMANCE_SCRIPT.trim()}\n`);
 }
 
-// Transient network errors on CI install are retried; code-level failures are not.
-async function retryOnNetworkError(op: () => void, label: string): Promise<void> {
-  const BACKOFF_MS = [0, 2000, 5000];
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      if (attempt > 1) {
-        const delay = BACKOFF_MS[attempt - 1] ?? 5000;
-        console.log(`[artifact-lane] ${label}: attempt ${attempt}/3 after ${delay}ms backoff`);
-        await new Promise<void>((r) => setTimeout(r, delay));
-      }
-      op();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|network|aborted/i.test(msg) || attempt === 3) throw err;
-      console.log(`[artifact-lane] ${label}: transient network error, retrying (${msg.slice(0, 160)})`);
-    }
-  }
-  throw lastErr;
-}
-
 async function main(): Promise<void> {
   console.log('[artifact-lane] packing workspace packages exactly as publish would...');
   const { tempRoot, publicStages } = await stagePackages();
@@ -202,9 +181,11 @@ async function main(): Promise<void> {
 
     writeConsumerFiles(projectDir);
     // Pin zod@^4 explicitly so the dist's `zod/v4` subpath import resolves.
-    await retryOnNetworkError(
-      () => run('npm', ['install', ...tarballs, 'zod@^4'], projectDir, { stdio: 'inherit' }),
-      'npm install',
+    // The engine tarball and the judgment tarball it depends on install
+    // together, so nothing is fetched from the registry under our scope.
+    await retryTransientInstall(
+      () => run('npm', ['install', ...tarballs, 'zod@^4'], projectDir, { stdio: 'pipe' }),
+      { prefix: 'artifact-lane', label: 'npm install', site: 'release.artifact-lane.npm-install' },
     );
 
     console.log('[artifact-lane] running shipped conformance kit against the packed artifacts...');

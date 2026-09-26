@@ -3,6 +3,10 @@
     "target": "ES2024",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    // Every workspace package lists a "bun" export condition first, naming its
+    // source; the release stage drops it, so the published package resolves
+    // the "types" and "import" conditions (dist). Bun matches "bun" at runtime.
+    "customConditions": ["bun"],
     "lib": [
       "ES2024",
       // ESNext.Disposable adds Symbol.dispose / Symbol.asyncDispose type definitions.

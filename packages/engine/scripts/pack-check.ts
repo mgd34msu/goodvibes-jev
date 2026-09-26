@@ -115,8 +115,9 @@ function assertFacadeImportsAreDeclared(
   manifest: PackageManifestLike,
   packageSpecifiers: readonly string[],
 ): void {
+  // Built output sits in package/dist/ or, in the engine, package/<pkg>/dist/.
   const distFiles = files.filter(
-    (file) => file.startsWith('package/dist/') && (file.endsWith('.js') || file.endsWith('.d.ts')),
+    (file) => /^package\/(?:[^/]+\/)?dist\//.test(file) && (file.endsWith('.js') || file.endsWith('.d.ts')),
   );
   for (const file of distFiles) {
     const content = readPackedText(tarball, file);

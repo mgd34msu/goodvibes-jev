@@ -73,6 +73,8 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
+import { exportCondition, subpackageExports } from './export-conditions.ts';
+
 import {
   buildSnapshot,
   coverageProblems,
@@ -124,25 +126,13 @@ function fail(message: string): never {
 }
 
 /**
- * The old package's export map, read from the engine package's ./<pkg>/* exports.
- *
- * Each engine entry names a source file under <pkg>/src; the surface is read
- * from the declaration tsc emits for it under <pkg>/dist, as before. JSON
- * artifacts stay string-valued assets.
+ * The old package's export map, read from the engine package's ./<pkg>/*
+ * exports: each entry's `types` condition names the declaration tsc emits
+ * under <pkg>/dist, as before. JSON artifacts stay string-valued assets.
  */
 function packageManifest(pkg: TrackedPackage): ExportManifest {
   const engine = readManifest(join(SDK_ROOT, 'package.json'));
-  const prefix = `./${pkg.subpath}`;
-  const sourcePrefix = `${prefix}/src/`;
-  const exports: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(engine.exports)) {
-    if (key !== prefix && !key.startsWith(`${prefix}/`)) continue;
-    const subpath = key === prefix ? '.' : `.${key.slice(prefix.length)}`;
-    exports[subpath] = typeof value === 'string' && value.startsWith(sourcePrefix)
-      ? { types: `./dist/${value.slice(sourcePrefix.length).replace(/(\.d)?\.ts$/, '.d.ts')}` }
-      : value;
-  }
-  return { exports };
+  return { exports: subpackageExports(engine.exports, pkg.subpath) };
 }
 
 /** The entry points a package publishes, refusing an export map that hides types. */
@@ -164,20 +154,16 @@ function entryPointsFor(pkg: TrackedPackage): ReadonlyMap<string, string> {
 /**
  * Where each engine subpath's declarations live. The old packages resolved one
  * another through their installed package.json "types" conditions (dist .d.ts);
- * the engine's exports name source files, so the same dist declarations are
- * mapped here to keep the recorded surface the declared one.
+ * the engine's entries carry the same "types" condition, mapped here so the
+ * recorded surface is the declared one whatever the resolver's conditions.
  */
 function engineDeclarationPaths(): Record<string, string[]> {
   const engine = readManifest(join(SDK_ROOT, 'package.json'));
   const paths: Record<string, string[]> = {};
   for (const [key, value] of Object.entries(engine.exports)) {
-    if (typeof value !== 'string' || !value.endsWith('.ts')) continue;
-    const [pkg] = key.slice(2).split('/');
-    if (pkg === undefined) continue;
-    const sourcePrefix = `./${pkg}/src/`;
-    if (!value.startsWith(sourcePrefix)) continue;
-    const declaration = value.slice(sourcePrefix.length).replace(/(\.d)?\.ts$/, '.d.ts');
-    paths[`@goodvibes-jev/engine/${key.slice(2)}`] = [resolve(SDK_ROOT, pkg, 'dist', declaration)];
+    const types = exportCondition(value, 'types');
+    if (types === undefined) continue;
+    paths[`@goodvibes-jev/engine/${key.slice(2)}`] = [resolve(SDK_ROOT, types)];
   }
   return paths;
 }

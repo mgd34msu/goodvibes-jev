@@ -26,6 +26,7 @@ import {
   resolveSubpathEntryPoints,
   type Snapshot,
 } from '../scripts/subpath-api-surface-rule.ts';
+import { subpackageExports } from '../scripts/export-conditions.ts';
 
 const SDK_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE_DIR = join(SDK_ROOT, 'sdk');
@@ -254,24 +255,13 @@ describe('normalizeDeclarationText', () => {
 
 describe('the committed report', () => {
   const committed = JSON.parse(readFileSync(join(SDK_ROOT, 'etc', 'subpath-api-surface.json'), 'utf8')) as Snapshot;
-  // The old sdk package's export map is the engine manifest's ./sdk/* entries:
-  // each names a module under sdk/src, whose surface is the declaration tsc
-  // emits for it under sdk/dist (the same derivation check-subpath-api-surface.ts makes).
+  // The old sdk package's export map is the engine manifest's ./sdk/* entries,
+  // whose "types" conditions name the declarations tsc emits under sdk/dist
+  // (the same derivation check-subpath-api-surface.ts makes).
   const engine = JSON.parse(readFileSync(join(SDK_ROOT, 'package.json'), 'utf8')) as {
     exports: Record<string, unknown>;
   };
-  const manifest = {
-    exports: Object.fromEntries(
-      Object.entries(engine.exports)
-        .filter(([key]) => key === './sdk' || key.startsWith('./sdk/'))
-        .map(([key, value]) => [
-          key === './sdk' ? '.' : `.${key.slice('./sdk'.length)}`,
-          typeof value === 'string' && value.startsWith('./sdk/src/')
-            ? { types: `./dist/${value.slice('./sdk/src/'.length).replace(/(\.d)?\.ts$/, '.d.ts')}` }
-            : value,
-        ]),
-    ),
-  };
+  const manifest = { exports: subpackageExports(engine.exports, 'sdk') };
 
   test('every subpath that publishes types has a non-empty section', () => {
     const { entryPoints, problems } = resolveSubpathEntryPoints(manifest, PACKAGE_DIR);

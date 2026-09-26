@@ -2,32 +2,31 @@
 // sdk-dev-tool.test.ts
 //
 // Unit + fixture-level coverage for scripts/sdk-dev.ts, the canonical local-
-// SDK overlay tool consolidated into one SDK-shipped script. Covers:
-//   - workspace enumeration (all 9 public packages incl. contracts; private/
-//     non-public packages excluded; a synthetic 10th package is picked up
-//     with zero code changes, the drift class this brief closes).
+// SDK overlay tool. In goodvibes-jev the old packages are subpaths of one
+// engine package, released together with the judgment package it depends
+// on, so the tool overlays those two. Covers:
+//   - package enumeration (the release tooling's own package list, engine
+//     first; private/non-public/missing packages excluded; a package added to
+//     the release is picked up with zero code changes here).
 //   - the pin reader (devDependencies before dependencies, the generalized
 //     agent behavior, safe for TUI/webui too).
-//   - the three status states + the restore version-agreement check (ported
-//     from the agent's sdk-dev.test.ts, since this is now their only home).
-//   - overlayPackage's fs-copy contract (dist + package.json replaced, never
-//     written through in place) against fixture dirs.
+//   - the three status states + the restore version-agreement check.
+//   - overlayPackage's fs-copy contract (every published `files` entry and a
+//     published package.json replaced, never written through in place, and
+//     the workspace source condition never reaching the consumer) against
+//     fixture dirs.
 //   - CLI black-box behavior via subprocess (link fails fast when the SDK
-//     checkout is missing; status/restore/usage dispatch), mirrors the
-//     pattern webui's sdk-dev.test.ts already used.
+//     checkout is missing; status/restore/usage dispatch).
 //
-// The FULL link -> build -> overlay(9 pkgs incl. contracts) -> status ->
-// restore(byte-identical) cycle against a real SDK build and a real consumer
-// checkout is a manual proof (documented separately), not automated here,
-// it requires a full `tsc -b` build of all 9 packages, which is too slow for
-// a unit-test loop and (per the existing webui/agent precedent) not
-// something CI can run without a local SDK checkout.
+// The FULL link -> build -> overlay -> status -> restore cycle against a real
+// SDK build and a real consumer checkout is env-gated below: it costs a full
+// `tsc -b` build, too slow for the unit-test loop.
 // ---------------------------------------------------------------------------
 import { afterEach, describe, expect, test } from 'bun:test';
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { packageDirs } from '../scripts/release-shared.ts';
 import {
   enumerateWorkspacePackages,
   markerPath,
@@ -60,59 +59,44 @@ function writePkgJson(dir: string, contents: Record<string, unknown>): void {
 }
 
 describe('enumerateWorkspacePackages', () => {
-  test('enumerates every public workspace package under packages/*, goodvibes-sdk first', () => {
+  test('enumerates the released packages, the engine first, then the judgment package', () => {
     const packages = enumerateWorkspacePackages(SDK_ROOT);
-    const names = packages.map((p) => p.nm);
-    expect(names[0]).toBe('goodvibes-sdk');
-    expect(names).toContain('goodvibes-contracts');
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'goodvibes-sdk',
-        'goodvibes-contracts',
-        'goodvibes-errors',
-        'goodvibes-operator-sdk',
-        'goodvibes-peer-sdk',
-        'goodvibes-daemon-sdk',
-        'goodvibes-transport-core',
-        'goodvibes-transport-http',
-        'goodvibes-transport-realtime',
-        'goodvibes-terminal-shell',
-        'goodvibes-toolchain',
-      ]),
-    );
-    expect(names.length).toBe(11);
+    expect(packages).toEqual([
+      { nm: 'engine', dir: '.' },
+      { nm: 'judgment', dir: '../judgment' },
+    ]);
   });
 
   test('excludes private packages and packages without publishConfig.access:"public"', () => {
     const root = mkTemp('gv-sdk-enum-');
-    writePkgJson(join(root, 'packages/public-one'), {
-      name: '@pellux/goodvibes-public-one',
+    writePkgJson(join(root, 'engine'), {
+      name: '@goodvibes-jev/engine',
       publishConfig: { access: 'public' },
     });
-    writePkgJson(join(root, 'packages/private-one'), {
-      name: '@pellux/goodvibes-private-one',
+    writePkgJson(join(root, 'judgment'), {
+      name: '@goodvibes-jev/judgment',
       private: true,
+      publishConfig: { access: 'public' },
     });
-    writePkgJson(join(root, 'packages/unpublished-one'), {
-      name: '@pellux/goodvibes-unpublished-one',
-    });
-    const packages = enumerateWorkspacePackages(root);
-    expect(packages.map((p) => p.nm)).toEqual(['goodvibes-public-one']);
+    expect(enumerateWorkspacePackages(join(root, 'engine')).map((p) => p.nm)).toEqual(['engine']);
+
+    writePkgJson(join(root, 'judgment'), { name: '@goodvibes-jev/judgment' });
+    expect(enumerateWorkspacePackages(join(root, 'engine')).map((p) => p.nm)).toEqual(['engine']);
   });
 
-  test('a new 10th public package is picked up with zero code changes (the drift class closed)', () => {
+  test('follows the release package list, so a released package needs no change here (the drift class closed)', () => {
     const root = mkTemp('gv-sdk-enum-');
-    for (const dir of ['sdk', 'contracts', 'newborn-package']) {
-      writePkgJson(join(root, 'packages', dir), {
-        name: `@pellux/goodvibes-${dir}`,
+    const engineRoot = join(root, 'engine');
+    for (const dir of packageDirs) {
+      writePkgJson(join(engineRoot, dir), {
+        name: `@goodvibes-jev/fixture-${dir === '.' ? 'engine' : dir.split('/').at(-1)}`,
         publishConfig: { access: 'public' },
       });
     }
-    const names = enumerateWorkspacePackages(root).map((p) => p.nm);
-    expect(names).toContain('goodvibes-newborn-package');
+    expect(enumerateWorkspacePackages(engineRoot).map((p) => p.dir)).toEqual([...packageDirs]);
   });
 
-  test('returns an empty list when packages/ does not exist', () => {
+  test('returns an empty list when no released package exists at the root', () => {
     const root = mkTemp('gv-sdk-enum-empty-');
     expect(enumerateWorkspacePackages(root)).toEqual([]);
   });
@@ -121,13 +105,13 @@ describe('enumerateWorkspacePackages', () => {
 describe('readSdkPin', () => {
   test('reads the pin from devDependencies first (the agent bundles the SDK there)', () => {
     const root = mkTemp('gv-sdk-pin-');
-    writePkgJson(root, { devDependencies: { '@pellux/goodvibes-sdk': '1.0.0' }, dependencies: { '@pellux/goodvibes-sdk': '0.38.0' } });
+    writePkgJson(root, { devDependencies: { '@goodvibes-jev/engine': '1.0.0' }, dependencies: { '@goodvibes-jev/engine': '0.38.0' } });
     expect(readSdkPin(root)).toBe('1.0.0');
   });
 
   test('falls back to dependencies when absent from devDependencies (TUI/webui)', () => {
     const root = mkTemp('gv-sdk-pin-');
-    writePkgJson(root, { dependencies: { '@pellux/goodvibes-sdk': '0.38.0' } });
+    writePkgJson(root, { dependencies: { '@goodvibes-jev/engine': '0.38.0' } });
     expect(readSdkPin(root)).toBe('0.38.0');
   });
 
@@ -171,45 +155,70 @@ describe('restoreVersionIssue', () => {
 });
 
 describe('overlayPackage', () => {
-  test('replaces dist and package.json in the installed package (unlink-before-copy)', () => {
+  /** A checkout package with one old package's dist, a contract artifact and a conditional export. */
+  function writeCheckoutPackage(packageRoot: string, version: string): void {
+    mkdirSync(join(packageRoot, 'sdk/dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'sdk/dist/index.js'), 'fresh local build');
+    mkdirSync(join(packageRoot, 'contracts/artifacts'), { recursive: true });
+    writeFileSync(join(packageRoot, 'contracts/artifacts/operator-contract.json'), '{"fresh":true}');
+    writePkgJson(packageRoot, {
+      name: '@goodvibes-jev/engine',
+      version,
+      files: ['contracts/artifacts', 'sdk/dist'],
+      exports: {
+        './sdk': { bun: './sdk/src/index.ts', types: './sdk/dist/index.d.ts', import: './sdk/dist/index.js' },
+        './package.json': './package.json',
+      },
+    });
+  }
+
+  test('replaces every published entry and package.json in the installed package (unlink-before-copy)', () => {
     const consumerRoot = mkTemp('gv-sdk-overlay-consumer-');
     const sdkRoot = mkTemp('gv-sdk-overlay-sdk-');
-    const installed = join(consumerRoot, 'node_modules/@pellux/goodvibes-sdk');
-    mkdirSync(join(installed, 'dist'), { recursive: true });
-    writeFileSync(join(installed, 'dist/index.js'), 'stale published build');
-    writeFileSync(join(installed, 'package.json'), JSON.stringify({ name: '@pellux/goodvibes-sdk', version: '0.38.0' }));
+    const installed = join(consumerRoot, 'node_modules/@goodvibes-jev/engine');
+    mkdirSync(join(installed, 'sdk/dist'), { recursive: true });
+    // The installed file is a hardlink into a package cache, as bun installs
+    // it; writing through it in place would corrupt the cache entry.
+    const cacheFile = join(consumerRoot, 'cache-index.js');
+    writeFileSync(cacheFile, 'stale published build');
+    linkSync(cacheFile, join(installed, 'sdk/dist/index.js'));
+    writeFileSync(join(installed, 'package.json'), JSON.stringify({ name: '@goodvibes-jev/engine', version: '2.0.0' }));
+    writeCheckoutPackage(sdkRoot, '2.0.23');
 
-    mkdirSync(join(sdkRoot, 'sdk/dist'), { recursive: true });
-    writeFileSync(join(sdkRoot, 'sdk/dist/index.js'), 'fresh local build');
-    writeFileSync(join(sdkRoot, 'sdk/package.json'), JSON.stringify({ name: '@pellux/goodvibes-sdk', version: '1.0.0' }));
-
-    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'goodvibes-sdk', dir: 'sdk' });
+    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'engine', dir: '.' });
     expect(ok).toBe(true);
-    expect(readFileSync(join(installed, 'dist/index.js'), 'utf8')).toBe('fresh local build');
-    expect(JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')).version).toBe('1.0.0');
+    expect(readFileSync(join(installed, 'sdk/dist/index.js'), 'utf8')).toBe('fresh local build');
+    expect(readFileSync(cacheFile, 'utf8')).toBe('stale published build');
+    expect(readFileSync(join(installed, 'contracts/artifacts/operator-contract.json'), 'utf8')).toBe('{"fresh":true}');
+    const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
+    expect(manifest.version).toBe('2.0.23');
+    // The published form: the source condition names src files the overlay
+    // does not copy, so a Bun consumer must never see it.
+    expect(manifest.exports['./sdk']).toEqual({ types: './sdk/dist/index.d.ts', import: './sdk/dist/index.js' });
+    expect(manifest.exports['./package.json']).toBe('./package.json');
   });
 
   test('skips (returns false) when the package is not installed in the consumer', () => {
     const consumerRoot = mkTemp('gv-sdk-overlay-consumer-');
     const sdkRoot = mkTemp('gv-sdk-overlay-sdk-');
-    mkdirSync(join(sdkRoot, 'peer-sdk/dist'), { recursive: true });
-    writeFileSync(join(sdkRoot, 'peer-sdk/package.json'), '{}');
-    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'goodvibes-peer-sdk', dir: 'peer-sdk' });
+    writeCheckoutPackage(sdkRoot, '2.0.23');
+    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'engine', dir: '.' });
     expect(ok).toBe(false);
   });
 
-  test('skips (returns false) when the SDK has not built a dist for that package', () => {
+  test('skips (returns false) when the SDK has not built a published dist for that package', () => {
     const consumerRoot = mkTemp('gv-sdk-overlay-consumer-');
     const sdkRoot = mkTemp('gv-sdk-overlay-sdk-');
-    mkdirSync(join(consumerRoot, 'node_modules/@pellux/goodvibes-peer-sdk'), { recursive: true });
-    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'goodvibes-peer-sdk', dir: 'peer-sdk' });
+    mkdirSync(join(consumerRoot, 'node_modules/@goodvibes-jev/engine'), { recursive: true });
+    writePkgJson(sdkRoot, { name: '@goodvibes-jev/engine', files: ['contracts/artifacts', 'sdk/dist'] });
+    const ok = overlayPackage(consumerRoot, sdkRoot, { nm: 'engine', dir: '.' });
     expect(ok).toBe(false);
   });
 });
 
 describe('markerPath', () => {
-  test('points at node_modules/@pellux/goodvibes-sdk/.local-sdk-overlay.json (the path every release gate reads)', () => {
-    expect(markerPath('/repo')).toBe('/repo/node_modules/@pellux/goodvibes-sdk/.local-sdk-overlay.json');
+  test('points at node_modules/@goodvibes-jev/engine/sdk/.local-sdk-overlay.json (the path every release gate reads)', () => {
+    expect(markerPath('/repo')).toBe('/repo/node_modules/@goodvibes-jev/engine/sdk/.local-sdk-overlay.json');
   });
 });
 
@@ -235,10 +244,10 @@ describe('CLI dispatch (black-box, subprocess)', () => {
 
   test('status reports OVERLAY ACTIVE and exits 2 when a marker fixture is present', () => {
     const dir = mkTemp('gv-sdk-cli-');
-    const pkgDir = join(dir, 'node_modules/@pellux/goodvibes-sdk');
-    mkdirSync(pkgDir, { recursive: true });
-    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@pellux/goodvibes-sdk', version: '9.9.9' }));
-    writeFileSync(join(pkgDir, '.local-sdk-overlay.json'), JSON.stringify({
+    const pkgDir = join(dir, 'node_modules/@goodvibes-jev/engine');
+    mkdirSync(join(pkgDir, 'sdk'), { recursive: true });
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@goodvibes-jev/engine', version: '9.9.9' }));
+    writeFileSync(markerPath(dir), JSON.stringify({
       sourcePath: '/fixture/goodvibes-sdk',
       sdkGit: 'main@fixture (clean)',
       overlaidAt: new Date().toISOString(),
@@ -250,9 +259,9 @@ describe('CLI dispatch (black-box, subprocess)', () => {
 
   test('status reports clean and exits 0 when no marker is present', () => {
     const dir = mkTemp('gv-sdk-cli-');
-    const pkgDir = join(dir, 'node_modules/@pellux/goodvibes-sdk');
+    const pkgDir = join(dir, 'node_modules/@goodvibes-jev/engine');
     mkdirSync(pkgDir, { recursive: true });
-    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@pellux/goodvibes-sdk', version: '0.38.0' }));
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@goodvibes-jev/engine', version: '0.38.0' }));
     const { exitCode, output } = run(['status'], { cwd: dir });
     expect(exitCode).toBe(0);
     expect(output).toContain('sdk-dev: clean');
@@ -261,8 +270,8 @@ describe('CLI dispatch (black-box, subprocess)', () => {
 
   test('restore is a no-op and exits 0 when no overlay is active', () => {
     const dir = mkTemp('gv-sdk-cli-');
-    mkdirSync(join(dir, 'node_modules/@pellux/goodvibes-sdk'), { recursive: true });
-    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { '@pellux/goodvibes-sdk': '0.38.0' } }));
+    mkdirSync(join(dir, 'node_modules/@goodvibes-jev/engine'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { '@goodvibes-jev/engine': '0.38.0' } }));
     const { exitCode, output } = run(['restore'], { cwd: dir });
     expect(exitCode).toBe(0);
     expect(output).toContain('no overlay active; nothing to restore');
@@ -282,15 +291,11 @@ describe('CLI dispatch (black-box, subprocess)', () => {
 });
 
 describe('full link/restore round-trip (real build, gated: slow)', () => {
-  // This exercises the actual `bun run build` + all-9-siblings-incl.-contracts
-  // overlay + precise restore against a REAL scratch consumer checkout. It is
-  // gated behind an env var (not run by default in the fast test loop or CI,
-  // matching the existing webui/agent precedent that this full cycle needs a
-  // real local SDK checkout with a real build) because it costs a full
-  // `tsc -b` build of all 9 packages. The manual proof for this brief was run
-  // once outside `bun test` and is reported separately; this test exists so
-  // the round-trip has an automatable home if a future CI job opts in.
-  test('link overlays all 9 packages incl. contracts; restore removes them and matches the pin', () => {
+  // This exercises the actual `bun run build` + overlay of every released
+  // package + precise restore against a REAL scratch consumer checkout. It is
+  // gated behind an env var (not run by default in the fast test loop or CI)
+  // because it costs a full `tsc -b` build of the workspace.
+  test('link overlays the engine and the judgment package; restore removes them and matches the pin', () => {
     // Env-gated slow round-trip: a runtime early-return keeps this compliant
     // with the repo's no-skipped-tests policy while staying a no-op in the fast
     // loop/CI unless GOODVIBES_SDK_DEV_ROUNDTRIP_TEST is set.
@@ -298,26 +303,23 @@ describe('full link/restore round-trip (real build, gated: slow)', () => {
     const consumerRoot = mkTemp('gv-sdk-roundtrip-consumer-');
     writeFileSync(join(consumerRoot, 'package.json'), JSON.stringify({
       name: 'roundtrip-consumer',
-      dependencies: { '@pellux/goodvibes-sdk': '0.38.0' },
+      dependencies: { '@goodvibes-jev/engine': '2.0.23' },
     }));
-    // Simulate an `npm install`-produced node_modules for every package the
-    // real consumers install (the tool only overlays packages already
-    // installed, see overlayPackage's existsSync(installed) guard).
+    // Simulate an install-produced node_modules for every released package
+    // (the tool only overlays packages already installed, see overlayPackage's
+    // existsSync(installed) guard).
     for (const pkg of enumerateWorkspacePackages(SDK_ROOT)) {
-      const dir = join(consumerRoot, 'node_modules/@pellux', pkg.nm);
-      mkdirSync(join(dir, 'dist'), { recursive: true });
-      writeFileSync(join(dir, 'dist/placeholder.js'), '// pre-overlay npm build');
-      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@pellux/${pkg.nm}`, version: '0.38.0' }));
+      const dir = join(consumerRoot, 'node_modules/@goodvibes-jev', pkg.nm);
+      mkdirSync(join(dir, 'sdk'), { recursive: true });
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@goodvibes-jev/${pkg.nm}`, version: '2.0.23' }));
     }
-    execSync('bun install --no-save', { cwd: consumerRoot });
 
     const linkResult = run(['link'], { cwd: consumerRoot, env: { GOODVIBES_SDK_PATH: SDK_ROOT } });
     expect(linkResult.exitCode).toBe(0);
-    expect(linkResult.output).toContain('goodvibes-contracts');
+    expect(linkResult.output).toContain('engine, judgment');
     expect(existsSync(markerPath(consumerRoot))).toBe(true);
     const marker = JSON.parse(readFileSync(markerPath(consumerRoot), 'utf8'));
-    expect(marker.overlaidPackages).toContain('goodvibes-contracts');
-    expect(marker.overlaidPackages.length).toBe(9);
+    expect(marker.overlaidPackages).toEqual(['engine', 'judgment']);
 
     const restoreResult = run(['restore'], { cwd: consumerRoot, env: { GOODVIBES_SDK_PATH: SDK_ROOT } });
     expect(restoreResult.exitCode).toBe(0);

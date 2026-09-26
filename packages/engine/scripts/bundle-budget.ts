@@ -24,6 +24,8 @@ import { gzipSync } from 'node:zlib';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { subpackageExports } from './export-conditions.ts';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SDK_PKG = resolve(REPO_ROOT, 'sdk');
@@ -151,21 +153,13 @@ function isBudgetEntry(value: unknown): value is BudgetEntry {
 }
 
 /**
- * The sdk's export map, read from the engine package's ./sdk/* exports. Each
- * engine entry names a source file under sdk/src; the budget measures the file
- * tsc emits for it under sdk/dist, as before.
+ * The sdk's export map, read from the engine package's ./sdk/* exports as the
+ * old sdk package's map: the budget measures each entry's `import` target
+ * under sdk/dist, as before.
  */
 function loadExports(): Record<string, ExportValue> {
   const pkg = JSON.parse(readFileSync(SDK_PKG_JSON_PATH, 'utf8')) as PkgJson;
-  const exports: Record<string, ExportValue> = {};
-  for (const [key, value] of Object.entries(pkg.exports ?? {})) {
-    if (key !== './sdk' && !key.startsWith('./sdk/')) continue;
-    const subpath = key === './sdk' ? '.' : `.${key.slice('./sdk'.length)}`;
-    exports[subpath] = typeof value === 'string' && value.startsWith('./sdk/src/') && !value.endsWith('.d.ts')
-      ? { import: `./dist/${value.slice('./sdk/src/'.length).replace(/\.ts$/, '.js')}` }
-      : value;
-  }
-  return exports;
+  return subpackageExports(pkg.exports ?? {}, 'sdk') as Record<string, ExportValue>;
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
