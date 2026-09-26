@@ -1,0 +1,747 @@
+import {
+  BOOLEAN_SCHEMA,
+  NUMBER_SCHEMA,
+  STRING_SCHEMA,
+  arraySchema,
+  objectSchema,
+} from './method-catalog-shared.js';
+import {
+  JSON_VALUE_SCHEMA,
+  METADATA_SCHEMA,
+  STRING_LIST_SCHEMA,
+  enumSchema,
+  nullableSchema,
+  recordSchema,
+} from './operator-contract-schemas-shared.js';
+import { REASONING_EFFORT_SEVERITY } from '../providers/reasoning-effort.js';
+
+const TASK_KIND_SCHEMA = enumSchema(['exec', 'agent', 'acp', 'scheduler', 'daemon', 'mcp', 'plugin', 'integration']);
+const TASK_STATUS_SCHEMA = enumSchema(['queued', 'running', 'blocked', 'completed', 'failed', 'cancelled']);
+const PROVIDER_AUTH_MODE_SCHEMA = enumSchema(['api-key', 'oauth', 'anonymous', 'none']);
+const PROVIDER_AUTH_ROUTE_SCHEMA = enumSchema(['api-key', 'subscription', 'service-oauth', 'unconfigured']);
+const PROVIDER_AUTH_FRESHNESS_SCHEMA = enumSchema(['healthy', 'expiring', 'expired', 'pending', 'unconfigured']);
+const MEMORY_EMBEDDING_STATE_SCHEMA = enumSchema(['healthy', 'degraded', 'disabled', 'unconfigured']);
+const NETWORK_HEALTH_SCHEMA = enumSchema(['healthy', 'degraded']);
+const INBOUND_SERVER_SURFACE_SCHEMA = enumSchema(['controlPlane', 'httpListener']);
+const INBOUND_TLS_MODE_SCHEMA = enumSchema(['off', 'proxy', 'direct']);
+const OUTBOUND_TRUST_MODE_SCHEMA = enumSchema(['bundled', 'bundled+custom', 'custom']);
+const OUTBOUND_CA_STRATEGY_SCHEMA = enumSchema(['bun-default', 'bundled+custom', 'custom']);
+const SHARED_SESSION_KIND_SCHEMA = enumSchema(['tui', 'agent', 'webui', 'companion-task', 'companion-chat', 'automation', 'channel', 'acp', 'hosted']);
+/**
+ * READ-path kind schema: an OPEN enum. The known kinds are the same set as
+ * {@link SHARED_SESSION_KIND_SCHEMA}, but response/output validation must accept
+ * an unknown `kind` string per-record instead of hard-failing the whole envelope
+ *, a mixed-version daemon (or a future build) can emit a kind this reader does
+ * not model, and the tolerant normalizer downstream (`normalizeSharedSessionRecord`)
+ * already maps an unknown kind to the documented 'tui' fallback while preserving
+ * the raw value under `metadata.wireKind`. See
+ * docs/decisions/2026-07-05-session-wire-mixed-version.md (the enum leg). Writes
+ * stay strict: {@link SHARED_SESSION_REGISTER_INPUT_SCHEMA} keeps the closed enum
+ * so `sessions.register` still 400s on an unknown kind.
+ */
+export const SHARED_SESSION_KIND_READ_SCHEMA = { type: 'string' } as Record<string, unknown>;
+const SHARED_SESSION_INPUT_INTENT_SCHEMA = enumSchema(['submit', 'steer', 'follow-up']);
+const SHARED_SESSION_INPUT_STATE_SCHEMA = enumSchema(['queued', 'delivered', 'spawned', 'completed', 'cancelled', 'failed', 'rejected']);
+const SHARED_SESSION_MESSAGE_MODE_SCHEMA = enumSchema(['spawn', 'continued-live', 'queued-follow-up', 'queued-for-surface', 'rejected']);
+const COMPANION_CHAT_SESSION_STATUS_SCHEMA = enumSchema(['active', 'closed']);
+const COMPANION_CHAT_MESSAGE_ROLE_SCHEMA = enumSchema(['user', 'assistant']);
+const PROVIDER_SELECTION_SCHEMA = enumSchema(['inherit-current', 'concrete', 'synthetic']);
+const PROVIDER_FAILURE_POLICY_SCHEMA = enumSchema(['ordered-fallbacks', 'fail']);
+const EXECUTION_RISK_CLASS_SCHEMA = enumSchema(['safe', 'elevated', 'dangerous']);
+const EXECUTION_NETWORK_POLICY_SCHEMA = enumSchema(['inherit', 'allow', 'deny', 'scoped']);
+const EXECUTION_FILESYSTEM_POLICY_SCHEMA = enumSchema(['inherit', 'workspace-write', 'read-only', 'isolated']);
+
+const COMPANION_CHAT_ATTACHMENT_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  artifactId: STRING_SCHEMA,
+  kind: STRING_SCHEMA,
+  mimeType: STRING_SCHEMA,
+  filename: STRING_SCHEMA,
+  sizeBytes: NUMBER_SCHEMA,
+  sha256: STRING_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+  expiresAt: NUMBER_SCHEMA,
+  sourceUri: STRING_SCHEMA,
+  acquisitionMode: STRING_SCHEMA,
+  fetchMode: STRING_SCHEMA,
+  label: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+}, ['id', 'artifactId', 'kind', 'mimeType', 'sizeBytes', 'sha256', 'createdAt', 'metadata'], { additionalProperties: true });
+
+export const SHARED_SESSION_PARTICIPANT_SCHEMA = objectSchema({
+  surfaceKind: STRING_SCHEMA,
+  surfaceId: STRING_SCHEMA,
+  externalId: STRING_SCHEMA,
+  userId: STRING_SCHEMA,
+  displayName: STRING_SCHEMA,
+  routeId: STRING_SCHEMA,
+  lastSeenAt: NUMBER_SCHEMA,
+}, ['surfaceKind', 'surfaceId', 'lastSeenAt']);
+
+/**
+ * Input to sessions.register, the idempotent registration + heartbeat upsert
+ * keyed on the caller-supplied `sessionId`. Carries the identity spine
+ * (kind + project + participant triple). Re-calling with the same id is the
+ * heartbeat (advances participant.lastSeenAt).
+ */
+export const SHARED_SESSION_REGISTER_INPUT_SCHEMA = objectSchema({
+  sessionId: STRING_SCHEMA,
+  kind: SHARED_SESSION_KIND_SCHEMA,
+  project: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  participant: SHARED_SESSION_PARTICIPANT_SCHEMA,
+  reopen: BOOLEAN_SCHEMA,
+}, ['sessionId', 'participant'], { additionalProperties: true });
+
+export const SHARED_SESSION_MESSAGE_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  sessionId: STRING_SCHEMA,
+  role: enumSchema(['user', 'assistant', 'system']),
+  body: STRING_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+  surfaceKind: STRING_SCHEMA,
+  surfaceId: STRING_SCHEMA,
+  routeId: STRING_SCHEMA,
+  agentId: STRING_SCHEMA,
+  userId: STRING_SCHEMA,
+  displayName: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+}, ['id', 'sessionId', 'role', 'body', 'createdAt', 'metadata']);
+
+export const SHARED_SESSION_RECORD_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  // Open on READ: an unknown kind must not blank the record (or, per-record, the
+  // whole list). Write validation stays strict via SHARED_SESSION_REGISTER_INPUT_SCHEMA.
+  kind: SHARED_SESSION_KIND_READ_SCHEMA,
+  project: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  status: enumSchema(['active', 'closed']),
+  createdAt: NUMBER_SCHEMA,
+  updatedAt: NUMBER_SCHEMA,
+  lastMessageAt: NUMBER_SCHEMA,
+  closedAt: NUMBER_SCHEMA,
+  lastActivityAt: NUMBER_SCHEMA,
+  messageCount: NUMBER_SCHEMA,
+  retainedMessageCount: NUMBER_SCHEMA,
+  pendingInputCount: NUMBER_SCHEMA,
+  routeIds: STRING_LIST_SCHEMA,
+  surfaceKinds: STRING_LIST_SCHEMA,
+  participants: arraySchema(SHARED_SESSION_PARTICIPANT_SCHEMA),
+  activeAgentId: STRING_SCHEMA,
+  lastAgentId: STRING_SCHEMA,
+  lastError: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+}, ['id', 'kind', 'title', 'status', 'createdAt', 'updatedAt', 'lastActivityAt', 'messageCount', 'pendingInputCount', 'routeIds', 'surfaceKinds', 'participants', 'metadata']);
+
+export const COMPANION_CHAT_SESSION_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  kind: enumSchema(['companion-chat']),
+  title: STRING_SCHEMA,
+  model: nullableSchema(STRING_SCHEMA),
+  provider: nullableSchema(STRING_SCHEMA),
+  systemPrompt: nullableSchema(STRING_SCHEMA),
+  status: COMPANION_CHAT_SESSION_STATUS_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+  updatedAt: NUMBER_SCHEMA,
+  closedAt: nullableSchema(NUMBER_SCHEMA),
+  messageCount: NUMBER_SCHEMA,
+}, ['id', 'kind', 'title', 'model', 'provider', 'systemPrompt', 'status', 'createdAt', 'updatedAt', 'closedAt', 'messageCount']);
+
+export const COMPANION_CHAT_MESSAGE_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  sessionId: STRING_SCHEMA,
+  role: COMPANION_CHAT_MESSAGE_ROLE_SCHEMA,
+  content: STRING_SCHEMA,
+  attachments: arraySchema(COMPANION_CHAT_ATTACHMENT_SCHEMA),
+  createdAt: NUMBER_SCHEMA,
+  // Delivery honesty marker: 'cancelled' = an assistant partial whose turn
+  // was stopped mid-generation; 'queued' = a user message whose turn has not
+  // started yet. Absent = normally delivered.
+  deliveryState: enumSchema(['cancelled', 'queued']),
+  // On assistant messages: the user message this reply answers (the
+  // transcript is append-ordered, so pairing needs an explicit link).
+  inReplyTo: STRING_SCHEMA,
+}, ['id', 'sessionId', 'role', 'content', 'attachments', 'createdAt']);
+
+export const COMPANION_CHAT_SESSION_WITH_MESSAGES_SCHEMA = objectSchema({
+  session: COMPANION_CHAT_SESSION_SCHEMA,
+  messages: arraySchema(COMPANION_CHAT_MESSAGE_SCHEMA),
+}, ['session', 'messages']);
+
+export const COMPANION_CHAT_SESSIONS_LIST_SCHEMA = objectSchema({
+  sessions: arraySchema(COMPANION_CHAT_SESSION_SCHEMA),
+  totals: objectSchema({
+    sessions: NUMBER_SCHEMA,
+    active: NUMBER_SCHEMA,
+    closed: NUMBER_SCHEMA,
+  }, ['sessions', 'active', 'closed']),
+}, ['sessions', 'totals']);
+
+export const COMPANION_CHAT_MESSAGES_LIST_SCHEMA = objectSchema({
+  sessionId: STRING_SCHEMA,
+  messages: arraySchema(COMPANION_CHAT_MESSAGE_SCHEMA),
+}, ['sessionId', 'messages']);
+
+export const SHARED_SESSION_ROUTING_INTENT_SCHEMA = objectSchema({
+  providerId: STRING_SCHEMA,
+  modelId: STRING_SCHEMA,
+  providerSelection: PROVIDER_SELECTION_SCHEMA,
+  providerFailurePolicy: PROVIDER_FAILURE_POLICY_SCHEMA,
+  fallbackModels: STRING_LIST_SCHEMA,
+  helperModel: objectSchema({
+    providerId: STRING_SCHEMA,
+    modelId: STRING_SCHEMA,
+  }, ['providerId', 'modelId']),
+  executionIntent: objectSchema({
+    riskClass: EXECUTION_RISK_CLASS_SCHEMA,
+    requiresApproval: BOOLEAN_SCHEMA,
+    networkPolicy: EXECUTION_NETWORK_POLICY_SCHEMA,
+    filesystemPolicy: EXECUTION_FILESYSTEM_POLICY_SCHEMA,
+  }),
+  tools: STRING_LIST_SCHEMA,
+  // Full severity ladder, not a fixed 4-value list: which levels a given model
+  // actually accepts is per-model (see providers/reasoning-effort.ts); this
+  // schema only rejects a typo, the real acceptance check happens at request time.
+  reasoningEffort: enumSchema([...REASONING_EFFORT_SEVERITY]),
+});
+
+export const SHARED_SESSION_INPUT_RECORD_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  sessionId: STRING_SCHEMA,
+  intent: SHARED_SESSION_INPUT_INTENT_SCHEMA,
+  state: SHARED_SESSION_INPUT_STATE_SCHEMA,
+  correlationId: STRING_SCHEMA,
+  causationId: STRING_SCHEMA,
+  body: STRING_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+  updatedAt: NUMBER_SCHEMA,
+  routeId: STRING_SCHEMA,
+  surfaceKind: STRING_SCHEMA,
+  surfaceId: STRING_SCHEMA,
+  externalId: STRING_SCHEMA,
+  threadId: STRING_SCHEMA,
+  userId: STRING_SCHEMA,
+  displayName: STRING_SCHEMA,
+  activeAgentId: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+  routing: SHARED_SESSION_ROUTING_INTENT_SCHEMA,
+  error: STRING_SCHEMA,
+}, ['id', 'sessionId', 'intent', 'state', 'correlationId', 'body', 'createdAt', 'updatedAt', 'metadata']);
+
+export const SESSION_SNAPSHOT_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  status: STRING_SCHEMA,
+  recoveryState: STRING_SCHEMA,
+  projectRoot: STRING_SCHEMA,
+  isResumed: BOOLEAN_SCHEMA,
+  resumedFromId: STRING_SCHEMA,
+  compactionState: STRING_SCHEMA,
+  lastCompactedAt: NUMBER_SCHEMA,
+  lineage: STRING_LIST_SCHEMA,
+}, ['id', 'title', 'status', 'recoveryState', 'projectRoot', 'isResumed', 'compactionState', 'lineage']);
+
+export const SESSION_BROKER_SNAPSHOT_SCHEMA = objectSchema({
+  totals: objectSchema({
+    sessions: NUMBER_SCHEMA,
+    active: NUMBER_SCHEMA,
+    closed: NUMBER_SCHEMA,
+  }, ['sessions', 'active', 'closed']),
+  sessions: arraySchema(SHARED_SESSION_RECORD_SCHEMA),
+}, ['totals', 'sessions']);
+
+export const SHARED_SESSION_WITH_MESSAGES_SCHEMA = objectSchema({
+  session: SHARED_SESSION_RECORD_SCHEMA,
+  messages: arraySchema(SHARED_SESSION_MESSAGE_SCHEMA),
+}, ['session', 'messages']);
+
+export const SHARED_SESSION_WITH_INPUTS_SCHEMA = objectSchema({
+  session: SHARED_SESSION_RECORD_SCHEMA,
+  inputs: arraySchema(SHARED_SESSION_INPUT_RECORD_SCHEMA),
+}, ['session', 'inputs']);
+
+export const SHARED_SESSION_CREATE_OUTPUT_SCHEMA = objectSchema({
+  session: SHARED_SESSION_RECORD_SCHEMA,
+}, ['session']);
+
+/**
+ * Output of sessions.register. Beyond the record it carries honest lifecycle
+ * disposition: `reopened` is true only when this call reopened a closed session,
+ * and `conflict` is present (status:'closed') when register targeted a closed
+ * session WITHOUT reopen:true, the heartbeat was recorded but the session was
+ * left closed.
+ */
+export const SHARED_SESSION_REGISTER_OUTPUT_SCHEMA = objectSchema({
+  session: SHARED_SESSION_RECORD_SCHEMA,
+  reopened: BOOLEAN_SCHEMA,
+  conflict: objectSchema({ status: enumSchema(['closed']) }, ['status']),
+}, ['session', 'reopened']);
+
+export const SHARED_SESSION_CONVERSATION_ROUTE_OUTPUT_SCHEMA = objectSchema({
+  messageId: STRING_SCHEMA,
+  routedTo: STRING_SCHEMA,
+  sessionId: STRING_SCHEMA,
+}, ['messageId', 'routedTo', 'sessionId']);
+
+export const SHARED_SESSION_MESSAGE_CREATE_OUTPUT_SCHEMA = objectSchema({
+  session: nullableSchema(SHARED_SESSION_RECORD_SCHEMA),
+  message: SHARED_SESSION_MESSAGE_SCHEMA,
+  input: SHARED_SESSION_INPUT_RECORD_SCHEMA,
+  mode: SHARED_SESSION_MESSAGE_MODE_SCHEMA,
+  agentId: nullableSchema(STRING_SCHEMA),
+}, ['session', 'message', 'input', 'mode', 'agentId']);
+
+export const SHARED_SESSION_MESSAGE_ROUTE_OUTPUT_SCHEMA = {
+  anyOf: [
+    SHARED_SESSION_CONVERSATION_ROUTE_OUTPUT_SCHEMA,
+    SHARED_SESSION_MESSAGE_CREATE_OUTPUT_SCHEMA,
+  ],
+} as const;
+
+const TASK_RETRY_POLICY_SCHEMA = objectSchema({
+  maxAttempts: NUMBER_SCHEMA,
+  currentAttempt: NUMBER_SCHEMA,
+  delayMs: NUMBER_SCHEMA,
+  backoff: enumSchema(['fixed', 'exponential']),
+  retryOn: arraySchema(enumSchema(['network', 'timeout', 'transient', 'tool_error'])),
+}, ['maxAttempts', 'currentAttempt', 'delayMs', 'backoff', 'retryOn']);
+
+export const RUNTIME_TASK_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  kind: TASK_KIND_SCHEMA,
+  title: STRING_SCHEMA,
+  description: STRING_SCHEMA,
+  status: TASK_STATUS_SCHEMA,
+  owner: STRING_SCHEMA,
+  cancellable: BOOLEAN_SCHEMA,
+  parentTaskId: STRING_SCHEMA,
+  childTaskIds: STRING_LIST_SCHEMA,
+  queuedAt: NUMBER_SCHEMA,
+  startedAt: NUMBER_SCHEMA,
+  endedAt: NUMBER_SCHEMA,
+  retryPolicy: TASK_RETRY_POLICY_SCHEMA,
+  retryDelayMs: NUMBER_SCHEMA,
+  retryAt: NUMBER_SCHEMA,
+  exitCode: NUMBER_SCHEMA,
+  error: STRING_SCHEMA,
+  result: JSON_VALUE_SCHEMA,
+  correlationId: STRING_SCHEMA,
+  turnId: STRING_SCHEMA,
+}, ['id', 'kind', 'title', 'status', 'owner', 'cancellable', 'childTaskIds', 'queuedAt']);
+
+export const TASK_SNAPSHOT_SCHEMA = objectSchema({
+  queued: NUMBER_SCHEMA,
+  running: NUMBER_SCHEMA,
+  blocked: NUMBER_SCHEMA,
+  totals: objectSchema({
+    created: NUMBER_SCHEMA,
+    completed: NUMBER_SCHEMA,
+    failed: NUMBER_SCHEMA,
+    cancelled: NUMBER_SCHEMA,
+  }, ['created', 'completed', 'failed', 'cancelled']),
+  tasks: arraySchema(objectSchema({
+    id: STRING_SCHEMA,
+    kind: TASK_KIND_SCHEMA,
+    title: STRING_SCHEMA,
+    status: TASK_STATUS_SCHEMA,
+    owner: STRING_SCHEMA,
+    parentTaskId: STRING_SCHEMA,
+    queuedAt: NUMBER_SCHEMA,
+    startedAt: NUMBER_SCHEMA,
+    endedAt: NUMBER_SCHEMA,
+    error: STRING_SCHEMA,
+  }, ['id', 'kind', 'title', 'status', 'owner', 'queuedAt'])),
+}, ['queued', 'running', 'blocked', 'totals', 'tasks']);
+
+export const TASK_CREATE_INPUT_SCHEMA = objectSchema({
+  task: STRING_SCHEMA,
+  model: STRING_SCHEMA,
+  tools: STRING_LIST_SCHEMA,
+  provider: STRING_SCHEMA,
+  routing: SHARED_SESSION_ROUTING_INTENT_SCHEMA,
+  sessionId: STRING_SCHEMA,
+  routeId: STRING_SCHEMA,
+  surfaceKind: STRING_SCHEMA,
+  surfaceId: STRING_SCHEMA,
+  externalId: STRING_SCHEMA,
+  threadId: STRING_SCHEMA,
+  userId: STRING_SCHEMA,
+  displayName: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+}, ['task'], { additionalProperties: true });
+
+export const TASK_CREATE_OUTPUT_SCHEMA = objectSchema({
+  acknowledged: BOOLEAN_SCHEMA,
+  mode: STRING_SCHEMA,
+  sessionId: STRING_SCHEMA,
+  agentId: nullableSchema(STRING_SCHEMA),
+  status: STRING_SCHEMA,
+  task: STRING_SCHEMA,
+  model: nullableSchema(STRING_SCHEMA),
+  tools: STRING_LIST_SCHEMA,
+}, ['acknowledged'], { additionalProperties: true });
+
+export const TASK_OUTPUT_SCHEMA = objectSchema({
+  task: RUNTIME_TASK_SCHEMA,
+}, ['task']);
+
+export const TASK_ACTION_OUTPUT_SCHEMA = objectSchema({
+  retried: BOOLEAN_SCHEMA,
+  task: RUNTIME_TASK_SCHEMA,
+  agentId: STRING_SCHEMA,
+}, ['task'], { additionalProperties: true });
+
+export const TASK_STATUS_OUTPUT_SCHEMA = objectSchema({
+  agentId: STRING_SCHEMA,
+  task: STRING_SCHEMA,
+  status: STRING_SCHEMA,
+  model: nullableSchema(STRING_SCHEMA),
+  tools: STRING_LIST_SCHEMA,
+  durationMs: NUMBER_SCHEMA,
+  toolCallCount: NUMBER_SCHEMA,
+  progress: nullableSchema(STRING_SCHEMA),
+  error: nullableSchema(STRING_SCHEMA),
+}, ['agentId', 'task', 'status', 'model', 'tools', 'durationMs', 'toolCallCount', 'progress', 'error']);
+
+
+const PROVIDER_USAGE_COST_SCHEMA = objectSchema({
+  source: enumSchema(['catalog', 'provider', 'none']),
+  currency: STRING_SCHEMA,
+  inputPerMillionTokens: NUMBER_SCHEMA,
+  outputPerMillionTokens: NUMBER_SCHEMA,
+  detail: STRING_SCHEMA,
+}, ['source'], { additionalProperties: true });
+
+const PROVIDER_AUTH_ROUTE_DESCRIPTOR_SCHEMA = objectSchema({
+  route: STRING_SCHEMA,
+  label: STRING_SCHEMA,
+  configured: BOOLEAN_SCHEMA,
+  usable: BOOLEAN_SCHEMA,
+  freshness: STRING_SCHEMA,
+  detail: STRING_SCHEMA,
+  envVars: STRING_LIST_SCHEMA,
+  secretKeys: STRING_LIST_SCHEMA,
+  serviceNames: STRING_LIST_SCHEMA,
+  providerId: STRING_SCHEMA,
+  repairHints: STRING_LIST_SCHEMA,
+}, ['route', 'label', 'configured'], { additionalProperties: true });
+
+const PROVIDER_RUNTIME_METADATA_SCHEMA = objectSchema({
+  auth: objectSchema({
+    mode: PROVIDER_AUTH_MODE_SCHEMA,
+    configured: BOOLEAN_SCHEMA,
+    detail: STRING_SCHEMA,
+    envVars: STRING_LIST_SCHEMA,
+    routes: arraySchema(PROVIDER_AUTH_ROUTE_DESCRIPTOR_SCHEMA),
+  }, ['mode', 'configured'], { additionalProperties: true }),
+  models: objectSchema({
+    defaultModel: STRING_SCHEMA,
+    models: STRING_LIST_SCHEMA,
+    embeddingModel: STRING_SCHEMA,
+    embeddingDimensions: NUMBER_SCHEMA,
+    aliases: STRING_LIST_SCHEMA,
+    suppressedModelRegistryKeys: STRING_LIST_SCHEMA,
+  }, ['models'], { additionalProperties: true }),
+  usage: objectSchema({
+    streaming: BOOLEAN_SCHEMA,
+    toolCalling: BOOLEAN_SCHEMA,
+    parallelTools: BOOLEAN_SCHEMA,
+    promptCaching: BOOLEAN_SCHEMA,
+    cost: PROVIDER_USAGE_COST_SCHEMA,
+    notes: STRING_LIST_SCHEMA,
+  }, ['streaming', 'toolCalling', 'parallelTools'], { additionalProperties: true }),
+  policy: objectSchema({
+    local: BOOLEAN_SCHEMA,
+    dataRetention: STRING_SCHEMA,
+    streamProtocol: STRING_SCHEMA,
+    reasoningMode: STRING_SCHEMA,
+    supportedReasoningEfforts: STRING_LIST_SCHEMA,
+    cacheStrategy: STRING_SCHEMA,
+    notes: STRING_LIST_SCHEMA,
+  }, [], { additionalProperties: true }),
+  notes: STRING_LIST_SCHEMA,
+}, [], { additionalProperties: true });
+
+const PROVIDER_MODEL_SNAPSHOT_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  registryKey: STRING_SCHEMA,
+  displayName: STRING_SCHEMA,
+  selectable: BOOLEAN_SCHEMA,
+  contextWindow: NUMBER_SCHEMA,
+  tier: STRING_SCHEMA,
+  pricing: objectSchema({
+    inputPerMillionTokens: NUMBER_SCHEMA,
+    outputPerMillionTokens: NUMBER_SCHEMA,
+    currency: enumSchema(['USD']),
+    // Provenance of the served rates: 'user' (manual/registration, "your
+    // price"), 'provider' (provider-served), 'catalog' (dated catalog).
+    // asOf is the ISO date of the catalog/provider snapshot; user prices
+    // are undated.
+    source: enumSchema(['user', 'provider', 'catalog']),
+    asOf: STRING_SCHEMA,
+  }, ['inputPerMillionTokens', 'outputPerMillionTokens', 'currency', 'source']),
+}, ['id', 'registryKey', 'displayName', 'selectable', 'contextWindow'], { additionalProperties: true });
+
+export const PROVIDER_RUNTIME_SNAPSHOT_SCHEMA = objectSchema({
+  providerId: STRING_SCHEMA,
+  active: BOOLEAN_SCHEMA,
+  modelCount: NUMBER_SCHEMA,
+  runtime: PROVIDER_RUNTIME_METADATA_SCHEMA,
+  models: arraySchema(PROVIDER_MODEL_SNAPSHOT_SCHEMA),
+}, ['providerId', 'active', 'modelCount', 'runtime', 'models']);
+
+export const PROVIDER_USAGE_SNAPSHOT_SCHEMA = objectSchema({
+  providerId: STRING_SCHEMA,
+  active: BOOLEAN_SCHEMA,
+  currentModelRegistryKey: STRING_SCHEMA,
+  // A single source when every priced model agrees, 'mixed' when they
+  // disagree, 'none' when no model carries pricing. pricingAsOf is the
+  // oldest dated (catalog/provider) snapshot served; absent when undated.
+  pricingSource: enumSchema(['user', 'catalog', 'provider', 'mixed', 'none']),
+  pricingAsOf: STRING_SCHEMA,
+  models: arraySchema(PROVIDER_MODEL_SNAPSHOT_SCHEMA),
+  usage: objectSchema({
+    streaming: BOOLEAN_SCHEMA,
+    toolCalling: BOOLEAN_SCHEMA,
+    parallelTools: BOOLEAN_SCHEMA,
+    promptCaching: BOOLEAN_SCHEMA,
+    cost: PROVIDER_USAGE_COST_SCHEMA,
+    notes: STRING_LIST_SCHEMA,
+  }, ['streaming', 'toolCalling', 'parallelTools'], { additionalProperties: true }),
+}, ['providerId', 'active', 'pricingSource', 'models', 'usage'], { additionalProperties: true });
+
+const PROVIDER_USAGE_WINDOW_SCHEMA = objectSchema({
+  label: STRING_SCHEMA,
+  detail: STRING_SCHEMA,
+}, ['label', 'detail']);
+
+const PROVIDER_ROUTE_RECORD_SCHEMA = objectSchema({
+  route: PROVIDER_AUTH_ROUTE_SCHEMA,
+  usable: BOOLEAN_SCHEMA,
+  freshness: PROVIDER_AUTH_FRESHNESS_SCHEMA,
+  detail: STRING_SCHEMA,
+  issues: STRING_LIST_SCHEMA,
+}, ['route', 'usable', 'freshness', 'detail', 'issues']);
+
+const PROVIDER_ACCOUNT_RECORD_SCHEMA = objectSchema({
+  providerId: STRING_SCHEMA,
+  active: BOOLEAN_SCHEMA,
+  modelCount: NUMBER_SCHEMA,
+  configured: BOOLEAN_SCHEMA,
+  oauthReady: BOOLEAN_SCHEMA,
+  pendingLogin: BOOLEAN_SCHEMA,
+  availableRoutes: arraySchema(PROVIDER_AUTH_ROUTE_SCHEMA),
+  preferredRoute: PROVIDER_AUTH_ROUTE_SCHEMA,
+  activeRoute: PROVIDER_AUTH_ROUTE_SCHEMA,
+  activeRouteReason: STRING_SCHEMA,
+  authFreshness: PROVIDER_AUTH_FRESHNESS_SCHEMA,
+  fallbackRoute: PROVIDER_AUTH_ROUTE_SCHEMA,
+  fallbackRisk: STRING_SCHEMA,
+  expiresAt: NUMBER_SCHEMA,
+  tokenType: STRING_SCHEMA,
+  notes: STRING_LIST_SCHEMA,
+  usageWindows: arraySchema(PROVIDER_USAGE_WINDOW_SCHEMA),
+  issues: STRING_LIST_SCHEMA,
+  recommendedActions: arraySchema(objectSchema({ description: STRING_SCHEMA, command: objectSchema({ name: STRING_SCHEMA, args: arraySchema(STRING_SCHEMA) }, ['name', 'args'], { additionalProperties: false }) }, ['description'], { additionalProperties: false })),
+  routeRecords: arraySchema(PROVIDER_ROUTE_RECORD_SCHEMA),
+}, ['providerId', 'active', 'modelCount', 'configured', 'oauthReady', 'pendingLogin', 'availableRoutes', 'preferredRoute', 'activeRoute', 'activeRouteReason', 'authFreshness', 'notes', 'usageWindows', 'issues', 'recommendedActions', 'routeRecords'], { additionalProperties: true });
+
+const INBOUND_TLS_KEY_PERMISSIONS_SCHEMA = objectSchema({
+  available: BOOLEAN_SCHEMA,
+  safe: BOOLEAN_SCHEMA,
+  mode: STRING_SCHEMA,
+}, ['available'], { additionalProperties: true });
+
+const INBOUND_TLS_SNAPSHOT_SCHEMA = objectSchema({
+  surface: INBOUND_SERVER_SURFACE_SCHEMA,
+  host: STRING_SCHEMA,
+  port: NUMBER_SCHEMA,
+  mode: INBOUND_TLS_MODE_SCHEMA,
+  scheme: enumSchema(['http', 'https']),
+  trustProxy: BOOLEAN_SCHEMA,
+  certFile: STRING_SCHEMA,
+  keyFile: STRING_SCHEMA,
+  usingDefaultPaths: BOOLEAN_SCHEMA,
+  ready: BOOLEAN_SCHEMA,
+  errors: STRING_LIST_SCHEMA,
+  keyPermissions: INBOUND_TLS_KEY_PERMISSIONS_SCHEMA,
+}, ['surface', 'host', 'port', 'mode', 'scheme', 'trustProxy', 'usingDefaultPaths', 'ready', 'errors'], { additionalProperties: true });
+
+const OUTBOUND_TLS_SNAPSHOT_SCHEMA = objectSchema({
+  mode: OUTBOUND_TRUST_MODE_SCHEMA,
+  allowInsecureLocalhost: BOOLEAN_SCHEMA,
+  customCaFile: STRING_SCHEMA,
+  customCaDir: STRING_SCHEMA,
+  customCaEntryCount: NUMBER_SCHEMA,
+  effectiveCaStrategy: OUTBOUND_CA_STRATEGY_SCHEMA,
+  errors: STRING_LIST_SCHEMA,
+}, ['mode', 'allowInsecureLocalhost', 'customCaEntryCount', 'effectiveCaStrategy', 'errors'], { additionalProperties: true });
+
+export const PROVIDER_ACCOUNT_SNAPSHOT_SCHEMA = objectSchema({
+  capturedAt: NUMBER_SCHEMA,
+  providers: arraySchema(PROVIDER_ACCOUNT_RECORD_SCHEMA),
+  configuredCount: NUMBER_SCHEMA,
+  issueCount: NUMBER_SCHEMA,
+}, ['capturedAt', 'providers', 'configuredCount', 'issueCount']);
+
+export const HEALTH_SNAPSHOT_SCHEMA = objectSchema({
+  overall: NETWORK_HEALTH_SCHEMA,
+  degradedDomains: STRING_LIST_SCHEMA,
+  providerProblems: STRING_LIST_SCHEMA,
+  mcpProblems: objectSchema({
+    degraded: STRING_LIST_SCHEMA,
+    quarantined: STRING_LIST_SCHEMA,
+  }, ['degraded', 'quarantined']),
+  integrationProblems: STRING_LIST_SCHEMA,
+  network: objectSchema({
+    controlPlane: INBOUND_TLS_SNAPSHOT_SCHEMA,
+    httpListener: INBOUND_TLS_SNAPSHOT_SCHEMA,
+    outbound: OUTBOUND_TLS_SNAPSHOT_SCHEMA,
+  }, ['controlPlane', 'httpListener', 'outbound']),
+}, ['overall', 'degradedDomains', 'providerProblems', 'mcpProblems', 'integrationProblems'], { additionalProperties: true });
+
+export const INTELLIGENCE_SNAPSHOT_SCHEMA = objectSchema({
+  diagnosticsStatus: STRING_SCHEMA,
+  symbolSearchStatus: STRING_SCHEMA,
+  completionsStatus: STRING_SCHEMA,
+  hoverStatus: STRING_SCHEMA,
+  errorCount: NUMBER_SCHEMA,
+  warningCount: NUMBER_SCHEMA,
+  totalRequests: NUMBER_SCHEMA,
+  avgLatencyMs: NUMBER_SCHEMA,
+}, ['diagnosticsStatus', 'symbolSearchStatus', 'completionsStatus', 'hoverStatus', 'errorCount', 'warningCount', 'totalRequests', 'avgLatencyMs']);
+
+const MEMORY_EMBEDDING_PROVIDER_STATUS_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  label: STRING_SCHEMA,
+  state: MEMORY_EMBEDDING_STATE_SCHEMA,
+  dimensions: NUMBER_SCHEMA,
+  configured: BOOLEAN_SCHEMA,
+  deterministic: BOOLEAN_SCHEMA,
+  detail: STRING_SCHEMA,
+  metadata: METADATA_SCHEMA,
+}, ['id', 'label', 'state', 'dimensions', 'configured', 'metadata'], { additionalProperties: true });
+
+const MEMORY_EMBEDDING_DOCTOR_REPORT_SCHEMA = objectSchema({
+  activeProviderId: STRING_SCHEMA,
+  providers: arraySchema(MEMORY_EMBEDDING_PROVIDER_STATUS_SCHEMA),
+  asyncProviders: STRING_LIST_SCHEMA,
+  syncProviders: STRING_LIST_SCHEMA,
+  warnings: STRING_LIST_SCHEMA,
+}, ['activeProviderId', 'providers', 'asyncProviders', 'syncProviders', 'warnings']);
+
+export const MEMORY_VECTOR_STATS_SCHEMA = objectSchema({
+  backend: enumSchema(['sqlite-vec']),
+  enabled: BOOLEAN_SCHEMA,
+  available: BOOLEAN_SCHEMA,
+  path: STRING_SCHEMA,
+  dimensions: NUMBER_SCHEMA,
+  indexedRecords: NUMBER_SCHEMA,
+  embeddingProviderId: STRING_SCHEMA,
+  embeddingProviderLabel: STRING_SCHEMA,
+  error: STRING_SCHEMA,
+  platformLimitReason: STRING_SCHEMA,
+}, ['backend', 'enabled', 'available', 'path', 'dimensions', 'indexedRecords', 'embeddingProviderId', 'embeddingProviderLabel'], { additionalProperties: true });
+
+export const MEMORY_DOCTOR_REPORT_SCHEMA = objectSchema({
+  vector: MEMORY_VECTOR_STATS_SCHEMA,
+  embeddings: MEMORY_EMBEDDING_DOCTOR_REPORT_SCHEMA,
+  checkedAt: NUMBER_SCHEMA,
+}, ['vector', 'embeddings', 'checkedAt']);
+
+// ── Memory record wire schemas (daemon-owned single-writer store) ──────────────
+export const MEMORY_SCOPE_SCHEMA = enumSchema(['session', 'project', 'team']);
+export const MEMORY_CLASS_SCHEMA = enumSchema([
+  'decision', 'constraint', 'incident', 'pattern', 'fact', 'risk', 'runbook', 'architecture', 'ownership',
+]);
+export const MEMORY_REVIEW_STATE_SCHEMA = enumSchema(['fresh', 'reviewed', 'stale', 'contradicted']);
+export const MEMORY_PROVENANCE_KIND_SCHEMA = enumSchema(['session', 'turn', 'task', 'event', 'file']);
+
+export const MEMORY_PROVENANCE_LINK_SCHEMA = objectSchema({
+  kind: MEMORY_PROVENANCE_KIND_SCHEMA,
+  ref: STRING_SCHEMA,
+  label: STRING_SCHEMA,
+}, ['kind', 'ref']);
+
+export const MEMORY_RECORD_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  scope: MEMORY_SCOPE_SCHEMA,
+  cls: MEMORY_CLASS_SCHEMA,
+  summary: STRING_SCHEMA,
+  detail: STRING_SCHEMA,
+  tags: STRING_LIST_SCHEMA,
+  provenance: arraySchema(MEMORY_PROVENANCE_LINK_SCHEMA),
+  reviewState: MEMORY_REVIEW_STATE_SCHEMA,
+  confidence: NUMBER_SCHEMA,
+  reviewedAt: NUMBER_SCHEMA,
+  reviewedBy: STRING_SCHEMA,
+  staleReason: STRING_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+  updatedAt: NUMBER_SCHEMA,
+}, ['id', 'scope', 'cls', 'summary', 'tags', 'provenance', 'reviewState', 'confidence', 'createdAt', 'updatedAt'], { additionalProperties: true });
+
+export const MEMORY_RECORD_SEARCH_OUTPUT_SCHEMA = objectSchema({
+  records: arraySchema(MEMORY_RECORD_SCHEMA),
+  mode: enumSchema(['literal', 'semantic']),
+  requestedSemantic: BOOLEAN_SCHEMA,
+  indexUnavailableReason: nullableSchema(STRING_SCHEMA),
+  caveat: nullableSchema(STRING_SCHEMA),
+  recallFiltered: BOOLEAN_SCHEMA,
+  excludedFlaggedCount: NUMBER_SCHEMA,
+  excludedBelowFloorCount: NUMBER_SCHEMA,
+  totalBeforeRecallFilter: NUMBER_SCHEMA,
+  recallFloor: NUMBER_SCHEMA,
+}, ['records', 'mode', 'requestedSemantic', 'indexUnavailableReason', 'caveat', 'recallFiltered', 'excludedFlaggedCount', 'excludedBelowFloorCount', 'totalBeforeRecallFilter', 'recallFloor']);
+
+export const MEMORY_RECORD_DELETE_OUTPUT_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  deleted: BOOLEAN_SCHEMA,
+}, ['id', 'deleted']);
+
+// ── Full-detach catalog wire schemas (1.2.0) ──────────────────────────────────
+
+export const MEMORY_LINK_SCHEMA = objectSchema({
+  fromId: STRING_SCHEMA,
+  toId: STRING_SCHEMA,
+  relation: STRING_SCHEMA,
+  createdAt: NUMBER_SCHEMA,
+}, ['fromId', 'toId', 'relation', 'createdAt']);
+
+// distance may be Infinity for a no-vector-match fallback; JSON serializes that to
+// null, so the wire field is nullable, honest about the "not ranked by vector" case.
+export const MEMORY_SEMANTIC_RESULT_SCHEMA = objectSchema({
+  record: MEMORY_RECORD_SCHEMA,
+  distance: nullableSchema(NUMBER_SCHEMA),
+  similarity: NUMBER_SCHEMA,
+  score: NUMBER_SCHEMA,
+}, ['record', 'similarity', 'score']);
+
+export const MEMORY_BUNDLE_SCHEMA = objectSchema({
+  schemaVersion: enumSchema(['v1']),
+  exportedAt: NUMBER_SCHEMA,
+  scope: enumSchema(['session', 'project', 'team', 'all']),
+  recordCount: NUMBER_SCHEMA,
+  linkCount: NUMBER_SCHEMA,
+  records: arraySchema(MEMORY_RECORD_SCHEMA),
+  links: arraySchema(MEMORY_LINK_SCHEMA),
+}, ['schemaVersion', 'exportedAt', 'scope', 'recordCount', 'linkCount', 'records', 'links']);
+
+export const MEMORY_IMPORT_RESULT_SCHEMA = objectSchema({
+  importedRecords: NUMBER_SCHEMA,
+  skippedRecords: NUMBER_SCHEMA,
+  importedLinks: NUMBER_SCHEMA,
+}, ['importedRecords', 'skippedRecords', 'importedLinks']);
+
+export const MEMORY_RECORD_LIST_OUTPUT_SCHEMA = objectSchema({
+  records: arraySchema(MEMORY_RECORD_SCHEMA),
+}, ['records']);
+
+export const MEMORY_RECORD_SEMANTIC_OUTPUT_SCHEMA = objectSchema({
+  results: arraySchema(MEMORY_SEMANTIC_RESULT_SCHEMA),
+}, ['results']);
+
+export const MEMORY_RECORD_LINKS_OUTPUT_SCHEMA = objectSchema({
+  links: arraySchema(MEMORY_LINK_SCHEMA),
+}, ['links']);
+// Memory projection wire schemas: operator-contract-schemas-memory-projection.ts (split for the line cap).

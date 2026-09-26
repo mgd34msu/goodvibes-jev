@@ -1,0 +1,397 @@
+import type { ToolDefinition, ToolCall } from '../types/tools.js';
+import type { ProviderCapability } from './capabilities.js';
+import type { SecretsManager } from '../config/secrets.js';
+import type { ServiceRegistry } from '../config/service-registry.js';
+import type { SubscriptionManager } from '../config/subscriptions.js';
+import { REASONING_EFFORT_BUDGET_TOKENS, type ReasoningEffortSpec } from './reasoning-effort.js';
+
+/**
+ * Shared budget token map for the four legacy reasoning effort levels.
+ * Values come from the full ladder in `reasoning-effort.ts` so the two tables
+ * cannot drift; prefer `budgetTokensForLevel` for new code, which respects the
+ * per-model minimum and maximum the catalog publishes.
+ */
+export const REASONING_BUDGET_MAP: Record<string, number> = {
+  instant: REASONING_EFFORT_BUDGET_TOKENS['instant']!,
+  low: REASONING_EFFORT_BUDGET_TOKENS['low']!,
+  medium: REASONING_EFFORT_BUDGET_TOKENS['medium']!,
+  high: REASONING_EFFORT_BUDGET_TOKENS['high']!,
+};
+
+/** Runtime metadata emitted by providers for diagnostics and policy surfaces. */
+export type ProviderDeclaredAuthRoute =
+  | 'api-key'
+  | 'secret-ref'
+  | 'service-oauth'
+  | 'subscription-oauth'
+  | 'anonymous'
+  | 'none';
+
+export interface ProviderAuthRouteDescriptor {
+  readonly route: ProviderDeclaredAuthRoute;
+  readonly label: string;
+  readonly configured: boolean;
+  readonly usable?: boolean | undefined;
+  readonly freshness?: 'healthy' | 'expiring' | 'expired' | 'pending' | 'unconfigured' | undefined;
+  readonly detail?: string | undefined;
+  readonly envVars?: readonly string[] | undefined;
+  readonly secretKeys?: readonly string[] | undefined;
+  readonly serviceNames?: readonly string[] | undefined;
+  readonly providerId?: string | undefined;
+  readonly repairHints?: readonly string[] | undefined;
+}
+
+export interface ProviderUsageCostMetadata {
+  readonly source: 'catalog' | 'provider' | 'none';
+  readonly currency?: string | undefined;
+  readonly inputPerMillionTokens?: number | undefined;
+  readonly outputPerMillionTokens?: number | undefined;
+  readonly detail?: string | undefined;
+}
+
+export interface ProviderRuntimeMetadata {
+  readonly auth?: {
+    readonly mode: 'api-key' | 'oauth' | 'anonymous' | 'none';
+    readonly configured: boolean;
+    readonly detail?: string | undefined;
+    readonly envVars?: readonly string[] | undefined;
+    readonly routes?: readonly ProviderAuthRouteDescriptor[] | undefined;
+  };
+  readonly models?: {
+    readonly defaultModel?: string | undefined;
+    readonly models: readonly string[];
+    readonly embeddingModel?: string | undefined;
+    readonly embeddingDimensions?: number | undefined;
+    readonly aliases?: readonly string[] | undefined;
+    readonly suppressedModelRegistryKeys?: readonly string[] | undefined;
+  };
+  readonly usage?: {
+    readonly streaming: boolean;
+    readonly toolCalling: boolean;
+    readonly parallelTools: boolean;
+    readonly promptCaching?: boolean | undefined;
+    readonly batch?: ProviderBatchRuntimeMetadata | undefined;
+    readonly cost?: ProviderUsageCostMetadata | undefined;
+    readonly notes?: readonly string[] | undefined;
+  };
+  readonly policy?: {
+    readonly local?: boolean | undefined;
+    readonly dataRetention?: string | undefined;
+    readonly streamProtocol?: string | undefined;
+    readonly reasoningMode?: string | undefined;
+    /**
+     * Reasoning levels this provider's representative model resolved to, for
+     * diagnostics only. Which levels apply is per model, not per provider, so
+     * the request path resolves them again per request; a provider that sends
+     * no reasoning field at all omits this. Never read it to decide what to
+     * send, see `resolveEffortForModel`.
+     */
+    readonly supportedReasoningEfforts?: readonly string[] | undefined;
+    readonly cacheStrategy?: string | undefined;
+    readonly notes?: readonly string[] | undefined;
+  };
+  readonly notes?: readonly string[] | undefined;
+}
+
+export interface ProviderRuntimeMetadataDeps {
+  readonly secretsManager: Pick<SecretsManager, 'listDetailed' | 'get'>;
+  readonly serviceRegistry: Pick<ServiceRegistry, 'getAll' | 'inspect'>;
+  readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending'>;
+}
+
+/** Shared embedding request shape used by providers and provider-backed adapters. */
+export interface ProviderEmbeddingRequest {
+  readonly text: string;
+  readonly dimensions: number;
+  readonly usage: 'record' | 'query' | 'doctor';
+  readonly model?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+/** Shared embedding response shape used by providers and provider-backed adapters. */
+export interface ProviderEmbeddingResult {
+  readonly vector: Float32Array | readonly number[];
+  readonly dimensions: number;
+  readonly modelId?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface ProviderBatchRuntimeMetadata {
+  readonly supported: boolean;
+  readonly discount?: string | undefined;
+  readonly completionWindow?: string | undefined;
+  readonly endpoints?: readonly string[] | undefined;
+  readonly maxRequestsPerProviderBatch?: number | undefined;
+  readonly maxInputBytes?: number | undefined;
+  readonly notes?: readonly string[] | undefined;
+}
+
+export type ProviderBatchStatus =
+  | 'queued'
+  | 'submitted'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'expired';
+
+export interface ProviderBatchChatRequest {
+  readonly customId: string;
+  readonly params: Omit<ChatRequest, 'signal' | 'onDelta' | 'onRetry'>;
+}
+
+export interface ProviderBatchCreateInput {
+  readonly requests: readonly ProviderBatchChatRequest[];
+  readonly metadata?: Record<string, string> | undefined;
+  readonly completionWindow?: '24h' | undefined;
+}
+
+export interface ProviderBatchCreateResult {
+  readonly providerBatchId: string;
+  readonly status: ProviderBatchStatus;
+  readonly raw?: unknown | undefined;
+}
+
+export interface ProviderBatchPollResult extends ProviderBatchCreateResult {
+  readonly resultAvailable: boolean;
+}
+
+export interface ProviderBatchResult {
+  readonly customId: string;
+  readonly status: 'succeeded' | 'failed' | 'cancelled' | 'expired';
+  readonly response?: ChatResponse | undefined;
+  readonly error?: {
+    readonly message: string;
+    readonly code?: string | undefined;
+    readonly raw?: unknown | undefined;
+  };
+  readonly raw?: unknown | undefined;
+}
+
+export interface ProviderBatchAdapter {
+  readonly kind: 'provider-batch';
+  readonly endpoints: readonly string[];
+  createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult>;
+  retrieveBatch(providerBatchId: string): Promise<ProviderBatchPollResult>;
+  cancelBatch?(providerBatchId: string): Promise<ProviderBatchPollResult>;
+  getResults(providerBatchId: string): Promise<readonly ProviderBatchResult[]>;
+}
+
+/**
+ * Declares where a provider's model list comes from, so the registration-time
+ * contract check (`model-source-contract.ts`) can tell a genuinely-empty,
+ * undated model list (the stale/dead-array anti-pattern) apart from a
+ * provider that is legitimately populated some other way:
+ *
+ * - `live-discovery` , the provider fetches its own model list from a live
+ *   API (its `models` array may start empty and populate asynchronously;
+ *   see `live-model-discovery.ts` for the shared fetch/cache/diff helpers).
+ * - `dated-static`   , the provider ships a complete, hand-maintained model
+ *   list as of a specific date (`asOf`), because the backend has no
+ *   model-listing API. Must be paired with a non-empty `models` array.
+ * - `catalog-backed` , the provider's own `models` array is intentionally
+ *   secondary; its real selectable models come from the shared, independently
+ *   refreshed model catalog (e.g. the synthetic failover provider).
+ */
+export type ProviderModelSource =
+  | { readonly kind: 'live-discovery' }
+  | { readonly kind: 'dated-static'; readonly asOf: string }
+  | { readonly kind: 'catalog-backed' };
+
+/** Contract all LLM providers must implement. */
+export interface LLMProvider {
+  readonly name: string;
+  readonly models: string[];
+  readonly batch?: ProviderBatchAdapter | undefined;
+  /**
+   * Optional self-declared capability overrides for this provider instance.
+   * When present, these take precedence over the built-in `PROVIDER_DEFAULTS`
+   * table in `capabilities.ts` but are overridden by per-model `MODEL_OVERRIDES`.
+   *
+   * @remarks Useful for custom / dynamically-discovered providers that know
+   * their own capabilities and want to participate in explainable routing.
+   */
+  readonly capabilities?: Partial<ProviderCapability> | undefined;
+  /**
+   * Declares this provider's model source for the registration-time contract
+   * check (`model-source-contract.ts`). Optional at the type level only for
+   * providers that go through a registration path the contract doesn't gate
+   * (e.g. `ProviderRegistry.registerRuntimeProvider` with an explicit
+   * non-empty `models` list, or `registerDiscoveredProviders`, whose local
+   * network-scanned providers never pass through the check at all). Every
+   * provider registered via `ProviderRegistry.register()` MUST declare one
+   * of the three kinds above regardless of whether its `models` array is
+   * currently empty or populated, a non-empty array with no declared
+   * source is rejected exactly like an empty one, or registration throws.
+   */
+  readonly modelSource?: ProviderModelSource | undefined;
+  /**
+   * How this provider's credentials are obtained, the registration-time
+   * contract behind the one request-time credential resolver (env -> secrets
+   * store -> subscription accounts):
+   *   - 'resolver'    , API key flows from the shared resolver chain; a key
+   *                      written to the secrets store re-registers the
+   *                      provider live (no restart anywhere).
+   *   - 'anonymous'   , local/keyless endpoints (ollama, lm-studio, ...).
+   *   - 'subscription', OAuth subscription tokens resolved per request.
+   *   - 'oauth'       , service-OAuth flows outside the subscription store.
+   * ProviderRegistry.register() REFUSES a provider that declares none (same
+   * fail-closed mechanism as the model-source contract): an auth path the
+   * resolver cannot see would let status say green while chat 401s.
+   */
+  readonly credentialAuthority?: 'resolver' | 'anonymous' | 'subscription' | 'oauth' | undefined;
+  chat(params: ChatRequest): Promise<ChatResponse>;
+  embed?(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult>;
+  describeRuntime?(deps: ProviderRuntimeMetadataDeps): ProviderRuntimeMetadata | Promise<ProviderRuntimeMetadata>;
+  /**
+   * Returns true if this provider has a valid API key or other credentials
+   * configured. When false, any chat() call will fail with an auth error.
+   *
+   * Optional, providers that don't implement this are assumed configured.
+   */
+  isConfigured?(): boolean;
+  /**
+   * The provider's registration-time auth state, exposed synchronously so
+   * keyless-readiness derivations (onboarding copy, default-model pairing
+   * checks, see keyless-default.ts) read the SAME state that decides
+   * {@link isConfigured} instead of restating it. Optional, providers that
+   * don't implement it are treated per {@link isConfigured} alone.
+   */
+  describeAuthState?(): ProviderAuthState;
+}
+
+/**
+ * A provider's registration-time auth state, the single source keyless-UX
+ * derivations read (see keyless-default.ts). `anonymousReady` means the
+ * provider genuinely works RIGHT NOW without a stored credential; a "no API
+ * key needed" promise may only ever be generated from that field.
+ */
+export interface ProviderAuthState {
+  /** An explicit credential (API key / auth token) is present. */
+  readonly configured: boolean;
+  /** The provider may in principle operate without a stored credential. */
+  readonly allowAnonymous: boolean;
+  /** The provider genuinely works right now without a stored credential. */
+  readonly anonymousReady: boolean;
+  /** Env vars the provider accepts a key from (for honest ask-for-key copy). */
+  readonly authEnvVars: readonly string[];
+}
+
+/** Incremental tool call data received during streaming. */
+export interface PartialToolCall {
+  index: number;
+  id?: string | undefined;
+  name?: string | undefined;
+  arguments?: string | undefined;  // Partial JSON string
+}
+
+/** A single streaming delta from the provider. */
+export interface StreamDelta {
+  content?: string;           // Text content delta
+  toolCalls?: PartialToolCall[];  // Incremental tool call data
+  reasoning?: string;         // Reasoning/thinking delta
+}
+
+/** Content part for multimodal messages. */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mediaType: string };
+
+export interface ChatRequest {
+  messages: ProviderMessage[];
+  tools?: ToolDefinition[] | undefined;
+  model: string;
+  maxTokens?: number | undefined;
+  signal?: AbortSignal | undefined;
+  systemPrompt?: string | undefined;
+  /**
+   * Requested reasoning depth. Which levels a model really accepts is
+   * per-model, not a fixed union, see `reasoning-effort.ts`. Adapters resolve
+   * this against the model's own options before it reaches the wire, so a
+   * level the model does not offer snaps down rather than earning a 400.
+   */
+  reasoningEffort?: string | undefined;
+  /**
+   * The resolved options for this exact model, when the caller already has
+   * them (it holds the `ModelDefinition`). Adapters fall back to resolving
+   * from the model id alone when this is absent, so passing it is an accuracy
+   * improvement, live catalog data instead of the curated family table,
+   * rather than a requirement.
+   */
+  reasoningEffortSpec?: ReasoningEffortSpec | undefined;
+  /** Mercury-2 specific: whether to include a reasoning summary in the response. */
+  reasoningSummary?: boolean | undefined;
+  /** Called per-chunk during streaming when streaming is enabled. */
+  onDelta?: ((delta: StreamDelta) => void) | undefined;
+  /**
+   * Called before each same-provider retry of a retryable transport error
+   * (e.g. a dropped connection mid-stream). Informational only, the
+   * provider's own retry loop (`withRetry`) resubmits the request itself;
+   * this callback exists so callers can surface retry progress (bus events,
+   * UI) without re-triggering the resubmission themselves.
+   */
+  onRetry?: ((attempt: number, maxAttempts: number, delayMs: number, error: Error) => void) | undefined;
+}
+
+/**
+ * Normalized stop-reason vocabulary for `ChatResponse`.
+ * Every provider's raw finish reason maps to exactly one canonical value.
+ */
+export type ChatStopReason =
+  | 'completed'        // Natural end of generation (was 'end')
+  | 'max_tokens'       // Output token limit reached
+  | 'tool_call'        // Model requested tool invocation (was 'tool_use')
+  | 'stop_sequence'    // Matched an explicit stop sequence
+  | 'content_filter'   // Provider content filter triggered
+  | 'context_overflow' // Provider reports the model's context window filled up
+  | 'error'            // Generation aborted due to error
+  | 'unknown';         // Default for unmapped provider values
+
+export interface ChatResponse {
+  content: string;
+  toolCalls: ToolCall[];
+  usage: {
+    inputTokens: number;       // Billed input tokens (excludes cache tokens on Anthropic)
+    outputTokens: number;
+    cacheReadTokens?: number;  // Anthropic: tokens read from prompt cache
+    cacheWriteTokens?: number; // Anthropic: tokens written to prompt cache
+  };
+  /** Normalized stop reason, use this for cross-provider comparisons. */
+  stopReason: ChatStopReason;
+  /**
+   * Raw stop reason string emitted by the underlying provider, preserved for
+   * consumers that need provider-specific detail (e.g. analytics, debugging).
+   */
+  providerStopReason?: string | undefined;
+  /** Mercury-2 specific: condensed chain-of-thought, if requested. */
+  reasoningSummary?: string | undefined;
+  /**
+   * Cache metrics for this response.
+   * @remarks Currently only populated by the Anthropic provider. Other providers return `undefined`.
+   */
+  cacheMetrics?: {
+    strategy: string;           // e.g. 'explicit-4bp', 'automatic', 'implicit', 'none'
+    breakpointsPlaced: number;
+    hitRate?: number | undefined;  // Computed from this response's usage
+  };
+  /**
+   * Rate-limit / quota snapshot parsed from THIS response's headers (populated on
+   * every response, not just 429s), when the provider carried recognized headers.
+   * Undefined when no rate-limit header was present. Fields are only set when a
+   * header genuinely carried them, never a fabricated "full quota". See
+   * rate-limit-headers.ts. Downstream, the runtime records this into the
+   * QuotaWindowTracker so consumers can render remaining quota before a limit.
+   */
+  rateLimit?: {
+    limit?: number | undefined;
+    remaining?: number | undefined;
+    resetAt?: number | undefined;
+    retryAfterMs?: number | undefined;
+  } | undefined;
+}
+
+export type ProviderMessage =
+  | { role: 'user'; content: string | ContentPart[] }
+  | { role: 'assistant'; content: string; toolCalls?: ToolCall[] }
+  | { role: 'tool'; callId: string; content: string; name?: string | undefined };

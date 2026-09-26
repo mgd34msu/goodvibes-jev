@@ -1,0 +1,533 @@
+import type { SimpleGit } from 'simple-git';
+import { createSimpleGit } from './optional-simple-git.js';
+import { parseUnifiedDiff, type StructuredDiff } from './structured-diff.js';
+import type { HookDispatcher } from '../hooks/dispatcher.js';
+import type { HookEvent } from '../hooks/types.js';
+import { logger } from '../utils/logger.js';
+import { summarizeError } from '../utils/error-display.js';
+
+function isMissingGitIdentityError(error: unknown): boolean {
+  const message = summarizeError(error).toLowerCase();
+  return (
+    message.includes('author identity unknown')
+    || message.includes('please tell me who you are')
+    || message.includes('unable to auto-detect email address')
+  );
+}
+
+/**
+ * Extract bare repo-relative conflict paths from a failed merge's message.
+ *
+ * The documented contract is PATHS, a conflict-resolution session seeds from
+ * this list, so a `path:reason` entry is a product defect. Two real raw shapes
+ * exist depending on the git/simple-git output pairing:
+ *
+ *  1. git's own informational lines, forwarded in the error message:
+ *     `CONFLICT (content): Merge conflict in <path>`
+ *  2. simple-git's parsed merge-summary rendering (a merge rejection built
+ *     with no explicit message stringifies its summary):
+ *     `CONFLICTS: <path>:<reason>[, <path>:<reason>…]`, each entry is the
+ *     parsed conflict's `file:reason` pair (e.g. `shared.txt:content`), so
+ *     the `:<reason>` suffix must be stripped to recover the bare path.
+ *
+ * This is the FALLBACK route only, the merge handler prefers the structured
+ * conflict entries the git library attaches to its rejection. Exported so
+ * regression tests can pin both raw shapes as fixtures with no dependence on
+ * the host's git version.
+ */
+export function conflictPathsFromMergeOutput(message: string): string[] {
+  const paths: string[] = [];
+  for (const line of message.split('\n')) {
+    const summaryForm = /^\s*CONFLICTS:\s*(.+)$/.exec(line);
+    if (summaryForm) {
+      for (const entry of summaryForm[1]!.split(', ')) {
+        // Strip the `:<reason>` suffix (content, add/add, modify/delete,
+        // rename/rename, …): reasons are lowercase words, optionally
+        // slash- or space-joined. Everything before it is the path.
+        const path = entry.replace(/:[a-z][a-z /-]*$/, '').trim();
+        if (path) paths.push(path);
+      }
+      continue;
+    }
+    if (!line.includes('CONFLICT')) continue;
+    // `CONFLICT (content): Merge conflict in <path>` -> `<path>`, the prose
+    // ("Merge conflict in ...") used to leak through and downstream consumers
+    // saw it as the "file".
+    const path = line.replace(/^.*CONFLICT.*?:\s*/, '').replace(/^Merge conflict in\s+/, '').trim();
+    if (path) paths.push(path);
+  }
+  return paths;
+}
+
+/**
+ * GitService, Wraps simple-git with hook emission on all mutating operations.
+ *
+ * Read-only operations (status, branch, log, diff, blame) do NOT emit hooks.
+ * Mutating operations (commit, push, pull, merge, checkout, stash, worktreeAdd,
+ * worktreeRemove) emit Pre:git:<op>, Post:git:<op>, and Fail:git:<op> events.
+ */
+export class GitService {
+  /**
+   * The `simple-git` instance, built on first use rather than in the
+   * constructor. `simple-git` is an optionalDependency, and a static import
+   * plus a constructor-time `simpleGit(...)` put the specifier on the module
+   * graph of everything that reaches git integration, the daemon included,
+   * so an absent optional package removed the process instead of the feature
+   * (see utils/optional-dependency.ts). The promise is memoised, so the
+   * instance is still built exactly once per service, and every method here
+   * was already async, so no public signature changed.
+   */
+  private gitClient: Promise<SimpleGit> | undefined;
+  private hooks: HookDispatcher | null;
+  private cwd: string;
+
+  constructor(cwd: string, hooks?: HookDispatcher) {
+    this.cwd = cwd;
+    this.hooks = hooks ?? null;
+  }
+
+  /**
+   * This service's git client. When `simple-git` is absent the await throws
+   * an error naming it, which reaches the caller through the same path any
+   * other git failure takes.
+   */
+  private git(): Promise<SimpleGit> {
+    this.gitClient ??= createSimpleGit({ baseDir: this.cwd });
+    return this.gitClient;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hook emission helpers
+  // ---------------------------------------------------------------------------
+
+  private makeEvent(
+    phase: 'Pre' | 'Post' | 'Fail',
+    specific: string,
+    payload: Record<string, unknown>,
+  ): HookEvent {
+    return {
+      path: `${phase}:git:${specific}` as HookEvent['path'],
+      phase,
+      category: 'git',
+      specific,
+      sessionId: '',
+      timestamp: Date.now(),
+      payload,
+    };
+  }
+
+  private async firePre(
+    specific: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.hooks) return;
+    const result = await this.hooks.fire(this.makeEvent('Pre', specific, payload));
+    if (result.decision === 'deny') {
+      throw new Error(`Git ${specific} blocked by hook: ${result.reason ?? 'no reason given'}`);
+    }
+  }
+
+  private async firePost(
+    specific: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.hooks) return;
+    await this.hooks.fire(this.makeEvent('Post', specific, payload));
+  }
+
+  private async fireFail(
+    specific: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.hooks) return;
+    await this.hooks.fire(this.makeEvent('Fail', specific, payload));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Status & info (read-only, no hooks)
+  // ---------------------------------------------------------------------------
+
+  async status(): Promise<Awaited<ReturnType<SimpleGit['status']>>> {
+    return (await this.git()).status();
+  }
+
+  async branch(): Promise<{ current: string; all: string[]; detached: boolean }> {
+    const result = await (await this.git()).branch();
+    return {
+      current: result.current,
+      all: result.all,
+      detached: result.detached,
+    };
+  }
+
+  async log(
+    maxCount = 20,
+  ): Promise<Array<{ hash: string; date: string; message: string; author: string }>> {
+    const result = await (await this.git()).log({ maxCount });
+    return result.all.map((entry: Awaited<ReturnType<SimpleGit['log']>>['all'][number]) => ({
+      hash: entry.hash,
+      date: entry.date,
+      message: entry.message,
+      author: entry.author_name,
+    }));
+  }
+
+  async diff(ref?: string): Promise<string> {
+    if (ref) {
+      return (await this.git()).diff([ref]);
+    }
+    return (await this.git()).diff();
+  }
+
+  /**
+   * The FULL working-tree diff (optionally vs a ref), parsed into structured
+   * per-file/per-hunk form with no size cap, the diff-view serving path that
+   * replaces consumer-side raw-text truncation. Read-only, no hooks emitted.
+   */
+  async diffStructured(ref?: string): Promise<StructuredDiff> {
+    return parseUnifiedDiff(await this.diff(ref));
+  }
+
+  /** diffBetween, structured and uncapped (see diffStructured). Read-only. */
+  async diffBetweenStructured(before: string, after: string, files?: string[]): Promise<StructuredDiff> {
+    return parseUnifiedDiff(await this.diffBetween(before, after, files));
+  }
+
+  /**
+   * Get the diff for a single file, optionally from the staging area.
+   * Read-only, no hooks emitted.
+   */
+  async diffFile(filePath: string, staged: boolean): Promise<string> {
+    const args = staged
+      ? ['diff', '--cached', '--', filePath]
+      : ['diff', '--', filePath];
+    return (await this.git()).raw(args);
+  }
+
+  /**
+   * Get the full diff between two refs, optionally scoped to specific files.
+   * Read-only, no hooks emitted.
+   */
+  async diffBetween(before: string, after: string, files?: string[]): Promise<string> {
+    const args = [before, after];
+    if (files && files.length > 0) {
+      args.push('--', ...files);
+    }
+    return (await this.git()).diff(args);
+  }
+
+  /**
+   * Get the --stat summary between two refs.
+   * Read-only, no hooks emitted.
+   */
+  async diffStat(before: string, after: string): Promise<string> {
+    return (await this.git()).raw(['diff', '--stat', before, after]);
+  }
+
+  async blame(
+    filePath: string,
+  ): Promise<Array<{ hash: string; author: string; line: number; content: string }>> {
+    const raw = await (await this.git()).raw(['blame', '--porcelain', filePath]);
+    const lines = raw.split('\n');
+    const result: Array<{ hash: string; author: string; line: number; content: string }> = [];
+
+    let currentHash = '';
+    let currentAuthor = '';
+    let currentLine = 0;
+
+    for (const line of lines) {
+      // Hash line: 40-char hex + original_line + final_line + num_lines
+      if (/^[0-9a-f]{40}\s/.test(line)) {
+        const parts = line.split(' ');
+        currentHash = parts[0]!;
+        currentLine = parseInt(parts[2]! ?? parts[1]!, 10);
+      } else if (line.startsWith('author ')) {
+        currentAuthor = line.slice(7);
+      } else if (line.startsWith('\t')) {
+        result.push({
+          hash: currentHash,
+          author: currentAuthor,
+          line: currentLine,
+          content: line.slice(1),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Staging
+  // ---------------------------------------------------------------------------
+
+  async add(files: string | string[]): Promise<void> {
+    await (await this.git()).add(files);
+  }
+
+  async addAll(): Promise<void> {
+    await (await this.git()).raw(['add', '--all']);
+  }
+
+  async reset(files?: string | string[]): Promise<void> {
+    if (files) {
+      await (await this.git()).reset(['HEAD', '--', ...(Array.isArray(files) ? files : [files])]);
+    } else {
+      await (await this.git()).reset(['HEAD']);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Commits
+  // ---------------------------------------------------------------------------
+
+  async commit(
+    message: string,
+    options?: {
+      amend?: boolean;
+      noVerify?: boolean;
+      fallbackIdentity?: { name: string; email: string } | undefined;
+    },
+  ): Promise<{ hash: string; summary: string }> {
+    await this.firePre('commit', { message, options });
+    try {
+      const flags: string[] = [];
+      if (options?.amend) flags.push('--amend');
+      if (options?.noVerify) flags.push('--no-verify');
+
+      const result = await (await this.git()).commit(message, undefined, flags);
+      const output = { hash: result.commit, summary: JSON.stringify(result.summary) };
+      await this.firePost('commit', { message, ...output });
+      return output;
+    } catch (err) {
+      if (options?.fallbackIdentity && isMissingGitIdentityError(err)) {
+        try {
+          const flags: string[] = [];
+          if (options.amend) flags.push('--amend');
+          if (options.noVerify) flags.push('--no-verify');
+          const raw = await (await this.git()).raw([
+            '-c',
+            `user.name=${options.fallbackIdentity.name}`,
+            '-c',
+            `user.email=${options.fallbackIdentity.email}`,
+            'commit',
+            '-m',
+            message,
+            ...flags,
+          ]);
+          const hash = (await (await this.git()).raw(['rev-parse', 'HEAD'])).trim();
+          const output = { hash, summary: raw.trim() };
+          await this.firePost('commit', { message, ...output });
+          return output;
+        } catch (fallbackErr) {
+          await this.fireFail('commit', { message, error: summarizeError(fallbackErr) });
+          throw fallbackErr;
+        }
+      }
+      await this.fireFail('commit', { message, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Branches
+  // ---------------------------------------------------------------------------
+
+  async checkout(
+    branch: string,
+    options?: { create?: boolean },
+  ): Promise<void> {
+    await this.firePre('checkout', { branch, options });
+    try {
+      if (options?.create) {
+        await (await this.git()).checkoutLocalBranch(branch);
+      } else {
+        await (await this.git()).checkout(branch);
+      }
+      await this.firePost('checkout', { branch });
+    } catch (err) {
+      await this.fireFail('checkout', { branch, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  async merge(
+    branch: string,
+  ): Promise<{ success: boolean; conflicts?: string[] }> {
+    await this.firePre('merge', { branch });
+    try {
+      await (await this.git()).merge([branch]);
+      await this.firePost('merge', { branch, success: true });
+      return { success: true };
+    } catch (err) {
+      // simple-git throws on merge conflicts, only handle actual conflicts.
+      // Prefer the machine-readable conflict entries simple-git parsed from
+      // the merge output (GitResponseError.git.conflicts: {file, reason})
+      // over scraping the message: the message's shape varies with the
+      // git/simple-git pairing (see conflictPathsFromMergeOutput) and is
+      // length-truncated by summarizeError, so it is only the fallback.
+      const structured = (err as { git?: { conflicts?: ReadonlyArray<{ file?: string | null }> } }).git?.conflicts;
+      const structuredFiles = (structured ?? [])
+        .map((entry) => (typeof entry.file === 'string' ? entry.file.trim() : ''))
+        .filter(Boolean);
+      const message = summarizeError(err);
+      if (structuredFiles.length === 0 && !message.includes('CONFLICT')) {
+        await this.fireFail('merge', { branch, error: message });
+        throw err;
+      }
+      const conflicts = structuredFiles.length > 0 ? structuredFiles : conflictPathsFromMergeOutput(message);
+      await this.fireFail('merge', { branch, error: message, conflicts });
+      return { success: false, conflicts };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Remote
+  // ---------------------------------------------------------------------------
+
+  async push(
+    remote = 'origin',
+    branch?: string,
+    options?: { force?: boolean },
+  ): Promise<void> {
+    await this.firePre('push', { remote, branch, options });
+    try {
+      const flags: string[] = [];
+      if (options?.force) flags.push('--force');
+      await (await this.git()).push(remote, branch, flags);
+      await this.firePost('push', { remote, branch });
+    } catch (err) {
+      await this.fireFail('push', { remote, branch, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  async pull(
+    remote = 'origin',
+    branch?: string,
+  ): Promise<void> {
+    await this.firePre('pull', { remote, branch });
+    try {
+      await (await this.git()).pull(remote, branch);
+      await this.firePost('pull', { remote, branch });
+    } catch (err) {
+      await this.fireFail('pull', { remote, branch, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stash
+  // ---------------------------------------------------------------------------
+
+  async stash(
+    action: 'push' | 'pop' | 'list' | 'drop' = 'push',
+    message?: string,
+  ): Promise<string> {
+    const isReadOnly = action === 'list';
+    if (!isReadOnly) await this.firePre('stash', { action, message });
+    try {
+      let result: string;
+      switch (action) {
+        case 'push': {
+          const args = message ? ['push', '-m', message] : ['push'];
+          result = await (await this.git()).stash(args);
+          break;
+        }
+        case 'pop':
+          result = await (await this.git()).stash(['pop']);
+          break;
+        case 'list':
+          result = await (await this.git()).stash(['list']);
+          break;
+        case 'drop':
+          result = await (await this.git()).stash(['drop']);
+          break;
+        default:
+          result = '';
+      }
+      if (!isReadOnly) await this.firePost('stash', { action, result });
+      return result;
+    } catch (err) {
+      if (!isReadOnly) await this.fireFail('stash', { action, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Worktree (for agent isolation)
+  // ---------------------------------------------------------------------------
+
+  async worktreeAdd(path: string, branch: string): Promise<void> {
+    await this.firePre('worktreeAdd', { path, branch });
+    try {
+      await (await this.git()).raw(['worktree', 'add', path, '-b', branch]);
+      await this.firePost('worktreeAdd', { path, branch });
+    } catch (err) {
+      await this.fireFail('worktreeAdd', { path, branch, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  async worktreeRemove(path: string): Promise<void> {
+    await this.firePre('worktreeRemove', { path });
+    try {
+      await (await this.git()).raw(['worktree', 'remove', path]);
+      await this.firePost('worktreeRemove', { path });
+    } catch (err) {
+      await this.fireFail('worktreeRemove', { path, error: summarizeError(err) });
+      throw err;
+    }
+  }
+
+  async worktreeList(): Promise<Array<{ path: string; branch: string; head: string }>> {
+    const raw = await (await this.git()).raw(['worktree', 'list', '--porcelain']);
+    const entries = raw.trim().split('\n\n').filter(Boolean);
+    return entries.map((block: string) => {
+      const lines = block.split('\n');
+      const worktreePath = lines.find((l: string) => l.startsWith('worktree '))?.slice(9) ?? '';
+      const head = lines.find((l: string) => l.startsWith('HEAD '))?.slice(5) ?? '';
+      const branchLine = lines.find((l: string) => l.startsWith('branch '));
+      const branch = branchLine ? branchLine.slice(7).replace(/^refs\/heads\//, '') : '(detached)';
+      return { path: worktreePath, branch, head };
+    });
+  }
+
+  /**
+   * Initialize a new git repository at the given path using Bun.spawnSync.
+   * Returns true on success, false on failure.
+   */
+  static initRepo(cwd: string): { success: boolean; error?: string } {
+    const result = Bun.spawnSync(['git', 'init', cwd]);
+    if (result.exitCode === 0) {
+      return { success: true };
+    }
+    const stderr = result.stderr ? new TextDecoder().decode(result.stderr) : 'unknown error';
+    return { success: false, error: stderr.trim() };
+  }
+
+  /**
+   * Return true if the given directory is inside a git repository.
+   * Uses `git rev-parse --git-dir` which exits 0 only inside a repo.
+   */
+  static isGitRepo(cwd: string): boolean {
+    const result = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--git-dir']);
+    return result.exitCode === 0;
+  }
+
+  static getRepoRoot(cwd: string): string | null {
+    const result = Bun.spawnSync(['git', '-C', cwd, 'rev-parse', '--show-toplevel']);
+    if (result.exitCode !== 0 || !result.stdout) return null;
+    const root = new TextDecoder().decode(result.stdout).trim();
+    return root.length > 0 ? root : null;
+  }
+
+  /** Return the working directory this instance is bound to. */
+  getCwd(): string {
+    return this.cwd;
+  }
+
+  /** Release resources tied to this git client instance. */
+  dispose(): void {
+    logger.debug('GitService disposed', { cwd: this.cwd });
+  }
+}

@@ -1,0 +1,319 @@
+import { stat as statAsync } from 'node:fs/promises';
+import type { ContentQuery, OutputOptions, ContentMatch } from './shared.js';
+import { summarizeError } from '../../utils/error-display.js';
+import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
+import {
+  collectFilesForSearch,
+  createFindDiagnostics,
+  addFindWarning,
+  isBinary,
+  makeCountResult,
+  makeFilesResult,
+  makeLocationsResult,
+  readTextFile,
+  FindRuntimeService,
+  validateSearchPath,
+  withFindWarnings,
+} from './shared.js';
+import { partitionByReadAccess, accessRestrictedNote, type ReadAccessFilter } from '../shared/read-access.js';
+
+interface CacheKey {
+  pattern: string;
+  glob: string;
+  path: string;
+  flags: string;
+}
+
+async function executeContentQuery(
+  query: ContentQuery,
+  output: OutputOptions,
+  runtime: FindRuntimeService,
+  projectRoot: string,
+  readAccessFilter?: ReadAccessFilter,
+): Promise<Record<string, unknown>> {
+  const validatedPath = validateSearchPath(query.path, projectRoot);
+  if (typeof validatedPath === 'object') return validatedPath;
+  const basePath = validatedPath;
+  const format = output.format ?? 'matches';
+  const maxPerFile = output.max_per_item ?? 10;
+  const maxTotal = output.max_total_matches ?? output.max_results ?? 100;
+  const ctxBefore = output.context_before ?? 0;
+  const ctxAfter = output.context_after ?? 0;
+  const diagnostics = createFindDiagnostics();
+
+  if (format === 'signatures' || format === 'full') {
+    return { error: `Output format '${format}' is only valid for symbols mode` };
+  }
+
+  let rawPattern: string;
+  if (query.pattern_base64) {
+    rawPattern = Buffer.from(query.pattern_base64, 'base64').toString('utf8');
+  } else if (query.pattern) {
+    rawPattern = query.pattern;
+  } else {
+    return { error: 'content mode requires pattern or pattern_base64' };
+  }
+
+  if (query.whole_word) {
+    rawPattern = `\\b(?:${rawPattern})\\b`;
+  }
+
+  const flags = [
+    query.case_sensitive === false ? 'i' : '',
+    query.multiline ? 'm' : '',
+    'g',
+  ].join('');
+
+  let regex: RegExp;
+  try {
+    regex = compileSafeRegExp(rawPattern, flags, { operation: 'find content' });
+  } catch (e) {
+    return { error: `Invalid regex: ${summarizeError(e)}` };
+  }
+
+  const allCandidateFiles = await collectFilesForSearch(basePath, query.glob, diagnostics);
+  // Read-side deny enforcement: a file whose read is currently restricted never
+  // has its content searched or returned. content mode is a content surface in
+  // EVERY format (even files_only/locations reveal that the pattern matched a
+  // file), so restricted candidates are dropped from the search set entirely and
+  // their count is surfaced. The cache key is unaffected: it never uses restricted
+  // content, and the filter re-applies on every call.
+  const { allowed: files, restricted: restrictedFiles } = partitionByReadAccess(
+    allCandidateFiles,
+    (f) => f,
+    readAccessFilter,
+  );
+  const restrictedNote = accessRestrictedNote(restrictedFiles.length);
+  if (restrictedNote) addFindWarning(diagnostics, restrictedNote);
+
+  if (query.negate) {
+    const nonMatchingFiles: string[] = [];
+    for (const file of files) {
+      const content = await readTextFile(file, diagnostics);
+      if (content === null) continue;
+      if (content.length > 500_000) continue;
+      if (!safeRegExpTest(regex, content, { operation: 'find content negate', maxInputChars: 500_000 })) {
+        nonMatchingFiles.push(file);
+        if (nonMatchingFiles.length >= maxTotal) break;
+      }
+    }
+    if (format === 'count_only') return withFindWarnings(makeCountResult(nonMatchingFiles.length), diagnostics.warnings);
+    return withFindWarnings(makeFilesResult(nonMatchingFiles, nonMatchingFiles.length), diagnostics.warnings);
+  }
+
+  const cacheKey: CacheKey = { pattern: rawPattern, glob: query.glob ?? '', path: basePath, flags };
+  const cachedEntry = runtime.searchCacheGet(cacheKey);
+  const cacheValid = cachedEntry ? await runtime.searchCacheIsValid(cachedEntry) : false;
+
+  let matchedFiles: Map<string, { content: string; matches: ContentMatch[] }>;
+  let totalMatches: number;
+
+  if (cacheValid && cachedEntry) {
+    matchedFiles = cachedEntry.matchedFiles;
+    totalMatches = cachedEntry.totalMatches;
+    // A cache entry may have been populated under a more permissive mode; the
+    // filter is the sole authority, so re-apply it and drop any now-restricted
+    // file's content before it can be returned. Rebuild into a fresh Map so the
+    // shared cache entry is never mutated.
+    if (readAccessFilter && Array.from(matchedFiles.keys()).some((f) => !readAccessFilter(f))) {
+      const kept = new Map<string, { content: string; matches: ContentMatch[] }>();
+      let keptMatches = 0;
+      for (const [file, entry] of matchedFiles) {
+        if (readAccessFilter(file)) {
+          kept.set(file, entry);
+          keptMatches += entry.matches.length;
+        }
+      }
+      matchedFiles = kept;
+      totalMatches = keptMatches;
+    }
+  } else {
+    matchedFiles = new Map<string, { content: string; matches: ContentMatch[] }>();
+    totalMatches = 0;
+
+    outer: for (const file of files) {
+      if (totalMatches >= maxTotal) break;
+
+      const content = await readTextFile(file, diagnostics);
+      if (content === null) continue;
+      if (await isBinary(file, diagnostics)) continue;
+
+      const lines = content.split('\n');
+      const fileMatches: ContentMatch[] = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        if (fileMatches.length >= maxPerFile) break;
+        if (totalMatches >= maxTotal) break outer;
+        if ((lines[i]?.length ?? 0) > 50_000) continue;
+
+        if (safeRegExpTest(regex, lines[i]!, { operation: 'find content line' })) {
+          const match: ContentMatch = { file, line: i + 1, text: lines[i]! };
+          if (format === 'context') {
+            match.context_before = lines.slice(Math.max(0, i - ctxBefore), i);
+            match.context_after = lines.slice(i + 1, i + 1 + ctxAfter);
+          }
+          fileMatches.push(match);
+          totalMatches++;
+        }
+      }
+
+      if (fileMatches.length > 0) {
+        matchedFiles.set(file, { content, matches: fileMatches });
+      }
+    }
+  }
+
+  if (!query.ranked && !query.preview_replace && !query.relationships) {
+    const fileMtimesForCache = new Map<string, number>();
+    await Promise.all(
+      Array.from(matchedFiles.keys()).map(async (f) => {
+        try {
+          const s = await statAsync(f);
+          fileMtimesForCache.set(f, s.mtimeMs);
+        } catch {
+          fileMtimesForCache.set(f, 0);
+        }
+      }),
+    );
+    runtime.searchCacheSet(cacheKey, {
+      files,
+      matchedFiles: new Map(matchedFiles),
+      totalMatches,
+      fileMtimes: fileMtimesForCache,
+    });
+  }
+
+  if (query.ranked) {
+    const fileMtimes = new Map<string, number>();
+    await Promise.all(
+      Array.from(matchedFiles.keys()).map(async (f) => {
+        try {
+          const s = await statAsync(f);
+          fileMtimes.set(f, s.mtimeMs);
+        } catch (err) {
+          addFindWarning(diagnostics, `Could not stat '${f}' for ranked search; ranking may be incomplete: ${summarizeError(err)}`);
+          fileMtimes.set(f, 0);
+        }
+      }),
+    );
+    const mostRecentMtime = Math.max(...Array.from(fileMtimes.values()), 0);
+    const exactPattern = query.pattern_base64
+      ? Buffer.from(query.pattern_base64, 'base64').toString('utf8')
+      : (query.pattern ?? '');
+
+    const scoredEntries: Array<{ file: string; matches: ContentMatch[]; score: number }> = [];
+    for (const [file, { matches }] of matchedFiles) {
+      let fileScore = 0;
+      const mtime = fileMtimes.get(file) ?? 0;
+      if (mostRecentMtime > 0 && mtime >= mostRecentMtime * 0.95) fileScore += 3;
+      for (const m of matches) {
+        if (m.text.includes(exactPattern)) fileScore += 10;
+        if (/^export\s/.test(m.text.trimStart())) fileScore += 5;
+      }
+      scoredEntries.push({ file, matches, score: fileScore });
+    }
+    scoredEntries.sort((a, b) => b.score - a.score);
+    const sortedEntries = scoredEntries.map(({ file, matches }) => {
+      const original = matchedFiles.get(file);
+      return [file, { content: original?.content ?? '', matches }] as const;
+    });
+    matchedFiles = new Map(sortedEntries);
+  }
+
+  const expandTo = output.expand_to;
+  if (expandTo === 'function' || expandTo === 'class') {
+    const ci = new (await import('../../intelligence/index.js')).CodeIntelligence({});
+    for (const [file, { content, matches }] of matchedFiles) {
+      for (const m of matches) {
+        try {
+          const scope = await ci.getEnclosingScope(file, content, m.line);
+          if (scope) {
+            m.startLine = scope.startLine;
+            m.endLine = scope.endLine;
+          }
+        } catch (err) {
+          addFindWarning(diagnostics, `Could not expand match scope in '${file}' at line ${m.line}: ${summarizeError(err)}`);
+        }
+      }
+    }
+  }
+
+  if (format === 'count_only') {
+    return withFindWarnings(makeCountResult(totalMatches, undefined, matchedFiles.size), diagnostics.warnings);
+  }
+  if (format === 'files_only') {
+    return withFindWarnings(makeFilesResult(Array.from(matchedFiles.keys()), matchedFiles.size), diagnostics.warnings);
+  }
+  if (format === 'locations') {
+    const locations: Array<{ file: string; line: number }> = [];
+    for (const [file, { matches }] of matchedFiles) {
+      for (const m of matches) {
+        locations.push({ file, line: m.line });
+      }
+    }
+    return withFindWarnings(makeLocationsResult(locations, totalMatches), diagnostics.warnings);
+  }
+
+  if (format === 'matches' || format === 'context') {
+    const results: Array<{
+      file: string;
+      line: number;
+      text: string;
+      replaced?: string | undefined;
+      startLine?: number | undefined;
+      endLine?: number | undefined;
+      context_before?: string[] | undefined;
+      context_after?: string[] | undefined;
+    }> = [];
+    for (const [, { matches }] of matchedFiles) {
+      for (const m of matches) {
+        let displayText = m.text;
+        let replacedText: string | undefined;
+        if (query.preview_replace !== undefined) {
+          try {
+            const replaceRegex = compileSafeRegExp(rawPattern, flags, { operation: 'find content preview_replace' });
+            replacedText = m.text.replace(replaceRegex, query.preview_replace);
+          } catch {
+            // ignore
+          }
+        }
+        if (output.max_line_length && displayText.length > output.max_line_length) {
+          displayText = displayText.slice(0, output.max_line_length) + '...';
+        }
+        if (replacedText !== undefined && output.max_line_length && replacedText.length > output.max_line_length) {
+          replacedText = replacedText.slice(0, output.max_line_length) + '...';
+        }
+        const entry: (typeof results)[number] = { file: m.file, line: m.line, text: displayText };
+        if (replacedText !== undefined) entry.replaced = replacedText;
+        if (m.startLine !== undefined) entry.startLine = m.startLine;
+        if (m.endLine !== undefined) entry.endLine = m.endLine;
+        if (format === 'context') {
+          entry.context_before = m.context_before;
+          entry.context_after = m.context_after;
+        }
+        results.push(entry);
+      }
+    }
+
+    if (query.relationships) {
+      const importGraph = await runtime.getImportGraph(projectRoot);
+      const relMap: Record<string, { imports: string[]; importedBy: string[] }> = {};
+      for (const file of matchedFiles.keys()) {
+        relMap[file] = {
+          imports: importGraph.findImports(file),
+          importedBy: importGraph.findDependents(file),
+        };
+      }
+      return withFindWarnings(
+        { matches: results, count: totalMatches, relationships: relMap },
+        [...diagnostics.warnings, ...(importGraph.getWarnings?.() ?? [])],
+      );
+    }
+
+    return withFindWarnings({ matches: results, count: totalMatches }, diagnostics.warnings);
+  }
+
+  return withFindWarnings(makeCountResult(totalMatches), diagnostics.warnings);
+}
+
+export { executeContentQuery };

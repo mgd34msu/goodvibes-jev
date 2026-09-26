@@ -1,0 +1,96 @@
+# @pellux/goodvibes-contracts
+
+Public runtime-neutral GoodVibes contract package for operator and peer artifacts, generated ids, lookup helpers, and schema exports.
+
+Most applications should install `@pellux/goodvibes-sdk` and import `@pellux/goodvibes-sdk/contracts`. Install this package directly when you only need the contracts subset.
+
+Consumer import:
+
+```ts
+import {
+  getOperatorContract,
+  getOperatorMethod,
+  type OperatorMethodOutput,
+} from '@goodvibes-jev/engine/sdk/contracts';
+```
+
+This surface provides:
+- operator contract lookup
+- peer contract lookup
+- operator method ids
+- peer endpoint ids
+- runtime event domains
+- generated method, endpoint, and event payload types
+
+Example:
+
+```ts
+import {
+  getOperatorContract,
+  getOperatorMethod,
+  type OperatorMethodOutput,
+} from '@goodvibes-jev/engine/sdk/contracts';
+
+const contract = getOperatorContract();
+const loginMethod = getOperatorMethod('control.auth.login');
+type LoginOutput = OperatorMethodOutput<'control.auth.login'>;
+```
+
+Peer example:
+
+```ts
+import {
+  getPeerContract,
+  getPeerEndpoint,
+  listPeerEndpoints,
+} from '@goodvibes-jev/engine/sdk/contracts';
+
+const peerContract = getPeerContract();
+const pairEndpoint = getPeerEndpoint('pair.request');
+const allEndpoints = listPeerEndpoints();
+```
+
+Lookup and guard helpers:
+
+```ts
+import {
+  listOperatorMethods,
+  isOperatorMethodId,
+  isPeerEndpointId,
+  RUNTIME_EVENT_DOMAINS,
+  isRuntimeEventDomain,
+} from '@goodvibes-jev/engine/sdk/contracts';
+
+listOperatorMethods(); // readonly OperatorMethodContract[]
+isOperatorMethodId('control.auth.login'); // true
+isPeerEndpointId('pair.request'); // true
+RUNTIME_EVENT_DOMAINS.forEach((domain) => isRuntimeEventDomain(domain));
+```
+
+The package also exports the generated `OPERATOR_CONTRACT` and `PEER_CONTRACT`
+manifests directly (for callers that want the raw data instead of the lookup
+helpers above), the core-verb classification used to lint operator method ids
+(`CORE_VERBS`, `BANNED_VERBS`, `EXEMPT_VERB_CATEGORIES`, `classifyVerb`), and
+the key-mapping helpers the generated typed-IO maps are built with
+(`RequiredNamedKeys`, `OmitNamed`, `NamedProps`, `IndexPart`), for consumers
+writing their own generic helpers over `OperatorMethodInput`/`OperatorMethodOutput`.
+
+Node-only artifact path helpers:
+
+```ts
+import {
+  getOperatorContractPath,
+  getPeerContractPath,
+} from '@goodvibes-jev/engine/sdk/contracts/node';
+```
+
+When installing this package directly instead of the SDK facade, import from
+`@pellux/goodvibes-contracts` and `@pellux/goodvibes-contracts/node`:
+
+```ts
+import { getOperatorContract, getPeerContract } from '@goodvibes-jev/engine/contracts';
+import { getOperatorContractPath, getPeerContractPath } from '@goodvibes-jev/engine/contracts/node';
+```
+
+See the [zod-schemas README](./src/zod-schemas/README.md) for the runtime Zod
+schema exports re-exported from this package root.

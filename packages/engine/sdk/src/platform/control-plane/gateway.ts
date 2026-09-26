@@ -1,0 +1,821 @@
+import { randomUUID } from 'node:crypto';
+import { logger } from '../utils/logger.js';
+import { createDomainDispatch } from '../runtime/store/index.js';
+import type { DomainDispatch, RuntimeStore } from '../runtime/store/index.js';
+import type { RuntimeEventBus, RuntimeEventDomain } from '../runtime/events/index.js';
+import type { ControlPlaneClientRecord } from '../runtime/store/domains/control-plane.js';
+import {
+  emitControlPlaneAuthGranted,
+  emitControlPlaneClientConnected,
+  emitControlPlaneClientDisconnected,
+  emitControlPlaneSubscriptionCreated,
+  emitControlPlaneSubscriptionDropped,
+  emitStreamSubscriberConnected,
+  emitStreamSubscriberDisconnected,
+} from '../runtime/emitters/index.js';
+import { renderControlPlaneGatewayWebUi } from './gateway-web-ui.js';
+import { buildGatewayDisabledResponseBody } from './gateway-disabled-response.js';
+import { SSE_HEARTBEAT_INTERVAL_MS } from './sse-timing.js';
+import { CHANNEL_REQUIRED_SCOPE, clientMayReceiveEventDomain, clientMaySeeScopedChannel } from './gateway-scope-enforcement.js';
+import type {
+  ControlPlaneClientDescriptor,
+  ControlPlaneServerConfig,
+  ControlPlaneStreamClientKind,
+  ControlPlaneSurfaceMessage,
+} from './types.js';
+import { type FeatureFlagReader, isFeatureGateEnabled, requireFeatureGate } from '../runtime/feature-flags/index.js';
+import {
+  DEFAULT_DOMAINS,
+  DEFAULT_SERVER_CONFIG,
+  createScopedSessionDelivery,
+  hasReplayScope,
+  normalizeRuntimeDomains,
+  pruneDisconnectedClientRecords,
+  replayRecentTraffic,
+  resolveReplayResume,
+  serializeEnvelope,
+  stripReplayScope,
+  toClientDescriptor,
+  type ControlPlaneEventReplayScope,
+  type ControlPlaneRecentEvent,
+  type ScopedControlPlaneRecentEvent,
+} from './gateway-utils.js';
+export type { ControlPlaneRecentEvent } from './gateway-utils.js';
+
+export interface ControlPlaneGatewayConfig {
+  readonly runtimeBus?: RuntimeEventBus | null | undefined;
+  readonly runtimeStore?: RuntimeStore | null | undefined;
+  readonly server?: Partial<ControlPlaneServerConfig> | undefined;
+  readonly featureFlags?: FeatureFlagReader | undefined;
+}
+
+export interface ControlPlaneEventStreamOptions {
+  readonly clientId?: string | undefined;
+  readonly clientKind?: ControlPlaneStreamClientKind;
+  readonly transport?: 'local' | 'http' | 'sse' | 'ws' | 'webhook' | undefined;
+  readonly label?: string | undefined;
+  readonly domains?: readonly RuntimeEventDomain[] | undefined;
+  readonly principalId?: string | undefined;
+  readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | undefined;
+  readonly scopes?: readonly string[] | undefined;
+  /** Admin token, scopes collapse; sees all channels. */
+  readonly admin?: boolean | undefined;
+  readonly sessionId?: string | undefined;
+  /** Deliver only `sessionId`'s frames; see {@link createScopedSessionDelivery}. */
+  readonly sessionScopedDelivery?: boolean | undefined;
+  readonly routeId?: string | undefined;
+  readonly surfaceId?: string | undefined;
+  readonly remoteAddress?: string | undefined;
+  readonly capabilities?: readonly string[] | undefined;
+  /** SSE keep-alive interval (ms); defaults to SSE_HEARTBEAT_INTERVAL_MS. First heartbeat always fires on open. */
+  readonly heartbeatIntervalMs?: number | undefined;
+}
+
+interface LiveControlPlaneClient {
+  readonly clientId: string;
+  readonly kind: ControlPlaneStreamClientKind;
+  readonly surfaceId?: string | undefined;
+  readonly routeId?: string | undefined;
+  /** Principal scopes (SSE/WS); `admin` collapses scopes (sees every channel). */
+  readonly scopes?: readonly string[] | undefined;
+  readonly admin?: boolean | undefined;
+  /**
+   * Subscribed domains for the broadcast (`publishEvent`) fan-out. `null` =
+   * deliver-all (client did not opt into narrowing); a non-null set narrows to
+   * tagged events in the set. For WS this is a live ref to the subscription set.
+   */
+  readonly domains: ReadonlySet<RuntimeEventDomain> | null;
+  readonly send: (event: string, payload: unknown, id?: string) => void;
+}
+
+interface WebSocketControlPlaneClient {
+  readonly clientId: string;
+  readonly traceId: string;
+  readonly domains: Set<RuntimeEventDomain>;
+  readonly unsubscribers: Map<RuntimeEventDomain, () => void>;
+}
+
+export class ControlPlaneGateway {
+  private runtimeBus: RuntimeEventBus | null;
+  private dispatch: DomainDispatch | null;
+  private readonly serverConfig: ControlPlaneServerConfig;
+  private readonly featureFlags: FeatureFlagReader;
+  private readonly clients = new Map<string, ControlPlaneClientRecord>();
+  private readonly liveClients = new Map<string, LiveControlPlaneClient>();
+  private readonly websocketClients = new Map<string, WebSocketControlPlaneClient>();
+  private readonly recentMessages: ControlPlaneSurfaceMessage[] = [];
+  private readonly _recentEventsRing: (ScopedControlPlaneRecentEvent | undefined)[];
+  private _recentEventsHead = 0;
+  private _recentEventsCount = 0;
+  private readonly _recentEventsCapacity = 500;
+  /** Materialized newest-first view of the recent event ring buffer. */
+  private get recentEvents(): ScopedControlPlaneRecentEvent[] {
+    const out: ScopedControlPlaneRecentEvent[] = [];
+    const count = this._recentEventsCount;
+    const cap = this._recentEventsCapacity;
+    for (let i = 0; i < count; i++) {
+      const idx = (this._recentEventsHead - 1 - i + cap) % cap;
+      const entry = this._recentEventsRing[idx]!;
+      if (entry) {
+        out.push(entry);
+      } else if (process.env.NODE_ENV !== 'production') {
+        logger.error('[ControlPlaneGateway] recentEvents: undefined slot at ring index', { head: this._recentEventsHead, count: this._recentEventsCount, index: idx, offset: i });
+      }
+    }
+    return out;
+  }
+  private requestCount = 0;
+  private errorCount = 0;
+  private lastRequestAt: number | undefined;
+  private _syncScheduled = false;
+  private _lastEventAt = 0;
+
+  constructor(config: ControlPlaneGatewayConfig = {}) {
+    this._recentEventsRing = new Array(this._recentEventsCapacity);
+    this.runtimeBus = config.runtimeBus ?? null;
+    this.dispatch = config.runtimeStore ? createDomainDispatch(config.runtimeStore) : null;
+    this.featureFlags = config.featureFlags ?? null;
+    this.serverConfig = {
+      ...DEFAULT_SERVER_CONFIG,
+      ...config.server,
+    };
+    if (this.dispatch) {
+      this.dispatch.syncControlPlaneState({
+        enabled: this.isEnabled() && this.serverConfig.enabled,
+        host: this.serverConfig.host,
+        port: this.serverConfig.port,
+        connectionState: this.isEnabled() && this.serverConfig.enabled ? 'disconnected' : 'disabled',
+      }, 'control-plane.gateway.init');
+    }
+  }
+
+  private isEnabled(): boolean {
+    return isFeatureGateEnabled(this.featureFlags, 'control-plane-gateway');
+  }
+
+  private requireEnabled(operation: string): void {
+    requireFeatureGate(this.featureFlags, 'control-plane-gateway', operation);
+  }
+
+  attachRuntime(config: {
+    readonly runtimeBus?: RuntimeEventBus | null | undefined;
+    readonly runtimeStore?: RuntimeStore | null | undefined;
+  }): void {
+    if (config.runtimeBus) {
+      this.runtimeBus = config.runtimeBus;
+    }
+    if (config.runtimeStore) {
+      this.dispatch = createDomainDispatch(config.runtimeStore);
+      this.dispatch.syncControlPlaneState({
+        enabled: this.isEnabled() && this.serverConfig.enabled,
+        host: this.serverConfig.host,
+        port: this.serverConfig.port,
+        connectionState: this.isEnabled() && this.serverConfig.enabled ? 'disconnected' : 'disabled',
+      }, 'control-plane.gateway.attach');
+      for (const client of this.clients.values()) {
+        this.dispatch.syncControlPlaneClient(client, 'control-plane.gateway.attach');
+      }
+    }
+  }
+
+  listClients(): ControlPlaneClientDescriptor[] {
+    if (!this.isEnabled()) return [];
+    pruneDisconnectedClientRecords(this.clients);
+    return [...this.clients.values()]
+      .sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0) || a.id.localeCompare(b.id))
+      .map(toClientDescriptor);
+  }
+
+  getSnapshot(): Record<string, unknown> {
+    if (!this.isEnabled()) {
+      return {
+        server: { ...this.serverConfig, enabled: false },
+        disabled: true,
+        setting: 'controlPlane.gateway',
+        totals: {
+          clients: 0,
+          activeClients: 0,
+          surfaceMessages: 0,
+          recentEvents: 0,
+          requests: 0,
+          errors: 0,
+        },
+        clients: [],
+        messages: [],
+        recentEvents: [],
+      };
+    }
+    pruneDisconnectedClientRecords(this.clients);
+    const active = [...this.clients.values()].filter((client) => client.connected);
+    return {
+      server: this.serverConfig,
+      totals: {
+        clients: this.clients.size,
+        activeClients: active.length,
+        surfaceMessages: this.recentMessages.length,
+        recentEvents: this._recentEventsCount,
+        requests: this.requestCount,
+        errors: this.errorCount,
+      },
+      clients: this.listClients(),
+      messages: this.listSurfaceMessages(20),
+      recentEvents: this.listRecentEvents(30),
+    };
+  }
+
+  listSurfaceMessages(limit = 50): ControlPlaneSurfaceMessage[] {
+    if (!this.isEnabled()) return [];
+    return this.recentMessages.slice(0, Math.max(1, limit));
+  }
+
+  listRecentEvents(limit = 100): ControlPlaneRecentEvent[] {
+    if (!this.isEnabled()) return [];
+    return this.recentEvents.slice(0, Math.max(1, limit)).map(stripReplayScope);
+  }
+
+  publishSurfaceMessage(input: Omit<ControlPlaneSurfaceMessage, 'id' | 'createdAt'>): ControlPlaneSurfaceMessage {
+    this.requireEnabled('publish surface message');
+    const message: ControlPlaneSurfaceMessage = {
+      id: `cpmsg-${randomUUID().slice(0, 8)}`,
+      createdAt: Date.now(),
+      ...input,
+    };
+    this.recentMessages.unshift(message);
+    if (this.recentMessages.length > 200) {
+      this.recentMessages.length = 200;
+    }
+    const record = this.rememberEvent('surface-message', message, {
+      ...(message.clientId ? { clientId: message.clientId } : {}),
+      ...(message.routeId ? { routeId: message.routeId } : {}),
+      ...(message.surfaceId ? { surfaceId: message.surfaceId } : {}),
+    });
+    for (const client of this.liveClients.values()) {
+      if (client.kind !== 'web') continue;
+      if (message.clientId && client.clientId !== message.clientId) continue;
+      if (message.routeId && client.routeId !== message.routeId) continue;
+      if (message.surfaceId && client.surfaceId !== message.surfaceId) continue;
+      client.send('surface-message', message, record.id);
+    }
+    return message;
+  }
+
+  publishEvent(event: string, payload: unknown, filter?: {
+    readonly clientKind?: LiveControlPlaneClient['kind'] | undefined;
+    readonly clientId?: string | undefined;
+    readonly routeId?: string | undefined;
+    readonly surfaceId?: string | undefined;
+  }): void {
+    if (!this.isEnabled()) return;
+    const record = this.rememberEvent(event, payload, filter);
+    const requiredScope = CHANNEL_REQUIRED_SCOPE[event];
+    for (const client of this.liveClients.values()) {
+      if (filter?.clientKind && client.kind !== filter.clientKind) continue;
+      if (filter?.clientId && client.clientId !== filter.clientId) continue;
+      if (filter?.routeId && client.routeId !== filter.routeId) continue;
+      if (filter?.surfaceId && client.surfaceId !== filter.surfaceId) continue;
+      if (requiredScope && !clientMaySeeScopedChannel(client, requiredScope)) continue;
+      // Domain filter, AND-ed with scope (null = deliver-all; untagged = delivered).
+      if (!clientMayReceiveEventDomain(client.domains, event)) continue;
+      client.send(event, payload, record.id);
+    }
+  }
+
+  recordApiRequest(input: {
+    readonly method: string;
+    readonly path: string;
+    readonly status: number;
+    readonly clientKind?: ControlPlaneEventStreamOptions['clientKind'] | undefined;
+    readonly error?: string | undefined;
+  }): void {
+    if (!this.isEnabled()) return;
+    this.requestCount += 1;
+    this.lastRequestAt = Date.now();
+    if (input.status >= 400 || input.error) {
+      this.errorCount += 1;
+    }
+    this.dispatch?.syncControlPlaneState({
+      requestCount: this.requestCount,
+      errorCount: this.errorCount,
+      lastRequestAt: this.lastRequestAt,
+      ...(input.error ? { lastError: input.error } : {}),
+    }, 'control-plane.gateway.api-request');
+    this.rememberEvent('api-request', {
+      method: input.method,
+      path: input.path,
+      status: input.status,
+      clientKind: input.clientKind ?? 'web',
+      ...(input.error ? { error: input.error } : {}),
+    });
+  }
+
+  setServerState(patch: Partial<ControlPlaneServerConfig>): void {
+    if (!this.isEnabled()) {
+      Object.assign(this.serverConfig, { ...patch, enabled: false });
+      this.dispatch?.syncControlPlaneState({
+        enabled: false,
+        host: this.serverConfig.host,
+        port: this.serverConfig.port,
+        connectionState: 'disabled',
+      }, 'control-plane.gateway.state.disabled');
+      return;
+    }
+    Object.assign(this.serverConfig, patch);
+    const hasActiveClient = [...this.clients.values()].some((client) => client.connected);
+    this.dispatch?.syncControlPlaneState({
+      enabled: this.serverConfig.enabled,
+      host: this.serverConfig.host,
+      port: this.serverConfig.port,
+      connectionState: this.serverConfig.enabled ? (hasActiveClient ? 'connected' : 'disconnected') : 'disabled',
+      requestCount: this.requestCount,
+      errorCount: this.errorCount,
+      lastRequestAt: this.lastRequestAt,
+    }, 'control-plane.gateway.state');
+  }
+
+  openWebSocketClient(
+    options: ControlPlaneEventStreamOptions,
+    send: (event: string, payload: unknown, id?: string) => void,
+  ): { clientId: string; domains: readonly RuntimeEventDomain[] } {
+    this.requireEnabled('open websocket client');
+    if (!this.runtimeBus) {
+      throw new Error('Runtime event bus unavailable');
+    }
+
+    const selectedDomains = normalizeRuntimeDomains(options.domains);
+    const clientId = options.clientId ?? `cp-${randomUUID().slice(0, 8)}`;
+    const label = options.label ?? `${options.clientKind ?? 'web'}:${clientId}`;
+    const now = Date.now();
+    const surfaceKind = options.clientKind === 'daemon' ? 'service' : (options.clientKind ?? 'web');
+    const clientRecord: ControlPlaneClientRecord = {
+      id: clientId,
+      kind: surfaceKind,
+      label,
+      transport: 'websocket',
+      connected: true,
+      sessionId: options.sessionId,
+      routeId: options.routeId,
+      surfaceId: options.surfaceId,
+      authenticatedAt: now,
+      lastSeenAt: now,
+      remoteAddress: options.remoteAddress,
+      capabilities: [...(options.capabilities ?? [])],
+      metadata: {
+        domains: selectedDomains,
+        ...(options.principalId ? { userId: options.principalId } : {}),
+      },
+    };
+    const traceId = `control-plane:${clientId}`;
+    // Live ref to the WS subscription set, shared with the liveClient (null = deliver-all).
+    const wsDomains = new Set<RuntimeEventDomain>();
+    const explicitDomains = (options.domains?.length ?? 0) > 0;
+    this.clients.set(clientId, clientRecord);
+    this.liveClients.set(clientId, {
+      clientId,
+      kind: options.clientKind ?? 'web',
+      surfaceId: options.surfaceId,
+      routeId: options.routeId,
+      scopes: options.scopes,
+      admin: options.admin,
+      domains: explicitDomains ? wsDomains : null,
+      send,
+    });
+    this.websocketClients.set(clientId, {
+      clientId,
+      traceId,
+      domains: wsDomains,
+      unsubscribers: new Map(),
+    });
+    this.dispatch?.syncControlPlaneState({
+      enabled: true,
+      isRunning: true,
+      connectionState: 'connected',
+    }, 'control-plane.gateway.ws-connect');
+    this.dispatch?.syncControlPlaneClient(clientRecord, 'control-plane.gateway.ws-connect');
+
+    const eventClientKind = options.clientKind === 'daemon' ? 'service' : (options.clientKind ?? 'web');
+    emitControlPlaneClientConnected(this.runtimeBus, {
+      sessionId: options.sessionId ?? 'control-plane',
+      source: 'control-plane.gateway',
+      traceId,
+    }, {
+      clientId,
+      clientKind: eventClientKind,
+      transport: 'ws',
+    });
+    emitControlPlaneSubscriptionCreated(this.runtimeBus, {
+      sessionId: options.sessionId ?? 'control-plane',
+      source: 'control-plane.gateway',
+      traceId,
+    }, {
+      clientId,
+      subscriptionId: clientId,
+      topics: selectedDomains,
+    });
+    if (options.principalId) {
+      emitControlPlaneAuthGranted(this.runtimeBus, {
+        sessionId: options.sessionId ?? 'control-plane',
+        source: 'control-plane.gateway',
+        traceId,
+      }, {
+        clientId,
+        principalId: options.principalId,
+        principalKind: options.principalKind ?? 'token',
+        scopes: [...(options.scopes ?? ['read:events'])],
+      });
+    }
+
+    this.subscribeWebSocketClient(clientId, selectedDomains);
+    send('ready', { clientId, domains: selectedDomains, transport: 'websocket' });
+    replayRecentTraffic(this.recentEvents, send, { ...options, clientId, domains: selectedDomains }, explicitDomains ? wsDomains : null);
+    return { clientId, domains: selectedDomains };
+  }
+
+  touchWebSocketClient(clientId: string, metadata: Record<string, unknown> = {}): void {
+    if (!this.isEnabled()) return;
+    const existing = this.clients.get(clientId);
+    if (!existing) return;
+    const updated: ControlPlaneClientRecord = {
+      ...existing,
+      lastSeenAt: Date.now(),
+      metadata: {
+        ...existing.metadata,
+        ...metadata,
+      },
+    };
+    this.clients.set(clientId, updated);
+    this.dispatch?.syncControlPlaneClient(updated, 'control-plane.gateway.ws-touch');
+  }
+
+  authenticateClient(clientId: string, input: {
+    readonly principalId: string;
+    readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | undefined;
+    readonly scopes?: readonly string[] | undefined;
+    readonly label?: string | undefined;
+    readonly capabilities?: readonly string[] | undefined;
+  }): void {
+    if (!this.isEnabled()) return;
+    const existing = this.clients.get(clientId);
+    if (!existing || !this.runtimeBus) return;
+    const updated: ControlPlaneClientRecord = {
+      ...existing,
+      label: input.label ?? existing.label,
+      authenticatedAt: Date.now(),
+      lastSeenAt: Date.now(),
+      capabilities: input.capabilities ? [...input.capabilities] : existing.capabilities,
+      metadata: {
+        ...existing.metadata,
+        userId: input.principalId,
+      },
+    };
+    this.clients.set(clientId, updated);
+    this.dispatch?.syncControlPlaneClient(updated, 'control-plane.gateway.ws-auth');
+    emitControlPlaneAuthGranted(this.runtimeBus, {
+      sessionId: updated.sessionId ?? 'control-plane',
+      source: 'control-plane.gateway',
+      traceId: `control-plane:${clientId}:auth`,
+    }, {
+      clientId,
+      principalId: input.principalId,
+      principalKind: input.principalKind ?? 'token',
+      scopes: [...(input.scopes ?? ['read:events'])],
+    });
+  }
+
+  subscribeWebSocketClient(clientId: string, domains: readonly RuntimeEventDomain[]): void {
+    if (!this.isEnabled()) return;
+    const wsClient = this.websocketClients.get(clientId);
+    if (!wsClient || !this.runtimeBus) return;
+    const liveClient = this.liveClients.get(clientId);
+    if (!liveClient) return;
+    const nextDomains = [...new Set(domains)];
+    for (const domain of nextDomains) {
+      if (wsClient.unsubscribers.has(domain)) continue;
+      const unsubscribe = this.runtimeBus.onDomain(domain, (envelope) => {
+        this.touchWebSocketClient(clientId, { lastEventType: envelope.type });
+        const serialized = serializeEnvelope(envelope);
+        const record = this.rememberEvent(domain, serialized);
+        liveClient.send(domain, serialized, record.id);
+      });
+      wsClient.unsubscribers.set(domain, unsubscribe);
+      wsClient.domains.add(domain);
+    }
+    this.touchWebSocketClient(clientId, { domains: [...wsClient.domains] });
+  }
+
+  unsubscribeWebSocketClient(clientId: string, domains?: readonly RuntimeEventDomain[]): void {
+    if (!this.isEnabled()) return;
+    const wsClient = this.websocketClients.get(clientId);
+    if (!wsClient) return;
+    const targetDomains = domains?.length ? [...new Set(domains)] : [...wsClient.domains];
+    for (const domain of targetDomains) {
+      const unsubscribe = wsClient.unsubscribers.get(domain);
+      unsubscribe?.();
+      wsClient.unsubscribers.delete(domain);
+      wsClient.domains.delete(domain);
+    }
+    this.touchWebSocketClient(clientId, { domains: [...wsClient.domains] });
+  }
+
+  closeWebSocketClient(clientId: string, reason = 'socket-closed'): void {
+    if (!this.isEnabled()) return;
+    const wsClient = this.websocketClients.get(clientId);
+    if (!wsClient) return;
+    if (this.runtimeBus) {
+      emitControlPlaneSubscriptionDropped(this.runtimeBus, {
+        sessionId: this.clients.get(clientId)?.sessionId ?? 'control-plane',
+        source: 'control-plane.gateway',
+        traceId: wsClient.traceId,
+      }, {
+        clientId,
+        subscriptionId: clientId,
+        reason,
+      });
+      emitControlPlaneClientDisconnected(this.runtimeBus, {
+        sessionId: this.clients.get(clientId)?.sessionId ?? 'control-plane',
+        source: 'control-plane.gateway',
+        traceId: wsClient.traceId,
+      }, {
+        clientId,
+        reason,
+      });
+    }
+    this.unsubscribeWebSocketClient(clientId);
+    this.websocketClients.delete(clientId);
+    this.liveClients.delete(clientId);
+    const previous = this.clients.get(clientId);
+    if (!previous) return;
+    const disconnected: ControlPlaneClientRecord = {
+      ...previous,
+      connected: false,
+      lastSeenAt: Date.now(),
+    };
+    this.clients.set(clientId, disconnected);
+    pruneDisconnectedClientRecords(this.clients);
+    this.dispatch?.syncControlPlaneClient(disconnected, 'control-plane.gateway.ws-disconnect');
+    this.dispatch?.syncControlPlaneState({
+      enabled: true,
+      isRunning: true,
+      connectionState: [...this.clients.values()].some((client) => client.connected) ? 'connected' : 'disconnected',
+    }, 'control-plane.gateway.ws-disconnect');
+  }
+
+  createEventStream(request: Request, options: ControlPlaneEventStreamOptions = {}): Response {
+    if (!this.isEnabled()) {
+      return Response.json(buildGatewayDisabledResponseBody(), { status: 503 });
+    }
+    if (!this.runtimeBus) {
+      return Response.json({ error: 'Runtime event bus unavailable' }, { status: 503 });
+    }
+
+    const encoder = new TextEncoder();
+    const selectedDomains = normalizeRuntimeDomains(options.domains);
+    const lastEventId = request.headers.get('last-event-id')?.trim() || undefined;
+    const clientId = options.clientId ?? `cp-${randomUUID().slice(0, 8)}`;
+    const label = options.label ?? `${options.clientKind ?? 'web'}:${clientId}`;
+    const now = Date.now();
+    const transport = options.transport ?? 'sse';
+    const surfaceKind = options.clientKind === 'daemon' ? 'service' : (options.clientKind ?? 'web');
+    const clientRecord: ControlPlaneClientRecord = {
+      id: clientId,
+      kind: surfaceKind,
+      label,
+      transport: transport === 'ws' ? 'websocket' : transport === 'local' ? 'local' : 'sse',
+      connected: true,
+      sessionId: options.sessionId,
+      routeId: options.routeId,
+      surfaceId: options.surfaceId,
+      authenticatedAt: now,
+      lastSeenAt: now,
+      remoteAddress: options.remoteAddress,
+      capabilities: [...(options.capabilities ?? [])],
+      metadata: {
+        domains: selectedDomains,
+        ...(options.principalId ? { userId: options.principalId } : {}),
+      },
+    };
+    this.clients.set(clientId, clientRecord);
+    this.dispatch?.syncControlPlaneState({
+      enabled: true,
+      isRunning: true,
+      connectionState: 'connected',
+    }, 'control-plane.gateway.connect');
+    this.dispatch?.syncControlPlaneClient(clientRecord, 'control-plane.gateway.connect');
+
+    const traceId = `control-plane:${clientId}`;
+    const eventClientKind = options.clientKind === 'daemon' ? 'service' : (options.clientKind ?? 'web');
+    // One shared event context for every control-plane lifecycle emit below.
+    const evtCtx = { sessionId: options.sessionId ?? 'control-plane', source: 'control-plane.gateway', traceId };
+    emitControlPlaneClientConnected(this.runtimeBus, evtCtx, {
+      clientId,
+      clientKind: eventClientKind,
+      transport,
+    });
+    emitControlPlaneSubscriptionCreated(this.runtimeBus, evtCtx, {
+      clientId,
+      subscriptionId: clientId,
+      topics: selectedDomains,
+    });
+    if (options.principalId) {
+      emitControlPlaneAuthGranted(this.runtimeBus, evtCtx, {
+        clientId,
+        principalId: options.principalId,
+        principalKind: options.principalKind ?? 'token',
+        scopes: [...(options.scopes ?? ['read:events'])],
+      });
+    }
+
+    // One predicate for live delivery AND replay, so they cannot drift apart.
+    const scoped = createScopedSessionDelivery(options.sessionScopedDelivery === true ? options.sessionId : undefined);
+    let teardown = (): void => {};
+    // HWM 256 (default 1 drops handshake/replay chunks before the consumer pulls).
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        const send = (event: string, payload: unknown, id?: string): void => {
+          // Backpressure guard: drop when the consumer is falling behind (desiredSize<=0).
+          if ((controller.desiredSize ?? 1) <= 0) return;
+          controller.enqueue(encoder.encode(`${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
+        };
+        const unsubs = selectedDomains.map((domain) => this.runtimeBus!.onDomain(domain, (envelope) => {
+          if (!scoped.mayDeliver(envelope.sessionId)) return;
+          const updated: ControlPlaneClientRecord = {
+            ...clientRecord,
+            lastSeenAt: Date.now(),
+            metadata: {
+              ...clientRecord.metadata,
+              lastEventType: envelope.type,
+            },
+          };
+          this.clients.set(clientId, updated);
+          this.dispatch?.syncControlPlaneClient(updated, 'control-plane.gateway.heartbeat');
+          const serialized = serializeEnvelope(envelope);
+          const record = this.rememberEvent(domain, serialized);
+          send(domain, serialized, record.id);
+        }));
+        // Opt-in narrowing (null=deliver-all, never the DEFAULT_DOMAINS fallback); reused below for replay.
+        const sseLiveDomains = (options.domains?.length ?? 0) > 0 ? new Set(selectedDomains) : null;
+        this.liveClients.set(clientId, {
+          clientId,
+          kind: options.clientKind ?? 'web',
+          surfaceId: options.surfaceId,
+          routeId: options.routeId,
+          scopes: options.scopes,
+          admin: options.admin,
+          domains: sseLiveDomains,
+          send,
+        });
+        emitStreamSubscriberConnected(this.runtimeBus!, evtCtx, {
+          streamId: clientId,
+          subscriberId: clientId,
+          streamType: transport,
+        });
+        const emitHeartbeat = (): void => send('heartbeat', { clientId, ts: Date.now() });
+        const heartbeatIntervalMs = options.heartbeatIntervalMs ?? SSE_HEARTBEAT_INTERVAL_MS;
+        const heartbeat = setInterval(emitHeartbeat, heartbeatIntervalMs);
+        (heartbeat as unknown as { unref?: () => void }).unref?.();
+        let torn = false;
+        teardown = () => {
+          if (torn) return; // idempotent: cancel + abort can both fire.
+          torn = true;
+          clearInterval(heartbeat);
+          for (const unsub of unsubs) unsub();
+          this.liveClients.delete(clientId);
+          const previous = this.clients.get(clientId);
+          if (previous) {
+            const disconnected: ControlPlaneClientRecord = {
+              ...previous,
+              connected: false,
+              lastSeenAt: Date.now(),
+            };
+            this.clients.set(clientId, disconnected);
+            pruneDisconnectedClientRecords(this.clients);
+            this.dispatch?.syncControlPlaneClient(disconnected, 'control-plane.gateway.disconnect');
+            this.dispatch?.syncControlPlaneState({
+              enabled: true,
+              isRunning: true,
+              connectionState: [...this.clients.values()].some((client) => client.connected) ? 'connected' : 'disconnected',
+            }, 'control-plane.gateway.disconnect');
+            emitControlPlaneSubscriptionDropped(this.runtimeBus!, evtCtx, {
+              clientId,
+              subscriptionId: clientId,
+              reason: 'stream-closed',
+            });
+            emitControlPlaneClientDisconnected(this.runtimeBus!, evtCtx, {
+              clientId,
+              reason: 'stream-closed',
+            });
+            emitStreamSubscriberDisconnected(this.runtimeBus!, evtCtx, {
+              streamId: clientId,
+              subscriberId: clientId,
+              streamType: transport,
+              reason: 'stream-closed',
+            });
+          }
+        };
+        request.signal.addEventListener('abort', () => {
+          teardown();
+          // cancel may have already closed the controller; closing twice throws.
+          try { controller.close(); } catch { /* already closed by cancel */ }
+        }, { once: true });
+        // A resuming client is told what its position turned into BEFORE any
+        // replay lands, so "I asked to resume and received nothing" is a stated
+        // outcome rather than something it has to infer from silence.
+        send('ready', {
+          clientId,
+          domains: selectedDomains,
+          resume: resolveReplayResume(this.recentEvents, lastEventId),
+        });
+        replayRecentTraffic(this.recentEvents, scoped.wrapSend(send), { ...options, clientId, domains: selectedDomains }, sseLiveDomains, lastEventId);
+        // First keep-alive immediately on open (not one interval later), so the
+        // window before the first interval can't strand a quiet stream.
+        emitHeartbeat();
+      },
+      cancel: () => {
+        teardown();
+      },
+    }, new CountQueuingStrategy({ highWaterMark: 256 }));
+
+    return new Response(stream, {
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      },
+    });
+  }
+
+  renderWebUi(authTokenHint = ''): Response {
+    if (!this.isEnabled()) {
+      return Response.json(buildGatewayDisabledResponseBody(), { status: 503 });
+    }
+    return renderControlPlaneGatewayWebUi(authTokenHint);
+  }
+
+  private _scheduleControlPlaneSync(): void {
+    if (this._syncScheduled || !this.dispatch) return;
+    this._syncScheduled = true;
+    setImmediate(() => {
+      this._syncScheduled = false;
+      this.dispatch?.syncControlPlaneState({
+        requestCount: this.requestCount,
+        errorCount: this.errorCount,
+        lastRequestAt: this.lastRequestAt,
+        lastEventAt: this._lastEventAt,
+      }, 'control-plane.gateway.event');
+    });
+  }
+
+  /** Retained replay/message entries (ring + surface messages), for MemoryGovernor visibility. */
+  retainedEventCount(): number {
+    return this._recentEventsCount + this.recentMessages.length;
+  }
+
+  /**
+   * MemoryGovernor trim hook, a REAL reclaim. `floor` halves the retained
+   * replay history (keeps the newest half of the ring); `flush` clears the
+   * replay ring and the surface-message buffer entirely. Replay after a flush
+   * degrades honestly: reconnecting clients simply get no replayed backlog.
+   */
+  trimRetainedEvents(level: 'floor' | 'flush'): void {
+    if (level === 'flush') {
+      this._recentEventsRing.fill(undefined);
+      this._recentEventsHead = 0;
+      this._recentEventsCount = 0;
+      this.recentMessages.length = 0;
+      return;
+    }
+    const keep = Math.floor(this._recentEventsCount / 2);
+    const newest = this.recentEvents.slice(0, keep); // newest-first view
+    this._recentEventsRing.fill(undefined);
+    this._recentEventsHead = 0;
+    this._recentEventsCount = 0;
+    for (const entry of newest.reverse()) {
+      this._recentEventsRing[this._recentEventsHead] = entry;
+      this._recentEventsHead = (this._recentEventsHead + 1) % this._recentEventsCapacity;
+      this._recentEventsCount += 1;
+    }
+    if (this.recentMessages.length > 50) this.recentMessages.length = 50;
+  }
+
+  private rememberEvent(
+    event: string,
+    payload: unknown,
+    replayScope?: ControlPlaneEventReplayScope,
+  ): ScopedControlPlaneRecentEvent {
+    const record: ScopedControlPlaneRecentEvent = {
+      id: `evt-${randomUUID().slice(0, 8)}`,
+      event,
+      createdAt: Date.now(),
+      payload,
+      ...(replayScope && hasReplayScope(replayScope) ? { replayScope } : {}),
+    };
+    this._recentEventsRing[this._recentEventsHead] = record;
+    this._recentEventsHead = (this._recentEventsHead + 1) % this._recentEventsCapacity;
+    if (this._recentEventsCount < this._recentEventsCapacity) this._recentEventsCount++;
+    this._lastEventAt = record.createdAt;
+    this._scheduleControlPlaneSync();
+    return record;
+  }
+}
+
+// Exposes DEFAULT_DOMAINS invariants for direct verification.
+export { DEFAULT_DOMAINS as DEFAULT_DOMAINS_TEST_EXPORT };

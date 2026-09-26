@@ -1,0 +1,263 @@
+/**
+ * Shared contracts for the Google (Gmail + Calendar) setup flows.
+ *
+ * Two paths exist, and they are genuinely different products:
+ *
+ *   Path A ("app-password"), no Google Cloud project at all. Gmail is reached
+ *   over IMAP/SMTP with a Google app password; Calendar is reached read-only
+ *   over the private iCal address. This is the fast lane and the default.
+ *
+ *   Path B ("oauth"), a Google Cloud project, the Gmail API and Calendar API,
+ *   and an OAuth Desktop client. Needed for calendar writes, push/watch
+ *   channels and richer queries.
+ *
+ * Everything in this module is pure data and interfaces. All I/O arrives
+ * through injected ports so the flows are testable without a browser, a
+ * network, or a Google account.
+ */
+
+/**
+ * Which setup path a step belongs to.
+ *
+ * `existing-client` is the third one and it exists because of a real failure:
+ * a machine that already held an OAuth client id and secret was still walked
+ * through creating a Cloud project and filling in the consent screen, because
+ * the only OAuth path started at `gcloud-installed`. When the client already
+ * exists there is exactly one thing left to do, ask the person for consent,
+ * so this path is those two steps and nothing else. It never touches a
+ * project, a branding page or an audience setting.
+ */
+export type GoogleSetupPath = 'app-password' | 'oauth' | 'existing-client';
+
+/**
+ * Who performs a step.
+ *
+ * - `automated`     , the flow does it with no human involvement.
+ * - `human-assisted`, the flow drives the browser to the exact place and the
+ *                      human performs one specific interaction (a click, a
+ *                      sign-in, a 2FA approval). The flow names the control.
+ * - `manual`        , the flow cannot drive it at all; the runbook is the
+ *                      only route. Kept explicit so it is never mistaken for
+ *                      something the automation silently skipped.
+ */
+export type GoogleStepActor = 'automated' | 'human-assisted' | 'manual';
+
+/** Terminal states a single step can end in. */
+export type GoogleStepOutcome =
+  /** The step did its work in this run. */
+  | 'done'
+  /** Already true before this run started; nothing was changed. */
+  | 'already-done'
+  /** Waiting on the human. Not an error, the flow reports and stops cleanly. */
+  | 'needs-human'
+  /** The step failed. `problem` and `fix` are always populated. */
+  | 'failed'
+  /** Deliberately not run (a prior step it depends on did not complete). */
+  | 'skipped';
+
+/**
+ * A step definition. This is the source of truth: the executor reads it to
+ * know what to run, and the runbook generator reads the same records to emit
+ * the written fallback. They cannot drift because there is one list.
+ */
+export interface GoogleSetupStepSpec {
+  readonly id: GoogleStepId;
+  readonly path: GoogleSetupPath;
+  /** Imperative one-liner shown as live progress: "Creating the app password". */
+  readonly title: string;
+  /** Why this step exists, in plain language. Shown in the runbook. */
+  readonly purpose: string;
+  readonly actor: GoogleStepActor;
+  /**
+   * Numbered manual instructions for the runbook and for error messages when
+   * automation fails. Written so they can be followed with no tooling at all.
+   */
+  readonly manualSteps: readonly string[];
+  /** Page the human lands on, when the step involves one. */
+  readonly url?: string;
+  /**
+   * Steps that must have completed first. Used to skip cleanly rather than
+   * fail confusingly.
+   *
+   * Pruned by `stepsForPath` to the steps actually in the selected path, so a
+   * step reused on a shorter path does not sit waiting on a prerequisite that
+   * path deliberately does not contain.
+   */
+  readonly requires?: readonly GoogleStepId[];
+  /**
+   * Additional paths this step also belongs to.
+   *
+   * Exists so `existing-client` can reuse the authorize and verify steps
+   * without a second copy of them. One list of steps is what keeps the
+   * automation and the written runbook from drifting, and duplicating a step
+   * to give it a second path would break exactly that.
+   */
+  readonly alsoInPaths?: readonly GoogleSetupPath[];
+}
+
+/** Stable identifiers for every step in both paths. */
+export type GoogleStepId =
+  // ---- Path A: app password ----
+  | 'browser-ready'
+  | 'google-signed-in'
+  | 'two-step-verification'
+  | 'app-password'
+  | 'gmail-config'
+  | 'gmail-verify'
+  | 'calendar-ics-address'
+  | 'calendar-verify'
+  // ---- Path B: OAuth ----
+  | 'gcloud-installed'
+  | 'gcloud-authenticated'
+  | 'gcloud-project'
+  | 'apis-enabled'
+  | 'oauth-branding'
+  | 'oauth-audience-production'
+  | 'oauth-client'
+  | 'oauth-authorize'
+  | 'oauth-verify';
+
+/** Result of executing one step. */
+export interface GoogleStepResult {
+  readonly id: GoogleStepId;
+  readonly outcome: GoogleStepOutcome;
+  /** Human-readable statement of what actually happened. Never a secret. */
+  readonly detail: string;
+  /** Populated when outcome is 'failed' or 'needs-human'. */
+  readonly problem?: string;
+  /** What the human should do next. Populated whenever problem is. */
+  readonly fix?: string;
+  /**
+   * Set when the step could not be completed and the written runbook is the
+   * fallback, carries the anchor to jump to.
+   */
+  readonly runbookAnchor?: string;
+  readonly elapsedMs: number;
+}
+
+/** Overall result of a flow run. */
+export interface GoogleSetupReport {
+  readonly path: GoogleSetupPath;
+  readonly ok: boolean;
+  readonly steps: readonly GoogleStepResult[];
+  /**
+   * Populated when the run stopped because a human must act. The flow is
+   * resumable: re-running after the human acts picks up here.
+   */
+  readonly waitingOn: GoogleStepId | null;
+  /**
+   * Plain-language warnings that do not fail the run but that the owner must
+   * see, most importantly the 7-day refresh token expiry when an OAuth app is
+   * left in Testing.
+   */
+  readonly warnings: readonly string[];
+  readonly summary: string;
+}
+
+// ---------------------------------------------------------------------------
+// Ports (injected I/O)
+// ---------------------------------------------------------------------------
+
+/** One interactive element from a page snapshot. */
+export interface GoogleBrowserElement {
+  readonly ref: string;
+  readonly role: string;
+  readonly name: string;
+  readonly tag: string;
+  readonly value?: string | undefined;
+}
+
+/**
+ * The browser surface the Google flows need. Deliberately much smaller than
+ * the full browser tool so the flows can be exercised against a fake.
+ */
+export interface GoogleBrowserPort {
+  navigate(url: string): Promise<{ readonly url: string; readonly title: string }>;
+  currentUrl(): Promise<string>;
+  snapshot(): Promise<readonly GoogleBrowserElement[]>;
+  click(ref: string): Promise<void>;
+  type(ref: string, text: string, options?: { readonly submit?: boolean }): Promise<void>;
+  readText(options?: { readonly maxChars?: number }): Promise<string>;
+}
+
+/** Outcome of running a subprocess. */
+export interface GoogleCommandResult {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly timedOut: boolean;
+  readonly spawnError: string | null;
+}
+
+/** Subprocess execution, injected so gcloud work is testable. */
+export interface GoogleCommandPort {
+  run(
+    command: string,
+    args: readonly string[],
+    options?: { readonly timeoutMs?: number; readonly env?: Readonly<Record<string, string>> },
+  ): Promise<GoogleCommandResult>;
+}
+
+/**
+ * Config read/write restricted to what the Google flows touch.
+ *
+ * An implementation MUST NOT pin these writes to its own surface's silo. Every
+ * path in `GOOGLE_CONFIG_KEYS` is daemon-owned, and the ownership machinery
+ * routes an unqualified write to the daemon tier by itself, so the correct
+ * implementation is a plain `set`, and an explicitly surface-scoped one is the
+ * bug. A connection stranded in one surface's file stops existing the moment
+ * that surface is closed, which is precisely when the daemon still has to
+ * answer mail. See `platform/config/config-ownership.ts`.
+ */
+export interface GoogleConfigPort {
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+}
+
+/**
+ * Encrypted secret storage. Values never leave this boundary.
+ *
+ * Same rule as `GoogleConfigPort`, and it bites harder here: every name in
+ * `GOOGLE_SECRET_KEYS` derives from a daemon-owned config path, so the secret
+ * store files it in the daemon tier when no scope is forced. Passing an
+ * explicit surface scope overrides that and hides the credential from the
+ * daemon, and from any node that later takes over. Do not pass one.
+ */
+export interface GoogleSecretPort {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<void>;
+  /**
+   * Removes a stored value.
+   *
+   * OPTIONAL, and optional on purpose: a store that cannot delete should make
+   * a removal impossible rather than appear to succeed. `credential-removal.ts`
+   * checks for this method and returns a typed refusal when it is absent, so
+   * "nothing happened" is never reported as "removed".
+   *
+   * Nothing in this connector calls it except the confirmation-gated removal
+   * path. A stored Google credential is the product of a person completing a
+   * consent screen; deleting one without an explicit yes destroys work the
+   * machine cannot recreate by itself, which is exactly what happened to the
+   * owner mid-flow.
+   */
+  delete?(key: string): Promise<void>;
+}
+
+/**
+ * Progress reporting. Every step start and finish is announced, so a run is
+ * never a silent grind. Implementations render to the CLI, the TUI feed, or a
+ * test buffer.
+ */
+export interface GoogleProgressPort {
+  /** A step is starting. */
+  stepStarted(spec: GoogleSetupStepSpec, index: number, total: number): void;
+  /** A step finished, with its outcome. */
+  stepFinished(spec: GoogleSetupStepSpec, result: GoogleStepResult): void;
+  /**
+   * The flow needs the human to do something before it can continue. Carries
+   * the exact control to interact with.
+   */
+  humanActionNeeded(spec: GoogleSetupStepSpec, instruction: string): void;
+  /** Free-form note. */
+  note(message: string): void;
+}

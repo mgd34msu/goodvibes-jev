@@ -1,0 +1,231 @@
+/**
+ * Turn emitters, typed emission wrappers for TurnEvent domain.
+ *
+ * Import and call these instead of emitting raw strings.
+ *
+ * Note: raw prompt/response content is carried on the event bus as-is so
+ * internal consumers (conversation reducer, reply pipeline, stream UI) can
+ * render and advance state. Redaction happens at the telemetry
+ * boundary (TelemetryApiService) where events become externally observable.
+ */
+import { createEventEnvelope } from '../events/envelope.js';
+import type { RuntimeEventBus } from '../events/index.js';
+import type { EmitterContext } from './index.js';
+import type { TurnInputOrigin } from '../../../events/turn.js';
+import type { PartialToolCall } from '../../providers/interface.js';
+import { getCostOrigin } from '../cost/cost-origin.js';
+
+/** Emit TURN_SUBMITTED when a user prompt is submitted. */
+export function emitTurnSubmitted(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; prompt: string; origin?: TurnInputOrigin }
+): void {
+  bus.emit('turn', createEventEnvelope('TURN_SUBMITTED', { type: 'TURN_SUBMITTED', ...data }, ctx));
+}
+
+/** Emit PREFLIGHT_OK when preflight checks pass. */
+export function emitPreflightOk(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string }
+): void {
+  bus.emit('turn', createEventEnvelope('PREFLIGHT_OK', { type: 'PREFLIGHT_OK', ...data }, ctx));
+}
+
+/** Emit PREFLIGHT_FAIL when preflight checks fail. */
+export function emitPreflightFail(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: {
+    turnId: string;
+    reason: string;
+    stopReason: 'preflight_failed' | 'context_overflow';
+  }
+): void {
+  bus.emit('turn', createEventEnvelope('PREFLIGHT_FAIL', { type: 'PREFLIGHT_FAIL', ...data }, ctx));
+}
+
+/** Emit STREAM_START when a provider stream iteration begins. */
+export function emitStreamStart(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; scope?: 'provider'; terminal?: false }
+): void {
+  bus.emit('turn', createEventEnvelope('STREAM_START', { type: 'STREAM_START', scope: 'provider', terminal: false, ...data }, ctx));
+}
+
+/** Emit STREAM_DELTA for each incremental content chunk. */
+export function emitStreamDelta(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; content: string; accumulated: string; reasoning?: string; toolCalls?: PartialToolCall[] }
+): void {
+  bus.emit('turn', createEventEnvelope('STREAM_DELTA', { type: 'STREAM_DELTA', ...data }, ctx));
+}
+
+/** Emit STREAM_END when a provider stream iteration ends. */
+export function emitStreamEnd(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; scope?: 'provider'; terminal?: false }
+): void {
+  bus.emit('turn', createEventEnvelope('STREAM_END', { type: 'STREAM_END', scope: 'provider', terminal: false, ...data }, ctx));
+}
+
+/** Emit STREAM_RETRY when an in-flight provider chat call retries after a transport error. */
+export function emitStreamRetry(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; provider: string; attempt: number; maxAttempts: number; delayMs: number; reason: string }
+): void {
+  bus.emit('turn', createEventEnvelope('STREAM_RETRY', { type: 'STREAM_RETRY', ...data }, ctx));
+}
+
+/** Emit LLM_REQUEST_STARTED when a provider chat request is about to be dispatched. */
+export function emitLlmRequestStarted(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: {
+    turnId: string;
+    provider: string;
+    model: string;
+    promptSummary: { length: number; sha256: string; first100chars: string } | string;
+  }
+): void {
+  bus.emit('turn', createEventEnvelope('LLM_REQUEST_STARTED', { type: 'LLM_REQUEST_STARTED', ...data }, ctx));
+}
+
+/** Emit LLM_RESPONSE_RECEIVED when a provider chat call completes within a turn iteration. */
+export function emitLlmResponseReceived(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: {
+    turnId: string;
+    provider: string;
+    model: string;
+    contentSummary: { length: number; sha256: string; first100chars: string } | string;
+    toolCallCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number | undefined;
+    cacheWriteTokens?: number | undefined;
+    /** LLM request enrichments */
+    durationMs?: number | undefined;
+    retries?: number | undefined;
+    costUsdCents?: number | undefined;
+    costSource?: 'user' | 'provider' | 'catalog' | 'subscription' | 'unknown' | undefined;
+    finishReason?: string | undefined;
+    providerRequestId?: string | undefined;
+    originTool?: string | undefined;
+    originCallId?: string | undefined;
+    originHook?: string | undefined;
+    originMcpServer?: string | undefined;
+    rateLimit?: {
+      limit?: number | undefined;
+      remaining?: number | undefined;
+      resetAt?: number | undefined;
+      retryAfterMs?: number | undefined;
+    } | undefined;
+  }
+): void {
+  // Merge the ambient cost-attribution origin (the tool/hook/MCP scope this LLM
+  // call ran inside, if any) so the emit site does not have to thread it by
+  // hand. An explicitly-passed origin field wins over the ambient one.
+  const origin = getCostOrigin();
+  const enriched = {
+    type: 'LLM_RESPONSE_RECEIVED' as const,
+    ...data,
+    ...(data.originTool ?? origin.tool ? { originTool: data.originTool ?? origin.tool } : {}),
+    ...(data.originCallId ?? origin.callId ? { originCallId: data.originCallId ?? origin.callId } : {}),
+    ...(data.originHook ?? origin.hook ? { originHook: data.originHook ?? origin.hook } : {}),
+    ...(data.originMcpServer ?? origin.mcpServer ? { originMcpServer: data.originMcpServer ?? origin.mcpServer } : {}),
+  };
+  bus.emit('turn', createEventEnvelope('LLM_RESPONSE_RECEIVED', enriched, ctx));
+}
+
+/** Emit TOOL_BATCH_READY when a set of tool calls is ready for execution. */
+export function emitToolBatchReady(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; toolCalls: string[] }
+): void {
+  bus.emit('turn', createEventEnvelope('TOOL_BATCH_READY', { type: 'TOOL_BATCH_READY', ...data }, ctx));
+}
+
+/** Emit TOOLS_DONE when all tool calls in the current batch have completed. */
+export function emitToolsDone(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string }
+): void {
+  bus.emit('turn', createEventEnvelope('TOOLS_DONE', { type: 'TOOLS_DONE', ...data }, ctx));
+}
+
+/** Emit POST_HOOKS_DONE when post-processing hooks have completed. */
+export function emitPostHooksDone(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string }
+): void {
+  bus.emit('turn', createEventEnvelope('POST_HOOKS_DONE', { type: 'POST_HOOKS_DONE', ...data }, ctx));
+}
+
+/**
+ * Emit TURN_COMPLETED when the turn finishes successfully.
+ *
+ * `memoryRecordIds`, the turn's MEMORY-sourced injected knowledge-record ids
+ * (TurnInjectionRecord filtered to source 'memory'). When non-empty they are
+ * stamped as `metadata.memory.recordIds` (the published provenance convention
+ * surfaces read); when absent/empty the event carries NO metadata field,
+ * honest absence, never an empty array.
+ */
+export function emitTurnCompleted(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: {
+    turnId: string;
+    response: string;
+    stopReason: 'completed' | 'empty_response';
+    memoryRecordIds?: readonly string[] | undefined;
+  }
+): void {
+  const { memoryRecordIds, ...payload } = data;
+  const metadata = memoryRecordIds && memoryRecordIds.length > 0
+    ? { memory: { recordIds: [...memoryRecordIds] } }
+    : undefined;
+  bus.emit('turn', createEventEnvelope('TURN_COMPLETED', {
+    type: 'TURN_COMPLETED',
+    ...payload,
+    ...(metadata ? { metadata } : {}),
+  }, ctx));
+}
+
+/** Emit TURN_ERROR when the turn fails. */
+export function emitTurnError(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: {
+    turnId: string;
+    error: string;
+    stopReason:
+      | 'preflight_failed'
+      | 'context_overflow'
+      | 'provider_exhausted'
+      | 'provider_error'
+      | 'hook_denied'
+      | 'tool_loop_circuit_breaker'
+      | 'unexpected_error';
+  }
+): void {
+  bus.emit('turn', createEventEnvelope('TURN_ERROR', { type: 'TURN_ERROR', ...data }, ctx));
+}
+
+/** Emit TURN_CANCEL when the turn is cancelled. */
+export function emitTurnCancel(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { turnId: string; reason?: string; stopReason: 'cancelled' }
+): void {
+  bus.emit('turn', createEventEnvelope('TURN_CANCEL', { type: 'TURN_CANCEL', ...data }, ctx));
+}

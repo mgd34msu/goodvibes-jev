@@ -1,0 +1,270 @@
+/**
+ * Fail-safe, bounded export queue with exponential-backoff retry.
+ *
+ * Guarantees:
+ * - Never blocks the caller, all export work is dequeued asynchronously.
+ * - Never throws, all errors are caught and logged.
+ * - Drops oldest entries when full (back-pressure relief).
+ * - Shutdown drain waits up to the configured timeout before returning.
+ */
+import { randomInt } from 'node:crypto';
+import type { ReadableSpan } from '../types.js';
+import type {
+  ExportQueueConfig,
+  ExportResult,
+  ExportResultCallback,
+  ExportFn,
+  RetryConfig,
+} from './types.js';
+import { DEFAULT_QUEUE_CONFIG } from './types.js';
+import { summarizeError } from '../../../utils/error-display.js';
+import { logger } from '../../../utils/logger.js';
+import { sleep } from '../../../utils/concurrency.js';
+
+/** Entry held in the ring buffer. */
+interface QueueEntry {
+  readonly batch: ReadableSpan[];
+  readonly enqueuedAt: number;
+}
+
+/**
+ * Computes the delay in milliseconds for a given retry attempt using
+ * exponential backoff with jitter (±10%).
+ */
+function computeDelay(attempt: number, config: RetryConfig): number {
+  const base = config.baseDelayMs * Math.pow(config.backoffFactor, attempt);
+  const capped = Math.min(base, config.maxDelayMs);
+  // Add ±10% jitter to avoid thundering-herd
+  const jitterWindow = Math.max(1, Math.floor(capped * 0.1));
+  const jitter = randomInt(-jitterWindow, jitterWindow + 1);
+  return Math.max(0, Math.round(capped + jitter));
+}
+
+
+
+/**
+ * Bounded in-memory export queue with retry and overflow protection.
+ *
+ * @example
+ * ```ts
+ * const queue = new ExportQueue(
+ *   async (batch) => {
+ *     await fetch('http://localhost:4318/v1/traces', {
+ *       method: 'POST',
+ *       body: JSON.stringify(batch),
+ *     });
+ *   },
+ *   { maxSize: 64, drainTimeoutMs: 3000, retry: { maxRetries: 2, baseDelayMs: 50, backoffFactor: 2, maxDelayMs: 1000 } },
+ * );
+ *
+ * queue.enqueue(spans);
+ * await queue.drain();
+ * ```
+ */
+export class ExportQueue {
+  private readonly _config: ExportQueueConfig;
+  private readonly _exportFn: ExportFn<ReadableSpan>;
+  private readonly _onResult?: ExportResultCallback | undefined;
+
+  /** Ring buffer holding pending batches. */
+  private readonly _ring: Array<QueueEntry | undefined>;
+  private _head = 0;
+  private _tail = 0;
+  private _size = 0;
+
+  /** True while a drain loop is running. */
+  private _draining = false;
+  /** True after shutdown() is called, no new enqueues accepted. */
+  private _shutdown = false;
+
+  /**
+   * @param exportFn - The actual export implementation. Must not throw.
+   * @param config - Queue configuration. Merged with defaults.
+   * @param onResult - Optional callback invoked after each export attempt.
+   */
+  constructor(
+    exportFn: ExportFn<ReadableSpan>,
+    config?: Partial<ExportQueueConfig>,
+    onResult?: ExportResultCallback,
+  ) {
+    this._config = {
+      ...DEFAULT_QUEUE_CONFIG,
+      ...config,
+      retry: { ...DEFAULT_QUEUE_CONFIG.retry, ...config?.retry },
+    };
+    this._exportFn = exportFn;
+    this._onResult = onResult;
+    this._ring = new Array<QueueEntry | undefined>(this._config.maxSize);
+  }
+
+  /** Number of batches currently in the queue. */
+  get size(): number {
+    return this._size;
+  }
+
+  /** Whether the queue is currently draining. */
+  get draining(): boolean {
+    return this._draining;
+  }
+
+  /**
+   * Enqueue a batch of spans for export.
+   *
+   * - If the queue is full, the oldest entry is dropped to make room.
+   * - Starts the drain loop if not already running.
+   * - No-op after shutdown().
+   */
+  enqueue(batch: ReadableSpan[]): void {
+    if (this._shutdown) return;
+    if (batch.length === 0) return;
+
+    if (this._size >= this._config.maxSize) {
+      // Drop oldest, advance head
+      const dropped = this._ring[this._head];
+      this._head = (this._head + 1) % this._config.maxSize;
+      this._size--;
+      if (dropped) {
+        this._emitResult({
+          code: 'dropped',
+          spanCount: dropped.batch.length,
+          attempts: 0,
+          completedAt: Date.now(),
+        });
+      }
+      // structured logger, not console
+      logger.warn('[ExportQueue] Queue overflow, dropped oldest batch', { maxSize: this._config.maxSize });
+    }
+
+    this._ring[this._tail] = { batch, enqueuedAt: Date.now() };
+    this._tail = (this._tail + 1) % this._config.maxSize;
+    this._size++;
+
+    this._startDrainLoop();
+  }
+
+  /**
+   * Wait until no queued entries remain or drainTimeoutMs elapses.
+   */
+  async drain(): Promise<void> {
+    if (this._size === 0) return;
+
+    const deadline = Date.now() + this._config.drainTimeoutMs;
+    while (this._size > 0 && Date.now() < deadline) {
+      await sleep(10);
+    }
+    if (this._size > 0) {
+      logger.warn('[ExportQueue] Drain timed out with queued batches remaining', {
+        remainingBatches: this._size,
+        drainTimeoutMs: this._config.drainTimeoutMs,
+      });
+    }
+  }
+
+  /**
+   * Stop accepting new entries and drain remaining batches.
+   * Returns after drain completes or drainTimeoutMs elapses.
+   */
+  async shutdown(): Promise<void> {
+    this._shutdown = true;
+    await this.drain();
+  }
+
+  // ── Private drain loop ───────────────────────────────────────────────────
+
+  /** Starts the async drain loop if not already running. */
+  private _startDrainLoop(): void {
+    if (this._draining) return;
+    this._draining = true;
+    void this._drainLoop().catch((error: unknown) => {
+      this._draining = false;
+      logger.error('[ExportQueue] Drain loop failed outside batch processing', {
+        error: summarizeError(error),
+      });
+    });
+  }
+
+  /** Continuously drains entries until the queue is empty. */
+  private async _drainLoop(): Promise<void> {
+    try {
+      while (this._size > 0) {
+        const entry = this._dequeue();
+        if (entry === undefined) break;
+        await this._processEntry(entry);
+      }
+    } finally {
+      this._draining = false;
+      // If more entries arrived during the final iteration, restart
+      if (this._size > 0) {
+        this._startDrainLoop();
+      }
+    }
+  }
+
+  /** Dequeues and returns the oldest entry, or undefined if empty. */
+  private _dequeue(): QueueEntry | undefined {
+    if (this._size === 0) return undefined;
+    const entry = this._ring[this._head];
+    this._ring[this._head] = undefined;
+    this._head = (this._head + 1) % this._config.maxSize;
+    this._size--;
+    return entry;
+  }
+
+  /**
+   * Attempts to export a single batch with retry/backoff.
+   * Never throws.
+   */
+  private async _processEntry(entry: QueueEntry): Promise<void> {
+    const { maxRetries } = this._config.retry;
+    let lastError: string | undefined;
+    let attempts = 0;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await this._exportFn(entry.batch);
+        this._emitResult({
+          code: 'success',
+          spanCount: entry.batch.length,
+          attempts,
+          completedAt: Date.now(),
+        });
+        return;
+      } catch (err) {
+        attempts++;
+        lastError = summarizeError(err);
+        if (attempt < maxRetries) {
+          const delay = computeDelay(attempt, this._config.retry);
+          // structured logger, not console
+          logger.warn('[ExportQueue] Export attempt failed, retrying', { attempt: attempt + 1, delayMs: delay, error: lastError });
+          await sleep(delay);
+        }
+      }
+    }
+
+    // All retries exhausted; use structured logging.
+    logger.error('[ExportQueue] Export failed after all retries, batch dropped', {
+      attempts,
+      spanCount: entry.batch.length,
+      error: lastError,
+    });
+    this._emitResult({
+      code: 'failure',
+      spanCount: entry.batch.length,
+      attempts,
+      error: lastError,
+      completedAt: Date.now(),
+    });
+  }
+
+  /** Safely invokes the result callback without throwing. */
+  private _emitResult(result: ExportResult): void {
+    if (this._onResult === undefined) return;
+    try {
+      this._onResult(result);
+    } catch (error) {
+      logger.warn('[ExportQueue] Result callback failed', {
+        error: summarizeError(error),
+      });
+    }
+  }
+}

@@ -1,0 +1,909 @@
+import { type ConfigSettingDefinition, intRange, numRange, port } from './schema-shared.js';
+
+/**
+ * Per-project worktree cold-start setup (resolveWorktreeSetupConfig). Both fields
+ * are arrays, so, like notifications.webhookUrls / wrfc.gates, they are NOT
+ * scalar ConfigKeys; read them via getCategory('worktree').setup. The domain is
+ * augmented onto GoodVibesConfig here (co-located with its default below) so
+ * schema-types.ts stays under its grandfathered line ceiling; registering it is
+ * what keeps get('worktree.setup.*') from throwing "section 'worktree' does not
+ * exist", the daemon reads those keys via a cast.
+ */
+export interface WorktreeConfig {
+  setup: { commands: string[]; carryOverGlobs: string[] };
+}
+
+/**
+ * The proactive check-in section. Its keys and defaults already shipped; no
+ * `declare module` block ever put the SECTION on `GoodVibesConfig`, so reading
+ * it off the config object was a compile error. Pinned in
+ * test/types/config-domains-complete.ts.
+ */
+export interface CheckinConfig {
+  enabled: boolean;
+  cadence: string;
+  deliveryChannel: string;
+  quietHours: string;
+}
+
+declare module './schema-types.js' {
+  interface GoodVibesConfig {
+    worktree: WorktreeConfig;
+    checkin: CheckinConfig;
+  }
+}
+export const runtimeConfigDefaults = {
+  runtime: {
+    companionChatLimiter: {
+      perSessionLimit: 10,
+    },
+    eventBus: {
+      maxListeners: 100,
+    },
+    unifiedTasks: true,
+    pluginLifecycle: false,
+    mcpLifecycle: false,
+    toolBudget: {
+      enforced: false,
+      maxMs: 0,
+      maxTokens: 0,
+      maxCostUsd: 0,
+    },
+  },
+  batch: {
+    mode: 'off',
+    fallback: 'live',
+    queueBackend: 'local',
+    tickIntervalMs: 60_000,
+    maxDelayMs: 5 * 60 * 1000,
+    maxJobsPerProviderBatch: 100,
+    maxQueuePayloadBytes: 16 * 1024,
+    maxQueueMessagesPerDay: 1_000,
+  },
+  cloudflare: {
+    enabled: false,
+    freeTierMode: true,
+    accountId: '',
+    apiTokenRef: '',
+    zoneId: '',
+    zoneName: '',
+    workerName: 'goodvibes-batch-worker',
+    workerSubdomain: '',
+    workerHostname: '',
+    workerBaseUrl: '',
+    daemonBaseUrl: '',
+    daemonHostname: '',
+    workerTokenRef: '',
+    workerClientTokenRef: '',
+    workerCron: '*/5 * * * *',
+    queueName: 'goodvibes-batch',
+    deadLetterQueueName: 'goodvibes-batch-dlq',
+    tunnelName: 'goodvibes-daemon',
+    tunnelId: '',
+    tunnelTokenRef: '',
+    accessAppId: '',
+    accessServiceTokenId: '',
+    accessServiceTokenRef: '',
+    kvNamespaceName: 'goodvibes-runtime',
+    kvNamespaceId: '',
+    durableObjectNamespaceName: 'GoodVibesCoordinator',
+    durableObjectNamespaceId: '',
+    r2BucketName: 'goodvibes-artifacts',
+    secretsStoreName: 'goodvibes',
+    secretsStoreId: '',
+    maxQueueOpsPerDay: 10_000,
+  },
+  telemetry: {
+    includeRawPrompts: false,
+    decisionOtlpEnabled: false,
+    decisionOtlpEndpoint: '',
+    decisionOtlpSignal: 'span',
+    otelMode: 'off',
+  },
+  automation: {
+    enabled: true,
+    maxConcurrentRuns: 4,
+    runHistoryLimit: 100,
+    defaultTimeoutMs: 15 * 60 * 1000,
+    catchUpWindowMinutes: 30,
+    failureCooldownMs: 5 * 60 * 1000,
+    deleteAfterRun: false,
+  },
+  checkin: {
+    enabled: false,
+    cadence: '0 */4 * * *',
+    deliveryChannel: '',
+    quietHours: '',
+  },
+  controlPlane: {
+    enabled: false,
+    gateway: true,
+    hostMode: 'local',
+    host: '127.0.0.1',
+    port: 3421,
+    publicBaseUrl: '',
+    streamMode: 'sse',
+    allowRemote: false,
+    trustProxy: false,
+    openaiCompatible: {
+      enabled: true,
+      pathPrefix: '/v1',
+    },
+    webui: {
+      serve: false,
+      bundleDir: '',
+    },
+    cors: {
+      enabled: false,
+      allowedOrigins: '',
+    },
+    tls: {
+      mode: 'off',
+      certFile: '',
+      keyFile: '',
+    },
+  },
+  httpListener: {
+    hostMode: 'local',
+    host: '127.0.0.1',
+    port: 3422,
+    trustProxy: false,
+    trustCloudflare: false,
+    tls: {
+      mode: 'off',
+      certFile: '',
+      keyFile: '',
+    },
+  },
+  web: {
+    enabled: true,
+    hostMode: 'local',
+    host: '127.0.0.1',
+    port: 3423,
+    publicBaseUrl: 'http://127.0.0.1:3423',
+    staticAssetsDir: 'dist/web',
+  },
+  watchers: {
+    enabled: true,
+    pollIntervalMs: 60_000,
+    heartbeatIntervalMs: 15_000,
+    recoveryWindowMinutes: 10,
+    ciPollIntervalMs: 60_000,
+  },
+  service: {
+    enabled: true,
+    autostart: false,
+    restartOnFailure: true,
+    platform: 'auto',
+    serviceName: 'goodvibes',
+    logPath: '',
+  },
+  network: {
+    outboundTls: {
+      mode: 'bundled',
+      customCaFile: '',
+      customCaDir: '',
+      allowInsecureLocalhost: false,
+    },
+    remoteFetch: {
+      allowPrivateHosts: false,
+    },
+  },
+  relay: {
+    enabled: true,
+    url: '',
+    rendezvousId: '',
+    label: '',
+    requireStepUpForMutations: false,
+  },
+  worktree: {
+    setup: {
+      commands: [] as string[],
+      carryOverGlobs: [] as string[],
+    },
+  },
+};
+
+export const runtimePrimaryConfigSettings: ConfigSettingDefinition[] = [
+  {
+    key: 'automation.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Enable the automation subsystem (durable routines, schedule evaluation, run history). Default on: with no routines defined it idles and surfaces a how-to-create-your-first-routine empty state.',
+  },
+  {
+    key: 'automation.maxConcurrentRuns',
+    type: 'number',
+    default: 4,
+    description: 'Maximum automation runs that may execute concurrently',
+    ...intRange(1, 64),
+  },
+  {
+    key: 'automation.runHistoryLimit',
+    type: 'number',
+    default: 100,
+    description: 'Maximum run history entries retained per automation job',
+    ...intRange(1, 5000),
+  },
+  {
+    key: 'automation.defaultTimeoutMs',
+    type: 'number',
+    default: 15 * 60 * 1000,
+    description: 'Default execution timeout for automation runs in milliseconds',
+    ...intRange(1_000, 24 * 60 * 60 * 1000),
+  },
+  {
+    key: 'automation.catchUpWindowMinutes',
+    type: 'number',
+    default: 30,
+    description: 'How long after startup the engine should catch up missed runs',
+    ...intRange(0, 24 * 60),
+  },
+  {
+    key: 'automation.failureCooldownMs',
+    type: 'number',
+    default: 5 * 60 * 1000,
+    description: 'Cooldown applied after a failed automation run before retrying',
+    ...intRange(0, 24 * 60 * 60 * 1000),
+  },
+  {
+    key: 'automation.deleteAfterRun',
+    type: 'boolean',
+    default: false,
+    description: 'Delete one-shot automation jobs after their first successful run',
+  },
+  {
+    key: 'checkin.enabled',
+    type: 'boolean',
+    default: false,
+    description: 'Enable the proactive check-in: on a cadence, a briefing is judged and the user is contacted only when something warrants it',
+  },
+  {
+    key: 'checkin.cadence',
+    type: 'string',
+    default: '0 */4 * * *',
+    description: 'Proactive check-in cadence as a cron expression (default: every 4 hours)',
+  },
+  {
+    key: 'checkin.deliveryChannel',
+    type: 'string',
+    default: '',
+    description: 'Where a proactive check-in message is delivered: "surfaceKind" or "surfaceKind:address" (e.g. "slack:C123")',
+  },
+  {
+    key: 'checkin.quietHours',
+    type: 'string',
+    default: '',
+    description: 'Proactive check-in quiet hours as "HH:MM-HH:MM" local time (empty disables); no message is sent during this window',
+  },
+  {
+    key: 'controlPlane.enabled',
+    type: 'boolean',
+    default: false,
+    description: 'Enable the standalone control-plane HTTP server',
+  },
+  {
+    key: 'controlPlane.gateway',
+    type: 'boolean',
+    default: true,
+    description: 'The shared gateway/control-plane host serving state snapshots, live streams (SSE/WS), and authenticated control APIs to terminal hosts and remote clients. Default on so a stock daemon can stream companion chat; every streaming endpoint stays auth-gated and the default bind stays loopback. Turn off for a request/response-only daemon.',
+  },
+  {
+    key: 'controlPlane.hostMode',
+    type: 'enum',
+    default: 'local',
+    description: 'Network binding mode: local (127.0.0.1, default port), network (0.0.0.0, default port), custom (editable host and port)',
+    enumValues: ['local', 'network', 'custom'],
+  },
+  {
+    key: 'controlPlane.host',
+    type: 'string',
+    default: '127.0.0.1',
+    description: 'Bind host for the control-plane HTTP server',
+  },
+  {
+    key: 'controlPlane.port',
+    type: 'number',
+    default: 3421,
+    description: 'Bind port for the control-plane HTTP server',
+    ...port(),
+  },
+  {
+    key: 'controlPlane.publicBaseUrl',
+    type: 'string',
+    default: '',
+    description:
+      'Override for a genuinely external control-plane address (tunnel or reverse proxy). '
+      + 'Leave empty, the everyday base URL is derived from hostMode/host/port/tls.mode, '
+      + 'so it cannot drift. Set this only when an off-box address differs from the bind.',
+  },
+  {
+    key: 'controlPlane.streamMode',
+    type: 'enum',
+    default: 'sse',
+    description: 'Live update stream mode for control-plane clients',
+    enumValues: ['sse', 'websocket', 'both'],
+  },
+  {
+    key: 'controlPlane.allowRemote',
+    type: 'boolean',
+    default: false,
+    description: 'Allow remote clients to connect to the control plane',
+  },
+  {
+    key: 'controlPlane.trustProxy',
+    type: 'boolean',
+    default: false,
+    description: 'Trust proxy forwarding headers such as x-forwarded-for for the control plane',
+  },
+  {
+    key: 'controlPlane.openaiCompatible.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Expose OpenAI-compatible /v1/models and /v1/chat/completions routes on the authenticated daemon',
+  },
+  {
+    key: 'controlPlane.openaiCompatible.pathPrefix',
+    type: 'string',
+    default: '/v1',
+    description: 'Path prefix for the daemon OpenAI-compatible routes',
+    validate: (v) => typeof v === 'string' && v.startsWith('/') && !v.includes('..'),
+  },
+  {
+    key: 'controlPlane.webui.serve',
+    type: 'boolean',
+    default: false,
+    description: 'Serve a built web UI bundle same-origin from the daemon (opt-in; loopback default unchanged). The bundle is public and the app token-authenticates its own API calls.',
+  },
+  {
+    key: 'controlPlane.webui.bundleDir',
+    type: 'string',
+    default: '',
+    description: 'Directory holding the built web UI bundle (index.html + assets) served when controlPlane.webui.serve is true. Takes precedence over web.staticAssetsDir: this key is the specific answer for this daemon, so when it names a directory that is the one served. Empty falls back to web.staticAssetsDir.',
+  },
+  {
+    key: 'controlPlane.cors.enabled',
+    type: 'boolean',
+    default: false,
+    description: 'Answer OPTIONS preflight and emit Access-Control-Allow-* headers for allowlisted origins (opt-in; off by default). Never wildcards; credentials are allowlist-gated.',
+  },
+  {
+    key: 'controlPlane.cors.allowedOrigins',
+    type: 'string',
+    default: '',
+    description: 'Comma-separated explicit allowlist of browser origins permitted to make cross-origin requests when controlPlane.cors.enabled is true (e.g. http://localhost:5173). Empty refuses every cross-origin request.',
+  },
+  {
+    key: 'controlPlane.tls.mode',
+    type: 'enum',
+    default: 'off',
+    description: 'TLS mode for the control-plane HTTP server',
+    enumValues: ['off', 'proxy', 'direct'],
+  },
+  {
+    key: 'controlPlane.tls.certFile',
+    type: 'string',
+    default: '',
+    description: 'Certificate chain PEM path for direct control-plane TLS (empty = ~/.goodvibes/certs/fullchain.pem)',
+  },
+  {
+    key: 'controlPlane.tls.keyFile',
+    type: 'string',
+    default: '',
+    description: 'Private key PEM path for direct control-plane TLS (empty = ~/.goodvibes/certs/privkey.pem)',
+  },
+  {
+    key: 'httpListener.hostMode',
+    type: 'enum',
+    default: 'local',
+    description: 'Network binding mode: local (127.0.0.1, default port), network (0.0.0.0, default port), custom (editable host and port)',
+    enumValues: ['local', 'network', 'custom'],
+  },
+  {
+    key: 'httpListener.host',
+    type: 'string',
+    default: '127.0.0.1',
+    description: 'Bind host for the webhook HTTP listener',
+  },
+  {
+    key: 'httpListener.port',
+    type: 'number',
+    default: 3422,
+    description: 'Bind port for the webhook HTTP listener',
+    ...port(),
+  },
+  {
+    key: 'httpListener.trustProxy',
+    type: 'boolean',
+    default: false,
+    description: 'Trust proxy forwarding headers such as x-forwarded-for for the webhook listener',
+  },
+  {
+    key: 'httpListener.trustCloudflare',
+    type: 'boolean',
+    default: false,
+    description: 'Read the real client IP from CF-Connecting-IP, and only when the connecting peer is inside a published Cloudflare range. Requires httpListener.trustProxy: with it off, CF-Connecting-IP is ignored no matter what this says. The range check is the point, without it any peer could send a CF-Connecting-IP header and choose which address the rate limiter and the audit log recorded. Leave off unless this listener genuinely sits behind Cloudflare.',
+  },
+  {
+    key: 'httpListener.tls.mode',
+    type: 'enum',
+    default: 'off',
+    description: 'TLS mode for the webhook HTTP listener',
+    enumValues: ['off', 'proxy', 'direct'],
+  },
+  {
+    key: 'httpListener.tls.certFile',
+    type: 'string',
+    default: '',
+    description: 'Certificate chain PEM path for direct webhook-listener TLS (empty = ~/.goodvibes/certs/fullchain.pem)',
+  },
+  {
+    key: 'httpListener.tls.keyFile',
+    type: 'string',
+    default: '',
+    description: 'Private key PEM path for direct webhook-listener TLS (empty = ~/.goodvibes/certs/privkey.pem)',
+  },
+  {
+    key: 'web.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Enable the browser-based operator surface. Default on, bound to loopback (web.hostMode local): served on this machine only until deliberately widened via web.hostMode. The URL is announced once at daemon start.',
+  },
+  {
+    key: 'web.hostMode',
+    type: 'enum',
+    default: 'local',
+    description: 'Network binding mode: local (127.0.0.1, default port), network (0.0.0.0, default port), custom (editable host and port)',
+    enumValues: ['local', 'network', 'custom'],
+  },
+  {
+    key: 'web.host',
+    type: 'string',
+    default: '127.0.0.1',
+    description: 'Bind host for the web surface',
+  },
+  {
+    key: 'web.port',
+    type: 'number',
+    default: 3423,
+    description: 'Bind port for the web surface',
+    ...port(),
+  },
+  {
+    key: 'web.publicBaseUrl',
+    type: 'string',
+    default: 'http://127.0.0.1:3423',
+    description: 'Public base URL for web links and ntfy/notification deep links',
+  },
+  {
+    key: 'web.staticAssetsDir',
+    type: 'string',
+    default: 'dist/web',
+    description: 'Static asset directory for the embedded web surface (index.html + assets), served when controlPlane.webui.serve is true. Used when controlPlane.webui.bundleDir is empty; that more specific key wins when it names a directory.',
+  },
+];
+
+export const runtimeSecondaryConfigSettings: ConfigSettingDefinition[] = [
+  {
+    key: 'watchers.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Enable managed watcher/listener services (checkpointing and recovery for long-running external sources). Default on: with no watchers configured the framework idles.',
+  },
+  {
+    key: 'watchers.pollIntervalMs',
+    type: 'number',
+    default: 60_000,
+    description: 'Polling interval for watcher sources in milliseconds',
+    ...intRange(1_000, 24 * 60 * 60 * 1000),
+  },
+  {
+    key: 'watchers.heartbeatIntervalMs',
+    type: 'number',
+    default: 15_000,
+    description: 'Heartbeat interval for watcher services in milliseconds',
+    ...intRange(1_000, 60 * 60 * 1000),
+  },
+  {
+    key: 'watchers.ciPollIntervalMs',
+    type: 'number',
+    default: 60_000,
+    description: 'Cadence (ms) for the daemon\'s recurring CI-watch poll; the poller enforces a 15s floor to respect the status source\'s rate limits',
+    ...intRange(1_000, 24 * 60 * 60 * 1000),
+  },
+  {
+    key: 'watchers.recoveryWindowMinutes',
+    type: 'number',
+    default: 10,
+    description: 'Recovery window for watcher restart and missed-event catch-up',
+    ...intRange(0, 24 * 60),
+  },
+  {
+    key: 'service.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Enable service-install and daemon-management features (install/start/stop/status/autostart verbs), including the standalone daemon\'s boot-time self-promotion to a supervised service at its first idle moment. Set false to keep spawned daemons session-only (nothing installed or promoted).',
+  },
+  {
+    key: 'service.autostart',
+    type: 'boolean',
+    default: false,
+    description: 'Start Goodvibes automatically when the host boots or logs in',
+  },
+  {
+    key: 'service.restartOnFailure',
+    type: 'boolean',
+    default: true,
+    description: 'Restart the service automatically after failure',
+  },
+  {
+    key: 'service.platform',
+    type: 'enum',
+    default: 'auto',
+    description: 'Target service manager platform',
+    enumValues: ['auto', 'systemd', 'launchd', 'windows', 'manual'],
+  },
+  {
+    key: 'service.serviceName',
+    type: 'string',
+    default: 'goodvibes',
+    description: 'Service name used for host integration and install scripts',
+  },
+  {
+    key: 'service.logPath',
+    type: 'string',
+    default: '',
+    description: 'File path for daemon/service logs (empty = platform default under the configured service directory)',
+  },
+  {
+    key: 'network.outboundTls.mode',
+    type: 'enum',
+    default: 'bundled',
+    description: 'Outbound HTTPS trust mode for Bun fetch-based network calls',
+    enumValues: ['bundled', 'bundled+custom', 'custom'],
+  },
+  {
+    key: 'network.outboundTls.customCaFile',
+    type: 'string',
+    default: '',
+    description: 'Additional PEM file to trust for outbound HTTPS when using bundled+custom or custom mode',
+  },
+  {
+    key: 'network.outboundTls.customCaDir',
+    type: 'string',
+    default: '',
+    description: 'Directory of PEM/CRT/CER files to trust for outbound HTTPS when using bundled+custom or custom mode',
+  },
+  {
+    key: 'network.outboundTls.allowInsecureLocalhost',
+    type: 'boolean',
+    default: false,
+    description: 'Allow self-signed HTTPS only for localhost/loopback outbound requests',
+  },
+  {
+    key: 'network.remoteFetch.allowPrivateHosts',
+    type: 'boolean',
+    default: false,
+    description: 'Allow explicit admin-approved remote fetches from private, localhost, or metadata hosts for artifacts and ingest flows',
+  },
+  {
+    key: 'relay.enabled',
+    type: 'boolean',
+    default: true,
+    description: 'Connect the daemon OUTBOUND to a zero-knowledge relay for reachability from outside the LAN. Default on, but no connection is ever made without an explicitly configured relay.url, leave the URL empty to keep the daemon LAN-only.',
+  },
+  {
+    key: 'relay.url',
+    type: 'string',
+    default: '',
+    description: 'Relay URL to dial (wss://…); empty disables the outbound relay connection',
+  },
+  {
+    key: 'relay.rendezvousId',
+    type: 'string',
+    default: '',
+    description: 'Stable unguessable rendezvous id the daemon registers under; generated on first enable when empty',
+  },
+  {
+    key: 'relay.label',
+    type: 'string',
+    default: '',
+    description: 'Human-facing daemon label carried in relay pairing payloads',
+  },
+  {
+    key: 'relay.requireStepUpForMutations',
+    type: 'boolean',
+    default: false,
+    description: 'Require a recent WebAuthn step-up assertion on mutating operator calls arriving via relay (fails closed until a verifier is wired)',
+  },
+  {
+    key: 'runtime.companionChatLimiter.perSessionLimit',
+    type: 'number',
+    default: 10,
+    description:
+      'Max companion chat messages per 60-second window per session. ' +
+      'Overrides the GOODVIBES_CHAT_LIMITER_THRESHOLD env var (env is read once at daemon startup; ' +
+      'this config key is read on each check() call and takes precedence when set to a positive integer).',
+  },
+  {
+    key: 'runtime.eventBus.maxListeners',
+    type: 'number',
+    default: 100,
+    description:
+      'Maximum number of listeners per event channel (per-type and per-domain) before a warning is emitted in production ' +
+      'or a RangeError is thrown in development mode. Raise this only if you have verified there is no subscriber leak.',
+    ...intRange(1, 100_000),
+  },
+  {
+    key: 'telemetry.includeRawPrompts',
+    type: 'boolean',
+    default: false,
+    description:
+      'When false (default), turn emitters emit a redacted prompt summary {length, sha256, first100chars} instead of raw prompt/response content. ' +
+      'Set to true ONLY for debugging in non-production environments, raw prompts may contain PII, secrets, or proprietary data. ' +
+      'When true at startup, a WARN log is emitted to make the configuration visible to ops.',
+  },
+  {
+    key: 'telemetry.decisionOtlpEnabled',
+    type: 'boolean',
+    default: false,
+    description: 'Export permission/policy decision-log records to an OTLP endpoint (export-only, no ingestion). Requires telemetry.decisionOtlpEndpoint',
+  },
+  {
+    key: 'telemetry.decisionOtlpEndpoint',
+    type: 'string',
+    default: '',
+    description: 'OTLP/HTTP JSON endpoint base for decision-log export (empty = disabled). Spans POST to <base>/v1/traces, logs to <base>/v1/logs',
+  },
+  {
+    key: 'telemetry.decisionOtlpSignal',
+    type: 'enum',
+    default: 'span',
+    description: 'Which OTLP record shape each decision is emitted as: span, log, or both',
+    enumValues: ['span', 'log', 'both'],
+  },
+  {
+    key: 'batch.mode',
+    type: 'enum',
+    default: 'off',
+    description: 'Daemon provider Batch API mode: off, explicit per request, or eligible-by-default for batch-capable daemon requests',
+    enumValues: ['off', 'explicit', 'eligible-by-default'],
+  },
+  {
+    key: 'batch.fallback',
+    type: 'enum',
+    default: 'live',
+    description: 'Fallback behavior when a batch-requested job is not eligible: live allows callers to choose live execution, fail rejects the batch job',
+    enumValues: ['live', 'fail'],
+  },
+  {
+    key: 'batch.queueBackend',
+    type: 'enum',
+    default: 'local',
+    description: 'Queue backend for daemon batch signals. local stores jobs under the daemon config directory; cloudflare requires cloudflare.enabled.',
+    enumValues: ['local', 'cloudflare'],
+  },
+  {
+    key: 'batch.tickIntervalMs',
+    type: 'number',
+    default: 60_000,
+    description: 'Daemon-local batch scheduler tick interval in milliseconds',
+    ...intRange(5_000, 60 * 60 * 1000),
+  },
+  {
+    key: 'batch.maxDelayMs',
+    type: 'number',
+    default: 5 * 60 * 1000,
+    description: 'Maximum time a queued local batch job should wait before the daemon submits its provider batch',
+    ...intRange(0, 24 * 60 * 60 * 1000),
+  },
+  {
+    key: 'batch.maxJobsPerProviderBatch',
+    type: 'number',
+    default: 100,
+    description: 'Maximum SDK jobs grouped into a single upstream provider batch submission',
+    ...intRange(1, 100_000),
+  },
+  {
+    key: 'batch.maxQueuePayloadBytes',
+    type: 'number',
+    default: 16 * 1024,
+    description: 'Recommended maximum Cloudflare queue message payload size; queue messages should be signals, not full prompt archives',
+    ...intRange(1024, 128 * 1024),
+  },
+  {
+    key: 'batch.maxQueueMessagesPerDay',
+    type: 'number',
+    default: 1_000,
+    description: 'SDK-side free-tier guardrail for Cloudflare queue message volume',
+    ...intRange(0, 10_000_000),
+  },
+  {
+    key: 'cloudflare.enabled',
+    type: 'boolean',
+    default: false,
+    description: 'Enable optional Cloudflare Worker/Queue integration points. The daemon does not require Cloudflare when this is false.',
+  },
+  {
+    key: 'cloudflare.freeTierMode',
+    type: 'boolean',
+    default: true,
+    description: 'Prefer Cloudflare usage patterns that fit the free tier: small queue signals, local daemon storage, and bounded daily queue volume',
+  },
+  {
+    key: 'cloudflare.accountId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare account id used by SDK-owned Worker/Queue provisioning',
+  },
+  {
+    key: 'cloudflare.apiTokenRef',
+    type: 'string',
+    default: '',
+    description: 'GoodVibes secret reference for the Cloudflare API token. If empty, the SDK falls back to CLOUDFLARE_API_TOKEN.',
+  },
+  {
+    key: 'cloudflare.zoneId',
+    type: 'string',
+    default: '',
+    description: 'Optional Cloudflare zone id selected for SDK-managed DNS and Zero Trust Access hostnames',
+  },
+  {
+    key: 'cloudflare.zoneName',
+    type: 'string',
+    default: '',
+    description: 'Optional Cloudflare zone name selected during discovery/onboarding when zone id is not known yet',
+  },
+  {
+    key: 'cloudflare.workerName',
+    type: 'string',
+    default: 'goodvibes-batch-worker',
+    description: 'Cloudflare Worker script name managed by GoodVibes provisioning',
+    validate: (v) => typeof v === 'string' && (/^[a-z0-9][a-z0-9-]{0,62}$/i.test(v) || v === ''),
+  },
+  {
+    key: 'cloudflare.workerSubdomain',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare account workers.dev subdomain used to infer cloudflare.workerBaseUrl',
+  },
+  {
+    key: 'cloudflare.workerHostname',
+    type: 'string',
+    default: '',
+    description: 'Optional custom hostname for the GoodVibes Cloudflare Worker when DNS automation is enabled',
+  },
+  {
+    key: 'cloudflare.workerBaseUrl',
+    type: 'string',
+    default: '',
+    description: 'Optional deployed GoodVibes Cloudflare Worker base URL used by clients that proxy batch signals through Workers',
+  },
+  {
+    key: 'cloudflare.daemonBaseUrl',
+    type: 'string',
+    default: '',
+    description: 'Daemon origin URL the Cloudflare Worker or Tunnel uses for Worker-to-daemon batch calls',
+  },
+  {
+    key: 'cloudflare.daemonHostname',
+    type: 'string',
+    default: '',
+    description: 'Optional public daemon hostname managed through Cloudflare DNS, Tunnel, and Access provisioning',
+  },
+  {
+    key: 'cloudflare.workerTokenRef',
+    type: 'string',
+    default: '',
+    description: 'Optional GoodVibes secret reference for the Worker-to-daemon bearer token',
+  },
+  {
+    key: 'cloudflare.workerClientTokenRef',
+    type: 'string',
+    default: '',
+    description: 'Optional GoodVibes secret reference for the bearer token clients use when calling the Cloudflare Worker',
+  },
+  {
+    key: 'cloudflare.workerCron',
+    type: 'string',
+    default: '*/5 * * * *',
+    description: 'Cron trigger installed on the GoodVibes Cloudflare Worker for batch scheduler ticks',
+  },
+  {
+    key: 'cloudflare.queueName',
+    type: 'string',
+    default: 'goodvibes-batch',
+    description: 'Cloudflare Queue binding/name for GoodVibes batch job signals',
+  },
+  {
+    key: 'cloudflare.deadLetterQueueName',
+    type: 'string',
+    default: 'goodvibes-batch-dlq',
+    description: 'Cloudflare dead-letter queue binding/name for failed GoodVibes batch job signals',
+  },
+  {
+    key: 'cloudflare.tunnelName',
+    type: 'string',
+    default: 'goodvibes-daemon',
+    description: 'Zero Trust Tunnel name managed by GoodVibes provisioning when tunnel integration is enabled',
+  },
+  {
+    key: 'cloudflare.tunnelId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare Zero Trust Tunnel id selected or created by GoodVibes provisioning',
+  },
+  {
+    key: 'cloudflare.tunnelTokenRef',
+    type: 'string',
+    default: '',
+    description: 'GoodVibes secret reference for the cloudflared tunnel token generated by provisioning',
+  },
+  {
+    key: 'cloudflare.accessAppId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare Zero Trust Access application id protecting the GoodVibes daemon hostname',
+  },
+  {
+    key: 'cloudflare.accessServiceTokenId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare Zero Trust Access service token id created for GoodVibes daemon access',
+  },
+  {
+    key: 'cloudflare.accessServiceTokenRef',
+    type: 'string',
+    default: '',
+    description: 'GoodVibes secret reference storing Access service token client id/secret JSON',
+  },
+  {
+    key: 'cloudflare.kvNamespaceName',
+    type: 'string',
+    default: 'goodvibes-runtime',
+    description: 'Cloudflare KV namespace name used for optional edge runtime state',
+  },
+  {
+    key: 'cloudflare.kvNamespaceId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare KV namespace id used for the GoodVibes Worker binding',
+  },
+  {
+    key: 'cloudflare.durableObjectNamespaceName',
+    type: 'string',
+    default: 'GoodVibesCoordinator',
+    description: 'Cloudflare Durable Object class/namespace name used for optional edge coordination',
+  },
+  {
+    key: 'cloudflare.durableObjectNamespaceId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare Durable Object namespace id discovered after Worker migration',
+  },
+  {
+    key: 'cloudflare.r2BucketName',
+    type: 'string',
+    default: 'goodvibes-artifacts',
+    description: 'Cloudflare R2 Standard bucket name used for optional GoodVibes artifacts',
+  },
+  {
+    key: 'cloudflare.secretsStoreName',
+    type: 'string',
+    default: 'goodvibes',
+    description: 'Cloudflare Secrets Store name managed by optional GoodVibes provisioning',
+  },
+  {
+    key: 'cloudflare.secretsStoreId',
+    type: 'string',
+    default: '',
+    description: 'Cloudflare Secrets Store id selected or created by GoodVibes provisioning',
+  },
+  {
+    key: 'cloudflare.maxQueueOpsPerDay',
+    type: 'number',
+    default: 10_000,
+    description: 'Free-tier queue operation budget used by clients to warn before Cloudflare queue usage exceeds the intended budget',
+    ...intRange(0, 10_000_000),
+  },
+];

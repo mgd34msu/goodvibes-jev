@@ -1,0 +1,450 @@
+import type { ConfigManager } from '../../config/manager.js';
+import type { ChannelPluginRegistry, ChannelPolicyManager, RouteBindingManager, SurfaceRegistry } from '../../channels/index.js';
+import { logger } from '../../utils/logger.js';
+import type { KnowledgeGraphqlService, KnowledgeService } from '../../knowledge/index.js';
+import type { ArtifactStore } from '../../artifacts/index.js';
+import type { MediaProviderRegistry } from '../../media/index.js';
+import type { MultimodalService } from '../../multimodal/index.js';
+import type { VoiceService } from '../../voice/index.js';
+import type { WebSearchService } from '../../web-search/index.js';
+import type { IntegrationHelperService } from '../../runtime/integration/helpers.js';
+import type { ApprovalBroker } from '../../control-plane/index.js';
+import type { PlatformServiceManager } from '../service-manager.js';
+import { toRecord } from '../../utils/record-coerce.js';
+import type { JsonRecord } from '../helpers.js';
+import type { WatcherRegistry } from '../../watchers/index.js';
+import type { DaemonChannelRouteContext, InboundMailHealthLike } from './channel-route-types.js';
+import type { DaemonIntegrationRouteContext } from './integration-route-types.js';
+import type { DaemonKnowledgeRouteContext } from './knowledge-route-types.js';
+import type { DaemonMediaRouteContext } from './media-route-types.js';
+import type { DaemonSystemRouteContext, WatcherRecord } from './system-route-types.js';
+
+/**
+ * The optional providers the daemon facade hands the router for /status.
+ *
+ * Both are late-bound: the router is constructed before the lifecycle sidecar
+ * and the cluster coordinator exist. Absent means the section is simply not in
+ * the payload, which is what an embedder without those subsystems should see,
+ * never a fabricated default.
+ */
+export interface DaemonStatusProviders {
+  /**
+   * The running artifact's own release version, when this host ships one. The
+   * platform build is reported separately and is never a stand-in for it,
+   * see ControlRouteContext.buildVersion in daemon-sdk/src/control-routes.ts.
+   */
+  readonly buildVersion?: (() => string | null) | undefined;
+  /** Undelivered daemon receipts (update, crash-restart, migration notices). */
+  readonly collectReceipts?: (() => readonly { id: string; text: string; at: number }[]) | undefined;
+  /**
+   * Which node on this network currently consumes inbound channel messages,
+   * for on-request inspection. Elections are otherwise invisible: no
+   * notification, no transcript line, no message on any surface.
+   */
+  readonly collectClusterStatus?: (() => unknown) | undefined;
+}
+
+export function buildChannelRouteContext(input: {
+  readonly channelPlugins: ChannelPluginRegistry;
+  readonly channelPolicy: ChannelPolicyManager;
+  readonly parseJsonBody: (request: Request) => Promise<JsonRecord | Response>;
+  readonly parseOptionalJsonBody: (request: Request) => Promise<JsonRecord | null | Response>;
+  readonly requireAdmin: (request: Request) => Response | null;
+  readonly surfaceRegistry: SurfaceRegistry;
+  /** Supplied by a composition that has the builtin channel runtime. */
+  readonly inboundMailHealth?: (() => InboundMailHealthLike | null) | undefined;
+}): DaemonChannelRouteContext {
+  return {
+    ...(input.inboundMailHealth === undefined
+      ? {}
+      : { inboundMailHealth: input.inboundMailHealth }),
+    channelPlugins: {
+      listAccounts: (surface) => input.channelPlugins.listAccounts(
+        surface as Parameters<ChannelPluginRegistry['listAccounts']>[0],
+      ),
+      getAccount: (surface, accountId) => input.channelPlugins.getAccount(
+        surface as Parameters<ChannelPluginRegistry['getAccount']>[0],
+        accountId,
+      ),
+      getSetupSchema: (surface, accountId) => input.channelPlugins.getSetupSchema(
+        surface as Parameters<ChannelPluginRegistry['getSetupSchema']>[0],
+        accountId,
+      ),
+      doctor: (surface, accountId) => input.channelPlugins.doctor(
+        surface as Parameters<ChannelPluginRegistry['doctor']>[0],
+        accountId,
+      ),
+      listRepairActions: (surface, accountId) => input.channelPlugins.listRepairActions(
+        surface as Parameters<ChannelPluginRegistry['listRepairActions']>[0],
+        accountId,
+      ),
+      getLifecycleState: (surface, accountId) => input.channelPlugins.getLifecycleState(
+        surface as Parameters<ChannelPluginRegistry['getLifecycleState']>[0],
+        accountId,
+      ),
+      runAccountAction: (surface, action, accountId, body) => input.channelPlugins.runAccountAction(
+        surface as Parameters<ChannelPluginRegistry['runAccountAction']>[0],
+        action as Parameters<ChannelPluginRegistry['runAccountAction']>[1],
+        accountId,
+        body as Parameters<ChannelPluginRegistry['runAccountAction']>[3],
+      ),
+      listCapabilities: (surface) => input.channelPlugins.listCapabilities(
+        surface as Parameters<ChannelPluginRegistry['listCapabilities']>[0],
+      ),
+      listTools: (surface) => input.channelPlugins.listTools(
+        surface as Parameters<ChannelPluginRegistry['listTools']>[0],
+      ),
+      listAgentTools: (surface) => input.channelPlugins.listAgentTools(
+        surface as Parameters<ChannelPluginRegistry['listAgentTools']>[0],
+      ),
+      runTool: (surface, toolId, body) => input.channelPlugins.runTool(
+        surface as Parameters<ChannelPluginRegistry['runTool']>[0],
+        toolId,
+        body as Parameters<ChannelPluginRegistry['runTool']>[2],
+      ),
+      listOperatorActions: (surface) => input.channelPlugins.listOperatorActions(
+        surface as Parameters<ChannelPluginRegistry['listOperatorActions']>[0],
+      ),
+      runOperatorAction: (surface, actionId, body) => input.channelPlugins.runOperatorAction(
+        surface as Parameters<ChannelPluginRegistry['runOperatorAction']>[0],
+        actionId,
+        body as Parameters<ChannelPluginRegistry['runOperatorAction']>[2],
+      ),
+      resolveTarget: (surface, target) => input.channelPlugins.resolveTarget(
+        surface as Parameters<ChannelPluginRegistry['resolveTarget']>[0],
+        target as Parameters<ChannelPluginRegistry['resolveTarget']>[1],
+      ),
+      authorizeActorAction: (surface, authz) => input.channelPlugins.authorizeActorAction(
+        surface as Parameters<ChannelPluginRegistry['authorizeActorAction']>[0],
+        authz as Parameters<ChannelPluginRegistry['authorizeActorAction']>[1],
+      ),
+      resolveAllowlist: (surface, allowlist) => input.channelPlugins.resolveAllowlist(
+        surface as Parameters<ChannelPluginRegistry['resolveAllowlist']>[0],
+        allowlist as Parameters<ChannelPluginRegistry['resolveAllowlist']>[1],
+      ),
+      editAllowlist: (surface, allowlist) => input.channelPlugins.editAllowlist(
+        surface as Parameters<ChannelPluginRegistry['editAllowlist']>[0],
+        allowlist as Parameters<ChannelPluginRegistry['editAllowlist']>[1],
+      ),
+      listStatus: () => input.channelPlugins.listStatus(),
+      queryDirectory: (surface, query) => input.channelPlugins.queryDirectory(
+        surface as Parameters<ChannelPluginRegistry['queryDirectory']>[0],
+        query as Parameters<ChannelPluginRegistry['queryDirectory']>[1],
+      ),
+    },
+    channelPolicy: {
+      listPolicies: () => input.channelPolicy.listPolicies(),
+      upsertPolicy: (surface, policy) => input.channelPolicy.upsertPolicy(
+        surface as Parameters<ChannelPolicyManager['upsertPolicy']>[0],
+        policy as Parameters<ChannelPolicyManager['upsertPolicy']>[1],
+      ),
+      listAudit: (limit) => input.channelPolicy.listAudit(limit),
+    },
+    parseJsonBody: input.parseJsonBody,
+    parseOptionalJsonBody: input.parseOptionalJsonBody,
+    requireAdmin: input.requireAdmin,
+    surfaceRegistry: input.surfaceRegistry,
+  };
+}
+
+export function buildSystemRouteContext(input: {
+  readonly approvalBroker: ApprovalBroker;
+  readonly configManager: ConfigManager;
+  readonly credentialStatus: DaemonSystemRouteContext['credentialStatus'];
+  readonly integrationHelpers: IntegrationHelperService | null;
+  readonly inspectInboundTls: (surface: 'controlPlane' | 'httpListener') => unknown;
+  readonly inspectOutboundTls: () => unknown;
+  readonly isValidConfigKey: (key: string) => boolean;
+  readonly parseJsonBody: (request: Request) => Promise<JsonRecord | Response>;
+  readonly parseOptionalJsonBody: (request: Request) => Promise<JsonRecord | null | Response>;
+  readonly platformServiceManager: PlatformServiceManager;
+  readonly recordApiResponse: (
+    request: Request,
+    path: string,
+    response: Response,
+    clientKind?: DaemonSystemRouteContext['recordApiResponse'] extends (
+      req: Request,
+      path: string,
+      response: Response,
+      clientKind?: infer T,
+    ) => Response
+      ? T
+      : never,
+  ) => Response;
+  readonly requireAdmin: (request: Request) => Response | null;
+  readonly requireAuthenticatedSession: (request: Request) => { username: string; roles: readonly string[] } | null;
+  readonly routeBindings: RouteBindingManager;
+  readonly swapManager: DaemonSystemRouteContext['swapManager'];
+  readonly watcherRegistry: WatcherRegistry;
+}): DaemonSystemRouteContext {
+  const castWatcherRecord = (value: unknown): WatcherRecord | null => value as WatcherRecord | null;
+
+  if (!input.swapManager) {
+    logger.warn(
+      'DaemonSystemRouteContext: initialized without swapManager, POST /config runtime.workingDir will be rejected',
+    );
+  }
+
+  return {
+    approvalBroker: input.approvalBroker,
+    configManager: input.configManager,
+    credentialStatus: input.credentialStatus,
+    integrationHelpers: input.integrationHelpers,
+    inspectInboundTls: input.inspectInboundTls,
+    inspectOutboundTls: input.inspectOutboundTls,
+    isValidConfigKey: input.isValidConfigKey,
+    parseJsonBody: input.parseJsonBody,
+    parseOptionalJsonBody: input.parseOptionalJsonBody,
+    platformServiceManager: {
+      status: () => toRecord(input.platformServiceManager.status()),
+      install: () => input.platformServiceManager.install(),
+      start: () => input.platformServiceManager.start(),
+      stop: () => input.platformServiceManager.stop(),
+      restart: () => input.platformServiceManager.restart(),
+      uninstall: () => input.platformServiceManager.uninstall(),
+    },
+    recordApiResponse: input.recordApiResponse,
+    requireAdmin: input.requireAdmin,
+    requireAuthenticatedSession: input.requireAuthenticatedSession,
+    swapManager: input.swapManager,
+    routeBindings: {
+      listBindings: () => input.routeBindings.listBindings(),
+      upsertBinding: (binding) => input.routeBindings.upsertBinding(
+        binding as Parameters<RouteBindingManager['upsertBinding']>[0],
+      ),
+      patchBinding: (bindingId, patch) => input.routeBindings.patchBinding(
+        bindingId,
+        patch as Parameters<RouteBindingManager['patchBinding']>[1],
+      ),
+      removeBinding: (bindingId) => input.routeBindings.removeBinding(bindingId),
+    },
+    watcherRegistry: {
+      list: () => input.watcherRegistry.list(),
+      removeWatcher: (watcherId) => input.watcherRegistry.removeWatcher(watcherId),
+      registerWatcher: (watcher) => input.watcherRegistry.registerWatcher(
+        watcher as Parameters<WatcherRegistry['registerWatcher']>[0],
+      ) as WatcherRecord,
+      getWatcher: (watcherId) => castWatcherRecord(input.watcherRegistry.getWatcher(watcherId)),
+      startWatcher: (watcherId) => castWatcherRecord(input.watcherRegistry.startWatcher(watcherId)),
+      stopWatcher: (watcherId, reason) => castWatcherRecord(input.watcherRegistry.stopWatcher(watcherId, reason)),
+      runWatcherNow: async (watcherId) => castWatcherRecord(await input.watcherRegistry.runWatcherNow(watcherId)),
+    },
+  };
+}
+
+export function buildKnowledgeRouteContext(input: {
+  readonly artifactStore: ArtifactStore;
+  readonly configManager: ConfigManager;
+  readonly inspectGraphqlAccess: DaemonKnowledgeRouteContext['inspectGraphqlAccess'];
+  readonly normalizeAtSchedule: DaemonKnowledgeRouteContext['normalizeAtSchedule'];
+  readonly normalizeEverySchedule: DaemonKnowledgeRouteContext['normalizeEverySchedule'];
+  readonly normalizeCronSchedule: DaemonKnowledgeRouteContext['normalizeCronSchedule'];
+  readonly parseJsonBody: (request: Request) => Promise<JsonRecord | Response>;
+  readonly parseOptionalJsonBody: (request: Request) => Promise<JsonRecord | null | Response>;
+  readonly parseJsonText: (raw: string) => JsonRecord | Response;
+  readonly requireAdmin: (request: Request) => Response | null;
+  readonly resolveAuthenticatedPrincipal: (request: Request) => ReturnType<DaemonKnowledgeRouteContext['resolveAuthenticatedPrincipal']>;
+  readonly knowledgeService: KnowledgeService;
+  readonly knowledgeGraphqlService: KnowledgeGraphqlService;
+}): DaemonKnowledgeRouteContext {
+  return {
+    artifactStore: input.artifactStore as unknown as DaemonMediaRouteContext['artifactStore'],
+    configManager: input.configManager,
+    inspectGraphqlAccess: input.inspectGraphqlAccess,
+    normalizeAtSchedule: input.normalizeAtSchedule,
+    normalizeEverySchedule: input.normalizeEverySchedule,
+    normalizeCronSchedule: input.normalizeCronSchedule,
+    parseJsonBody: input.parseJsonBody,
+    parseOptionalJsonBody: input.parseOptionalJsonBody,
+    parseJsonText: input.parseJsonText,
+    requireAdmin: input.requireAdmin,
+    resolveAuthenticatedPrincipal: input.resolveAuthenticatedPrincipal,
+    knowledgeService: {
+      getStatus: (scope) => input.knowledgeService.getStatus(
+        scope as Parameters<KnowledgeService['getStatus']>[0],
+      ),
+      querySources: (query) => input.knowledgeService.querySources(
+        query as Parameters<KnowledgeService['querySources']>[0],
+      ),
+      queryNodes: (query) => input.knowledgeService.queryNodes(
+        query as Parameters<KnowledgeService['queryNodes']>[0],
+      ),
+      queryIssues: (query) => input.knowledgeService.queryIssues(
+        query as Parameters<KnowledgeService['queryIssues']>[0],
+      ),
+      reviewIssue: (body) => input.knowledgeService.reviewIssue(
+        body as unknown as Parameters<KnowledgeService['reviewIssue']>[0],
+      ),
+      getItemScoped: (id, scope) => input.knowledgeService.getItemScoped(
+        id,
+        scope as Parameters<KnowledgeService['getItemScoped']>[1],
+      ),
+      listConnectors: () => input.knowledgeService.listConnectors(),
+      getConnector: (id) => input.knowledgeService.getConnector(id),
+      doctorConnector: (id) => input.knowledgeService.doctorConnector(id),
+      listProjectionTargets: (limit, scope) => input.knowledgeService.listProjectionTargets(
+        limit,
+        scope as Parameters<KnowledgeService['listProjectionTargets']>[1],
+      ),
+      listExtractions: (limit, sourceId, scope) => input.knowledgeService.listExtractions(
+        limit,
+        sourceId,
+        scope as Parameters<KnowledgeService['listExtractions']>[2],
+      ),
+      listUsageRecords: (limit, filter) => input.knowledgeService.listUsageRecords(
+        limit,
+        filter as Parameters<KnowledgeService['listUsageRecords']>[1],
+      ),
+      listConsolidationCandidates: (limit, filter) => input.knowledgeService.listConsolidationCandidates(
+        limit,
+        filter as Parameters<KnowledgeService['listConsolidationCandidates']>[1],
+      ),
+      getConsolidationCandidate: (id) => input.knowledgeService.getConsolidationCandidate(id),
+      listConsolidationReports: (limit) => input.knowledgeService.listConsolidationReports(limit),
+      getConsolidationReport: (id) => input.knowledgeService.getConsolidationReport(id),
+      getExtraction: (id) => input.knowledgeService.getExtraction(id),
+      getSourceExtraction: (id) => input.knowledgeService.getSourceExtraction(id),
+      listJobs: () => input.knowledgeService.listJobs(),
+      getJob: (jobId) => input.knowledgeService.getJob(jobId),
+      listJobRuns: (limit, jobId) => input.knowledgeService.listJobRuns(limit, jobId),
+      listRefinementTasks: (limit, filter) => input.knowledgeService.listRefinementTasks(
+        limit,
+        filter as Parameters<KnowledgeService['listRefinementTasks']>[1],
+      ),
+      getRefinementTask: (id) => input.knowledgeService.getRefinementTask(id),
+      runRefinement: (body) => input.knowledgeService.runRefinement(
+        body as Parameters<KnowledgeService['runRefinement']>[0],
+      ),
+      cancelRefinementTask: (id) => input.knowledgeService.cancelRefinementTask(id),
+      listSchedules: (limit) => input.knowledgeService.listSchedules(limit),
+      getSchedule: (id) => input.knowledgeService.getSchedule(id),
+      ingestUrl: (body) => input.knowledgeService.ingestUrl(
+        body as Parameters<KnowledgeService['ingestUrl']>[0],
+      ),
+      ingestArtifact: (body) => input.knowledgeService.ingestArtifact(
+        body as Parameters<KnowledgeService['ingestArtifact']>[0],
+      ),
+      syncBrowserHistory: (body) => input.knowledgeService.syncBrowserHistory(
+        body as Parameters<KnowledgeService['syncBrowserHistory']>[0],
+      ),
+      importBookmarksFromFile: (body) => input.knowledgeService.importBookmarksFromFile(
+        body as Parameters<KnowledgeService['importBookmarksFromFile']>[0],
+      ),
+      importUrlsFromFile: (body) => input.knowledgeService.importUrlsFromFile(
+        body as Parameters<KnowledgeService['importUrlsFromFile']>[0],
+      ),
+      ingestConnectorInput: (body) => input.knowledgeService.ingestConnectorInput(
+        body as Parameters<KnowledgeService['ingestConnectorInput']>[0],
+      ),
+      searchScoped: (query) => input.knowledgeService.searchScoped(
+        query as Parameters<KnowledgeService['searchScoped']>[0],
+      ),
+      ask: (body) => input.knowledgeService.ask(
+        body as Parameters<KnowledgeService['ask']>[0],
+      ),
+      buildPacket: (task, writeScope, limit, options) => input.knowledgeService.buildPacket(
+        task,
+        writeScope,
+        limit,
+        options as Parameters<KnowledgeService['buildPacket']>[3],
+      ),
+      decideConsolidationCandidate: (id, decision, body) => input.knowledgeService.decideConsolidationCandidate(
+        id,
+        decision,
+        body as Parameters<KnowledgeService['decideConsolidationCandidate']>[2],
+      ),
+      runJob: (jobId, body) => input.knowledgeService.runJob(
+        jobId,
+        body as Parameters<KnowledgeService['runJob']>[1],
+      ),
+      lint: () => input.knowledgeService.lint(),
+      reindex: () => input.knowledgeService.reindex(),
+      saveSchedule: (schedule) => input.knowledgeService.saveSchedule(
+        schedule as Parameters<KnowledgeService['saveSchedule']>[0],
+      ),
+      deleteSchedule: (id) => input.knowledgeService.deleteSchedule(id),
+      setScheduleEnabled: (id, enabled) => input.knowledgeService.setScheduleEnabled(id, enabled),
+      renderProjection: (projection) => input.knowledgeService.renderProjection(
+        projection as Parameters<KnowledgeService['renderProjection']>[0],
+      ),
+      materializeProjection: (projection) => input.knowledgeService.materializeProjection(
+        projection as Parameters<KnowledgeService['materializeProjection']>[0],
+      ),
+      map: (mapInput) => input.knowledgeService.map(
+        mapInput as Parameters<KnowledgeService['map']>[0],
+      ),
+    },
+    knowledgeGraphqlService: input.knowledgeGraphqlService,
+  };
+}
+
+export function buildMediaRouteContext(input: {
+  readonly artifactStore: ArtifactStore;
+  readonly configManager: ConfigManager;
+  readonly mediaProviders: MediaProviderRegistry;
+  readonly multimodalService: MultimodalService;
+  readonly parseJsonBody: (request: Request) => Promise<JsonRecord | Response>;
+  readonly requireAdmin: (request: Request) => Response | null;
+  readonly voiceService: VoiceService;
+  readonly webSearchService: WebSearchService;
+}): DaemonMediaRouteContext {
+  return {
+    artifactStore: input.artifactStore as unknown as DaemonMediaRouteContext['artifactStore'],
+    configManager: input.configManager,
+    mediaProviders: {
+      status: () => input.mediaProviders.status(),
+      findProvider: (capability, providerId) => input.mediaProviders.findProvider(
+        capability,
+        providerId,
+      ) as unknown as DaemonMediaRouteContext['mediaProviders']['findProvider'] extends (...args: never[]) => infer R ? R : never,
+    },
+    multimodalService: {
+      getStatus: () => input.multimodalService.getStatus(),
+      listProviders: () => input.multimodalService.listProviders(),
+      analyze: (body) => input.multimodalService.analyze(
+        body as Parameters<MultimodalService['analyze']>[0],
+      ),
+      buildPacket: (analysis, detail, budgetLimit) => input.multimodalService.buildPacket(
+        analysis as Parameters<MultimodalService['buildPacket']>[0],
+        detail as Parameters<MultimodalService['buildPacket']>[1],
+        budgetLimit,
+      ),
+      writeBackAnalysis: (analysis, body) => input.multimodalService.writeBackAnalysis(
+        analysis as Parameters<MultimodalService['writeBackAnalysis']>[0],
+        body as Parameters<MultimodalService['writeBackAnalysis']>[1],
+      ),
+    },
+    parseJsonBody: input.parseJsonBody,
+    requireAdmin: input.requireAdmin,
+    voiceService: {
+      getStatus: (enabled) => input.voiceService.getStatus(enabled),
+      listVoices: (providerId) => input.voiceService.listVoices(providerId),
+      synthesize: (providerId, body) => input.voiceService.synthesize(
+        providerId,
+        body as unknown as Parameters<VoiceService['synthesize']>[1],
+      ),
+      synthesizeStream: (providerId, body) => input.voiceService.synthesizeStream(
+        providerId,
+        body as unknown as Parameters<VoiceService['synthesizeStream']>[1],
+      ),
+      transcribe: (providerId, body) => input.voiceService.transcribe(
+        providerId,
+        body as unknown as Parameters<VoiceService['transcribe']>[1],
+      ),
+      openRealtimeSession: (providerId, body) => input.voiceService.openRealtimeSession(
+        providerId,
+        body as unknown as Parameters<VoiceService['openRealtimeSession']>[1],
+      ),
+    },
+    webSearchService: {
+      getStatus: () => input.webSearchService.getStatus(),
+      search: (body) => input.webSearchService.search(
+        body as unknown as Parameters<WebSearchService['search']>[0],
+      ),
+    },
+  };
+}
+
+export function buildIntegrationRouteContext(input: DaemonIntegrationRouteContext): DaemonIntegrationRouteContext {
+  return input;
+}

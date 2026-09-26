@@ -1,0 +1,770 @@
+/**
+ * DaemonLifecycleRuntime, the daemon facade's lifecycle sidecar: the
+ * clean-shutdown marker (crash detection), the persisted receipt store
+ * ("updated from X to Y at HH:MM", "restarted after a crash at HH:MM"),
+ * and the hourly auto-updater (owner-directed default-on; update.auto
+ * turns it off).
+ *
+ * Kept beside facade.ts so the facade only carries thin lifecycle hooks:
+ * onStarted() after the server is accepting, onStopping() during an
+ * orderly stop, and collectReceipts() for the /status payload.
+ */
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { flushActivityLogSync, logger } from '../utils/logger.js';
+import { summarizeError } from '../utils/error-display.js';
+import type { ConfigManager } from '../config/manager.js';
+import type { PlatformServiceManager } from './service-manager.js';
+import { DaemonAutoUpdater, resolveDaemonInstalledFiles, type AutoUpdateServiceActions } from './auto-updater.js';
+import { DaemonReceiptStore, formatReceiptTime } from './receipts.js';
+import { writeFatalLine } from './fatal-boot-report.js';
+import { FeatureAnnouncementStore, collectStartupAnnouncements, featureAnnouncementsPath } from '../runtime/feature-announcements.js';
+import {
+  readLifecycleMarker,
+  recordDaemonAutoRollback,
+  recordDaemonCleanShutdown,
+  recordDaemonStart,
+  recordDaemonStartAttempt,
+  type LifecycleMarkerIo,
+} from './lifecycle-marker.js';
+import { crashLoopRollbackReceipt, decideCrashLoopRollback } from './boot-rollback.js';
+import { rollbackKeptPrevious, realUpdateFileIo, type UpdateFileIo } from '../runtime/self-update.js';
+import { currentProcessSignals, isCompiledBinaryInvocation } from './daemon-exec-invocation.js';
+import { deliverOwnerAlert } from './owner-alert.js';
+import type { DaemonUpdateStatus } from './update-status.js';
+export type { DaemonUpdateStatus } from './update-status.js';
+import type { RouteBindingManager } from '../channels/route-manager.js';
+import type { DaemonSurfaceDeliveryHelper } from './surface-delivery.js';
+
+/**
+ * The daemon's owner-alert callback: put one line in front of the owner over a
+ * channel that still works.
+ *
+ * It reuses the SAME path a failing channel uses (owner-alert.ts) rather than
+ * adding a second notification mechanism. `null` for the preferred surface
+ * because the subject here is not a channel, the daemon cannot update itself,
+ * or has just rolled itself back to an older build, so no surface earns the
+ * first try and the order is simply the most recently used conversation.
+ */
+export function createDaemonOwnerAlerter(
+  routeBindings: RouteBindingManager,
+  delivery: Pick<DaemonSurfaceDeliveryHelper, 'deliverSurfaceNotice'>,
+): (text: string) => void {
+  return (text: string) => {
+    void deliverOwnerAlert(routeBindings, delivery, null, text);
+  };
+}
+
+export { runDaemonSessionStoreBoot } from './daemon-session-store-boot.js';
+
+/**
+ * The daemon heartbeat watcher: a polling watcher that stamps an ISO
+ * timestamp on the configured heartbeat interval. Registered from start()
+ * only when watchers are enabled; the facade stops it on shutdown.
+ */
+export function registerDaemonHeartbeatWatcher(
+  watcherRegistry: {
+    registerPollingWatcher(input: {
+      id: string;
+      label: string;
+      source: { id: string; kind: 'watcher'; label: string; enabled: boolean; createdAt: number; updatedAt: number; metadata: Record<string, never> };
+      intervalMs: number;
+      run: () => string;
+    }): void;
+    startWatcher(id: string): void;
+  },
+  configManager: ConfigManager,
+  onBeat?: () => void,
+): void {
+  watcherRegistry.registerPollingWatcher({
+    id: 'daemon-heartbeat',
+    label: 'Daemon heartbeat',
+    source: {
+      id: 'source:daemon-heartbeat',
+      kind: 'watcher',
+      label: 'Daemon heartbeat',
+      enabled: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      metadata: {},
+    },
+    intervalMs: Number(configManager.get('watchers.heartbeatIntervalMs') ?? 30_000),
+    run: () => {
+      // The reachability heartbeat is also when schedule drift is reconciled:
+      // a host that slept while the daemon kept running catches its missed
+      // occurrences here, not only at boot. Never let a beat throw.
+      if (onBeat) {
+        try {
+          onBeat();
+        } catch (error) {
+          logger.warn('Daemon heartbeat reconcile hook failed', { error: summarizeError(error) });
+        }
+      }
+      return new Date().toISOString();
+    },
+  });
+  watcherRegistry.startWatcher('daemon-heartbeat');
+}
+
+/**
+ * Identity of the RUNNING artifact for the auto-update loop. The daemon
+ * facade must never assume the SDK package is the shipped artifact: an
+ * embedding host names its own version (what release tags are compared
+ * against) and, optionally, the executable the swap replaces. Absent, the
+ * embedded default, means the HOST manages updates: the loop stays off,
+ * because comparing the SDK's package version against a host's release tags
+ * is meaningless and the swap would target the wrong binary.
+ */
+export interface DaemonUpdateArtifact {
+  /** The running artifact's own version, compared against release tags. */
+  readonly version: string;
+  /** The executable the verified swap replaces. Defaults to process.execPath. */
+  readonly execPath?: string | undefined;
+}
+
+export interface DaemonLifecycleRuntimeOptions {
+  readonly configManager: ConfigManager;
+  readonly platformServiceManager: PlatformServiceManager;
+  /** The daemon's real activity signal: true only when NO work is in flight. */
+  readonly isIdle: () => boolean;
+  /** Absent = host-managed updates (the safe embedded default): no auto-update loop AND no boot promotion. */
+  readonly updateArtifact?: DaemonUpdateArtifact | undefined;
+  /** Injectable process exit (boot promotion hands over by exiting); tests observe instead of dying. */
+  readonly exitProcess?: ((code: number) => void) | undefined;
+  /**
+   * The daemon's own orderly stop, run before an update or crash-loop-rollback
+   * restart hands over, so shutdown hooks fire on those restarts instead of
+   * being skipped by a bare exit. Absent = nothing to wind down.
+   */
+  readonly stopGracefully?: (() => Promise<void> | void) | undefined;
+  /** Injectable marker filesystem; tests drive the crash-loop counter in memory. */
+  readonly markerIo?: LifecycleMarkerIo | undefined;
+  /** Injectable swap/rename filesystem for the crash-loop rollback. */
+  readonly rollbackIo?: UpdateFileIo | undefined;
+  /** Injectable clock for receipts and marker stamps. */
+  readonly now?: (() => number) | undefined;
+  /** Injectable stderr; the crash-loop rollback says what it did before the process hands over. */
+  readonly stderr?: { write(chunk: string): unknown } | undefined;
+  /** Boot-promotion idle recheck cadence. Default 60s; floored at 1s. */
+  readonly promotionRetryMs?: number | undefined;
+  /**
+   * True when this process was told to run out of a home that is NOT the
+   * machine's default, `--daemon-home`, `GOODVIBES_DAEMON_HOME`, a test
+   * harness's temp tree.
+   *
+   * Such a daemon must NEVER adopt the machine's service unit. It happened:
+   * a daemon started from a scratchpad directory found the owner's unit not
+   * running, wrote its own scratchpad `ExecStart` into
+   * `~/.config/systemd/user/goodvibes.service`, and exited. systemd then
+   * supervised the throwaway daemon as the machine's daemon, which is how it
+   * came to be reading the owner's real credentials and long-polling their
+   * real Telegram bot, producing the 409 that killed inbound messages.
+   *
+   * Promotion means "this process should be the machine's daemon forever".
+   * A process running from a directory that may not exist tomorrow cannot
+   * honestly claim that, so the claim is refused rather than merely discouraged.
+   */
+  readonly hasOverriddenHome?: boolean | undefined;
+  /**
+   * Whether this process is a compiled single-file binary. Only a compiled
+   * binary self-promotes to a supervised service, a source/dev run would write
+   * a unit whose ExecStart is a dev command line that fails on the next boot.
+   * Injectable for tests; defaults to the real process-signal check.
+   */
+  readonly isCompiledBinary?: (() => boolean) | undefined;
+  /**
+   * Put one line in front of the owner over a channel that still works. The
+   * facade supplies the existing owner-alert path; absent (embedded daemons,
+   * tests) means the ERROR log line is the whole record.
+   */
+  readonly alertOwner?: ((text: string) => void) | undefined;
+}
+
+export class DaemonLifecycleRuntime {
+  private autoUpdater: DaemonAutoUpdater | null = null;
+  private store: DaemonReceiptStore | null = null;
+  /** Why the self-update loop is not running. Empty once it is. */
+  private updateLoopOffReason = 'the daemon has not finished starting';
+  private promotionTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Whether THIS process has ever reached a fully-started daemon.
+   *
+   * start() is re-entered in-process whenever the control-plane binding
+   * changes, and each re-entry used to record another "start attempt". A
+   * long-running, perfectly healthy daemon could therefore accumulate a
+   * failed-start streak from its own restart cycles and then roll ITSELF back
+   * to the kept previous binary, which is exactly what happened: a daemon up
+   * for ten hours restored an older build over itself, and that older build
+   * could not start at all, leaving the machine with no daemon overnight.
+   *
+   * A failed START means the process never came up. A process that came up
+   * cannot retroactively become one, so once this is set the crash-loop guard
+   * takes no further part in this process's life.
+   */
+  private reachedFullyStarted = false;
+
+  constructor(private readonly options: DaemonLifecycleRuntimeOptions) {}
+
+  /** Lazily-created persisted store for update/crash receipts. */
+  receiptStore(): DaemonReceiptStore {
+    if (!this.store) {
+      this.store = new DaemonReceiptStore(
+        join(this.options.configManager.getControlPlaneConfigDir(), 'control-plane', 'daemon-receipts.json'),
+      );
+    }
+    return this.store;
+  }
+
+  private markerPath(): string {
+    return join(this.options.configManager.getControlPlaneConfigDir(), 'control-plane', 'daemon-lifecycle.json');
+  }
+
+  /**
+   * Undelivered receipts for a consuming /status read (`?receipts=consume`);
+   * marked delivered once served. The route only calls this when the reader
+   * passed the explicit flag, plain status reads are receipt-neutral.
+   *
+   * Fired announce-once feature lines (web surface URL, first contained run)
+   * ride the same exactly-once feed: they are drained from the announcement
+   * store's pending queue here, so a surface reading receipts at attach
+   * renders them instead of them dead-ending in the daemon log.
+   */
+  collectReceipts(): readonly { id: string; text: string; at: number }[] {
+    const receipts = this.receiptStore().consumeUndelivered().map(({ id, text, at }) => ({ id, text, at }));
+    const announcements = this.announcementStore().drainPending().map(({ id, text, at }) => ({
+      id: `announcement-${id}`,
+      text,
+      at,
+    }));
+    return [...receipts, ...announcements];
+  }
+
+  /** The shared announce-once store (same file the runtime's announcers write). */
+  private announcementStore(): FeatureAnnouncementStore {
+    return new FeatureAnnouncementStore(featureAnnouncementsPath(this.options.configManager));
+  }
+
+  /**
+   * Says it on stderr as well as in the log.
+   *
+   * The activity log buffers and flushes asynchronously, and every branch that
+   * uses this exits the process moments later, so the log line that explains
+   * why is exactly the line that gets discarded. stderr is synchronous and
+   * lands wherever the daemon's output goes (the service journal, a terminal),
+   * which is where an operator looks when a daemon keeps restarting. The same
+   * reasoning already governs the fatal-error path in daemon/cli.ts.
+   */
+  private announceOnStderr(line: string): void {
+    try {
+      // Synchronous write to fd 2 by default: every branch that calls this
+      // exits moments later, and `process.stderr` is both replaceable by a
+      // host and asynchronously flushed, which is how the released daemon
+      // came to die with zero bytes on either stream. The injected seam is
+      // kept so tests can observe. See daemon/fatal-boot-report.ts.
+      if (this.options.stderr) this.options.stderr.write(`${line}\n`);
+      else writeFatalLine(line);
+    } catch {
+      // A closed/unwritable stderr must never turn a rollback into a crash.
+    }
+  }
+
+  /**
+   * Put a line in front of the owner AND state it at ERROR. Never throws: an
+   * alert that cannot be delivered must not turn a rollback into a crash.
+   */
+  private alertOwner(text: string): void {
+    logger.error(`DaemonServer: ${text}`);
+    try {
+      this.options.alertOwner?.(text);
+    } catch (error) {
+      logger.error('DaemonServer: the owner alert could not be sent', { error: summarizeError(error) });
+    }
+  }
+
+  /** Marker call options honoring the injected filesystem/clock seams. */
+  private markerOptions(): { io?: LifecycleMarkerIo; now?: () => number } {
+    return {
+      ...(this.options.markerIo ? { io: this.options.markerIo } : {}),
+      ...(this.options.now ? { now: this.options.now } : {}),
+    };
+  }
+
+  /**
+   * The FIRST thing daemon start() does, before anything that can fail: record
+   * this boot as an unconfirmed start attempt, and, when the boots before it
+   * kept failing to reach a fully-started daemon, restore the kept previous
+   * binary instead of repeating the same failure again.
+   *
+   * Returns true when the caller must ABANDON this boot: a rollback restart is
+   * in flight and the process is handing over to the restored binary.
+   *
+   * A daemon with no update-artifact identity (host-managed updates, embedded
+   * daemons, dev runs) does not own the binary on disk: it neither counts its
+   * boots nor restores anything, and always returns false.
+   */
+  onStarting(): boolean {
+    const artifact = this.options.updateArtifact;
+    if (!artifact) return false;
+    // An in-process restart cycle (a control-plane binding change re-enters
+    // start()) is not a boot. See `reachedFullyStarted`.
+    if (this.reachedFullyStarted) return false;
+    const threshold = Number(this.options.configManager.get('update.rollbackAfterFailedStarts') ?? 3);
+    let attempt: ReturnType<typeof recordDaemonStartAttempt>;
+    try {
+      attempt = recordDaemonStartAttempt(this.markerPath(), { ...this.markerOptions(), version: artifact.version });
+    } catch (error) {
+      logger.warn('DaemonServer: could not record the start attempt, crash-loop rollback is not armed this boot', {
+        error: summarizeError(error),
+      });
+      return false;
+    }
+    if (attempt.failedStarts === 0) return false;
+    if (!Number.isFinite(threshold) || threshold < 1) {
+      logger.warn('DaemonServer: previous boots did not reach a fully-started daemon; automatic rollback is off (update.rollbackAfterFailedStarts)', {
+        failedStarts: attempt.failedStarts,
+      });
+      return false;
+    }
+    const verdict = decideCrashLoopRollback({
+      failedStarts: attempt.failedStarts,
+      autoRollbackAt: attempt.autoRollbackAt,
+      threshold,
+    });
+    if (!verdict.rollback) {
+      logger.warn('DaemonServer: the previous boot(s) never reached a fully-started daemon', {
+        failedStarts: attempt.failedStarts,
+        rollbackAfterFailedStarts: threshold,
+        reason: verdict.reason,
+      });
+      return false;
+    }
+    return this.rollBackToKeptPrevious(artifact.execPath ?? process.execPath, verdict.failedStarts);
+  }
+
+  /**
+   * Restore each installed file from its kept `<path>.previous` copy, leave a
+   * receipt, and hand over to the restored binary. Returns false, this boot
+   * continues on the current build, when there is nothing on disk to restore:
+   * a rollback that did not happen must never be reported as one.
+   */
+  private rollBackToKeptPrevious(execPath: string, failedStarts: number): boolean {
+    const targets = resolveDaemonInstalledFiles({
+      execPath,
+      platform: process.platform,
+      arch: process.arch,
+      ...(this.options.rollbackIo ? { io: this.options.rollbackIo } : {}),
+    }).map(({ label, path }) => ({ label, path }));
+
+    let result: ReturnType<typeof rollbackKeptPrevious>;
+    try {
+      result = rollbackKeptPrevious(targets, this.options.rollbackIo ?? realUpdateFileIo);
+    } catch (error) {
+      logger.error('DaemonServer: automatic rollback failed; continuing the boot on the current build', {
+        failedStarts,
+        error: summarizeError(error),
+      });
+      return false;
+    }
+    if (result.restored.length === 0) {
+      logger.error('DaemonServer: repeated failed starts, but no kept previous version is on disk to roll back to; continuing the boot on the current build', {
+        failedStarts,
+        checked: targets.map((target) => target.path),
+      });
+      this.announceOnStderr(
+        `goodvibes daemon: ${failedStarts} starts in a row did not finish, and no kept previous version is on disk to roll back to, starting this build again`,
+      );
+      return false;
+    }
+
+    const at = (this.options.now ?? Date.now)();
+    this.receiptStore().record(crashLoopRollbackReceipt({ failedStarts, restored: result.restored, at }));
+    const rejectedVersion = this.options.updateArtifact?.version;
+    try {
+      // Naming the rejected version is what stops the self-update loop from
+      // downloading and installing it again on its very next check, the cycle
+      // that pinned an installed daemon to an old build across three releases.
+      recordDaemonAutoRollback(this.markerPath(), {
+        ...this.markerOptions(),
+        ...(rejectedVersion !== undefined ? { rejectedVersion } : {}),
+      });
+    } catch (error) {
+      logger.warn('DaemonServer: could not stamp the automatic rollback in the lifecycle marker', {
+        error: summarizeError(error),
+      });
+    }
+    // A rollback is rare, consequential, and changes which version the machine
+    // is running without anyone asking. It goes to the owner directly rather
+    // than waiting for a surface to happen to poll for receipts, the receipt
+    // for the rollback that stranded this machine overnight was still sitting
+    // undelivered the next morning.
+    this.alertOwner(
+      `the daemon rolled itself back${rejectedVersion !== undefined ? ` from v${rejectedVersion}` : ''}`
+      + ` after ${failedStarts} starts in a row did not finish.`
+      + ` The previously installed version has been restored (${result.restored.map((target) => target.label).join(', ')})`
+      + ` and automatic updates will skip that release until a newer one ships`,
+    );
+    logger.error('DaemonServer: rolled back to the kept previous version after repeated failed starts; handing over to it', {
+      failedStarts,
+      restored: result.restored.map((target) => target.path),
+      skipped: result.skipped.map((target) => target.path),
+    });
+    this.announceOnStderr(
+      `goodvibes daemon: ${failedStarts} starts in a row did not finish, rolled back to the kept previous version`
+      + ` (${result.restored.map((target) => target.path).join(', ')}) and handing over to it`,
+    );
+    void this.handOverAfterRollback();
+    return true;
+  }
+
+  /** The same handover the update swap uses: orderly stop first, then restart onto the restored binary. */
+  private async handOverAfterRollback(): Promise<void> {
+    try {
+      await this.options.stopGracefully?.();
+    } catch (error) {
+      logger.warn('DaemonServer: orderly stop before the rollback restart failed; handing over anyway', {
+        error: summarizeError(error),
+      });
+    }
+    const actions = this.buildServiceActions();
+    if (actions.isSupervised()) {
+      actions.restartService();
+      return;
+    }
+    actions.adoptIntoService();
+    // The rollback is the whole reason this process is stopping, and the ERROR
+    // line naming the restored binary was written moments ago. It has to be on
+    // disk before the exit, or the record of an automatic rollback reads as a
+    // daemon that stopped for no stated reason.
+    flushActivityLogSync();
+    (this.options.exitProcess ?? ((code: number) => process.exit(code)))(0);
+  }
+
+  /**
+   * After the server is accepting: stamp the lifecycle marker (a previous
+   * marker still saying "running" means the last daemon died without an
+   * orderly stop, one honest crash receipt; reaching here also clears the
+   * failed-start streak and re-arms the automatic rollback), then start the
+   * update loop.
+   */
+  onStarted(): void {
+    // Only the FIRST fully-started moment in a process can discover that the
+    // process before it died: an in-process restart cycle is looking at the
+    // marker THIS process wrote, which of course still says `running`. Without
+    // this, every control-plane binding change minted a "restarted after a
+    // crash" receipt for a crash that never happened, and the receipt store
+    // filled with them, burying the receipts that meant something.
+    const firstStartInThisProcess = !this.reachedFullyStarted;
+    // Set before anything that can throw: this process HAS come up, and the
+    // crash-loop guard must not accuse it for the rest of its life.
+    this.reachedFullyStarted = true;
+    try {
+      const startResult = recordDaemonStart(this.markerPath(), {
+        ...this.markerOptions(),
+        ...(this.options.updateArtifact ? { version: this.options.updateArtifact.version } : {}),
+      });
+      if (startResult.crashed && firstStartInThisProcess) {
+        this.receiptStore().record(`restarted after a crash at ${formatReceiptTime((this.options.now ?? Date.now)())}`);
+      }
+    } catch (error) {
+      logger.warn('DaemonServer: could not record the lifecycle marker', { error: summarizeError(error) });
+    }
+    // Announce-once lines due at daemon start (e.g. the web surface URL):
+    // recorded here for EVERY daemon construction path (CLI, boot factory,
+    // embedded). Each fired line is logged AND queued for surface delivery
+    // through the consuming /status receipts read.
+    try {
+      for (const announcement of collectStartupAnnouncements({
+        configManager: this.options.configManager,
+        store: this.announcementStore(),
+      })) {
+        logger.info(announcement.text, { announcement: announcement.id });
+      }
+    } catch (error) {
+      logger.warn('DaemonServer: startup announcements could not be collected', { error: summarizeError(error) });
+    }
+    this.startAutoUpdater();
+    this.promoteToServiceAtBoot();
+  }
+
+  /**
+   * During stop(): halt the update loop; on a real shutdown (not a
+   * config-driven in-process restart cycle) stamp the clean-shutdown marker
+   * so the next start does not record a crash receipt.
+   */
+  onStopping(restarting: boolean): void {
+    this.autoUpdater?.stop();
+    this.autoUpdater = null;
+    if (this.promotionTimer) {
+      clearInterval(this.promotionTimer);
+      this.promotionTimer = null;
+    }
+    if (restarting) return;
+    try {
+      recordDaemonCleanShutdown(this.markerPath(), {
+        ...this.markerOptions(),
+        ...(this.options.updateArtifact ? { version: this.options.updateArtifact.version } : {}),
+      });
+    } catch (error) {
+      logger.warn('DaemonServer: could not record the clean-shutdown marker', { error: summarizeError(error) });
+    }
+  }
+
+  /**
+   * The self-update loop: a first check shortly after boot, then the
+   * configured cadence. The swap only happens at a no-active-work moment: the
+   * busy probe is the session broker's real pending-input count.
+   *
+   * EVERY gate that leaves the loop off logs why. A daemon that quietly never
+   * updates is indistinguishable from one that has nothing to update to, and
+   * the log is the only place an owner can tell those apart.
+   */
+  private startAutoUpdater(): void {
+    if (this.autoUpdater) return;
+    const { configManager } = this.options;
+    const auto = configManager.get('update.auto');
+    if (auto !== true) {
+      this.updateLoopOffReason = 'update.auto is not true, so this daemon will not update itself';
+      logger.info('DaemonServer: auto-update loop off, update.auto is not true; this daemon will not update itself', {
+        'update.auto': auto,
+      });
+      return;
+    }
+    const artifact = this.options.updateArtifact;
+    if (!artifact) {
+      // No artifact identity was provided (the embedded default): the host
+      // manages its own updates. Never fall back to the SDK package version,
+      // comparing it against the host's release tags would be meaningless and
+      // the swap would replace the wrong executable. Logged so an operator
+      // who set update.auto sees why no loop is running.
+      this.updateLoopOffReason = 'this host manages its own updates: no artifact identity was provided, and the SDK package version is never assumed to be the shipped one';
+      logger.info('DaemonServer: auto-update loop off, no update artifact identity provided (host-managed updates)');
+      return;
+    }
+    const releasesUrl = String(configManager.get('update.releasesUrl') ?? '').trim();
+    if (!releasesUrl) {
+      this.updateLoopOffReason = 'update.releasesUrl is empty, so there is nowhere to resolve release tags from';
+      logger.info('DaemonServer: auto-update loop off, update.releasesUrl is empty, so there is nowhere to resolve release tags from');
+      return;
+    }
+    const intervalMinutes = Number(configManager.get('update.intervalMinutes') ?? 60);
+    const firstCheckSeconds = Number(configManager.get('update.firstCheckSeconds') ?? 30);
+    const alertAfter = Number(configManager.get('update.alertAfterFailedChecks') ?? 3);
+    const updater = new DaemonAutoUpdater({
+      currentVersion: artifact.version,
+      execPath: artifact.execPath ?? process.execPath,
+      platform: process.platform,
+      arch: process.arch,
+      releasesLatestUrl: releasesUrl,
+      checkIntervalMs: Math.max(5, intervalMinutes) * 60 * 1000,
+      firstCheckDelayMs: Math.max(0, Number.isFinite(firstCheckSeconds) ? firstCheckSeconds : 30) * 1000,
+      isIdle: this.options.isIdle,
+      receipts: this.receiptStore(),
+      serviceActions: this.buildServiceActions(),
+      // Read from disk on every check, not captured once: the rejection this
+      // has to honor was written by the boot BEFORE the one running now.
+      rejectedVersion: () => this.rejectedUpdateVersion(),
+      alertOwner: (text) => this.alertOwner(text),
+      ...(Number.isFinite(alertAfter) ? { alertAfterFailedChecks: alertAfter } : {}),
+      ...(this.options.stopGracefully ? { stopGracefully: this.options.stopGracefully } : {}),
+    });
+    this.autoUpdater = updater;
+    this.updateLoopOffReason = '';
+    updater.start();
+    // The positive case is logged too: "no update happened" should be
+    // readable as either "the loop never ran" or "the loop ran and found
+    // nothing", never a guess between them.
+    logger.info('DaemonServer: auto-update loop armed', {
+      currentVersion: artifact.version,
+      releasesUrl,
+      firstCheckInMs: updater.firstCheckDelayMs,
+      thenEveryMs: updater.checkIntervalMs,
+    });
+  }
+
+  /**
+   * The version an automatic rollback rejected and no successful boot has
+   * cleared, or null. Read from the marker on disk each time it is asked for,
+   * because the rollback that recorded it happened in a PREVIOUS process.
+   */
+  private rejectedUpdateVersion(): string | null {
+    const marker = readLifecycleMarker(this.markerPath(), this.options.markerIo);
+    return marker?.rejectedVersion ?? null;
+  }
+
+  /**
+   * What this daemon can say about updating itself, from the state the loop
+   * already keeps.
+   *
+   * EVERY gate that leaves the loop off is named here, not just logged. "The
+   * daemon has not updated" reads identically whether there is nothing to
+   * update to, the loop was never armed, or every check has been failing for a
+   * week, and the difference between those is the whole question.
+   */
+  updateStatus(): DaemonUpdateStatus {
+    const updater = this.autoUpdater;
+    const rejectedVersion = this.rejectedUpdateVersion();
+    if (!updater) {
+      return {
+        armed: false,
+        offReason: this.updateLoopOffReason,
+        currentVersion: this.options.updateArtifact?.version ?? null,
+        releasesUrl: String(this.options.configManager.get('update.releasesUrl') ?? '').trim(),
+        checkIntervalMs: null,
+        firstCheckDelayMs: null,
+        failedCheckCount: 0,
+        lastCheckFailure: null,
+        pendingVersion: null,
+        rejectedVersion,
+      };
+    }
+    const snapshot = updater.snapshot();
+    return {
+      armed: true,
+      offReason: '',
+      currentVersion: snapshot.currentVersion,
+      releasesUrl: snapshot.releasesUrl,
+      checkIntervalMs: snapshot.checkIntervalMs,
+      firstCheckDelayMs: snapshot.firstCheckDelayMs,
+      failedCheckCount: snapshot.failedCheckCount,
+      lastCheckFailure: snapshot.lastCheckFailure,
+      pendingVersion: snapshot.pendingVersion,
+      rejectedVersion,
+    };
+  }
+
+  /**
+   * Run one check now rather than waiting for the next interval, and report
+   * what the loop knows afterwards.
+   *
+   * The same tick the schedule runs, not a second code path, so what an
+   * on-demand check does and what the hourly one does cannot diverge. A check
+   * that throws is recorded by the loop exactly as a scheduled failure is, and
+   * the returned status carries it; this never rejects, because "the check
+   * failed" is an answer and the caller asked for the state.
+   */
+  async checkForUpdatesNow(): Promise<DaemonUpdateStatus> {
+    await this.autoUpdater?.tick();
+    return this.updateStatus();
+  }
+
+  /** The service-manager actions shared by the update swap and boot promotion. */
+  private buildServiceActions(): AutoUpdateServiceActions {
+    const serviceName = String(this.options.configManager.get('service.serviceName') ?? 'goodvibes').trim() || 'goodvibes';
+    const spawnDetached = (argv: readonly string[]): void => {
+      try {
+        const child = spawn(argv[0]!, argv.slice(1), { detached: true, stdio: 'ignore' });
+        child.unref();
+      } catch (error) {
+        logger.warn('DaemonServer: service-manager command failed to spawn', { argv, error: summarizeError(error) });
+      }
+    };
+    return {
+      isSupervised: () => {
+        try {
+          const status = this.options.platformServiceManager.status();
+          return status.installed && status.running;
+        } catch {
+          return false;
+        }
+      },
+      adoptIntoService: () => {
+        // Adoption: write the unit (with the survival contract) and enqueue
+        // a start. The old process exits right after; if the first start
+        // races the dying listener, Restart=on-failure retries until the
+        // port is free.
+        try {
+          const installed = this.options.platformServiceManager.install();
+          if (installed.lingerNote) logger.info(`DaemonServer: ${installed.lingerNote}`);
+        } catch (error) {
+          logger.warn('DaemonServer: service unit install failed during adoption', { error: summarizeError(error) });
+          return;
+        }
+        if (process.platform === 'linux') {
+          spawnDetached(['systemctl', '--user', 'daemon-reload']);
+          spawnDetached(['systemctl', '--user', '--no-block', 'enable', '--now', `${serviceName}.service`]);
+        }
+      },
+      restartService: () => {
+        if (process.platform === 'linux') {
+          // Non-blocking: the restart job outlives this process, which
+          // systemd stops as part of the restart.
+          spawnDetached(['systemctl', '--user', '--no-block', 'restart', `${serviceName}.service`]);
+          return;
+        }
+        // launchd (KeepAlive=true) and manual supervision both respawn the
+        // (already-swapped) binary when this process exits cleanly. The log
+        // lands first: an exit taken as a handover has to be distinguishable
+        // in the record from an exit nobody chose.
+        flushActivityLogSync();
+        process.exit(0);
+      },
+    };
+  }
+
+  /**
+   * Boot-edge service promotion, independent of updates: a STANDALONE
+   * unsupervised daemon (spawned detached by a surface) installs its service
+   * unit and hands over to the supervised instance at its first idle moment
+   *, a freshly-spawned daemon at the latest version no longer stays
+   * unref()'d forever waiting for an update swap to promote it. Embedded
+   * daemons (no updateArtifact identity) never self-promote: exiting would
+   * kill the host process. service.enabled=false opts out; a platform
+   * without a service manager is left alone.
+   */
+  private promoteToServiceAtBoot(): void {
+    if (!this.options.updateArtifact) return;
+    // A daemon running out of an overridden home is a throwaway by definition,
+    // and a throwaway must not become the machine's daemon. See
+    // `hasOverriddenHome`, this exact promotion put a scratchpad daemon in
+    // charge of the owner's machine and their real Telegram bot.
+    //
+    // Checked BEFORE `service.enabled`, deliberately: that key is client-owned
+    // and therefore read from the REAL home, so a test tree's own opt-out was
+    // written and never read. Isolation that depends on the isolated process
+    // reading its own settings file is not isolation.
+    if (this.options.hasOverriddenHome === true) {
+      logger.info('DaemonServer: home was overridden, skipping boot promotion', {
+        detail: 'a daemon running from a non-default home never adopts the machine service unit',
+      });
+      return;
+    }
+    if (this.options.configManager.get('service.enabled') === false) return;
+    // Only a compiled binary may self-promote: a source/dev run would install a
+    // unit whose ExecStart reconstructs a dev command line for a binary and fail
+    // on the next boot. A dev checkout stays session-only.
+    const isCompiled = this.options.isCompiledBinary ?? (() => isCompiledBinaryInvocation(currentProcessSignals()));
+    if (!isCompiled()) {
+      logger.info('DaemonServer: source/dev run, skipping boot promotion (only a compiled binary self-promotes)');
+      return;
+    }
+    let status: { installed: boolean; running: boolean };
+    try {
+      status = this.options.platformServiceManager.status();
+    } catch {
+      return; // no service manager on this platform, nothing to promote into
+    }
+    if (status.installed && status.running) return; // already supervised
+    const actions = this.buildServiceActions();
+    const exitProcess = this.options.exitProcess ?? ((code: number) => process.exit(code));
+    const attempt = (): boolean => {
+      if (!this.options.isIdle()) return false;
+      logger.info('DaemonServer: unsupervised daemon, installing the service unit and handing over (boot promotion)');
+      actions.adoptIntoService();
+      flushActivityLogSync();
+      exitProcess(0);
+      return true;
+    };
+    if (attempt()) return;
+    // Busy at boot (e.g. sessions reconnected immediately): keep checking for
+    // the same idle moment the update swap waits for. The timer never keeps
+    // the process alive and stops with the lifecycle.
+    const retryMs = Math.max(1_000, this.options.promotionRetryMs ?? 60_000);
+    this.promotionTimer = setInterval(() => {
+      if (attempt() && this.promotionTimer) {
+        clearInterval(this.promotionTimer);
+        this.promotionTimer = null;
+      }
+    }, retryMs);
+    (this.promotionTimer as { unref?: () => void }).unref?.();
+  }
+}

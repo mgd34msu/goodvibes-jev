@@ -1,0 +1,291 @@
+import type { DaemonRuntimeRouteHandlers } from '@goodvibes-jev/engine/daemon-sdk';
+import type { DaemonRuntimeRouteContext as SdkDaemonRuntimeRouteContext, AutomationSurfaceKind, JsonBody } from '@goodvibes-jev/engine/daemon-sdk';
+import type {
+  AutomationScheduleDefinition,
+  CreateAutomationJobInput,
+  UpdateAutomationJobInput,
+} from '../../automation/index.js';
+import type { ExecutionIntent } from '../../runtime/execution-intents.js';
+// The local Like-view types below describe the minimal route handler inputs
+// accepted by daemon-sdk handlers. They stay narrow so callers can provide
+// lightweight records instead of full runtime objects.
+export interface SharedSessionRoutingIntent {
+  readonly modelId?: string | undefined;
+  readonly providerId?: string | undefined;
+  readonly providerSelection?: 'inherit-current' | 'concrete' | 'synthetic' | undefined;
+  readonly providerFailurePolicy?: 'ordered-fallbacks' | 'fail' | undefined;
+  readonly fallbackModels?: readonly string[] | undefined;
+  readonly helperModel?: {
+    readonly providerId: string;
+    readonly modelId: string;
+  } | undefined;
+  readonly tools?: readonly string[] | undefined;
+  readonly executionIntent?: ExecutionIntent | undefined;
+  readonly reasoningEffort?: string | undefined;
+}
+interface AutomationRouteBinding {
+  readonly id?: string | undefined;
+}
+type AgentRecordLike = {
+  readonly id: string;
+  readonly status: string;
+  readonly task: string;
+  readonly model?: string | null | undefined;
+  readonly tools: readonly string[];
+  readonly startedAt: number;
+  readonly completedAt?: number | undefined;
+  readonly toolCallCount?: number | undefined;
+  readonly progress?: string | null | undefined;
+  readonly error?: string | null | undefined;
+};
+type AutomationJobLike = { readonly id: string };
+type AutomationRunLike = {
+  readonly id: string;
+  readonly jobId: string;
+  readonly agentId?: string | undefined;
+  readonly status: string;
+  readonly startedAt?: number | undefined;
+  // Present in the canonical copy in daemon-sdk and missing here, the same
+  // copy-paste drift as createJob/updateJob below, found the same way.
+  readonly endedAt?: number | undefined;
+  readonly queuedAt: number;
+  readonly continuationMode?: string | undefined;
+};
+interface RuntimeTaskLike {
+  readonly kind?: string | undefined;
+  readonly owner?: string | undefined;
+  readonly description?: string | undefined;
+  readonly title?: string | undefined;
+}
+interface RuntimeTaskStateLike {
+  readonly tasks: Map<string, RuntimeTaskLike>;
+}
+
+export interface DaemonRuntimeRouteContext extends Omit<
+  SdkDaemonRuntimeRouteContext,
+  'automationManager' | 'normalizeAtSchedule' | 'normalizeEverySchedule' | 'normalizeCronSchedule' | 'trySpawnAgent'
+> {
+  readonly parseJsonBody: (req: Request) => Promise<JsonBody | Response>;
+  readonly parseOptionalJsonBody: (req: Request) => Promise<JsonBody | null | Response>;
+  readonly recordApiResponse: (req: Request, path: string, response: Response) => Response;
+  readonly requireAdmin: (req: Request) => Response | null;
+  readonly sessionBroker: {
+    start(): Promise<void>;
+    submitMessage(input: {
+      sessionId?: string | undefined;
+      routeId?: string | undefined;
+      surfaceKind: AutomationSurfaceKind;
+      surfaceId: string;
+      externalId?: string | undefined;
+      threadId?: string | undefined;
+      userId?: string | undefined;
+      displayName?: string | undefined;
+      title?: string | undefined;
+      body: string;
+      metadata?: Record<string, unknown> | undefined;
+      routing?: SharedSessionRoutingIntent | undefined;
+    }): Promise<{
+      mode: 'continued-live' | 'spawn' | 'queued-follow-up' | 'queued-for-surface' | 'rejected';
+      input: { id: string; routing?: SharedSessionRoutingIntent };
+      session: { id: string; status: string };
+      routeBinding?: AutomationRouteBinding | undefined;
+      task?: string | undefined;
+      activeAgentId?: string | null | undefined;
+      userMessage?: unknown | undefined;
+    }>;
+    steerMessage(input: {
+      sessionId?: string | undefined;
+      routeId?: string | undefined;
+      surfaceKind: AutomationSurfaceKind;
+      surfaceId: string;
+      externalId?: string | undefined;
+      threadId?: string | undefined;
+      userId?: string | undefined;
+      displayName?: string | undefined;
+      title?: string | undefined;
+      body: string;
+      metadata?: Record<string, unknown> | undefined;
+      routing?: SharedSessionRoutingIntent | undefined;
+      allowSpawnFallback?: boolean | undefined;
+    }): Promise<{
+      mode: 'continued-live' | 'spawn' | 'queued-follow-up' | 'queued-for-surface' | 'rejected';
+      input: { id: string; state: string; routing?: SharedSessionRoutingIntent };
+      session: { id: string; status: string };
+      routeBinding?: AutomationRouteBinding | undefined;
+      task?: string | undefined;
+      activeAgentId?: string | null | undefined;
+      userMessage?: unknown | undefined;
+    }>;
+    followUpMessage(input: {
+      sessionId?: string | undefined;
+      routeId?: string | undefined;
+      surfaceKind: AutomationSurfaceKind;
+      surfaceId: string;
+      externalId?: string | undefined;
+      threadId?: string | undefined;
+      userId?: string | undefined;
+      displayName?: string | undefined;
+      title?: string | undefined;
+      body: string;
+      metadata?: Record<string, unknown> | undefined;
+      routing?: SharedSessionRoutingIntent | undefined;
+    }): Promise<{
+      mode: 'continued-live' | 'spawn' | 'queued-follow-up' | 'queued-for-surface' | 'rejected';
+      input: { id: string; state: string; routing?: SharedSessionRoutingIntent };
+      session: { id: string; status: string };
+      routeBinding?: AutomationRouteBinding | undefined;
+      task?: string | undefined;
+      activeAgentId?: string | null | undefined;
+      userMessage?: unknown | undefined;
+    }>;
+    bindAgent(sessionId: string, agentId: string): Promise<unknown>;
+    createSession(input: {
+      id?: string | undefined;
+      title?: string | undefined;
+      metadata?: Record<string, unknown> | undefined;
+      routeBinding?: AutomationRouteBinding | undefined;
+      participant?: {
+        surfaceKind: AutomationSurfaceKind;
+        surfaceId: string;
+        externalId?: string | undefined;
+        userId?: string | undefined;
+        displayName?: string | undefined;
+        routeId?: string | undefined;
+        lastSeenAt: number;
+      };
+    }): Promise<{ id: string }>;
+    register(input: {
+      sessionId: string;
+      kind?: string | undefined;
+      project?: string | undefined;
+      title?: string | undefined;
+      participant: {
+        surfaceKind: AutomationSurfaceKind;
+        surfaceId: string;
+        externalId?: string | undefined;
+        userId?: string | undefined;
+        displayName?: string | undefined;
+        routeId?: string | undefined;
+        lastSeenAt: number;
+      };
+      reopen?: boolean | undefined;
+    }): Promise<{
+      record: { id: string };
+      reopened: boolean;
+      conflict?: { readonly status: 'closed' } | undefined;
+    }>;
+    getSession(sessionId: string): { id: string; status: string; messageCount: number; activeAgentId?: string } | null;
+    getMessages(sessionId: string, limit: number): unknown[];
+    getInputs(sessionId: string, limit: number): unknown[];
+    getInputsSince(sessionId: string, options: { state?: string | undefined; since?: number | undefined; limit?: number | undefined }): unknown[];
+    markInputDelivered(sessionId: string, inputId: string, options: { consumed?: boolean | undefined; agentId?: string | undefined }): Promise<unknown | null>;
+    closeSession(sessionId: string): Promise<{ id: string } | null>;
+    reopenSession(sessionId: string): Promise<{ id: string } | null>;
+    detachParticipant(sessionId: string, surfaceId: string): Promise<{ id: string; status: string } | null>;
+    /** Hard-remove a session record + its messages/inputs (see CHANGELOG 1.0.0). Distinct from close. */
+    deleteSession(sessionId: string): Promise<'deleted' | 'not-found' | 'active'>;
+    cancelInput(sessionId: string, inputId: string): Promise<unknown | null>;
+    completeAgent(sessionId: string, agentId: string, message: string, meta: { status: string; routeId?: string }): Promise<void>;
+    appendCompanionMessage(sessionId: string, input: {
+      readonly messageId: string;
+      readonly body: string;
+      readonly timestamp: number;
+      readonly source: string;
+      readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+    }): Promise<unknown>;
+  };
+  readonly agentManager: {
+    getStatus(agentId: string): AgentRecordLike | null;
+    cancel(agentId: string): void;
+  };
+  /**
+   * Omitted from the canonical above and re-declared here, with this layer's
+   * precise input types.
+   *
+   * `createJob`/`updateJob` deliberately differ from the canonical, which
+   * declares them as `Record<string, unknown>` because daemon-sdk's handlers
+   * call them with a parsed JSON body.
+   * `createDaemonRuntimeRouteHandlers` in runtime-routes.ts is the bridge: it
+   * wraps this context's manager and runs the body through
+   * `parseCreateAutomationJobInput` before calling through.
+   *
+   * Every OTHER method here must stay identical to the canonical, so that a
+   * method added upstream is required here too;
+   * test/platform-http-context-inheritance.test.ts pins that, minus the two
+   * adapted methods. It could not pin anything before, because `test/` was
+   * never typechecked, and in the meantime `AutomationRunLike` below had
+   * silently lost a field the canonical copy has.
+   */
+  readonly automationManager: {
+    listJobs(): AutomationJobLike[];
+    listRuns(): AutomationRunLike[];
+    getRun(runId: string): AutomationRunLike | null | undefined;
+    triggerHeartbeat(input: { source: string }): Promise<unknown>;
+    cancelRun(runId: string, reason: string): Promise<unknown | null>;
+    retryRun(runId: string): Promise<unknown>;
+    createJob(input: CreateAutomationJobInput): Promise<AutomationJobLike>;
+    updateJob(jobId: string, input: UpdateAutomationJobInput): Promise<AutomationJobLike | null>;
+    removeJob(jobId: string): Promise<void>;
+    setEnabled(jobId: string, enabled: boolean): Promise<AutomationJobLike | null>;
+    runNow(jobId: string): Promise<{ id: string; agentId?: string; status: string }>;
+    getSchedulerCapacity(): { slotsTotal: number; slotsInUse: number; queueDepth: number; oldestQueuedAgeMs: number | null };
+  };
+  readonly normalizeAtSchedule: (at: number) => AutomationScheduleDefinition;
+  readonly normalizeEverySchedule: (interval: string | number, anchorAt?: number) => AutomationScheduleDefinition;
+  readonly normalizeCronSchedule: (expression: string, timezone?: string, staggerMs?: unknown) => AutomationScheduleDefinition;
+  readonly routeBindings: {
+    start(): Promise<void>;
+    getBinding(id: string): AutomationRouteBinding | undefined;
+  };
+  readonly trySpawnAgent: (input: {
+    mode: 'spawn';
+    task: string;
+    model?: string | undefined;
+    tools?: string[] | readonly string[] | undefined;
+    provider?: string | undefined;
+    context?: string | undefined;
+    executionIntent?: ExecutionIntent | undefined;
+    executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
+    reviewMode?: 'none' | 'wrfc' | undefined;
+    communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
+    dangerously_disable_wrfc?: boolean | undefined;
+  }, logLabel: string, sessionId?: string) => AgentRecordLike | Response;
+  readonly queueSurfaceReplyFromBinding: (
+    binding: AutomationRouteBinding | undefined,
+    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly workflowChainId?: string; readonly sessionId?: string; },
+  ) => void;
+
+  /**
+   * A surface that ran the turn in its own process reports the answer, so the
+   * daemon can write it into the shared session and push it down the reply
+   * pipeline. The daemon's own completion poll only ever sees agents THIS
+   * process spawned, so without this an answer produced by a client that
+   * collected the input over `sessions.inputs.list` never reached the
+   * conversation it came from.
+   */
+  readonly completeSurfaceReplyFromSurface: (input: {
+    readonly agentId: string;
+    readonly sessionId?: string | undefined;
+    readonly body: string;
+    readonly status?: 'completed' | 'failed' | 'cancelled' | undefined;
+  }) => Promise<boolean>;
+  readonly surfaceDeliveryEnabled: (surface: 'slack' | 'discord' | 'ntfy' | 'webhook' | 'homeassistant' | 'telegram' | 'google-chat' | 'signal' | 'whatsapp' | 'telephony' | 'imessage' | 'msteams' | 'bluebubbles' | 'mattermost' | 'matrix') => boolean;
+  readonly syncSpawnedAgentTask: (record: AgentRecordLike, sessionId?: string) => void;
+  readonly syncFinishedAgentTask: (record: AgentRecordLike) => void;
+  readonly configManager: {
+    get(key: string): unknown;
+  };
+  readonly runtimeStore: { getState(): { tasks: RuntimeTaskStateLike } } | null;
+  readonly runtimeDispatch: {
+    transitionRuntimeTask(
+      taskId: string,
+      status: string,
+      patch: Record<string, unknown>,
+      source: string,
+    ): void;
+  } | null;
+}
+
+export type { JsonBody };
+
+export type DaemonRuntimeRouteHandlerMap = DaemonRuntimeRouteHandlers;

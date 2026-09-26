@@ -1,0 +1,201 @@
+/**
+ * Auto-refresh transport middleware.
+ *
+ * Integrates `AutoRefreshCoordinator` at the transport boundary so that ALL
+ * typed operator/peer SDK calls benefit from automatic token refresh, not only
+ * `auth.current()`.
+ *
+ * Responsibilities:
+ *   1. Pre-flight: call `coordinator.ensureFreshToken()` before dispatching the
+ *      request. Updates `ctx.headers.Authorization` with the fresh token so
+ *      consumer middleware (which runs after this one) sees the current token.
+ *   2. Reactive 401: if `next()` throws a 401-shaped error, trigger a refresh
+ *      via `coordinator.refreshAndRetryOnce()` and set `ctx.response` to the
+ *      retry result so the transport can return it to the caller.
+ *   3. Loop prevention: retry requests carry `__gv_ar_attempted: true` in their
+ *      options. The middleware recognises this flag and passes through without
+ *      additional refresh logic, preventing infinite recursion.
+ *   4. Error passthrough: terminal auth errors from the coordinator are placed
+ *      directly onto `ctx.error` rather than thrown, so the transport's
+ *      middleware-error-wrapping instrumentation does not re-wrap them as
+ *      `kind:'unknown'`.
+ */
+
+import type { TransportContext, TransportMiddleware } from '@goodvibes-jev/engine/transport-core';
+import type { HttpJsonTransport } from '@goodvibes-jev/engine/transport-http/http-core';
+import type { GoodVibesTokenStore } from './types.js';
+import type { AutoRefreshCoordinator } from './auto-refresh.js';
+import { is401Error } from './auto-refresh.js';
+
+/** Request-local flag key that never conflicts with public HttpJsonRequestOptions fields. */
+const ATTEMPTED_FLAG = '__gv_ar_attempted';
+
+/**
+ * Create a transport middleware that integrates the `AutoRefreshCoordinator`
+ * into every HTTP request.
+ *
+ * @param coordinator - The auto-refresh coordinator managing token lifecycle.
+ * @param transport   - The HTTP JSON transport used to re-issue the request on
+ *                      reactive 401 retry. Must be the same transport instance
+ *                      whose middleware chain contains this middleware, so that
+ *                      the retry benefits from other middleware (e.g. logging,
+ *                      tracing) except for another auto-refresh cycle.
+ * @param tokenStore  - The token store from which to read the fresh token after
+ *                      pre-flight refresh, so `ctx.headers.Authorization` can
+ *                      be updated before consumer middleware runs.
+ *
+ * @example
+ * const mw = createAutoRefreshMiddleware(coordinator, transport, tokenStore);
+ * transport.use(mw);
+ */
+export function createAutoRefreshMiddleware(
+  coordinator: AutoRefreshCoordinator,
+  transport: Pick<HttpJsonTransport, 'requestJson'>,
+  tokenStore: GoodVibesTokenStore,
+): TransportMiddleware {
+  return async function autoRefreshMiddleware(
+    ctx: TransportContext,
+    next: () => Promise<void>,
+  ): Promise<void> {
+    // ── Loop-prevention guard ────────────────────────────────────────────────
+    // Retry requests issued by this middleware carry the flag. When we see it,
+    // simply forward the request without any refresh logic.
+    // We catch and re-place errors onto ctx.error so they are NOT tagged as
+    // "middleware errors" by the transport's instrumented-chain wrapper, which
+    // would re-wrap them as GoodVibesSdkError{kind:'unknown'} and hide the
+    // original 401 status that refreshAndRetryOnce needs to detect.
+    if (ctx.options[ATTEMPTED_FLAG] === true) {
+      try {
+        await next();
+      } catch (passthroughErr) {
+        ctx.error = passthroughErr;
+      }
+      return;
+    }
+
+    // ── Pre-flight refresh ───────────────────────────────────────────────────
+    // Refresh the token before dispatch when it is within the leeway window.
+    // After refresh, update ctx.headers.Authorization with the fresh token so
+    // consumer middleware (which runs after this one in the chain) sees the
+    // current Bearer token, not the stale one that was set when ctx was built.
+    try {
+      await coordinator.ensureFreshToken();
+    } catch (error) {
+      ctx.error = error;
+      return;
+    }
+    let freshToken: string | null;
+    try {
+      freshToken = await tokenStore.getToken();
+    } catch (error) {
+      ctx.error = error;
+      return;
+    }
+    if (freshToken) {
+      ctx.headers['Authorization'] = `Bearer ${freshToken}`;
+    }
+
+    // ── Dispatch request ─────────────────────────────────────────────────────
+    // We catch ALL errors from next() rather than re-throwing them directly.
+    // Re-throwing from within a middleware causes the transport's instrumented-
+    // chain wrapper to tag the error as "from this middleware" and re-wrap it
+    // as GoodVibesSdkError{kind:'unknown'}, even when the error originated
+    // from the real fetch (innerFetch). By placing non-401 errors onto
+    // ctx.error instead, they bypass the middleware-wrapping path and propagate
+    // with their original type and kind intact.
+    let caughtErr: unknown;
+    let nextSucceeded = false;
+    try {
+      await next();
+      nextSucceeded = true;
+    } catch (err) {
+      caughtErr = err;
+    }
+
+    if (nextSucceeded) {
+      return; // success, nothing more to do
+    }
+
+    if (!is401Error(caughtErr)) {
+      // Non-401 error (e.g. 5xx, network), place on ctx.error so it exits
+      // the middleware chain without triggering middleware-error wrapping.
+      ctx.error = caughtErr;
+      return;
+    }
+
+    // ── Reactive 401 retry ─────────────────────────────────────────────────
+    // Release the original 401 error before we await the refresh + retry. The
+    // transport's end-of-chain catch (composeMiddleware) sets `ctx.error` to
+    // the SAME error object innerFetch threw before rethrowing it to us, and
+    // ctx stays strongly reachable for the whole call, so clearing only the
+    // local `caughtErr` would be a no-op (verified by WeakRef probe): the
+    // error, which can transitively retain the failed request and its
+    // operator-token Authorization header, would stay pinned via ctx.error for
+    // the entire refresh+retry await window. Under a 401 storm that is one
+    // pinned error-plus-request context per in-flight call. We have already
+    // extracted everything we need (the 401 classification), so release BOTH
+    // references now. Post-retry semantics are preserved: every exit path from
+    // this block explicitly sets ctx.error (terminal errors) or leaves it
+    // cleared (successful retry), so no later reader observes a stale 401.
+    caughtErr = undefined;
+    ctx.error = undefined;
+    // Build retry options that preserve the original request attributes and
+    // carry the loop-prevention flag so the next pass through this middleware
+    // just calls next() without re-entering the refresh logic.
+    const retryOptions: Record<string, unknown> = {
+      method: ctx.method,
+      body: ctx.body,
+      signal: ctx.signal,
+      [ATTEMPTED_FLAG]: true,
+    };
+
+    // Delegate to coordinator.refreshAndRetryOnce, this refreshes the token
+    // exactly once and executes the retry fn once. If the retry also returns
+    // 401, it throws GoodVibesSdkError{kind:'auth'} with the standard three-part message.
+    //
+    // IMPORTANT: we place terminal errors onto ctx.error instead of re-throwing
+    // them. This bypasses the transport's middleware-error-wrapping path
+    // (which would re-label them as kind:'unknown') and lets the transport's
+    // outer `if (ctx.error) throw ctx.error` propagate them cleanly.
+    let retryResult: unknown;
+    try {
+      retryResult = await coordinator.refreshAndRetryOnce(async () => {
+        // transport.requestJson goes through the full middleware chain; the
+        // ATTEMPTED_FLAG ensures this middleware is a passthrough on that call.
+        return transport.requestJson<unknown>(ctx.url, retryOptions as never);
+      });
+    } catch (retryErr) {
+      // Place onto ctx.error, transport's post-chain check will rethrow it
+      // without the middleware-wrapping treatment.
+      ctx.error = retryErr;
+      return;
+    }
+
+    // Put the retry result back onto ctx.response so the transport's outer
+    // requestJson can resolve it via `await ctx.response.json()`.
+    //
+    // status: 200, transport.requestJson throws on non-2xx, so a non-throwing
+    //   return means the retry succeeded. The transport layer only inspects the
+    //   JSON body; the status is not forwarded to callers by HttpJsonTransport.
+    //
+    // headers: Content-Type only, the transport reads `ctx.response.json()` and
+    //   does not forward response headers to callers. If header forwarding is
+    //   needed in the future, use the lower-level fetch path here instead.
+    //
+    // Also clear ctx.error: the innerFetch path sets it when it throws (before
+    // re-throwing), so it reflects the original 401. Since we handled the 401
+    // successfully, we must clear it so the transport's `if (ctx.error) throw`
+    // guard does not re-raise the already-resolved error.
+    ctx.error = undefined;
+    ctx.response = new Response(JSON.stringify(retryResult), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// is401Error is shared, import from auto-refresh.ts to avoid divergence.

@@ -1,0 +1,585 @@
+import { existsSync, mkdirSync, readFileSync, readSync, readdirSync, writeFileSync, unlinkSync, renameSync, openSync, fsyncSync, closeSync } from 'fs';
+import { join } from 'path';
+import { logger } from '../utils/logger.js';
+import type { AgentRecord } from '../tools/agent/index.js';
+import type { SessionReturnContextSummary } from '../runtime/session-return-context.js';
+import type { ConversationTitleSource } from '../core/conversation.js';
+import { summarizeError } from '../utils/error-display.js';
+import { resolveScopedDirectory } from '../runtime/surface-root.js';
+import type { SessionSurface } from '../runtime/session-surface.js';
+
+/**
+ * Metadata for a saved session (the first JSONL line).
+ */
+export interface SessionMeta {
+  title: string;
+  model: string;
+  provider: string;
+  timestamp: number;
+  titleSource?: ConversationTitleSource | undefined;
+  returnContext?: SessionReturnContextSummary | undefined;
+  /** File format version written into the JSONL meta line. Present on files saved after schemaVersion was introduced. Missing on older files (treat as version 0). */
+  schemaVersion?: number | undefined;
+  /**
+   * Who caused this save: `'user'` for an explicit save the user asked for
+   * (e.g. a `/save` command, never expired by the session-conversations
+   * retention store, see runtime/retention/append-only-registry.ts), `'auto'`
+   * for an automatic save (e.g. shutdownRuntime's save-on-exit), which the
+   * bounded default retention policy may reclaim. Defaults to `'auto'` when
+   * omitted at save time. A file with no `saveSource` at all (written before
+   * this field existed) is treated as `'user'` by the retention store, never
+   * assume an old file is safe to expire.
+   *
+   * INVARIANT, `'user'` is STICKY. Once a session file is stamped `'user'`,
+   * no `'auto'` (or omitted) save over the same file can downgrade it back to
+   * `'auto'`; SessionManager.save re-reads the existing file's stamp and keeps
+   * `'user'`. Without this, an automatic periodic save of the same session id
+   * (persistConversation, which defaults to `'auto'`) would quietly strip the
+   * retention exemption off a conversation the user explicitly asked to keep,
+   * and the next sweep would be free to delete it. Only an explicit
+   * `saveSource: 'user'` ever changes the stamp, always upward.
+   */
+  saveSource?: 'user' | 'auto' | undefined;
+}
+
+/**
+ * Summary info for listing saved sessions.
+ */
+export interface SessionInfo {
+  name: string;
+  title: string;
+  model: string;
+  provider: string;
+  timestamp: number;
+  messageCount: number;
+  filePath: string;
+  titleSource?: ConversationTitleSource | undefined;
+  returnContext?: SessionReturnContextSummary | undefined;
+}
+
+/**
+ * SessionManager - Handles saving and loading named conversation sessions
+ * as JSONL files under the configured surface session directory.
+ *
+ * Format: each line is a JSON object.
+ *   Line 0: { type: 'meta', ...SessionMeta }
+ *   Line N: { type: 'message', ...message fields }
+ */
+/**
+ * Current schema version written to session files.
+ * Increment when the file format changes in a backward-incompatible way.
+ * Readers accept: version undefined (legacy, treated as 0), version <= CURRENT, and
+ * version > CURRENT (future, logged as a warning, accepted with best-effort parsing).
+ */
+export const CURRENT_SESSION_SCHEMA_VERSION = 1;
+
+/**
+ * Turn a session name (or session id) into the filename stem its durable
+ * store file uses: `<sessionsDir>/<stem>.jsonl`. Module-level so a caller that
+ * needs a session's store path, e.g. the recovery layer asking "is this
+ * snapshot older than its own session's last clean save?" in
+ * runtime/session-recovery.ts, derives exactly the same filename this class
+ * writes, without constructing a SessionManager just to reach the rule.
+ * {@link SessionManager.sanitizeName} delegates here, so there is one rule,
+ * not two that can drift apart.
+ */
+export function sanitizeSessionName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9_-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'session';
+}
+
+export class SessionManager {
+  private sessionsDir: string;
+
+  constructor(
+    baseDir: string,
+    options?: {
+      readonly surfaceRoot?: string | undefined;
+      readonly sessionsDir?: string | undefined;
+      /**
+       * A declare-once `SessionSurface` (see platform/runtime/session-surface.ts).
+       * When given, `sessionsDir` is resolved from `surface.sessionsDir`,
+       * taking priority over an explicit `sessionsDir` or `surfaceRoot` option.
+       */
+      readonly surface?: SessionSurface | undefined;
+    },
+  ) {
+    this.sessionsDir = options?.surface?.sessionsDir
+      ?? options?.sessionsDir
+      ?? resolveScopedDirectory(baseDir, options?.surfaceRoot, 'sessions');
+    // Clean up orphaned tmp files from a crashed write.
+    this._cleanupOrphanTempFiles();
+  }
+
+  /**
+   * Remove any `.tmp-*` files left behind by a crashed write.
+   * Cleanup errors are logged and startup continues.
+   */
+  private _cleanupOrphanTempFiles(): void {
+    if (!existsSync(this.sessionsDir)) return;
+    try {
+      const files = readdirSync(this.sessionsDir);
+      for (const f of files) {
+        if (f.startsWith('.tmp-')) {
+          try {
+            unlinkSync(join(this.sessionsDir, f));
+            logger.debug('SessionManager: removed orphan tmp file', { file: f });
+          } catch (err: unknown) {
+            logger.warn('SessionManager: failed to remove orphan tmp file', {
+              file: join(this.sessionsDir, f),
+              error: summarizeError(err),
+            });
+          }
+        }
+      }
+    } catch (err: unknown) {
+      // Directory may not be readable yet; log so ops can diagnose permission issues.
+      logger.warn('[SessionManager] _cleanupOrphanTempFiles: directory read failed', {
+        dir: this.sessionsDir,
+        error: summarizeError(err),
+      });
+    }
+  }
+
+  /**
+   * Atomically write content to filePath via a temp file + fsync(file) + rename + fsync(dir).
+   * Protects against partial writes and directory-entry reversion on power loss:
+   *   1. Write content to a tmp file in the same directory.
+   *   2. fsync the tmp file to flush its data to storage.
+   *   3. rename the tmp file into place (atomic on POSIX).
+   *   4. fsync the parent directory to flush the directory entry, without
+   *      this step, on power loss after rename the directory entry can
+   *      revert and the renamed file disappears.
+   * Mirrors the reference implementation in platform/security/user-auth.ts
+   * (atomicWriteSecretFile), which performs both fsyncs.
+   */
+  private _atomicWrite(filePath: string, content: string): void {
+    const tmpPath = join(this.sessionsDir, `.tmp-${process.pid}-${Date.now()}`);
+    writeFileSync(tmpPath, content, 'utf-8');
+    // fsync the file to flush data buffers before rename
+    const fileFd = openSync(tmpPath, 'r+');
+    try {
+      fsyncSync(fileFd);
+    } finally {
+      closeSync(fileFd);
+    }
+    renameSync(tmpPath, filePath);
+    // fsync the directory to flush the directory entry (makes rename durable)
+    const dirFd = openSync(this.sessionsDir, 'r');
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
+  }
+
+  /**
+   * Read just the `saveSource` stamp off an existing session file's meta line
+   * (line 0), without loading the conversation. Returns undefined when the
+   * file is absent, unreadable, or carries no readable stamp.
+   */
+  private _readExistingSaveSource(filePath: string): 'user' | 'auto' | undefined {
+    if (!existsSync(filePath)) return undefined;
+    let fd: number;
+    try {
+      fd = openSync(filePath, 'r');
+    } catch {
+      return undefined;
+    }
+    try {
+      const buf = Buffer.alloc(8192);
+      const bytesRead = readSync(fd, buf, 0, 8192, 0);
+      const firstLine = buf.toString('utf-8', 0, bytesRead).split('\n')[0];
+      if (!firstLine?.trim()) return undefined;
+      const record = JSON.parse(firstLine) as { type?: unknown; saveSource?: unknown };
+      if (record.type !== 'meta') return undefined;
+      return record.saveSource === 'user' || record.saveSource === 'auto' ? record.saveSource : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      closeSync(fd);
+    }
+  }
+
+  /**
+   * The `saveSource` to stamp on this write. `'user'` is sticky: an explicit
+   * `'user'` always wins, and an `'auto'`/omitted save over a file already
+   * stamped `'user'` PRESERVES `'user'` rather than downgrading it (see the
+   * invariant on {@link SessionMeta.saveSource}).
+   */
+  private _resolveSaveSource(filePath: string, incoming: 'user' | 'auto' | undefined): 'user' | 'auto' {
+    if (incoming === 'user') return 'user';
+    return this._readExistingSaveSource(filePath) === 'user' ? 'user' : (incoming ?? 'auto');
+  }
+
+  /**
+   * Save conversation messages to a JSONL session file.
+   * Overwrites if file already exists.
+   * Returns the sanitized filename used (may differ from input name).
+   */
+  save(
+    name: string,
+    messages: object[],
+    meta: SessionMeta,
+    agentRecords?: AgentRecord[],
+  ): { filePath: string; sanitizedName: string } {
+    if (!name || !name.trim()) throw new Error('Session name cannot be empty');
+    mkdirSync(this.sessionsDir, { recursive: true });
+    const sanitizedName = this.sanitizeName(name);
+    const filePath = join(this.sessionsDir, `${sanitizedName}.jsonl`);
+
+    const lines: string[] = [];
+
+    // First line: meta record
+    const metaRecord = {
+      type: 'meta' as const,
+      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      timestamp: meta.timestamp,
+      title: meta.title,
+      model: meta.model,
+      provider: meta.provider,
+      titleSource: meta.titleSource ?? 'system',
+      returnContext: meta.returnContext,
+      saveSource: this._resolveSaveSource(filePath, meta.saveSource),
+    };
+    lines.push(JSON.stringify(metaRecord));
+
+    // Subsequent lines: one message per line
+    for (const msg of messages) {
+      const { type: _ignored, ...safeMsg } = msg as Record<string, unknown>;
+      const record = { ...safeMsg, type: 'message' as const };
+      lines.push(JSON.stringify(record));
+    }
+
+    // Agent records: one per line, after messages
+    if (agentRecords && agentRecords.length > 0) {
+      for (const agent of agentRecords) {
+        const record = { ...agent, type: 'agent_record' as const };
+        lines.push(JSON.stringify(record));
+      }
+    }
+
+    this._atomicWrite(filePath, lines.join('\n') + '\n');
+    return { filePath, sanitizedName };
+  }
+
+  /**
+   * Load a session from JSONL. Returns meta and messages (excluding removed ones).
+   * Throws if the file does not exist or cannot be parsed.
+   */
+  load(name: string): { meta: SessionMeta; messages: object[]; agentRecords: AgentRecord[] } {
+    if (!name || !name.trim()) throw new Error('Session name cannot be empty');
+    const filename = this.sanitizeName(name);
+    const filePath = join(this.sessionsDir, `${filename}.jsonl`);
+
+    if (!existsSync(filePath)) {
+      throw new Error(`Session not found: ${name}`);
+    }
+
+    const raw = readFileSync(filePath, 'utf-8');
+    const lines = raw.split('\n').filter(l => l.trim().length > 0);
+
+    let meta: SessionMeta = { title: '', model: '', provider: '', timestamp: 0, titleSource: 'system' };
+    const messages: object[] = [];
+    const agentRecords: AgentRecord[] = [];
+
+    let skipped = 0;
+    for (const line of lines) {
+      let record: Record<string, unknown>;
+      try {
+        record = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        // Malformed JSON line: skip and count it.
+        skipped++;
+        continue;
+      }
+
+      if (record.type === 'meta') {
+        const fileVersion = typeof record.schemaVersion === 'number' ? record.schemaVersion : 0;
+        if (fileVersion > CURRENT_SESSION_SCHEMA_VERSION) {
+          logger.warn('SessionManager: session file has a newer schemaVersion, loading with best-effort parsing', {
+            name,
+            fileVersion,
+            currentVersion: CURRENT_SESSION_SCHEMA_VERSION,
+          });
+        }
+        meta = {
+          title: String(record.title ?? ''),
+          model: String(record.model ?? ''),
+          provider: String(record.provider ?? ''),
+          timestamp: Number(record.timestamp ?? 0),
+          titleSource: record.titleSource === 'user' ? 'user' : 'system',
+          returnContext: (record.returnContext && typeof record.returnContext === 'object')
+            ? (record.returnContext as SessionReturnContextSummary)
+            : undefined,
+          schemaVersion: fileVersion,
+          saveSource: record.saveSource === 'user' || record.saveSource === 'auto' ? record.saveSource : undefined,
+        };
+      } else if (record.type === 'message') {
+        if (record.removed === true) continue;
+        // Strip the 'type' wrapper before returning raw message
+        const { type: _type, ...msgFields } = record;
+        messages.push(msgFields);
+      } else if (record.type === 'agent_record') {
+        const { type: _type, ...agentFields } = record;
+        if (typeof agentFields.id === 'string' && typeof agentFields.status === 'string' && typeof agentFields.task === 'string') {
+          agentRecords.push(agentFields as unknown as AgentRecord);
+        }
+      }
+    }
+
+    if (skipped > 0) logger.warn('Skipped malformed session log lines', { name, skipped });
+    return { meta, messages, agentRecords };
+  }
+
+  /**
+   * List all saved sessions with metadata, sorted by most recent first.
+   */
+  list(): SessionInfo[] {
+    if (!existsSync(this.sessionsDir)) return [];
+
+    let files: string[];
+    try {
+      files = readdirSync(this.sessionsDir).filter(f => f.endsWith('.jsonl'));
+    } catch (err: unknown) {
+      // Sessions directory unreadable: return an empty listing.
+      logger.warn('SessionManager: could not read sessions directory', {
+        dir: this.sessionsDir,
+        error: summarizeError(err),
+      });
+      return [];
+    }
+
+    const sessions: SessionInfo[] = [];
+
+    for (const file of files) {
+      const name = file.replace(/\.jsonl$/, '');
+      const filePath = join(this.sessionsDir, file);
+
+      let meta: SessionMeta = { title: '', model: '', provider: '', timestamp: 0, titleSource: 'system' };
+      let messageCount = 0;
+
+      try {
+        const raw = readFileSync(filePath, 'utf-8');
+        const lines = raw.split('\n').filter(l => l.trim().length > 0);
+
+        // Parse only the first line for meta; count remaining non-removed message lines
+        if (lines.length > 0) {
+          try {
+            const first = JSON.parse(lines[0]!) as Record<string, unknown>;
+            if (first.type === 'meta') {
+              const fileVersion = typeof first.schemaVersion === 'number' ? first.schemaVersion : 0;
+              meta = {
+                title: String(first.title ?? ''),
+                model: String(first.model ?? ''),
+                provider: String(first.provider ?? ''),
+                timestamp: Number(first.timestamp ?? 0),
+                titleSource: first.titleSource === 'user' ? 'user' : 'system',
+                returnContext: (first.returnContext && typeof first.returnContext === 'object')
+                  ? (first.returnContext as SessionReturnContextSummary)
+                  : undefined,
+                schemaVersion: fileVersion,
+              };
+            }
+          } catch (err: unknown) {
+            // Malformed meta line: list session with default title/model.
+            logger.warn('SessionManager: malformed meta line', {
+              name,
+              error: summarizeError(err),
+            });
+          }
+        }
+
+        // Count message lines: parse each line's type/removed fields only (no full content parse)
+        // Using startsWith anchor to avoid false positives from message content containing these strings
+        for (const l of lines.slice(1)) {
+          const trimmed = l.trim();
+          if (trimmed.startsWith('{"') && trimmed.includes('"type":"message"')) {
+            // Quick check: is "removed":true near the start of the line (before content)?
+            // Content is always the longest field, so type/removed appear in the first ~50 chars
+            const prefix = trimmed.slice(0, 60);
+            if (!prefix.includes('"removed":true')) {
+              messageCount++;
+            }
+          }
+        }
+      } catch (err: unknown) {
+        // Session file unreadable: skip it from the listing.
+        logger.warn('SessionManager: unreadable session file', {
+          name,
+          error: summarizeError(err),
+        });
+        continue;
+      }
+
+      sessions.push({
+        name,
+        title: meta.title,
+        model: meta.model,
+        provider: meta.provider,
+        timestamp: meta.timestamp,
+        messageCount,
+        filePath,
+        titleSource: meta.titleSource,
+        returnContext: meta.returnContext,
+      });
+    }
+
+    // Sort by most recent first
+    sessions.sort((a, b) => b.timestamp - a.timestamp);
+    return sessions;
+  }
+
+  /**
+   * Get just the metadata for a session without loading all messages.
+   * Returns null if the session does not exist or meta cannot be parsed.
+   */
+  getMeta(name: string): SessionMeta | null {
+    if (!name || !name.trim()) return null;
+    const filename = this.sanitizeName(name);
+    const filePath = join(this.sessionsDir, `${filename}.jsonl`);
+    if (!existsSync(filePath)) return null;
+    try {
+      const raw = readFileSync(filePath, 'utf-8');
+      const firstLine = raw.split('\n')[0];
+      if (!firstLine?.trim()) return null;
+      const record = JSON.parse(firstLine) as Record<string, unknown>;
+      if (record.type !== 'meta') return null;
+      const fileVersion = typeof record.schemaVersion === 'number' ? record.schemaVersion : 0;
+      return {
+        title: String(record.title ?? ''),
+        model: String(record.model ?? ''),
+        provider: String(record.provider ?? ''),
+        timestamp: Number(record.timestamp ?? 0),
+        titleSource: record.titleSource === 'user' ? 'user' : 'system',
+        returnContext: (record.returnContext && typeof record.returnContext === 'object')
+          ? (record.returnContext as SessionReturnContextSummary)
+          : undefined,
+        schemaVersion: fileVersion,
+        saveSource: record.saveSource === 'user' || record.saveSource === 'auto' ? record.saveSource : undefined,
+      };
+    } catch (err: unknown) {
+      // Session file unreadable or missing meta: return null to caller.
+      logger.warn('SessionManager: could not read session meta', {
+        name: filePath,
+        error: summarizeError(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Rename a session by rewriting its meta line with a new title.
+   * The file is stored under the sanitized name, rename updates the title
+   * field inside the file but does NOT rename the file itself.
+   * Throws if the session does not exist.
+   */
+  rename(name: string, newTitle: string): void {
+    if (!name || !name.trim()) throw new Error('Session name cannot be empty');
+    const filename = this.sanitizeName(name);
+    const filePath = join(this.sessionsDir, `${filename}.jsonl`);
+    if (!existsSync(filePath)) throw new Error(`Session not found: ${name}`);
+
+    const raw = readFileSync(filePath, 'utf-8');
+    const lines = raw.split('\n');
+    if (lines.length === 0) throw new Error('Session file is empty');
+
+    try {
+      const record = JSON.parse(lines[0]!) as Record<string, unknown>;
+      record.title = newTitle;
+      lines[0]! = JSON.stringify(record);
+      this._atomicWrite(filePath, lines.join('\n'));
+    } catch (err: unknown) {
+      throw new Error(`Failed to update session title: ${name}: ${summarizeError(err)}`);
+    }
+  }
+
+  /**
+   * Delete a session file.
+   * Throws if the session does not exist.
+   */
+  delete(name: string): void {
+    if (!name || !name.trim()) throw new Error('Session name cannot be empty');
+    const filename = this.sanitizeName(name);
+    const filePath = join(this.sessionsDir, `${filename}.jsonl`);
+    if (!existsSync(filePath)) throw new Error(`Session not found: ${name}`);
+    try {
+      unlinkSync(filePath);
+    } catch (e) {
+      throw new Error(`Failed to delete session: ${summarizeError(e)}`);
+    }
+  }
+
+  /**
+   * Search all sessions for messages containing the query string (case-insensitive).
+   * Returns sessions with match count and up to 3 context snippets per session.
+   */
+  search(query: string): Array<{ session: SessionInfo; matchCount: number; snippets: string[] }> {
+    if (!query || !query.trim()) return [];
+    const q = query.toLowerCase();
+    const sessions = this.list();
+    const results: Array<{ session: SessionInfo; matchCount: number; snippets: string[] }> = [];
+
+    for (const session of sessions) {
+      try {
+        const raw = readFileSync(session.filePath, 'utf-8');
+        const lines = raw.split('\n').filter(l => l.trim().length > 0);
+        let matchCount = 0;
+        const snippets: string[] = [];
+
+        for (const line of lines.slice(1)) { // skip meta line
+          try {
+            const record = JSON.parse(line) as Record<string, unknown>;
+            if (record.type !== 'message') continue;
+            const content = String(record.content ?? '');
+            const lower = content.toLowerCase();
+            const idx = lower.indexOf(q);
+            if (idx !== -1) {
+              matchCount++;
+              if (snippets.length < 3) {
+                const start = Math.max(0, idx - 40);
+                const end = Math.min(content.length, idx + q.length + 60);
+                const snippet = (start > 0 ? '...' : '') + content.slice(start, end).replace(/\n/g, ' ') + (end < content.length ? '...' : '');
+                snippets.push(snippet);
+              }
+            }
+          } catch (err: unknown) {
+            // Malformed line in session during search: skip it.
+            logger.warn('SessionManager: malformed line during search', {
+              name,
+              error: summarizeError(err),
+            });
+          }
+        }
+
+        if (matchCount > 0) {
+          results.push({ session, matchCount, snippets });
+        }
+      } catch (err: unknown) {
+        // Session unreadable during search: skip it.
+        logger.warn('SessionManager: unreadable session during search', {
+          name,
+          error: summarizeError(err),
+        });
+      }
+    }
+
+    // Sort by match count descending
+    results.sort((a, b) => b.matchCount - a.matchCount);
+    return results;
+  }
+
+  /**
+   * Sanitize a session name into a safe filename.
+   * Replaces spaces with hyphens, strips non-alphanumeric/hyphen/underscore chars,
+   * collapses multiple hyphens, trims leading/trailing hyphens.
+   */
+  sanitizeName(name: string): string {
+    return sanitizeSessionName(name);
+  }
+}

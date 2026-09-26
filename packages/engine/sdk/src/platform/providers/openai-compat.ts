@@ -1,0 +1,650 @@
+import type OpenAI from 'openai';
+import { createOpenAIClient } from './optional-openai.js';
+import type {
+  LLMProvider,
+  ChatRequest,
+  ChatResponse,
+  ChatStopReason,
+  ProviderAuthState,
+  ProviderEmbeddingRequest,
+  ProviderEmbeddingResult,
+  ProviderModelSource,
+  ProviderRuntimeMetadata,
+  ProviderRuntimeMetadataDeps,
+} from './interface.js';
+import {
+  fetchModelIdsFromListing,
+  runLiveModelRefresh,
+  type LiveModelDiscoveryResult,
+} from './live-model-discovery.js';
+import type { ProviderCapability } from './capabilities.js';
+import { ProviderError } from '../types/errors.js';
+import { withRetry } from '../utils/retry.js';
+import { instrumentedLlmCall } from '../runtime/llm-observability.js';
+import {
+  toOpenAITools,
+  toOpenAIMessages,
+} from './tool-formats.js';
+import type { OpenAIToolCall } from './tool-formats.js';
+import { accumOpenAIToolCall, finalizeOpenAIToolCalls, applyOpenAIChunkUsage, resolveOpenAIToolCallsAndFallback } from './openai-stream-helpers.js';
+import type { OpenAIChunkUsage } from './openai-stream-helpers.js';
+import { resolveCompletedStopReason, withProviderStopReason } from './provider-stop-reason.js';
+import { parseRateLimitHeaders } from './rate-limit-headers.js';
+import { getCacheCapability } from './cache-capability.js';
+import type { ProviderCacheCapability } from './cache-capability.js';
+import type { CacheHitTracker } from './cache-strategy.js';
+import { extractOpenAIStreamTextDelta } from './openai-stream-delta.js';
+import { StreamTextAccumulator } from './inline-reasoning.js';
+import { logger } from '../utils/logger.js';
+import { toProviderError } from '../utils/error-display.js';
+import {
+  buildChatRequestFingerprint,
+  buildOpenAICompatErrorMessage,
+  extractOpenAICompatErrorDiagnostic,
+} from './openai-compat-diagnostics.js';
+
+import { mapOpenAIStopReason } from './stop-reason-maps.js';
+import { resolveEffortForRequest, resolveReasoningEffortSpec } from './reasoning-effort-families.js';
+import { describeReasoningRejection, reasoningEffortLevels } from './reasoning-effort.js';
+
+const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'recordTurn'> = {
+  recordTurn: () => {},
+};
+
+/**
+ * The chat-completions `create` signature. Named here because the client is
+ * resolved through a promise now and cannot be referenced as `typeof
+ * this.client...` in a type position; `OpenAI` is imported type-only, so the
+ * specifier is erased and never reaches the module graph.
+ */
+type OpenAICompatChatCreate = OpenAI['chat']['completions']['create'];
+
+/**
+ * Placeholder credential passed to the `openai` package's client constructor
+ * when no real API key is configured (local servers such as Ollama, LM
+ * Studio, llama.cpp, TGI, and LocalAI ignore the value entirely; discovery
+ * registers these providers with `apiKey: ''`). openai's client constructor
+ * has thrown "Missing credentials..." on a falsy `apiKey` (empty string
+ * included) since 6.4x, previously it only threw on `undefined`, so every
+ * unconfigured/anonymous provider broke at registration time once the SDK's
+ * `openai` dependency resolved past that change. This is the SAME literal
+ * already used by the builtin-provider registry's own anonymous fallback
+ * (`packages/sdk/src/platform/providers/builtin-registry.ts`); kept as a
+ * named export so every `new OpenAI(...)` construction site in this codebase
+ * uses one grep-able placeholder.
+ */
+export const OPENAI_CLIENT_LOCAL_PLACEHOLDER_API_KEY = 'gv-local';
+
+/**
+ * Returns an apiKey value safe to pass to `new OpenAI(...)`, substituting the
+ * shared placeholder when the effective key is empty. Callers must derive
+ * `configured`/`isConfigured()` status from the ORIGINAL apiKey (or an
+ * explicit override) BEFORE calling this, never from the substituted value.
+ */
+export function resolveOpenAIClientApiKey(apiKey: string): string {
+  return apiKey.length > 0 ? apiKey : OPENAI_CLIENT_LOCAL_PLACEHOLDER_API_KEY;
+}
+
+export interface OpenAICompatOptions {
+  name: string;
+  baseURL: string;
+  apiKey: string;
+  defaultModel: string;
+  models: string[];
+  embeddingModel?: string | undefined;
+  capabilities?: Partial<ProviderCapability> | undefined;
+  /** Optional extra HTTP headers sent with every request to this provider. */
+  defaultHeaders?: Record<string, string> | undefined;
+  /**
+   * Which request field carries reasoning depth. Named for the wire shape, not
+   * the vendor: `reasoning-effort` is the plain OpenAI-compatible
+   * `reasoning_effort` string, `mercury` is the same field plus Mercury-2's
+   * reasoning-summary extras, `openrouter` nests it under `reasoning.effort`,
+   * and `llamacpp` exposes only an `enable_thinking` toggle. Default: 'none'
+   * (send nothing), which is correct for backends that document no control.
+   */
+  reasoningFormat?: 'mercury' | 'openrouter' | 'llamacpp' | 'reasoning-effort' | 'none' | undefined;
+  /** Optional env vars or secret keys that can satisfy API-key auth for this provider. */
+  authEnvVars?: readonly string[] | undefined;
+  /** Optional service names that expose service-owned OAuth for this provider. */
+  serviceNames?: readonly string[] | undefined;
+  /** Optional subscription-provider identity when this provider can use a stored OAuth session. */
+  subscriptionProviderId?: string | undefined;
+  /** Optional provider-owned model suppression registry keys for runtime metadata consumers. */
+  suppressedModelRegistryKeys?: readonly string[] | undefined;
+  /** Optional provider aliases exposed to runtime metadata consumers. */
+  aliases?: readonly string[] | undefined;
+  /** Optional explicit stream protocol label for diagnostics. */
+  streamProtocol?: string | undefined;
+  /** Optional anonymous/local access posture. */
+  allowAnonymous?: boolean | undefined;
+  anonymousConfigured?: boolean | undefined;
+  anonymousDetail?: string | undefined;
+  /** Override runtime auth posture when apiKey is an internal transport placeholder. */
+  authConfigured?: boolean | undefined;
+  /** Shared cache-hit tracker owned by the runtime service graph. */
+  cacheHitTracker?: Pick<CacheHitTracker, 'recordTurn'> | undefined;
+  /**
+   * How this backend's model list is discovered.
+   *  - 'openai-endpoint' (default): live discovery from the backend's
+   *    OpenAI-style GET {baseURL}/models listing, with `models` demoted to a
+   *    dated-static baseline that is used until the first successful fetch
+   *    and whenever live discovery fails.
+   *  - 'none': the backend has no model-listing API (verified per provider);
+   *    `models` is the complete dated-static list and no live fetch is made.
+   */
+  modelListing?: 'openai-endpoint' | 'none' | undefined;
+  /** Override the model-listing URL (defaults to `${baseURL}/models`). */
+  modelListingUrl?: string | undefined;
+  /**
+   * Fully custom live-listing fetcher for backends whose listing is not an
+   * OpenAI-style GET (e.g. Fireworks' paginated account-management listing).
+   * Takes precedence over `modelListingUrl`.
+   */
+  fetchLiveModels?: (() => Promise<string[]>) | undefined;
+  /** The date the static `models` list was last verified, e.g. '2026-07-12'. */
+  modelsAsOf?: string | undefined;
+  /** On-disk cache path for live-discovered model lists (TTL cached). */
+  modelsCachePath?: string | undefined;
+}
+
+/**
+ * OpenAICompatProvider, generic OpenAI-compatible provider.
+ * Configured for InceptionLabs Mercury-2 with reasoning_effort and
+ * reasoning_summary extensions, but usable with any OAI-compatible API.
+ */
+export class OpenAICompatProvider implements LLMProvider {
+  readonly name: string;
+  readonly credentialAuthority = 'resolver' as const;
+  readonly capabilities?: Partial<ProviderCapability> | undefined;
+  readonly modelSource: ProviderModelSource;
+
+  /**
+   * Populated synchronously with the configured static list at construction
+   * (never empty), then replaced by `refreshModels()` with the backend's
+   * live listing when `modelListing` is 'openai-endpoint'. See `modelSource`.
+   */
+  private _models: string[];
+  get models(): string[] {
+    return this._models;
+  }
+
+  /**
+   * The `openai` client, resolved on first use rather than at construction.
+   * `openai` is an optionalDependency; a static import plus a constructor-time
+   * `new OpenAI(...)` put the specifier on the module graph of every graph
+   * that registers providers, the daemon's included, and an absent optional
+   * package then removed the process instead of one provider. See
+   * utils/optional-dependency.ts. Both methods that use the client already run
+   * inside an async request path, so no public signature changes.
+   */
+  private openaiClient: Promise<OpenAI> | undefined;
+  private defaultModel: string;
+  private embeddingModel: string;
+  private readonly configured: boolean;
+  private reasoningFormat: NonNullable<OpenAICompatOptions['reasoningFormat']>;
+  private cacheCapability: ProviderCacheCapability;
+  private readonly authEnvVars: readonly string[];
+  private readonly serviceNames: readonly string[];
+  private readonly subscriptionProviderId?: string | undefined;
+  private readonly suppressedModelRegistryKeys: readonly string[];
+  private readonly aliases: readonly string[];
+  private readonly streamProtocol?: string | undefined;
+  private readonly allowAnonymous: boolean;
+  private readonly anonymousConfigured: boolean;
+  private readonly anonymousDetail?: string | undefined;
+  private readonly cacheHitTracker: Pick<CacheHitTracker, 'recordTurn'>;
+  private readonly baseURL: string;
+  private readonly endpointHost: string;
+  private readonly apiKey: string;
+  private readonly defaultHeaders: Record<string, string>;
+  /**
+   * The caller's `defaultHeaders` exactly as given, including a deliberate
+   * empty object. `defaultHeaders` above normalises `undefined` to `{}` for
+   * per-request header merging; the client construction below keeps the
+   * original distinction it had when it ran in the constructor.
+   */
+  private readonly clientDefaultHeaders: Record<string, string> | undefined;
+  private readonly modelListing: 'openai-endpoint' | 'none';
+  private readonly modelListingUrl: string | undefined;
+  private readonly customFetchLiveModels: (() => Promise<string[]>) | undefined;
+  private readonly datedStaticModels: readonly string[];
+  private readonly modelsAsOf: string | undefined;
+  private readonly modelsCachePath: string | undefined;
+
+  constructor(opts: OpenAICompatOptions) {
+    this.name = opts.name;
+    this._models = [...opts.models];
+    this.datedStaticModels = [...opts.models];
+    this.apiKey = opts.apiKey;
+    this.defaultHeaders = opts.defaultHeaders ?? {};
+    this.clientDefaultHeaders = opts.defaultHeaders;
+    this.modelListing = opts.modelListing ?? 'openai-endpoint';
+    this.modelListingUrl = opts.modelListingUrl;
+    this.customFetchLiveModels = opts.fetchLiveModels;
+    this.modelsAsOf = opts.modelsAsOf;
+    this.modelsCachePath = opts.modelsCachePath;
+    this.modelSource = this.modelListing === 'none'
+      ? { kind: 'dated-static', asOf: opts.modelsAsOf ?? 'unknown' }
+      : { kind: 'live-discovery' };
+    this.capabilities = opts.capabilities;
+    this.defaultModel = opts.defaultModel;
+    this.embeddingModel = opts.embeddingModel ?? opts.defaultModel;
+    this.configured = opts.authConfigured ?? Boolean(opts.apiKey);
+    this.reasoningFormat = opts.reasoningFormat ?? 'none';
+    this.cacheCapability = getCacheCapability(opts.name);
+    this.authEnvVars = opts.authEnvVars ?? [];
+    this.serviceNames = opts.serviceNames ?? [];
+    this.subscriptionProviderId = opts.subscriptionProviderId;
+    this.suppressedModelRegistryKeys = opts.suppressedModelRegistryKeys ?? [];
+    this.aliases = opts.aliases ?? [];
+    this.streamProtocol = opts.streamProtocol;
+    this.allowAnonymous = opts.allowAnonymous ?? false;
+    this.anonymousConfigured = opts.anonymousConfigured ?? false;
+    this.anonymousDetail = opts.anonymousDetail;
+    this.cacheHitTracker = opts.cacheHitTracker ?? NOOP_CACHE_HIT_TRACKER;
+    this.baseURL = opts.baseURL;
+    this.endpointHost = (() => {
+      try {
+        return new URL(opts.baseURL).host;
+      } catch {
+        return opts.baseURL;
+      }
+    })();
+  }
+
+  /** The `openai` client for this provider, built once on first use. */
+  private client(): Promise<OpenAI> {
+    this.openaiClient ??= createOpenAIClient({
+      apiKey: resolveOpenAIClientApiKey(this.apiKey),
+      baseURL: this.baseURL,
+      ...(this.clientDefaultHeaders ? { defaultHeaders: this.clientDefaultHeaders } : {}),
+    });
+    return this.openaiClient;
+  }
+
+  isConfigured(): boolean {
+    return this.configured || this.anonymousConfigured;
+  }
+
+  describeAuthState(): ProviderAuthState {
+    return {
+      configured: this.configured,
+      allowAnonymous: this.allowAnonymous,
+      anonymousReady: this.anonymousConfigured,
+      authEnvVars: this.authEnvVars,
+    };
+  }
+
+  /**
+   * No dead-end 401: an unconfigured provider refuses the request BEFORE it
+   * hits the wire, with copy that names the key it needs. A key written to
+   * env/secrets re-registers the provider (credentialAuthority 'resolver'),
+   * so this state is never stale across a key being added.
+   */
+  private assertConfiguredForChat(model: string | undefined): void {
+    if (this.isConfigured()) return;
+    const keyHint = this.authEnvVars.length > 0
+      ? `set ${this.authEnvVars.join(' or ')}, or store a key for "${this.name}"`
+      : `configure credentials for "${this.name}"`;
+    throw new ProviderError(
+      `Provider "${this.name}" has no API key configured, the request for model "${model ?? this.defaultModel}" was not sent. To use this provider, ${keyHint}.`,
+    );
+  }
+
+  /**
+   * Re-check this backend's live model listing. Called at boot (background,
+   * respects the on-disk TTL cache) and on-demand for a picker-open re-check
+   * or an explicit user refresh (`force: true`). Always resolves, falls back
+   * to the on-disk cache, then to the dated-static baseline, and reports the
+   * honest failure reason rather than ever blanking the model list. When the
+   * backend has no listing API (`modelListing: 'none'`, verified per
+   * provider), this reports the dated-static source without a network call.
+   */
+  async refreshModels(force = false): Promise<LiveModelDiscoveryResult> {
+    const result = await runLiveModelRefresh({
+      providerName: this.name,
+      cachePath: this.modelsCachePath,
+      datedStaticModels: this.datedStaticModels,
+      datedStaticAsOf: this.modelsAsOf ?? 'unknown',
+      isConfigured: this.modelListing !== 'none' && this.isConfigured(),
+      fetchLive: () => this.fetchLiveModelIds(),
+      force,
+    });
+    this._models = [...result.models];
+    return result;
+  }
+
+  private async fetchLiveModelIds(): Promise<string[]> {
+    if (this.customFetchLiveModels) return this.customFetchLiveModels();
+    const url = this.modelListingUrl ?? `${this.baseURL.replace(/\/$/, '')}/models`;
+    const headers: Record<string, string> = { ...this.defaultHeaders };
+    if (this.apiKey && this.apiKey !== OPENAI_CLIENT_LOCAL_PLACEHOLDER_API_KEY) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+    return fetchModelIdsFromListing(this.name, url, headers, { filterNonChat: true });
+  }
+
+  async chat(params: ChatRequest): Promise<ChatResponse> {
+    const {
+      messages,
+      tools,
+      model,
+      maxTokens,
+      signal,
+      systemPrompt,
+      reasoningEffort,
+      reasoningSummary,
+      onDelta,
+      onRetry,
+    } = params;
+    this.assertConfiguredForChat(model);
+
+    return (await instrumentedLlmCall(() => withRetry(async () => {
+      // Keeps returned reasoning out of the answer, in both shapes it arrives
+      // in, see the module doc in providers/inline-reasoning.ts for why.
+      const streamText = new StreamTextAccumulator();
+      let streamedText: { content: string; reasoning: string } = { content: '', reasoning: '' };
+      let responseText = '';
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let cacheReadTokens = 0;
+      let rawStopReason: string | undefined;
+      let stopReason: ChatStopReason = 'unknown';
+      let reasoningSummaryText: string | undefined;
+      let rateLimit: ChatResponse['rateLimit'];
+      let rawToolCalls: OpenAIToolCall[] = [];
+      const selectedModel = model ?? this.defaultModel;
+      const requestFingerprint = buildChatRequestFingerprint(params, selectedModel);
+
+      const openaiMessages = toOpenAIMessages(messages, systemPrompt);
+      const openaiTools = tools && tools.length > 0 ? toOpenAITools(tools) : undefined;
+
+      // Provider-specific reasoning params. The requested level is first mapped
+      // onto what this exact model accepts, so a level it does not offer snaps
+      // down instead of earning a provider-side 400.
+      const effortValue = resolveEffortForRequest(reasoningEffort, {
+        modelId: selectedModel,
+        ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
+      }).value;
+      const extraBody: Record<string, unknown> = {};
+      if (effortValue && (this.reasoningFormat === 'mercury' || this.reasoningFormat === 'reasoning-effort')) {
+        extraBody['reasoning_effort'] = effortValue;
+      } else if (effortValue && this.reasoningFormat === 'openrouter') {
+        extraBody['reasoning'] = { effort: effortValue };
+      } else if (this.reasoningFormat === 'llamacpp') {
+        // llama.cpp auto-enables thinking for capable models; explicitly control it
+        extraBody['enable_thinking'] = effortValue !== undefined
+          && effortValue !== 'instant'
+          && effortValue !== 'none';
+      }
+      // reasoningFormat === 'none': don't send anything
+
+      if (reasoningSummary && this.reasoningFormat === 'mercury') {
+        extraBody['reasoning_summary'] = true;
+        // Wait for the full reasoning summary before streaming text
+        extraBody['reasoning_summary_wait'] = true;
+      }
+
+      // Build per-request headers for cache optimization
+      const requestHeaders: Record<string, string> = {};
+      if (this.cacheCapability.type === 'automatic' && this.cacheCapability.sessionAffinityHeader) {
+        requestHeaders[this.cacheCapability.sessionAffinityHeader] = 'true';
+      }
+
+      let streamOpened = false;
+      logger.debug('OpenAICompatProvider.chat request', {
+        provider: this.name,
+        endpointHost: this.endpointHost,
+        endpoint: this.baseURL,
+        request: requestFingerprint,
+      });
+
+      try {
+        // .withResponse() surfaces the raw HTTP Response alongside the stream so
+        // rate-limit headers are readable on the SUCCESS path (not only 429s).
+        const client = await this.client();
+        const created = await client.chat.completions.create(
+          {
+            model: selectedModel,
+            messages: openaiMessages as Parameters<OpenAICompatChatCreate>[0]['messages'],
+            ...(openaiTools ? { tools: openaiTools as Parameters<OpenAICompatChatCreate>[0]['tools'] } : {}),
+            ...(maxTokens ? { max_tokens: maxTokens } : {}),
+            stream: true,
+            stream_options: { include_usage: true },
+            ...extraBody,
+          } as Parameters<OpenAICompatChatCreate>[0],
+          (
+            signal !== undefined || Object.keys(requestHeaders).length > 0
+              ? {
+                  ...(signal !== undefined ? { signal } : {}),
+                  ...(Object.keys(requestHeaders).length > 0 ? { headers: requestHeaders } : {}),
+                }
+              : undefined
+          ) as Parameters<OpenAICompatChatCreate>[1],
+        ).withResponse() as unknown as {
+          data: AsyncIterable<import('openai/resources/chat/completions.js').ChatCompletionChunk> & { controller: AbortController };
+          response: Response;
+        };
+        const stream = created.data;
+        rateLimit = parseRateLimitHeaders(created.response.headers) ?? undefined;
+        streamOpened = true;
+        logger.debug('OpenAICompatProvider.chat stream opened', {
+          provider: this.name,
+          endpointHost: this.endpointHost,
+          model: selectedModel,
+          messageCount: requestFingerprint.messageCount,
+          toolCount: requestFingerprint.toolCount,
+        });
+
+        const accToolCalls: Map<number, { id: string; name: string; args: string }> = new Map();
+
+        for await (const chunk of stream) {
+          const raw = chunk as typeof chunk & {
+            usage?: { prompt_tokens?: number; completion_tokens?: number };
+            reasoning_summary?: string | undefined;
+          };
+
+          const delta = raw.choices[0]?.delta;
+          streamText.push(extractOpenAIStreamTextDelta(raw, { allowReasoning: true }), onDelta);
+
+          // Mercury-2: reasoning_summary may appear on any chunk, capture and emit
+          if (raw.reasoning_summary) {
+            reasoningSummaryText = raw.reasoning_summary;
+          }
+
+          // Accumulate streaming tool_calls deltas
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              accumOpenAIToolCall(accToolCalls, tc, onDelta);
+            }
+          }
+
+          const finishReason = raw.choices[0]?.finish_reason;
+          if (finishReason) {
+            rawStopReason = finishReason;
+            stopReason = mapOpenAIStopReason(finishReason);
+          }
+
+          ({ inputTokens, outputTokens, cacheReadTokens } = applyOpenAIChunkUsage(
+            raw.usage as OpenAIChunkUsage | undefined,
+            { inputTokens, outputTokens, cacheReadTokens },
+          ));
+        }
+
+        streamedText = streamText.finish(onDelta);
+        responseText = streamedText.content;
+        rawToolCalls = finalizeOpenAIToolCalls(accToolCalls);
+      } catch (err: unknown) {
+        const diagnostic = extractOpenAICompatErrorDiagnostic(err);
+        const effortHint = describeReasoningRejection(
+          diagnostic.status ?? 0,
+          `${diagnostic.detail ?? ''} ${diagnostic.rawMessage}`,
+          effortValue,
+        ) ?? '';
+        const phase = streamOpened ? 'stream' : 'request';
+        const message = buildOpenAICompatErrorMessage(this.name, phase, diagnostic) + effortHint;
+        logger.error('OpenAICompatProvider.chat failed', {
+          provider: this.name,
+          endpointHost: this.endpointHost,
+          endpoint: this.baseURL,
+          phase,
+          requestAccepted: streamOpened,
+          request: requestFingerprint,
+          status: diagnostic.status,
+          code: diagnostic.code,
+          type: diagnostic.type,
+          requestId: diagnostic.requestId,
+          detail: diagnostic.detail,
+          rawMessage: diagnostic.rawMessage,
+        });
+        throw new ProviderError(message, {
+          statusCode: diagnostic.status,
+          provider: this.name,
+          operation: 'chat',
+          phase,
+          requestId: diagnostic.requestId,
+          providerCode: diagnostic.code,
+          providerType: diagnostic.type,
+          detail: diagnostic.detail,
+          rawMessage: diagnostic.rawMessage,
+        });
+      }
+
+      // Some models (e.g. kimi-k2-thinking via ollama-cloud) emit tool calls as
+      // raw text tokens instead of the OpenAI function-calling wire format.
+      // Fall back to text extraction when no structured tool calls were found.
+      const resolved = resolveOpenAIToolCallsAndFallback(rawToolCalls, responseText, stopReason, rawStopReason);
+      const toolCalls = resolved.toolCalls;
+      responseText = resolved.responseText;
+      stopReason = resolved.stopReason;
+      rawStopReason = resolved.rawStopReason;
+
+      // The floor: classifying reasoning as reasoning must never EMPTY a reply
+      // (see inline-reasoning.ts). Skipped on a tool-call turn, where empty
+      // content is normal and means the work is in the calls.
+      if (toolCalls.length === 0 && !responseText.trim() && streamedText.reasoning.trim()) {
+        responseText = streamedText.reasoning.trim();
+      }
+
+      const response: ChatResponse = {
+        content: responseText,
+        toolCalls,
+        usage: {
+          inputTokens,
+          outputTokens,
+          ...(cacheReadTokens > 0 ? { cacheReadTokens } : {}),
+        },
+        stopReason: resolveCompletedStopReason(stopReason, responseText),
+        ...withProviderStopReason(rawStopReason),
+        ...(rateLimit ? { rateLimit } : {}),
+      };
+
+      if (reasoningSummaryText) {
+        response.reasoningSummary = reasoningSummaryText;
+      }
+
+      this.cacheHitTracker.recordTurn({
+        inputTokens,
+        cacheReadTokens,
+      });
+
+      return response;
+    }, signal ? { signal } : undefined, onRetry), { provider: this.name, model: model ?? this.defaultModel })).result;
+  }
+
+  async embed(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult> {
+    let response;
+    try {
+      response = await (await this.client()).embeddings.create(
+        {
+          model: request.model ?? this.embeddingModel,
+          input: request.text,
+          ...(request.dimensions ? { dimensions: request.dimensions } : {}),
+        },
+        request.signal ? { signal: request.signal } : undefined,
+      );
+    } catch (error: unknown) {
+      throw toProviderError(error, {
+        provider: this.name,
+        operation: 'embed',
+        phase: 'request',
+      });
+    }
+    const embedding = response.data[0]?.embedding ?? [];
+    return {
+      vector: Float32Array.from(embedding),
+      dimensions: embedding.length,
+      modelId: response.model,
+      metadata: {
+        usage: request.usage,
+        provider: this.name,
+      },
+    };
+  }
+
+  async describeRuntime(deps: ProviderRuntimeMetadataDeps): Promise<ProviderRuntimeMetadata> {
+    const { buildStandardProviderAuthRoutes, summarizeProviderAuth } = await import('./runtime-metadata.js');
+    const authRoutes = await buildStandardProviderAuthRoutes({
+      providerId: this.name,
+      apiKeyEnvVars: this.authEnvVars,
+      secretKeys: this.authEnvVars,
+      serviceNames: this.serviceNames,
+      ...(this.subscriptionProviderId ? { subscriptionProviderId: this.subscriptionProviderId } : {}),
+      allowAnonymous: this.allowAnonymous,
+      anonymousConfigured: this.anonymousConfigured,
+      anonymousDetail: this.anonymousDetail,
+    }, deps);
+    const auth = summarizeProviderAuth({
+      configured: this.configured || this.anonymousConfigured,
+      detail: this.configured
+        ? `${this.name} API key available`
+        : this.allowAnonymous
+          ? (this.anonymousDetail ?? `${this.name} can be used without a stored API key`)
+          : `API key for ${this.name} is not configured`,
+    }, authRoutes);
+    return {
+      auth: {
+        mode: this.allowAnonymous && !this.configured ? 'anonymous' : 'api-key',
+        configured: auth.configured,
+        detail: auth.detail,
+        ...(this.authEnvVars.length > 0 ? { envVars: this.authEnvVars } : {}),
+        routes: authRoutes,
+      },
+      models: {
+        defaultModel: this.defaultModel,
+        models: this.models,
+        embeddingModel: this.embeddingModel,
+        ...(this.aliases.length > 0 ? { aliases: this.aliases } : {}),
+        ...(this.suppressedModelRegistryKeys.length > 0
+          ? { suppressedModelRegistryKeys: this.suppressedModelRegistryKeys }
+          : {}),
+      },
+      usage: {
+        streaming: true,
+        toolCalling: this.capabilities?.toolCalling ?? true,
+        parallelTools: this.capabilities?.parallelTools ?? false,
+        promptCaching: this.cacheCapability.type !== 'none',
+        notes: this.reasoningFormat !== 'none'
+          ? ['Provider supports reasoning-aware request routing.']
+          : undefined,
+      },
+      policy: {
+        local: false,
+        streamProtocol: this.streamProtocol ?? 'openai-chat-completions',
+        reasoningMode: this.reasoningFormat === 'none' ? 'provider-default' : this.reasoningFormat,
+        // Omitted when this backend sends no reasoning field at all; otherwise
+        // the default model's resolved levels, which is what a request for that
+        // model would actually be mapped onto.
+        ...(this.reasoningFormat === 'none'
+          ? {}
+          : {
+              supportedReasoningEfforts: reasoningEffortLevels(
+                resolveReasoningEffortSpec({ modelId: this.defaultModel }),
+              ),
+            }),
+        cacheStrategy: this.cacheCapability.type,
+      },
+    };
+  }
+}

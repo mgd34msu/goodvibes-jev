@@ -1,0 +1,689 @@
+/**
+ * companion-chat-routes.ts
+ *
+ * HTTP route handlers for the companion-app chat-mode API.
+ *
+ * Routes:
+ *   POST   /api/companion/chat/sessions
+ *   GET    /api/companion/chat/sessions/:sessionId
+ *   PATCH  /api/companion/chat/sessions/:sessionId
+ *   POST   /api/companion/chat/sessions/:sessionId/close   (soft close, history preserved)
+ *   DELETE /api/companion/chat/sessions/:sessionId         (hard delete, record permanently removed)
+ *   POST   /api/companion/chat/sessions/:sessionId/messages
+ *   GET    /api/companion/chat/sessions/:sessionId/messages
+ *   POST   /api/companion/chat/sessions/:sessionId/turns/cancel (stop the in-flight turn)
+ *   POST   /api/companion/chat/sessions/:sessionId/messages/steer (interrupt + send now)
+ *   GET    /api/companion/chat/sessions/:sessionId/events  (SSE)
+ *
+ * All routes require the existing daemon bearer-token auth (enforced by the
+ * caller, DaemonHttpRouter.handleRequest already validates auth before
+ * dispatching to API routes).
+ */
+
+import { SDKErrorCodes } from '@goodvibes-jev/engine/errors';
+import type {
+  CancelCompanionChatTurnInput,
+  CompanionChatMessageAttachmentInput,
+  CreateCompanionChatSessionInput,
+  EditCompanionChatMessageInput,
+  ListCompanionChatSessionsInput,
+  PostCompanionChatMessageInput,
+  RegenerateCompanionChatMessageInput,
+  UpdateCompanionChatSessionInput,
+} from './companion-chat-types.js';
+import type { CompanionChatRouteContext } from './companion-chat-route-types.js';
+
+// ---------------------------------------------------------------------------
+// Route dispatch, called from DaemonHttpRouter.dispatchApiRoutes
+// ---------------------------------------------------------------------------
+
+/**
+ * Try to handle a companion chat route. Returns null if the path/method
+ * does not match, so the caller can fall through to other route groups.
+ */
+export async function dispatchCompanionChatRoutes(
+  req: Request,
+  context: CompanionChatRouteContext,
+): Promise<Response | null> {
+  const url = new URL(req.url);
+  const { pathname } = url;
+
+  // POST /api/companion/chat/sessions
+  if (pathname === '/api/companion/chat/sessions' && req.method === 'POST') {
+    return handleCreateSession(req, context);
+  }
+
+  // GET /api/companion/chat/sessions
+  if (pathname === '/api/companion/chat/sessions' && req.method === 'GET') {
+    return handleListSessions(url, context);
+  }
+
+  const sessionMatch = pathname.match(
+    /^\/api\/companion\/chat\/sessions\/([^/]+)(\/(.+))?$/,
+  );
+  if (!sessionMatch) return null;
+
+  const sessionId = sessionMatch[1]!;
+  const sub = sessionMatch[3]! ?? '';
+
+  // GET /api/companion/chat/sessions/:sessionId
+  if (!sub && req.method === 'GET') {
+    return handleGetSession(sessionId, context);
+  }
+
+  // PATCH /api/companion/chat/sessions/:sessionId
+  if (!sub && req.method === 'PATCH') {
+    return handleUpdateSession(req, sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/close
+  if (sub === 'close' && req.method === 'POST') {
+    return handleCloseSession(sessionId, context);
+  }
+
+  // DELETE /api/companion/chat/sessions/:sessionId
+  if (!sub && req.method === 'DELETE') {
+    return handleDeleteSession(sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/messages
+  if (sub === 'messages' && req.method === 'POST') {
+    return handlePostMessage(req, sessionId, context);
+  }
+
+  if (sub === 'messages' && req.method === 'GET') {
+    return handleGetMessages(sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/messages/retry   (regenerate)
+  if (sub === 'messages/retry' && req.method === 'POST') {
+    return handleRegenerateMessage(req, sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/messages/edit    (edit + branch)
+  if (sub === 'messages/edit' && req.method === 'POST') {
+    return handleEditMessage(req, sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/turns/cancel
+  if (sub === 'turns/cancel' && req.method === 'POST') {
+    return handleCancelTurn(req, sessionId, context);
+  }
+
+  // POST /api/companion/chat/sessions/:sessionId/messages/steer
+  if (sub === 'messages/steer' && req.method === 'POST') {
+    return handleSteerMessage(req, sessionId, context);
+  }
+
+  // GET /api/companion/chat/sessions/:sessionId/events
+  if (sub === 'events' && req.method === 'GET') {
+    return handleGetEvents(req, sessionId, context);
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions
+// ---------------------------------------------------------------------------
+
+async function handleCreateSession(
+  req: Request,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseOptionalJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+
+  const body = (bodyOrResponse ?? {}) as Record<string, unknown>;
+  const hasModel = typeof body['model'] === 'string';
+  const hasProvider = typeof body['provider'] === 'string';
+  if (hasModel !== hasProvider) {
+    return Response.json(
+      { error: 'provider and model must be supplied together', code: 'INVALID_MODEL_ROUTE' },
+      { status: 400 },
+    );
+  }
+
+  // Resolve provider/model from registry only when caller did not specify a route.
+  const shouldResolveDefaults = !hasModel && !hasProvider;
+  const hasDefaultResolver = typeof context.resolveDefaultProviderModel === 'function';
+  const resolvedDefaults = hasDefaultResolver && shouldResolveDefaults
+    ? (context.resolveDefaultProviderModel?.() ?? null)
+    : null;
+
+  const input: CreateCompanionChatSessionInput = {
+    title: typeof body['title'] === 'string' ? body['title'] : undefined,
+    model: hasModel ? (body['model'] as string) : (resolvedDefaults?.model ?? undefined),
+    provider: hasProvider ? (body['provider'] as string) : (resolvedDefaults?.provider ?? undefined),
+    systemPrompt: typeof body['systemPrompt'] === 'string' ? body['systemPrompt'] : undefined,
+  };
+
+  if (shouldResolveDefaults
+    && (!input.provider || !input.model)
+    && (hasDefaultResolver || Object.keys(body).length === 0)) {
+    return Response.json(
+      { error: 'No provider or model configured. Set a current model before creating a companion chat session.', code: 'NO_MODEL_CONFIGURED' },
+      { status: 400 },
+    );
+  }
+
+  const session = context.chatManager.createSession(input);
+  // Drain the best-effort broker mirror before responding so /api/sessions
+  // reflects this session synchronously, matching CompanionBrokerSync's
+  // documented contract (see companion-chat-broker-sync.ts).
+  await context.chatManager.flushBrokerSync();
+  return Response.json(
+    { sessionId: session.id, createdAt: session.createdAt, session },
+    { status: 201 },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/companion/chat/sessions
+// ---------------------------------------------------------------------------
+
+function readBooleanQuery(url: URL, key: string): boolean | undefined {
+  const value = url.searchParams.get(key);
+  if (value === null) return undefined;
+  return value === '1' || value.toLowerCase() === 'true';
+}
+
+function readLimitQuery(url: URL): number | undefined {
+  const value = url.searchParams.get('limit');
+  if (value === null || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function handleListSessions(
+  url: URL,
+  context: CompanionChatRouteContext,
+): Response {
+  const input: ListCompanionChatSessionsInput = {
+    includeClosed: readBooleanQuery(url, 'includeClosed'),
+    limit: readLimitQuery(url),
+  };
+  return Response.json(context.chatManager.listSessions(input));
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/companion/chat/sessions/:sessionId
+// ---------------------------------------------------------------------------
+
+async function handleGetSession(
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const session = context.chatManager.getSession(sessionId);
+  if (!session) {
+    return Response.json({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  const messages = context.chatManager.getMessages(sessionId);
+  return Response.json({ session, messages });
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /api/companion/chat/sessions/:sessionId
+// ---------------------------------------------------------------------------
+
+function hasOwn(body: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(body, key);
+}
+
+function readOptionalNonEmptyString(
+  body: Record<string, unknown>,
+  key: string,
+): string | Response | undefined {
+  if (!hasOwn(body, key)) return undefined;
+  const value = body[key]!;
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return Response.json(
+      { error: `${key} must be a non-empty string`, code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+  return value.trim();
+}
+
+function readOptionalSystemPrompt(
+  body: Record<string, unknown>,
+): string | null | Response | undefined {
+  if (!hasOwn(body, 'systemPrompt')) return undefined;
+  const value = body['systemPrompt'];
+  if (value === null) return null;
+  if (typeof value !== 'string') {
+    return Response.json(
+      { error: 'systemPrompt must be a string or null', code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+  return value;
+}
+
+async function handleUpdateSession(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+
+  const body = bodyOrResponse as Record<string, unknown>;
+  const input: UpdateCompanionChatSessionInput = {};
+
+  const title = readOptionalNonEmptyString(body, 'title');
+  if (title instanceof Response) return title;
+  if (title !== undefined) (input as { title?: string }).title = title;
+
+  const model = readOptionalNonEmptyString(body, 'model');
+  if (model instanceof Response) return model;
+  if (model !== undefined) {
+    (input as { model?: string }).model = model;
+  }
+
+  const provider = readOptionalNonEmptyString(body, 'provider');
+  if (provider instanceof Response) return provider;
+  if (provider !== undefined) (input as { provider?: string }).provider = provider;
+
+  if ((model !== undefined) !== (provider !== undefined)) {
+    return Response.json(
+      { error: 'provider and model must be updated together', code: 'INVALID_MODEL_ROUTE' },
+      { status: 400 },
+    );
+  }
+
+  const systemPrompt = readOptionalSystemPrompt(body);
+  if (systemPrompt instanceof Response) return systemPrompt;
+  if (systemPrompt !== undefined) (input as { systemPrompt?: string | null }).systemPrompt = systemPrompt;
+
+  if (Object.keys(input).length === 0) {
+    return Response.json(
+      { error: 'At least one of title, provider, model, or systemPrompt is required', code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const session = context.chatManager.updateSession(sessionId, input);
+    // Drain the best-effort broker mirror before responding, an update
+    // heartbeats the shared record (see CompanionBrokerSync.registerSession).
+    await context.chatManager.flushBrokerSync();
+    return Response.json({ session });
+  } catch (err: unknown) {
+    const e = err as { code?: string; status?: number; message?: string };
+    const status = e.status ?? 500;
+    return Response.json(
+      { error: e.message ?? 'Internal error', code: e.code ?? 'INTERNAL_ERROR' },
+      { status },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/close
+// ---------------------------------------------------------------------------
+
+async function handleCloseSession(
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const session = context.chatManager.closeSession(sessionId);
+  if (!session) {
+    return Response.json({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  // Drain the best-effort broker mirror before responding so /api/sessions
+  // reflects the close synchronously (matches CompanionBrokerSync's docs).
+  await context.chatManager.flushBrokerSync();
+  return Response.json({ sessionId: session.id, status: session.status });
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/companion/chat/sessions/:sessionId  (see CHANGELOG 1.0.0: a real hard delete)
+// ---------------------------------------------------------------------------
+
+async function handleDeleteSession(
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  try {
+    const result = await context.chatManager.deleteSession(sessionId);
+    // Drain the best-effort broker mirror before responding so /api/sessions
+    // no longer shows the session by the time this response returns.
+    await context.chatManager.flushBrokerSync();
+    return Response.json(result);
+  } catch (err: unknown) {
+    const e = err as { code?: string; status?: number; message?: string };
+    const status = e.status ?? 500;
+    return Response.json(
+      { error: e.message ?? 'Internal error', code: e.code ?? 'INTERNAL_ERROR' },
+      { status },
+    );
+  }
+}
+
+/**
+ * Read the message content from an incoming POST body.
+ * Returns empty string when neither field is present, the caller must
+ * check for empty and return 400 INVALID_ARGUMENT.
+ *
+ * @param body - Parsed JSON body from the request.
+ * @returns Raw (un-trimmed) string value, or '' if neither field is present.
+ */
+export function readCompanionChatMessageBody(body: Record<string, unknown>): string {
+  return typeof body['body'] === 'string'
+    ? body['body']
+    : typeof body['content'] === 'string'
+      ? body['content']
+      : '';
+}
+
+function readCompanionChatAttachments(
+  body: Record<string, unknown>,
+): CompanionChatMessageAttachmentInput[] | Response {
+  const raw = body['attachments'];
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    return Response.json(
+      { error: 'attachments must be an array', code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+  const attachments: CompanionChatMessageAttachmentInput[] = [];
+  for (const [index, item] of raw.entries()) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      return Response.json(
+        { error: `attachments[${index}] must be an object`, code: 'INVALID_ARGUMENT' },
+        { status: 400 },
+      );
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record['artifactId'] !== 'string' || record['artifactId'].trim().length === 0) {
+      return Response.json(
+        { error: `attachments[${index}].artifactId is required`, code: 'INVALID_ARGUMENT' },
+        { status: 400 },
+      );
+    }
+    const attachment: CompanionChatMessageAttachmentInput = {
+      artifactId: record['artifactId'].trim(),
+    };
+    if (typeof record['label'] === 'string' && record['label'].trim()) {
+      (attachment as { label?: string }).label = record['label'].trim();
+    }
+    if (typeof record['metadata'] === 'object' && record['metadata'] !== null && !Array.isArray(record['metadata'])) {
+      (attachment as { metadata?: Record<string, unknown> }).metadata = record['metadata'] as Record<string, unknown>;
+    }
+    attachments.push(attachment);
+  }
+  return attachments;
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/messages
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle POST /api/companion/chat/sessions/:sessionId/messages.
+ *
+ * Accepts either `{body}` or `{content}` in the request payload.
+ * If both are present, `{body}` takes precedence (shared-session canonical field).
+ * Returns 400 INVALID_ARGUMENT when neither field is present or both are empty.
+ */
+async function handlePostMessage(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+
+  const body = bodyOrResponse as Record<string, unknown>;
+  const rawContent =
+    typeof body['body'] === 'string'
+      ? body['body']
+      : typeof body['content'] === 'string'
+        ? body['content']
+        : '';
+  const attachments = readCompanionChatAttachments(body);
+  if (attachments instanceof Response) return attachments;
+  const input: PostCompanionChatMessageInput = {
+    content: rawContent,
+    attachments,
+    metadata: typeof body['metadata'] === 'object' && body['metadata'] !== null
+      ? (body['metadata'] as Record<string, unknown>)
+      : undefined,
+  };
+
+  if (!input.content.trim() && attachments.length === 0) {
+    return Response.json(
+      { error: 'content, body, or attachments are required', code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const messageId = await context.chatManager.postMessage(sessionId, input.content, '', {
+      attachments: input.attachments,
+      ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+      // This route sits behind the daemon's bearer-token auth, validated by
+      // DaemonHttpRouter.handleRequest before any API route is dispatched (see
+      // this file's header). Holding that token IS being the owner, it is the
+      // same credential the TUI and the operator API use, so the daemon can
+      // honestly attest this message is theirs, and does.
+      //
+      // This is what gives the webui a turn boundary. Without it the window
+      // never reset for anything the owner typed there, and the taint guard
+      // would weigh a page read an hour ago against a message they are
+      // writing now.
+      ownerDirect: true,
+    });
+    return Response.json({ messageId }, { status: 202 });
+  } catch (err: unknown) {
+    const e = err as { code?: string; status?: number; message?: string };
+    const status = e.status ?? 500;
+    return Response.json(
+      { error: e.message ?? 'Internal error', code: e.code ?? 'INTERNAL_ERROR' },
+      { status },
+    );
+  }
+}
+
+/**
+ * Map a `{ code, status }`-carrying manager error to an honest JSON error
+ * response, mirroring the catch blocks used by the update/delete handlers.
+ */
+function respondWithManagerError(err: unknown): Response {
+  const e = err as { code?: string; status?: number; message?: string };
+  const status = e.status ?? 500;
+  return Response.json(
+    { error: e.message ?? 'Internal error', code: e.code ?? 'INTERNAL_ERROR' },
+    { status },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/messages/retry  (regenerate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Regenerate an assistant response. Optional `messageId` in the body targets a
+ * specific assistant message; omitted, the latest assistant response is re-run.
+ * The prior response is superseded (retained as history), never deleted.
+ */
+async function handleRegenerateMessage(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseOptionalJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+  const body = (bodyOrResponse ?? {}) as Record<string, unknown>;
+  const input: RegenerateCompanionChatMessageInput = {
+    messageId: typeof body['messageId'] === 'string' ? body['messageId'] : undefined,
+  };
+  try {
+    return Response.json(context.chatManager.regenerateMessage(sessionId, input), { status: 202 });
+  } catch (err: unknown) {
+    return respondWithManagerError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/messages/edit  (edit + branch)
+// ---------------------------------------------------------------------------
+
+/**
+ * Edit a user message and branch the conversation from it. Accepts `messageId`
+ * (required) plus the edited text as `body` or `content` (as the message-post
+ * route does). The original message and everything after it are superseded
+ * (retained as history) and a fresh turn runs from the edited message.
+ */
+async function handleEditMessage(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+  const body = bodyOrResponse as Record<string, unknown>;
+
+  const messageId = typeof body['messageId'] === 'string' ? body['messageId'].trim() : '';
+  if (!messageId) {
+    return Response.json({ error: 'messageId is required', code: 'INVALID_ARGUMENT' }, { status: 400 });
+  }
+  const attachments = readCompanionChatAttachments(body);
+  if (attachments instanceof Response) return attachments;
+
+  const input: EditCompanionChatMessageInput = {
+    messageId,
+    content: readCompanionChatMessageBody(body),
+    attachments,
+    metadata: typeof body['metadata'] === 'object' && body['metadata'] !== null
+      ? (body['metadata'] as Record<string, unknown>)
+      : undefined,
+  };
+  try {
+    return Response.json(context.chatManager.editMessage(sessionId, input), { status: 202 });
+  } catch (err: unknown) {
+    return respondWithManagerError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/companion/chat/sessions/:sessionId/messages
+// ---------------------------------------------------------------------------
+
+/**
+ * Handle GET /api/companion/chat/sessions/:sessionId/messages.
+ *
+ * Response shape matches the `messages` field of the session-detail endpoint.
+ */
+async function handleGetMessages(
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const session = context.chatManager.getSession(sessionId);
+  if (!session) {
+    return Response.json({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  const messages = context.chatManager.getMessages(sessionId);
+  return Response.json({ sessionId, messages });
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/turns/cancel
+// ---------------------------------------------------------------------------
+
+/**
+ * Stop the in-flight turn for a session. Optional `turnId` in the body guards
+ * against cancelling a newer turn a stale stop click raced against
+ * (409 TURN_MISMATCH). No turn in flight is the benign 404 NO_ACTIVE_TURN;
+ * repeat cancels are idempotent successes. The terminal `turn.cancelled` SSE
+ * event (emitted to every subscriber) is the authoritative convergence signal.
+ */
+async function handleCancelTurn(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseOptionalJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+  const body = (bodyOrResponse ?? {}) as Record<string, unknown>;
+  const input: CancelCompanionChatTurnInput = {
+    turnId: typeof body['turnId'] === 'string' && body['turnId'].trim() ? body['turnId'].trim() : undefined,
+  };
+  try {
+    return Response.json(await context.chatManager.cancelTurn(sessionId, input));
+  } catch (err: unknown) {
+    return respondWithManagerError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/companion/chat/sessions/:sessionId/messages/steer
+// ---------------------------------------------------------------------------
+
+/**
+ * Steer: send a message that runs immediately, interrupting the in-flight
+ * turn (cancelled through the same finalization path as an explicit stop,
+ * honest partial + terminal turn.cancelled). Accepts the same payload as the
+ * message-post route (`body`/`content`, `attachments`, `metadata`).
+ */
+async function handleSteerMessage(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const bodyOrResponse = await context.parseJsonBody(req);
+  if (bodyOrResponse instanceof Response) return bodyOrResponse;
+  const body = bodyOrResponse as Record<string, unknown>;
+  const rawContent = readCompanionChatMessageBody(body);
+  const attachments = readCompanionChatAttachments(body);
+  if (attachments instanceof Response) return attachments;
+  if (!rawContent.trim() && attachments.length === 0) {
+    return Response.json(
+      { error: 'content, body, or attachments are required', code: 'INVALID_ARGUMENT' },
+      { status: 400 },
+    );
+  }
+  try {
+    const result = await context.chatManager.steerMessage(sessionId, rawContent, '', {
+      attachments,
+      metadata: typeof body['metadata'] === 'object' && body['metadata'] !== null
+        ? (body['metadata'] as Record<string, unknown>)
+        : undefined,
+      // Same bearer-token auth as the post route above, so the same attestation.
+      // A steer is the owner speaking with more urgency, not less authority,
+      // wiring one and not the other would leave them a way to start a turn
+      // that silently did not end the previous one.
+      ownerDirect: true,
+    });
+    return Response.json(result, { status: 202 });
+  } catch (err: unknown) {
+    return respondWithManagerError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/companion/chat/sessions/:sessionId/events  (SSE)
+// ---------------------------------------------------------------------------
+
+async function handleGetEvents(
+  req: Request,
+  sessionId: string,
+  context: CompanionChatRouteContext,
+): Promise<Response> {
+  const session = context.chatManager.getSession(sessionId);
+  if (!session) {
+    return Response.json({ error: 'Session not found', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  if (session.status === 'closed') {
+    return Response.json(
+      { error: 'Session is closed', code: SDKErrorCodes.SESSION_CLOSED },
+      { status: 410 },
+    );
+  }
+
+  // Delegate to the caller-provided SSE stream opener which wires up the
+  // gateway live-client registration and returns an SSE Response.
+  return context.openSessionEventStream(req, sessionId);
+}

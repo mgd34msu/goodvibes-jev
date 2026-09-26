@@ -1,0 +1,230 @@
+/**
+ * RuntimeMeter production wiring for the goodvibes-sdk platform.
+ *
+ * Exposes named metric instruments used across the platform:
+ * - HTTP request counters and histograms
+ * - LLM request counters and histograms
+ * - Auth success/failure counters
+ * - Session and SSE subscriber gauges
+ * - Telemetry buffer fill gauge
+ *
+ * It also holds the process's ACTIVE TRACER, which `telemetry.otelMode`
+ * governs, see {@link platformTracer}.
+ */
+import { RuntimeMeter } from './telemetry/meter.js';
+import { RuntimeTracer } from './telemetry/tracer.js';
+import { toolFormatTelemetry } from './telemetry/tool-format-telemetry.js';
+import type { HistogramSnapshot } from './telemetry/types.js';
+
+/** Singleton RuntimeMeter instance for the platform. */
+export const platformMeter = new RuntimeMeter({ scope: 'goodvibes-sdk' });
+
+/**
+ * A tracer that records nothing. What the platform uses until a host installs
+ * one, which is the same thing `telemetry.otelMode: 'off'` asks for.
+ */
+const DISABLED_TRACER = new RuntimeTracer({ scope: 'goodvibes-sdk', enabled: false, exporters: [] });
+
+let activeTracer: RuntimeTracer = DISABLED_TRACER;
+
+/**
+ * The tracer the platform's instrumentation opens spans on.
+ *
+ * `telemetry.otelMode` used to be checked in exactly one place,
+ * `createTelemetryProvider`, which had no callers, while the live meter in this
+ * module was built with no reference to it at all. So 'off', 'in-process' and
+ * 'remote-export' produced identical behaviour: no spans, ever, because nothing
+ * held a tracer to open one on.
+ *
+ * This is the seam that closes that. The composed runtime builds a provider from
+ * the mode's two feature gates and installs its tracer here; instrumentation
+ * asks for the tracer per call rather than capturing it, so a host that installs
+ * one after the first LLM request still gets spans from the second.
+ *
+ * A function rather than a mutable export because a `let` binding read through
+ * an ES module namespace is a live view in bundlers and a snapshot in some CJS
+ * interop paths, and "did tracing turn on" is not a question to leave to that.
+ */
+export function platformTracer(): RuntimeTracer {
+  return activeTracer;
+}
+
+/**
+ * Install the process's tracer. Called once by the composed runtime.
+ *
+ * Passing `null` restores the recording-nothing tracer, which is what a test
+ * that turned tracing on uses to put the process back.
+ */
+export function installPlatformTracer(tracer: RuntimeTracer | null): void {
+  activeTracer = tracer ?? DISABLED_TRACER;
+}
+
+// ── HTTP metrics ─────────────────────────────────────────────────────────────
+
+/** Counter: total HTTP requests by method and status_class (2xx, 4xx, 5xx). */
+export const httpRequestsTotal = platformMeter.counter('http.requests.total');
+/** Histogram: HTTP request latency in ms by method, path_pattern, status_class. */
+export const httpRequestDurationMs = platformMeter.histogram('http.request.duration_ms');
+
+// ── LLM metrics ──────────────────────────────────────────────────────────────
+
+/** Counter: total LLM requests started by provider, model (emitted on entry, before the call). */
+export const llmRequestsStarted = platformMeter.counter('llm.requests.started');
+/** Counter: total LLM requests by provider, model, status (success/error). */
+export const llmRequestsTotal = platformMeter.counter('llm.requests.total');
+/** Histogram: LLM request latency in ms by provider, model. */
+export const llmRequestDurationMs = platformMeter.histogram('llm.request.duration_ms');
+/** Histogram: LLM input token counts by provider, model. */
+export const llmTokensInput = platformMeter.histogram('llm.tokens.input');
+/** Histogram: LLM output token counts by provider, model. */
+export const llmTokensOutput = platformMeter.histogram('llm.tokens.output');
+
+// ── Auth metrics ─────────────────────────────────────────────────────────────
+
+/** Counter: successful auth events. */
+export const authSuccessTotal = platformMeter.counter('auth.success.total');
+/** Counter: failed auth events. */
+export const authFailureTotal = platformMeter.counter('auth.failure.total');
+
+// ── Session and SSE metrics ───────────────────────────────────────────────────
+
+/** Gauge: currently active sessions. */
+export const sessionsActive = platformMeter.gauge('sessions.active');
+/** Gauge: current SSE subscriber count per stream type. */
+export const sseSubscribers = platformMeter.gauge('sse.subscribers');
+
+// ── Transport metrics ─────────────────────────────────────────────────────────
+
+/** Counter: total transport retries by transport_type and reason. */
+export const transportRetriesTotal = platformMeter.counter('transport.retries_total');
+
+// ── Telemetry buffer metrics ──────────────────────────────────────────────────
+
+/** Gauge: fill level of the telemetry buffer (0..1). */
+export const telemetryBufferFill = platformMeter.gauge('telemetry.buffer.fill');
+
+// ── Listener error metrics ──────────────────────────────────────────
+
+/** Counter: total listener errors caught during event dispatch. */
+export const listenerErrorsTotal = platformMeter.counter('listener_errors_total');
+
+/**
+ * Reset all metric instruments on the singleton platform meter.
+ * Use in afterEach() hooks to prevent singleton state from bleeding between tests.
+ */
+export function resetMetrics(): void {
+  platformMeter.reset();
+  toolFormatTelemetry.reset();
+}
+
+/** A bucketed counter split by an outcome label (e.g. status class, success/error). */
+export interface RuntimeMetricsBucket {
+  readonly [label: string]: number;
+}
+
+/** The JSON-serialisable shape `snapshotMetrics()` returns. */
+export interface RuntimeMetricsSnapshot {
+  readonly counters: {
+    readonly http: { readonly requests: { readonly total: RuntimeMetricsBucket } };
+    readonly llm: { readonly requests: { readonly total: RuntimeMetricsBucket } };
+    readonly auth: { readonly success: { readonly total: number }; readonly failure: { readonly total: number } };
+    readonly transport: { readonly retries_total: number };
+    readonly [flatKey: string]: unknown;
+  };
+  readonly gauges: {
+    readonly sessions: { readonly active: number };
+    readonly sse: { readonly subscribers: number };
+    readonly telemetry: { readonly buffer: { readonly fill: number } };
+    readonly [flatKey: string]: unknown;
+  };
+  readonly histograms: {
+    readonly 'http.request.duration_ms': HistogramSnapshot;
+    readonly 'llm.request.duration_ms': HistogramSnapshot;
+    readonly 'llm.tokens.input': HistogramSnapshot;
+    readonly 'llm.tokens.output': HistogramSnapshot;
+  };
+  /** Per-model edit-failure + declared-exec-expectation-miss counts (see tool-format-telemetry.ts). */
+  readonly toolFormat: {
+    readonly byModel: Record<string, Record<string, number>>;
+    readonly byClass: Record<string, number>;
+  };
+  // An index signature so this remains assignable to the untyped
+  // `Record<string, unknown>` return type older context surfaces (e.g.
+  // daemon-sdk's DaemonRuntimeRouteContext) still declare for snapshotMetrics.
+  readonly [topLevelKey: string]: unknown;
+}
+
+/**
+ * Snapshot all metric instruments as a JSON-serialisable object.
+ *
+ * Reachable two ways: the `runtime.metrics.get` operator method (typed IO,
+ * catalog-registered, see method-catalog-runtime.ts and routes/runtime-
+ * metrics.ts), and its REST binding `GET /api/runtime/metrics`. Consumers
+ * needing this shape directly (not through the operator client) can import
+ * `snapshotMetrics`/`RuntimeMetricsSnapshot` from
+ * `@pellux/goodvibes-sdk/platform/runtime/observability`.
+ */
+export function snapshotMetrics(): RuntimeMetricsSnapshot {
+  const httpRequestsSnapshot = {
+    '2xx': httpRequestsTotal.value({ status_class: '2xx' }),
+    '4xx': httpRequestsTotal.value({ status_class: '4xx' }),
+    '5xx': httpRequestsTotal.value({ status_class: '5xx' }),
+  };
+  const llmRequestsSnapshot = {
+    success: llmRequestsTotal.value({ status: 'success' }),
+    error: llmRequestsTotal.value({ status: 'error' }),
+  };
+  return {
+    counters: {
+      http: {
+        requests: {
+          total: httpRequestsSnapshot,
+        },
+      },
+      llm: {
+        requests: {
+          total: llmRequestsSnapshot,
+        },
+      },
+      auth: {
+        success: { total: authSuccessTotal.value() },
+        failure: { total: authFailureTotal.value() },
+      },
+      transport: {
+        retries_total: transportRetriesTotal.value(),
+      },
+      'http.requests.total': httpRequestsSnapshot,
+      'llm.requests.total': llmRequestsSnapshot,
+      'auth.success.total': authSuccessTotal.value(),
+      'auth.failure.total': authFailureTotal.value(),
+      'transport.retries_total': transportRetriesTotal.value(),
+      'listener_errors_total': listenerErrorsTotal.value(),
+    },
+    gauges: {
+      sessions: {
+        active: sessionsActive.value(),
+      },
+      sse: {
+        subscribers: sseSubscribers.value(),
+      },
+      telemetry: {
+        buffer: {
+          fill: telemetryBufferFill.value(),
+        },
+      },
+      'sessions.active': sessionsActive.value(),
+      'sse.subscribers': sseSubscribers.value(),
+      'telemetry.buffer.fill': telemetryBufferFill.value(),
+    },
+    histograms: {
+      'http.request.duration_ms': httpRequestDurationMs.snapshot(),
+      'llm.request.duration_ms': llmRequestDurationMs.snapshot(),
+      'llm.tokens.input': llmTokensInput.snapshot(),
+      'llm.tokens.output': llmTokensOutput.snapshot(),
+    },
+    // Per-model edit-failure + declared-exec-expectation-miss counts. Measurement
+    // only: keyed by model id and failure class so tool-format regressions surface
+    // as data ({ byModel: { [model]: { [class]: n } }, byClass: { [class]: n } }).
+    toolFormat: toolFormatTelemetry.snapshot(),
+  };
+}

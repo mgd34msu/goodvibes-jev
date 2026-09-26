@@ -1,0 +1,584 @@
+import type {
+  KnowledgeEdgeRecord,
+  KnowledgeExtractionRecord,
+  KnowledgeIssueRecord,
+  KnowledgeMapFilterInput,
+  KnowledgeMapEdge,
+  KnowledgeMapNode,
+  KnowledgeMapResult,
+  KnowledgeNodeRecord,
+  KnowledgeSourceRecord,
+} from '../types.js';
+import type { KnowledgeSemanticSelfImproveResult } from '../semantic/index.js';
+import type { KnowledgeSemanticAnswerRefinement } from '../semantic/index.js';
+
+export const HOME_GRAPH_NODE_KINDS = [
+  'ha_home',
+  'ha_entity',
+  'ha_device',
+  'ha_area',
+  'ha_automation',
+  'ha_script',
+  'ha_scene',
+  'ha_label',
+  'ha_integration',
+  'ha_room',
+  'ha_device_passport',
+  'ha_maintenance_item',
+  'ha_troubleshooting_case',
+  'ha_purchase',
+  'ha_network_node',
+] as const;
+
+export type HomeGraphNodeKind = typeof HOME_GRAPH_NODE_KINDS[number];
+
+export const HOME_GRAPH_RELATIONS = [
+  'controls',
+  'located_in',
+  'belongs_to_device',
+  'has_manual',
+  'has_receipt',
+  'has_warranty',
+  'has_issue',
+  'fixed_by',
+  'uses_battery',
+  'connected_via',
+  'part_of_network',
+  'mentioned_by',
+  'source_for',
+] as const;
+
+export type HomeGraphRelation = typeof HOME_GRAPH_RELATIONS[number];
+
+/**
+ * Relations the pipeline writes on its own, never supplied on a link call.
+ * `repairs_gap` is minted by semantic self-improvement when an ingested source
+ * repairs a recorded knowledge gap; reindex and map rendering treat it as a
+ * passport-relevant, context-map relation. Kept separate from
+ * HOME_GRAPH_RELATIONS so the published caller vocabulary stays exactly what
+ * callers may send, while the machine-written set is still typed and
+ * discoverable. Same wire strings as before; this is a typing split only.
+ */
+export const REPAIRS_GAP_RELATION = 'repairs_gap' as const;
+
+export const MACHINE_WRITTEN_HOME_GRAPH_RELATIONS = [
+  REPAIRS_GAP_RELATION,
+] as const;
+
+export type HomeGraphMachineWrittenRelation = typeof MACHINE_WRITTEN_HOME_GRAPH_RELATIONS[number];
+
+/** Every relation a Home Graph edge may carry: caller vocabulary plus machine-written. */
+export type AnyHomeGraphRelation = HomeGraphRelation | HomeGraphMachineWrittenRelation;
+
+export const HOME_GRAPH_CAPABILITIES = [
+  'knowledge-space-isolation',
+  'snapshot-sync',
+  'source-backed-ingest',
+  'semantic-enrichment',
+  'semantic-self-improvement',
+  'llm-answer-synthesis',
+  'knowledge-linking',
+  'ask-home-graph',
+  'device-passports',
+  'room-pages',
+  'automatic-page-generation',
+  'visual-knowledge-map',
+  'packets',
+  'source-inventory',
+  'review-queue',
+  'durable-review-decisions',
+  'quality-rule-heuristics',
+  'documentation-candidates',
+  'export-import',
+  'space-reset',
+  'namespace-aware-graph-browse',
+] as const;
+
+export type HomeGraphObjectKind =
+  | 'home'
+  | 'entity'
+  | 'device'
+  | 'area'
+  | 'automation'
+  | 'script'
+  | 'scene'
+  | 'label'
+  | 'integration'
+  | 'room'
+  | 'device_passport'
+  | 'maintenance_item'
+  | 'troubleshooting_case'
+  | 'purchase'
+  | 'network_node';
+
+export interface HomeGraphSpaceInput {
+  readonly installationId?: string | undefined;
+  readonly knowledgeSpaceId?: string | undefined;
+}
+
+export interface HomeGraphResetInput extends HomeGraphSpaceInput {
+  readonly dryRun?: boolean | undefined;
+  readonly preserveArtifacts?: boolean | undefined;
+}
+
+export interface HomeGraphObjectInput {
+  readonly id?: string | undefined;
+  readonly name?: string | undefined;
+  readonly title?: string | undefined;
+  readonly entityId?: string | undefined;
+  readonly deviceId?: string | undefined;
+  readonly areaId?: string | undefined;
+  readonly integrationId?: string | undefined;
+  readonly labels?: readonly string[] | undefined;
+  readonly aliases?: readonly string[] | undefined;
+  readonly manufacturer?: string | undefined;
+  readonly model?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+/**
+ * What a CALLER may hand in for one object, camelCase, or the raw Home
+ * Assistant wire spelling.
+ *
+ * `normalizeHomeGraphObjectInput` reads every alias below (`entity_id`,
+ * `device_id`, `area_id`, `platform`, `domain`, `original_name`, `unique_id`,
+ * `slug`, `label_ids`, `attributes`) and has since it was written, accepting a
+ * Home Assistant snapshot unmodified is the point of it. The snapshot fields
+ * were nonetheless typed as `HomeGraphObjectInput`, which names none of them,
+ * so passing a real snapshot did not typecheck. It went unnoticed because the
+ * only callers passing the wire shape were tests, and `test/` was not
+ * typechecked; the first attempt to make one compile deleted `platform` from a
+ * fixture and broke the assertion that depended on it.
+ *
+ * The normalizer still RETURNS `HomeGraphObjectInput`, camelCase only. This
+ * type is the input side alone.
+ */
+export interface HomeGraphObjectInputSource extends HomeGraphObjectInput {
+  readonly entity_id?: string | undefined;
+  readonly device_id?: string | undefined;
+  readonly area_id?: string | undefined;
+  readonly integration_id?: string | undefined;
+  /** Home Assistant's integration name for an entity, e.g. `webostv`. */
+  readonly platform?: string | undefined;
+  readonly domain?: string | undefined;
+  readonly originalName?: string | undefined;
+  readonly original_name?: string | undefined;
+  readonly uniqueId?: string | undefined;
+  readonly unique_id?: string | undefined;
+  readonly slug?: string | undefined;
+  readonly labelIds?: readonly string[] | undefined;
+  readonly label_ids?: readonly string[] | undefined;
+  readonly attributes?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphSnapshotInput extends HomeGraphSpaceInput {
+  readonly homeId?: string | undefined;
+  readonly title?: string | undefined;
+  readonly capturedAt?: number | undefined;
+  readonly pageAutomation?: HomeGraphPageAutomationOptions | undefined;
+  readonly entities?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly devices?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly areas?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly automations?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly scripts?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly scenes?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly labels?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly integrations?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly helpers?: readonly HomeGraphObjectInputSource[] | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphPageAutomationOptions {
+  readonly enabled?: boolean | undefined;
+  readonly devicePassports?: boolean | undefined;
+  readonly roomPages?: boolean | undefined;
+  readonly maxDevicePassports?: number | undefined;
+  readonly maxRoomPages?: number | undefined;
+  readonly maxRunMs?: number | undefined;
+}
+
+export interface HomeGraphGeneratedPagesSummary {
+  readonly devicePassports: number;
+  readonly roomPages: number;
+  readonly artifacts: number;
+  readonly sources: number;
+  readonly deferredDevicePassports?: number | undefined;
+  readonly deferredRoomPages?: number | undefined;
+  readonly truncated?: boolean | undefined;
+  readonly errors: readonly {
+    readonly kind: 'device-passport' | 'room-page';
+    readonly targetId: string;
+    readonly error: string;
+  }[];
+}
+
+export interface HomeGraphStatus {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly installationId: string;
+  readonly sourceCount: number;
+  readonly nodeCount: number;
+  readonly edgeCount: number;
+  readonly issueCount: number;
+  readonly extractionCount: number;
+  readonly lastSnapshotAt?: number | undefined;
+  readonly readiness: {
+    readonly state: 'ready' | 'repairing' | 'needs_review' | 'needs_sources' | 'empty';
+    readonly openIssueCount: number;
+    readonly activeRefinementTaskCount: number;
+    readonly needsReviewTaskCount: number;
+  };
+  readonly capabilities: readonly string[];
+}
+
+export interface HomeGraphSyncResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly installationId: string;
+  readonly source: KnowledgeSourceRecord;
+  readonly home: KnowledgeNodeRecord;
+  readonly created: {
+    readonly nodes: number;
+    readonly edges: number;
+    readonly issues: number;
+  };
+  readonly generated: HomeGraphGeneratedPagesSummary;
+  readonly counts: {
+    readonly entities: number;
+    readonly devices: number;
+    readonly areas: number;
+    readonly automations: number;
+    readonly scripts: number;
+    readonly scenes: number;
+    readonly labels: number;
+    readonly integrations: number;
+  };
+}
+
+export interface HomeGraphIngestUrlInput extends HomeGraphSpaceInput {
+  readonly url: string;
+  readonly title?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly target?: HomeGraphKnowledgeTarget | undefined;
+  readonly allowPrivateHosts?: boolean | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphIngestNoteInput extends HomeGraphSpaceInput {
+  readonly title?: string | undefined;
+  readonly body: string;
+  readonly category?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly target?: HomeGraphKnowledgeTarget | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphIngestArtifactInput extends HomeGraphSpaceInput {
+  readonly artifactId?: string | undefined;
+  readonly path?: string | undefined;
+  readonly uri?: string | undefined;
+  readonly title?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly target?: HomeGraphKnowledgeTarget | undefined;
+  readonly allowPrivateHosts?: boolean | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphKnowledgeTarget {
+  readonly kind: HomeGraphObjectKind | HomeGraphNodeKind | 'source' | 'node';
+  readonly id: string;
+  readonly relation?: HomeGraphRelation | string | undefined;
+  readonly title?: string | undefined;
+}
+
+export interface HomeGraphIngestResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly source: KnowledgeSourceRecord;
+  readonly artifactId?: string | undefined;
+  readonly extraction?: KnowledgeExtractionRecord | undefined;
+  readonly linked?: KnowledgeEdgeRecord | undefined;
+}
+
+export interface HomeGraphLinkInput extends HomeGraphSpaceInput {
+  readonly sourceId?: string | undefined;
+  readonly nodeId?: string | undefined;
+  readonly target: HomeGraphKnowledgeTarget;
+  readonly relation?: HomeGraphRelation | string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphLinkResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly edge: KnowledgeEdgeRecord;
+  readonly target: KnowledgeNodeRecord | KnowledgeSourceRecord | null;
+}
+
+/**
+ * Result of an unlink. Unlink is a real reversal: it removes the link edge (and,
+ * if the prior link materialized the target node and nothing else references it,
+ * that node too). Unlinking a never-linked target is an honest no-op, it creates
+ * no phantom records. `reversed` is true only when an active link was actually
+ * removed.
+ */
+export interface HomeGraphUnlinkResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly reversed: boolean;
+  readonly removedEdgeId?: string | undefined;
+  readonly removedNodeId?: string | undefined;
+  readonly target: KnowledgeNodeRecord | KnowledgeSourceRecord | null;
+}
+
+export interface HomeGraphAskInput extends HomeGraphSpaceInput {
+  readonly query: string;
+  readonly limit?: number | undefined;
+  readonly mode?: 'concise' | 'standard' | 'detailed' | undefined;
+  readonly includeSources?: boolean | undefined;
+  readonly includeConfidence?: boolean | undefined;
+  readonly includeLinkedObjects?: boolean | undefined;
+  readonly timeoutMs?: number | undefined;
+}
+
+export interface HomeGraphAskResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly query: string;
+  readonly answer: {
+    readonly text: string;
+    readonly mode: string;
+    readonly confidence: number;
+    readonly sources: readonly KnowledgeSourceRecord[];
+    readonly linkedObjects: readonly KnowledgeNodeRecord[];
+    readonly facts?: readonly KnowledgeNodeRecord[] | undefined;
+    readonly gaps?: readonly KnowledgeNodeRecord[] | undefined;
+    readonly refinementTaskIds?: readonly string[] | undefined;
+    readonly refinement?: KnowledgeSemanticAnswerRefinement | undefined;
+    readonly synthesized?: boolean | undefined;
+  };
+  readonly results: readonly HomeGraphSearchResult[];
+}
+
+export interface HomeGraphMapInput extends HomeGraphSpaceInput {
+  readonly limit?: number | undefined;
+  readonly includeSources?: boolean | undefined;
+  readonly includeIssues?: boolean | undefined;
+  readonly includeGenerated?: boolean | undefined;
+  readonly filters?: KnowledgeMapFilterInput | undefined;
+  readonly query?: string | undefined;
+  readonly recordKinds?: readonly ('source' | 'node' | 'issue')[] | undefined;
+  readonly ids?: readonly string[] | undefined;
+  readonly linkedToIds?: readonly string[] | undefined;
+  readonly nodeKinds?: readonly string[] | undefined;
+  readonly sourceTypes?: readonly string[] | undefined;
+  readonly sourceStatuses?: readonly string[] | undefined;
+  readonly nodeStatuses?: readonly string[] | undefined;
+  readonly issueCodes?: readonly string[] | undefined;
+  readonly issueStatuses?: readonly string[] | undefined;
+  readonly issueSeverities?: readonly string[] | undefined;
+  readonly edgeRelations?: readonly string[] | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly minConfidence?: number | undefined;
+  readonly objectKinds?: readonly string[] | undefined;
+  readonly entityIds?: readonly string[] | undefined;
+  readonly deviceIds?: readonly string[] | undefined;
+  readonly areaIds?: readonly string[] | undefined;
+  readonly integrationIds?: readonly string[] | undefined;
+  readonly integrationDomains?: readonly string[] | undefined;
+  readonly domains?: readonly string[] | undefined;
+  readonly deviceClasses?: readonly string[] | undefined;
+  readonly labels?: readonly string[] | undefined;
+  readonly ha?: HomeGraphMapHaFilterInput | undefined;
+}
+
+export interface HomeGraphMapHaFilterInput {
+  readonly objectKinds?: readonly string[] | undefined;
+  readonly entityIds?: readonly string[] | undefined;
+  readonly deviceIds?: readonly string[] | undefined;
+  readonly areaIds?: readonly string[] | undefined;
+  readonly integrationIds?: readonly string[] | undefined;
+  readonly integrationDomains?: readonly string[] | undefined;
+  readonly domains?: readonly string[] | undefined;
+  readonly deviceClasses?: readonly string[] | undefined;
+  readonly labels?: readonly string[] | undefined;
+}
+
+export type HomeGraphMapNode = KnowledgeMapNode;
+export type HomeGraphMapEdge = KnowledgeMapEdge;
+export type HomeGraphMapResult = KnowledgeMapResult & { readonly spaceId: string };
+
+export interface HomeGraphReindexInput extends HomeGraphSpaceInput {
+  readonly limit?: number | undefined;
+  readonly maxRunMs?: number | undefined;
+  readonly semanticLimit?: number | undefined;
+  readonly semanticMaxRunMs?: number | undefined;
+  readonly generatedPageLimit?: number | undefined;
+  readonly force?: boolean | undefined;
+  readonly refreshPages?: boolean | undefined;
+}
+
+export interface HomeGraphReindexResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly scanned: number;
+  readonly reparsed: number;
+  readonly skipped: number;
+  readonly failed: number;
+  readonly changedSourceCount?: number | undefined;
+  readonly forcedSourceCount?: number | undefined;
+  readonly skippedGeneratedPageArtifactCount?: number | undefined;
+  readonly refreshedGeneratedPageCount?: number | undefined;
+  readonly generatedPagePolicyVersion?: string | undefined;
+  readonly coalesced?: boolean | undefined;
+  readonly truncated?: boolean | undefined;
+  readonly budgetExhausted?: boolean | undefined;
+  readonly sources: readonly KnowledgeSourceRecord[];
+  readonly failures: readonly { readonly sourceId: string; readonly error: string }[];
+  readonly linked?: readonly {
+    readonly edge: KnowledgeEdgeRecord;
+    readonly node: KnowledgeNodeRecord;
+    readonly relation: string;
+    readonly score: number;
+    readonly reasons: readonly string[];
+  }[];
+  readonly generated?: HomeGraphGeneratedPagesSummary | undefined;
+  readonly qualityIssues?: readonly KnowledgeIssueRecord[] | undefined;
+  readonly semantic?: {
+    readonly scanned: number;
+    readonly enriched: number;
+    readonly skipped: number;
+    readonly failed: number;
+    readonly errors: readonly { readonly sourceId: string; readonly error: string }[];
+    readonly selfImprovement?: KnowledgeSemanticSelfImproveResult | undefined;
+  };
+}
+
+export interface HomeGraphSearchResult {
+  readonly kind: 'source' | 'node';
+  readonly id: string;
+  readonly score: number;
+  readonly title: string;
+  readonly summary?: string | undefined;
+  readonly excerpt?: string | undefined;
+  readonly source?: KnowledgeSourceRecord | undefined;
+  readonly node?: KnowledgeNodeRecord | undefined;
+}
+
+export interface HomeGraphProjectionInput extends HomeGraphSpaceInput {
+  readonly areaId?: string | undefined;
+  readonly roomId?: string | undefined;
+  readonly deviceId?: string | undefined;
+  readonly packetKind?: string | undefined;
+  readonly title?: string | undefined;
+  readonly includeFields?: readonly string[] | undefined;
+  readonly excludeFields?: readonly string[] | undefined;
+  readonly sharingProfile?: 'default' | 'guest' | 'pet-sitter' | 'emergency' | 'contractor' | 'network-admin' | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface HomeGraphProjectionResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly title: string;
+  readonly markdown: string;
+  readonly source?: KnowledgeSourceRecord | undefined;
+  readonly linked?: KnowledgeEdgeRecord | undefined;
+  readonly artifact: {
+    readonly id: string;
+    readonly mimeType: string;
+    readonly filename?: string | undefined;
+    readonly createdAt: number;
+    readonly metadata: Record<string, unknown>;
+  };
+}
+
+export interface HomeGraphDevicePassportResult extends HomeGraphProjectionResult {
+  readonly device: KnowledgeNodeRecord;
+  readonly passport: KnowledgeNodeRecord;
+  readonly missingFields: readonly string[];
+}
+
+export interface HomeGraphPageListResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly pages: readonly {
+    readonly source: KnowledgeSourceRecord;
+    readonly artifact?: HomeGraphProjectionResult['artifact'] | undefined;
+    readonly markdown?: string | undefined;
+    readonly target?: HomeGraphPageGraphNode | undefined;
+    readonly subject?: HomeGraphPageGraphNode | undefined;
+    readonly neighbors?: readonly HomeGraphPageGraphNeighbor[] | undefined;
+    readonly relatedPages?: readonly HomeGraphRelatedPage[] | undefined;
+  }[];
+}
+
+export interface HomeGraphPageGraphNode {
+  readonly id: string;
+  readonly kind: string;
+  readonly title: string;
+  readonly [key: string]: unknown;
+  readonly objectKind?: string | undefined;
+  readonly objectId?: string | undefined;
+  readonly entityId?: string | undefined;
+  readonly deviceId?: string | undefined;
+  readonly areaId?: string | undefined;
+  readonly integrationId?: string | undefined;
+}
+
+export interface HomeGraphPageGraphNeighbor extends HomeGraphPageGraphNode {
+  readonly relation: string;
+  readonly direction: 'incoming' | 'outgoing';
+}
+
+export interface HomeGraphRelatedPage {
+  readonly sourceId: string;
+  readonly title: string;
+  readonly projectionKind?: string | undefined;
+  readonly subject?: HomeGraphPageGraphNode | undefined;
+}
+
+export interface HomeGraphReviewInput extends HomeGraphSpaceInput {
+  readonly issueId?: string | undefined;
+  readonly nodeId?: string | undefined;
+  readonly sourceId?: string | undefined;
+  readonly action: 'accept' | 'reject' | 'resolve' | 'edit' | 'forget';
+  readonly value?: Record<string, unknown> | undefined;
+  readonly reviewer?: string | undefined;
+}
+
+export interface HomeGraphExport {
+  readonly version: 1;
+  readonly exportedAt: number;
+  readonly spaceId: string;
+  readonly installationId: string;
+  readonly sources: readonly KnowledgeSourceRecord[];
+  readonly nodes: readonly KnowledgeNodeRecord[];
+  readonly edges: readonly KnowledgeEdgeRecord[];
+  readonly issues: readonly KnowledgeIssueRecord[];
+  readonly extractions: readonly KnowledgeExtractionRecord[];
+}
+
+export interface HomeGraphResetResult {
+  readonly ok: true;
+  readonly spaceId: string;
+  readonly installationId: string;
+  readonly dryRun: boolean;
+  readonly deleted: {
+    readonly sources: number;
+    readonly nodes: number;
+    readonly edges: number;
+    readonly issues: number;
+    readonly extractions: number;
+    readonly jobRuns: number;
+    readonly refinementTasks: number;
+    readonly usageRecords: number;
+    readonly consolidationCandidates: number;
+    readonly consolidationReports: number;
+    readonly schedules: number;
+  };
+  readonly artifactDeleteCandidates: number;
+  readonly deletedArtifacts: number;
+  readonly preservedArtifacts: number;
+  readonly artifactsDeleted: boolean;
+}

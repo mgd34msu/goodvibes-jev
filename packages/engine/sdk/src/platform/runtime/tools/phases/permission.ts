@@ -1,0 +1,146 @@
+import type { Tool, ToolCall } from '../../../types/tools.js';
+import type { ToolRuntimeContext } from '../context.js';
+import type { PhaseResult, ToolExecutionRecord } from '../types.js';
+import {
+  emitPermissionDecision,
+  emitPermissionRequested,
+} from '../../emitters/permissions.js';
+import type { PermissionCheckResult } from '../../../permissions/types.js';
+import { buildToolDenial, buildDenialErrorMessage } from '../../../permissions/denial.js';
+import { summarizeError } from '../../../utils/error-display.js';
+
+/**
+ * permission, Phase 3 of the tool execution pipeline.
+ *
+ * Delegates to PermissionManager.check(). If permission is denied,
+ * the phase aborts and no further phases are run.
+ *
+ * The resolved args used here account for any input updates from the
+ * prehook phase (stored as `_updatedArgs` on the record).
+ */
+/**
+ * Build the aborting permission-denied phase result, carrying structured,
+ * call-scoped denial data (reason + scope) AND a self-explaining error string so
+ * the asking agent can continue and report honestly rather than parse a bare
+ * "Permission denied" line.
+ */
+function deniedPhaseResult(
+  toolName: string,
+  reason: string,
+  scope: string,
+  start: number,
+  userReason?: string,
+): PhaseResult {
+  const source = { reasonCode: reason, sourceLayer: scope, userReason };
+  return {
+    phase: 'permissioned',
+    success: false,
+    durationMs: performance.now() - start,
+    error: buildDenialErrorMessage(toolName, source),
+    abort: true,
+    denial: buildToolDenial(source),
+  };
+}
+
+export async function permissionPhase(
+  call: ToolCall,
+  _tool: Tool,
+  context: ToolRuntimeContext,
+  record: ToolExecutionRecord,
+): Promise<PhaseResult> {
+  const start = performance.now();
+
+  // Use updated args from prehook if present
+  const effectiveArgs = record._updatedArgs ?? call.arguments;
+
+  const resolvePermissionResult = async (): Promise<PermissionCheckResult> => {
+    const manager = context.permissionManager as unknown as {
+      checkDetailed?: ((toolName: string, args: Record<string, unknown>) => Promise<PermissionCheckResult>) | undefined;
+      check?: ((toolName: string, args: Record<string, unknown>) => Promise<boolean>) | undefined;
+      getCategory: (toolName: string) => string;
+    };
+
+    if (typeof manager.checkDetailed === 'function') {
+      return manager.checkDetailed(call.name, effectiveArgs);
+    }
+
+    if (typeof manager.check === 'function') {
+      const approved = await manager.check(call.name, effectiveArgs);
+      return {
+        approved,
+        persisted: false,
+        sourceLayer: approved ? 'config_policy' : 'user_prompt',
+        reasonCode: approved ? 'config_allow' : 'user_denied',
+        analysis: {
+          classification: 'generic',
+          riskLevel: 'medium',
+          summary: `Permission ${approved ? 'approved' : 'denied'} for ${call.name}`,
+          reasons: [],
+        },
+      };
+    }
+
+    throw new Error('PermissionManager is missing both checkDetailed() and check()');
+  };
+
+  try {
+    if (context.runtimeBus) {
+      const analysis = await resolvePermissionResult();
+      emitPermissionRequested(context.runtimeBus, {
+        sessionId: context.ids.sessionId,
+        traceId: context.ids.traceId,
+        source: 'permission-manager',
+      }, {
+        callId: call.id,
+        tool: call.name,
+        args: effectiveArgs,
+        category: context.permissionManager.getCategory(call.name),
+        classification: analysis.analysis.classification,
+        riskLevel: analysis.analysis.riskLevel,
+        summary: analysis.analysis.summary,
+        reasons: analysis.analysis.reasons,
+      });
+
+      emitPermissionDecision(context.runtimeBus, {
+        sessionId: context.ids.sessionId,
+        traceId: context.ids.traceId,
+        source: 'permission-manager',
+      }, {
+        callId: call.id,
+        tool: call.name,
+        approved: analysis.approved,
+        source: 'permission-manager',
+        sourceLayer: analysis.sourceLayer,
+        persisted: analysis.persisted,
+        reasonCode: analysis.reasonCode,
+        classification: analysis.analysis.classification,
+        riskLevel: analysis.analysis.riskLevel,
+        summary: analysis.analysis.summary,
+      });
+
+      if (!analysis.approved) {
+        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason);
+      }
+    } else {
+      const analysis = await resolvePermissionResult();
+      if (!analysis.approved) {
+        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason);
+      }
+    }
+
+    return {
+      phase: 'permissioned',
+      success: true,
+      durationMs: performance.now() - start,
+    };
+  } catch (err) {
+    const message = summarizeError(err);
+    return {
+      phase: 'permissioned',
+      success: false,
+      durationMs: performance.now() - start,
+      error: `Permission check threw: ${message}`,
+      abort: true,
+    };
+  }
+}

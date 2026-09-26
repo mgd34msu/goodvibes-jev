@@ -1,0 +1,323 @@
+import type { RuntimeEventDomain } from '../runtime/events/index.js';
+
+export type GatewayMethodTransport = 'http' | 'ws' | 'internal';
+export type GatewayMethodSource = 'builtin' | 'plugin';
+export type GatewayMethodAccess = 'public' | 'authenticated' | 'admin' | 'remote-peer';
+export type GatewayEventTransport = 'sse' | 'ws' | 'internal';
+
+export interface GatewayHttpBinding {
+  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  readonly path: string;
+}
+
+export interface GatewayMethodDescriptor {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly category: string;
+  readonly source: GatewayMethodSource;
+  readonly access: GatewayMethodAccess;
+  readonly transport: readonly GatewayMethodTransport[];
+  readonly scopes: readonly string[];
+  readonly http?: GatewayHttpBinding | undefined;
+  readonly events?: readonly string[] | undefined;
+  readonly inputSchema?: Record<string, unknown> | undefined;
+  readonly outputSchema?: Record<string, unknown> | undefined;
+  readonly pluginId?: string | undefined;
+  readonly dangerous?: boolean | undefined;
+  /**
+   * Defaults to `true`. When explicitly `false`, this method is NOT dispatchable
+   * through the generic HTTP/WS method-invocation surface
+   * (`invokeGatewayMethodCall`/`invokeWebSocketControlPlaneCall` in
+   * `../daemon/control-plane.ts`, guarded by `validateGatewayInvocation`, which
+   * rejects it with an honest 400 `NOT_INVOKABLE` before any handler or route is
+   * even considered), nothing more, nothing less.
+   *
+   * This is a statement about ONE dispatch path, not a claim that the method can
+   * never run anywhere. Two independent reasons a descriptor carries
+   * `invokable: false`:
+   *  - No route or internal handler exists at all for this build (e.g. `email.*`,
+   *    `calendar.*`, cataloged so the contract is honest about the capability's
+   *    shape, but genuinely unavailable everywhere).
+   *  - A real route DOES exist and IS served (e.g. `voice.tts.stream`,
+   *    `control.events.stream`, `artifacts.content.get`), just not through the
+   *    generic JSON-envelope invoke path, the response is binary/streaming/HTML
+   *    (see `metadata.responseKind`) and callers must use the direct HTTP path
+   *    instead.
+   *
+   * A runtime that registers a real in-process handler for this method id (via
+   * `GatewayMethodCatalog.register(descriptor, handler)`) and calls
+   * `GatewayMethodCatalog.invoke()` DIRECTLY (bypassing `validateGatewayInvocation`)
+   * still serves it, `invoke()` itself does not consult this flag, by design: a
+   * consuming runtime that has wired up a genuine handler is authoritative over
+   * whether the method actually works, this descriptor is not. `invoke()` only
+   * refuses when BOTH `invokable === false` AND no handler is registered, see
+   * `method-catalog.ts`'s `invoke()`.
+   */
+  readonly invokable?: boolean | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface GatewayEventDescriptor {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly category: string;
+  readonly source: GatewayMethodSource;
+  readonly transport: readonly GatewayEventTransport[];
+  readonly scopes: readonly string[];
+  readonly domains?: readonly RuntimeEventDomain[] | undefined;
+  readonly wireEvents?: readonly string[] | undefined;
+  readonly outputSchema?: Record<string, unknown> | undefined;
+  readonly pluginId?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface GatewayMethodInvocationContext {
+  readonly principalId?: string | undefined;
+  readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | 'remote-peer' | undefined;
+  readonly admin?: boolean | undefined;
+  readonly scopes?: readonly string[] | undefined;
+  readonly clientKind?: string | undefined;
+  readonly authToken?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export interface GatewayMethodInvocation {
+  readonly body?: unknown | undefined;
+  readonly query?: Record<string, unknown> | undefined;
+  readonly context: GatewayMethodInvocationContext;
+}
+
+export type GatewayMethodHandler = (input: GatewayMethodInvocation) => unknown | Promise<unknown>;
+export interface GatewayMethodListOptions {
+  readonly category?: string | undefined;
+  readonly source?: GatewayMethodSource | undefined;
+  readonly pluginId?: string | undefined;
+}
+
+export interface GatewayEventListOptions {
+  readonly category?: string | undefined;
+  readonly source?: GatewayMethodSource | undefined;
+  readonly pluginId?: string | undefined;
+  readonly domain?: RuntimeEventDomain | undefined;
+}
+
+export const EMPTY_OBJECT_SCHEMA = { type: 'object', properties: {}, additionalProperties: false } as const;
+export const STRING_SCHEMA = { type: 'string' } as const;
+export const BOOLEAN_SCHEMA = { type: 'boolean' } as const;
+export const NUMBER_SCHEMA = { type: 'number' } as const;
+const NULL_SCHEMA = { type: 'null' } as const;
+export const JSON_VALUE_SCHEMA: Record<string, unknown> = {};
+export const JSON_OBJECT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: JSON_VALUE_SCHEMA,
+};
+export const JSON_ARRAY_SCHEMA: Record<string, unknown> = {
+  type: 'array',
+  items: JSON_VALUE_SCHEMA,
+};
+
+Object.assign(JSON_VALUE_SCHEMA, {
+  anyOf: [
+    STRING_SCHEMA,
+    NUMBER_SCHEMA,
+    BOOLEAN_SCHEMA,
+    NULL_SCHEMA,
+    JSON_OBJECT_SCHEMA,
+    JSON_ARRAY_SCHEMA,
+  ],
+});
+
+export function arraySchema(itemSchema: Record<string, unknown>): Record<string, unknown> {
+  return { type: 'array', items: itemSchema };
+}
+
+export function objectSchema(
+  properties: Record<string, Record<string, unknown>>,
+  required: readonly string[] = [],
+  options: { readonly additionalProperties?: boolean } = {},
+): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties,
+    ...(required.length > 0 ? { required: [...required] } : {}),
+    additionalProperties: options.additionalProperties ?? false,
+  };
+}
+
+export const GATEWAY_HTTP_BINDING_SCHEMA = objectSchema({
+  method: STRING_SCHEMA,
+  path: STRING_SCHEMA,
+}, ['method', 'path']);
+
+export const METHOD_DESCRIPTOR_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  description: STRING_SCHEMA,
+  category: STRING_SCHEMA,
+  source: STRING_SCHEMA,
+  access: STRING_SCHEMA,
+  transport: arraySchema(STRING_SCHEMA),
+  scopes: arraySchema(STRING_SCHEMA),
+  http: GATEWAY_HTTP_BINDING_SCHEMA,
+  events: arraySchema(STRING_SCHEMA),
+  inputSchema: JSON_OBJECT_SCHEMA,
+  outputSchema: JSON_OBJECT_SCHEMA,
+  pluginId: STRING_SCHEMA,
+  dangerous: BOOLEAN_SCHEMA,
+  invokable: BOOLEAN_SCHEMA,
+  metadata: JSON_OBJECT_SCHEMA,
+}, ['id', 'title', 'description', 'category', 'source', 'access', 'transport', 'scopes']);
+
+export const EVENT_DESCRIPTOR_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  title: STRING_SCHEMA,
+  description: STRING_SCHEMA,
+  category: STRING_SCHEMA,
+  source: STRING_SCHEMA,
+  transport: arraySchema(STRING_SCHEMA),
+  scopes: arraySchema(STRING_SCHEMA),
+  domains: arraySchema(STRING_SCHEMA),
+  wireEvents: arraySchema(STRING_SCHEMA),
+  outputSchema: JSON_OBJECT_SCHEMA,
+  pluginId: STRING_SCHEMA,
+  metadata: JSON_OBJECT_SCHEMA,
+}, ['id', 'title', 'description', 'category', 'source', 'transport', 'scopes']);
+
+export function listOutputSchema(
+  key: string,
+  itemSchema: Record<string, unknown>,
+): Record<string, unknown> {
+  return objectSchema({ [key]: arraySchema(itemSchema) }, [key], { additionalProperties: false });
+}
+
+export function entityOutputSchema(
+  key: string,
+  entitySchema: Record<string, unknown>,
+): Record<string, unknown> {
+  return objectSchema({ [key]: entitySchema }, [key], { additionalProperties: false });
+}
+
+export function actionResultOutputSchema(
+  key: string,
+  entitySchema: Record<string, unknown>,
+): Record<string, unknown> {
+  return objectSchema({
+    [key]: entitySchema,
+  }, [key], { additionalProperties: true });
+}
+
+export function bodyEnvelopeSchema(
+  properties: Record<string, Record<string, unknown>> = {},
+  required: readonly string[] = [],
+  options: { readonly dependentRequired?: Readonly<Record<string, readonly string[]>> } = {},
+): Record<string, unknown> {
+  return {
+    ...objectSchema({ ...properties }, required, { additionalProperties: true }),
+    ...(options.dependentRequired ? { dependentRequired: { ...options.dependentRequired } } : {}),
+  };
+}
+
+/**
+ * An input schema for a verb whose required set is CONDITIONAL, "id when kind
+ * names a specific item", "one of dataBase64/text/path/uri", "cron when the
+ * schedule is a cron".
+ *
+ * Handlers like these refuse a call that a flat `required` array calls valid,
+ * and the flat array cannot be repaired by adding the field: `id` is genuinely
+ * not required for `kind: 'overview'`, so declaring it required would refuse
+ * calls that work today.
+ *
+ * The encoding is a BASE schema, every property, plus whatever is required
+ * unconditionally, carrying an `anyOf` of small requirement branches. Both
+ * consumers read it that way:
+ *   - `invoke-input-validation.ts` checks the base first and then requires one
+ *     branch to match (proper JSON Schema conjunction).
+ *   - `scripts/check-foundation-io-types.ts` renders it as `Base & (B1 | B2)`.
+ *
+ * Why factored rather than a union of whole objects, which reads more directly:
+ * repeating a thirty-property object four times, twice (automation's job and
+ * schedule create verbs), made the operator client's method map exceed
+ * TypeScript's union-complexity limit outright, `client-core.ts` stopped
+ * compiling with TS2590. Intersecting one base with small branches says the
+ * same thing at a fraction of the type size.
+ *
+ * Each branch must still be a real object schema naming its own required
+ * fields as properties, with `additionalProperties: true` so it constrains
+ * only what it names, `requirementBranch` builds that shape. A bare
+ * `{ required: [...] }` fragment would render as `unknown`, which is how
+ * `knowledge.ingest.connector` ended up with no consumer type at all.
+ */
+export function branchedSchema(
+  base: Record<string, unknown>,
+  requirementBranches: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  return { ...base, anyOf: [...requirementBranches] };
+}
+
+/**
+ * One requirement branch: the fields this alternative makes mandatory, and
+ * nothing else. Anything the branch does not name is left to the base schema,
+ * which is where the full property list and the open-ended body envelope live.
+ *
+ * The branch is `additionalProperties: true`, and that is not incidental. These
+ * schemas are PUBLISHED, they become the operator contract artifact and the
+ * OpenAPI document that third-party validators read. A branch saying
+ * `{ required: ['text'], additionalProperties: false }` inside an `anyOf`
+ * rejects `{ text: 'hello', kind: 'note' }`, because the only branch that
+ * accepts `text` forbids `kind`. Our own invoke gate never enforces
+ * `additionalProperties` so nothing would break here, and the published
+ * contract would be quietly wrong for everyone else, the worst kind of wrong,
+ * since it reads as more precise.
+ *
+ * `scripts/check-foundation-io-types.ts` drops the resulting index signature
+ * when it renders a branch, because the base it is intersected with already
+ * carries one. Stating it once rather than once per branch is what keeps the
+ * client's method map inside TypeScript's union-complexity limit.
+ */
+export function requirementBranch(
+  properties: Record<string, Record<string, unknown>>,
+  required: readonly string[],
+): Record<string, unknown> {
+  return objectSchema(properties, required, { additionalProperties: true });
+}
+
+/** A string constrained to a fixed set of values. */
+export function stringEnumSchema(values: readonly string[]): Record<string, unknown> {
+  return { type: 'string', enum: [...values] };
+}
+
+export function methodDescriptor(input: Omit<GatewayMethodDescriptor, 'source' | 'transport' | 'access'> & Partial<Pick<GatewayMethodDescriptor, 'source' | 'transport' | 'access'>>): GatewayMethodDescriptor {
+  return {
+    source: input.source ?? 'builtin',
+    transport: input.transport ?? ['http', 'ws'],
+    access: input.access ?? 'authenticated',
+    ...input,
+  };
+}
+
+export function eventDescriptor(input: Omit<GatewayEventDescriptor, 'source'> & Partial<Pick<GatewayEventDescriptor, 'source'>>): GatewayEventDescriptor {
+  return {
+    source: input.source ?? 'builtin',
+    ...input,
+  };
+}
+
+export function runtimeEventId(domain: RuntimeEventDomain): string {
+  return `runtime.${domain}`;
+}
+
+export function runtimeDomainEvent(domain: RuntimeEventDomain, description: string): GatewayEventDescriptor {
+  return eventDescriptor({
+    id: runtimeEventId(domain),
+    title: `${domain} Domain Events`,
+    description,
+    category: 'runtime-domain',
+    transport: ['sse', 'ws'],
+    scopes: ['read:events'],
+    domains: [domain],
+    wireEvents: [domain],
+    outputSchema: JSON_OBJECT_SCHEMA,
+  });
+}

@@ -1,0 +1,838 @@
+import type { ConfigManager } from '../../config/manager.js';
+import type { ServiceRegistry } from '../../config/service-registry.js';
+import { isValidConfigKey } from '../../config/schema.js';
+import { createCredentialStatusProvider } from '../../config/credential-status.js';
+import { buildAutomationEmptyState } from '../../runtime/feature-announcements.js';
+import type { UserAuthManager } from '../../security/user-auth.js';
+import { buildOperatorSessionCookie, OPERATOR_SESSION_COOKIE_NAME } from '../../security/http-auth.js';
+import type { AgentManager } from '../../tools/agent/index.js';
+import {
+  normalizeAtSchedule,
+  normalizeCronSchedule,
+  normalizeEverySchedule,
+  type AutomationManager,
+  type CreateAutomationJobInput,
+  type UpdateAutomationJobInput,
+} from '../../automation/index.js';
+import type { ApprovalBroker, ControlPlaneGateway, SharedSessionBroker } from '../../control-plane/index.js';
+import type { GatewayMethodCatalog } from '../../control-plane/index.js';
+import { buildOperatorContract } from '../../control-plane/operator-contract.js';
+import { CLIENT_COMPATIBILITY_FLOOR, CLIENT_COMPATIBILITY_FLOOR_HEADER } from '../../control-plane/client-compatibility.js';
+import { openScopedSessionEventStream } from './session-event-stream.js';
+import type { ProviderRegistry } from '../../providers/registry.js';
+import {
+  getProviderRuntimeSnapshot,
+  getProviderUsageSnapshot,
+  listProviderRuntimeSnapshots,
+} from '../../providers/runtime-snapshot.js';
+import type { RouteBindingManager, ChannelPolicyManager, ChannelPluginRegistry, SurfaceRegistry } from '../../channels/index.js';
+import type { WatcherRegistry } from '../../watchers/index.js';
+import type { InboundMailHealthLike } from './channel-route-types.js';
+import type { DistributedPeerAuth, DistributedRuntimeManager } from '../../runtime/remote/index.js';
+import type { HomeGraphService, KnowledgeService, ProjectPlanningService } from '../../knowledge/index.js';
+import { inspectKnowledgeGraphqlAccess, KnowledgeGraphqlService } from '../../knowledge/index.js';
+import type { VoiceService } from '../../voice/index.js';
+import type { WebSearchService } from '../../web-search/index.js';
+import type { ArtifactStore } from '../../artifacts/index.js';
+import type { MediaProviderRegistry } from '../../media/index.js';
+import type { MultimodalService } from '../../multimodal/index.js';
+import type { IntegrationHelperService } from '../../runtime/integration/helpers.js';
+import type { DomainDispatch, RuntimeStore } from '../../runtime/store/index.js';
+import type { RuntimeEventBus } from '../../runtime/events/index.js';
+import type { DaemonBatchManager } from '../../batch/index.js';
+import { emitCompanionMessageReceived } from '../../runtime/emitters/session.js';
+import { correlationCtx } from '../../runtime/correlation.js';
+import { TelemetryApiService } from '../../runtime/telemetry/api.js';
+import { inspectInboundTls, inspectOutboundTls } from '../../runtime/network/index.js';
+import type { MemoryEmbeddingProviderRegistry, MemoryRegistry } from '../../state/index.js';
+import { dispatchDaemonApiRoutes } from '../../control-plane/routes/index.js';
+import { clusterGroupRouteExtension, type ClusterGroupVerbs } from './cluster-group-routes.js';
+import { buildRouterKnowledgeContext } from './router-knowledge-context.js';
+import { handleGitHubAutomationWebhook, handleSlackSurfaceWebhook, handleDiscordSurfaceWebhook, handleNtfySurfaceWebhook, handleGenericWebhookSurface } from '../../adapters/index.js';
+import { createDaemonKnowledgeRouteHandlers } from './knowledge-routes.js';
+import { createDaemonMediaRouteHandlers } from './media-routes.js';
+import {
+  createDaemonRemoteRouteHandlers,
+  handleRemotePairRequest,
+  handleRemotePairVerify,
+  handleRemotePeerHeartbeat,
+  handleRemotePeerWorkPull,
+  handleRemotePeerWorkComplete,
+} from './remote-routes.js';
+import { createDaemonRuntimeRouteHandlers } from './runtime-routes.js';
+import { buildRouterSessionBrokerAdapter } from './router-session-broker-adapter.js';
+import { createDaemonControlRouteHandlers } from './control-routes.js';
+import { createDaemonIntegrationRouteHandlers } from './integration-routes.js';
+import { createDaemonTelemetryRouteHandlers } from './telemetry-routes.js';
+import { createDaemonChannelRouteHandlers } from './channel-routes.js';
+import { createDaemonSystemRouteHandlers } from './system-routes.js';
+import {
+  buildChannelRouteContext,
+  buildKnowledgeRouteContext,
+  buildMediaRouteContext,
+  buildSystemRouteContext,
+} from './router-route-contexts.js';
+import type { GenericWebhookAdapterContext, SurfaceAdapterContext } from '../../adapters/index.js';
+import type { PlatformServiceManager } from '../service-manager.js';
+import type { JsonRecord } from '../helpers.js';
+import { jsonErrorResponse } from './error-response.js';
+import { AppError } from '../../types/errors.js';
+import { VERSION } from '../../version.js';
+import type { CompanionChatManager } from '../../companion/companion-chat-manager.js';
+import { dispatchCompanionChatRoutes } from '../../companion/companion-chat-routes.js';
+import { dispatchModelRoutes } from './model-routes.js';
+import { dispatchBatchRoutes } from './batch-routes.js';
+import { dispatchCloudflareRoutes } from './cloudflare-routes.js';
+import { dispatchMcpRoutes } from './mcp-routes.js';
+import { HomeAssistantConversationRoutes } from './homeassistant-routes.js';
+import { HomeGraphRoutes } from './home-graph-routes.js';
+import { dispatchOpenAICompatibleRoutes } from './openai-compatible-routes.js';
+import { ProjectPlanningRoutes } from './project-planning-routes.js';
+import {
+  parseDaemonJsonBody,
+  parseDaemonJsonText,
+  parseOptionalDaemonJsonBody,
+} from './router-request-body.js';
+import {
+  applyCorsHeaders,
+  handleCorsPreflight,
+  resolveWebuiServingPosture,
+  serveWebuiBundle,
+} from './webui-serving.js';
+
+interface DaemonHttpRouterContext {
+  readonly configManager: ConfigManager;
+  readonly serviceRegistry: ServiceRegistry;
+  readonly userAuth: UserAuthManager;
+  readonly agentManager: AgentManager;
+  readonly automationManager: AutomationManager;
+  readonly approvalBroker: ApprovalBroker;
+  readonly controlPlaneGateway: ControlPlaneGateway;
+  readonly gatewayMethods: GatewayMethodCatalog;
+  readonly providerRegistry: ProviderRegistry;
+  readonly sessionBroker: SharedSessionBroker;
+  readonly routeBindings: RouteBindingManager;
+  readonly channelPolicy: ChannelPolicyManager;
+  readonly channelPlugins: ChannelPluginRegistry;
+  readonly surfaceRegistry: SurfaceRegistry;
+  /** Inbound mail's health. Absent means no mailbox, NOT a healthy one. */
+  readonly inboundMailHealth?: (() => InboundMailHealthLike | null) | undefined;
+  readonly distributedRuntime: DistributedRuntimeManager;
+  readonly watcherRegistry: WatcherRegistry;
+  readonly voiceService: VoiceService;
+  readonly webSearchService: WebSearchService;
+  readonly mcpRegistry: import('../../mcp/registry.js').McpRegistry;
+  readonly mcpConfigRoots: import('../../mcp/config.js').McpConfigRoots;
+  readonly knowledgeService: KnowledgeService;
+  readonly agentKnowledgeService: KnowledgeService;
+  readonly homeGraphService: HomeGraphService;
+  readonly projectPlanningService: ProjectPlanningService;
+  readonly knowledgeGraphqlService: KnowledgeGraphqlService;
+  readonly mediaProviders: MediaProviderRegistry;
+  readonly multimodalService: MultimodalService;
+  readonly artifactStore: ArtifactStore;
+  readonly memoryRegistry: MemoryRegistry;
+  /** Consolidation receipts + pending proposals for the memory.consolidation.receipts route. */
+  readonly memoryConsolidation?: { listReceipts(): readonly unknown[] } | null | undefined;
+  readonly memoryEmbeddingRegistry: MemoryEmbeddingProviderRegistry;
+  readonly platformServiceManager: PlatformServiceManager;
+  readonly integrationHelpers: IntegrationHelperService | null;
+  readonly runtimeBus: RuntimeEventBus;
+  readonly runtimeStore: RuntimeStore | null;
+  readonly runtimeDispatch: DomainDispatch | null;
+  readonly batchManager?: DaemonBatchManager | null | undefined;
+  readonly githubWebhookSecret: string | null;
+  readonly authToken: () => string | null;
+  readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
+  readonly buildGenericWebhookAdapterContext: () => GenericWebhookAdapterContext;
+  readonly checkAuth: (req: Request) => boolean;
+  readonly extractAuthToken: (req: Request) => string;
+  readonly requireAuthenticatedSession: (req: Request) => { username: string; roles: readonly string[] } | null;
+  readonly requireAdmin: (req: Request) => Response | null;
+  readonly requireRemotePeer: (req: Request, scope?: string) => Promise<DistributedPeerAuth | Response>;
+  readonly describeAuthenticatedPrincipal: (token: string) => {
+    principalId: string;
+    principalKind: 'user' | 'bot' | 'service' | 'token';
+    admin: boolean;
+    scopes: readonly string[];
+  } | null;
+  readonly invokeGatewayMethodCall: (input: {
+    readonly authToken: string;
+    readonly methodId: string;
+    readonly query?: Record<string, unknown> | undefined;
+    readonly body?: unknown | undefined;
+    readonly context?: {
+      readonly principalId?: string | undefined;
+      readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | 'remote-peer' | undefined;
+      readonly admin?: boolean | undefined;
+      readonly scopes?: readonly string[] | undefined;
+      readonly clientKind?: string | undefined;
+    };
+  }) => Promise<{ status: number; ok: boolean; body: unknown }>;
+  readonly queueSurfaceReplyFromBinding: (
+    binding: import('../../automation/routes.js').AutomationRouteBinding | undefined,
+    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly workflowChainId?: string; readonly sessionId?: string },
+  ) => void;
+  /** A surface that ran the turn in its own process reports the answer; see DaemonSurfaceDeliveryHelper. */
+  readonly completeSurfaceReplyFromSurface: (input: { readonly agentId: string; readonly sessionId?: string | undefined; readonly body: string; readonly status?: 'completed' | 'failed' | 'cancelled' | undefined }) => Promise<boolean>;
+  readonly surfaceDeliveryEnabled: (
+    surface: 'slack' | 'discord' | 'ntfy' | 'webhook' | 'homeassistant' | 'telegram' | 'google-chat' | 'signal' | 'whatsapp' | 'telephony' | 'imessage' | 'msteams' | 'bluebubbles' | 'mattermost' | 'matrix',
+  ) => boolean;
+  readonly syncSpawnedAgentTask: (record: import('../../tools/agent/index.js').AgentRecord, sessionId?: string) => void;
+  readonly syncFinishedAgentTask: (record: import('../../tools/agent/index.js').AgentRecord) => void;
+  /**
+   * WorkspaceSwapManager instance for delegating POST /config runtime.workingDir
+   * requests. Null in embedded/test contexts that don't support live workspace swaps.
+   */
+  readonly swapManager: import('./system-route-types.js').WorkspaceSwapManagerLike | null;
+  /**
+   * Optional companion chat manager. When present, companion chat routes
+   * (/api/companion/chat/...) are enabled. Injected by the daemon facade
+   * when the companion feature is active.
+   */
+  readonly companionChatManager?: CompanionChatManager | null | undefined;
+  /** Resolve the current provider/model for companion-chat session creation. */
+  readonly resolveDefaultProviderModel?: (() => { provider: string; model: string } | null) | undefined;
+  /**
+   * SecretsManager instance used to resolve provider API keys stored as secrets
+   * rather than env vars. Threaded into ModelRouteContext so that
+   * resolveSecretKeys() can return the correct configuredVia='secrets' tier.
+   * Without this, the production router always passes undefined and the secrets
+   * tier is permanently dead on live code paths.
+   */
+  readonly secretsManager?: Pick<import('../../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome' | 'list' | 'listDetailed'> | null | undefined;
+  readonly trySpawnAgent: (
+    input: Parameters<AgentManager['spawn']>[0],
+    logLabel?: string,
+    sessionId?: string,
+  ) => import('../../tools/agent/index.js').AgentRecord | Response;
+}
+
+export class DaemonHttpRouter {
+  private readonly telemetryApi: TelemetryApiService | null;
+  private homeAssistantRoutes: HomeAssistantConversationRoutes | null = null;
+  private homeGraphRoutes: HomeGraphRoutes | null = null;
+  private projectPlanningRoutes: ProjectPlanningRoutes | null = null;
+  /** Supplied by the daemon facade after construction; these feed /status. */
+  private statusProviders: import('./router-route-contexts.js').DaemonStatusProviders = {};
+  private clusterGroupVerbs: ClusterGroupVerbs | null = null;
+
+  /** Wire receipts (update/crash announcements) and the cluster role into /status. */
+  setDaemonStatusProviders(providers: import('./router-route-contexts.js').DaemonStatusProviders): void {
+    this.statusProviders = { ...this.statusProviders, ...providers };
+  }
+
+  /** Wire the LAN group verbs (`/api/cluster/*`), see cluster-group-routes.ts. */
+  setClusterGroupVerbs(verbs: ClusterGroupVerbs): void { this.clusterGroupVerbs = verbs; }
+
+  constructor(private readonly context: DaemonHttpRouterContext) {
+    this.telemetryApi = context.runtimeStore
+      ? new TelemetryApiService({
+        runtimeBus: context.runtimeBus,
+        runtimeStore: context.runtimeStore,
+      })
+      : null;
+  }
+
+  dispose(): void {
+    this.telemetryApi?.dispose();
+    this.context.batchManager?.dispose();
+  }
+
+  private getConfigValue(key: string): unknown {
+    const getter = (this.context.configManager as { readonly get?: unknown }).get;
+    return typeof getter === 'function' ? getter.call(this.context.configManager, key) : undefined;
+  }
+
+  async handleRequest(req: Request): Promise<Response> {
+    return correlationCtx.run(
+      { requestId: req.headers.get('x-request-id') ?? crypto.randomUUID() },
+      async () => {
+        // Opt-in cross-origin + bundle-serving posture (both default off → no CORS,
+        // no bundle, daemon behaves exactly as before). CORS preflight is answered
+        // pre-auth (a browser OPTIONS carries no credentials; only allowlisted
+        // origins are granted, never a wildcard).
+        const serving = resolveWebuiServingPosture(this.context.configManager, this.context.gatewayMethods);
+        if (serving.cors.enabled && req.method === 'OPTIONS') {
+          return applyCorsHeaders(req, handleCorsPreflight(req, serving), serving);
+        }
+        // Same-origin bundle serving is pre-auth: the built app is public and
+        // token-authenticates its own API calls; reserved API paths return null
+        // here (API precedence) and flow to the normal auth-gated dispatch below.
+        const asset = serving.serveBundle ? await serveWebuiBundle(req, serving) : null;
+        const response = asset ?? await this.dispatchAuthedRequest(req);
+        return serving.cors.enabled ? applyCorsHeaders(req, response, serving) : response;
+      },
+    );
+  }
+
+  private async dispatchAuthedRequest(req: Request): Promise<Response> {
+    // Pre-auth routes: no auth check (login, remote-peer handshake, webhooks, control-plane web UI).
+    const preAuth = await this.dispatchPreAuthRoutes(req);
+    if (preAuth) return preAuth;
+
+    if (!this.context.checkAuth(req)) {
+      return jsonErrorResponse(
+        new AppError('Authentication required', 'AUTH_REQUIRED', false, {
+          category: 'authentication',
+          source: 'runtime',
+          guidance: 'Authenticate with the operator shared token or an authenticated user session before calling daemon APIs.',
+        }),
+        { status: 401 },
+      );
+    }
+
+    const apiResponse = await this.dispatchApiRoutes(req);
+    if (apiResponse) return apiResponse;
+    const url = new URL(req.url);
+    return jsonErrorResponse(
+      new AppError(`Route not found: ${url.pathname}`, 'NOT_FOUND', false, {
+        category: 'not_found',
+        source: 'runtime',
+        guidance: 'Check the daemon API path and version. New SDK-facing routes are published under /api/v1.',
+      }),
+      { status: 404 },
+    );
+  }
+
+  /**
+   * Dispatches routes that are exempt from the auth gate: login, remote-peer
+   * handshake, webhooks, and the control-plane web UI. Extracted from
+   * handleRequest to eliminate the 8-entry inline if-chain (m2/m3).
+   */
+  private async dispatchPreAuthRoutes(req: Request): Promise<Response | null> {
+    const url = new URL(req.url);
+
+    if (url.pathname === '/login' && req.method === 'POST') {
+      return this.handleLogin(req);
+    }
+
+    if (url.pathname === '/api/remote/pair/request' && req.method === 'POST') {
+      return handleRemotePairRequest({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        distributedRuntime: this.context.distributedRuntime,
+      }, req);
+    }
+    if (url.pathname === '/api/remote/pair/verify' && req.method === 'POST') {
+      return handleRemotePairVerify({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        distributedRuntime: this.context.distributedRuntime,
+      }, req);
+    }
+    if (url.pathname === '/api/remote/heartbeat' && req.method === 'POST') {
+      return handleRemotePeerHeartbeat({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        requireRemotePeer: (request, scope) => this.context.requireRemotePeer(request, scope),
+        distributedRuntime: this.context.distributedRuntime,
+      }, req);
+    }
+    if (url.pathname === '/api/remote/work/pull' && req.method === 'POST') {
+      return handleRemotePeerWorkPull({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        requireRemotePeer: (request, scope) => this.context.requireRemotePeer(request, scope),
+        distributedRuntime: this.context.distributedRuntime,
+      }, req);
+    }
+    const remoteWorkCompleteMatch = url.pathname.match(/^\/api\/remote\/work\/([^/]+)\/complete$/);
+    if (remoteWorkCompleteMatch && req.method === 'POST') {
+      return handleRemotePeerWorkComplete({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        requireRemotePeer: (request, scope) => this.context.requireRemotePeer(request, scope),
+        distributedRuntime: this.context.distributedRuntime,
+      }, remoteWorkCompleteMatch[1]!, req);
+    }
+
+    if (url.pathname === '/webhook/github' && req.method === 'POST') {
+      return this.handleGitHubWebhook(req);
+    }
+    if (url.pathname.startsWith('/webhook/')) {
+      const pluginResponse = await this.context.channelPlugins.handleInbound(url.pathname, req);
+      if (pluginResponse) return pluginResponse;
+    }
+
+    if (url.pathname === '/api/control-plane/web' && req.method === 'GET') {
+      return this.context.controlPlaneGateway.renderWebUi();
+    }
+    if (url.pathname === '/api/control-plane/auth' && req.method === 'GET') {
+      const apiResponse = await this.dispatchApiRoutes(req);
+      if (apiResponse) return apiResponse;
+    }
+
+    return null;
+  }
+
+  async dispatchApiRoutes(req: Request): Promise<Response | null> {
+    const url = new URL(req.url);
+    const openAICompatibleEnabled = this.getConfigValue('controlPlane.openaiCompatible.enabled') !== false;
+    if (openAICompatibleEnabled) {
+      const pathPrefix = this.getConfigValue('controlPlane.openaiCompatible.pathPrefix');
+      const response = await dispatchOpenAICompatibleRoutes(req, {
+        providerRegistry: this.context.providerRegistry,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        recordApiResponse: (request, path, routeResponse) => this.recordApiResponse(request, path, routeResponse),
+      }, typeof pathPrefix === 'string' && pathPrefix.trim() ? pathPrefix : '/v1');
+      if (response) return response;
+    }
+
+    if (url.pathname.startsWith('/api/batch')) {
+      if (!this.context.batchManager) {
+        return Response.json({ error: 'Batch manager is not available', code: 'BATCH_MANAGER_UNAVAILABLE' }, { status: 503 });
+      }
+      const batchResponse = await dispatchBatchRoutes(req, {
+        batchManager: this.context.batchManager,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request: Request) => this.parseOptionalJsonBody(request),
+      });
+      if (batchResponse) return batchResponse;
+    }
+
+    if (url.pathname.startsWith('/api/cloudflare')) {
+      const adminError = this.context.requireAdmin(req);
+      if (adminError) return adminError;
+      const cloudflareResponse = await dispatchCloudflareRoutes(req, {
+        configManager: this.context.configManager,
+        secretsManager: this.context.secretsManager,
+        authToken: this.context.authToken,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request: Request) => this.parseOptionalJsonBody(request),
+      });
+      if (cloudflareResponse) return cloudflareResponse;
+    }
+
+    if (url.pathname.startsWith('/api/mcp')) {
+      const mcpResponse = await dispatchMcpRoutes(req, {
+        mcpRegistry: this.context.mcpRegistry,
+        roots: this.context.mcpConfigRoots,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request: Request) => this.parseOptionalJsonBody(request),
+        requireAdmin: (request) => this.context.requireAdmin(request),
+      });
+      if (mcpResponse) return mcpResponse;
+    }
+
+    if (url.pathname.startsWith('/api/homeassistant')) {
+      const homeGraphResponse = await this.getHomeGraphRoutes().handle(req);
+      if (homeGraphResponse) return homeGraphResponse;
+      const homeAssistantResponse = await this.getHomeAssistantRoutes().handle(req);
+      if (homeAssistantResponse) return homeAssistantResponse;
+    }
+
+    if (url.pathname.startsWith('/api/projects/planning')) {
+      const projectPlanningResponse = await this.getProjectPlanningRoutes().handle(req);
+      if (projectPlanningResponse) return projectPlanningResponse;
+    }
+
+    // Companion chat routes, scoped to /api/companion/chat/..., session-isolated.
+    // Handled before the main API router so they never touch the global control-plane feed.
+    // Model catalog + model-switching routes. Provider runtime metadata is owned
+    // by the operator contract under /api/providers.
+    if (url.pathname === '/api/models' || url.pathname.startsWith('/api/models/')) {
+      const providerResponse = await dispatchModelRoutes(req, {
+        providerRegistry: this.context.providerRegistry,
+        configManager: this.context.configManager,
+        runtimeBus: this.context.runtimeBus,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        secretsManager: this.context.secretsManager,
+      });
+      if (providerResponse) return providerResponse;
+    }
+
+    if (this.context.companionChatManager && req.url.includes('/api/companion/chat/')) {
+      const gateway = this.context.controlPlaneGateway;
+      const chatManager = this.context.companionChatManager;
+      const companionResponse = await dispatchCompanionChatRoutes(req, {
+        chatManager,
+        parseJsonBody: (request: Request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request: Request) => this.parseOptionalJsonBody(request),
+        resolveDefaultProviderModel: this.context.resolveDefaultProviderModel,
+        openSessionEventStream: (request: Request, sessionId: string) => {
+          chatManager.registerSubscriber(sessionId, `companion-chat:${sessionId}`);
+          return openScopedSessionEventStream(gateway, request, { clientPrefix: 'companion-chat', sessionId });
+        },
+      });
+      if (companionResponse) return companionResponse;
+    }
+
+    const handlers = {
+      ...createDaemonControlRouteHandlers({
+        authToken: this.context.authToken(),
+        version: VERSION,
+        ...this.statusProviders,
+        // Read by every client on the probe it already makes: below this
+        // build it stops taking shared-session work and asks to be restarted.
+        clientCompatibilityFloor: CLIENT_COMPATIBILITY_FLOOR,
+        clientCompatibilityFloorHeader: CLIENT_COMPATIBILITY_FLOOR_HEADER,
+        sessionCookieName: OPERATOR_SESSION_COOKIE_NAME,
+        controlPlaneGateway: this.context.controlPlaneGateway,
+        extractAuthToken: this.context.extractAuthToken,
+        resolveAuthenticatedPrincipal: (request) => {
+          const token = this.context.extractAuthToken(request);
+          return token ? this.context.describeAuthenticatedPrincipal(token) : null;
+        },
+        gatewayMethods: this.context.gatewayMethods,
+        getOperatorContract: () => buildOperatorContract(this.context.gatewayMethods),
+        invokeGatewayMethodCall: this.context.invokeGatewayMethodCall,
+        parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+        requireAdmin: this.context.requireAdmin,
+        requireAuthenticatedSession: this.context.requireAuthenticatedSession,
+      }),
+      postLogin: (request: Request) => this.handleLogin(request),
+      ...createDaemonIntegrationRouteHandlers({
+        channelPlugins: this.context.channelPlugins,
+        integrationHelpers: this.context.integrationHelpers,
+        memoryEmbeddingRegistry: this.context.memoryEmbeddingRegistry,
+        memoryRegistry: this.context.memoryRegistry,
+        memoryConsolidation: this.context.memoryConsolidation ?? null,
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        providerRuntime: {
+          listSnapshots: () => listProviderRuntimeSnapshots(this.context.providerRegistry),
+          getSnapshot: (providerId) => getProviderRuntimeSnapshot(this.context.providerRegistry, providerId),
+          getUsageSnapshot: (providerId) => getProviderUsageSnapshot(this.context.providerRegistry, providerId),
+        },
+        requireAdmin: (request) => this.context.requireAdmin(request),
+        userAuth: this.context.userAuth,
+      }),
+      ...createDaemonTelemetryRouteHandlers({
+        telemetryApi: this.telemetryApi,
+        resolveAuthenticatedPrincipal: (request) => {
+          const token = this.context.extractAuthToken(request);
+          return token ? this.context.describeAuthenticatedPrincipal(token) : null;
+        },
+        ingestSink: this.telemetryApi,
+      }),
+      ...createDaemonChannelRouteHandlers({
+        ...buildChannelRouteContext({
+          channelPlugins: this.context.channelPlugins,
+          channelPolicy: this.context.channelPolicy,
+          parseJsonBody: (request) => this.parseJsonBody(request),
+          parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+          requireAdmin: (request) => this.context.requireAdmin(request),
+          surfaceRegistry: this.context.surfaceRegistry,
+          // The call that was missing. `inboundMailHealth()` had no callers
+          // repo-wide, so a watched mailbox reported its state to nothing.
+          ...(this.context.inboundMailHealth === undefined
+            ? {}
+            : { inboundMailHealth: this.context.inboundMailHealth }),
+        }),
+      }),
+      ...createDaemonSystemRouteHandlers({
+        ...buildSystemRouteContext({
+          approvalBroker: this.context.approvalBroker,
+          configManager: this.context.configManager,
+          credentialStatus: this.context.secretsManager
+            ? createCredentialStatusProvider(this.context.secretsManager)
+            : null,
+          integrationHelpers: this.context.integrationHelpers,
+          inspectInboundTls: (surface) => inspectInboundTls(this.context.configManager, surface),
+          inspectOutboundTls: () => inspectOutboundTls(this.context.configManager),
+          isValidConfigKey,
+          parseJsonBody: (request) => this.parseJsonBody(request),
+          parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+          platformServiceManager: this.context.platformServiceManager,
+          recordApiResponse: (request, path, response, clientKind) => this.recordApiResponse(request, path, response, clientKind),
+          requireAdmin: (request) => this.context.requireAdmin(request),
+          requireAuthenticatedSession: (request) => this.context.requireAuthenticatedSession(request),
+          routeBindings: this.context.routeBindings,
+          swapManager: this.context.swapManager,
+          watcherRegistry: this.context.watcherRegistry,
+        }),
+      }),
+      ...createDaemonRuntimeRouteHandlers({
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+        recordApiResponse: (request, path, response) => this.recordApiResponse(request, path, response),
+        requireAdmin: (request) => this.context.requireAdmin(request),
+        sessionBroker: buildRouterSessionBrokerAdapter(this.context.sessionBroker),
+        agentManager: { getStatus: (agentId) => this.context.agentManager.getStatus(agentId), cancel: (agentId) => this.context.agentManager.cancel(agentId) },
+        // SDK-owned empty-state copy, served while automation is enabled with zero routines (see feature-announcements).
+        automationEmptyState: () => buildAutomationEmptyState({ enabled: this.getConfigValue('automation.enabled') === true, routineCount: this.context.automationManager.listJobs().length }),
+        automationManager: {
+          listJobs: () => this.context.automationManager.listJobs(),
+          listRuns: () => this.context.automationManager.listRuns(),
+          getRun: (runId) => this.context.automationManager.getRun(runId) ?? null,
+          triggerHeartbeat: (input) => this.context.automationManager.triggerHeartbeat(input),
+          cancelRun: (runId, reason) => this.context.automationManager.cancelRun(runId, reason),
+          retryRun: (runId) => this.context.automationManager.retryRun(runId),
+          createJob: (input: CreateAutomationJobInput) => this.context.automationManager.createJob(input),
+          updateJob: (jobId, input: UpdateAutomationJobInput) => this.context.automationManager.updateJob(jobId, input),
+          removeJob: async (jobId) => {
+            await this.context.automationManager.removeJob(jobId);
+          },
+          setEnabled: (jobId, enabled) => this.context.automationManager.setEnabled(jobId, enabled),
+          runNow: (jobId) => this.context.automationManager.runNow(jobId) as never,
+          getSchedulerCapacity: () => this.context.automationManager.getSchedulerCapacity(),
+        },
+        normalizeAtSchedule,
+        normalizeEverySchedule,
+        normalizeCronSchedule,
+        routeBindings: {
+          start: () => this.context.routeBindings.start(),
+          getBinding: (id) => this.context.routeBindings.getBinding(id),
+        },
+        trySpawnAgent: (input, logLabel, sessionId) => {
+          const { tools, ...spawnInput } = input;
+          return this.context.trySpawnAgent({
+            ...spawnInput,
+            ...(tools ? { tools: [...tools] } : {}),
+          }, logLabel, sessionId);
+        },
+        queueSurfaceReplyFromBinding: (binding, input) => this.context.queueSurfaceReplyFromBinding(
+          binding as Parameters<typeof this.context.queueSurfaceReplyFromBinding>[0],
+          input,
+        ),
+        completeSurfaceReplyFromSurface: (input) => this.context.completeSurfaceReplyFromSurface(input),
+        surfaceDeliveryEnabled: (surface) => this.context.surfaceDeliveryEnabled(surface),
+        syncSpawnedAgentTask: (record, sessionId) => this.context.syncSpawnedAgentTask(
+          record as Parameters<typeof this.context.syncSpawnedAgentTask>[0],
+          sessionId,
+        ),
+        syncFinishedAgentTask: (record) => this.context.syncFinishedAgentTask(
+          record as Parameters<typeof this.context.syncFinishedAgentTask>[0],
+        ),
+        configManager: this.context.configManager,
+        runtimeStore: this.context.runtimeStore,
+        runtimeDispatch: this.context.runtimeDispatch,
+        publishConversationFollowup: (sessionId, envelope) => {
+          // Scope the event to TUI-kind clients only: non-TUI clients (web, companion
+          // app, etc.) must not receive raw operator conversation follow-ups. Using
+          // clientKind:'tui' ensures only the TUI surface receives this event.
+          this.context.controlPlaneGateway.publishEvent(
+            'conversation.followup.companion',
+            { sessionId, ...envelope },
+            { clientKind: 'tui' },
+          );
+          // Also emit on the runtime bus so the in-process TUI surface can
+          // subscribe and render the companion message in the conversation view.
+          emitCompanionMessageReceived(
+            this.context.runtimeBus,
+            { sessionId, traceId: `companion:${envelope.messageId}`, source: 'companion-followup' },
+            { sessionId, ...envelope },
+          );
+        },
+        // `GET /api/sessions/:id/events`, see http/session-event-stream.ts.
+        openSessionEventStream: (req, sessionId) => openScopedSessionEventStream(
+          this.context.controlPlaneGateway,
+          req,
+          { clientPrefix: 'shared-session', sessionId },
+        ),
+      }),
+      ...createDaemonRemoteRouteHandlers({
+        authToken: this.context.authToken(),
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        requireAdmin: (request) => this.context.requireAdmin(request),
+        requireRemotePeer: (request, scope) => this.context.requireRemotePeer(request, scope),
+        requireAuthenticatedSession: (request) => this.context.requireAuthenticatedSession(request),
+        distributedRuntime: this.context.distributedRuntime,
+      }),
+      ...createDaemonKnowledgeRouteHandlers(
+        this.knowledgeRouteContext(this.context.knowledgeService, this.context.knowledgeGraphqlService),
+      ),
+      ...createDaemonMediaRouteHandlers({
+        ...buildMediaRouteContext({
+          artifactStore: this.context.artifactStore,
+          configManager: this.context.configManager,
+          mediaProviders: this.context.mediaProviders,
+          multimodalService: this.context.multimodalService,
+          parseJsonBody: (request) => this.parseJsonBody(request),
+          requireAdmin: (request) => this.context.requireAdmin(request),
+          voiceService: this.context.voiceService,
+          webSearchService: this.context.webSearchService,
+        }),
+      }),
+    };
+    const agentKnowledgeHandlers = {
+      ...handlers,
+      ...createDaemonKnowledgeRouteHandlers(this.knowledgeRouteContext(
+        this.context.agentKnowledgeService,
+        new KnowledgeGraphqlService(this.context.agentKnowledgeService),
+      )),
+    };
+    return dispatchDaemonApiRoutes(req, handlers, [
+      (candidate) => dispatchAliasedKnowledgeRoutes(candidate, '/api/goodvibes-agent/knowledge', agentKnowledgeHandlers),
+      clusterGroupRouteExtension(() => this.clusterGroupVerbs, {
+        requireAdmin: (candidate) => this.context.requireAdmin(candidate),
+        parseJsonBody: (candidate) => this.parseJsonBody(candidate),
+      }),
+    ]);
+  }
+
+  /** Knowledge route context for one surface, see router-knowledge-context.ts. */
+  private knowledgeRouteContext(
+    knowledgeService: Parameters<typeof buildRouterKnowledgeContext>[2],
+    knowledgeGraphqlService: Parameters<typeof buildRouterKnowledgeContext>[3],
+  ): ReturnType<typeof buildRouterKnowledgeContext> {
+    return buildRouterKnowledgeContext(this.context, {
+      parseJsonBody: (request) => this.parseJsonBody(request),
+      parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+      parseJsonText: (raw) => this.parseJsonText(raw),
+    }, knowledgeService, knowledgeGraphqlService);
+  }
+
+  private getHomeAssistantRoutes(): HomeAssistantConversationRoutes {
+    if (!this.homeAssistantRoutes) {
+      const chatManager = this.context.companionChatManager;
+      if (!chatManager) {
+        throw new Error('Home Assistant remote chat manager is unavailable.');
+      }
+      this.homeAssistantRoutes = new HomeAssistantConversationRoutes({
+        configManager: this.context.configManager,
+        routeBindings: this.context.routeBindings,
+        chatManager,
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        resolveDefaultProviderModel: this.context.resolveDefaultProviderModel,
+        homeGraph: this.context.homeGraphService,
+      });
+    }
+    return this.homeAssistantRoutes;
+  }
+
+  private getHomeGraphRoutes(): HomeGraphRoutes {
+    if (!this.homeGraphRoutes) {
+      this.homeGraphRoutes = new HomeGraphRoutes({
+        artifactStore: this.context.artifactStore,
+        homeGraphService: this.context.homeGraphService,
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+        requireAdmin: (request) => this.context.requireAdmin(request),
+      });
+    }
+    return this.homeGraphRoutes;
+  }
+
+  private getProjectPlanningRoutes(): ProjectPlanningRoutes {
+    if (!this.projectPlanningRoutes) {
+      this.projectPlanningRoutes = new ProjectPlanningRoutes({
+        projectPlanningService: this.context.projectPlanningService,
+        parseJsonBody: (request) => this.parseJsonBody(request),
+        parseOptionalJsonBody: (request) => this.parseOptionalJsonBody(request),
+        requireAdmin: (request) => this.context.requireAdmin(request),
+      });
+    }
+    return this.projectPlanningRoutes;
+  }
+
+  async parseJsonBody(req: Request): Promise<JsonRecord | Response> {
+    return parseDaemonJsonBody(req);
+  }
+
+  async parseOptionalJsonBody(req: Request): Promise<JsonRecord | null | Response> {
+    return parseOptionalDaemonJsonBody(req);
+  }
+
+  parseJsonText(rawBody: string): JsonRecord | Response {
+    return parseDaemonJsonText(rawBody);
+  }
+
+  recordApiResponse(
+    req: Request,
+    path: string,
+    response: Response,
+    clientKind:
+      | 'web'
+      | 'slack'
+      | 'discord'
+      | 'ntfy'
+      | 'webhook'
+      | 'homeassistant'
+      | 'telegram'
+      | 'google-chat'
+      | 'signal'
+      | 'whatsapp'
+      | 'telephony'
+      | 'imessage'
+      | 'msteams'
+      | 'bluebubbles'
+      | 'mattermost'
+      | 'matrix'
+      | 'daemon' = 'web',
+  ): Response {
+    this.context.controlPlaneGateway.recordApiRequest({
+      method: req.method,
+      path,
+      status: response.status,
+      clientKind,
+      ...(response.status >= 400 ? { error: `${req.method} ${path} -> ${response.status}` } : {}),
+    });
+    return response;
+  }
+
+  private async handleLogin(req: Request): Promise<Response> {
+    const body = await this.parseJsonBody(req);
+    if (body instanceof Response) return body;
+
+    const username = typeof body.username === 'string' ? body.username : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const authResult = this.context.userAuth.authenticate(username, password);
+
+    if (!authResult.ok) {
+      if (authResult.lockedUntilMs) {
+        const retryAfterSeconds = Math.ceil((authResult.lockedUntilMs - Date.now()) / 1_000);
+        return Response.json(
+          { error: 'Too many requests' },
+          { status: 429, headers: { 'Retry-After': String(Math.max(1, retryAfterSeconds)) } },
+        );
+      }
+      return Response.json({ error: 'Invalid credentials' }, { status: 401 });
+    }
+
+    const { user } = authResult;
+    const session = this.context.userAuth.createSession(user.username);
+
+    // Auto-retire the bootstrap credential file ONLY after the first
+    // NON-bootstrap login (mirrors http-listener.ts handleLogin behaviour).
+    if (!authResult.usedBootstrapCredential && this.context.userAuth.inspect().bootstrapCredentialPresent) {
+      this.context.userAuth.clearBootstrapCredentialFile();
+    }
+
+    return Response.json({
+      authenticated: true,
+      token: session.token,
+      username: session.username,
+      expiresAt: session.expiresAt,
+    }, {
+      headers: {
+        'Set-Cookie': buildOperatorSessionCookie(session.token, {
+          req,
+          expiresAt: session.expiresAt,
+          trustProxy: Boolean(this.context.configManager.get('controlPlane.trustProxy')),
+        }),
+      },
+    });
+  }
+
+  private async handleGitHubWebhook(req: Request): Promise<Response> {
+    return handleGitHubAutomationWebhook(req, {
+      serviceRegistry: this.context.serviceRegistry,
+      githubWebhookSecret: this.context.githubWebhookSecret,
+      trySpawnAgent: (input, logLabel, sessionId) => this.context.trySpawnAgent(input, logLabel, sessionId),
+    });
+  }
+
+  async handleSlackWebhook(req: Request): Promise<Response> {
+    return handleSlackSurfaceWebhook(req, this.context.buildSurfaceAdapterContext());
+  }
+
+  async handleDiscordWebhook(req: Request): Promise<Response> {
+    return handleDiscordSurfaceWebhook(req, this.context.buildSurfaceAdapterContext());
+  }
+
+  async handleNtfyWebhook(req: Request): Promise<Response> {
+    return handleNtfySurfaceWebhook(req, this.context.buildSurfaceAdapterContext());
+  }
+
+  async handleGenericWebhook(req: Request): Promise<Response> {
+    return handleGenericWebhookSurface(req, this.context.buildGenericWebhookAdapterContext());
+  }
+}
+
+function dispatchAliasedKnowledgeRoutes(
+  req: Request,
+  aliasPrefix: string,
+  handlers: Parameters<typeof dispatchDaemonApiRoutes>[1],
+): Promise<Response | null> | Response | null {
+  const url = new URL(req.url);
+  if (!url.pathname.startsWith(aliasPrefix)) return null;
+  const suffix = url.pathname.slice(aliasPrefix.length);
+  url.pathname = `/api/knowledge${suffix}`;
+  return dispatchDaemonApiRoutes(new Request(url.toString(), req), handlers);
+}

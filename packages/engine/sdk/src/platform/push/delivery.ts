@@ -1,0 +1,201 @@
+/**
+ * push/delivery.ts
+ *
+ * The single place a push message is actually encrypted and sent. Every send,
+ * a `push.subscriptions.verify` test, or an approval/completion fan-out, flows
+ * through `deliverToSubscription`, so the honesty rules live in one spot:
+ *
+ *  - A push service that answers 404/410 means the browser subscription is gone;
+ *    the record is pruned and the receipt says `pruned`, never a fake success.
+ *  - Any other non-2xx (or a transport error) is reported as `failed` with the
+ *    status/reason, never swallowed into a success.
+ *  - The request carries the RFC 8188 `Content-Encoding: aes128gcm` body plus
+ *    the `TTL`, `Urgency`, and VAPID `Authorization` headers a push service
+ *    requires.
+ *
+ * The endpoint is whatever the browser registered. In tests that is a local
+ * HTTP sink; in production it is the browser vendor's push service. This module
+ * never contacts a hard-coded external service of its own.
+ */
+
+import { encryptPushPayload } from './encryption.js';
+import type { VapidManager } from './vapid.js';
+import type { PushSubscriptionStore } from './subscription-store.js';
+import type {
+  PushDeliveryReceipt,
+  PushMessage,
+  StoredPushSubscription,
+} from './types.js';
+
+/** The `fetch` slice used to POST an encrypted payload. Injectable for tests. */
+export type PushTransport = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: Buffer },
+) => Promise<{ status: number }>;
+
+const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
+const GONE_STATUSES = new Set([404, 410]);
+/**
+ * Bounded retries before a dead endpoint that never answers 404/410 is pruned.
+ * A push service that keeps returning 5xx/timeouts is treated as gone once the
+ * consecutive-failure counter crosses this bound, reported as an honest `pruned`
+ * receipt rather than an endless string of `failed`s.
+ */
+export const DELIVERY_FAILURE_PRUNE_THRESHOLD = 5;
+
+function defaultTransport(): PushTransport {
+  return async (url, init) => {
+    // Re-wrap over a plain ArrayBuffer so the body matches fetch's BodyInit.
+    const res = await fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: new Uint8Array(init.body),
+    });
+    return { status: res.status };
+  };
+}
+
+function endpointOrigin(endpoint: string): string {
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return 'invalid';
+  }
+}
+
+function messagePlaintext(message: PushMessage): Buffer {
+  return Buffer.from(
+    JSON.stringify({ title: message.title, body: message.body, data: message.data ?? {} }),
+    'utf8',
+  );
+}
+
+export interface DeliveryDeps {
+  readonly vapid: VapidManager;
+  readonly store: PushSubscriptionStore;
+  readonly transport?: PushTransport | undefined;
+  /**
+   * Consecutive refused deliveries after which the endpoint is treated as dead.
+   * Absent ⇒ {@link DELIVERY_FAILURE_PRUNE_THRESHOLD}. The composition root
+   * wires it to `push.subscriptions.failureThreshold`, the same key the
+   * subscription sweep reads, so delivery and housekeeping cannot disagree
+   * about when a push service has proved an endpoint gone.
+   */
+  readonly failureThreshold?: number | undefined;
+}
+
+/** The effective bound: the configured value when sane, else the module default. */
+function failureBound(deps: DeliveryDeps): number {
+  const configured = deps.failureThreshold;
+  return typeof configured === 'number' && Number.isFinite(configured) && configured >= 1
+    ? Math.floor(configured)
+    : DELIVERY_FAILURE_PRUNE_THRESHOLD;
+}
+
+/**
+ * Encrypt and send one message to one subscription, prune-on-gone, and return
+ * an honest receipt. The subscription's `lastOutcome` is stamped either way.
+ */
+export async function deliverToSubscription(
+  subscription: StoredPushSubscription,
+  message: PushMessage,
+  deps: DeliveryDeps,
+): Promise<PushDeliveryReceipt> {
+  const origin = endpointOrigin(subscription.endpoint);
+  const transport = deps.transport ?? defaultTransport();
+
+  let httpStatus: number;
+  try {
+    const encrypted = encryptPushPayload(subscription.keys, messagePlaintext(message));
+    const authorization = await deps.vapid.buildAuthorizationHeader(subscription.endpoint);
+    const headers: Record<string, string> = {
+      'content-encoding': encrypted.contentEncoding,
+      'content-type': 'application/octet-stream',
+      ttl: String(message.ttlSeconds ?? DEFAULT_TTL_SECONDS),
+      urgency: message.urgency ?? 'normal',
+      authorization,
+    };
+    const result = await transport(subscription.endpoint, {
+      method: 'POST',
+      headers,
+      body: encrypted.body,
+    });
+    httpStatus = result.status;
+  } catch (error) {
+    const failures = await deps.store.recordOutcome(subscription.id, 'failed');
+    const reason = `delivery request failed: ${error instanceof Error ? error.message : String(error)}`;
+    return prunedOrFailed(subscription, origin, deps, failures, reason);
+  }
+
+  if (httpStatus >= 200 && httpStatus < 300) {
+    await deps.store.recordOutcome(subscription.id, 'delivered');
+    return { subscriptionId: subscription.id, endpointOrigin: origin, outcome: 'delivered', httpStatus };
+  }
+
+  if (GONE_STATUSES.has(httpStatus)) {
+    // The subscription is gone at the push service, prune it (delete means
+    // delete) and report the prune with the status that proved it dead.
+    await deps.store.remove(subscription.id);
+    return {
+      subscriptionId: subscription.id,
+      endpointOrigin: origin,
+      outcome: 'pruned',
+      httpStatus,
+      detail: `push endpoint reported ${httpStatus} gone; subscription removed`,
+    };
+  }
+
+  const failures = await deps.store.recordOutcome(subscription.id, 'failed');
+  return prunedOrFailed(subscription, origin, deps, failures, `push service returned ${httpStatus}`, httpStatus);
+}
+
+/**
+ * A non-gone delivery failure: report `failed` while the bounded retries remain,
+ * but once the consecutive-failure counter crosses the threshold, prune the
+ * dead endpoint (delete means delete) and report an honest `pruned` receipt.
+ */
+async function prunedOrFailed(
+  subscription: StoredPushSubscription,
+  origin: string,
+  deps: DeliveryDeps,
+  failures: number,
+  reason: string,
+  httpStatus?: number,
+): Promise<PushDeliveryReceipt> {
+  const bound = failureBound(deps);
+  if (failures >= bound) {
+    await deps.store.remove(subscription.id);
+    return {
+      subscriptionId: subscription.id,
+      endpointOrigin: origin,
+      outcome: 'pruned',
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+      detail: `${reason}; pruned after ${failures} consecutive delivery failures`,
+    };
+  }
+  return {
+    subscriptionId: subscription.id,
+    endpointOrigin: origin,
+    outcome: 'failed',
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    detail: `${reason} (failure ${failures} of ${bound} before prune)`,
+  };
+}
+
+/**
+ * Fan one message out to every stored subscription, delivering (and pruning) in
+ * sequence. Returns one receipt per subscription, an empty array when there
+ * are no subscriptions at all (the honest "nobody to notify" result, not a
+ * silent success).
+ */
+export async function deliverToAll(
+  message: PushMessage,
+  deps: DeliveryDeps,
+): Promise<PushDeliveryReceipt[]> {
+  const subscriptions = await deps.store.all();
+  const receipts: PushDeliveryReceipt[] = [];
+  for (const subscription of subscriptions) {
+    receipts.push(await deliverToSubscription(subscription, message, deps));
+  }
+  return receipts;
+}

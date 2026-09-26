@@ -1,0 +1,81 @@
+import type { Tool, ToolCall, ToolResult } from '../../../types/tools.js';
+import type { ToolRuntimeContext } from '../context.js';
+import type { ExecutorConfig, PhaseResult, ToolExecutionRecord } from '../types.js';
+import { summarizeError } from '../../../utils/error-display.js';
+
+/** Default per-call execution timeout (30 seconds). */
+const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
+
+/**
+ * execute, Phase 4 of the tool execution pipeline.
+ *
+ * Calls `tool.execute(args)` and injects the callId into the result.
+ * Respects the phase timeout and the budget.maxMs constraint.
+ * Caught errors produce a failed PhaseResult (not thrown) so the
+ * executor can record the failure trace cleanly.
+ *
+ * The resolved args honour any prehook-modified input stored as
+ * `_updatedArgs` on the record.
+ */
+export async function executePhase(
+  call: ToolCall,
+  tool: Tool,
+  context: ToolRuntimeContext,
+  record: ToolExecutionRecord,
+  config?: ExecutorConfig,
+): Promise<PhaseResult & { toolResult?: ToolResult }> {
+  const start = performance.now();
+
+  const effectiveArgs = record._updatedArgs ?? call.arguments;
+
+  // Resolve timeout: per-phase override → budget → default
+  let timeoutMs =
+    config?.phaseTimeouts?.['executing'] ?? context.budget?.maxMs ?? DEFAULT_EXECUTE_TIMEOUT_MS;
+
+  // The exec tool accepts its own `timeout_ms` input for long-running commands
+  // (e.g. a full test suite). Never let the phase deadline undercut a caller-
+  // requested exec timeout, otherwise the phase times out the call while the
+  // underlying command legitimately still has time left to run.
+  if (call.name === 'exec') {
+    const requestedTimeoutMs = (effectiveArgs as Record<string, unknown>)['timeout_ms'];
+    if (typeof requestedTimeoutMs === 'number' && requestedTimeoutMs > timeoutMs) {
+      timeoutMs = requestedTimeoutMs;
+    }
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    // Race between the tool and a timeout; clear the timer regardless of outcome
+    const rawResult = await Promise.race([
+      tool.execute(effectiveArgs),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Tool '${call.name}' timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+
+    const toolResult: ToolResult = { ...rawResult, callId: call.id };
+
+    return {
+      phase: 'executing',
+      success: true,
+      durationMs: performance.now() - start,
+      toolResult,
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    const message = summarizeError(err);
+    return {
+      phase: 'executing',
+      success: false,
+      durationMs: performance.now() - start,
+      error: message,
+      abort: true,
+    };
+  }
+}

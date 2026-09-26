@@ -1,0 +1,140 @@
+/** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
+
+/**
+ * Model domain state, tracks the active LLM provider and model,
+ * fallback chain, token limits, and reasoning configuration.
+ */
+
+/**
+ * A reasoning-effort level as a plain string.
+ *
+ * Not a fixed union: the level a model accepts is per-model now (see
+ * providers/reasoning-effort.ts), so the store carries whatever the user
+ * configured and resolution against the serving model happens at request time.
+ */
+export type ReasoningEffort = string;
+
+/** Provider tier classification. */
+export type ProviderTier = 'local' | 'hosted' | 'hosted_reasoning' | 'diffusion';
+
+/** Token limit configuration for a model. */
+export interface ModelTokenLimits {
+  /** Maximum output tokens the model supports. */
+  maxOutputTokens: number;
+  /** Maximum tokens in a single tool result before truncation. */
+  maxToolResultTokens: number;
+  /** Maximum number of tool calls per turn. */
+  maxToolCalls: number;
+  /** Maximum reasoning/thinking tokens (undefined = not a reasoning model). */
+  maxReasoningTokens?: number | undefined;
+  /** Full context window size in tokens. */
+  contextWindow: number;
+}
+
+/**
+ * A single entry in the model fallback chain.
+ * If the primary model fails, the runtime attempts each fallback in order.
+ */
+export interface FallbackChainEntry {
+  /** Provider ID. */
+  providerId: string;
+  /** Model ID on that provider. */
+  modelId: string;
+  /**
+   * Registry key used for config lookup, the same stored key the active model
+   * carries, not a key recomposed from providerId and modelId.
+   *
+   * The chain's own entries are what a fallover switches the session to, so the
+   * key a fallback node reports has to be the key the registry actually knows
+   * it by. Recomposing `${providerId}:${modelId}` guesses that shape, and the
+   * guess disagrees with the stored key for any model whose id already carries
+   * a namespace (an OpenRouter `vendor/model`, a Bedrock ARN-ish id).
+   */
+  registryKey: string;
+  /** Human-readable name for display. */
+  displayName: string;
+  /** Reason this fallback was configured. */
+  reason?: 'rate_limit' | 'unavailable' | 'context_exceeded' | 'manual' | undefined;
+}
+
+/**
+ * ModelDomainState, all information about the active model configuration.
+ */
+export interface ModelDomainState {
+  // ── Domain metadata ────────────────────────────────────────────────────────
+  /** Monotonic revision counter; increments on every mutation. */
+  revision: number;
+  /** Timestamp of last mutation (Date.now()). */
+  lastUpdatedAt: number;
+  /** Subsystem that triggered the last mutation. */
+  source: string;
+
+  // ── Active model ───────────────────────────────────────────────────────────
+  /** ID of the currently active provider (e.g. 'anthropic', 'openai'). */
+  activeProviderId: string;
+  /** Model identifier on the provider (e.g. 'claude-sonnet-4-6'). */
+  activeModelId: string;
+  /** Human-readable display name. */
+  displayName: string;
+  /** Registry key used for config lookup. */
+  registryKey: string;
+  /** Provider tier (affects permission and UX behavior). */
+  tier: ProviderTier;
+
+  // ── Capabilities ───────────────────────────────────────────────────────────
+  /** Token limits for the active model. */
+  tokenLimits: ModelTokenLimits;
+  /** Whether the active model supports streaming. */
+  supportsStreaming: boolean;
+  /** Whether the active model supports tool calls. */
+  supportsTools: boolean;
+  /** Whether the active model supports vision/image inputs. */
+  supportsVision: boolean;
+
+  // ── Reasoning ──────────────────────────────────────────────────────────────
+  /** Current reasoning effort setting. */
+  reasoningEffort: ReasoningEffort;
+  /** Whether reasoning summaries are enabled. */
+  reasoningSummary: boolean;
+
+  // ── Fallback chain ─────────────────────────────────────────────────────────
+  /** Ordered fallback chain to attempt if the primary model fails. */
+  fallbackChain: FallbackChainEntry[];
+  /** Index into fallbackChain of the currently active fallback (-1 = primary). */
+  activeFallbackIndex: number;
+  /** Number of fallover events since session start. */
+  falloverCount: number;
+  /** ID of the previous model before the last fallback (for display). */
+  previousModelId?: string | undefined;
+}
+
+/**
+ * Returns the default initial state for the model domain.
+ */
+export function createInitialModelState(): ModelDomainState {
+  return {
+    revision: 0,
+    lastUpdatedAt: 0,
+    source: 'init',
+    activeProviderId: '',
+    activeModelId: '',
+    displayName: '',
+    registryKey: '',
+    tier: 'hosted',
+    tokenLimits: {
+      maxOutputTokens: 8192,
+      maxToolResultTokens: 50000,
+      maxToolCalls: 64,
+      contextWindow: 200000,
+    },
+    supportsStreaming: true,
+    supportsTools: true,
+    supportsVision: false,
+    reasoningEffort: 'medium',
+    reasoningSummary: false,
+    fallbackChain: [],
+    activeFallbackIndex: -1,
+    falloverCount: 0,
+    previousModelId: undefined,
+  };
+}

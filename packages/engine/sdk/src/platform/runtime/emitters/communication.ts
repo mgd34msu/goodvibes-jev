@@ -1,0 +1,67 @@
+/**
+ * Communication emitters, typed emission wrappers for communication domain.
+ */
+import { createEventEnvelope } from '../events/envelope.js';
+import type { RuntimeEventBus } from '../events/index.js';
+import type { EmitterContext } from './index.js';
+import type { CommunicationKind, CommunicationScope } from '../../../events/communication.js';
+
+type BaseCommunication = {
+  messageId: string;
+  fromId: string;
+  toId: string;
+  scope: CommunicationScope;
+  kind: CommunicationKind;
+};
+
+export function emitCommunicationSent(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: BaseCommunication & {
+    content: string;
+    fromRole?: string | undefined;
+    toRole?: string | undefined;
+    cohort?: string | undefined;
+    wrfcId?: string | undefined;
+    parentAgentId?: string | undefined;
+  },
+): void {
+  bus.emit('communication', createEventEnvelope('COMMUNICATION_SENT', { type: 'COMMUNICATION_SENT', ...data }, ctx));
+}
+
+export function emitCommunicationDelivered(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: BaseCommunication,
+): void {
+  bus.emit('communication', createEventEnvelope('COMMUNICATION_DELIVERED', { type: 'COMMUNICATION_DELIVERED', ...data }, ctx));
+}
+
+/**
+ * The honest "consumed at boundary" signal, emitted once, at the drain
+ * site (orchestrator-runner.ts), the turn a queued message is actually
+ * injected into the target agent's conversation. Never repurpose
+ * `emitCommunicationDelivered` for this: it fires eagerly at send() time.
+ */
+export function emitCommunicationConsumed(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: { messageId: string; agentId: string; turn: number },
+): void {
+  bus.emit('communication', createEventEnvelope('COMMUNICATION_CONSUMED', { type: 'COMMUNICATION_CONSUMED', ...data }, ctx));
+}
+
+export function emitCommunicationBlocked(
+  bus: RuntimeEventBus,
+  ctx: EmitterContext,
+  data: BaseCommunication & {
+    reason: string;
+    fromRole?: string | undefined;
+    toRole?: string | undefined;
+    cohort?: string | undefined;
+    wrfcId?: string | undefined;
+    parentAgentId?: string | undefined;
+  },
+): void {
+  bus.emit('communication', createEventEnvelope('COMMUNICATION_BLOCKED', { type: 'COMMUNICATION_BLOCKED', ...data }, ctx));
+}

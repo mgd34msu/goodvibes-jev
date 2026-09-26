@@ -1,0 +1,67 @@
+import type { HookDefinition, HookResult, HookEvent } from '../types.js';
+import { logger } from '../../utils/logger.js';
+import { summarizeError } from '../../utils/error-display.js';
+import { classifyHostTrustTier, extractHostname, emitSsrfDeny } from '../../tools/fetch/trust-tiers.js';
+import { instrumentedFetch, fetchWithTimeout } from '../../utils/fetch-with-timeout.js';
+
+/**
+ * HTTP hook runner.
+ * POSTs the event JSON to the configured URL and parses the response as HookResult.
+ */
+export async function run(hook: HookDefinition, event: HookEvent): Promise<HookResult> {
+  const url = hook.url;
+  if (!url) {
+    return { ok: false, error: 'http hook missing "url" field' };
+  }
+
+  // SSRF tier filter, block requests to internal/private hosts unless
+  // the hook definition opts in with allowInternal: true.
+  if (!hook.allowInternal) {
+    const hostname = extractHostname(url);
+    if (hostname !== null) {
+      const trustResult = classifyHostTrustTier(hostname);
+      // Automated hook egress has no interactive approval flow: loopback
+      // targets stay refused here unless the hook opts in via allowInternal.
+      if (trustResult.tier === 'blocked' || trustResult.tier === 'localhost') {
+        emitSsrfDeny(hostname, url, trustResult.reason);
+        return { ok: false, error: `http hook blocked: ${trustResult.reason}` };
+      }
+    }
+  }
+
+  const timeoutMs = (hook.timeout ?? 30) * 1000;
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...hook.headers,
+      },
+      body: JSON.stringify(event),
+    }, timeoutMs, instrumentedFetch);
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `http hook received ${response.status} ${response.statusText}`,
+      };
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+      return { ok: true };
+    }
+
+    try {
+      const result = JSON.parse(text) as HookResult;
+      return { ...result, ok: result.ok ?? true };
+    } catch {
+      return { ok: true };
+    }
+  } catch (err) {
+    const message = summarizeError(err);
+    logger.error('http hook error', { url, error: message });
+    return { ok: false, error: message };
+  }
+}

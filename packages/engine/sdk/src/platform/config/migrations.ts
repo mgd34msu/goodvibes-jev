@@ -1,0 +1,680 @@
+/**
+ * One-shot config migrations applied to raw on-disk JSON before it is
+ * deep-merged with defaults in {@link ConfigManager.load}.
+ *
+ * CHANGELOG 1.0.0 removes the deprecated `danger.daemon` alias from the schema
+ * (see docs/decisions/2026-07-05-daemon-by-default.md). Once the key leaves
+ * `CONFIG_SCHEMA`/`ConfigKey`, a stray `danger.daemon` value in an existing
+ * settings.json would otherwise be silently ignored by the deep-merge (the
+ * default config's `danger` object no longer declares a `daemon` field to
+ * merge onto), which would flip a user's explicit two-year off-switch
+ * (`danger.daemon = false`) back to daemon-ON the moment they upgrade. This
+ * migration closes that hazard by rewriting the explicit choice onto
+ * `daemon.enabled` BEFORE the merge, so the alias is honored exactly once
+ * and then retired.
+ */
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export interface DangerDaemonMigrationResult {
+  /** True if the raw config carried a `danger.daemon` key that this migration touched. */
+  readonly migrated: boolean;
+  /** The (possibly rewritten) raw config, safe to deep-merge with defaults. */
+  readonly config: Record<string, unknown>;
+  /**
+   * Present only when an explicit `danger.daemon = false` was rewritten onto
+   * `daemon.enabled = false`, the one case that changes resolved behavior.
+   * Callers can use this to report the migration honestly (e.g. a log line).
+   */
+  readonly rewroteDaemonEnabledFalse: boolean;
+}
+
+/**
+ * Migrate a raw parsed settings object: `danger.daemon` (a deprecated alias
+ * for `daemon.enabled`, removed in CHANGELOG 1.0.0) is removed, and if it was
+ * explicitly `false`, that choice is preserved onto `daemon.enabled = false`.
+ *
+ * Precedence mirrors the alias it replaces (see the removed
+ * `resolveDaemonEnabled` alias branch): an explicit `danger.daemon` value
+ * always wins over whatever `daemon.enabled` currently holds in the same
+ * file, because the alias historically took precedence.
+ *
+ * Idempotent: config that has already been migrated (or never had the alias)
+ * comes back unchanged, `migrated: false`, same reference.
+ *
+ * - `danger.daemon === false` -> `daemon.enabled = false` (rewritten), alias removed.
+ * - `danger.daemon === true`  -> alias removed, no rewrite (daemon.enabled
+ *   already defaults `true`; nothing to preserve).
+ * - non-boolean junk under the key -> alias removed, no rewrite.
+ * - absent / not an object -> unchanged.
+ */
+export function migrateDangerDaemonAlias(parsed: Record<string, unknown>): DangerDaemonMigrationResult {
+  const danger = parsed['danger'];
+  if (!isPlainObject(danger) || !('daemon' in danger)) {
+    return { migrated: false, config: parsed, rewroteDaemonEnabledFalse: false };
+  }
+
+  const alias = danger['daemon'];
+  const { daemon: _removedAlias, ...restDanger } = danger;
+  const nextConfig: Record<string, unknown> = { ...parsed, danger: restDanger };
+
+  if (alias === false) {
+    const existingDaemon = isPlainObject(parsed['daemon']) ? parsed['daemon'] : {};
+    nextConfig['daemon'] = { ...existingDaemon, enabled: false };
+    return { migrated: true, config: nextConfig, rewroteDaemonEnabledFalse: true };
+  }
+
+  // alias === true, or non-boolean junk: nothing to preserve, daemon.enabled
+  // already defaults true, and a non-boolean value was never a valid override.
+  return { migrated: true, config: nextConfig, rewroteDaemonEnabledFalse: false };
+}
+
+// ── Legacy featureFlags record -> domain settings ───────────────────────────
+
+export interface LegacySettingsMigrationResult {
+  /** True when the raw config carried legacy keys this migration rewrote. */
+  readonly migrated: boolean;
+  /** The (possibly rewritten) raw config, safe to deep-merge with defaults. */
+  readonly config: Record<string, unknown>;
+  /** Dot-path keys this migration wrote (for the one-line receipt). */
+  readonly changedKeys: readonly string[];
+  /** Legacy ids that mapped to nothing (unknown or stale). */
+  readonly unknownIds: readonly string[];
+}
+
+function cloneShallowPath(config: Record<string, unknown>, segments: readonly string[]): Record<string, unknown> {
+  // Ensure every object along the path is a fresh copy on `config` so writes
+  // never mutate the caller's parsed object.
+  let cursor = config;
+  for (const segment of segments) {
+    const existing = cursor[segment];
+    const copy = isPlainObject(existing) ? { ...existing } : {};
+    cursor[segment] = copy;
+    cursor = copy;
+  }
+  return cursor;
+}
+
+function writeDotPath(config: Record<string, unknown>, key: string, value: unknown): void {
+  const segments = key.split('.');
+  const field = segments.pop() as string;
+  const parent = segments.length > 0 ? cloneShallowPath(config, segments) : config;
+  parent[field] = value;
+}
+
+function readDot(config: Record<string, unknown>, key: string): unknown {
+  let cursor: unknown = config;
+  for (const segment of key.split('.')) {
+    if (!isPlainObject(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+type LegacyToggleState = 'enabled' | 'disabled' | 'killed';
+
+function isLegacyToggleState(value: unknown): value is LegacyToggleState {
+  return value === 'enabled' || value === 'disabled' || value === 'killed';
+}
+
+/** Legacy ids whose OFF state forces a boolean domain key false; ON defers to the key. */
+const LEGACY_OFF_FORCES_FALSE: Readonly<Record<string, string>> = {
+  'automation-domain': 'automation.enabled',
+  'web-surface': 'web.enabled',
+  'watcher-framework': 'watchers.enabled',
+  'service-management': 'service.enabled',
+  'exec-sandbox': 'sandbox.enabled',
+  'relay-connect': 'relay.enabled',
+  'control-plane-gateway': 'controlPlane.gateway',
+  'slack-surface': 'surfaces.slack.enabled',
+  'discord-surface': 'surfaces.discord.enabled',
+  'ntfy-surface': 'surfaces.ntfy.enabled',
+  'webhook-surface': 'surfaces.webhook.enabled',
+  'homeassistant-surface': 'surfaces.homeassistant.enabled',
+};
+
+/** Legacy ids that map 1:1 onto a boolean domain key (both states written). */
+const LEGACY_BOOLEAN_KEYS: Readonly<Record<string, string>> = {
+  'permissions-simulation': 'permissions.simulation',
+  'permission-divergence-dashboard': 'permissions.divergenceDashboard',
+  'policy-signing': 'policy.requireSignedBundles',
+  'policy-as-code': 'policy.registryEnabled',
+  'unified-runtime-task': 'runtime.unifiedTasks',
+  'plugin-lifecycle': 'runtime.pluginLifecycle',
+  'mcp-lifecycle': 'runtime.mcpLifecycle',
+  'runtime-tools-budget-enforcement': 'runtime.toolBudget.enforced',
+  'tool-contract-verification': 'tools.contractVerification',
+  'output-schema-fingerprint': 'tools.outputSchemaFingerprints',
+  'local-provider-context-ingestion': 'provider.localContextIngestion',
+  'adaptive-execution-planner': 'planner.adaptive',
+  'token-scope-rotation-audit': 'security.tokenAudit.enabled',
+  'adaptive-notification-suppression': 'notifications.adaptiveSuppression',
+  'integration-delivery-slo': 'integrations.delivery.sloEnforced',
+  'route-binding': 'integrations.routeBinding',
+  'delivery-engine': 'integrations.deliveryTracking',
+  'agent-passive-knowledge-injection': 'agents.passiveInjection.knowledge',
+  'agent-passive-code-injection': 'agents.passiveInjection.code',
+  'agent-context-window-awareness': 'agents.contextWindowGuard',
+};
+
+/**
+ * Migrate the legacy `featureFlags` record (and the renamed
+ * `sandbox.judgmentAutoApprove` key) onto the per-domain settings keys that
+ * now own each capability. Runs on the raw parsed settings object before the
+ * defaults merge; the caller persists the rewritten file so this happens once.
+ *
+ * Mapping rules preserve the user's EXPLICIT choices, not old defaults:
+ * - A legacy 'disabled' (or 'killed') entry writes the feature's domain key
+ *   off (e.g. behavior.compactionStrategy = 'off', sandbox.enabled = false).
+ * - A legacy 'enabled' entry defers to the domain key where one already
+ *   existed (automation.enabled, web.enabled, ...), because the legacy
+ *   effective state was the AND of both switches; for keys that replaced the
+ *   toggle outright it writes the on value.
+ * - Related toggles collapse into their real option shape: the compaction
+ *   pair -> behavior.compactionStrategy, the otel pair -> telemetry.otelMode,
+ *   judgment + judgmentAutoApprove -> sandbox.judgment.
+ *
+ * Idempotent: a config with no legacy keys comes back unchanged, same reference.
+ */
+export function migrateLegacyFeatureToggles(parsed: Record<string, unknown>): LegacySettingsMigrationResult {
+  const legacyRecord = isPlainObject(parsed['featureFlags']) ? parsed['featureFlags'] : null;
+  const sandboxSection = isPlainObject(parsed['sandbox']) ? parsed['sandbox'] : null;
+  const hasLegacyJudgment = sandboxSection !== null && 'judgmentAutoApprove' in sandboxSection;
+  const hasLegacyRecord = legacyRecord !== null && 'featureFlags' in parsed;
+  if (!hasLegacyRecord && !hasLegacyJudgment) {
+    return { migrated: false, config: parsed, changedKeys: [], unknownIds: [] };
+  }
+
+  const config: Record<string, unknown> = { ...parsed };
+  const changedKeys: string[] = [];
+  const unknownIds: string[] = [];
+  const write = (key: string, value: unknown): void => {
+    writeDotPath(config, key, value);
+    changedKeys.push(key);
+  };
+
+  const states = new Map<string, LegacyToggleState>();
+  if (legacyRecord) {
+    for (const [id, value] of Object.entries(legacyRecord)) {
+      if (isLegacyToggleState(value)) states.set(id, value);
+      else unknownIds.push(id);
+    }
+    delete config['featureFlags'];
+  }
+  const on = (id: string): boolean => states.get(id) === 'enabled';
+  const off = (id: string): boolean => {
+    const s = states.get(id);
+    return s === 'disabled' || s === 'killed';
+  };
+
+  const handled = new Set<string>();
+  const handle = (id: string): void => { handled.add(id); };
+
+  for (const [id, key] of Object.entries(LEGACY_BOOLEAN_KEYS)) {
+    if (!states.has(id)) continue;
+    handle(id);
+    write(key, on(id));
+  }
+  for (const [id, key] of Object.entries(LEGACY_OFF_FORCES_FALSE)) {
+    if (!states.has(id)) continue;
+    handle(id);
+    if (off(id)) write(key, false);
+  }
+
+  // permissions-policy-engine -> permissions.engine
+  if (states.has('permissions-policy-engine')) {
+    handle('permissions-policy-engine');
+    write('permissions.engine', on('permissions-policy-engine') ? 'policy-engine' : 'baseline');
+  }
+  // shell-ast-normalization -> permissions.commandParser
+  if (states.has('shell-ast-normalization')) {
+    handle('shell-ast-normalization');
+    write('permissions.commandParser', on('shell-ast-normalization') ? 'ast' : 'flat');
+  }
+  // tool-result-reconciliation -> behavior.toolResultReconciliation
+  if (states.has('tool-result-reconciliation')) {
+    handle('tool-result-reconciliation');
+    write('behavior.toolResultReconciliation', on('tool-result-reconciliation') ? 'reconcile' : 'warn-only');
+  }
+  // hitl-ux-modes: only an explicit OFF maps (mode off); ON keeps the configured mode.
+  if (states.has('hitl-ux-modes')) {
+    handle('hitl-ux-modes');
+    if (off('hitl-ux-modes')) write('behavior.hitlMode', 'off');
+  }
+  // Compaction pair -> behavior.compactionStrategy.
+  if (states.has('session-compaction') || states.has('compaction-distiller-strategy')) {
+    handle('session-compaction');
+    handle('compaction-distiller-strategy');
+    if (off('session-compaction')) {
+      write('behavior.compactionStrategy', 'off');
+    } else if (on('compaction-distiller-strategy')) {
+      write('behavior.compactionStrategy', 'distiller');
+    } else if (off('compaction-distiller-strategy') && readDot(parsed, 'behavior.compactionStrategy') === 'distiller') {
+      // Legacy resolved a distiller selection back to structured while the
+      // distiller toggle was off, preserve that resolution explicitly.
+      write('behavior.compactionStrategy', 'structured');
+    }
+  }
+  // fetch-sanitization: only an explicit OFF maps (content sanitization off).
+  if (states.has('fetch-sanitization')) {
+    handle('fetch-sanitization');
+    if (off('fetch-sanitization')) write('fetch.sanitizeMode', 'none');
+  }
+  // overflow-spill-backends: OFF meant the configured backend was not honored.
+  if (states.has('overflow-spill-backends')) {
+    handle('overflow-spill-backends');
+    const configured = readDot(parsed, 'tools.overflowSpillBackend');
+    if (off('overflow-spill-backends') && typeof configured === 'string' && configured !== 'file') {
+      write('tools.overflowSpillBackend', 'file');
+    }
+  }
+  // provider-optimizer -> provider.optimizerMode gains 'off'.
+  if (states.has('provider-optimizer')) {
+    handle('provider-optimizer');
+    if (off('provider-optimizer')) {
+      write('provider.optimizerMode', 'off');
+    } else if (readDot(parsed, 'provider.optimizerMode') === undefined) {
+      write('provider.optimizerMode', 'manual');
+    }
+  }
+  // OTel pair -> telemetry.otelMode.
+  if (states.has('otel-foundation') || states.has('otel-remote-export')) {
+    handle('otel-foundation');
+    handle('otel-remote-export');
+    const foundationOn = on('otel-foundation');
+    write('telemetry.otelMode', foundationOn ? (on('otel-remote-export') ? 'remote-export' : 'in-process') : 'off');
+  }
+  // sandbox-model-judgment + sandbox.judgmentAutoApprove -> sandbox.judgment.
+  {
+    const flagState = states.get('sandbox-model-judgment');
+    if (flagState !== undefined) handle('sandbox-model-judgment');
+    const legacyAuto = hasLegacyJudgment ? sandboxSection['judgmentAutoApprove'] === true : false;
+    if (hasLegacyJudgment) {
+      const sandboxCopy = cloneShallowPath(config, ['sandbox']);
+      delete sandboxCopy['judgmentAutoApprove'];
+      if (!changedKeys.includes('sandbox.judgment')) changedKeys.push('sandbox.judgmentAutoApprove');
+    }
+    if (flagState === 'disabled' || flagState === 'killed') {
+      write('sandbox.judgment', 'off');
+    } else if (legacyAuto) {
+      write('sandbox.judgment', 'auto-approve');
+    } else if (flagState === 'enabled') {
+      write('sandbox.judgment', 'annotate');
+    }
+  }
+
+  for (const id of states.keys()) {
+    if (!handled.has(id)) unknownIds.push(id);
+  }
+
+  return { migrated: true, config, changedKeys, unknownIds };
+}
+
+/** Outcome of the fleet.maxSize rename migration (orchestration.maxActiveAgents -> fleet.maxSize). */
+export interface FleetMaxSizeMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when a legacy value was actually moved (the receipt fires only then). */
+  readonly migrated: boolean;
+  readonly movedValue?: number | undefined;
+}
+
+/**
+ * Invisible key migration for the owner-named cap ("Maximum fleet size"):
+ * an explicit legacy `orchestration.maxActiveAgents` moves onto
+ * `fleet.maxSize` (which wins if BOTH are present, the new key is the one
+ * the user can see) and the legacy key is removed. Idempotent; a file with
+ * no legacy key is returned untouched.
+ */
+export function migrateFleetMaxSizeRename(parsed: Record<string, unknown>): FleetMaxSizeMigrationResult {
+  const orchestration = parsed.orchestration;
+  if (orchestration === null || typeof orchestration !== 'object' || Array.isArray(orchestration)) {
+    return { config: parsed, migrated: false };
+  }
+  const legacy = (orchestration as Record<string, unknown>).maxActiveAgents;
+  if (typeof legacy !== 'number') return { config: parsed, migrated: false };
+  const config = structuredClone(parsed);
+  const orch = config.orchestration as Record<string, unknown>;
+  delete orch.maxActiveAgents;
+  if (Object.keys(orch).length === 0) delete config.orchestration;
+  const fleet = (config.fleet !== null && typeof config.fleet === 'object' && !Array.isArray(config.fleet))
+    ? config.fleet as Record<string, unknown>
+    : {};
+  if (fleet.maxSize === undefined) fleet.maxSize = legacy;
+  config.fleet = fleet;
+  return { config, migrated: true, movedValue: legacy };
+}
+
+/** Outcome of dropping the stored `controlPlane.baseUrl` mirror. */
+export interface ControlPlaneBaseUrlMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when a stored `controlPlane.baseUrl` was actually present and removed. */
+  readonly migrated: boolean;
+  /** The value that was on disk, so the receipt can quote it back. */
+  readonly removedValue?: string | undefined;
+}
+
+/**
+ * Remove the stored `controlPlane.baseUrl`.
+ *
+ * The key had no writers: every site that configured the daemon set
+ * `hostMode`/`host`/`port` and left this string untouched, so it drifted from
+ * the real bind on three axes at once, the port, the scheme (TLS on, stored
+ * value still http), and a host typed in once and passed through verbatim
+ * afterwards. The URL is now DERIVED from the bind (see
+ * `control-plane-base-url.ts`), so there is nothing left for a stored copy to
+ * be right about.
+ *
+ * The old value is deliberately NOT carried over to `controlPlane.publicBaseUrl`.
+ * That key means "an external address the bind cannot describe", and silently
+ * promoting a stale mirror into an explicit declaration would preserve exactly
+ * the drift this removes, the owner's own loopback string would have become a
+ * declared external address. The removed value is quoted in the receipt instead,
+ * so anyone who genuinely meant a tunnel or proxy address can re-declare it.
+ *
+ * Idempotent; a file with no legacy key is returned untouched.
+ */
+export function migrateControlPlaneBaseUrlRemoval(
+  parsed: Record<string, unknown>,
+): ControlPlaneBaseUrlMigrationResult {
+  const controlPlane = parsed.controlPlane;
+  if (controlPlane === null || typeof controlPlane !== 'object' || Array.isArray(controlPlane)) {
+    return { config: parsed, migrated: false };
+  }
+  if (!('baseUrl' in (controlPlane as Record<string, unknown>))) {
+    return { config: parsed, migrated: false };
+  }
+  const legacy = (controlPlane as Record<string, unknown>).baseUrl;
+  const config = structuredClone(parsed);
+  const cp = config.controlPlane as Record<string, unknown>;
+  delete cp.baseUrl;
+  if (Object.keys(cp).length === 0) delete config.controlPlane;
+  return {
+    config,
+    migrated: true,
+    ...(typeof legacy === 'string' ? { removedValue: legacy } : {}),
+  };
+}
+
+/** Outcome of dropping a stored `daemon.embedInProcess`. */
+export interface DaemonEmbedInProcessMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when a stored `daemon.embedInProcess` was present and removed. */
+  readonly migrated: boolean;
+  /** The value that was on disk, so the receipt can say what was set. */
+  readonly removedValue?: boolean | undefined;
+}
+
+/**
+ * Remove the stored `daemon.embedInProcess`.
+ *
+ * The key offered a choice no shipped surface could act on. Every product starts
+ * host services in adopt-only mode, and the adoption policy answers adopt-only
+ * before it ever looks at the embed preference, so a settings file with
+ * `embedInProcess: true` produced exactly the same behaviour as one without it.
+ * A toggle the settings UI presented as live, with a "NOT RECOMMENDED" warning
+ * attached, for a branch that could not run, is worse than an inert key: it
+ * described a topology the product does not have.
+ *
+ * Hosting a daemon inside another process is still possible, it is how an
+ * embedder composes one and how tests build one without a port, but that is an
+ * argument to the composition API, not a preference a user files in settings.
+ *
+ * The value is not carried anywhere. There is no setting left that means what it
+ * meant, and inventing one to receive it would recreate the same false choice.
+ * The receipt says what was set and why it is gone.
+ *
+ * Idempotent; a file with no such key is returned untouched.
+ */
+export function migrateDaemonEmbedInProcessRemoval(
+  parsed: Record<string, unknown>,
+): DaemonEmbedInProcessMigrationResult {
+  const daemon = parsed.daemon;
+  if (daemon === null || typeof daemon !== 'object' || Array.isArray(daemon)) {
+    return { config: parsed, migrated: false };
+  }
+  if (!('embedInProcess' in (daemon as Record<string, unknown>))) {
+    return { config: parsed, migrated: false };
+  }
+  const legacy = (daemon as Record<string, unknown>).embedInProcess;
+  const config = structuredClone(parsed);
+  const section = config.daemon as Record<string, unknown>;
+  delete section.embedInProcess;
+  if (Object.keys(section).length === 0) delete config.daemon;
+  return {
+    config,
+    migrated: true,
+    ...(typeof legacy === 'boolean' ? { removedValue: legacy } : {}),
+  };
+}
+
+
+/** Outcome of materializing the daemon adopt-vs-dial split into a settings file. */
+export interface DaemonConnectedHostSplitMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when `daemon.connectedHost.enabled` was written in. */
+  readonly migrated: boolean;
+}
+
+/**
+ * Write `daemon.connectedHost.enabled: true` into a file that carries an
+ * explicit `daemon.enabled: false`.
+ *
+ * `daemon.enabled` used to mean two things at once: whether this surface adopts
+ * a session daemon of its own, AND whether it may dial a daemon it is already
+ * connected to. Turning it off to decline the first silently declined the
+ * second, so on such a machine the session-inputs poll, the rewind host
+ * registration, the approvals stream and the hosted-conversation handoff all
+ * refused, while the session spine, the memory spine and the operator tools,
+ * which never read the flag, dialed the same live host without trouble.
+ *
+ * The new key defaults to `true`, so the behaviour is already right the moment
+ * this build loads such a file, with or without this pass. What the pass adds
+ * is HONESTY: a user who wrote `daemon.enabled: false` gets the second half of
+ * that decision written down where they can see and change it, instead of
+ * discovering by inference that a flag they set no longer covers what it used
+ * to. Their file now states both answers.
+ *
+ * Deliberately narrow:
+ *  - Only files with an EXPLICIT `daemon.enabled: false` are touched. A file
+ *    that never mentioned the key was never affected by the conflation and gets
+ *    nothing added to it.
+ *  - The value written is `true`, NOT the old `false`. Carrying the old value
+ *    over would preserve the exact defect, the old `false` was never a
+ *    decision about dialing, because there was no way to make one.
+ *  - `daemon.enabled` itself is left exactly as the user wrote it. It still
+ *    means something, and this pass is a split, not a removal.
+ *
+ * Idempotent: a file that already states `daemon.connectedHost.enabled`, at
+ * either value, is returned untouched, so a user who turns dialing off keeps
+ * it off across every later load.
+ */
+export function migrateDaemonConnectedHostSplit(
+  parsed: Record<string, unknown>,
+): DaemonConnectedHostSplitMigrationResult {
+  const daemon = parsed.daemon;
+  if (daemon === null || typeof daemon !== 'object' || Array.isArray(daemon)) {
+    return { config: parsed, migrated: false };
+  }
+  const section = daemon as Record<string, unknown>;
+  if (section.enabled !== false) return { config: parsed, migrated: false };
+
+  const existing = section.connectedHost;
+  const hasStatedDialChoice = existing !== null
+    && typeof existing === 'object'
+    && !Array.isArray(existing)
+    && 'enabled' in (existing as Record<string, unknown>);
+  if (hasStatedDialChoice) return { config: parsed, migrated: false };
+
+  const config = structuredClone(parsed);
+  const migratedSection = config.daemon as Record<string, unknown>;
+  const connectedHost = migratedSection.connectedHost;
+  migratedSection.connectedHost = connectedHost !== null
+    && typeof connectedHost === 'object'
+    && !Array.isArray(connectedHost)
+    ? { ...(connectedHost as Record<string, unknown>), enabled: true }
+    : { enabled: true };
+  return { config, migrated: true };
+}
+
+/** One amount key carried across the payments budget rename. */
+export interface PaymentsBudgetKeyMove {
+  /** The name that was on disk. */
+  readonly from: string;
+  /** The name it now has. */
+  readonly to: string;
+  /** The number that was stored under the old name. */
+  readonly oldValue: number;
+  /** The number stored under the new name. */
+  readonly newValue: number;
+}
+
+/** Outcome of moving the payments budget amounts onto their new names. */
+export interface PaymentsBudgetMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when at least one old key was present and moved. */
+  readonly migrated: boolean;
+  /** Every key that moved, in schema order, for the receipt. */
+  readonly moves: readonly PaymentsBudgetKeyMove[];
+}
+
+/**
+ * The four payments budget amounts, old name to new.
+ *
+ * Exported because the settings-honesty screen has to recognise the old names
+ * as keys that are ON THEIR WAY somewhere rather than keys nobody knows, a
+ * file being migrated must not also be reported as carrying unknown settings.
+ */
+export const PAYMENTS_BUDGET_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ['dailyItemCents', 'dailyItem'],
+  ['dailyOverageCents', 'dailyOverage'],
+  ['perPurchaseCeilingCents', 'perPurchaseCeiling'],
+  ['overageToleranceDailyAllowanceCents', 'overageToleranceDailyAllowance'],
+];
+
+/** The old full dot-path names, for the ingestion screen. */
+export const LEGACY_PAYMENTS_BUDGET_KEYS: readonly string[] =
+  PAYMENTS_BUDGET_RENAMES.map(([from]) => `payments.budget.${from}`);
+
+/**
+ * Move the payments budget amounts onto their new names, converting the number.
+ *
+ * What was stored was the count of the currency's smallest division: `10000`
+ * meant a hundred. What is stored now is the amount itself, written the way the
+ * owner would say it, so `10000` becomes `100` and `1999` becomes `19.99`. The
+ * new number is the simplest exact form of the old one, a whole amount stays
+ * whole, and one that needs a decimal keeps exactly the decimal it needs.
+ *
+ * A value already sitting under the new name is left alone and the old key is
+ * still removed: the new name is the one the reader uses, so a file carrying
+ * both must not have the new value overwritten by the old one.
+ *
+ * Idempotent; a file with none of the old keys is returned untouched.
+ */
+export function migratePaymentsBudgetAmounts(
+  parsed: Record<string, unknown>,
+): PaymentsBudgetMigrationResult {
+  const payments = parsed.payments;
+  if (payments === null || typeof payments !== 'object' || Array.isArray(payments)) {
+    return { config: parsed, migrated: false, moves: [] };
+  }
+  const budget = (payments as Record<string, unknown>).budget;
+  if (budget === null || typeof budget !== 'object' || Array.isArray(budget)) {
+    return { config: parsed, migrated: false, moves: [] };
+  }
+  const source = budget as Record<string, unknown>;
+  if (!PAYMENTS_BUDGET_RENAMES.some(([from]) => from in source)) {
+    return { config: parsed, migrated: false, moves: [] };
+  }
+
+  const config = structuredClone(parsed);
+  const section = (config.payments as Record<string, unknown>).budget as Record<string, unknown>;
+  const moves: PaymentsBudgetKeyMove[] = [];
+
+  for (const [from, to] of PAYMENTS_BUDGET_RENAMES) {
+    if (!(from in section)) continue;
+    const stored = section[from];
+    delete section[from];
+    if (typeof stored !== 'number' || !Number.isFinite(stored) || stored < 0) continue;
+    if (to in section) continue;
+    // Two decimal places, exactly: the stored count was hundredths, and
+    // rounding here removes the trailing binary dust a plain divide leaves
+    // (1999 / 100 is 19.990000000000002 before this).
+    const converted = Math.round(stored) / 100;
+    const newValue = Number(converted.toFixed(2));
+    section[to] = newValue;
+    moves.push({
+      from: `payments.budget.${from}`,
+      to: `payments.budget.${to}`,
+      oldValue: stored,
+      newValue,
+    });
+  }
+
+  return { config, migrated: moves.length > 0, moves };
+}
+
+/** Outcome of dropping the retired occasions final-stretch key. */
+export interface OccasionsFinalStretchMigrationResult {
+  readonly config: Record<string, unknown>;
+  readonly migrated: boolean;
+  /** The value that was on disk, so the receipt can say what was set. */
+  readonly removedValue?: number | undefined;
+}
+
+/**
+ * The full dot-path of the retired key, for the ingestion screen.
+ *
+ * Exported for the same reason the payments rename list is: a key the platform
+ * is about to remove itself is not a key the platform does not understand, and
+ * a file being migrated must not also be reported as carrying unknown settings.
+ */
+export const RETIRED_OCCASIONS_FINAL_STRETCH_KEY = 'occasions.finalStretchDays';
+
+/**
+ * Remove the stored `occasions.finalStretchDays`.
+ *
+ * The key set how many days before a date the reminder rhythm went DAILY. That
+ * rhythm no longer exists. An occasion now speaks at two fixed moments, the day
+ * it enters its runway, and the day itself, and a count of two has nothing to
+ * tune. Keeping the key would leave a number in the settings UI that changed
+ * nothing, which is the inert-toggle failure the platform has a rule against.
+ *
+ * The rhythm it described is the one the owner ended: with an hourly sweep, "go
+ * daily near the date" plus a due date that could never move past the occurrence
+ * meant they were told about their own birthday every hour. Nothing unresolved
+ * was dropped in the fix, an occasion still gets its two touches and still
+ * answers when they ask what is coming up, so there is no behaviour left for
+ * this setting to govern and no value worth carrying to a new name.
+ *
+ * The value is not moved anywhere. There is no setting that means what it meant,
+ * and inventing one to receive it would recreate the thing that was removed. The
+ * receipt says what was set, what replaced the rhythm, and that nothing about
+ * the owner's dates changed.
+ *
+ * Idempotent; a file with no such key is returned untouched.
+ */
+export function migrateOccasionsFinalStretchRemoval(
+  parsed: Record<string, unknown>,
+): OccasionsFinalStretchMigrationResult {
+  const occasions = parsed.occasions;
+  if (occasions === null || typeof occasions !== 'object' || Array.isArray(occasions)) {
+    return { config: parsed, migrated: false };
+  }
+  if (!('finalStretchDays' in (occasions as Record<string, unknown>))) {
+    return { config: parsed, migrated: false };
+  }
+  const legacy = (occasions as Record<string, unknown>).finalStretchDays;
+  const config = structuredClone(parsed);
+  const section = config.occasions as Record<string, unknown>;
+  delete section.finalStretchDays;
+  // A section that held nothing else goes too, so the file does not keep an
+  // empty `occasions: {}` as a monument to a setting that is gone.
+  if (Object.keys(section).length === 0) delete config.occasions;
+  return {
+    config,
+    migrated: true,
+    ...(typeof legacy === 'number' && Number.isFinite(legacy) ? { removedValue: legacy } : {}),
+  };
+}

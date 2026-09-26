@@ -1,0 +1,453 @@
+import { randomUUID } from 'node:crypto';
+import { PersistentStore } from '../state/persistent-store.js';
+import { StoreWriteQueue } from '../state/store-write-queue.js';
+import type {
+  ChannelConversationKind,
+  ChannelGroupPolicyRecord,
+  ChannelIngressPolicyInput,
+  ChannelPolicyAuditRecord,
+  ChannelPolicyDecision,
+  ChannelPolicyRecord,
+  ChannelSurface,
+} from './types.js';
+import { isRecord } from '../utils/record-coerce.js';
+import { logger } from '../utils/logger.js';
+
+interface ChannelPolicySnapshot extends Record<string, unknown> {
+  readonly policies: readonly ChannelPolicyRecord[];
+  readonly audit: readonly ChannelPolicyAuditRecord[];
+}
+
+const MAX_AUDIT_RECORDS = 500;
+
+/**
+ * Audit writes are coalesced and flushed on this debounce interval instead of
+ * synchronously on every inbound message. Policy mutations (upsertPolicy) remain
+ * synchronously persisted; only the append-only audit telemetry is debounced, so
+ * a busy ingress path is not blocked behind a full-snapshot disk write per message.
+ */
+const AUDIT_FLUSH_INTERVAL_MS = 1_000;
+
+function defaultPolicy(surface: ChannelSurface): ChannelPolicyRecord {
+  return {
+    surface,
+    enabled: true,
+    requireMention: false,
+    allowDirectMessages: true,
+    allowGroupMessages: true,
+    allowThreadMessages: true,
+    dmPolicy: 'inherit',
+    groupPolicy: 'inherit',
+    allowTextCommandsWithoutMention: false,
+    allowlistUserIds: [],
+    allowlistChannelIds: [],
+    allowlistGroupIds: [],
+    allowedCommands: [],
+    groupPolicies: [],
+    updatedAt: Date.now(),
+    metadata: {},
+  };
+}
+
+function normalizeGroupPolicy(policy: ChannelGroupPolicyRecord): ChannelGroupPolicyRecord {
+  return {
+    ...policy,
+    metadata: policy.metadata ?? {},
+  };
+}
+
+function normalizeConversationKind(input: ChannelIngressPolicyInput): ChannelConversationKind {
+  if (input.conversationKind) return input.conversationKind;
+  if (input.threadId) return 'thread';
+  if (input.groupId) return 'group';
+  if (input.channelId) return 'channel';
+  return 'service';
+}
+
+function firstCommand(text: string | undefined, explicit?: string): string {
+  if (explicit && explicit.trim().length > 0) return explicit.trim().toLowerCase();
+  if (!text) return '';
+  return text.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? '';
+}
+
+function commandAllowed(command: string, allowedCommands: readonly string[]): boolean {
+  if (allowedCommands.length === 0 || !command) return true;
+  return allowedCommands.map((entry) => entry.toLowerCase()).includes(command);
+}
+
+const CONVERSATION_POLICIES = new Set(['allow', 'deny', 'inherit']);
+const CONVERSATION_KINDS = new Set<ChannelConversationKind>(['direct', 'group', 'channel', 'thread', 'service']);
+
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function throwInvalidChannelPolicySnapshot(): never {
+  throw new Error('Channel policy store snapshot is invalid.');
+}
+
+function validateOptionalString(value: unknown): void {
+  if (value !== undefined && typeof value !== 'string') throwInvalidChannelPolicySnapshot();
+}
+
+function validateOptionalBoolean(value: unknown): void {
+  if (value !== undefined && typeof value !== 'boolean') throwInvalidChannelPolicySnapshot();
+}
+
+function validateOptionalStringArray(value: unknown): void {
+  if (value !== undefined && !isStringArray(value)) throwInvalidChannelPolicySnapshot();
+}
+
+function validateChannelGroupPolicyRecord(value: unknown): void {
+  if (!isRecord(value) || typeof value['id'] !== 'string') throwInvalidChannelPolicySnapshot();
+  validateOptionalString(value['label']);
+  validateOptionalString(value['groupId']);
+  validateOptionalString(value['channelId']);
+  validateOptionalString(value['workspaceId']);
+  validateOptionalBoolean(value['requireMention']);
+  validateOptionalBoolean(value['allowGroupMessages']);
+  validateOptionalBoolean(value['allowThreadMessages']);
+  validateOptionalBoolean(value['allowTextCommandsWithoutMention']);
+  validateOptionalStringArray(value['allowlistUserIds']);
+  validateOptionalStringArray(value['allowlistChannelIds']);
+  validateOptionalStringArray(value['allowlistGroupIds']);
+  validateOptionalStringArray(value['allowedCommands']);
+  if (value['metadata'] !== undefined && !isRecord(value['metadata'])) throwInvalidChannelPolicySnapshot();
+}
+
+function validateChannelPolicyRecord(value: unknown): void {
+  if (!isRecord(value) || typeof value['surface'] !== 'string') throwInvalidChannelPolicySnapshot();
+  validateOptionalBoolean(value['enabled']);
+  validateOptionalBoolean(value['requireMention']);
+  validateOptionalBoolean(value['allowDirectMessages']);
+  validateOptionalBoolean(value['allowGroupMessages']);
+  validateOptionalBoolean(value['allowThreadMessages']);
+  validateOptionalBoolean(value['allowTextCommandsWithoutMention']);
+  const dmPolicy = value['dmPolicy'];
+  if (dmPolicy !== undefined && (typeof dmPolicy !== 'string' || !CONVERSATION_POLICIES.has(dmPolicy))) {
+    throwInvalidChannelPolicySnapshot();
+  }
+  const groupPolicy = value['groupPolicy'];
+  if (groupPolicy !== undefined && (typeof groupPolicy !== 'string' || !CONVERSATION_POLICIES.has(groupPolicy))) {
+    throwInvalidChannelPolicySnapshot();
+  }
+  validateOptionalStringArray(value['allowlistUserIds']);
+  validateOptionalStringArray(value['allowlistChannelIds']);
+  validateOptionalStringArray(value['allowlistGroupIds']);
+  validateOptionalStringArray(value['allowedCommands']);
+  if (value['groupPolicies'] !== undefined) {
+    if (!Array.isArray(value['groupPolicies'])) throwInvalidChannelPolicySnapshot();
+    for (const groupPolicy of value['groupPolicies']) validateChannelGroupPolicyRecord(groupPolicy);
+  }
+  if (value['updatedAt'] !== undefined && !isFiniteNumber(value['updatedAt'])) throwInvalidChannelPolicySnapshot();
+  if (value['metadata'] !== undefined && !isRecord(value['metadata'])) throwInvalidChannelPolicySnapshot();
+}
+
+function validateChannelPolicyAuditRecord(value: unknown): void {
+  if (
+    !isRecord(value)
+    || typeof value['id'] !== 'string'
+    || typeof value['surface'] !== 'string'
+    || !isFiniteNumber(value['createdAt'])
+    || typeof value['allowed'] !== 'boolean'
+    || typeof value['reason'] !== 'string'
+    || !isRecord(value['metadata'])
+  ) {
+    throwInvalidChannelPolicySnapshot();
+  }
+  validateOptionalString(value['userId']);
+  validateOptionalString(value['channelId']);
+  validateOptionalString(value['groupId']);
+  validateOptionalString(value['threadId']);
+  validateOptionalString(value['matchedGroupPolicyId']);
+  validateOptionalString(value['text']);
+  const conversationKind = value['conversationKind'];
+  if (
+    conversationKind !== undefined
+    && (typeof conversationKind !== 'string' || !CONVERSATION_KINDS.has(conversationKind as ChannelConversationKind))
+  ) {
+    throwInvalidChannelPolicySnapshot();
+  }
+}
+
+function validateChannelPolicySnapshot(snapshot: ChannelPolicySnapshot | null): ChannelPolicySnapshot | null {
+  if (!snapshot) return null;
+  if (!isRecord(snapshot) || !Array.isArray(snapshot.policies) || !Array.isArray(snapshot.audit)) throwInvalidChannelPolicySnapshot();
+  for (const policy of snapshot.policies) validateChannelPolicyRecord(policy);
+  for (const audit of snapshot.audit) validateChannelPolicyAuditRecord(audit);
+  return snapshot;
+}
+
+export class ChannelPolicyManager {
+  private readonly store: PersistentStore<ChannelPolicySnapshot>;
+  private readonly policies = new Map<ChannelSurface, ChannelPolicyRecord>();
+  private readonly audit: ChannelPolicyAuditRecord[] = [];
+  private loaded = false;
+  private auditFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whole-store writes run one at a time, in call order. See StoreWriteQueue. */
+  private readonly writes = new StoreWriteQueue();
+
+  constructor(
+    options: {
+      readonly store?: PersistentStore<ChannelPolicySnapshot> | undefined;
+      readonly storePath?: string | undefined;
+    },
+  ) {
+    if (options.store) {
+      this.store = options.store;
+      return;
+    }
+    if (!options.storePath) {
+      throw new Error('ChannelPolicyManager requires an explicit store or storePath');
+    }
+    this.store = new PersistentStore<ChannelPolicySnapshot>(options.storePath);
+  }
+
+  async start(): Promise<void> {
+    if (this.loaded) return;
+    const snapshot = validateChannelPolicySnapshot(await this.store.load());
+    this.policies.clear();
+    this.audit.length = 0;
+    for (const policy of snapshot?.policies ?? []) {
+      this.policies.set(policy.surface, {
+        ...defaultPolicy(policy.surface),
+        ...policy,
+        allowDirectMessages: policy.allowDirectMessages ?? true,
+        allowGroupMessages: policy.allowGroupMessages ?? true,
+        allowThreadMessages: policy.allowThreadMessages ?? true,
+        dmPolicy: policy.dmPolicy ?? 'inherit',
+        groupPolicy: policy.groupPolicy ?? 'inherit',
+        allowTextCommandsWithoutMention: policy.allowTextCommandsWithoutMention ?? false,
+        allowlistGroupIds: policy.allowlistGroupIds ?? [],
+        groupPolicies: (policy.groupPolicies ?? []).map(normalizeGroupPolicy),
+        metadata: policy.metadata ?? {},
+      });
+    }
+    this.audit.push(...(snapshot?.audit ?? []));
+    this.loaded = true;
+  }
+
+  listPolicies(): ChannelPolicyRecord[] {
+    return [...this.policies.values()].sort((a, b) => a.surface.localeCompare(b.surface));
+  }
+
+  listAudit(limit = 100): ChannelPolicyAuditRecord[] {
+    return this.audit.slice(0, Math.max(1, limit));
+  }
+
+  getPolicy(surface: ChannelSurface): ChannelPolicyRecord {
+    return this.policies.get(surface) ?? defaultPolicy(surface);
+  }
+
+  async upsertPolicy(
+    surface: ChannelSurface,
+    patch: Partial<Omit<ChannelPolicyRecord, 'surface' | 'updatedAt'>>,
+  ): Promise<ChannelPolicyRecord> {
+    await this.start();
+    const existing = this.getPolicy(surface);
+    const next: ChannelPolicyRecord = {
+      ...existing,
+      ...patch,
+      surface,
+      updatedAt: Date.now(),
+      allowDirectMessages: patch.allowDirectMessages ?? existing.allowDirectMessages,
+      allowGroupMessages: patch.allowGroupMessages ?? existing.allowGroupMessages,
+      allowThreadMessages: patch.allowThreadMessages ?? existing.allowThreadMessages,
+      dmPolicy: patch.dmPolicy ?? existing.dmPolicy,
+      groupPolicy: patch.groupPolicy ?? existing.groupPolicy,
+      allowTextCommandsWithoutMention: patch.allowTextCommandsWithoutMention ?? existing.allowTextCommandsWithoutMention,
+      allowlistUserIds: patch.allowlistUserIds ?? existing.allowlistUserIds,
+      allowlistChannelIds: patch.allowlistChannelIds ?? existing.allowlistChannelIds,
+      allowlistGroupIds: patch.allowlistGroupIds ?? existing.allowlistGroupIds,
+      allowedCommands: patch.allowedCommands ?? existing.allowedCommands,
+      groupPolicies: (patch.groupPolicies ?? existing.groupPolicies).map(normalizeGroupPolicy),
+      metadata: patch.metadata ?? existing.metadata,
+    };
+    this.policies.set(surface, next);
+    await this.persist();
+    return next;
+  }
+
+  async evaluateIngress(input: ChannelIngressPolicyInput): Promise<ChannelPolicyDecision> {
+    await this.start();
+    const policy = this.getPolicy(input.surface);
+    const conversationKind = normalizeConversationKind(input);
+    const matchedGroupPolicy = policy.groupPolicies.find((entry) => (
+      (entry.groupId && input.groupId && entry.groupId === input.groupId)
+      || (entry.channelId && input.channelId && entry.channelId === input.channelId)
+      || (entry.workspaceId && input.workspaceId && entry.workspaceId === input.workspaceId)
+    ));
+    const requireMention = matchedGroupPolicy?.requireMention ?? policy.requireMention;
+    const allowTextCommandsWithoutMention = matchedGroupPolicy?.allowTextCommandsWithoutMention
+      ?? policy.allowTextCommandsWithoutMention;
+    const allowlistUserIds = matchedGroupPolicy?.allowlistUserIds ?? policy.allowlistUserIds;
+    const allowlistChannelIds = matchedGroupPolicy?.allowlistChannelIds ?? policy.allowlistChannelIds;
+    const allowlistGroupIds = matchedGroupPolicy?.allowlistGroupIds ?? policy.allowlistGroupIds;
+    const allowedCommands = matchedGroupPolicy?.allowedCommands ?? policy.allowedCommands;
+    const allowGroupMessages = matchedGroupPolicy?.allowGroupMessages ?? policy.allowGroupMessages;
+    const allowThreadMessages = matchedGroupPolicy?.allowThreadMessages ?? policy.allowThreadMessages;
+    const command = firstCommand(input.text, input.controlCommand);
+    const isAuthorizedControlCommand = commandAllowed(command, allowedCommands);
+    const bypassMention =
+      (conversationKind === 'group' || conversationKind === 'channel' || conversationKind === 'thread')
+      && requireMention
+      && !input.mentioned
+      && !input.hasAnyMention
+      && allowTextCommandsWithoutMention
+      && Boolean(command)
+      && isAuthorizedControlCommand;
+    let allowed = true;
+    let reason = 'allowed';
+    if (!policy.enabled) {
+      allowed = false;
+      reason = 'surface-disabled';
+    } else if (conversationKind === 'direct' && (policy.dmPolicy === 'deny' || !policy.allowDirectMessages)) {
+      allowed = false;
+      reason = 'direct-messages-disabled';
+    } else if ((conversationKind === 'group' || conversationKind === 'channel') && (policy.groupPolicy === 'deny' || !allowGroupMessages)) {
+      allowed = false;
+      reason = 'group-messages-disabled';
+    } else if (conversationKind === 'thread' && !allowThreadMessages) {
+      allowed = false;
+      reason = 'thread-messages-disabled';
+    } else if (allowlistGroupIds.length > 0 && input.groupId && !allowlistGroupIds.includes(input.groupId)) {
+      allowed = false;
+      reason = 'group-not-allowlisted';
+    } else if (allowlistGroupIds.length > 0 && !input.groupId) {
+      allowed = false;
+      reason = 'missing-group-identity';
+    } else if (allowlistUserIds.length > 0 && input.userId && !allowlistUserIds.includes(input.userId)) {
+      allowed = false;
+      reason = 'user-not-allowlisted';
+    } else if (allowlistUserIds.length > 0 && !input.userId) {
+      allowed = false;
+      reason = 'missing-user-identity';
+    } else if (allowlistChannelIds.length > 0 && input.channelId && !allowlistChannelIds.includes(input.channelId)) {
+      allowed = false;
+      reason = 'channel-not-allowlisted';
+    } else if (allowlistChannelIds.length > 0 && !input.channelId) {
+      allowed = false;
+      reason = 'missing-channel-identity';
+    } else if (requireMention && !input.mentioned && !bypassMention) {
+      allowed = false;
+      reason = 'mention-required';
+    } else if (!commandAllowed(command, allowedCommands)) {
+      allowed = false;
+      reason = 'command-not-allowed';
+    }
+
+    // Owner allowlist self-seeding: a surface with no owner allowlist adopts
+    // the first identified sender as its owner, whoever pairs/configures the
+    // channel proves it by sending the first message, and no separate
+    // add-yourself step exists. From then on unknown senders are ignored.
+    let effectivePolicy = policy;
+    if (allowed && allowlistUserIds.length === 0 && input.userId) {
+      effectivePolicy = await this.upsertPolicy(input.surface, { allowlistUserIds: [input.userId] });
+      reason = 'owner-allowlist-seeded';
+      logger.info('Channel owner allowlist seeded from the first identified sender', {
+        surface: input.surface,
+        userId: input.userId,
+      });
+    }
+
+    if (!allowed && (reason === 'user-not-allowlisted' || reason === 'missing-user-identity')) {
+      logger.info('Channel message from unknown sender ignored', {
+        surface: input.surface,
+        ...(input.userId ? { userId: input.userId } : {}),
+        reason,
+      });
+    }
+
+    this.audit.unshift({
+      id: `policy-audit-${randomUUID().slice(0, 8)}`,
+      surface: input.surface,
+      createdAt: Date.now(),
+      allowed,
+      reason,
+      ...(input.userId ? { userId: input.userId } : {}),
+      ...(input.channelId ? { channelId: input.channelId } : {}),
+      ...(input.groupId ? { groupId: input.groupId } : {}),
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      conversationKind,
+      ...(matchedGroupPolicy?.id ? { matchedGroupPolicyId: matchedGroupPolicy.id } : {}),
+      ...(input.text ? { text: input.text.slice(0, 200) } : {}),
+      metadata: input.metadata ?? {},
+    });
+    if (this.audit.length > MAX_AUDIT_RECORDS) {
+      this.audit.length = MAX_AUDIT_RECORDS;
+    }
+    // Audit telemetry is durability-decoupled from the per-message decision path:
+    // schedule a coalesced flush rather than awaiting a full-snapshot disk write on
+    // every inbound message. Call stop() to force a final flush on graceful shutdown.
+    this.scheduleAuditFlush();
+
+    return {
+      allowed,
+      reason,
+      policy: effectivePolicy,
+      ...(matchedGroupPolicy ? { matchedGroupPolicy } : {}),
+      matchedScope: matchedGroupPolicy ? 'group' : 'surface',
+      effectiveRequireMention: requireMention,
+      effectiveAllowedCommands: allowedCommands,
+    };
+  }
+
+  private scheduleAuditFlush(): void {
+    if (this.auditFlushTimer) return;
+    const timer = setTimeout(() => {
+      this.auditFlushTimer = null;
+      // The flush goes through the same write queue every other write uses.
+      // It used to have a chain of its own, which ordered flushes against each
+      // OTHER and against nothing else, the write it actually races is
+      // `upsertPolicy`'s.
+      void this.persist().catch((error: unknown) => {
+        logger.warn('Channel policy audit flush failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, AUDIT_FLUSH_INTERVAL_MS);
+    timer.unref?.();
+    this.auditFlushTimer = timer;
+  }
+
+  /**
+   * Flush any pending debounced audit writes and stop the flush timer. Call on
+   * graceful shutdown so the last batch of audit records is durably persisted.
+   */
+  async stop(): Promise<void> {
+    if (this.auditFlushTimer) {
+      clearTimeout(this.auditFlushTimer);
+      this.auditFlushTimer = null;
+    }
+    // A flush already in flight settles first, so the final write below is the
+    // last one to land rather than a race against it.
+    await this.writes.drain();
+    if (this.loaded) await this.persist();
+  }
+
+  /**
+   * Write the policies and audit trail as they stand at THIS call, after every
+   * write already queued has finished.
+   *
+   * Two paths write this file and they were ordered only against themselves:
+   * `upsertPolicy` awaited its write, and the debounced audit flush ran on a
+   * private chain. `evaluateIngress` schedules a flush on EVERY inbound message,
+   * so a "disable this surface" ruling, or the owner-allowlist seeding that
+   * decides which sender the surface answers at all, arriving while a flush was
+   * in flight could be overwritten by that flush's older snapshot. The surface
+   * comes back enabled, or the allowlist comes back empty and adopts the next
+   * sender that speaks.
+   */
+  private async persist(): Promise<void> {
+    const snapshot: ChannelPolicySnapshot = {
+      policies: this.listPolicies(),
+      audit: [...this.audit],
+    };
+    await this.writes.run(() => this.store.persist(snapshot));
+  }
+}

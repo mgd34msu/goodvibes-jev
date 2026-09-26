@@ -1,0 +1,725 @@
+import type {
+  LLMProvider,
+  ChatRequest,
+  ChatResponse,
+  ChatStopReason,
+  ProviderBatchAdapter,
+  ProviderBatchCreateInput,
+  ProviderBatchCreateResult,
+  ProviderBatchPollResult,
+  ProviderBatchResult,
+  ProviderModelSource,
+  ProviderRuntimeMetadata,
+  ProviderRuntimeMetadataDeps,
+} from './interface.js';
+import {
+  fetchAnthropicModels,
+  runLiveModelRefresh,
+  type LiveModelDiscoveryResult,
+} from './live-model-discovery.js';
+import { applyAnthropicReasoning, isAnthropicThinkingEnabled } from './anthropic-stream.js';
+import { describeReasoningRejection } from './reasoning-effort.js';
+import { getCacheCapability } from './cache-capability.js';
+import { mapAnthropicStopReason } from './stop-reason-maps.js';
+import { resolveCacheStrategy } from './cache-strategy.js';
+import type { CacheContext, CacheHitTracker, CachePolicyReader } from './cache-strategy.js';
+import { ProviderError } from '../types/errors.js';
+import { withRetry } from '../utils/retry.js';
+import { instrumentedLlmCall } from '../runtime/llm-observability.js';
+import {
+  toAnthropicTools,
+  toAnthropicMessages,
+  fromAnthropicContent,
+  normalizeAnthropicModel,
+} from './tool-formats.js';
+import { createAnthropicSSEState, readAnthropicSSEStream, assembleAnthropicContentBlocks } from './anthropic-sse-assembler.js';
+import { resolveCompletedStopReason, withProviderStopReason } from './provider-stop-reason.js';
+import type { AnthropicContentBlock } from './tool-formats.js';
+import { summarizeError, toProviderError } from '../utils/error-display.js';
+import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
+import { toRecord } from '../utils/record-coerce.js';
+import { parseRateLimitHeaders } from './rate-limit-headers.js';
+
+const ANTHROPIC_API_BASE = 'https://api.anthropic.com/v1';
+const ANTHROPIC_API_VERSION = '2023-06-01';
+
+/**
+ * Dated fallback model list, used when no API key is configured (so a live
+ * /v1/models call isn't possible) and as the offline baseline when a live
+ * call fails with no prior cache. Live-verified against a real Anthropic
+ * API key's GET /v1/models response on 2026-07-12; update this list (and
+ * the date below) whenever it is re-verified.
+ */
+export const ANTHROPIC_DATED_STATIC_MODELS: readonly string[] = [
+  'claude-sonnet-5',
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-sonnet-4-6',
+  'claude-opus-4-6',
+  'claude-opus-4-5-20251101',
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-5-20250929',
+  'claude-opus-4-1-20250805',
+];
+export const ANTHROPIC_DATED_STATIC_MODELS_AS_OF = '2026-07-12';
+
+interface AnthropicResponseBody {
+  content: AnthropicContentBlock[];
+  stop_reason: string;
+  usage: { input_tokens: number; output_tokens: number };
+}
+
+
+/**
+ * OFFLINE fallback for per-model max output tokens.
+ *
+ * The authoritative source is the provider: GET /v1/models reports `max_tokens`
+ * per model, and `refreshModels()` reads it (see `_liveMaxOutput`). This table
+ * exists for the same case as ANTHROPIC_DATED_STATIC_MODELS, no API key, so
+ * no live call is possible, and as the baseline when a live call fails.
+ *
+ * Order matters: the first match wins, so the newest and most specific arms
+ * come first. Left un-updated, this table had no arm covering claude-opus-5,
+ * claude-sonnet-5 or claude-fable-5, so all three fell to the 16384 default
+ * and were capped at an eighth of their real 128000.
+ *
+ * Verified against Anthropic's published model comparison on 2026-07-27.
+ */
+const ANTHROPIC_MAX_OUTPUT: Array<{ match: (m: string) => boolean; cap: number }> = [
+  // 128K-output generation: Fable 5, Opus 5 / 4.8 / 4.7 / 4.6, Sonnet 5 / 4.6.
+  {
+    match: (m) => m.startsWith('claude-fable-5')
+      || m.startsWith('claude-mythos-5')
+      || m.startsWith('claude-opus-5')
+      || m.startsWith('claude-opus-4-8')
+      || m.startsWith('claude-opus-4-7')
+      || m.startsWith('claude-opus-4-6')
+      || m.startsWith('claude-sonnet-5')
+      || m.startsWith('claude-sonnet-4-6'),
+    cap: 128000,
+  },
+  // 64K-output generation: Haiku 4.5, Opus 4.5, Sonnet 4.5.
+  { match: (m) => m.includes('haiku-4-5') || m.includes('opus-4-5') || m.includes('sonnet-4-5'), cap: 64000 },
+  { match: (m) => m.includes('sonnet-4-0') || m.includes('sonnet-4'), cap: 64000 },
+  // Opus 4.1 / 4.0.
+  { match: (m) => m.includes('opus-4'), cap: 32000 },
+  // Older Haiku generations (3, 3.5).
+  { match: (m) => m.includes('haiku'), cap: 8192 },
+];
+const ANTHROPIC_DEFAULT_MAX_OUTPUT = 16384;
+const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'> = {
+  getHitRate: () => 0,
+  recordTurn: () => {},
+};
+
+/** This model's max output tokens per the offline table. Live limits win, see `clampMaxTokens`. */
+function staticMaxOutput(model: string): number {
+  for (const { match, cap } of ANTHROPIC_MAX_OUTPUT) {
+    if (match(model)) return cap;
+  }
+  return ANTHROPIC_DEFAULT_MAX_OUTPUT;
+}
+
+/**
+ * AnthropicProvider, calls the Anthropic Messages API directly via fetch.
+ * System message is a top-level field (not a message). Tool results are
+ * `tool_result` content blocks inside `user` messages.
+ * Supports SSE streaming when onDelta is provided.
+ */
+export class AnthropicProvider implements LLMProvider {
+  readonly name = 'anthropic';
+  readonly credentialAuthority = 'resolver' as const;
+  readonly modelSource: ProviderModelSource = { kind: 'live-discovery' };
+  readonly batch: ProviderBatchAdapter;
+
+  /**
+   * Populated synchronously with the dated-static baseline at construction
+   * (never empty), then replaced by `refreshModels()` with the live
+   * /v1/models result. See `modelSource`.
+   */
+  private _models: string[] = [...ANTHROPIC_DATED_STATIC_MODELS];
+  get models(): string[] {
+    return this._models;
+  }
+
+  /**
+   * Per-model max output tokens as the PROVIDER reports them, populated by
+   * `refreshModels()` from GET /v1/models.
+   *
+   * Empty until a live refresh succeeds, which is why the offline table still
+   * has to be correct, but once populated it is authoritative, so a model
+   * released after this build shipped is capped at its real limit instead of
+   * whatever the table happens to guess.
+   */
+  private readonly _liveMaxOutput = new Map<string, number>();
+
+  private readonly apiKey: string;
+  private readonly cacheHitTracker: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'>;
+  private readonly modelsCachePath: string | undefined;
+  /**
+   * Where `cache.enabled` and `cache.stableTtl` are read from, per request.
+   *
+   * Read at request time rather than captured at construction, for the reason
+   * `cache.monitorHitRate` and `cache.hitRateWarningThreshold` are: a config
+   * change applies to the next turn, not the next restart. Absent when an
+   * embedder constructs this provider with nothing but a key, which leaves the
+   * shipped defaults in force.
+   */
+  private readonly cachePolicy: CachePolicyReader | undefined;
+
+  constructor(
+    apiKey: string,
+    cacheHitTracker: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'> = NOOP_CACHE_HIT_TRACKER,
+    modelsCachePath?: string,
+    cachePolicy?: CachePolicyReader,
+  ) {
+    this.apiKey = apiKey;
+    this.cacheHitTracker = cacheHitTracker;
+    this.modelsCachePath = modelsCachePath;
+    this.cachePolicy = cachePolicy;
+    this.batch = {
+      kind: 'provider-batch',
+      endpoints: ['/v1/messages/batches'],
+      createChatBatch: (input) => this.createChatBatch(input),
+      retrieveBatch: (providerBatchId) => this.retrieveBatch(providerBatchId),
+      cancelBatch: (providerBatchId) => this.cancelBatch(providerBatchId),
+      getResults: (providerBatchId) => this.getBatchResults(providerBatchId),
+    };
+  }
+
+  async chat(params: ChatRequest): Promise<ChatResponse> {
+    const { messages, tools, model, maxTokens, signal, systemPrompt, onDelta, onRetry, reasoningEffort } = params;
+
+    return (await instrumentedLlmCall(() => withRetry(async () => {
+      const resolvedModel = normalizeAnthropicModel(model);
+      // Build Anthropic-formatted messages and tools early so we can inject cache_control.
+      const anthropicMessages = toAnthropicMessages(messages);
+      const anthropicTools = (tools && tools.length > 0) ? toAnthropicTools(tools) : null;
+
+      const body: Record<string, unknown> = {
+        model: resolvedModel,
+        max_tokens: this.clampMaxTokens(resolvedModel, maxTokens ?? 8192),
+        stream: true,
+      };
+
+      if (systemPrompt) {
+        body['system'] = [
+          { type: 'text', text: systemPrompt },
+        ];
+      }
+
+      if (anthropicTools && anthropicTools.length > 0) {
+        body['tools'] = anthropicTools;
+      }
+
+      // Multi-breakpoint prompt caching (up to 4 breakpoints).
+      const cacheContext: CacheContext = {
+        providerName: 'anthropic',
+        systemPromptTokens: Math.ceil((systemPrompt?.length ?? 0) / 4),
+        toolCount: tools?.length ?? 0,
+        toolTokens: Math.ceil(JSON.stringify(tools ?? []).length / 4),
+        conversationTurns: Math.floor(messages.length / 2),
+        // Token estimates use length/4 as an approximation (actual tokenization varies by content).
+        conversationTokens: Math.ceil(
+          messages.reduce((sum, m) =>
+            sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0) / 4,
+        ),
+        recentCacheHitRate: this.cacheHitTracker.getHitRate() || undefined,
+      };
+
+      const strategy = resolveCacheStrategy(cacheContext, this.cachePolicy);
+      let breakpointsPlaced = 0;
+
+      if (strategy.breakpoints.length > 0) {
+        // BP1: System prompt + tools (1h TTL for stable content).
+        const bp1 = strategy.breakpoints.find(b => b.position === 'system_and_tools');
+        if (bp1) {
+          if (anthropicTools && anthropicTools.length > 0) {
+            const lastTool = toRecord(anthropicTools[anthropicTools.length - 1]);
+            lastTool['cache_control'] = bp1.ttl !== '5m'
+              ? { type: 'ephemeral', ttl: bp1.ttl }
+              : { type: 'ephemeral' };
+            breakpointsPlaced++;
+          } else if (systemPrompt) {
+            const sysBlocks = body['system'] as Array<Record<string, unknown>>;
+            if (sysBlocks?.length) {
+              sysBlocks[sysBlocks.length - 1]!['cache_control'] = bp1.ttl !== '5m'
+                ? { type: 'ephemeral', ttl: bp1.ttl }
+                : { type: 'ephemeral' };
+              breakpointsPlaced++;
+            }
+          }
+        }
+
+        // BP2: Conversation history prefix, last assistant message before the final user message.
+        const bp2 = strategy.breakpoints.find(b => b.position === 'conversation_prefix');
+        let bp2MessageIdx = -1;
+        if (bp2 && anthropicMessages.length >= 3) {
+          for (let i = anthropicMessages.length - 2; i >= 0; i--) {
+            const msg = toRecord(anthropicMessages[i]);
+            if (msg.role === 'assistant') {
+              const content = msg.content as Array<Record<string, unknown>>;
+              if (content?.length) {
+                content[content.length - 1]!['cache_control'] = { type: 'ephemeral' };
+                bp2MessageIdx = i;
+                breakpointsPlaced++;
+              }
+              break;
+            }
+          }
+        }
+
+        // BP3: Largest tool result in conversation history.
+        // Skip messages within 2 indices of BP2 to avoid wasting breakpoints on overlapping prefix regions.
+        const bp3 = strategy.breakpoints.find(b => b.position === 'last_tool_result');
+        if (bp3) {
+          let largestIdx = -1;
+          let largestBlockIdx = -1;
+          let largestSize = 0;
+          for (let i = 0; i < anthropicMessages.length - 1; i++) {
+            // Skip messages too close to BP2 to avoid proximity waste.
+            if (bp2MessageIdx >= 0 && Math.abs(i - bp2MessageIdx) <= 2) continue;
+            const msg = toRecord(anthropicMessages[i]);
+            if (msg.role === 'user') {
+              const content = msg.content as Array<Record<string, unknown>>;
+              if (content) {
+                // Skip messages that already have cache_control on any content block.
+                const alreadyCached = content.some(b => b['cache_control'] != null);
+                if (alreadyCached) continue;
+                for (let j = 0; j < content.length; j++) {
+                  const block = content[j]!;
+                  if (block['type'] === 'tool_result') {
+                    const size = typeof block['content'] === 'string'
+                      ? block['content'].length
+                      : JSON.stringify(block['content']).length;
+                    if (size > largestSize) {
+                      largestSize = size;
+                      largestIdx = i;
+                      largestBlockIdx = j;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          // Only place BP3 if the tool result is substantial (>500 chars ~ 125 tokens).
+          if (largestIdx >= 0 && largestBlockIdx >= 0 && largestSize > 500) {
+            const msg = toRecord(anthropicMessages[largestIdx]);
+            const content = msg.content as Array<Record<string, unknown>>;
+            // Target the specific tool_result block, not the last block in the message.
+            content[largestBlockIdx]!['cache_control'] = { type: 'ephemeral' };
+            breakpointsPlaced++;
+          }
+        }
+      }
+
+      body['messages'] = anthropicMessages;
+
+      const resolvedEffort = applyAnthropicReasoning(
+        body,
+        { model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+        this.clampMaxTokens(resolvedModel, Infinity),
+      );
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'anthropic-version': ANTHROPIC_API_VERSION,
+        'x-api-key': this.apiKey,
+      };
+      // Build beta headers: thinking and/or extended TTL prompt caching.
+      const betaFeatures: string[] = [];
+      if (isAnthropicThinkingEnabled(body['thinking'])) {
+        betaFeatures.push('interleaved-thinking-2025-05-14');
+      }
+      // Extended TTL (e.g. '1h') requires the prompt-caching beta header.
+      const hasExtendedTtl = strategy.breakpoints.some(bp => bp.ttl !== '5m');
+      if (hasExtendedTtl) {
+        betaFeatures.push('prompt-caching-2025-04-14');
+      }
+      if (betaFeatures.length > 0) {
+        headers['anthropic-beta'] = betaFeatures.join(',');
+      }
+
+      let res: Response;
+      try {
+        res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          ...(signal !== undefined ? { signal } : {}),
+        } as RequestInit);
+      } catch (err: unknown) {
+        throw toProviderError(err, {
+          provider: this.name,
+          operation: 'chat',
+          phase: 'request',
+        });
+      }
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'unknown error');
+        const effortHint = describeReasoningRejection(res.status, text, resolvedEffort.value) ?? '';
+        throw new ProviderError(`${formatAnthropicErrorText(res.status, text)}${effortHint}`, {
+          statusCode: res.status,
+          provider: this.name,
+          operation: 'chat',
+          phase: 'request',
+        });
+      }
+
+      // Rate-limit snapshot from THIS response's headers (populated on success,
+      // not just 429) so the runtime can warn before a limit is hit.
+      const rateLimit = parseRateLimitHeaders(res.headers) ?? undefined;
+
+      // Parse SSE stream
+      const state = createAnthropicSSEState();
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new ProviderError('Anthropic chat returned no response body.', {
+          statusCode: 502,
+          provider: this.name,
+          operation: 'chat',
+          phase: 'response',
+        });
+      }
+
+      await readAnthropicSSEStream(reader, state, onDelta, 'Anthropic');
+
+      const { text, toolCalls } = assembleAnthropicContentBlocks(state.toolBlocks, state.responseText, this.name);
+
+      // Record cache metrics for strategy adaptation.
+      this.cacheHitTracker.recordTurn({ inputTokens: state.inputTokens, cacheReadTokens: state.cacheReadTokens, cacheWriteTokens: state.cacheWriteTokens });
+
+      const cap = getCacheCapability('anthropic');
+      // Exclude write tokens from the denominator: writes are a one-time cost and inflate the
+      // apparent miss rate on the first request. Read rate = reads / (billed input + reads).
+      const hitRateDenom = state.inputTokens + state.cacheReadTokens;
+      const hitRate = hitRateDenom > 0 ? state.cacheReadTokens / hitRateDenom : undefined;
+
+      return {
+        content: text,
+        toolCalls,
+        usage: { inputTokens: state.inputTokens, outputTokens: state.outputTokens, cacheReadTokens: state.cacheReadTokens, cacheWriteTokens: state.cacheWriteTokens },
+        stopReason: resolveCompletedStopReason(state.stopReason, text),
+        ...withProviderStopReason(state.rawStopReason),
+        cacheMetrics: {
+          strategy: cap.type === 'explicit' ? `explicit-${cap.maxBreakpoints}bp` : cap.type,
+          breakpointsPlaced,
+          hitRate,
+        },
+        ...(rateLimit ? { rateLimit } : {}),
+      };
+    }, signal ? { signal } : undefined, onRetry), { provider: 'anthropic', model: model })).result;
+  }
+
+  async describeRuntime(deps: ProviderRuntimeMetadataDeps): Promise<ProviderRuntimeMetadata> {
+    const { buildStandardProviderAuthRoutes, summarizeProviderAuth } = await import('./runtime-metadata.js');
+    const authRoutes = await buildStandardProviderAuthRoutes({
+      providerId: 'anthropic',
+      apiKeyEnvVars: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
+      serviceNames: ['anthropic'],
+    }, deps);
+    const auth = summarizeProviderAuth({
+      configured: Boolean(this.apiKey),
+      detail: this.apiKey ? 'Anthropic API key available' : 'Anthropic API key is not configured',
+    }, authRoutes);
+    return {
+      auth: {
+        mode: 'api-key',
+        configured: auth.configured,
+        detail: auth.detail,
+        envVars: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
+        routes: authRoutes,
+      },
+      models: {
+        models: this.models,
+      },
+      usage: {
+        streaming: true,
+        toolCalling: true,
+        parallelTools: true,
+        promptCaching: true,
+        batch: {
+          supported: true,
+          discount: 'Provider-side Message Batches pricing is discounted versus live API pricing where Anthropic offers the discount.',
+          completionWindow: '24h',
+          endpoints: ['/v1/messages/batches'],
+          maxRequestsPerProviderBatch: 100_000,
+          maxInputBytes: 256 * 1024 * 1024,
+          notes: ['Batch requests are asynchronous and non-streaming. Results are correlated by custom_id.'],
+        },
+        notes: ['Anthropic prompt caching and thinking budgets are handled natively.'],
+      },
+      policy: {
+        local: false,
+        streamProtocol: 'anthropic-sse',
+        // Per model, not per provider: current generations take
+        // output_config.effort, Claude 4.5 and earlier take a thinking budget,
+        // and the levels each accepts come from the resolved spec.
+        reasoningMode: 'per-model-effort-or-thinking-budget',
+        cacheStrategy: 'anthropic-prompt-cache',
+      },
+    };
+  }
+
+  isConfigured(): boolean {
+    return this.apiKey.trim().length > 0;
+  }
+
+  /**
+   * Re-check Anthropic's live model list. Called at boot (background,
+   * respects the on-disk TTL cache) and on-demand for a picker-open
+   * re-check or an explicit user refresh (`force: true`, bypasses the TTL
+   * cache). Always resolves, falls back to the on-disk cache, then to the
+   * dated-static list, and reports the honest reason when live discovery
+   * fails rather than silently keeping stale data with no explanation.
+   */
+  async refreshModels(force = false): Promise<LiveModelDiscoveryResult> {
+    const result = await runLiveModelRefresh({
+      providerName: this.name,
+      cachePath: this.modelsCachePath,
+      datedStaticModels: ANTHROPIC_DATED_STATIC_MODELS,
+      datedStaticAsOf: ANTHROPIC_DATED_STATIC_MODELS_AS_OF,
+      isConfigured: this.isConfigured(),
+      // The same /v1/models call that lists the ids also reports each model's
+      // token limits, so the output cap is recorded here rather than fetched
+      // separately or guessed from a table. Only ids flow back to the shared
+      // refresh machinery, which is id-shaped by design.
+      fetchLive: async () => {
+        const models = await fetchAnthropicModels(this.apiKey);
+        for (const model of models) {
+          if (model.maxOutputTokens !== undefined) this._liveMaxOutput.set(model.id, model.maxOutputTokens);
+        }
+        return models.map((model) => model.id);
+      },
+      force,
+    });
+    this._models = [...result.models];
+    return result;
+  }
+
+  /**
+   * Clamp a requested max_tokens to what this model actually allows.
+   *
+   * Live limit first (what the provider says), offline table second. A model
+   * the live call did not cover, because there is no API key, or because the
+   * call failed, still gets a real cap rather than the generic default,
+   * provided the table has an arm for it.
+   */
+  private clampMaxTokens(model: string, requested: number): number {
+    return Math.min(requested, this._liveMaxOutput.get(model) ?? staticMaxOutput(model));
+  }
+
+  private async createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult> {
+    const res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches`, {
+      method: 'POST',
+      headers: this.batchHeaders(),
+      body: JSON.stringify({
+        requests: input.requests.map((request) => ({
+          custom_id: request.customId,
+          params: this.toAnthropicBatchMessageParams(request.params),
+        })),
+      }),
+    });
+    const body = await this.readJsonResponse(res, 'create batch');
+    return {
+      providerBatchId: String(body['id'] ?? ''),
+      status: this.mapAnthropicBatchStatus(body),
+      raw: body,
+    };
+  }
+
+  private async retrieveBatch(providerBatchId: string): Promise<ProviderBatchPollResult> {
+    const res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches/${encodeURIComponent(providerBatchId)}`, {
+      method: 'GET',
+      headers: this.batchHeaders(),
+    });
+    const body = await this.readJsonResponse(res, 'retrieve batch');
+    return {
+      providerBatchId: String(body['id'] ?? providerBatchId),
+      status: this.mapAnthropicBatchStatus(body),
+      resultAvailable: typeof body['results_url'] === 'string' && body['results_url'].length > 0,
+      raw: body,
+    };
+  }
+
+  private async cancelBatch(providerBatchId: string): Promise<ProviderBatchPollResult> {
+    const res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches/${encodeURIComponent(providerBatchId)}/cancel`, {
+      method: 'POST',
+      headers: this.batchHeaders(),
+    });
+    const body = await this.readJsonResponse(res, 'cancel batch');
+    return {
+      providerBatchId: String(body['id'] ?? providerBatchId),
+      status: this.mapAnthropicBatchStatus(body),
+      resultAvailable: typeof body['results_url'] === 'string' && body['results_url'].length > 0,
+      raw: body,
+    };
+  }
+
+  private async getBatchResults(providerBatchId: string): Promise<readonly ProviderBatchResult[]> {
+    const retrieveRes = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches/${encodeURIComponent(providerBatchId)}`, {
+      method: 'GET',
+      headers: this.batchHeaders(),
+    });
+    const batch = await this.readJsonResponse(retrieveRes, 'retrieve batch results');
+    const resultsUrl = typeof batch['results_url'] === 'string' ? batch['results_url'] : '';
+    if (!resultsUrl) return [];
+    const resultsRes = await instrumentedFetch(resultsUrl, {
+      method: 'GET',
+      headers: this.batchHeaders({ accept: 'application/jsonl' }),
+    });
+    if (!resultsRes.ok) {
+      const text = await resultsRes.text().catch(() => 'unknown error');
+      throw new ProviderError(formatAnthropicErrorText(resultsRes.status, text), {
+        statusCode: resultsRes.status,
+        provider: this.name,
+        operation: 'batch.results',
+        phase: 'request',
+      });
+    }
+    const text = await resultsRes.text();
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const results: ProviderBatchResult[] = [];
+    for (const line of lines) {
+      try {
+        results.push(this.parseAnthropicBatchResult(JSON.parse(line) as Record<string, unknown>));
+      } catch (error: unknown) {
+        results.push({
+          customId: `unparseable:${crypto.randomUUID()}`,
+          status: 'failed',
+          error: { message: `Unable to parse Anthropic batch result line: ${summarizeError(error)}` },
+          raw: line,
+        });
+      }
+    }
+    return results;
+  }
+
+  private batchHeaders(extra?: { accept?: string }): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'anthropic-version': ANTHROPIC_API_VERSION,
+      'x-api-key': this.apiKey,
+      ...(extra?.accept ? { Accept: extra.accept } : {}),
+    };
+  }
+
+  private toAnthropicBatchMessageParams(params: Omit<ChatRequest, 'signal' | 'onDelta'>): Record<string, unknown> {
+    const resolvedModel = normalizeAnthropicModel(params.model);
+    const body: Record<string, unknown> = {
+      model: resolvedModel,
+      max_tokens: this.clampMaxTokens(resolvedModel, params.maxTokens ?? 8192),
+      messages: toAnthropicMessages(params.messages),
+    };
+    if (params.systemPrompt) {
+      body['system'] = [{ type: 'text', text: params.systemPrompt }];
+    }
+    if (params.tools && params.tools.length > 0) {
+      body['tools'] = toAnthropicTools(params.tools);
+    }
+    applyAnthropicReasoning(
+      body,
+      { model: resolvedModel, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
+      this.clampMaxTokens(resolvedModel, Infinity),
+    );
+    return body;
+  }
+
+  private mapAnthropicBatchStatus(body: Record<string, unknown>): ProviderBatchPollResult['status'] {
+    const status = typeof body['processing_status'] === 'string' ? body['processing_status'] : '';
+    if (status === 'ended') return 'completed';
+    if (status === 'canceling') return 'cancelled';
+    if (status === 'in_progress') return 'running';
+    const archivedAt = body['archived_at'];
+    if (archivedAt != null) return 'cancelled';
+    return 'submitted';
+  }
+
+  private async readJsonResponse(res: Response, operation: string): Promise<Record<string, unknown>> {
+    const text = await res.text().catch(() => 'unknown error');
+    if (!res.ok) {
+      throw new ProviderError(formatAnthropicErrorText(res.status, text), {
+        statusCode: res.status,
+        provider: this.name,
+        operation: `batch.${operation}`,
+        phase: 'request',
+      });
+    }
+    try {
+      return JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new ProviderError(`Anthropic batch ${operation} returned invalid JSON.`, {
+        statusCode: 502,
+        provider: this.name,
+        operation: `batch.${operation}`,
+        phase: 'response',
+      });
+    }
+  }
+
+  private parseAnthropicBatchResult(parsed: Record<string, unknown>): ProviderBatchResult {
+    const customId = typeof parsed['custom_id'] === 'string' ? parsed['custom_id'] : `unknown:${crypto.randomUUID()}`;
+    const result = toRecord(parsed['result']);
+    const type = typeof result['type'] === 'string' ? result['type'] : '';
+    if (type === 'succeeded') {
+      const message = toRecord(result['message']);
+      return {
+        customId,
+        status: 'succeeded',
+        response: this.anthropicBatchMessageToChatResponse(message),
+        raw: parsed,
+      };
+    }
+    const status = type === 'canceled' ? 'cancelled' : type === 'expired' ? 'expired' : 'failed';
+    const error = toRecord(result['error']);
+    return {
+      customId,
+      status,
+      error: {
+        message: typeof error['message'] === 'string' ? error['message'] : `Anthropic batch request ${type || 'failed'}`,
+        ...(typeof error['type'] === 'string' ? { code: error['type'] } : {}),
+        raw: result,
+      },
+      raw: parsed,
+    };
+  }
+
+  private anthropicBatchMessageToChatResponse(message: Record<string, unknown>): ChatResponse {
+    const content = Array.isArray(message['content'])
+      ? message['content'] as AnthropicContentBlock[]
+      : [];
+    const { text, toolCalls } = fromAnthropicContent(content);
+    const usage = toRecord(message['usage']);
+    const rawStopReason = typeof message['stop_reason'] === 'string' ? message['stop_reason'] : undefined;
+    return {
+      content: text,
+      toolCalls,
+      usage: {
+        inputTokens: typeof usage['input_tokens'] === 'number' ? usage['input_tokens'] : 0,
+        outputTokens: typeof usage['output_tokens'] === 'number' ? usage['output_tokens'] : 0,
+        ...(typeof usage['cache_read_input_tokens'] === 'number' ? { cacheReadTokens: usage['cache_read_input_tokens'] } : {}),
+        ...(typeof usage['cache_creation_input_tokens'] === 'number' ? { cacheWriteTokens: usage['cache_creation_input_tokens'] } : {}),
+      },
+      stopReason: rawStopReason ? mapAnthropicStopReason(rawStopReason) : (text ? 'completed' : 'unknown'),
+      ...(rawStopReason ? { providerStopReason: rawStopReason } : {}),
+    };
+  }
+}
+
+function formatAnthropicErrorText(status: number, text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown; type?: unknown; request_id?: unknown };
+    const details = (() => {
+      if (parsed.error && typeof parsed.error === 'object') return JSON.stringify(parsed.error);
+      if (typeof parsed.error === 'string') return parsed.error;
+      return JSON.stringify(parsed);
+    })();
+    const requestId = typeof parsed.request_id === 'string' ? ` (request_id=${parsed.request_id})` : '';
+    return `Anthropic API error ${status}: ${details}${requestId}`;
+  } catch {
+    return `Anthropic API error ${status}: ${text}`;
+  }
+}

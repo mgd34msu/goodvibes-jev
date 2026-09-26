@@ -1,0 +1,106 @@
+import type { ConfigManager } from '../config/manager.js';
+import type { ServiceRegistry } from '../config/service-registry.js';
+import type { ProviderRegistry } from '../providers/registry.js';
+import type { IntegrationRecord } from './store/domains/integrations.js';
+import { logger } from '../utils/logger.js';
+import {
+  loadSystemPromptWithSources as _loadSystemPromptWithSources,
+  type SystemPromptResult,
+} from '../utils/prompt-loader.js';
+import { isAbsolute, resolve } from 'node:path';
+import { summarizeError } from '../utils/error-display.js';
+
+export interface RuntimeModelSelectionState {
+  model: string;
+  provider: string;
+}
+
+function requireOwnedPromptRoot(path: string | null, name: 'workingDirectory' | 'homeDirectory'): string {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    throw new Error(`loadRuntimeSystemPrompt requires ConfigManager with explicit ${name}.`);
+  }
+  return trimmed;
+}
+
+/**
+ * Load the runtime system prompt together with the provenance of every
+ * instruction file that fed it (including a nearest-file-wins `AGENTS.md`).
+ * The loaded sources are logged so the set of active instruction files is
+ * always reported, and returned so a host surface can display them.
+ */
+export function loadRuntimeSystemPromptWithSources(configManager: ConfigManager): SystemPromptResult {
+  const workingDirectory = requireOwnedPromptRoot(configManager.getWorkingDirectory(), 'workingDirectory');
+  const homeDirectory = requireOwnedPromptRoot(configManager.getHomeDirectory(), 'homeDirectory');
+  const result = _loadSystemPromptWithSources(
+    {
+      workingDirectory,
+      homeDirectory,
+      getConfigPath: () => {
+        const configuredPath = configManager.get('provider.systemPromptFile') as string | undefined;
+        if (typeof configuredPath !== 'string' || !configuredPath.trim()) return undefined;
+        return isAbsolute(configuredPath)
+          ? resolve(configuredPath)
+          : resolve(workingDirectory, configuredPath);
+      },
+      argv: process.argv,
+    },
+  );
+  logger.debug('Loaded system prompt instruction sources', {
+    sources: result.sources.map((s) => ({ kind: s.kind, path: s.path })),
+  });
+  return result;
+}
+
+export function loadRuntimeSystemPrompt(configManager: ConfigManager): string {
+  return loadRuntimeSystemPromptWithSources(configManager).prompt;
+}
+
+export async function synchronizeConfiguredServices(
+  syncIntegration: (record: IntegrationRecord, source?: string) => void,
+  serviceRegistry: ServiceRegistry,
+): Promise<void> {
+  const services = serviceRegistry.getAll();
+  await Promise.all(
+    Object.entries(services).map(async ([id, config]) => {
+      const inspection = await serviceRegistry.inspect(id);
+      if (!inspection) return;
+      syncIntegration({
+        id,
+        displayName: config.name || id,
+        category: 'custom',
+        status: inspection.hasPrimaryCredential ? 'healthy' : 'unconfigured',
+        enabled: true,
+        successCount: 0,
+        errorCount: 0,
+        meta: {
+          authType: config.authType,
+          baseUrl: config.baseUrl ?? null,
+          hasPrimaryCredential: inspection.hasPrimaryCredential,
+          hasWebhookUrl: inspection.hasWebhookUrl,
+          hasSigningSecret: inspection.hasSigningSecret,
+          hasPublicKey: inspection.hasPublicKey,
+          hasAppToken: inspection.hasAppToken,
+        },
+      }, 'bootstrap.services');
+    }),
+  );
+}
+
+export function restoreRuntimeModel(
+  providerRegistry: ProviderRegistry,
+  savedModel: string,
+  runtime: RuntimeModelSelectionState,
+): void {
+  const registry = providerRegistry.listModels();
+  const modelDef = registry.find((m) => m.registryKey === savedModel);
+  if (!modelDef) return;
+  try {
+    const key = modelDef.registryKey;
+    providerRegistry.setCurrentModel(key);
+    runtime.model = key;
+    runtime.provider = modelDef.provider;
+  } catch (err) {
+    logger.warn('Model restore failed', { error: summarizeError(err) });
+  }
+}

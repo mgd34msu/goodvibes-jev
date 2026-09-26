@@ -1,0 +1,300 @@
+import type { RuntimeEventDomain } from '../runtime/events/index.js';
+import type { ChannelSurface } from '../channels/index.js';
+import type { ConfigManager } from '../config/manager.js';
+import type { ServiceRegistry } from '../config/service-registry.js';
+import type { UserAuthManager } from '../security/user-auth.js';
+import type { AgentManager } from '../tools/agent/index.js';
+import type { AutomationDeliveryManager, AutomationManager } from '../automation/index.js';
+import type { ApprovalBroker, ControlPlaneGateway, SharedSessionBroker } from '../control-plane/index.js';
+import type { GatewayMethodCatalog, GatewayMethodDescriptor } from '../control-plane/index.js';
+import type { ProviderRegistry } from '../providers/registry.js';
+import type { RouteBindingManager, ChannelPolicyManager, ChannelPluginRegistry, ChannelReplyPipeline, ChannelProviderRuntimeManager, SurfaceRegistry, BuiltinChannelRuntime } from '../channels/index.js';
+import type { RuntimeEventBus } from '../runtime/events/index.js';
+import type { IntegrationHelperService } from '../runtime/integration/helpers.js';
+import type { DomainDispatch, RuntimeStore } from '../runtime/store/index.js';
+import type { RuntimeServices } from '../runtime/services.js';
+import type { DistributedRuntimeManager } from '../runtime/remote/index.js';
+import type { WatcherRegistry } from '../watchers/index.js';
+import type { VoiceService } from '../voice/index.js';
+import type { WebSearchService } from '../web-search/index.js';
+import type { HomeGraphService, KnowledgeGraphqlService, KnowledgeService, ProjectPlanningService } from '../knowledge/index.js';
+import type { MediaProviderRegistry } from '../media/index.js';
+import type { MultimodalService } from '../multimodal/index.js';
+import type { ArtifactStore } from '../artifacts/index.js';
+import type { AutomationExecutionPolicy, AutomationExternalContentSource, AutomationWakeMode } from '../automation/index.js';
+import type { AutomationJob } from '../automation/jobs.js';
+import type { SurfaceAdapterContext, GenericWebhookAdapterContext } from '../adapters/index.js';
+import type { SharedApprovalRecord } from '../control-plane/index.js';
+import type { DistributedPeerAuth } from '../runtime/remote/index.js';
+import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
+import type { RuntimeEventBus as EventBus } from '../runtime/events/index.js';
+import type { EmitterContext } from '../runtime/emitters/index.js';
+import type { MemoryEmbeddingProviderRegistry, MemoryRegistry } from '../state/index.js';
+
+export interface DaemonConfig {
+  port?: number | undefined;
+  host?: string | undefined;
+  workingDir?: string | undefined;
+  homeDirectory?: string | undefined;
+  /**
+   * Absolute path to the daemon home directory (`daemon.homeDir`).
+   * Resolved from --daemon-home CLI flag, GOODVIBES_DAEMON_HOME env, or
+   * ~/.goodvibes/daemon/ default. Holds immutable-after-startup identity state:
+   * auth-users.json, auth-bootstrap.txt, daemon-settings.json, operator-tokens.json.
+   */
+  daemonHomeDir?: string | undefined;
+  configManager?: ConfigManager | undefined;
+  githubWebhookSecret?: string | undefined;
+  agentManager?: AgentManager | undefined;
+  serveFactory?: typeof Bun.serve | undefined;
+  userAuth?: UserAuthManager | undefined;
+  runtimeBus?: RuntimeEventBus | null | undefined;
+  runtimeServices?: RuntimeServices | undefined;
+  /**
+   * Override companion-chat rate-limiter thresholds from daemon config.
+   * Takes precedence over GOODVIBES_CHAT_LIMITER_THRESHOLD env var.
+   */
+  companionChatRateLimiterOptions?: { threshold?: number } | undefined;
+  /**
+   * WorkspaceSwapManager instance to handle runtime.workingDir transitions.
+   * When provided, POST /config runtime.workingDir requests are delegated
+   * to the swap manager rather than rejected. Injected by cli.ts at startup;
+   * omitted in embedded/test contexts where workspace swaps are not supported.
+   */
+  swapManager?: import('./http/system-route-types.js').WorkspaceSwapManagerLike | null | undefined;
+  /**
+   * Identity of the RUNNING artifact for the auto-update loop: its version
+   * (compared against release tags) and optionally the executable the swap
+   * replaces. The SDK's own daemon CLI passes its release version; an
+   * embedding host passes ITS artifact identity. Absent, the embedded
+   * default, means the host manages updates and the loop stays off (the
+   * SDK package version is never assumed to be the shipped artifact).
+   */
+  updateArtifact?: import('./facade-lifecycle.js').DaemonUpdateArtifact | undefined;
+  /**
+   * True when this process was told to run out of a home that is NOT the
+   * machine's default (`--daemon-home`, `GOODVIBES_DAEMON_HOME`, a test
+   * harness's temp tree). Such a daemon never adopts the machine's service
+   * unit, see DaemonLifecycleRuntimeOptions.hasOverriddenHome for the
+   * incident that made this necessary.
+   */
+  hasOverriddenHome?: boolean | undefined;
+  /**
+   * An already-composed LAN leader-election coordinator to REUSE.
+   *
+   * A process has exactly one. A host that gates its own inbound consumers
+   * (goodvibes-tui's daemon gates its inbox poller) builds the coordinator
+   * itself, registers its gates, and passes it here so the daemon's Telegram
+   * and ntfy consumers ride the same leadership. Absent, the embedded
+   * default, means the daemon composes its own from `cluster.*` config.
+   *
+   * Passing one that is ALREADY started is fine: start() is idempotent.
+   */
+  clusterCoordinator?: import('../cluster/index.js').ClusterCoordinator | undefined;
+  /**
+   * The LAN group verbs to serve on `/api/cluster/*`.
+   *
+   * These are the single implementation behind the `cluster` CLI subcommands,
+   * the TUI's `/cluster` command and any web UI, which is what makes a command
+   * run against a REMOTE daemon behave exactly like one run on that machine.
+   * Absent means those paths are simply unrouted, which is the honest answer
+   * for an embedder that composes no group runtime.
+   */
+  clusterGroupVerbs?: import('./http/cluster-group-routes.js').ClusterGroupVerbs | undefined;
+  /**
+   * Turn on daemon-hosted sessions (`sessions.hosted.*`).
+   *
+   * Absent means this daemon hosts no conversation loops and the verbs refuse
+   * honestly, which is the right answer for an embedder that has not stated
+   * how a workspace floor is built, because that statement is where its trust
+   * posture lives. See daemon/hosted-sessions-composition.ts.
+   */
+  hostedSessions?: import('./hosted-sessions-composition.js').DaemonHostedSessionsOptions | undefined;
+}
+
+export interface DaemonDangerConfig {
+  daemon: boolean;
+}
+
+export interface ControlPlaneWebSocketData {
+  readonly channel: 'control-plane';
+  readonly authToken: string;
+  readonly principalId: string;
+  readonly principalKind: 'user' | 'bot' | 'service' | 'token';
+  readonly admin: boolean;
+  readonly scopes: readonly string[];
+  readonly domains: readonly RuntimeEventDomain[];
+  readonly clientKind:
+    | 'tui'
+    | 'web'
+    | 'slack'
+    | 'discord'
+    | 'ntfy'
+    | 'webhook'
+    | 'homeassistant'
+    | 'telegram'
+    | 'google-chat'
+    | 'signal'
+    | 'whatsapp'
+    | 'telephony'
+    | 'imessage'
+    | 'msteams'
+    | 'bluebubbles'
+    | 'mattermost'
+    | 'matrix'
+    | 'daemon';
+  readonly remoteAddress?: string | undefined;
+  clientId?: string | undefined;
+}
+
+export interface PendingSurfaceReply {
+  readonly agentId: string;
+  readonly surfaceKind: ChannelSurface;
+  readonly task: string;
+  readonly createdAt: number;
+  readonly sessionId?: string | undefined;
+  readonly routeId?: string | undefined;
+  readonly responseUrl?: string | undefined;
+  readonly channelId?: string | undefined;
+  readonly applicationId?: string | undefined;
+  readonly interactionToken?: string | undefined;
+  readonly topic?: string | undefined;
+  readonly callbackUrl?: string | undefined;
+  readonly callbackSecret?: string | undefined;
+  readonly callbackSignature?: 'shared-secret' | 'hmac-sha256' | undefined;
+  readonly callbackCorrelationId?: string | undefined;
+  readonly targetAddress?: string | undefined;
+  readonly threadId?: string | undefined;
+  [key: string]: unknown;
+  lastProgressAt?: number | undefined;
+  lastProgress?: string | undefined;
+}
+
+/**
+ * Why a one-off surface notice was not delivered.
+ *
+ * Each name is one guard in `DaemonSurfaceDeliveryHelper.deliverSurfaceNotice`.
+ * They exist because those guards used to be four bare `return false`s: the
+ * caller could not tell "sent" from "silently refused", so the conversation
+ * gate held an answerable proposal that the owner had never been shown.
+ */
+export type SurfaceNoticeRefusal =
+  | 'no-route-binding'
+  | 'empty-text'
+  | 'unsupported-delivery-surface'
+  | 'surface-delivery-disabled'
+  | 'no-deliverable-target'
+  | 'delivery-failed';
+
+/** The outcome of one surface notice. Never a bare boolean, see above. */
+export type SurfaceNoticeDelivery =
+  | { readonly delivered: true }
+  | {
+    readonly delivered: false;
+    readonly reason: SurfaceNoticeRefusal;
+    /** Present only for 'delivery-failed': the transport's own message. */
+    readonly error?: string | undefined;
+  };
+
+export interface DaemonRouteContext {
+  readonly configManager: ConfigManager;
+  readonly serviceRegistry: ServiceRegistry;
+  readonly userAuth: UserAuthManager;
+  readonly agentManager: AgentManager;
+  readonly automationManager: AutomationManager;
+  readonly automationDeliveryManager: AutomationDeliveryManager;
+  readonly approvalBroker: ApprovalBroker;
+  readonly controlPlaneGateway: ControlPlaneGateway;
+  readonly gatewayMethods: GatewayMethodCatalog;
+  readonly providerRegistry: ProviderRegistry;
+  readonly sessionBroker: SharedSessionBroker;
+  readonly routeBindings: RouteBindingManager;
+  readonly channelPolicy: ChannelPolicyManager;
+  readonly channelPlugins: ChannelPluginRegistry;
+  readonly channelReplyPipeline: ChannelReplyPipeline;
+  readonly providerRuntime: ChannelProviderRuntimeManager;
+  readonly builtinChannels: BuiltinChannelRuntime;
+  readonly surfaceRegistry: SurfaceRegistry;
+  readonly runtimeBus: EventBus | null;
+  readonly distributedRuntime: DistributedRuntimeManager;
+  readonly watcherRegistry: WatcherRegistry;
+  readonly voiceService: VoiceService;
+  readonly webSearchService: WebSearchService;
+  readonly knowledgeService: KnowledgeService;
+  readonly agentKnowledgeService: KnowledgeService;
+  readonly homeGraphService: HomeGraphService;
+  readonly projectPlanningService: ProjectPlanningService;
+  readonly knowledgeGraphqlService: KnowledgeGraphqlService;
+  readonly mediaProviders: MediaProviderRegistry;
+  readonly multimodalService: MultimodalService;
+  readonly artifactStore: ArtifactStore;
+  readonly memoryRegistry: MemoryRegistry;
+  readonly memoryEmbeddingRegistry: MemoryEmbeddingProviderRegistry;
+  readonly integrationHelpers: IntegrationHelperService | null;
+  readonly runtimeStore: RuntimeStore | null;
+  readonly runtimeDispatch: DomainDispatch | null;
+  readonly githubWebhookSecret: string | null;
+  readonly authToken: string | null;
+  readonly host: string;
+  readonly port: number;
+  readonly tlsTrustProxy: boolean;
+  readonly pendingSurfaceReplies: Map<string, PendingSurfaceReply>;
+  readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
+  readonly buildGenericWebhookAdapterContext: () => GenericWebhookAdapterContext;
+  readonly authorizeSurfaceIngress: (input: unknown) => Promise<unknown>;
+  readonly extractAuthToken: (req: Request) => string;
+  readonly checkAuth: (req: Request) => boolean;
+  readonly requireAuthenticatedSession: (req: Request) => { username: string; roles: readonly string[] } | null;
+  readonly requireAdmin: (req: Request) => Response | null;
+  readonly requireRemotePeer: (req: Request, scope?: string) => Promise<DistributedPeerAuth | Response>;
+  readonly describeAuthenticatedPrincipal: (token: string) => { principalId: string; principalKind: 'user' | 'bot' | 'service' | 'token'; admin: boolean; scopes: readonly string[] } | null;
+  readonly getGrantedGatewayScopes: (includeWrite: boolean) => readonly string[];
+  readonly validateGatewayInvocation: (descriptor: GatewayMethodDescriptor, context?: { readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | 'remote-peer'; readonly scopes?: readonly string[]; readonly admin?: boolean; }) => { status: number; ok: false; body: Record<string, unknown> } | null;
+  readonly parseJsonBody: (req: Request) => Promise<Record<string, unknown> | Response>;
+  readonly parseOptionalJsonBody: (req: Request) => Promise<Record<string, unknown> | null | Response>;
+  readonly parseJsonText: (rawBody: string) => Record<string, unknown> | Response;
+  readonly recordApiResponse: (req: Request, path: string, response: Response, clientKind?: 'web' | 'slack' | 'discord' | 'ntfy' | 'webhook' | 'homeassistant' | 'telegram' | 'google-chat' | 'signal' | 'whatsapp' | 'telephony' | 'imessage' | 'msteams' | 'bluebubbles' | 'mattermost' | 'matrix' | 'daemon') => Response;
+  readonly queueSurfaceReplyFromBinding: (binding: import('../automation/routes.js').AutomationRouteBinding | undefined, input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly workflowChainId?: string; readonly sessionId?: string; }) => void;
+  readonly queueWebhookReply: (input: { readonly agentId: string; readonly task: string; readonly sessionId?: string; readonly routeId?: string; readonly callbackUrl?: string; readonly callbackCorrelationId?: string; readonly callbackSignature?: PendingSurfaceReply['callbackSignature']; }) => void;
+  readonly parseSurfaceControlCommand: (text: string) => { readonly action: 'status' | 'cancel' | 'retry'; readonly id: string } | null;
+  readonly performSurfaceControlCommand: (command: { readonly action: 'status' | 'cancel' | 'retry'; readonly id: string }) => Promise<string>;
+  readonly performInteractiveSurfaceAction: (actionId: string, surface: 'slack' | 'discord', req: Request) => Promise<string>;
+  readonly trySpawnAgent: (input: {
+    mode: 'spawn';
+    task: string;
+    model?: string | undefined;
+    tools?: readonly string[] | undefined;
+    provider?: string | undefined;
+    context?: string | undefined;
+    executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
+    reviewMode?: 'none' | 'wrfc' | undefined;
+    communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
+    dangerously_disable_wrfc?: boolean | undefined;
+  }, logLabel: string, sessionId?: string) => import('../tools/agent/index.js').AgentRecord | Response;
+  readonly syncSpawnedAgentTask: (record: import('../tools/agent/index.js').AgentRecord, sessionId?: string) => void;
+  readonly syncFinishedAgentTask: (record: import('../tools/agent/index.js').AgentRecord) => void;
+  readonly findSchedule: (id: string) => AutomationJob | undefined;
+  readonly surfaceDeliveryEnabled: (surface: 'slack' | 'discord' | 'ntfy' | 'webhook' | 'homeassistant' | 'telegram' | 'google-chat' | 'signal' | 'whatsapp' | 'telephony' | 'imessage' | 'msteams' | 'bluebubbles' | 'mattermost' | 'matrix') => boolean;
+  readonly pollPendingSurfaceReplies: () => Promise<void>;
+  readonly deliverSurfaceProgress: (pending: PendingSurfaceReply, progress: string) => Promise<void>;
+  readonly deliverSlackAgentReply: (pending: PendingSurfaceReply, message: string) => Promise<void>;
+  readonly deliverDiscordAgentReply: (pending: PendingSurfaceReply, message: string) => Promise<void>;
+  readonly deliverNtfyAgentReply: (pending: PendingSurfaceReply, message: string) => Promise<void>;
+  readonly deliverWebhookAgentReply: (pending: PendingSurfaceReply, message: string) => Promise<void>;
+  readonly deliverSlackApprovalUpdate: (approval: SharedApprovalRecord, binding: import('../automation/routes.js').AutomationRouteBinding) => Promise<void>;
+  readonly deliverDiscordApprovalUpdate: (approval: SharedApprovalRecord, binding: import('../automation/routes.js').AutomationRouteBinding) => Promise<void>;
+  readonly deliverNtfyApprovalUpdate: (approval: SharedApprovalRecord, binding: import('../automation/routes.js').AutomationRouteBinding) => Promise<void>;
+  readonly deliverWebhookApprovalUpdate: (approval: SharedApprovalRecord, binding: import('../automation/routes.js').AutomationRouteBinding) => Promise<void>;
+  readonly notifyApprovalUpdate: (approval: SharedApprovalRecord) => Promise<void>;
+  readonly controlPlaneWebUrl: (input: { readonly approvalId?: string; readonly sessionId?: string }) => string | undefined;
+  readonly signWebhookPayload: (body: string, secret: string) => string;
+  readonly transportId: () => string;
+  readonly transportScheme: () => 'http' | 'https';
+  readonly transportEndpoint: () => string;
+  readonly emitterContext: () => EmitterContext;
+  readonly emitTransportInitializing: () => void;
+  readonly emitTransportConnected: () => void;
+  readonly emitTransportDisconnected: (reason: string, willRetry: boolean) => void;
+  readonly emitTransportTerminalFailure: (error: string) => void;
+  readonly fireTransportHook: (specific: string, payload: Record<string, unknown>) => Promise<void>;
+}

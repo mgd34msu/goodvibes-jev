@@ -1,0 +1,281 @@
+/**
+ * method-catalog-control-companion.ts
+ *
+ * Companion-chat method catalog registration, split out of
+ * method-catalog-control-core.ts (see CHANGELOG 1.0.0) to stay under the repo's 800-line
+ * hand-authored file cap (see scripts/check-line-cap.ts), this block is
+ * self-contained (companion.chat.* descriptors only) and control.ts folds it
+ * in unchanged, so this is a pure file-organization move with no API surface
+ * change beyond the delete-honesty split it carries (companion.chat.sessions.close
+ * as a distinct soft-close verb alongside a genuinely hard-deleting
+ * companion.chat.sessions.delete).
+ */
+import type { GatewayMethodDescriptor } from './method-catalog-shared.js';
+import {
+  BOOLEAN_SCHEMA,
+  EMPTY_OBJECT_SCHEMA,
+  NUMBER_SCHEMA,
+  STRING_SCHEMA,
+  arraySchema,
+  bodyEnvelopeSchema,
+  branchedSchema,
+  requirementBranch,
+  methodDescriptor,
+  objectSchema,
+} from './method-catalog-shared.js';
+import {
+  COMPANION_CHAT_MESSAGES_LIST_SCHEMA,
+  COMPANION_CHAT_SESSION_SCHEMA,
+  COMPANION_CHAT_SESSIONS_LIST_SCHEMA,
+  COMPANION_CHAT_SESSION_WITH_MESSAGES_SCHEMA,
+} from './operator-contract-schemas.js';
+
+/** The attachment list every companion-chat message payload carries. */
+const COMPANION_CHAT_ATTACHMENTS_SCHEMA = arraySchema(objectSchema({
+  artifactId: STRING_SCHEMA,
+  label: STRING_SCHEMA,
+  metadata: objectSchema({}, []),
+}, ['artifactId']));
+
+const COMPANION_CHAT_MESSAGE_PAYLOAD_PROPERTIES: Record<string, Record<string, unknown>> = {
+  body: STRING_SCHEMA,
+  content: STRING_SCHEMA,
+  attachments: COMPANION_CHAT_ATTACHMENTS_SCHEMA,
+  metadata: objectSchema({}, []),
+};
+
+/**
+ * Companion chat refuses a message carrying no text AND no attachments
+ * (companion/companion-chat-routes.ts: `content, body, or attachments are
+ * required`, 400 INVALID_ARGUMENT). None of the three is required on its own, so
+ * a flat `required` array cannot state this, listing any one of them would
+ * refuse an attachment-only message, which is a call that works today. The
+ * union says exactly what the handler does.
+ */
+function companionChatMessageInputSchema(
+  extraProperties: Record<string, Record<string, unknown>> = {},
+  alwaysRequired: readonly string[] = [],
+): Record<string, unknown> {
+  const properties = { ...extraProperties, ...COMPANION_CHAT_MESSAGE_PAYLOAD_PROPERTIES };
+  return branchedSchema(
+    bodyEnvelopeSchema(properties, alwaysRequired),
+    (['body', 'content', 'attachments'] as const).map((field) =>
+      requirementBranch({ [field]: properties[field] as Record<string, unknown> }, [field])),
+  );
+}
+
+/**
+ * `provider` and `model` name one route together and the handler refuses half
+ * of it (`provider and model must be supplied together`, 400
+ * INVALID_MODEL_ROUTE). Neither is required alone, this is a dependency
+ * between two optional fields, which is what `dependentRequired` is for.
+ */
+const COMPANION_MODEL_ROUTE_DEPENDENCY: Readonly<Record<string, readonly string[]>> = {
+  model: ['provider'],
+  provider: ['model'],
+};
+
+export const builtinGatewayControlCompanionMethodDescriptors: readonly GatewayMethodDescriptor[] = [
+  methodDescriptor({
+    id: 'companion.chat.sessions.create',
+    title: 'Create Companion Chat Session',
+    description: 'Create a new companion-chat session. Optional `provider` / `model` override the registry default; `title` and `systemPrompt` are stored on the session record.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions' },
+    inputSchema: bodyEnvelopeSchema({
+      title: STRING_SCHEMA,
+      model: STRING_SCHEMA,
+      provider: STRING_SCHEMA,
+      systemPrompt: STRING_SCHEMA,
+    }, [], { dependentRequired: COMPANION_MODEL_ROUTE_DEPENDENCY }),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      createdAt: NUMBER_SCHEMA,
+      session: COMPANION_CHAT_SESSION_SCHEMA,
+    }, ['sessionId', 'createdAt', 'session']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.sessions.list',
+    title: 'List Companion Chat Sessions',
+    description: 'List active companion-chat sessions. Pass `includeClosed` to include recently closed sessions.',
+    category: 'companion',
+    scopes: ['read:sessions'],
+    http: { method: 'GET', path: '/api/companion/chat/sessions' },
+    inputSchema: objectSchema({
+      includeClosed: BOOLEAN_SCHEMA,
+      limit: NUMBER_SCHEMA,
+    }, []),
+    outputSchema: COMPANION_CHAT_SESSIONS_LIST_SCHEMA,
+  }),
+  methodDescriptor({
+    id: 'companion.chat.sessions.get',
+    title: 'Get Companion Chat Session',
+    description: 'Return a companion-chat session record together with its full message history.',
+    category: 'companion',
+    scopes: ['read:sessions'],
+    http: { method: 'GET', path: '/api/companion/chat/sessions/{sessionId}' },
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: COMPANION_CHAT_SESSION_WITH_MESSAGES_SCHEMA,
+  }),
+  methodDescriptor({
+    id: 'companion.chat.sessions.update',
+    title: 'Update Companion Chat Session',
+    description: 'Update companion-chat session metadata, including session-local `provider` and `model`, without changing the daemon/TUI current model.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'PATCH', path: '/api/companion/chat/sessions/{sessionId}' },
+    // An update with nothing to update is refused (`At least one of title,
+    // provider, model, or systemPrompt is required`), and provider/model still
+    // travel as a pair. Both facts are declared: a union over the four fields,
+    // each branch carrying the pairing dependency.
+    inputSchema: branchedSchema(
+      bodyEnvelopeSchema({
+        sessionId: STRING_SCHEMA,
+        title: STRING_SCHEMA,
+        model: STRING_SCHEMA,
+        provider: STRING_SCHEMA,
+        systemPrompt: STRING_SCHEMA,
+      }, ['sessionId'], { dependentRequired: COMPANION_MODEL_ROUTE_DEPENDENCY }),
+      (['title', 'model', 'provider', 'systemPrompt'] as const).map((field) =>
+        requirementBranch({ [field]: STRING_SCHEMA }, [field])),
+    ),
+    outputSchema: objectSchema({
+      session: COMPANION_CHAT_SESSION_SCHEMA,
+    }, ['session']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.sessions.close',
+    title: 'Close Companion Chat Session',
+    description: 'Close a companion-chat session (soft close). The session record and its messages are preserved in closed state and remain listable with includeClosed. Distinct from companion.chat.sessions.delete, which permanently removes the record.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/close' },
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      status: STRING_SCHEMA,
+    }, ['sessionId', 'status']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.sessions.delete',
+    title: 'Delete Companion Chat Session',
+    description: 'Permanently remove a companion-chat session: the on-disk record file is deleted and the session is dropped from the shared session store, this does NOT merely close it (use companion.chat.sessions.close for a soft close). Requires the session to already be closed: deleting a still-active session is rejected with 409 SESSION_ACTIVE (close it, then delete). An unknown or already-deleted id is a 404 SESSION_NOT_FOUND, never a 200-noop.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'DELETE', path: '/api/companion/chat/sessions/{sessionId}' },
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      deleted: BOOLEAN_SCHEMA,
+    }, ['sessionId', 'deleted']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.messages.create',
+    title: 'Send Companion Chat Message',
+    description: 'Post a user message to a companion-chat session. Accepts either `body` or `content` in the payload; `body` wins when both are provided. Attachments reference artifacts created through `artifacts.create`.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/messages' },
+    inputSchema: companionChatMessageInputSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: objectSchema({
+      messageId: STRING_SCHEMA,
+    }, ['messageId']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.messages.list',
+    title: 'List Companion Chat Messages',
+    description: 'Return the message list for a companion-chat session.',
+    category: 'companion',
+    scopes: ['read:sessions'],
+    http: { method: 'GET', path: '/api/companion/chat/sessions/{sessionId}/messages' },
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: COMPANION_CHAT_MESSAGES_LIST_SCHEMA,
+  }),
+  methodDescriptor({
+    id: 'companion.chat.messages.retry',
+    title: 'Regenerate Companion Chat Response',
+    description: 'Regenerate an assistant response. Optional `messageId` targets a specific assistant message; omitted, the latest assistant response is re-run. The prior response (and any turns after it) is SUPERSEDED, kept in the message list and on disk, flagged as retained history, never deleted, then a fresh turn re-runs from the preceding user message. Returns the superseded message ids so the caller can render the honest lineage. Rejected on a closed session (409 SESSION_CLOSED) or unknown session (404 SESSION_NOT_FOUND), and with an honest machine code (409 NO_ASSISTANT_MESSAGE) when there is nothing to regenerate.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/messages/retry' },
+    inputSchema: bodyEnvelopeSchema({
+      messageId: STRING_SCHEMA,
+    }, []),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      regeneratedFrom: STRING_SCHEMA,
+      supersededMessageIds: arraySchema(STRING_SCHEMA),
+      turnStarted: BOOLEAN_SCHEMA,
+    }, ['sessionId', 'regeneratedFrom', 'supersededMessageIds', 'turnStarted']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.messages.edit',
+    title: 'Edit Companion Chat Message And Branch',
+    description: 'Edit a user message and branch the conversation from it. `messageId` (required) is the user message to edit; the edited text is passed as `body` or `content` (as message create accepts), with optional `attachments` referencing artifacts. The original message and everything after it are SUPERSEDED, retained as history, never deleted, a new user message carrying `revisionOf` back to the original is appended, and a fresh turn answers it. Returns the new message id and the superseded ids for honest lineage. Same closed/unknown-session refusals as companion.chat.messages.retry.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/messages/edit' },
+    // `messageId` is refused unconditionally (`messageId is required`), and the
+    // edited text follows the same body/content/attachments rule as a create.
+    inputSchema: companionChatMessageInputSchema(
+      { sessionId: STRING_SCHEMA, messageId: STRING_SCHEMA },
+      ['sessionId', 'messageId'],
+    ),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      editedFrom: STRING_SCHEMA,
+      messageId: STRING_SCHEMA,
+      supersededMessageIds: arraySchema(STRING_SCHEMA),
+      turnStarted: BOOLEAN_SCHEMA,
+    }, ['sessionId', 'editedFrom', 'messageId', 'supersededMessageIds', 'turnStarted']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.messages.steer',
+    title: 'Steer Companion Chat (Interrupt And Send)',
+    description: 'Send a message that runs IMMEDIATELY, interrupting the in-flight turn if one is running. The message jumps to the front of the pending-turn queue; the active turn is cancelled through the same finalization path as companion.chat.turns.cancel (any non-empty partial reply is persisted with `deliveryState: "cancelled"` and the terminal `turn.cancelled` event reaches every subscriber), then the steered message\'s turn starts. Messages queued behind an active turn keep their places behind the steer. With no turn running this behaves as an ordinary send. Accepts the same payload as companion.chat.messages.create (`body`/`content`, `attachments`, `metadata`). Returns the new message id, `steered: true`, and `cancelledTurnId` when a turn was interrupted. Ordinary sends posted while a turn is running are QUEUED (transcript-visible immediately with `deliveryState: "queued"`, answered in order), steer is the explicit jump-the-line verb.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/messages/steer' },
+    inputSchema: companionChatMessageInputSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      messageId: STRING_SCHEMA,
+      steered: BOOLEAN_SCHEMA,
+      cancelledTurnId: STRING_SCHEMA,
+      turnStarted: BOOLEAN_SCHEMA,
+    }, ['sessionId', 'messageId', 'steered', 'turnStarted']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.turns.cancel',
+    title: 'Cancel Companion Chat Turn',
+    description: 'Stop the in-flight turn for a companion chat session, a true server-side stop: the provider stream is aborted, any non-empty partial reply is persisted to the transcript with an explicit `deliveryState: "cancelled"` marker (an honest partial, never disguised as a complete reply) AND committed to the model-facing conversation history with an explicit interruption note, later turns can reason about what the user saw and stopped, which is usually what a follow-up or steer refers to, and the terminal `turn.cancelled` event is published to every subscriber of the session stream so a stop from one client converges on all others. Any announced tool call without a result is closed with a synthetic error `turn.tool_result` before the terminal event. Optional `turnId` guards against cancelling a newer turn a stale stop raced against (409 TURN_MISMATCH). No turn in flight is the benign 404 NO_ACTIVE_TURN (the turn finished before the stop landed). Repeat cancels are idempotent successes. The session stays open; the next message starts a fresh turn normally.',
+    category: 'companion',
+    scopes: ['write:sessions'],
+    http: { method: 'POST', path: '/api/companion/chat/sessions/{sessionId}/turns/cancel' },
+    inputSchema: bodyEnvelopeSchema({
+      sessionId: STRING_SCHEMA,
+      turnId: STRING_SCHEMA,
+    }, ['sessionId']),
+    outputSchema: objectSchema({
+      sessionId: STRING_SCHEMA,
+      turnId: STRING_SCHEMA,
+      cancelled: BOOLEAN_SCHEMA,
+      alreadyCancelled: BOOLEAN_SCHEMA,
+      partialPersisted: BOOLEAN_SCHEMA,
+    }, ['sessionId', 'turnId', 'cancelled', 'partialPersisted']),
+  }),
+  methodDescriptor({
+    id: 'companion.chat.events.stream',
+    title: 'Stream Companion Chat Events',
+    description: 'Server-Sent Events stream of turn and agent events scoped to a single companion-chat session.',
+    category: 'companion',
+    scopes: ['read:sessions'],
+    transport: ['http'],
+    http: { method: 'GET', path: '/api/companion/chat/sessions/{sessionId}/events' },
+    inputSchema: objectSchema({ sessionId: STRING_SCHEMA }, ['sessionId']),
+    outputSchema: EMPTY_OBJECT_SCHEMA,
+    invokable: false,
+    metadata: { responseKind: 'sse', stream: true, wireEventPrefix: 'companion-chat.' },
+  }),
+];

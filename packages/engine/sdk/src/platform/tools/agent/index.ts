@@ -1,0 +1,781 @@
+import type { Tool } from '../../types/tools.js';
+import type { ConfigManager } from '../../config/manager.js';
+import { AGENT_TOOL_SCHEMA } from './schema.js';
+import type { AgentInput } from './schema.js';
+import { ArchetypeLoader } from '../../agents/archetypes.js';
+import { AgentMessageBus } from '../../agents/message-bus.js';
+import type { WrfcController } from '../../agents/wrfc-controller.js';
+import { AGENT_TEMPLATES, AgentManager, type AgentRecord } from './manager.js';
+import { evaluateOrchestrationSpawn, ORCHESTRATION_CAP_KEYS } from '../../runtime/orchestration/spawn-policy.js';
+import { summarizeError } from '../../utils/error-display.js';
+import { toRecord } from '../../utils/record-coerce.js';
+import { evaluateWrfcBatchPolicy } from './wrfc-batch-policy.js';
+import {
+  buildChildFailureEnvelope,
+  isChildFailureTerminal,
+  type ChildFailureEnvelope,
+} from './child-failure-envelope.js';
+export type { AgentExecutor, AgentRecord } from './manager.js';
+export { AGENT_TEMPLATES, AgentManager } from './manager.js';
+export { isActiveAgent } from './predicates.js';
+export { cancelAllAgentRuns, type CancellableAgentRuns } from './cancel-all.js';
+
+// ---------------------------------------------------------------------------
+// Tool implementation
+// ---------------------------------------------------------------------------
+
+function summarizeWrfcEvent(event: Record<string, unknown>) {
+  return {
+    type: event.event ?? event.type,
+    timestamp: event.ts ?? event.timestamp,
+    status: event.status,
+    action: event.action,
+    reason: event.reason,
+    agentId: event.agentId,
+    role: event.role,
+    score: event.score,
+    gate: event.gate,
+    issueCount: Array.isArray(event.issues) ? event.issues.length : undefined,
+  };
+}
+
+function agentTopology(record: AgentRecord) {
+  return {
+    parentAgentId: record.parentAgentId ?? null,
+    wrfcId: record.wrfcId ?? null,
+    wrfcRole: record.wrfcRole ?? null,
+    wrfcPhaseOrder: record.wrfcPhaseOrder ?? null,
+    wrfcSubtaskId: record.wrfcSubtaskId ?? null,
+    wrfcRouteReason: record.wrfcRouteReason ?? null,
+    orchestrationGraphId: record.orchestrationGraphId ?? null,
+    orchestrationNodeId: record.orchestrationNodeId ?? null,
+    parentNodeId: record.parentNodeId ?? null,
+  };
+}
+
+function agentOrchestrationControl(record: AgentRecord) {
+  const authoritativeWrfcChain = record.wrfcRole === 'owner' && typeof record.wrfcId === 'string' && record.wrfcId.length > 0;
+  return {
+    authoritativeWrfcChain,
+    continueRootSpawning: authoritativeWrfcChain ? false : true,
+    rootSpawnContinuation: authoritativeWrfcChain ? 'stop' : 'allowed',
+    orchestrationStopSignal: authoritativeWrfcChain ? 'wrfc_owner_chain_started' : null,
+    orchestrationInstruction: authoritativeWrfcChain
+      ? 'This WRFC owner chain is authoritative for the deliverable. Do not spawn additional root review/test/verification/fix agents for the same work.'
+      : null,
+  };
+}
+
+function agentExecutionContract(record: AgentRecord) {
+  return {
+    executionIntent: record.executionIntent ?? null,
+    tools: record.tools,
+    capabilityCeilingTools: record.capabilityCeilingTools ?? record.tools,
+    successCriteria: record.successCriteria ?? [],
+    requiredEvidence: record.requiredEvidence ?? [],
+    writeScope: record.writeScope ?? [],
+    executionProtocol: record.executionProtocol,
+    reviewMode: record.reviewMode,
+    communicationLane: record.communicationLane,
+    knowledgeInjections: record.knowledgeInjections ?? [],
+  };
+}
+
+/**
+ * Build the child-failure envelope for a terminally-failed/cancelled record so
+ * the supervising model receives {agentId, phase, reason, partialOutputs} as the
+ * RESULT of its poll, never a bare status. Returns null for non-terminal or
+ * cleanly-completed agents. The transcript tail is pulled from the manager's
+ * live-or-frozen snapshot (honest partial output, never fabricated).
+ */
+function childFailureFor(manager: AgentManager, record: AgentRecord): ChildFailureEnvelope | null {
+  if (!isChildFailureTerminal(record)) return null;
+  const transcriptTail = manager.getConversationSnapshot(record.id);
+  return buildChildFailureEnvelope(record, { transcriptTail });
+}
+
+function agentSummary(record: AgentRecord) {
+  return {
+    id: record.id,
+    task: record.task,
+    template: record.template,
+    status: record.status,
+    startedAt: record.startedAt,
+    toolCallCount: record.toolCallCount,
+    cohort: record.cohort,
+    progress: record.progress,
+    ...agentTopology(record),
+  };
+}
+
+function agentSpawnSummary(record: AgentRecord) {
+  return {
+    ...agentSummary(record),
+    ...agentOrchestrationControl(record),
+  };
+}
+
+function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInput['tasks']>[number]): AgentInput {
+  return {
+    mode: 'spawn',
+    task: taskDef.task,
+    authoritativeTask: input.authoritativeTask ?? input.task,
+    template: taskDef.template ?? input.template ?? 'general',
+    model: taskDef.model ?? input.model,
+    provider: taskDef.provider ?? input.provider,
+    fallbackModels: taskDef.fallbackModels ?? input.fallbackModels,
+    routing: taskDef.routing ?? input.routing,
+    reasoningEffort: taskDef.reasoningEffort ?? input.reasoningEffort,
+    tools: taskDef.tools ?? input.tools,
+    restrictTools: taskDef.restrictTools ?? input.restrictTools,
+    context: taskDef.context ?? input.context,
+    successCriteria: taskDef.successCriteria ?? input.successCriteria,
+    requiredEvidence: taskDef.requiredEvidence ?? input.requiredEvidence,
+    writeScope: taskDef.writeScope ?? input.writeScope,
+    executionProtocol: taskDef.executionProtocol ?? input.executionProtocol,
+    reviewMode: taskDef.reviewMode ?? input.reviewMode,
+    communicationLane: taskDef.communicationLane ?? input.communicationLane,
+    parentAgentId: taskDef.parentAgentId ?? input.parentAgentId,
+    orchestrationGraphId: taskDef.orchestrationGraphId ?? input.orchestrationGraphId,
+    orchestrationNodeId: taskDef.orchestrationNodeId,
+    parentNodeId: taskDef.parentNodeId ?? input.parentNodeId,
+    dangerously_disable_wrfc: taskDef.dangerously_disable_wrfc ?? input.dangerously_disable_wrfc,
+    cohort: input.cohort,
+  };
+}
+
+export function createAgentTool(config: {
+  manager: AgentManager;
+  messageBus: Pick<AgentMessageBus, 'getMessages' | 'send'>;
+  wrfcController?: Pick<WrfcController, 'getWorkmap'> | undefined;
+  archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
+  configManager: Pick<ConfigManager, 'get'>;
+}): Tool {
+  const archetypeLoader = config.archetypeLoader ?? new ArchetypeLoader();
+  return {
+    definition: AGENT_TOOL_SCHEMA,
+
+    async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string }> {
+    // Validate required fields before casting
+    if (!args || typeof args !== 'object') {
+      return { success: false, error: 'Invalid args: expected an object' };
+    }
+    if (!('mode' in args) || typeof (args as Record<string, unknown>).mode !== 'string') {
+      return { success: false, error: 'Missing required parameter: mode' };
+    }
+    const input = args as unknown as AgentInput;
+
+    if (!input.mode) {
+      return { success: false, error: 'Missing required parameter: mode' };
+    }
+
+    const validModes = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'wrfc-chains', 'wrfc-history', 'cohort-status', 'cohort-report'];
+    if (!validModes.includes(input.mode)) {
+      return { success: false, error: `Invalid mode: '${input.mode}'. Must be one of: ${validModes.join(', ')}` };
+    }
+
+    const manager = config.manager;
+
+    switch (input.mode) {
+      case 'spawn': {
+        if (!input.task || typeof input.task !== 'string' || input.task.trim() === '') {
+          return { success: false, error: 'Missing required parameter for spawn: task' };
+        }
+
+        if (input.template && !AGENT_TEMPLATES[input.template]) {
+          // Also allow custom archetypes loaded from .goodvibes/agents/*.md
+          const customArchetype = archetypeLoader.loadArchetype(input.template);
+          if (!customArchetype || customArchetype.isCustom === false) {
+            return {
+              success: false,
+              error: `Unknown template: '${input.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
+            };
+          }
+        }
+
+        let record;
+        try {
+          record = manager.spawn(input);
+        } catch (error) {
+          return {
+            success: false,
+            error: summarizeError(error, {
+              ...(typeof input.provider === 'string' ? { provider: input.provider } : {}),
+            }),
+          };
+        }
+
+        return {
+          success: true,
+          output: JSON.stringify({
+            agentId: record.id,
+            status: 'spawned',
+            template: record.template,
+            task: record.task,
+            ...agentExecutionContract(record),
+            ...agentTopology(record),
+            ...agentOrchestrationControl(record),
+          }),
+        };
+      }
+
+      case 'status': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for status: agentId' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        const duration =
+          record.completedAt !== undefined
+            ? record.completedAt - record.startedAt
+            : Date.now() - record.startedAt;
+
+        const statusFailure = childFailureFor(manager, record);
+        return {
+          success: true,
+          output: JSON.stringify({
+            id: record.id,
+            task: record.task,
+            template: record.template,
+            status: record.status,
+            durationMs: duration,
+            toolCallCount: record.toolCallCount,
+            progress: record.progress,
+            error: record.error,
+            ...(statusFailure ? { failure: statusFailure } : {}),
+            ...agentTopology(record),
+          }),
+        };
+      }
+
+      case 'cancel': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for cancel: agentId' };
+        }
+
+        const cancelled = manager.cancel(input.agentId);
+        if (!cancelled) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: true, output: JSON.stringify({ agentId: input.agentId, status: 'deleted', error: 'Agent was removed after cancel' }) };
+        }
+        return {
+          success: true,
+          output: JSON.stringify({ agentId: input.agentId, status: record.status }),
+        };
+      }
+
+      case 'list': {
+        const allRecords = manager.list();
+        const records = input.cohort
+          ? allRecords.filter(r => r.cohort === input.cohort)
+          : allRecords;
+        return {
+          success: true,
+          output: JSON.stringify({
+            agents: records.map(agentSummary),
+            count: records.length,
+            ...(input.cohort ? { cohort: input.cohort } : {}),
+          }),
+        };
+      }
+
+      case 'templates': {
+        return {
+          success: true,
+          output: JSON.stringify({
+            templates: Object.entries(AGENT_TEMPLATES).map(([name, def]) => ({
+              name,
+              description: def.description,
+              defaultTools: def.defaultTools,
+            })),
+          }),
+        };
+      }
+
+      case 'get': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for get: agentId' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        const recentMessages = config.messageBus.getMessages(input.agentId).slice(-10);
+        const duration =
+          record.completedAt !== undefined
+            ? record.completedAt - record.startedAt
+            : Date.now() - record.startedAt;
+        const detail = input.detail ?? 'full';
+
+        const base = {
+          id: record.id,
+          task: record.task,
+          template: record.template,
+          model: record.model,
+          provider: record.provider,
+          executionIntent: record.executionIntent ?? null,
+          status: record.status,
+          durationMs: duration,
+          toolCallCount: record.toolCallCount,
+          progress: record.progress,
+          error: record.error,
+          executionProtocol: record.executionProtocol,
+          reviewMode: record.reviewMode,
+          communicationLane: record.communicationLane,
+          ...agentTopology(record),
+        };
+
+        const contract = {
+          tools: record.tools,
+          capabilityCeilingTools: record.capabilityCeilingTools ?? record.tools,
+          successCriteria: record.successCriteria ?? [],
+          requiredEvidence: record.requiredEvidence ?? [],
+          writeScope: record.writeScope ?? [],
+          knowledgeInjections: record.knowledgeInjections ?? [],
+        };
+
+        const messages = {
+          recentMessages: recentMessages.map((m) => ({
+            from: m.from,
+            content: m.content,
+            timestamp: m.timestamp,
+          })),
+        };
+
+        const getFailure = childFailureFor(manager, record);
+        const failureField = getFailure ? { failure: getFailure } : {};
+        return {
+          success: true,
+          output: JSON.stringify(detail === 'full'
+            ? { ...base, ...failureField, ...contract, ...messages }
+            : detail === 'contract'
+              ? { ...base, ...failureField, ...contract }
+              : detail === 'messages'
+                ? { ...base, ...failureField, ...messages }
+                : { ...base, ...failureField }),
+        };
+      }
+
+      case 'budget': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for budget: agentId' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        // Estimate tokens: each tool call involves ~200 input + ~300 output tokens on average.
+        // Without a live ConversationManager attached to the agent, this is the best estimate
+        // available from the AgentRecord alone.
+        const AVG_INPUT_PER_CALL = 200;
+        const AVG_OUTPUT_PER_CALL = 300;
+        const inputTokens = record.toolCallCount * AVG_INPUT_PER_CALL;
+        const outputTokens = record.toolCallCount * AVG_OUTPUT_PER_CALL;
+
+        return {
+          success: true,
+          output: JSON.stringify({
+            agentId: record.id,
+            inputTokens,
+            outputTokens,
+            totalTokens: inputTokens + outputTokens,
+            toolCallCount: record.toolCallCount,
+            note: 'Estimated from tool call count. Attach a ConversationManager for precise tracking.',
+          }),
+        };
+      }
+
+      case 'plan': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for plan: agentId' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        const templateDef = AGENT_TEMPLATES[record.template];
+
+        return {
+          success: true,
+          output: JSON.stringify({
+            agentId: record.id,
+            task: record.task,
+            template: record.template,
+            templateDescription: templateDef?.description ?? null,
+            tools: record.tools,
+            capabilityCeilingTools: record.capabilityCeilingTools ?? record.tools,
+            model: record.model ?? null,
+            provider: record.provider ?? null,
+            successCriteria: record.successCriteria ?? [],
+            requiredEvidence: record.requiredEvidence ?? [],
+            writeScope: record.writeScope ?? [],
+            parentAgentId: record.parentAgentId ?? null,
+          }),
+        };
+      }
+
+      case 'wait': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for wait: agentId' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        // Non-blocking: return current status immediately if already in a terminal state.
+        // For short polls (timeoutMs > 0), wait at most that duration, capped at 5000ms
+        // to prevent blocking the main conversation loop.
+        const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+
+        if (terminalStatuses.has(record.status)) {
+          const waitFailure = childFailureFor(manager, record);
+          return {
+            success: true,
+            output: JSON.stringify({
+              agentId: input.agentId,
+              status: record.status,
+              timedOut: false,
+              ...(waitFailure ? { failure: waitFailure } : {}),
+            }),
+          };
+        }
+
+        // If a timeoutMs is requested, poll briefly, capped at 5000ms to avoid
+        // blocking the main turn loop (sub-agents use small timeouts anyway).
+        const requestedTimeout = typeof input.timeoutMs === 'number' ? input.timeoutMs : 0;
+        const MAX_BLOCKING_MS = 5_000;
+        const timeoutMs = Math.min(requestedTimeout, MAX_BLOCKING_MS);
+
+        if (timeoutMs > 0) {
+          const start = Date.now();
+          const pollIntervalMs = 50;
+          while (true) {
+            const current = manager.getStatus(input.agentId);
+            if (!current || terminalStatuses.has(current.status)) break;
+            if (Date.now() - start >= timeoutMs) break;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, pollIntervalMs);
+              timer.unref?.();
+            });
+          }
+        }
+
+        const finalRecord = manager.getStatus(input.agentId);
+        if (!finalRecord) {
+          return { success: true, output: JSON.stringify({ agentId: input.agentId, status: 'deleted', error: 'Agent was removed during wait' }) };
+        }
+        const finalStatus = finalRecord.status;
+        const finalFailure = childFailureFor(manager, finalRecord);
+        return {
+          success: true,
+          output: JSON.stringify({
+            agentId: input.agentId,
+            status: finalStatus,
+            timedOut: !terminalStatuses.has(finalStatus),
+            hint: terminalStatuses.has(finalStatus) ? undefined : 'Agent still running. Use mode=status to poll again.',
+            ...(finalFailure ? { failure: finalFailure } : {}),
+          }),
+        };
+      }
+
+      case 'message': {
+        if (!input.agentId || typeof input.agentId !== 'string' || input.agentId.trim() === '') {
+          return { success: false, error: 'Missing required parameter for message: agentId' };
+        }
+        if (!input.message || typeof input.message !== 'string' || input.message.trim() === '') {
+          return { success: false, error: 'message cannot be empty or whitespace only' };
+        }
+
+        const record = manager.getStatus(input.agentId);
+        if (!record) {
+          return { success: false, error: `Unknown agent: '${input.agentId}'` };
+        }
+
+        const sent = config.messageBus.send('orchestrator', input.agentId, input.message, {
+          kind: input.kind ?? 'directive',
+        });
+        if (!sent) {
+          return {
+            success: false,
+            error: `Communication to agent '${input.agentId}' was blocked by policy.`,
+          };
+        }
+
+        return {
+          success: true,
+          output: JSON.stringify({
+            agentId: input.agentId,
+            sent: true,
+            content: input.message,
+            kind: input.kind ?? 'directive',
+          }),
+        };
+      }
+
+      case 'batch-spawn': {
+        if (!input.tasks || !Array.isArray(input.tasks) || input.tasks.length === 0) {
+          return { success: false, error: 'batch-spawn requires a non-empty tasks array.' };
+        }
+        if (input.tasks.length > 20) {
+          return { success: false, error: 'batch-spawn limited to 20 tasks per batch.' };
+        }
+        if (input.tasks.length === 1) {
+          const taskDef = input.tasks[0]!;
+          if (!taskDef.task || typeof taskDef.task !== 'string' || taskDef.task.trim() === '') {
+            return { success: false, error: 'Each task in batch-spawn must have a non-empty task string.' };
+          }
+          if (taskDef.template && !AGENT_TEMPLATES[taskDef.template]) {
+            const customArchetype = archetypeLoader.loadArchetype(taskDef.template);
+            if (!customArchetype || customArchetype.isCustom === false) {
+              return {
+                success: false,
+                error: `Unknown template: '${taskDef.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
+              };
+            }
+          }
+          let record;
+          try {
+            record = manager.spawn(batchTaskToSpawnInput(input, taskDef));
+          } catch (error) {
+            return {
+              success: false,
+              error: summarizeError(error),
+            };
+          }
+          return {
+            success: true,
+            output: JSON.stringify({
+              agents: [{ ...agentSpawnSummary(record), task: record.task.slice(0, 80) }],
+              count: 1,
+              cohort: input.cohort,
+              skipped: 0,
+              normalizedToSpawn: true,
+              ...agentOrchestrationControl(record),
+            }),
+          };
+        }
+        const batchPolicy = evaluateWrfcBatchPolicy(input);
+        if (batchPolicy.kind === 'collapse-to-wrfc') {
+          let record;
+          try {
+            record = manager.spawn(batchPolicy.ownerInput!);
+          } catch (error) {
+            return {
+              success: false,
+              error: `Failed to collapse role-decomposition batch into a WRFC owner chain: ${summarizeError(error)}`,
+            };
+          }
+          // Part (a): when a requested fan-out was collapsed, state it plainly for
+          // the host to surface to the user, what was requested, what the guard
+          // did, and why, so the collapse is never a silent, confusing rewrite.
+          const fanout = batchPolicy.ownerInput?.fanoutCollapse;
+          const announcement = fanout
+            ? `Requested ${fanout.requestedShape}; the WRFC topology guard ran them as one reviewed chain instead (${batchPolicy.reason ?? 'topology enforcement'}).`
+            : undefined;
+          return {
+            success: true,
+            output: JSON.stringify({
+              agents: [{ ...agentSpawnSummary(record), task: record.task.slice(0, 80) }],
+              count: 1,
+              cohort: input.cohort,
+              skipped: 0,
+              collapsedToWrfc: true,
+              collapsedTaskCount: input.tasks.length,
+              reason: batchPolicy.reason,
+              ...(announcement ? { announcement } : {}),
+              roleTaskIndexes: batchPolicy.roleTaskIndexes ?? [],
+              compoundTaskIndexes: batchPolicy.compoundTaskIndexes ?? [],
+              scopeMutation: batchPolicy.scopeMutation ?? null,
+              ...agentOrchestrationControl(record),
+            }),
+          };
+        }
+        const currentCount = manager.list().filter(a => a.status === 'pending' || a.status === 'running').length;
+        const spawnDecision = evaluateOrchestrationSpawn({
+          configManager: config.configManager,
+          mode: 'manual-batch',
+          activeAgents: currentCount,
+          requestedDepth: 0,
+        });
+        if (!spawnDecision.allowed || spawnDecision.availableSlots === 0) {
+          const boundCap = spawnDecision.boundCap
+            ?? { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
+          return {
+            success: false,
+            error: spawnDecision.reason
+              ?? `agent capacity reached (${currentCount}/${spawnDecision.maxAgents}), cap: ${boundCap.key}=${boundCap.value}. No capacity for batch-spawn.`,
+            output: JSON.stringify({ cap: boundCap }),
+          };
+        }
+        const tasksToSpawn = input.tasks.slice(0, spawnDecision.availableSlots);
+        const skipped = input.tasks.length - tasksToSpawn.length;
+
+        const results: ReturnType<typeof agentSpawnSummary>[] = [];
+        for (const taskDef of tasksToSpawn) {
+          if (!taskDef.task || typeof taskDef.task !== 'string' || taskDef.task.trim() === '') {
+            return { success: false, error: 'Each task in batch-spawn must have a non-empty task string.' };
+          }
+          // Validate template if provided
+          if (taskDef.template && !AGENT_TEMPLATES[taskDef.template]) {
+            const customArchetype = archetypeLoader.loadArchetype(taskDef.template);
+            if (!customArchetype || customArchetype.isCustom === false) {
+              return {
+                success: false,
+                error: `Unknown template: '${taskDef.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
+              };
+            }
+          }
+          const spawnInput = batchTaskToSpawnInput(input, taskDef);
+          let record;
+          try {
+            record = manager.spawn(spawnInput);
+          } catch (error) {
+            return {
+              success: false,
+              error: summarizeError(error),
+            };
+          }
+          results.push({ ...agentSpawnSummary(record), task: taskDef.task.slice(0, 80) });
+        }
+        const batchOutput: Record<string, unknown> = {
+          agents: results,
+          count: results.length,
+          cohort: input.cohort,
+          skipped,
+          maxAgents: spawnDecision.maxAgents,
+        };
+        if (skipped > 0) {
+          // The active-agents cap bound: excess tasks were queued/refused. Name
+          // the cap and its value both here and in a human-readable note.
+          batchOutput.cap = { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
+          batchOutput.capMessage =
+            `queued ${skipped} task${skipped === 1 ? '' : 's'}: ${spawnDecision.maxAgents}/${spawnDecision.maxAgents} active, cap: ${ORCHESTRATION_CAP_KEYS.maxActiveAgents}=${spawnDecision.maxAgents}`;
+        }
+        return {
+          success: true,
+          output: JSON.stringify(batchOutput),
+        };
+      }
+
+      case 'cohort-status': {
+        if (!input.cohort) {
+          return { success: false, error: 'cohort-status requires a cohort name.' };
+        }
+        const cohortAgents = manager.listByCohort(input.cohort);
+        if (cohortAgents.length === 0) {
+          return { success: true, output: `No agents found in cohort '${input.cohort}'.` };
+        }
+        const summary = cohortAgents.map(a => ({
+          id: a.id,
+          task: a.task?.slice(0, 80),
+          status: a.status,
+          template: a.template,
+          wrfcId: a.wrfcId,
+          toolCallCount: a.toolCallCount,
+        }));
+        return { success: true, output: JSON.stringify({ cohort: input.cohort, count: cohortAgents.length, agents: summary }) };
+      }
+
+      case 'cohort-report': {
+        if (!input.cohort) {
+          return { success: false, error: 'cohort-report requires a cohort name.' };
+        }
+        const reportAgents = manager.listByCohort(input.cohort);
+        if (reportAgents.length === 0) {
+          return { success: true, output: `No agents found in cohort '${input.cohort}'.` };
+        }
+        const lines: string[] = [
+          `## Cohort: ${input.cohort} (${reportAgents.length} agents)`,
+          '',
+          '| Agent | Task | Status | Template | WRFC | Tool Calls |',
+          '|-------|------|--------|----------|------|------------|',
+        ];
+        for (const a of reportAgents) {
+          const taskShort = (a.task ?? '').slice(0, 40).replace(/\|/g, '\\|');
+          const wrfcStatus = a.wrfcId ?? 'n/a';
+          lines.push(`| ${a.id.slice(-8)} | ${taskShort} | ${a.status} | ${a.template ?? 'general'} | ${wrfcStatus} | ${a.toolCallCount ?? 0} |`);
+        }
+        return { success: true, output: lines.join('\n') };
+      }
+
+      case 'wrfc-chains': {
+        try {
+          const workmap = config.wrfcController?.getWorkmap();
+          if (!workmap) {
+            return { success: false, error: 'WRFC controller is not configured in this runtime.' };
+          }
+          const chains = workmap.listChains();
+          const detail = input.detail ?? 'summary';
+          return {
+            success: true,
+            output: JSON.stringify({
+              mode: 'wrfc-chains',
+              detail,
+              count: chains.length,
+              chains: detail === 'full'
+                ? chains
+                : chains.map((chain) => ({
+                  wrfcId: chain.wrfcId,
+                  status: chain.status,
+                  lastScore: chain.lastScore,
+                  task: chain.task,
+                  events: chain.events,
+                })),
+            }),
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to list WRFC chains: ${summarizeError(err)}` };
+        }
+      }
+
+      case 'wrfc-history': {
+        if (!input.wrfcId) {
+          return { success: false, error: 'wrfc-history requires wrfcId' };
+        }
+        try {
+          const workmap = config.wrfcController?.getWorkmap();
+          if (!workmap) {
+            return { success: false, error: 'WRFC controller is not configured in this runtime.' };
+          }
+          const events = workmap.read(input.wrfcId);
+          const detail = input.detail ?? 'summary';
+          return {
+            success: true,
+            output: JSON.stringify({
+              mode: 'wrfc-history',
+              detail,
+              wrfcId: input.wrfcId,
+              events: detail === 'full'
+                ? events
+                : events.map((event) => summarizeWrfcEvent(toRecord(event))),
+              count: events.length,
+            }),
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to get WRFC history: ${summarizeError(err)}` };
+        }
+      }
+
+      default: {
+        return { success: false, error: `Unhandled mode: '${input.mode}'` };
+      }
+    }
+    },
+  };
+}

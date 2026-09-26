@@ -1,0 +1,17 @@
+{
+  "name": "uuid",
+  "version": "0.0.0-goodvibes.0",
+  "description": "GoodVibes vendored CommonJS uuid v4 adapter for Verdaccio @cypress/request.",
+  "main": "index.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-sdk.git",
+    "directory": "vendor/uuid-cjs"
+  }
+}

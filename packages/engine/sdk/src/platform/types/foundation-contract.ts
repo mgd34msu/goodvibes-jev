@@ -1,0 +1,27 @@
+export type {
+  ContractHttpDefinition,
+  JsonSchema,
+  OperatorContractManifest,
+  OperatorEventContract,
+  OperatorEventCoverageContract,
+  OperatorMethodContract,
+  OperatorSchemaCoverageContract,
+  OperatorValidationCoverageContract,
+  PeerContractManifest,
+  PeerEndpointContract,
+  RuntimeEventDomain,
+} from '../../contracts.js';
+
+export type GatewayMethodTransport = 'http' | 'ws' | 'internal';
+export type GatewayMethodSource = 'builtin' | 'plugin';
+export type GatewayMethodAccess = 'public' | 'authenticated' | 'admin' | 'remote-peer';
+export type GatewayEventTransport = 'sse' | 'ws' | 'internal';
+export type DistributedPeerKind = 'node' | 'device';
+export type DistributedWorkType =
+  | 'invoke'
+  | 'status.request'
+  | 'location.request'
+  | 'session.message'
+  | 'automation.run'
+  | 'device.capability';
+export type DistributedWorkStatus = 'queued' | 'claimed' | 'completed' | 'failed' | 'cancelled' | 'expired';

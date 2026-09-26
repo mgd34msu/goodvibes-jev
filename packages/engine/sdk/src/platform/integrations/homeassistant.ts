@@ -1,0 +1,274 @@
+import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
+import { summarizeError } from '../utils/error-display.js';
+import { logger } from '../utils/logger.js';
+
+const DEFAULT_HOME_ASSISTANT_TIMEOUT_MS = 15_000;
+const DEFAULT_HOME_ASSISTANT_RESPONSE_BYTES = 2_000_000;
+
+export interface HomeAssistantStateRecord {
+  readonly entity_id: string;
+  readonly state: string;
+  readonly attributes?: Record<string, unknown> | undefined;
+  readonly last_changed?: string | undefined;
+  readonly last_updated?: string | undefined;
+  readonly context?: Record<string, unknown> | undefined;
+}
+
+export interface HomeAssistantServiceRecord {
+  readonly domain: string;
+  readonly services: Record<string, unknown> | readonly string[];
+}
+
+export interface HomeAssistantClientOptions {
+  readonly baseUrl: string;
+  readonly accessToken?: string | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly maxResponseBytes?: number | undefined;
+}
+
+export interface HomeAssistantGoodVibesEvent {
+  readonly type: string;
+  readonly title?: string | undefined;
+  readonly body: string;
+  readonly speechText?: string | undefined;
+  readonly status?: string | undefined;
+  readonly jobId?: string | undefined;
+  readonly runId?: string | undefined;
+  readonly agentId?: string | undefined;
+  readonly sessionId?: string | undefined;
+  readonly routeId?: string | undefined;
+  readonly surfaceId?: string | undefined;
+  readonly externalId?: string | undefined;
+  readonly messageId?: string | undefined;
+  readonly replyToMessageId?: string | undefined;
+  readonly conversationId?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+export class HomeAssistantIntegration {
+  private readonly baseUrl: string;
+  private readonly accessToken?: string | undefined;
+  private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
+
+  constructor(options: HomeAssistantClientOptions) {
+    this.baseUrl = normalizeHomeAssistantBaseUrl(options.baseUrl);
+    this.accessToken = options.accessToken?.trim() || undefined;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_HOME_ASSISTANT_TIMEOUT_MS;
+    this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_HOME_ASSISTANT_RESPONSE_BYTES;
+  }
+
+  async getApiStatus(): Promise<unknown> {
+    return this.requestJson('/api/', { auth: Boolean(this.accessToken) });
+  }
+
+  async getConfig(): Promise<unknown> {
+    return this.requestJson('/api/config', { auth: true });
+  }
+
+  async listStates(): Promise<HomeAssistantStateRecord[]> {
+    const payload = await this.requestJson('/api/states', { auth: true });
+    return Array.isArray(payload) ? payload.filter(isHomeAssistantState) : [];
+  }
+
+  async getState(entityId: string): Promise<HomeAssistantStateRecord | null> {
+    const payload = await this.requestJson(`/api/states/${encodeURIComponent(entityId)}`, {
+      auth: true,
+      notFoundAsNull: true,
+    });
+    return isHomeAssistantState(payload) ? payload : null;
+  }
+
+  async listServices(): Promise<HomeAssistantServiceRecord[]> {
+    const payload = await this.requestJson('/api/services', { auth: true });
+    return Array.isArray(payload) ? payload.filter(isHomeAssistantService) : [];
+  }
+
+  async callService(input: {
+    readonly domain: string;
+    readonly service: string;
+    readonly serviceData?: Record<string, unknown> | undefined;
+    readonly returnResponse?: boolean | undefined;
+  }): Promise<unknown> {
+    const path = `/api/services/${encodeURIComponent(input.domain)}/${encodeURIComponent(input.service)}`
+      + (input.returnResponse ? '?return_response' : '');
+    return this.requestJson(path, {
+      auth: true,
+      method: 'POST',
+      body: input.serviceData ?? {},
+    });
+  }
+
+  async fireEvent(eventType: string, eventData: Record<string, unknown> = {}): Promise<unknown> {
+    return this.requestJson(`/api/events/${encodeURIComponent(eventType)}`, {
+      auth: true,
+      method: 'POST',
+      body: eventData,
+    });
+  }
+
+  async renderTemplate(template: string, variables?: Record<string, unknown>): Promise<string> {
+    const payload = await this.requestText('/api/template', {
+      auth: true,
+      method: 'POST',
+      body: {
+        template,
+        ...(variables && Object.keys(variables).length > 0 ? { variables } : {}),
+      },
+    });
+    return payload;
+  }
+
+  async publishGoodVibesEvent(eventType: string, event: HomeAssistantGoodVibesEvent): Promise<unknown> {
+    return this.fireEvent(eventType, {
+      ...event,
+      source: 'goodvibes',
+      emittedAt: new Date().toISOString(),
+    });
+  }
+
+  private async requestJson(
+    path: string,
+    options: {
+      readonly auth?: boolean | undefined;
+      readonly method?: string | undefined;
+      readonly body?: Record<string, unknown> | undefined;
+      readonly notFoundAsNull?: boolean | undefined;
+    } = {},
+  ): Promise<unknown> {
+    const response = await this.request(path, options);
+    if (options.notFoundAsNull && response.status === 404) return null;
+    const text = await readResponseTextWithinLimit(response, this.maxResponseBytes);
+    if (!response.ok) {
+      throw new Error(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`);
+    }
+    if (!text.trim()) return null;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
+  }
+
+  private async requestText(
+    path: string,
+    options: {
+      readonly auth?: boolean | undefined;
+      readonly method?: string | undefined;
+      readonly body?: Record<string, unknown> | undefined;
+    } = {},
+  ): Promise<string> {
+    const response = await this.request(path, options);
+    const text = await readResponseTextWithinLimit(response, this.maxResponseBytes);
+    if (!response.ok) {
+      throw new Error(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`);
+    }
+    return text;
+  }
+
+  private async request(
+    path: string,
+    options: {
+      readonly auth?: boolean | undefined;
+      readonly method?: string | undefined;
+      readonly body?: Record<string, unknown> | undefined;
+    },
+  ): Promise<Response> {
+    if (options.auth && !this.accessToken) {
+      throw new Error('Home Assistant access token is not configured.');
+    }
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.auth && this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}),
+    };
+    if (/^[a-z][a-z0-9+\-.]*:/i.test(path)) {
+      throw new Error(`Absolute path not allowed in Home Assistant request: ${path}`);
+    }
+    return instrumentedFetch(new URL(path, `${this.baseUrl}/`).toString(), {
+      method: options.method ?? 'GET',
+      headers,
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+  }
+}
+
+export function normalizeHomeAssistantBaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error('Home Assistant base URL is required.');
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error(`Invalid Home Assistant base URL: ${trimmed}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Home Assistant base URL must use http or https.');
+  }
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/+$/, '');
+}
+
+function isHomeAssistantState(value: unknown): value is HomeAssistantStateRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.entity_id === 'string' && typeof record.state === 'string';
+}
+
+function isHomeAssistantService(value: unknown): value is HomeAssistantServiceRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.domain === 'string'
+    && (Array.isArray(record.services) || (typeof record.services === 'object' && record.services !== null));
+}
+
+async function readResponseTextWithinLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number.parseInt(response.headers.get('content-length') ?? '0', 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    if (response.body) await cancelHomeAssistantBody(response.body, 'Response content-length exceeds limit');
+    throw new Error(`Home Assistant response too large: ${contentLength} bytes`);
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await cancelHomeAssistantReader(reader, 'Response too large');
+        throw new Error(`Home Assistant response exceeded ${maxBytes} bytes`);
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function cancelHomeAssistantBody(body: ReadableStream<Uint8Array>, reason: string): Promise<void> {
+  try {
+    await body.cancel(reason);
+  } catch (error) {
+    logger.warn('Home Assistant response body cancel failed', { reason, error: summarizeError(error) });
+  }
+}
+
+async function cancelHomeAssistantReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  reason: string,
+): Promise<void> {
+  try {
+    await reader.cancel(reason);
+  } catch (error) {
+    logger.warn('Home Assistant response reader cancel failed', { reason, error: summarizeError(error) });
+  }
+}

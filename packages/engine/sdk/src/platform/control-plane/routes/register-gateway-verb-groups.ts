@@ -1,0 +1,794 @@
+/**
+ * routes/register-gateway-verb-groups.ts
+ *
+ * One entry point the runtime-services composition root calls to attach every
+ * handler-registered gateway verb group, so services.ts needs a single import
+ * and a single call regardless of how many groups exist.
+ *
+ * It folds in the pre-existing fleet / checkpoints / sessions.search group
+ * (registerFleetCheckpointsSearchGatewayMethods, unchanged) and constructs + wires the browser-
+ * push group: a PushService over the subscription store and VAPID key custody,
+ * its verb handlers, and, the real event source, a subscription to the
+ * approval broker so an approval that needs a decision fans out as a push to the
+ * operator's registered devices.
+ */
+import type { GatewayMethodCatalog } from '../method-catalog.js';
+import { resolveWebPort } from '../../daemon/host-resolver.js';
+import { registerFleetCheckpointsSearchGatewayMethods, type FleetCheckpointsSearchGatewayDeps } from './register-fleet-checkpoints-search.js';
+import { registerPushGatewayMethods } from './push.js';
+import { registerPairingGatewayMethods, type PairingGatewayService } from './pairing.js';
+import { registerPairingHandoffGatewayMethods } from './pairing-handoff.js';
+import { registerTailscaleGatewayMethods } from './tailscale.js';
+import { registerAcpGatewayMethods } from './acp.js';
+import { discoverAcpAgents, type AcpHostService } from '../../acp/host.js';
+import { createFleetConflictsListHandler, createFleetConflictsResolveHandler, type FleetConflictsDeps } from './fleet.js';
+import { startConflictResolutionSession } from './seeded-sessions.js';
+// Compatibility re-export: consumers/tests import startCiFixSession from here.
+export { startCiFixSession, startConflictResolutionSession } from './seeded-sessions.js';
+import { defaultTailscaleRunner, TailscaleServeReceiptStore, type TailscaleCommandRunner } from '../../remote-access/tailscale.js';
+import { registerSkillsGatewayMethods } from './skills.js';
+import { registerPrincipalsGatewayMethods } from './principals.js';
+import { composeOwnerProfile } from './owner-profile-composition.js';
+import { PrincipalRegistry, PrincipalStore } from '../../principals/index.js';
+import { registerChannelProfilesGatewayMethods } from './channel-profiles.js';
+import { registerChannelSyncGatewayMethods } from './channel-sync.js';
+import { ChannelSyncRegistry, ChannelSyncStore } from '../../channel-sync/index.js';
+import { registerChannelTestGatewayMethods } from './channel-test.js';
+import { registerWorktreeSetupGatewayMethods } from './worktree-setup.js';
+import { WorktreeRegistry } from '../../runtime/worktree/registry.js';
+import { resolveEffectiveWorktreeSetup } from '../../runtime/worktree/setup.js';
+import { registerCostGatewayMethods } from './cost.js';
+import { registerPermissionRulesGatewayMethods } from './permission-rules.js';
+import type { UserPermissionRuleStore } from '../../permissions/user-rule-store.js';
+import { registerMemoryProjectionsGatewayMethods, type MemoryProjectionSource } from './memory-projections.js';
+import {
+  registerCredentialWriteGatewayMethods,
+  type CredentialWriteConfig,
+  type CredentialWriteSecrets,
+} from './credentials-write.js';
+import { registerApprovalRaiseGatewayMethods, type ApprovalRaiseService } from './approvals-raise.js';
+import { CostAttributionService, type ResolvePricing } from '../../runtime/cost/attribution.js';
+import { QuotaWindowTracker } from '../../runtime/cost/quota-window.js';
+import {
+  ChannelProfileRegistry,
+  ChannelProfileStore,
+  installInboundIntakeEnrichment,
+  type InboundIntakeBroker,
+} from '../../channel-profiles/index.js';
+import type { ChannelPolicyManager } from '../../channels/policy-manager.js';
+import { registerCheckinGatewayMethods } from './checkin.js';
+import {
+  CheckinService,
+  CheckinReceiptStore,
+  createProviderBackedCheckinJudge,
+  createRuntimeCheckinStateReader,
+  type CheckinSessionView,
+} from '../../checkin/index.js';
+import type { ProviderRegistry } from '../../providers/registry.js';
+import type { AutomationManager } from '../../automation/index.js';
+import type { ChannelDeliveryRouter } from '../../channels/delivery-router.js';
+import { parseChannelDeliveryTarget } from '../../channels/delivery/types.js';
+import { composeCiWatchGatewayVerbs } from './ci-watch-composition.js';
+import type { CiPollingHost, FixSessionStartOutcome } from '../../ci-watch/index.js';
+import { summarizeError } from '../../utils/error-display.js';
+import type { PermissionPromptDecision, PermissionPromptRequest } from '../../permissions/prompt.js';
+import { logger } from '../../utils/logger.js';
+import { registerFlagsGraduationGatewayMethods } from './flags-graduation.js';
+import { registerRuntimeMetricsGatewayMethods } from './runtime-metrics.js';
+import { registerStepUpGatewayMethods, type StepUpGatewayService } from './stepup.js';
+import { dirname } from 'node:path';
+import { registerRewindGatewayMethods } from './rewind.js';
+import {
+  createConversationRewindHostBroker,
+  registerRewindConversationHostGatewayMethods,
+} from './rewind-conversation-hosts.js';
+import { registerWorkspacesGatewayMethods } from './workspaces.js';
+import { WorkspaceRegistrationStore } from '../../workspace/registration/index.js';
+import { UnifiedRewindService } from '../../rewind/index.js';
+import type { RewindConversationPort } from '../../rewind/index.js';
+import { createEventEnvelope } from '../../runtime/events/index.js';
+import type { WorkspaceEvent } from '../../../events/workspace.js';
+
+import { createSessionRuntimeControls, registerSessionRuntimeGatewayMethods, type SessionLiveTurnControlsHolder } from './session-runtime.js';
+import { registerPowerGatewayMethods, type PowerGatewayService } from './power.js';
+import { registerDevicesGatewayMethods, type DevicesGatewayService } from './devices.js';
+import { registerMemoryGatewayMethods, type MemoryGatewayService } from './memory.js';
+import { registerVoiceSetupGatewayMethods, type VoiceSetupGatewayService } from './voice-setup.js';
+import { registerBrowserGatewayMethods } from './browser.js';
+import { composeDaemonBrowser, type BrowserCompositionDeps } from './browser-composition.js';
+import { registerCalendarGatewayMethods, type CalendarGatewayService } from './calendar.js';
+import { createDaemonCalendarGatewayService } from './calendar-composition.js';
+import { registerEmailGatewayMethods, type EmailGatewayService } from './email.js';
+import { registerDaemonEmailVerbs, type EmailCompositionDeps } from './email-composition.js';
+import { bindCostAttributionIngest } from './attribution-ingest.js';
+import type { ConfigManager } from '../../config/manager.js';
+import type { DisposalRegistry } from '../../runtime/disposal.js';
+import type { ConfigKey } from '../../config/schema.js';
+import type { RuntimeStore } from '../../runtime/store/index.js';
+import { FileSystemSkillStore, SkillService } from '../../skills/index.js';
+import type {
+  ApprovalSource,
+  FleetNotice,
+  FleetNoticeSource,
+  NeedsInputPresence,
+  VapidSecretStore,
+} from '../../push/index.js';
+import { createPushService } from './push-composition.js';
+import type { RuntimeEventBus } from '../../runtime/events/index.js';
+import type { FleetEvent } from '../../../events/fleet.js';
+import { controlPlaneStorePath } from '../control-plane-store-paths.js';
+import { legacyWorkspaceRegisterPath, sharedWorkspaceRegisterPath } from '../../workspace/registration/shared-register-path.js';
+
+export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps, BrowserCompositionDeps {
+  /** SecretsManager (get/set), VAPID keypair custody lives here, never in config. */
+  readonly secretsManager: VapidSecretStore;
+  /** Filled with the owner profile store and occasions service below, which is what lets the `profile` capture tool write. Absent in a host with no agent tools. */
+  readonly personalCapture?: Pick<import('../../personal-capture/index.js').PersonalCaptureHolder, 'setPort'> | undefined;
+  /**
+   * Teardown registry for the pollers this registration starts, today the
+   * push-subscription sweep, which is constructed here and so is otherwise
+   * unreachable from the graph that owns it. Optional: a narrow composition
+   * that never tears down passes nothing and keeps today's behaviour.
+   */
+  readonly disposal?: DisposalRegistry | undefined;
+  /** The approval broker, the real event source push fans out from. */
+  readonly approvalBroker: ApprovalSource;
+  /**
+   * Optional: stamp the session an accepted ci fix-this offer spawned onto
+   * its RESOLVED approval record (ApprovalBroker.stampFixSession). Present
+   * when the real broker is wired (the runtime composition root); absent in
+   * narrower compositions, the id then travels only via the channel
+   * notification.
+   */
+  readonly stampFixSessionOnApproval?: ((offerCallId: string, outcome: FixSessionStartOutcome) => Promise<unknown>) | undefined;
+  /**
+   * Optional: raise an ask through the shared approval broker. When present,
+   * a watched CI run going red produces a "fix this?" offer whose acceptance
+   * starts the fix-session. Absent → red runs only notify.
+   */
+  readonly requestApproval?: ((input: {
+    readonly request: PermissionPromptRequest;
+    readonly metadata?: Record<string, unknown> | undefined;
+  }) => Promise<PermissionPromptDecision>) | undefined;
+  /**
+   * Optional: the daemon's watcher registry, the recurring-poll host. When
+   * present, registered CI watches are polled on the watchers.ciPollIntervalMs
+   * cadence instead of standing still until a manual ci.watches.run.
+   */
+  readonly watcherRegistry?: CiPollingHost | undefined;
+  /**
+   * Optional: the durable user-origin permission rule store (remembered
+   * approval decisions). When present, the permissions.rules.* settings verbs
+   * are registered over it; absent, they stay cataloged-but-unhandled.
+   */
+  readonly userPermissionRuleStore?: Pick<UserPermissionRuleStore, 'list' | 'delete'> | undefined;
+  /** Home-scoped path service; the subscription store file resolves under it. */
+  readonly shellPaths: { resolveUserPath(...segments: string[]): string };
+  /** Surface root every control-plane store here resolves under; required, never defaulted. */ readonly surfaceRoot: string;
+  /**
+   * Optional explicit VAPID JWT `sub` contact, overriding the `push.vapidSubject`
+   * config key. Absent (the normal case) ⇒ the config key is read; empty or
+   * invalid there ⇒ the documented localhost fallback.
+   */
+  readonly vapidSubject?: string | undefined;
+  /**
+   * Optional: the runtime event bus. When present, a fleet node that becomes
+   * blocked on the operator fans out as a 'needs-input' push (the poll-free
+   * counterpart to the approval source above). Absent → no needs-input pushes
+   * (graceful degrade); every other verb group is unaffected.
+   */
+  readonly runtimeBus?: Pick<RuntimeEventBus, 'onDomain' | 'emit'> | undefined;
+  /**
+   * Optional: operator presence lookup. When present, a needs-input push is
+   * suppressed while an operator surface is actively attached to that node's
+   * session (someone is already looking). Absent → every needs-input block
+   * pushes.
+   */
+  readonly sessionPresence?: NeedsInputPresence | undefined;
+  /**
+   * Per-pairing token manager. When present, the pairing.tokens.* verbs
+   * (list/create/rename/delete/migrate/revokeShared) are registered over it;
+   * absent → those verbs stay cataloged-but-unhandled (graceful degrade).
+   */
+  readonly pairingTokens?: PairingGatewayService | undefined;
+  /** Whether the rendezvous relay is available ⇒ the pairing hand-off offers a relay step. */
+  readonly relayAvailable?: (() => boolean) | undefined;
+  /** The configured web-app origin the pairing QR points at ⇒ hand-off returns a full deep link. */
+  readonly pairingWebOrigin?: (() => string | undefined) | undefined;
+  /** Injectable tailscale command runner (tests); absent ⇒ the real spawnSync runner. */
+  readonly tailscaleRunner?: TailscaleCommandRunner | undefined;
+  /**
+   * Optional: the hosted third-party ACP agent service. When present, the
+   * acp.* verbs (discovery + spawn) are registered over it; absent → they stay
+   * cataloged-but-unhandled (graceful degrade for narrower embeds).
+   */
+  readonly acpHost?: Pick<AcpHostService, 'spawnAgent' | 'list'> | undefined;
+  /** Injectable discovery seam for the acp verbs (tests); absent ⇒ the real read-only discovery. */
+  readonly acpDiscover?: (() => ReturnType<typeof discoverAcpAgents>) | undefined;
+  /**
+   * Config surface backing the session-scoped permission-mode verbs
+   * (sessions.permissionMode.get/set): the daemon's own `permissions.mode`
+   * read/write. A set flows to surfaces as runtime.permissions via the
+   * already-wired mode-change binding.
+   */
+  readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'>;
+  /**
+   * Runtime store backing sessions.contextUsage.get and the local-session
+   * resolution the session-runtime verbs gate on (getState().session.id).
+   */
+  readonly runtimeStore: Pick<RuntimeStore, 'getState'>;
+  /**
+   * Optional: the live-turn controls holder an interactive consumer binds its
+   * Orchestrator into. When present, sessions.toolCalls.cancel and the
+   * sessions.queuedMessages.* verbs act on the bound runtime; absent (or
+   * nothing bound) those verbs refuse honestly (LIVE_TURN_CONTROLS_UNAVAILABLE).
+   */
+  readonly sessionLiveTurnControls?: SessionLiveTurnControlsHolder | undefined;
+  /** Optional: the live PowerManager. When present, power.status.get / power.keepAwake.set serve real state; absent they stay cataloged-but-unhandled. */
+  readonly powerManager?: PowerGatewayService | undefined;
+  /** Optional: the paired-device capability service. When present, devices.nodes.list / devices.grants.* / devices.housekeeping.run serve real state; absent they stay cataloged-but-unhandled. */
+  readonly deviceCapabilities?: DevicesGatewayService | undefined;
+  /** Optional: the live MemoryGovernor. When present, ops.memory.get serves the real governance snapshot; absent it stays cataloged-but-unhandled. */
+  readonly memoryGovernor?: MemoryGatewayService | undefined;
+  /** Optional: managed local-voice provisioning. When present, voice.local.status/install serve real state; absent they stay cataloged-but-unhandled. */
+  readonly voiceSetup?: VoiceSetupGatewayService | undefined;
+  /**
+   * Optional override for the calendar backend. Absent in the real daemon,
+   * which composes the Google-backed one from its own daemon-tier config and
+   * secrets (see routes/calendar-composition.ts); present in tests that serve
+   * calendar.events.* / calendar.ics.* from a fake with no store behind it.
+   *
+   * A missing calendar implementation the daemon could reach, not a missing
+   * route, is what made those five methods `invokable: false` for so long.
+   */
+  readonly calendarGateway?: CalendarGatewayService | undefined;
+  /**
+   * Optional mail backend. When present, email.inbox.* / email.draft.create /
+   * email.send serve real mail; absent they stay cataloged-but-unhandled.
+   *
+   * Its absence is why nothing the daemon did on its own could send a message.
+   */
+  readonly emailGateway?: EmailGatewayService | undefined;
+  /** Everything platform/email needs; absent in narrow compositions. */
+  readonly emailServiceDeps?: EmailCompositionDeps['emailServiceDeps'];
+  /**
+   * Why the mailbox is not usable yet, in the operator's own key names.
+   * Supplied by a composition reading the daemon's `surfaces.email.*` keys.
+   */
+  readonly describeEmailConfigProblem?: EmailCompositionDeps['describeEmailConfigProblem'];
+  /** Operational log sink for the mail verbs; absent means they log nothing. */
+  readonly emailLog?: EmailCompositionDeps['emailLog'];
+  /**
+   * The following three are wired only by the full runtime-services composition
+   * root; when any is absent (e.g. the terminal-shell embed) the proactive
+   * check-in verb group is simply not registered, a graceful degrade, exactly
+   * like the runtimeBus-gated needs-input push source above.
+   */
+  readonly channelDeliveryRouter?: Pick<ChannelDeliveryRouter, 'deliver'> | undefined;
+  readonly providerRegistry?: ProviderRegistry | undefined;
+  readonly automationManager?:
+    | Pick<AutomationManager, 'listJobs' | 'createJob' | 'updateJob' | 'setEnabled' | 'attachCheckinEvaluator' | 'listRuns' | 'runNow'>
+    | undefined;
+  /** A read-only session lister for the check-in briefing (the full SharedSessionBroker satisfies it). */
+  readonly sessionLister?: { listSessions(limit?: number): readonly CheckinSessionView[] } | undefined;
+  /**
+   * The shared session broker's transport intake entry point. When present, the
+   * inbound-intake enrichment (principal attribution + channel-profile
+   * application) is installed on it so every channel-originated session is
+   * enriched at submitMessage; absent → no enrichment is installed (graceful
+   * degrade for embeds that wire no channel intake).
+   */
+  readonly sessionIntake?: InboundIntakeBroker | undefined;
+  /** Optional channel ingress-policy manager. Present: `sessionIntake` attributes a policy-authorized-owner sender to the owner principal instead of unknown (see `attributeInboundSession`). Absent: unchanged behavior. */
+  readonly channelPolicy?: Pick<ChannelPolicyManager, 'getPolicy'> | undefined;
+  /**
+   * The daemon's working directory (source working tree). When present, the
+   * worktrees.setup.run rerun verb is registered over a worktree registry rooted
+   * here (the same store worktrees.snapshot reads); absent → the verb stays
+   * cataloged-but-unhandled, a graceful degrade for embeds with no worktree root.
+   */
+  readonly workingDirectory?: string | undefined;
+  /**
+   * Optional: receives the CI auto-watch tool-execution observer once the
+   * ci-watch service exists, so the composition root can hang it on the shared
+   * tool-execution seam, work pushed through the platform then mints its own
+   * CI watch with no ceremony. Absent → only the scripted ci.watches.create.
+   */
+  readonly onCiAutoWatch?: ((observer: (toolName: string, args: Record<string, unknown>, success: boolean) => void) => void) | undefined;
+  /**
+   * Optional: a daemon-side conversation store port for the conversation half of
+   * the unified rewind (rewind.plan/apply with scope 'conversation' or 'both'),
+   * for sessions THIS process hosts the conversation for.
+   *
+   * It is no longer the only way that half gets served, and is no longer the
+   * first one consulted. A surface running its own loop offers its live
+   * conversation through the rewind.conversation.* verbs, and that offer wins
+   * for its session, a process holding the messages is a better authority on
+   * them than a store that merely might have them. This port is the fallback,
+   * for sessions no surface has offered.
+   *
+   * With neither, the conversation half is reported unavailable with the reason
+   * in a plan warning rather than faked. The files half is unaffected either way.
+   */
+  readonly conversationRewindPort?: RewindConversationPort | null | undefined;
+  /**
+   * The relay WebAuthn step-up ceremony service. When present, the
+   * stepup.credentials.register + stepup.challenge.mint verbs are registered over
+   * it, the SAME instance whose verifier the relay dispatch gate installs
+   * (services.ts constructs one and threads it to both). Absent (an embed with no
+   * relay wiring) → the verbs stay cataloged-but-unhandled, a graceful degrade.
+   */
+  readonly stepUpService?: StepUpGatewayService | undefined;
+  /**
+   * The canonical memory registry backing memory.projections.list/get. When
+   * present, the read-only memory-projection verbs are registered over it;
+   * absent (an embed with no memory store) → the verbs stay cataloged-but-
+   * unhandled, a graceful degrade exactly like the other optional groups.
+   */
+  readonly memoryRegistry?: MemoryProjectionSource | undefined;
+  /**
+   * The config + secret pair the credentials.set/.clear verbs write through,
+   * the only way a surface that is not on this filesystem can finish a settings
+   * modal that asks for a token. A SEPARATE bundle rather than a widening of
+   * `configManager`/`secretsManager` above, because those two are deliberately
+   * narrow Picks that several partial compositions satisfy today, and a
+   * credential write needs members (`setDynamic`, `delete`) neither of them
+   * declares. Absent → the verbs stay cataloged-but-unhandled, a graceful
+   * degrade exactly like the other optional groups.
+   */
+  readonly credentialWrites?: {
+    readonly config: CredentialWriteConfig;
+    readonly secrets: CredentialWriteSecrets;
+    readonly additionalSecretKeys?: readonly string[] | undefined;
+  } | undefined;
+  /**
+   * The broker a surface RAISES an ask into (approvals.raise). Separate from
+   * `approvalBroker` above, which is the push fan-out's read-only
+   * `ApprovalSource` view: raising needs the two members that view does not
+   * declare. The real composition passes the same ApprovalBroker instance to
+   * both. Absent → approvals.raise stays cataloged-but-unhandled, and the
+   * decide verbs are unaffected.
+   */
+  readonly approvalRaise?: ApprovalRaiseService | undefined;
+}
+
+/** Adapt a fleet event payload down to the structural notice the push source needs. */
+function toFleetNotice(event: FleetEvent): FleetNotice {
+  return {
+    type: event.type,
+    nodeId: event.nodeId,
+    ...('label' in event && event.label ? { label: event.label } : {}),
+    ...('reason' in event && event.reason ? { reason: event.reason } : {}),
+    ...('sessionId' in event && event.sessionId ? { sessionId: event.sessionId } : {}),
+    ...('kind' in event && event.kind ? { kind: event.kind } : {}),
+    ...('state' in event && event.state ? { state: event.state } : {}),
+  };
+}
+
+export function registerGatewayVerbGroups(catalog: GatewayMethodCatalog, deps: GatewayVerbGroupDeps): void {
+  registerFleetCheckpointsSearchGatewayMethods(catalog, deps);
+
+  // fleet.conflicts.*, a conflict row's one action: spawn a seeded resolution
+  // session inside the kept tree (the CI fix-session machinery) and reclaim
+  // the tree once the resolution lands (re-merge on run success). Registered
+  // only when the engine's conflict surface AND the automation manager exist.
+  const attemptsEngine = deps.attemptsController;
+  if (attemptsEngine?.listWorkstreams && attemptsEngine.stampConflictSession && attemptsEngine.retryItemIntegration && deps.automationManager) {
+    const automation = deps.automationManager;
+    const engine = attemptsEngine;
+    /** jobId -> itemId for started resolution sessions awaiting run completion. */
+    const pendingResolutions = new Map<string, string>();
+    const conflictsDeps: FleetConflictsDeps = {
+      listWorkstreams: () => engine.listWorkstreams!(),
+      stampConflictSession: (itemId, sessionId) => engine.stampConflictSession!(itemId, sessionId),
+      startResolutionSession: async (seed) => {
+        const started = await startConflictResolutionSession(automation, seed);
+        if ('error' in started) return started;
+        pendingResolutions.set(started.jobId, seed.itemId);
+        return { sessionId: started.sessionId };
+      },
+    };
+    const attachConflict = (id: string, handler: ReturnType<typeof createFleetConflictsListHandler>): void => {
+      const descriptor = catalog.get(id);
+      if (descriptor) catalog.register(descriptor, handler, { replace: true });
+    };
+    attachConflict('fleet.conflicts.list', createFleetConflictsListHandler(conflictsDeps));
+    attachConflict('fleet.conflicts.resolve', createFleetConflictsResolveHandler(conflictsDeps));
+    // Reclaim on success: the resolution session's automation run completing
+    // successfully re-attempts the merge through the same integration lane,
+    // a clean merge removes the kept tree; a re-conflict honestly stays flagged.
+    if (deps.runtimeBus) {
+      deps.runtimeBus.onDomain('automation', (envelope) => {
+        const payload = envelope.payload as { type?: string; jobId?: string; outcome?: string };
+        if (payload.type !== 'AUTOMATION_RUN_COMPLETED' || !payload.jobId) return;
+        const itemId = pendingResolutions.get(payload.jobId);
+        if (!itemId) return;
+        pendingResolutions.delete(payload.jobId);
+        if (payload.outcome !== 'success') return;
+        void engine.retryItemIntegration!(itemId).catch((error) => {
+          logger.warn('fleet.conflicts: post-resolution re-merge failed', { itemId, error: summarizeError(error) });
+        });
+      });
+    }
+  }
+
+  // The canonical skill service over a directory of Markdown documents under the
+  // daemon's own state directory. Constructed here (from the shellPaths this
+  // registrar already receives) rather than threaded through the runtime-services
+  // composition root, exactly like the push group below.
+  const skillService = new SkillService(
+    new FileSystemSkillStore(deps.shellPaths.resolveUserPath('skills')),
+  );
+  registerSkillsGatewayMethods(catalog, skillService);
+
+  // The shared registered-workspace registry: which project roots the operator
+  // has opted into (coverage flows down each root's subtree, inherited through
+  // the git worktree→main-repo link). The daemon state dir is resolveUserPath()
+  // itself (~/.goodvibes); its parent (the home directory) is refused as an
+  // absurdly broad root by the same guard checkpointing uses.
+  const daemonStateDir = deps.shellPaths.resolveUserPath();
+  const workspaceRegistrationStore = new WorkspaceRegistrationStore({
+    // SHARED TIER, not surface-scoped, three products read this register. See workspace/registration/shared-register-path.ts.
+    path: sharedWorkspaceRegisterPath(deps.shellPaths),
+    fallbackReadPath: legacyWorkspaceRegisterPath(deps.shellPaths),
+    homeDir: dirname(daemonStateDir),
+    daemonStateDir,
+  });
+  registerWorkspacesGatewayMethods(catalog, workspaceRegistrationStore);
+
+  // The cross-channel principal identity registry over a JSON snapshot under
+  // the daemon's own control-plane state directory, constructed here like the
+  // skill/push groups rather than threaded through the composition root.
+  const principalRegistry = new PrincipalRegistry(new PrincipalStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'principals.json')));
+  registerPrincipalsGatewayMethods(catalog, principalRegistry);
+
+  // The owner profile: one Markdown file at daemon scope, its nine profile.*
+  // verbs, and the consumer seams it fills (the ConfigManager read fallback for
+  // unset keys, the closed-tier redaction values, the signup base address, and
+  // the open-tier context block). See routes/owner-profile-composition.ts.
+  // No daemonHome passed: this registrar never sees the --daemon-home flag, and
+  // the profile's own resolver already honours GOODVIBES_DAEMON_HOME, which is
+  // what an isolated daemon sets. A host that DOES parse the flag threads it
+  // through OwnerProfileCompositionDeps.daemonHome.
+  // Skipped when the composition supplied no config manager (a narrow embed, a
+  // conformance harness): every `profile.*` switch lives in config, so without
+  // one there is nothing to read the feature's own on/off from. The verbs then
+  // stay cataloged-but-unhandled, the same graceful degrade the other optional
+  // groups use, instead of one optional family throwing and taking every other
+  // verb group in this registrar down with it.
+  if (deps.configManager?.attachProfileFallback !== undefined) {
+    const ownerProfile = composeOwnerProfile(catalog, {
+      configManager: deps.configManager,
+      occasions: deps,
+      ...(deps.personalCapture === undefined ? {} : { personalCapture: deps.personalCapture }),
+      // The runtime's own home, so an injected home resolves the profile under
+      // it instead of falling through to whoever is logged in.
+      ...(deps.homeDirectory === undefined ? {} : { homeDir: deps.homeDirectory }),
+    });
+    deps.disposal?.add('owner profile', ownerProfile.dispose);
+  }
+
+  // Per-channel profile bindings (model/permission defaults for the sessions a
+  // channel originates), over a JSON snapshot under the daemon's control-plane
+  // state directory. Constructed here like the principal/skill/push groups. The
+  // intake helpers in ../../channel-profiles (attribution + profile resolution)
+  // pair this registry with the principal registry above at the inbound seam.
+  const channelProfileRegistry = new ChannelProfileRegistry(
+    new ChannelProfileStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'channel-profiles.json')),
+  );
+  registerChannelProfilesGatewayMethods(catalog, channelProfileRegistry);
+
+  // The channel routing table and the draft mirror: what a surface needs to
+  // draw the same channel screen on a second device. Same snapshot pattern and
+  // the same state directory as the profile bindings above; the two are
+  // deliberately separate tables (see platform/channel-sync's header).
+  registerChannelSyncGatewayMethods(
+    catalog,
+    new ChannelSyncRegistry(
+      new ChannelSyncStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'channel-sync.json')),
+    ),
+  );
+
+  // Wire the inbound-intake enrichment onto the transport intake chokepoint: from
+  // here on, every channel-originated session is attributed to its sending
+  // principal (via the registry just above) and inherits its channel's bound
+  // profile, no per-adapter call needed. Uses the same two registries the
+  // principals.*/channels.profiles.* verbs manage, so the mappings an operator
+  // sets are exactly the mappings intake honors.
+  if (deps.sessionIntake) {
+    installInboundIntakeEnrichment(deps.sessionIntake, {
+      principals: principalRegistry,
+      channelProfiles: channelProfileRegistry,
+      ...(deps.channelPolicy ? { channelPolicy: deps.channelPolicy } : {}),
+    });
+  }
+
+  // CI-watch (the per-job status tool, the auto-minter and the recurring
+  // poll): constructed in routes/ci-watch-composition.ts, the free-function
+  // split this file's line budget required, with no behaviour change.
+  composeCiWatchGatewayVerbs(catalog, deps);
+
+  // channels.test.send, live per-channel test-message probe over the daemon's
+  // delivery router. Registered only when the router is wired; absent, the verb
+  // stays cataloged-but-unhandled rather than a facade that pretends to deliver.
+  if (deps.channelDeliveryRouter) {
+    registerChannelTestGatewayMethods(catalog, deps.channelDeliveryRouter);
+  }
+
+  // worktrees.setup.run, re-run cold-start setup on a live worktree. Registered
+  // over a registry rooted at the daemon working directory (matching
+  // worktrees.snapshot's reader) so the recorded outcome is visible there.
+  if (deps.workingDirectory !== undefined) {
+    const worktreeSetupRegistry = new WorktreeRegistry(deps.workingDirectory);
+    const sourceRoot = deps.workingDirectory;
+    registerWorktreeSetupGatewayMethods(catalog, {
+      registry: worktreeSetupRegistry,
+      sourceRoot,
+      // Derived-by-default setup (lockfile → install command, .env carry-over);
+      // user config overrides the derivation per field, never merely enables it.
+      resolveConfig: () => resolveEffectiveWorktreeSetup((key) => deps.configManager.get(key as ConfigKey), deps.workingDirectory!),
+    });
+  }
+
+  // Proactive check-in (the "heartbeat initiative"): a briefing→judgment→
+  // conditional-delivery loop that rides the automation scheduler as a
+  // kind:'checkin' job. Registered only when the full runtime wired the channel
+  // delivery router, provider registry, and automation manager (the pieces the
+  // loop genuinely needs); absent → the verbs stay cataloged-but-unhandled,
+  // never a facade that pretends to deliver.
+  if (deps.channelDeliveryRouter && deps.providerRegistry && deps.automationManager && deps.sessionLister) {
+    const channelDeliveryRouter = deps.channelDeliveryRouter;
+    const automation = deps.automationManager;
+    const sessionLister = deps.sessionLister;
+    // The checkin.* keys are string-keyed (they live in the config defaults tree,
+    // not the grandfathered ConfigKey union); adapt the daemon's ConfigManager to
+    // the check-in's string-keyed config surface.
+    const configManager = deps.configManager;
+    const checkinConfig = {
+      get: (key: string): unknown => configManager.get(key as ConfigKey),
+      set: (key: string, value: string | boolean): void => configManager.set(key as ConfigKey, value as never),
+    };
+    const checkinService = new CheckinService({
+      config: checkinConfig,
+      stateReader: createRuntimeCheckinStateReader({
+        listSessions: () => sessionLister.listSessions(500),
+        listRuns: () => automation.listRuns(),
+      }),
+      judge: createProviderBackedCheckinJudge(deps.providerRegistry),
+      deliverer: {
+        deliver: async (channel, message) => {
+          return channelDeliveryRouter.deliver({
+            target: parseChannelDeliveryTarget(channel),
+            body: message,
+            title: 'Check-in',
+            jobId: 'checkin',
+            runId: `checkin-${Date.now()}`,
+            includeLinks: false,
+          });
+        },
+      },
+      receipts: new CheckinReceiptStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'checkin-receipts.json')),
+      automation,
+    });
+    registerCheckinGatewayMethods(catalog, checkinService);
+    void checkinService.attach().catch(() => {
+      // Automation may be disabled at construction; the schedule syncs on the
+      // next checkin.config.set once it is enabled. Never fail construction.
+    });
+  }
+
+  // Session-scoped permission mode (get/set) + context-usage exposure on the
+  // wire, over the daemon's own config + runtime store (its live local
+  // runtime). Constructed here rather than threaded through the runtime-
+  // services composition root, exactly like the skill/push groups above.
+  if (deps.powerManager) registerPowerGatewayMethods(catalog, deps.powerManager);
+  if (deps.deviceCapabilities) registerDevicesGatewayMethods(catalog, deps.deviceCapabilities);
+  if (deps.memoryGovernor) registerMemoryGatewayMethods(catalog, deps.memoryGovernor);
+  if (deps.voiceSetup) registerVoiceSetupGatewayMethods(catalog, deps.voiceSetup);
+  const calendarGateway = createDaemonCalendarGatewayService(deps);
+  if (calendarGateway) registerCalendarGatewayMethods(catalog, calendarGateway);
+  registerDaemonEmailVerbs(catalog, { ...deps, configManager: deps.configManager });
+  const browserGateway = composeDaemonBrowser(deps);
+  if (browserGateway) registerBrowserGatewayMethods(catalog, browserGateway);
+  if (browserGateway) deps.disposal?.add('browser sessions', () => void browserGateway.shutdown());
+  registerSessionRuntimeGatewayMethods(
+    catalog,
+    createSessionRuntimeControls({
+      config: deps.configManager,
+      store: deps.runtimeStore,
+      liveTurnHolder: deps.sessionLiveTurnControls,
+    }),
+  );
+
+  // The daemon's one PushService: VAPID custody, the subscription store with
+  // its housekeeping running, and every policy read wired live to config.
+  // See routes/push-composition.ts.
+  const pushService = createPushService(deps);
+  // Relay WebAuthn step-up ceremony verbs (register a credential, mint a
+  // challenge). Registered only when the composition root threads the shared
+  // service (the one whose verifier the relay gate installs).
+  if (deps.stepUpService) {
+    registerStepUpGatewayMethods(catalog, deps.stepUpService);
+  }
+
+  registerPushGatewayMethods(catalog, pushService);
+  // Per-pairing token verbs (list/mint/rename/revoke/migrate/revoke-shared),
+  // over the daemon's PairingTokenManager. Only when the composition root
+  // threads it (a graceful degrade for narrower embeds).
+  if (deps.pairingTokens) {
+    registerPairingGatewayMethods(catalog, deps.pairingTokens);
+    // Pairing hand-off bundle: one exchange carries the notifications/relay/
+    // passkey offer set for a surface to complete in one pass, each declinable.
+    registerPairingHandoffGatewayMethods(catalog, {
+      tokens: deps.pairingTokens,
+      push: pushService,
+      ...(deps.stepUpService ? { stepUp: deps.stepUpService } : {}),
+      relayAvailable: deps.relayAvailable ?? ((): boolean => false),
+      ...(deps.pairingWebOrigin ? { webOrigin: deps.pairingWebOrigin } : {}),
+    });
+  }
+  // Hosted third-party coding agents (ACP): read-only discovery + the one-act
+  // spawn. Registered only when the composition root threads the host service.
+  if (deps.acpHost) {
+    registerAcpGatewayMethods(catalog, {
+      host: deps.acpHost,
+      discover: deps.acpDiscover ?? ((): ReturnType<typeof discoverAcpAgents> => discoverAcpAgents()),
+    });
+  }
+
+  // Tailscale auto-wire: read-only detection + the one-action serve affordance
+  // (the recommended https path, the daemon never mints certificates). Where
+  // tailscale is absent, detection reports it once; nothing nags.
+  registerTailscaleGatewayMethods(catalog, {
+    runner: deps.tailscaleRunner ?? defaultTailscaleRunner(),
+    receipts: new TailscaleServeReceiptStore(controlPlaneStorePath(deps.shellPaths, deps.surfaceRoot, 'tailscale-serve-receipts.json')),
+    resolveWebPort: () => resolveWebPort(deps.configManager.get('web.port')),
+    setPublicBaseUrl: (url) => {
+      deps.configManager.set('web.publicBaseUrl', url);
+    },
+  });
+  // The escalation timers this service arms: one per outstanding blocked ask,
+  // rearmed for each bounded reminder. Nothing outside the service could reach
+  // them, so a stopping daemon sat on up to a five-minute grace timer per
+  // unanswered ask with no way to put it down.
+  deps.disposal?.add('push escalation timers', () => pushService.dispose());
+
+  // Real event source: approvals-needed -> push to every registered device.
+  // Retained now that the graph has a shutdown seam: a subscription that
+  // outlives the daemon fans pushes out of a torn-down graph.
+  const pushSubscriptions: (() => void)[] = [pushService.attachApprovalSource(deps.approvalBroker)];
+
+  // Second event source: a fleet node blocked on the operator -> a 'needs-input'
+  // push carrying the session/node deep link, suppressed when an operator is
+  // already attached to that session. Only when the runtime bus is wired.
+  if (deps.runtimeBus) {
+    const bus = deps.runtimeBus;
+    const source: FleetNoticeSource = {
+      subscribe: (listener) => bus.onDomain('fleet', (envelope) => listener(toFleetNotice(envelope.payload))),
+    };
+    pushSubscriptions.push(pushService.attachFleetNeedsInputSource(source, deps.sessionPresence));
+    // Third event source: a tracked run reaching a terminal state -> a
+    // 'completion' push, by default with zero setup (the
+    // notifications.pushCompletion toggle only silences the class).
+    pushSubscriptions.push(pushService.attachCompletionSource(source));
+  }
+  deps.disposal?.add('push event sources', () => {
+    for (let i = pushSubscriptions.length - 1; i >= 0; i -= 1) pushSubscriptions[i]!();
+  });
+
+  // Cost attribution + quota-window tracking over the platform's own LLM usage
+  // records. Pricing goes through the ONE model pricing resolver (manual
+  // config price -> registration price -> provider-served -> catalog ->
+  // honest unknown); an unknown or subscription model stays unpriced, never a
+  // fabricated cost; absent registry -> everything unpriced. The verbs are
+  // always registered; ingestion is wired only when the runtime bus is present.
+  const resolvePricing: ResolvePricing = (model, provider) => {
+    const registry = deps.providerRegistry;
+    if (!model || !registry) return null;
+    const resolved = registry.resolveModelPricing(model, provider);
+    if (resolved.status !== 'priced') return null;
+    return {
+      input: resolved.rates.inputPerMTok,
+      output: resolved.rates.outputPerMTok,
+      cacheRead: resolved.rates.cacheReadPerMTok,
+      cacheWrite: resolved.rates.cacheWritePerMTok,
+      // Provenance rides with the rates so attribution can report costSource
+      // ("your price" vs "catalog price") and the pricing's as-of date.
+      source: resolved.source,
+      asOf: resolved.asOf,
+    };
+  };
+  const costAttribution = new CostAttributionService({ resolvePricing });
+  const quotaWindow = new QuotaWindowTracker();
+  registerCostGatewayMethods(catalog, { costAttribution, quotaWindow });
+
+  // Durable permission rules settings surface (list/delete), registered only
+  // when the composition root wires the store, like every optional group here.
+  if (deps.userPermissionRuleStore) {
+    registerPermissionRulesGatewayMethods(catalog, { userRuleStore: deps.userPermissionRuleStore });
+  }
+
+  // credentials.set / credentials.delete, a credential written THROUGH the
+  // daemon: into the encrypted store at the scope the ownership rules resolve,
+  // read back and verified, with only a goodvibes://secrets/ reference left in
+  // config, and the value never echoed anywhere. Registered only when the
+  // composition wires a real config+secret pair; absent, the verbs stay
+  // cataloged-but-unhandled rather than a facade that reports a stored
+  // credential nothing can read.
+  if (deps.credentialWrites) {
+    registerCredentialWriteGatewayMethods(catalog, deps.credentialWrites);
+  }
+
+  // approvals.raise, a surface CREATING an ask in the shared broker, the write
+  // counterpart to the decide verbs. Registered only when the raising view of
+  // the broker is wired.
+  if (deps.approvalRaise) {
+    registerApprovalRaiseGatewayMethods(catalog, deps.approvalRaise);
+  }
+
+  // Memory projection read verbs (memory.projections.list/get) over the canonical
+  // memory registry. Registered only when the memory store is wired; absent, the
+  // verbs stay cataloged-but-unhandled rather than a facade over no store.
+  if (deps.memoryRegistry) {
+    registerMemoryProjectionsGatewayMethods(catalog, deps.memoryRegistry);
+  }
+
+  // Feature-flag graduation report: a read-only view over the static flag
+  // registry + owner graduation annotations. Needs no runtime dependency (the
+  // registry is static module data), so it is always registered. No live
+  // evidence provider is threaded here yet, flags with instrumentation report
+  // "no evidence collected this run" rather than a fabricated readiness.
+  registerFlagsGraduationGatewayMethods(catalog);
+
+  // runtime.metrics.get, the process-wide RuntimeMeter snapshot plus per-model
+  // tool-format telemetry. Needs no runtime dependency (platformMeter and the
+  // tool-format recorder are process-wide singletons), so it is always
+  // registered, exactly like the flags-graduation report above.
+  registerRuntimeMetricsGatewayMethods(catalog);
+
+  // Unified message-anchored rewind (rewind.plan / rewind.apply): one coordinator
+  // over the daemon's workspace-checkpoint store, files rewind reuses the same
+  // manager checkpoints.* uses (never a fourth history system), and the pre-restore
+  // safety checkpoint it already takes is the undo point that makes a rewind
+  // reversible. The conversation half is wired only when a consumer threads a
+  // conversationRewindPort (a daemon-hosted mutable conversation store); absent
+  //, the default today, the conversation part is honestly reported unavailable
+  // rather than faked. Receipt events fan out on the workspace domain when the
+  // runtime bus is present.
+  //
+  // The conversation half is served by whichever surface is running the
+  // session's loop, which it offers through the rewind.conversation.* verbs
+  // below. That broker is always constructed, because it is the only way a
+  // pure-client surface can serve conversation rewind at all, and it falls
+  // through to an in-process conversationRewindPort for sessions this daemon
+  // hosts itself. With neither, the conversation half is reported unavailable
+  // with the reason rather than answered with a zero.
+  const conversationHosts = createConversationRewindHostBroker({
+    fallback: deps.conversationRewindPort ?? null,
+  });
+  registerRewindConversationHostGatewayMethods(catalog, conversationHosts);
+  deps.disposal?.add('conversation rewind hosts', () => conversationHosts.shutdown());
+
+  const rewindService = new UnifiedRewindService({
+    workspace: deps.workspaceCheckpointManager,
+    conversation: conversationHosts,
+    ...(deps.runtimeBus
+      ? {
+        emit: (event: WorkspaceEvent, sessionId: string): void => {
+          const envelope = createEventEnvelope(event.type, event, { sessionId, source: 'rewind-service' });
+          deps.runtimeBus!.emit<'workspace'>(
+            'workspace',
+            envelope as import('../../runtime/events/index.js').RuntimeEventEnvelope<WorkspaceEvent['type'], WorkspaceEvent>,
+          );
+        },
+      }
+      : {}),
+  });
+  registerRewindGatewayMethods(catalog, rewindService);
+
+  if (deps.runtimeBus) {
+    // LLM + metered-voice usage -> the attribution ledger (see attribution-ingest.ts).
+    bindCostAttributionIngest(deps.runtimeBus, costAttribution, quotaWindow);
+  }
+}
+

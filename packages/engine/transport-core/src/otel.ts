@@ -1,0 +1,137 @@
+/**
+ * OpenTelemetry traceparent/tracestate propagation helper.
+ *
+ * Zero-dependency: detects `@opentelemetry/api` at runtime.
+ * If OTel is absent, all functions are no-ops.
+ *
+ * Dynamic detection uses an indirect import pattern to prevent bundlers
+ * (esbuild, Rollup, Miniflare/workerd) from flagging the import as an
+ * unresolvable dynamic specifier. The module name is never a literal in
+ * any import() call that the bundler sees.
+ *
+ * W3C Trace Context spec: https://www.w3.org/TR/trace-context/
+ */
+
+import {
+  cacheOtelApi,
+  readCachedOtelApi,
+  readOtelModuleOverride,
+  type OtelApi,
+  type SpanContext,
+} from './otel-state.js';
+
+type SyncRequire = (moduleName: string) => unknown;
+
+/**
+ * Dynamic import that is opaque to bundlers.
+ * `new Function(...)` is not statically analysed for import() specifiers.
+ */
+function dynamicImport(moduleName: string): Promise<unknown> {
+  // `new Function(...)` is intentional: it prevents bundlers (esbuild, Rollup,
+  // Miniflare/workerd) from statically analysing the import() specifier and either
+  // bundling @opentelemetry/api or raising an unresolvable-specifier error.
+  //
+  // CSP note: `new Function` violates strict `script-src 'self'` Content Security
+  // Policies (equivalent to eval). Call sites must guard with the WorkerGlobalScope /
+  // window checks in probeOtel() so this is never called in restricted browser / worker
+  // environments. In Node.js and non-CSP environments it is safe.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  return new Function('m', 'return import(m)')(moduleName) as Promise<unknown>;
+}
+
+async function probeOtel(): Promise<OtelApi | null> {
+  const override = readOtelModuleOverride();
+  if (override !== undefined) return override;
+  const cached = readCachedOtelApi();
+  if (cached !== undefined) return cached;
+  // skip dynamic import in browser windows AND Service Workers / workerd
+  // (which have no `window` but do have WorkerGlobalScope). The Function constructor
+  // used in dynamicImport violates strict `script-src 'self'` CSPs in workers.
+  if (typeof window !== 'undefined' || 'WorkerGlobalScope' in globalThis) {
+    cacheOtelApi(null);
+    return null;
+  }
+  try {
+    const mod = await dynamicImport('@opentelemetry/api');
+    cacheOtelApi(mod as OtelApi);
+  } catch {
+    cacheOtelApi(null);
+  }
+  return readCachedOtelApi() ?? null;
+}
+
+function probeOtelSync(): OtelApi | null {
+  const override = readOtelModuleOverride();
+  if (override !== undefined) return override;
+  const cached = readCachedOtelApi();
+  if (cached !== undefined) return cached;
+  try {
+    // Use globalThis.require via indirect reference to avoid bundler module resolution.
+    const nodeRequire = typeof globalThis !== 'undefined'
+      ? (globalThis as { require?: SyncRequire }).require
+      : undefined;
+    if (typeof nodeRequire === 'function') {
+      cacheOtelApi(nodeRequire('@opentelemetry/api') as OtelApi);
+    } else {
+      cacheOtelApi(null);
+    }
+  } catch {
+    cacheOtelApi(null);
+  }
+  return readCachedOtelApi() ?? null;
+}
+
+function buildTraceparent(ctx: SpanContext): string {
+  const flags = (ctx.traceFlags & 0xff).toString(16).padStart(2, '0');
+  return `00-${ctx.traceId}-${ctx.spanId}-${flags}`;
+}
+
+/**
+ * Inject W3C Trace Context headers (`traceparent`, `tracestate`) if an active
+ * OTel span is available. Synchronous; uses require-based detection.
+ *
+ * @param headers - Mutable header record to augment in-place.
+ */
+export function injectTraceparent(headers: Record<string, string>): void {
+  const api = probeOtelSync();
+  if (!api) return;
+  try {
+    const span = api.trace.getActiveSpan();
+    if (!span) return;
+    const ctx = span.spanContext();
+    if (!ctx.traceId || !ctx.spanId) return;
+    headers['traceparent'] = buildTraceparent(ctx);
+    const traceState = ctx.traceState?.serialize();
+    if (traceState) {
+      headers['tracestate'] = traceState;
+    }
+  } catch {
+    // Never let OTel errors propagate into transport logic.
+    return;
+  }
+}
+
+/**
+ * Async variant, probes OTel via dynamic import on first call, then caches.
+ * Use for SSE/WS connection setup where async is acceptable.
+ *
+ * @param headers - Mutable header record to augment in-place.
+ */
+export async function injectTraceparentAsync(headers: Record<string, string>): Promise<void> {
+  const api = await probeOtel();
+  if (!api) return;
+  try {
+    const span = api.trace.getActiveSpan();
+    if (!span) return;
+    const ctx = span.spanContext();
+    if (!ctx.traceId || !ctx.spanId) return;
+    headers['traceparent'] = buildTraceparent(ctx);
+    const traceState = ctx.traceState?.serialize();
+    if (traceState) {
+      headers['tracestate'] = traceState;
+    }
+  } catch {
+    // Never let OTel errors propagate into transport logic.
+    return;
+  }
+}

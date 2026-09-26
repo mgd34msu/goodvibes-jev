@@ -1,0 +1,262 @@
+import { copyFileSync, renameSync, unlinkSync, rmSync, cpSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, isAbsolute, join, relative, dirname } from 'node:path';
+import { logger } from '../../utils/logger.js';
+import { resolveAndValidatePath } from '../../utils/path-safety.js';
+import type { ExecFileOp } from './schema.js';
+import { summarizeError } from '../../utils/error-display.js';
+
+export interface FileOpResult {
+  op: string;
+  source: string;
+  destination?: string | undefined;
+  dry_run?: boolean | undefined;
+  would_delete?: string[] | undefined;
+  updated_imports?: string[] | undefined;
+  warnings?: string[] | undefined;
+}
+
+function appendFileOpWarning(result: FileOpResult, warning: string): void {
+  result.warnings = [...(result.warnings ?? []), warning];
+}
+
+function resolveFileOpPath(p: string, op: 'copy' | 'move' | 'delete', projectRoot: string): string {
+  if (op === 'delete' || !isAbsolute(p)) {
+    return resolveAndValidatePath(p, projectRoot);
+  }
+  return resolve(p);
+}
+
+function collectPaths(p: string, acc: string[] = [], warnings: string[] = []): string[] {
+  try {
+    const st = statSync(p);
+    if (st.isDirectory()) {
+      for (const entry of readdirSync(p)) {
+        collectPaths(join(p, entry), acc, warnings);
+      }
+    } else {
+      acc.push(p);
+    }
+  } catch (err) {
+    warnings.push(`Could not inspect '${p}' while collecting delete preview: ${summarizeError(err)}`);
+    acc.push(p);
+  }
+  return acc;
+}
+
+function computeRelativeImportPath(fromFile: string, toFile: string): string {
+  const TS_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+  const toDir = dirname(toFile);
+  let rel = relative(dirname(fromFile), toDir);
+  if (rel === '' || !rel.startsWith('.')) rel = './' + (rel || '');
+  const ext = toFile.slice(toFile.lastIndexOf('.'));
+  const base = toFile.slice(toDir.length + 1, TS_EXTS.has(ext) ? toFile.lastIndexOf('.') : undefined);
+  return rel.endsWith('/') ? rel + base : rel + '/' + base;
+}
+
+async function updateImportsAfterMove(
+  oldSrc: string,
+  newDst: string,
+  projectRoot: string,
+): Promise<{ updated: string[]; warnings: string[] }> {
+  const TS_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+  const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', '.next', '.nuxt', '.cache', '__pycache__']);
+  const allFiles: string[] = [];
+  const warnings: string[] = [];
+
+  function walkDir(dir: string): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch (error) {
+      warnings.push(`Import update could not read directory '${dir}': ${summarizeError(error)}`);
+      logger.warn('file move import update: failed to read directory', {
+        dir,
+        error: summarizeError(error),
+      });
+      return;
+    }
+    for (const entry of entries) {
+      if (SKIP_DIRS.has(entry)) continue;
+      const full = join(dir, entry);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) { walkDir(full); continue; }
+        const ext = full.slice(full.lastIndexOf('.'));
+        if (TS_EXTS.has(ext)) allFiles.push(full);
+      } catch (error) {
+        warnings.push(`Import update could not stat '${full}': ${summarizeError(error)}`);
+        logger.warn('file move import update: failed to stat path', {
+          path: full,
+          error: summarizeError(error),
+        });
+      }
+    }
+  }
+  walkDir(projectRoot);
+
+  const updated: string[] = [];
+  for (const file of allFiles) {
+    if (file === newDst) continue;
+    let content: string;
+    try {
+      content = readFileSync(file, 'utf-8');
+    } catch (error) {
+      warnings.push(`Import update could not read '${file}': ${summarizeError(error)}`);
+      logger.warn('file move import update: failed to read file', {
+        file,
+        error: summarizeError(error),
+      });
+      continue;
+    }
+
+    const oldSpecifier = computeRelativeImportPath(file, oldSrc);
+    const newSpecifier = computeRelativeImportPath(file, newDst);
+    if (oldSpecifier === newSpecifier) continue;
+
+    const escaped = oldSpecifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const importRe = new RegExp(`(from\\s+['"])${escaped}(['"])`, 'g');
+    const requireRe = new RegExp(`(require\\(['"])${escaped}(['"]\\))`, 'g');
+
+    const newContent = content
+      .replace(importRe, `$1${newSpecifier}$2`)
+      .replace(requireRe, `$1${newSpecifier}$2`);
+
+    if (newContent !== content) {
+      try {
+        writeFileSync(file, newContent, 'utf-8');
+        updated.push(file);
+      } catch (err) {
+        warnings.push(`Import update could not write '${file}': ${summarizeError(err)}`);
+        logger.warn('exec file_ops update_imports: write failed', {
+          file,
+          error: summarizeError(err),
+        });
+      }
+    }
+  }
+
+  return { updated, warnings };
+}
+
+export function executeFileOp(op: ExecFileOp, projectRoot: string): FileOpResult {
+  const src = resolveFileOpPath(op.source, op.op, projectRoot);
+  const result: FileOpResult = { op: op.op, source: src };
+
+  if (op.op === 'delete') {
+    if (op.dry_run) {
+      const warnings: string[] = [];
+      result.dry_run = true;
+      result.would_delete = collectPaths(src, [], warnings);
+      if (warnings.length > 0) {
+        result.warnings = warnings;
+      }
+      return result;
+    }
+    if (op.recursive) {
+      rmSync(src, { recursive: true, force: true });
+    } else {
+      unlinkSync(src);
+    }
+    return result;
+  }
+
+  if (!op.destination) {
+    throw new Error(`file_ops ${op.op} requires destination`);
+  }
+  const dst = resolveFileOpPath(op.destination, op.op, projectRoot);
+  result.destination = dst;
+
+  if (!op.overwrite && existsSync(dst)) {
+    throw new Error(`file_ops ${op.op}: destination already exists: '${op.destination}'. Set overwrite: true to replace it.`);
+  }
+
+  if (op.op === 'copy') {
+    if (op.recursive) {
+      cpSync(src, dst, { recursive: true });
+    } else {
+      copyFileSync(src, dst);
+    }
+    return result;
+  }
+
+  if (op.op === 'move') {
+    try {
+      renameSync(src, dst);
+    } catch (err) {
+      appendFileOpWarning(
+        result,
+        `file_ops move used copy/delete fallback after rename failed from '${src}' to '${dst}': ${summarizeError(err)}`,
+      );
+      if (op.recursive) {
+        cpSync(src, dst, { recursive: true });
+        rmSync(src, { recursive: true, force: true });
+      } else {
+        copyFileSync(src, dst);
+        unlinkSync(src);
+      }
+    }
+  }
+
+  return result;
+}
+
+export async function executeFileOperations(
+  fileOps: ExecFileOp[] | undefined,
+  projectRoot: string,
+): Promise<{ fileOpResults: FileOpResult[]; fileOpError?: string; fileOpWarnings?: string[] }> {
+  const fileOpResults: FileOpResult[] = [];
+  const pendingImportUpdates: Array<{ src: string; dst: string }> = [];
+  const fileOpWarnings: string[] = [];
+
+  if (!fileOps || fileOps.length === 0) {
+    return { fileOpResults };
+  }
+
+  for (const op of fileOps) {
+    try {
+      const opResult = executeFileOp(op, projectRoot);
+      fileOpResults.push(opResult);
+      fileOpWarnings.push(...(opResult.warnings ?? []));
+      if (op.op === 'move' && op.update_imports && opResult.destination) {
+        pendingImportUpdates.push({ src: opResult.source, dst: opResult.destination });
+      }
+    } catch (err) {
+      const msg = summarizeError(err);
+      return {
+        fileOpResults,
+        fileOpError: `file_ops failed: ${msg}`,
+        ...(fileOpWarnings.length > 0 ? { fileOpWarnings } : {}),
+      };
+    }
+  }
+
+  for (const { src, dst } of pendingImportUpdates) {
+    const matchingResult = fileOpResults.find((r) => r.source === src && r.destination === dst);
+    try {
+      const updateResult = await updateImportsAfterMove(src, dst, projectRoot);
+      if (matchingResult) {
+        matchingResult.updated_imports = updateResult.updated;
+        for (const warning of updateResult.warnings) {
+          appendFileOpWarning(matchingResult, warning);
+        }
+      }
+      fileOpWarnings.push(...updateResult.warnings);
+    } catch (err) {
+      const warning = `file_ops update_imports failed after moving '${src}' to '${dst}': ${summarizeError(err)}`;
+      if (matchingResult) {
+        appendFileOpWarning(matchingResult, warning);
+      }
+      fileOpWarnings.push(warning);
+      logger.warn('exec file_ops: update_imports failed', {
+        src,
+        dst,
+        error: summarizeError(err),
+      });
+    }
+  }
+
+  return {
+    fileOpResults,
+    ...(fileOpWarnings.length > 0 ? { fileOpWarnings } : {}),
+  };
+}

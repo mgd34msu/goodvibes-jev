@@ -1,0 +1,78 @@
+export type {
+  DaemonErrorCategory,
+  DaemonErrorSource,
+  StructuredDaemonErrorBody,
+} from './daemon-error-contract.js';
+export {
+  AcpError,
+  AppError,
+  ConfigError,
+  isBillingOrCreditError,
+  isContextSizeExceededError,
+  isNonTransientProviderFailure,
+  isRateLimitOrQuotaError,
+  PermissionError,
+  ProviderError,
+  RenderError,
+  RETRYABLE_STATUS_CODES,
+  ToolError,
+} from './errors.js';
+export type {
+  AppErrorOptions,
+  PlatformErrorCategory,
+  PlatformErrorSource,
+  ProviderErrorOptions,
+} from './errors.js';
+export type {
+  ContractHttpDefinition,
+  DistributedPeerKind,
+  DistributedWorkStatus,
+  DistributedWorkType,
+  GatewayEventTransport,
+  GatewayMethodAccess,
+  GatewayMethodSource,
+  GatewayMethodTransport,
+  JsonSchema,
+  OperatorContractManifest,
+  OperatorEventContract,
+  OperatorEventCoverageContract,
+  OperatorMethodContract,
+  OperatorSchemaCoverageContract,
+  OperatorValidationCoverageContract,
+  PeerContractManifest,
+  PeerEndpointContract,
+  RuntimeEventDomain,
+} from './foundation-contract.js';
+export type {
+  JsonPrimitive,
+  JsonValue,
+  CompanionChatSessionsListTotals,
+  OperatorEventPayload,
+  OperatorEventPayloadMap,
+  OperatorMethodInput,
+  OperatorMethodInputMap,
+  OperatorMethodOutput,
+  OperatorMethodOutputMap,
+  OperatorStreamMethodId,
+  OperatorTypedEventId,
+  OperatorTypedMethodId,
+  PeerEndpointInput,
+  PeerEndpointInputMap,
+  PeerEndpointOutput,
+  PeerEndpointOutputMap,
+  PeerTypedEndpointId,
+  RuntimeDomainEventPayload,
+  RuntimeDomainEventPayloadMap,
+  RuntimeDomainEventType,
+  RuntimeEventTypedDomain,
+} from './generated/foundation-client-types.js';
+export type {
+  Tool,
+  ToolCall,
+  ToolConcurrencyMode,
+  ToolDefinition,
+  ToolResult,
+  ToolSideEffect,
+} from './tools.js';
+export type { Cell, Line } from './grid.js';
+export { createEmptyCell, createEmptyLine, createStyledCell } from './grid.js';

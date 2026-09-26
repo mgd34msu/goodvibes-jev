@@ -2,14 +2,14 @@
 
 Every source file of goodvibes-sdk (`packages/*/src`, tests excluded) with its disposition, grouped by the intent's engine subsystems. Nothing is dropped unless it is specific to WRFC or QEMU; everything else uses Jev where judgment applies or is ported exactly. Jev is in place of WRFC: WRFC code is JEV in the contract runner, and docs/inventory/wrfc-to-jev.md maps each WRFC function to its Jev form. A JEV file lists each place it decides something by guesswork today and the battery or pattern from `packages/judgment` that replaces it. A PORT file with decision points keeps its code but its guesswork moves to the JEV subsystem the intent names (for providers, the new routing subsystem). HOIST applies to product modules moving into the engine and is recorded in the product inventories.
 
-Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
+Files: 2371. PORT 1868, JEV 501, DROP 2. Decision points: 175.
 
 | Subsystem | Files | PORT | JEV | DROP | Decision points |
 |---|---|---|---|---|---|
 | CI watch, power | 15 | 15 | 0 | 0 | 0 |
 | automation, scheduler | 33 | 32 | 1 | 0 | 1 |
 | batch | 3 | 3 | 0 | 0 | 0 |
-| browser, devices | 24 | 24 | 0 | 0 | 4 |
+| browser, devices | 25 | 25 | 0 | 0 | 4 |
 | calendar | 22 | 22 | 0 | 0 | 0 |
 | channels, adapters, channel profiles, channel sync | 76 | 76 | 0 | 0 | 2 |
 | check-in | 9 | 1 | 8 | 0 | 1 |
@@ -19,7 +19,7 @@ Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
 | companion, push, pairing, relay, remote access | 48 | 48 | 0 | 0 | 0 |
 | config | 88 | 88 | 0 | 0 | 0 |
 | contract runner (Jev in place of WRFC) | 19 | 1 | 18 | 0 | 13 |
-| contracts | 24 | 24 | 0 | 0 | 0 |
+| contracts | 25 | 25 | 0 | 0 | 0 |
 | control plane | 163 | 0 | 163 | 0 | 2 |
 | core | 38 | 0 | 38 | 0 | 5 |
 | daemon routes (daemon-sdk) | 34 | 34 | 0 | 0 | 0 |
@@ -57,7 +57,7 @@ Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
 | toolchain | 30 | 30 | 0 | 0 | 0 |
 | tools | 112 | 112 | 0 | 0 | 5 |
 | transports | 37 | 37 | 0 | 0 | 0 |
-| types, errors, utils, node | 38 | 38 | 0 | 0 | 8 |
+| types, errors, utils, node | 43 | 43 | 0 | 0 | 8 |
 | voice, multimodal, media | 65 | 65 | 0 | 0 | 3 |
 | web search | 12 | 12 | 0 | 0 | 0 |
 
@@ -161,6 +161,7 @@ Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
 | `sdk/src/platform/devices/device-posture-runtime.ts` | PORT | device-posture-runtime.ts, one call that stands the paired-device feature up inside whichever process hosts the daemon. |
 | `sdk/src/platform/devices/index.ts` | PORT | platform/devices, paired-device capabilities as agent tools. |
 | `sdk/src/platform/runtime/client/phone-tool.ts` | PORT | Registers the client-side 'phone' tool that forwards paired-device capability requests (camera, screen, location, clipboard) to the daemon's device runtime and renders its outcome; a declined capability is reported as a successful refusal, not an error. |
+| `sdk/src/platform/browser/browser-host.mjs` | PORT | Node script the browser host client spawns to drive the browser over a child process; loaded from disk by browser-host-client.ts. |
 
 ### Decision points
 
@@ -602,6 +603,7 @@ Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
 | `contracts/src/zod-schemas/providers.ts` | PORT | Zod schemas for the model catalog and global model-selection HTTP API (list models, get/patch current model). |
 | `contracts/src/zod-schemas/session.ts` | PORT | Zod schemas for the control.status and local_auth.status operator method responses. |
 | `daemon-sdk/src/gateway-rest-routes.ts` | PORT | Maps REST paths to method IDs using regex built from fixed route patterns, not natural-language interpretation. |
+| `contracts/src/zod-schemas/README.md` | PORT | Explains the hand-written zod schemas that sit beside the generated contract types. |
 
 ## control plane
 
@@ -2881,6 +2883,11 @@ Files: 2364. PORT 1861, JEV 501, DROP 2. Decision points: 175.
 | `sdk/src/platform/utils/url-safety.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/utils/walk-dir.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/version.ts` | PORT | Exports VERSION. |
+| `sdk/src/platform/types/pdfjs-dist.d.ts` | PORT | Type declarations for the pdfjs-dist module used by document extraction. |
+| `sdk/src/platform/types/peer-deps.d.ts` | PORT | Type declarations for the optional peer dependencies (expo-secure-store, react-native-keychain). |
+| `sdk/src/platform/types/sql-js.d.ts` | PORT | Type declarations for sql.js, published as the ./sql-js subpath. |
+| `sdk/src/platform/types/vendor-deps.d.ts` | PORT | Type declarations for vendored and optional third-party modules. |
+| `sdk/src/platform/types/wasm-files.d.ts` | PORT | Module declarations that let .wasm files be imported as assets. |
 
 ### Decision points
 

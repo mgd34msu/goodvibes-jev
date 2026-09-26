@@ -1,0 +1,194 @@
+import { ConfigurationError } from '@goodvibes-jev/engine/errors';
+
+export interface TransportPaths {
+  readonly baseUrl: string;
+  readonly statusUrl: string;
+  readonly controlPlaneUrl: string;
+  readonly controlPlaneAuthUrl: string;
+  readonly controlPlaneEventsUrl: string;
+  readonly controlPlaneMethodsUrl: string;
+  readonly sessionsUrl: string;
+  readonly tasksUrl: string;
+  readonly approvalsUrl: string;
+  readonly providersUrl: string;
+  readonly accountsUrl: string;
+  readonly localAuthUrl: string;
+  readonly telemetryUrl: string;
+  readonly telemetryEventsUrl: string;
+  readonly telemetryErrorsUrl: string;
+  readonly telemetryTracesUrl: string;
+  readonly telemetryMetricsUrl: string;
+  readonly telemetryStreamUrl: string;
+  readonly telemetryOtlpTracesUrl: string;
+  readonly telemetryOtlpLogsUrl: string;
+  readonly telemetryOtlpMetricsUrl: string;
+  readonly remoteUrl: string;
+  readonly remoteContractUrl: string;
+  readonly peerRequestsUrl: string;
+  readonly peerListUrl: string;
+  readonly remoteWorkUrl: string;
+  /**
+   * Alias for `controlPlaneUrl`. Provided for convenience.
+   */
+  readonly controlUrl: string;
+}
+
+/**
+ * Whether a URL hostname addresses a private network, loopback, an RFC 1918
+ * range (10/8, 172.16/12, 192.168/16), or an mDNS `.local` name.
+ *
+ * Plain-http origins on these hosts are a DELIBERATE, SUPPORTED posture (a
+ * phone on the same LAN talking to the daemon), not a mistake to wall off:
+ * TLS on a home network is the user's own responsibility and the daemon never
+ * mints certificates, so the transport must work over http here, in a browser
+ * bundle too, where no process.env escape hatch exists. Genuinely public http
+ * origins keep the insecure-transport wall.
+ *
+ * Accepts the hostname as URL.hostname yields it (IPv6 still in brackets).
+ */
+export function isPrivateNetworkHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '::1' || host.endsWith('.localhost')) return true;
+  // The wildcard bind addresses. As a DIAL target the wildcard reaches the
+  // local machine (platforms route it to loopback), so it is never a public
+  // origin. Clients that inherit a daemon's bind host (0.0.0.0 means "listen
+  // everywhere") must not be refused as if they were dialing across the
+  // open internet.
+  if (host === '0.0.0.0' || host === '::' || host === '0:0:0:0:0:0:0:0') return true;
+  if (host.endsWith('.local')) return true; // mDNS
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+  if (a === 127) return true; // loopback
+  if (a === 10) return true; // 10/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  return false;
+}
+
+export function normalizeBaseUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim();
+  if (!normalized) {
+    throw new ConfigurationError('Transport baseUrl is required. Pass a non-empty baseUrl string to your transport or SDK options.', { code: 'SDK_TRANSPORT_BASE_URL_REQUIRED' });
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch (cause) {
+    throw new ConfigurationError('Transport baseUrl must be an absolute URL.', {
+      code: 'SDK_TRANSPORT_BASE_URL_INVALID',
+      source: 'transport',
+      hint: 'Pass a full URL such as https://goodvibes.example.com.',
+      cause,
+    });
+  }
+  const protocol = parsed.protocol;
+  if (protocol !== 'https:' && protocol !== 'wss:' && protocol !== 'http:' && protocol !== 'ws:') {
+    throw new ConfigurationError(`Unsupported transport baseUrl protocol: ${protocol}`, {
+      code: 'SDK_TRANSPORT_BASE_URL_PROTOCOL_UNSUPPORTED',
+      source: 'transport',
+      hint: 'Use https:// or wss://. http:// and ws:// are supported on private-network origins (localhost, RFC 1918, .local) and for explicit public-http deployments.',
+    });
+  }
+  // Private-network origins (loopback, RFC 1918, .local mDNS) are a supported
+  // plain-http posture, no throw, and no env escape hatch needed (which would
+  // not exist in a browser bundle anyway). Only a genuinely PUBLIC http origin
+  // keeps the wall; the server-side env override remains for an intentional
+  // public-http deployment.
+  const privateNetwork = isPrivateNetworkHost(parsed.hostname);
+  const runtimeProcess = (globalThis as { readonly process?: { readonly env?: Record<string, string | undefined> } }).process;
+  const allowInsecure = runtimeProcess?.env?.GOODVIBES_ALLOW_INSECURE_TRANSPORT === 'true';
+  if ((protocol === 'http:' || protocol === 'ws:') && !privateNetwork && !allowInsecure) {
+    throw new ConfigurationError('Refusing insecure PUBLIC GoodVibes transport baseUrl.', {
+      code: 'SDK_TRANSPORT_INSECURE_BASE_URL',
+      source: 'transport',
+      hint: 'Use https:// or wss:// for public origins. Plain http is supported on private-network origins (localhost, 10/8, 172.16/12, 192.168/16, .local). For an intentional public-http deployment set GOODVIBES_ALLOW_INSECURE_TRANSPORT=true (server-side only).',
+    });
+  }
+  return normalized.replace(/\/+$/, '');
+}
+
+export function buildUrl(baseUrl: string, path: string): string {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (/^[a-z][a-z0-9+\-.]*:/i.test(path)) {
+    throw new ConfigurationError(`Absolute path not allowed: ${path}`, { code: 'SDK_TRANSPORT_PATH_ABSOLUTE' });
+  }
+  try {
+    return new URL(path, `${normalized}/`).toString();
+  } catch (cause) {
+    throw new ConfigurationError(`Invalid transport path: ${path}`, { code: 'SDK_TRANSPORT_PATH_INVALID', cause });
+  }
+}
+
+/**
+ * Assert that an absolute URL has the same origin as a reference URL (or baseUrl).
+ *
+ * Used by transport call sites that allow absolute URLs as a convenience but
+ * MUST NOT leak the bearer Authorization header to a different origin. Throws
+ * `ConfigurationError SDK_TRANSPORT_CROSS_ORIGIN` when origins diverge.
+ *
+ * Returns the validated absolute URL unchanged on success.
+ */
+export function assertSameOriginAbsoluteUrl(absoluteUrl: string, originReferenceUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(absoluteUrl);
+  } catch (cause) {
+    throw new ConfigurationError(`Invalid absolute transport URL: ${absoluteUrl}`, {
+      code: 'SDK_TRANSPORT_URL_INVALID',
+      source: 'transport',
+      cause,
+    });
+  }
+  let referenceOrigin: string;
+  try {
+    referenceOrigin = new URL(originReferenceUrl).origin;
+  } catch (cause) {
+    throw new ConfigurationError(`Invalid transport origin reference URL: ${originReferenceUrl}`, {
+      code: 'SDK_TRANSPORT_URL_INVALID',
+      source: 'transport',
+      cause,
+    });
+  }
+  if (parsed.origin !== referenceOrigin) {
+    throw new ConfigurationError(`Cross-origin transport request rejected: ${parsed.origin} does not match transport baseUrl origin ${referenceOrigin}`, {
+      code: 'SDK_TRANSPORT_CROSS_ORIGIN',
+      source: 'transport',
+      hint: 'The transport bearer token would be sent to a different origin. Use a same-origin URL or open a separate transport for the cross-origin endpoint.',
+    });
+  }
+  return absoluteUrl;
+}
+
+export function createTransportPaths(baseUrl: string): TransportPaths {
+  const normalized = normalizeBaseUrl(baseUrl);
+  return {
+    baseUrl: normalized,
+    statusUrl: buildUrl(normalized, '/status'),
+    controlPlaneUrl: buildUrl(normalized, '/api/control-plane'),
+    controlPlaneAuthUrl: buildUrl(normalized, '/api/control-plane/auth'),
+    controlPlaneEventsUrl: buildUrl(normalized, '/api/control-plane/events'),
+    controlPlaneMethodsUrl: buildUrl(normalized, '/api/control-plane/methods'),
+    sessionsUrl: buildUrl(normalized, '/api/sessions'),
+    tasksUrl: buildUrl(normalized, '/api/tasks'),
+    approvalsUrl: buildUrl(normalized, '/api/approvals'),
+    providersUrl: buildUrl(normalized, '/api/providers'),
+    accountsUrl: buildUrl(normalized, '/api/accounts'),
+    localAuthUrl: buildUrl(normalized, '/api/local-auth'),
+    telemetryUrl: buildUrl(normalized, '/api/v1/telemetry'),
+    telemetryEventsUrl: buildUrl(normalized, '/api/v1/telemetry/events'),
+    telemetryErrorsUrl: buildUrl(normalized, '/api/v1/telemetry/errors'),
+    telemetryTracesUrl: buildUrl(normalized, '/api/v1/telemetry/traces'),
+    telemetryMetricsUrl: buildUrl(normalized, '/api/v1/telemetry/metrics'),
+    telemetryStreamUrl: buildUrl(normalized, '/api/v1/telemetry/stream'),
+    telemetryOtlpTracesUrl: buildUrl(normalized, '/api/v1/telemetry/otlp/v1/traces'),
+    telemetryOtlpLogsUrl: buildUrl(normalized, '/api/v1/telemetry/otlp/v1/logs'),
+    telemetryOtlpMetricsUrl: buildUrl(normalized, '/api/v1/telemetry/otlp/v1/metrics'),
+    remoteUrl: buildUrl(normalized, '/api/remote'),
+    remoteContractUrl: buildUrl(normalized, '/api/remote/node-host/contract'),
+    peerRequestsUrl: buildUrl(normalized, '/api/remote/pair/requests'),
+    peerListUrl: buildUrl(normalized, '/api/remote/peers'),
+    remoteWorkUrl: buildUrl(normalized, '/api/remote/work'),
+    controlUrl: buildUrl(normalized, '/api/control-plane'),
+  };
+}

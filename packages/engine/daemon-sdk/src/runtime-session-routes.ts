@@ -1,0 +1,898 @@
+import type { DaemonRuntimeSessionRouteHandlers, DaemonRuntimeTaskRouteHandlers } from './context.js';
+import { handleRegisterSharedSession } from './runtime-session-register.js';
+import {
+  handleDeleteSharedSession,
+  handleGetSharedSession,
+  handleSharedSessionDetach,
+  handleSharedSessionLifecycle,
+} from './runtime-session-lifecycle-routes.js';
+import { withAdmin } from './auth-helpers.js';
+import { randomUUID } from 'node:crypto';
+import { jsonErrorResponse } from './error-response.js';
+import { SDKErrorCodes } from '@goodvibes-jev/engine/errors';
+import type {
+  AutomationSurfaceKind,
+  DaemonRuntimeRouteContext,
+  ExecutionIntent,
+  SharedSessionRoutingIntent,
+} from './runtime-route-types.js';
+import {
+  createRouteBodySchema,
+  createRouteBodySchemaRegistry,
+  isJsonRecord,
+  readBoundedPositiveInteger,
+  readOptionalStringField,
+  readStringArrayField,
+  type JsonRecord,
+} from './route-helpers.js';
+
+type SharedSessionSubmission = Awaited<ReturnType<DaemonRuntimeRouteContext['sessionBroker']['submitMessage']>>;
+type SharedSessionSteerSubmission = Awaited<ReturnType<DaemonRuntimeRouteContext['sessionBroker']['steerMessage']>>;
+type SharedSessionFollowUpSubmission = Awaited<ReturnType<DaemonRuntimeRouteContext['sessionBroker']['followUpMessage']>>;
+type SessionSubmission = SharedSessionSubmission | SharedSessionSteerSubmission | SharedSessionFollowUpSubmission;
+type RuntimeTaskBody = {
+  readonly task: string;
+  readonly model?: string | undefined;
+  readonly tools?: string[] | undefined;
+  readonly routing?: SharedSessionRoutingIntent | undefined;
+};
+type SharedSessionMessageInput = {
+  readonly sessionId: string;
+  readonly surfaceKind: AutomationSurfaceKind;
+  readonly surfaceId: string;
+  readonly externalId?: string | undefined;
+  readonly threadId?: string | undefined;
+  readonly userId?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly title?: string | undefined;
+  readonly routeId?: string | undefined;
+  readonly body: string;
+  readonly metadata?: Record<string, unknown> | undefined;
+  readonly routing?: SharedSessionRoutingIntent | undefined;
+};
+export type SharedSessionRecordResponse = {
+  readonly id: string;
+  readonly kind: 'tui' | 'agent' | 'webui' | 'companion-task' | 'companion-chat' | 'automation' | 'channel' | 'acp' | 'hosted';
+  readonly project: string;
+  readonly title: string;
+  readonly status: 'active' | 'closed';
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly lastMessageAt?: number | undefined;
+  readonly closedAt?: number | undefined;
+  readonly lastActivityAt: number;
+  readonly messageCount: number;
+  readonly retainedMessageCount?: number | undefined; // retained bodies when < messageCount
+  readonly pendingInputCount: number;
+  readonly routeIds: readonly string[];
+  readonly surfaceKinds: readonly string[];
+  readonly participants: readonly SharedSessionParticipantResponse[];
+  readonly activeAgentId?: string | undefined;
+  readonly lastAgentId?: string | undefined;
+  readonly lastError?: string | undefined;
+  readonly metadata: Record<string, unknown>;
+};
+type SharedSessionParticipantResponse = {
+  readonly surfaceKind: string;
+  readonly surfaceId: string;
+  readonly externalId?: string | undefined;
+  readonly userId?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly routeId?: string | undefined;
+  readonly lastSeenAt: number;
+};
+
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 500;
+const MAX_SESSION_TOOL_NAMES = 64;
+export const SHARED_SESSION_KINDS = new Set<SharedSessionRecordResponse['kind']>(['tui', 'agent', 'webui', 'companion-task', 'companion-chat', 'automation', 'channel', 'acp', 'hosted']);
+const SHARED_SESSION_STATUSES = new Set<SharedSessionRecordResponse['status']>(['active', 'closed']);
+
+function readBoundedLimit(url: URL, key = 'limit'): number {
+  return readBoundedPositiveInteger(url.searchParams.get(key), DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
+}
+
+/** Runs a submit/steer/follow-up broker call, converting its closed-session
+ * guard throw ({ code: SDKErrorCodes.SESSION_CLOSED, status: 409 }, thrown
+ * before any mutation) into the same structured 409 other routes return. */
+async function callOrSessionClosed<T>(fn: () => Promise<T>): Promise<T | Response> {
+  try {
+    return await fn();
+  } catch (err: unknown) {
+    const closed = err as { code?: string; status?: number };
+    if (closed.code !== SDKErrorCodes.SESSION_CLOSED) throw err;
+    return jsonErrorResponse({ error: 'Session is closed', code: SDKErrorCodes.SESSION_CLOSED }, { status: closed.status ?? 409 });
+  }
+}
+
+export function toSharedSessionRecordResponse(
+  sessionId: string,
+  session: unknown,
+  options: {
+    readonly status?: SharedSessionRecordResponse['status'] | undefined;
+    readonly messageCount?: number | undefined;
+    readonly pendingInputCount?: number | undefined;
+  } = {},
+): SharedSessionRecordResponse {
+  const record = isJsonRecord(session) ? session : {};
+  const id = readNonEmptyString(record.id) ?? sessionId;
+  const now = Date.now();
+  const createdAt = readFiniteNumber(record.createdAt) ?? now;
+  const updatedAt = readFiniteNumber(record.updatedAt) ?? createdAt;
+  const lastMessageAt = readFiniteNumber(record.lastMessageAt);
+  const closedAt = readFiniteNumber(record.closedAt);
+  const lastActivityAt = readFiniteNumber(record.lastActivityAt) ?? lastMessageAt ?? updatedAt;
+  const kind = readSessionKind(record.kind);
+  const status = readSessionStatus(record.status) ?? options.status ?? 'active';
+  const activeAgentId = readNonEmptyString(record.activeAgentId);
+  const lastAgentId = readNonEmptyString(record.lastAgentId);
+  const lastError = readNonEmptyString(record.lastError);
+  const messageCount = Math.max(readFiniteNumber(record.messageCount) ?? 0, options.messageCount ?? 0);
+  const retained = readFiniteNumber(record.retainedMessageCount);
+  return {
+    id,
+    kind,
+    project: readNonEmptyString(record.project) ?? 'unknown',
+    title: readNonEmptyString(record.title) ?? `Session ${id}`,
+    status,
+    createdAt,
+    updatedAt,
+    ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+    ...(closedAt !== undefined ? { closedAt } : {}),
+    lastActivityAt,
+    messageCount,
+    ...(retained !== undefined && retained < messageCount ? { retainedMessageCount: retained } : {}),
+    pendingInputCount: Math.max(readFiniteNumber(record.pendingInputCount) ?? 0, options.pendingInputCount ?? 0),
+    routeIds: readStringArray(record.routeIds),
+    surfaceKinds: readStringArray(record.surfaceKinds),
+    participants: readParticipants(record.participants),
+    ...(activeAgentId ? { activeAgentId } : {}),
+    ...(lastAgentId ? { lastAgentId } : {}),
+    ...(lastError ? { lastError } : {}),
+    metadata: isJsonRecord(record.metadata) ? record.metadata : {},
+  };
+}
+
+function readSessionKind(value: unknown): SharedSessionRecordResponse['kind'] {
+  return typeof value === 'string' && SHARED_SESSION_KINDS.has(value as SharedSessionRecordResponse['kind'])
+    ? value as SharedSessionRecordResponse['kind']
+    : 'tui';
+}
+
+function readSessionStatus(value: unknown): SharedSessionRecordResponse['status'] | undefined {
+  return typeof value === 'string' && SHARED_SESSION_STATUSES.has(value as SharedSessionRecordResponse['status'])
+    ? value as SharedSessionRecordResponse['status']
+    : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+function readParticipants(value: unknown): SharedSessionParticipantResponse[] {
+  if (!Array.isArray(value)) return [];
+  const output: SharedSessionParticipantResponse[] = [];
+  for (const entry of value) {
+    if (!isJsonRecord(entry)) continue;
+    const surfaceKind = readNonEmptyString(entry.surfaceKind);
+    const surfaceId = readNonEmptyString(entry.surfaceId);
+    const lastSeenAt = readFiniteNumber(entry.lastSeenAt);
+    if (!surfaceKind || !surfaceId || lastSeenAt === undefined) continue;
+    const externalId = readNonEmptyString(entry.externalId);
+    const userId = readNonEmptyString(entry.userId);
+    const displayName = readNonEmptyString(entry.displayName);
+    const routeId = readNonEmptyString(entry.routeId);
+    output.push({
+      surfaceKind,
+      surfaceId,
+      ...(externalId ? { externalId } : {}),
+      ...(userId ? { userId } : {}),
+      ...(displayName ? { displayName } : {}),
+      ...(routeId ? { routeId } : {}),
+      lastSeenAt,
+    });
+  }
+  return output;
+}
+
+export function createDaemonRuntimeSessionRouteHandlers(
+  context: DaemonRuntimeRouteContext,
+): DaemonRuntimeSessionRouteHandlers & DaemonRuntimeTaskRouteHandlers {
+  return {
+    createSharedSession: async (request) => withAdmin(context, request, () => handleCreateSharedSession(context, request)),
+    registerSharedSession: async (request) => withAdmin(context, request, () => handleRegisterSharedSession(context, request)),
+    postTask: async (request) => withAdmin(context, request, () => handlePostTask(context, request)),
+    getSharedSession: async (sessionId) => handleGetSharedSession(context, sessionId),
+    closeSharedSession: (sessionId, request) => withAdmin(context, request, () => handleSharedSessionLifecycle(context, sessionId, 'close')),
+    reopenSharedSession: (sessionId, request) => withAdmin(context, request, () => handleSharedSessionLifecycle(context, sessionId, 'reopen')),
+    detachSharedSession: (sessionId, request) => withAdmin(context, request, () => handleSharedSessionDetach(context, sessionId, request)),
+    deleteSharedSession: (sessionId, request) => withAdmin(context, request, () => handleDeleteSharedSession(context, sessionId)),
+    getSharedSessionMessages: async (sessionId, url) => handleGetSharedSessionMessages(context, sessionId, url),
+    getSharedSessionInputs: async (sessionId, url) => handleGetSharedSessionInputs(context, sessionId, url),
+    postSharedSessionMessage: (sessionId, request) => withAdmin(context, request, () => handlePostSharedSessionMessage(context, sessionId, request)),
+    postSharedSessionSteer: (sessionId, request) => withAdmin(context, request, () => handlePostSharedSessionSteer(context, sessionId, request)),
+    postSharedSessionFollowUp: (sessionId, request) => withAdmin(context, request, () => handlePostSharedSessionFollowUp(context, sessionId, request)),
+    cancelSharedSessionInput: (sessionId, inputId, request) => withAdmin(context, request, () => handleCancelSharedSessionInput(context, sessionId, inputId)),
+    deliverSharedSessionInput: (sessionId, inputId, request) => withAdmin(context, request, () => handleDeliverSharedSessionInput(context, sessionId, inputId, request)),
+    getRuntimeTask: (taskId) => handleGetRuntimeTask(context, taskId),
+    runtimeTaskAction: (taskId, action, request) => withAdmin(context, request, () => handleRuntimeTaskAction(context, taskId, action, request)),
+    getTaskStatus: (agentId) => handleGetTaskStatus(context, agentId),
+    getSharedSessionEvents: (sessionId, request) => withAdmin(context, request, () => handleGetSharedSessionEvents(context, sessionId, request)),
+  };
+}
+
+
+const runtimeSessionBodySchemas = createRouteBodySchemaRegistry({
+  task: createRouteBodySchema<RuntimeTaskBody>('POST /task', (body) => {
+    const task = readOptionalStringField(body, 'task');
+    if (!task) {
+      return jsonErrorResponse({ error: 'Missing required field: task (non-empty string)' }, { status: 400 });
+    }
+    const routing = readSharedSessionRoutingIntent(body.routing);
+    const model = readOptionalStringField(body, 'model');
+    const tools = readStringArrayField(body, 'tools', MAX_SESSION_TOOL_NAMES);
+    return {
+      task,
+      ...(model ? { model } : {}),
+      ...(tools ? { tools } : {}),
+      ...(routing ? { routing } : {}),
+    };
+  }),
+});
+
+async function handleCreateSharedSession(context: DaemonRuntimeRouteContext, req: Request): Promise<Response> {
+  const body = await context.parseJsonBody(req);
+  if (body instanceof Response) return body;
+  await context.sessionBroker.start();
+  await context.routeBindings.start();
+  const routeBinding = typeof body.routeId === 'string'
+    ? context.routeBindings.getBinding(body.routeId)
+    : undefined;
+  const session = await context.sessionBroker.createSession({
+    id: typeof body.id === 'string' ? body.id : undefined,
+    title: typeof body.title === 'string' ? body.title : undefined,
+    metadata: typeof body.metadata === 'object' && body.metadata !== null ? body.metadata as Record<string, unknown> : {},
+    routeBinding,
+    participant: typeof body.surfaceKind === 'string' && typeof body.surfaceId === 'string'
+      ? {
+          surfaceKind: body.surfaceKind as AutomationSurfaceKind,
+          surfaceId: body.surfaceId,
+          externalId: typeof body.externalId === 'string' ? body.externalId : undefined,
+          userId: typeof body.userId === 'string' ? body.userId : undefined,
+          displayName: typeof body.displayName === 'string' ? body.displayName : undefined,
+          routeId: routeBinding?.id,
+          lastSeenAt: Date.now(),
+        }
+      : undefined,
+  });
+  return context.recordApiResponse(req, '/api/sessions', Response.json({
+    session: toSharedSessionRecordResponse(session.id, session),
+  }, { status: 201 }));
+}
+
+async function handlePostTask(context: DaemonRuntimeRouteContext, req: Request): Promise<Response> {
+  const body = await context.parseJsonBody(req);
+  if (body instanceof Response) return body;
+  const input = runtimeSessionBodySchemas.task.parse(body);
+  if (input instanceof Response) return input;
+  const wantsSharedSession = typeof body.sessionId === 'string' || typeof body.routeId === 'string' || typeof body.surfaceKind === 'string';
+  if (wantsSharedSession) {
+    const submission = await callOrSessionClosed(() => context.sessionBroker.submitMessage({
+      sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
+      routeId: typeof body.routeId === 'string' ? body.routeId : undefined,
+      surfaceKind: typeof body.surfaceKind === 'string' ? body.surfaceKind as AutomationSurfaceKind : 'web',
+      surfaceId: typeof body.surfaceId === 'string' ? body.surfaceId : 'surface:web',
+      externalId: typeof body.externalId === 'string' ? body.externalId : undefined,
+      threadId: typeof body.threadId === 'string' ? body.threadId : undefined,
+      userId: typeof body.userId === 'string' ? body.userId : undefined,
+      displayName: typeof body.displayName === 'string' ? body.displayName : undefined,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      body: input.task,
+      metadata: typeof body.metadata === 'object' && body.metadata !== null ? body.metadata as Record<string, unknown> : {},
+      ...(input.routing ? { routing: input.routing } : {}),
+    }));
+    if (submission instanceof Response) return submission;
+
+    if (submission.mode === 'continued-live') {
+      return context.recordApiResponse(req, '/task', Response.json({
+        acknowledged: true,
+        mode: submission.mode,
+        sessionId: submission.session.id,
+        agentId: submission.activeAgentId ?? null,
+        inputId: submission.input.id,
+      }, { status: 202 }));
+    }
+    if (submission.mode === 'queued-follow-up') {
+      return context.recordApiResponse(req, '/task', Response.json({
+        acknowledged: true,
+        mode: submission.mode,
+        sessionId: submission.session.id,
+        agentId: submission.activeAgentId ?? null,
+        inputId: submission.input.id,
+      }, { status: 202 }));
+    }
+    if (submission.mode === 'rejected') {
+      return context.recordApiResponse(req, '/task', Response.json({
+        acknowledged: false,
+        mode: submission.mode,
+        sessionId: submission.session.id,
+        inputId: submission.input.id,
+      }, { status: 409 }));
+    }
+
+    const sessionSpawn = context.trySpawnAgent({
+      mode: 'spawn',
+      task: submission.task!,
+      ...(input.model !== undefined || submission.input.routing?.modelId ? { model: input.model ?? submission.input.routing?.modelId } : {}),
+      ...(input.tools !== undefined || submission.input.routing?.tools ? { tools: input.tools ?? [...(submission.input.routing?.tools ?? []).slice(0, MAX_SESSION_TOOL_NAMES)] } : {}),
+      ...(submission.input.routing?.providerId ? { provider: submission.input.routing.providerId } : {}),
+      ...(submission.input.routing?.executionIntent ? { executionIntent: submission.input.routing.executionIntent } : {}),
+    }, 'DaemonServer.handlePostTask.sharedSession', submission.session.id);
+    if (sessionSpawn instanceof Response) return sessionSpawn;
+    await context.sessionBroker.bindAgent(submission.session.id, sessionSpawn.id);
+    context.queueSurfaceReplyFromBinding(submission.routeBinding, {
+      agentId: sessionSpawn.id,
+      task: input.task,
+      sessionId: submission.session.id,
+    });
+    return context.recordApiResponse(req, '/task', Response.json({
+      acknowledged: true,
+      mode: submission.mode,
+      sessionId: submission.session.id,
+      agentId: sessionSpawn.id,
+      status: sessionSpawn.status,
+    }, { status: 202 }));
+  }
+
+  const spawnResult = context.trySpawnAgent({
+    mode: 'spawn',
+    task: input.task,
+    ...(input.model !== undefined && { model: input.model }),
+    ...(input.tools !== undefined && { tools: input.tools }),
+    ...(typeof body.routing === 'object'
+      && body.routing !== null
+      && typeof (body.routing as { executionIntent?: unknown }).executionIntent === 'object'
+      && (body.routing as { executionIntent?: unknown }).executionIntent !== null
+      ? {
+          executionIntent: (body.routing as {
+            executionIntent: ExecutionIntent;
+          }).executionIntent,
+        }
+      : {}),
+  }, 'DaemonServer', typeof body.sessionId === 'string' ? body.sessionId : undefined);
+  if (spawnResult instanceof Response) return spawnResult;
+  return context.recordApiResponse(req, '/task', Response.json({
+    acknowledged: true,
+    agentId: spawnResult.id,
+    status: spawnResult.status,
+    task: spawnResult.task,
+    model: spawnResult.model ?? null,
+    tools: spawnResult.tools,
+  }, { status: 202 }));
+}
+
+async function handleGetSharedSessionMessages(
+  context: DaemonRuntimeRouteContext,
+  sessionId: string,
+  url: URL,
+): Promise<Response> {
+  await context.sessionBroker.start();
+  const session = context.sessionBroker.getSession(sessionId);
+  if (!session) {
+    return jsonErrorResponse({ error: 'Unknown shared session' }, { status: 404 });
+  }
+  const limit = readBoundedLimit(url);
+  const messages = context.sessionBroker.getMessages(sessionId, limit);
+  return Response.json({
+    session: toSharedSessionRecordResponse(sessionId, session, { messageCount: messages.length }),
+    messages,
+  });
+}
+
+async function handleGetSharedSessionInputs(
+  context: DaemonRuntimeRouteContext,
+  sessionId: string,
+  url: URL,
+): Promise<Response> {
+  await context.sessionBroker.start();
+  const session = context.sessionBroker.getSession(sessionId);
+  if (!session) {
+    return jsonErrorResponse({ error: 'Unknown shared session' }, { status: 404 });
+  }
+  const limit = readBoundedLimit(url);
+  // Collection cursor for live surfaces: filter by state (e.g. 'queued') and/or a
+  // `since` createdAt cursor (exclusive) so a surface drains only inputs it has
+  // not collected yet. Absent params preserve the legacy "last N inputs" behavior.
+  const stateParam = readSessionInputState(url.searchParams.get('state'));
+  const sinceParam = readPositiveInt(url.searchParams.get('since'));
+  const inputs = (stateParam !== undefined || sinceParam !== undefined)
+    ? context.sessionBroker.getInputsSince(sessionId, {
+        ...(stateParam !== undefined ? { state: stateParam } : {}),
+        ...(sinceParam !== undefined ? { since: sinceParam } : {}),
+        limit,
+      })
+    : context.sessionBroker.getInputs(sessionId, limit);
+  return Response.json({
+    session: toSharedSessionRecordResponse(sessionId, session, { pendingInputCount: inputs.length }),
+    inputs,
+  });
+}
+
+const SHARED_SESSION_INPUT_STATES = new Set([
+  'queued', 'delivered', 'spawned', 'completed', 'cancelled', 'failed', 'rejected',
+]);
+
+function readSessionInputState(value: string | null): string | undefined {
+  return value !== null && SHARED_SESSION_INPUT_STATES.has(value) ? value : undefined;
+}
+
+function readPositiveInt(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+const SURFACE_ANSWER_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function readSurfaceAnswerStatus(value: unknown): 'completed' | 'failed' | 'cancelled' | undefined {
+  return typeof value === 'string' && SURFACE_ANSWER_STATUSES.has(value)
+    ? value as 'completed' | 'failed' | 'cancelled'
+    : undefined;
+}
+
+/** Handle POST /api/sessions/:sessionId/inputs/:inputId/deliver, a live surface reports
+ * collection (`{consumed:true}` = completed, else delivered); optional body, null/bare = consumed:false.
+ *
+ * `agentId` is the surface naming the agent that is answering this input: it
+ * binds the reply so a message that arrived over a channel and was dispatched
+ * to a surface gets its answer routed back, on the same path the daemon's own
+ * spawn takes. `answer` (with `consumed:true`) is that agent's finished output,
+ * reported when the surface's turn ends, the daemon writes it into the shared
+ * session and pushes it down the reply pipeline. */
+async function handleDeliverSharedSessionInput(
+  context: DaemonRuntimeRouteContext, sessionId: string, inputId: string, req: Request,
+): Promise<Response> {
+  const body = await context.parseOptionalJsonBody(req);
+  if (body instanceof Response) return body;
+  const consumed = body?.consumed === true;
+  const agentId = typeof body?.agentId === 'string' && body.agentId.trim() ? body.agentId.trim() : undefined;
+  const answer = typeof body?.answer === 'string' ? body.answer : undefined;
+  const input = await context.sessionBroker.markInputDelivered(sessionId, inputId, {
+    consumed,
+    ...(agentId ? { agentId } : {}),
+  });
+  if (!input) {
+    return jsonErrorResponse({ error: 'Unknown shared session input' }, { status: 404 });
+  }
+  if (agentId && answer !== undefined) {
+    const status = readSurfaceAnswerStatus(body?.status);
+    await context.completeSurfaceReplyFromSurface({
+      agentId,
+      sessionId,
+      body: answer,
+      ...(status ? { status } : {}),
+    });
+  }
+  return context.recordApiResponse(req, `/api/sessions/${sessionId}/inputs/${inputId}/deliver`, Response.json({ input }, { status: 200 }));
+}
+
+/** Handle POST /api/sessions/:sessionId/messages. Accepts `{body}`; 400 when absent/empty. */
+async function handlePostSharedSessionMessage(context: DaemonRuntimeRouteContext, sessionId: string, req: Request): Promise<Response> {
+  const body = await context.parseJsonBody(req);
+  if (body instanceof Response) return body;
+
+  // Ordinary session messages default to conversation routing; callers must opt into kind='task' for agent/WRFC work.
+  const kind = body.kind === undefined ? 'message' : body.kind;
+  if (kind !== 'task' && kind !== 'message' && kind !== 'followup') {
+    return jsonErrorResponse(
+      { error: `Invalid kind '${String(kind)}'. Accepted values: 'task' | 'message' | 'followup'`, code: 'INVALID_KIND' },
+      { status: 400 },
+    );
+  }
+
+  const message = readSharedSessionMessageBody(body);
+  if (!message) {
+    return jsonErrorResponse({ error: 'Missing shared session message body' }, { status: 400 });
+  }
+
+  const input = buildSharedSessionMessageInput(sessionId, body, message);
+
+  // kind='followup', always queues/spawns a follow-up turn via followUpMessage()
+  if (kind === 'followup') {
+    const followUpSubmission = await callOrSessionClosed(() => context.sessionBroker.followUpMessage(input));
+    if (followUpSubmission instanceof Response) return followUpSubmission;
+    return await respondToSessionSubmission(context, req, followUpSubmission, message, `/api/sessions/${sessionId}/messages`, 'DaemonServer.handlePostSharedSessionMessage.followup', {
+      context: `shared-session:${followUpSubmission.session.id}`,
+    });
+  }
+
+  // kind='message', companion main-chat send. Delegates to dedicated handler to avoid
+  // inline duplication of session-resolution with submitMessage().
+  if (kind === 'message') {
+    return handleCompanionMessageKind(context, sessionId, req, input);
+  }
+
+  const submission = await callOrSessionClosed(() => context.sessionBroker.submitMessage(input));
+  if (submission instanceof Response) return submission;
+
+  return await respondToSessionSubmission(context, req, submission, message, `/api/sessions/${sessionId}/messages`, 'DaemonServer.handlePostSharedSessionMessage', {
+    context: `shared-session:${submission.session.id}`,
+  });
+}
+
+/** Handles kind='message' companion main-chat messages, short-circuits before
+ * sessionBroker.submitMessage() so conversation messages route to the existing session instead of spawning continuation work. */
+async function handleCompanionMessageKind(
+  context: DaemonRuntimeRouteContext,
+  sessionId: string,
+  req: Request,
+  input: SharedSessionMessageInput,
+): Promise<Response> {
+  const session = context.sessionBroker.getSession(sessionId);
+  if (!session) {
+    return jsonErrorResponse({ error: 'Unknown shared session', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  if (session.status === 'closed') {
+    return jsonErrorResponse({ error: 'Session is closed', code: SDKErrorCodes.SESSION_CLOSED }, { status: 409 });
+  }
+  const messageId = `companion-${randomUUID()}`;
+  const timestamp = Date.now();
+  const metadata = buildCompanionMessageMetadata(input);
+  // Persist the companion message to the session log so GET /api/sessions/:id/messages
+  // returns it and the TUI can render it.
+  await context.sessionBroker.appendCompanionMessage(sessionId, {
+    messageId,
+    body: input.body,
+    source: 'companion-followup',
+    timestamp,
+    ...(metadata ? { metadata } : {}),
+  });
+  // Notify in-process subscribers via the conversation follow-up event (the
+  // runtime subscriber turns it into a normal conversation turn that streams out).
+  context.publishConversationFollowup(sessionId, {
+    messageId,
+    body: input.body,
+    source: 'companion-followup',
+    timestamp,
+    ...(metadata ? { metadata } : {}),
+  });
+  // { routedTo: 'conversation' } signals the companion app the message was persisted.
+  return context.recordApiResponse(req, `/api/sessions/${sessionId}/messages`, Response.json({
+    messageId,
+    routedTo: 'conversation',
+    sessionId,
+  }, { status: 202 }));
+}
+
+function buildCompanionMessageMetadata(input: SharedSessionMessageInput): Record<string, unknown> | undefined {
+  const metadata: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+  };
+  if (input.routing) metadata.routing = input.routing;
+  if (input.surfaceKind) metadata.surfaceKind = input.surfaceKind;
+  if (input.surfaceId) metadata.surfaceId = input.surfaceId;
+  if (input.routeId) metadata.routeId = input.routeId;
+  if (input.externalId) metadata.externalId = input.externalId;
+  if (input.threadId) metadata.threadId = input.threadId;
+  if (input.userId) metadata.userId = input.userId;
+  if (input.displayName) metadata.displayName = input.displayName;
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+/** Handle GET /api/sessions/:id/events, a session-scoped SSE stream for turn events
+ * (STREAM_DELTA, TURN_COMPLETED, etc.) and agent events. */
+async function handleGetSharedSessionEvents(
+  context: DaemonRuntimeRouteContext,
+  sessionId: string,
+  req: Request,
+): Promise<Response> {
+  await context.sessionBroker.start();
+  const session = context.sessionBroker.getSession(sessionId);
+  if (!session) {
+    return jsonErrorResponse({ error: 'Unknown shared session', code: 'SESSION_NOT_FOUND' }, { status: 404 });
+  }
+  // Stream lifetime is tied to the request connection; cleanup happens when
+  // the response body closes.
+  return context.openSessionEventStream(req, sessionId);
+}
+
+async function handlePostSharedSessionSteer(context: DaemonRuntimeRouteContext, sessionId: string, req: Request): Promise<Response> {
+  const body = await context.parseJsonBody(req);
+  if (body instanceof Response) return body;
+  const message = readSharedSessionMessageBody(body);
+  if (!message) {
+    return jsonErrorResponse({ error: 'Missing shared session steer body' }, { status: 400 });
+  }
+  const submission = await callOrSessionClosed(() => context.sessionBroker.steerMessage({
+    ...buildSharedSessionMessageInput(sessionId, body, message),
+    ...(body.allowSpawnFallback === true ? { allowSpawnFallback: true } : {}),
+  }));
+  if (submission instanceof Response) return submission;
+  return await respondToSessionSubmission(context, req, submission, message, `/api/sessions/${sessionId}/steer`, 'DaemonServer.handlePostSharedSessionSteer', {
+    context: `shared-session:${submission.session.id}`,
+  });
+}
+
+async function handlePostSharedSessionFollowUp(context: DaemonRuntimeRouteContext, sessionId: string, req: Request): Promise<Response> {
+  const body = await context.parseJsonBody(req);
+  if (body instanceof Response) return body;
+  const message = readSharedSessionMessageBody(body);
+  if (!message) {
+    return jsonErrorResponse({ error: 'Missing shared session follow-up body' }, { status: 400 });
+  }
+  const submission = await callOrSessionClosed(() => context.sessionBroker.followUpMessage(buildSharedSessionMessageInput(sessionId, body, message)));
+  if (submission instanceof Response) return submission;
+  return await respondToSessionSubmission(context, req, submission, message, `/api/sessions/${sessionId}/follow-up`, 'DaemonServer.handlePostSharedSessionFollowUp', {
+    context: `shared-session:${submission.session.id}`,
+  });
+}
+
+async function handleCancelSharedSessionInput(context: DaemonRuntimeRouteContext, sessionId: string, inputId: string): Promise<Response> {
+  await context.sessionBroker.start();
+  const input = await context.sessionBroker.cancelInput(sessionId, inputId);
+  if (!input) {
+    return jsonErrorResponse({ error: 'Unknown shared session input' }, { status: 404 });
+  }
+  // cancelInput returns the entry unchanged when state is not 'queued'. Return
+  // 409 so callers know the cancel was a no-op, e.g. already spawned.
+  const inputRecord = input as { state?: string };
+  if (inputRecord.state !== 'queued' && inputRecord.state !== 'cancelled') {
+    // Use Response.json directly so the `input` field is preserved in the
+    // response body. jsonErrorResponse strips unknown fields via its structured
+    // error serializer, which would remove `input`.
+    return Response.json(
+      { error: `Cannot cancel input in state '${inputRecord.state}'`, code: 'CANCEL_NOT_ALLOWED', input },
+      { status: 409 },
+    );
+  }
+  return Response.json({ input });
+}
+
+function handleGetRuntimeTask(context: DaemonRuntimeRouteContext, taskId: string): Response {
+  const task = context.runtimeStore?.getState().tasks.tasks.get(taskId);
+  if (!task) {
+    return jsonErrorResponse({ error: 'Unknown runtime task' }, { status: 404 });
+  }
+  return Response.json({ task });
+}
+
+/**
+ * Extract the canonical `body` field from an incoming POST envelope. Returns ''
+ * when absent or non-string; the caller must check for '' and return 400.
+ */
+export function readSharedSessionMessageBody(body: JsonRecord): string {
+  return typeof body.body === 'string' ? body.body.trim() : '';
+}
+
+function buildSharedSessionMessageInput(
+  sessionId: string,
+  body: JsonRecord,
+  message: string,
+): SharedSessionMessageInput {
+  const routing = readSharedSessionRoutingIntent(body.routing);
+  return {
+    sessionId,
+    surfaceKind: typeof body.surfaceKind === 'string' ? body.surfaceKind as AutomationSurfaceKind : 'web',
+    surfaceId: typeof body.surfaceId === 'string' ? body.surfaceId : 'surface:web',
+    ...(typeof body.externalId === 'string' ? { externalId: body.externalId } : {}),
+    ...(typeof body.threadId === 'string' ? { threadId: body.threadId } : {}),
+    ...(typeof body.userId === 'string' ? { userId: body.userId } : {}),
+    ...(typeof body.displayName === 'string' ? { displayName: body.displayName } : {}),
+    ...(typeof body.title === 'string' ? { title: body.title } : {}),
+    ...(typeof body.routeId === 'string' ? { routeId: body.routeId } : {}),
+    body: message,
+    ...(typeof body.metadata === 'object' && body.metadata !== null ? { metadata: body.metadata as Record<string, unknown> } : {}),
+    ...(routing ? { routing } : {}),
+  };
+}
+
+function readToolNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tools = value.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '').slice(0, MAX_SESSION_TOOL_NAMES);
+  return tools.length > 0 ? tools : undefined;
+}
+
+function readSharedSessionRoutingIntent(value: unknown): SharedSessionRoutingIntent | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const tools = readToolNames(record.tools);
+  const fallbackModels = readStringArrayField(record, 'fallbackModels', MAX_SESSION_TOOL_NAMES);
+  const helperModel = readHelperModel(record.helperModel);
+  const providerSelection = readProviderSelection(record.providerSelection);
+  const providerFailurePolicy = readProviderFailurePolicy(record.providerFailurePolicy);
+  const reasoningEffort = readReasoningEffort(record.reasoningEffort);
+  return {
+    ...(typeof record.modelId === 'string' ? { modelId: record.modelId } : {}),
+    ...(typeof record.providerId === 'string' ? { providerId: record.providerId } : {}),
+    ...(providerSelection ? { providerSelection } : {}),
+    ...(providerFailurePolicy ? { providerFailurePolicy } : {}),
+    ...(fallbackModels?.length ? { fallbackModels } : {}),
+    ...(helperModel ? { helperModel } : {}),
+    ...(tools ? { tools } : {}),
+    ...(record.executionIntent !== undefined ? { executionIntent: record.executionIntent } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+  };
+}
+
+function readProviderSelection(value: unknown): SharedSessionRoutingIntent['providerSelection'] | undefined {
+  return value === 'inherit-current' || value === 'concrete' || value === 'synthetic' ? value : undefined;
+}
+
+function readProviderFailurePolicy(value: unknown): SharedSessionRoutingIntent['providerFailurePolicy'] | undefined {
+  return value === 'ordered-fallbacks' || value === 'fail' ? value : undefined;
+}
+
+// Mirrors the severity ladder in the sdk package's providers/reasoning-effort.ts
+// (REASONING_EFFORT_SEVERITY). Duplicated as a literal list rather than
+// imported: daemon-sdk is a lower-level package the sdk package depends on,
+// so importing the other way would be circular. Which levels a given model
+// actually accepts is per-model, this only rejects a typo, same as the
+// sdk-side schema and route validators for this field.
+const REASONING_EFFORT_LEVELS = new Set([
+  'none', 'instant', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+]);
+
+function readReasoningEffort(value: unknown): SharedSessionRoutingIntent['reasoningEffort'] | undefined {
+  return typeof value === 'string' && REASONING_EFFORT_LEVELS.has(value) ? value : undefined;
+}
+
+function readHelperModel(value: unknown): SharedSessionRoutingIntent['helperModel'] | undefined {
+  if (!isJsonRecord(value)) return undefined;
+  return typeof value.providerId === 'string' && typeof value.modelId === 'string'
+    ? { providerId: value.providerId, modelId: value.modelId }
+    : undefined;
+}
+
+async function respondToSessionSubmission(
+  context: DaemonRuntimeRouteContext,
+  req: Request,
+  submission: SessionSubmission,
+  taskText: string,
+  path: string,
+  logLabel: string,
+  spawnOptions: {
+    readonly context?: string | undefined;
+    readonly model?: string | undefined;
+    readonly provider?: string | undefined;
+    readonly tools?: readonly string[] | undefined;
+    readonly executionIntent?: ExecutionIntent | undefined;
+  } = {},
+): Promise<Response> {
+  if (
+    submission.mode === 'continued-live' ||
+    submission.mode === 'queued-follow-up' ||
+    submission.mode === 'queued-for-surface'
+  ) {
+    // queued-for-surface: the input is queued for a live registered surface to
+    // collect (sessions.inputs.list) and deliver (sessions.inputs.deliver). No
+    // daemon executor is spawned, the surface owns turn execution.
+    return context.recordApiResponse(req, path, Response.json({
+      session: toSharedSessionRecordResponse(submission.session.id, submission.session),
+      message: submission.userMessage ?? null,
+      input: submission.input,
+      mode: submission.mode,
+      agentId: submission.activeAgentId ?? null,
+    }, { status: 202 }));
+  }
+  if (submission.mode === 'rejected') {
+    return context.recordApiResponse(req, path, Response.json({
+      session: toSharedSessionRecordResponse(submission.session.id, submission.session),
+      message: submission.userMessage ?? null,
+      input: submission.input,
+      mode: submission.mode,
+    }, { status: 409 }));
+  }
+
+  const spawnResult = context.trySpawnAgent({
+    mode: 'spawn',
+    task: submission.task!,
+    ...(spawnOptions.context ? { context: spawnOptions.context } : {}),
+    ...(spawnOptions.model ?? submission.input.routing?.modelId ? { model: spawnOptions.model ?? submission.input.routing?.modelId } : {}),
+    ...(spawnOptions.provider ?? submission.input.routing?.providerId ? { provider: spawnOptions.provider ?? submission.input.routing?.providerId } : {}),
+    ...(spawnOptions.tools ?? submission.input.routing?.tools ? { tools: [...(spawnOptions.tools ?? submission.input.routing?.tools ?? [])] } : {}),
+    ...(spawnOptions.executionIntent ?? submission.input.routing?.executionIntent
+      ? { executionIntent: spawnOptions.executionIntent ?? submission.input.routing?.executionIntent }
+      : {}),
+  }, logLabel, submission.session.id);
+  if (spawnResult instanceof Response) return spawnResult;
+  await context.sessionBroker.bindAgent(submission.session.id, spawnResult.id);
+  context.queueSurfaceReplyFromBinding(submission.routeBinding, {
+    agentId: spawnResult.id,
+    task: taskText,
+    sessionId: submission.session.id,
+  });
+  return context.recordApiResponse(req, path, Response.json({
+    session: (() => {
+      const session = context.sessionBroker.getSession(submission.session.id);
+      return session ? toSharedSessionRecordResponse(submission.session.id, session) : null;
+    })(),
+    message: submission.userMessage ?? null,
+    input: {
+      ...submission.input,
+      state: 'spawned',
+      activeAgentId: spawnResult.id,
+    },
+    mode: submission.mode,
+    agentId: spawnResult.id,
+  }, { status: 202 }));
+}
+
+function handleRuntimeTaskAction(context: DaemonRuntimeRouteContext, taskId: string, action: 'cancel' | 'retry', _req: Request): Response {
+  if (!context.runtimeStore || !context.runtimeDispatch) {
+    return jsonErrorResponse({ error: 'Runtime store unavailable' }, { status: 503 });
+  }
+  const task = context.runtimeStore.getState().tasks.tasks.get(taskId);
+  if (!task) {
+    return jsonErrorResponse({ error: 'Unknown runtime task' }, { status: 404 });
+  }
+  if (action === 'cancel') {
+    if (task.kind === 'agent' && task.owner) {
+      context.agentManager.cancel(task.owner);
+    }
+    context.runtimeDispatch.transitionRuntimeTask(taskId, 'cancelled', {
+      endedAt: Date.now(),
+      error: 'Cancelled via control plane',
+    }, 'daemon.server.tasks.cancel');
+    return Response.json({ task: context.runtimeStore.getState().tasks.tasks.get(taskId) });
+  }
+  if (action === 'retry') {
+    if (task.kind !== 'agent') {
+      return jsonErrorResponse({ error: 'Retry is only implemented for agent tasks' }, { status: 400 });
+    }
+    const spawnResult = context.trySpawnAgent({
+      mode: 'spawn',
+      task: task.description ?? task.title ?? '',
+    }, 'DaemonServer.handleRuntimeTaskAction');
+    if (spawnResult instanceof Response) return spawnResult;
+    context.runtimeDispatch.transitionRuntimeTask(taskId, 'queued', {
+      // Ownership moves to the agent this retry spawned: cancel reads this field,
+      // and leaving the dead agent's id here made a later cancel a silent no-op.
+      owner: spawnResult.id,
+      startedAt: undefined,
+      endedAt: undefined,
+      error: undefined,
+      result: undefined,
+    }, 'daemon.server.tasks.retry');
+    return Response.json({
+      retried: true,
+      task: context.runtimeStore.getState().tasks.tasks.get(taskId),
+      agentId: spawnResult.id,
+    });
+  }
+  // Exhaustive: a new action literal on the handler interface fails to compile here.
+  const unsupported: never = action;
+  return jsonErrorResponse({ error: `Unsupported task action: ${String(unsupported)}` }, { status: 400 });
+}
+
+function handleGetTaskStatus(context: DaemonRuntimeRouteContext, agentId: string): Response {
+  const record = context.agentManager.getStatus(agentId);
+  if (!record) {
+    return jsonErrorResponse({ error: `Agent not found: ${agentId}` }, { status: 404 });
+  }
+  if (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') {
+    context.syncFinishedAgentTask(record);
+  }
+  const durationMs = record.completedAt !== undefined
+    ? record.completedAt - record.startedAt
+    : Date.now() - record.startedAt;
+  return Response.json({
+    agentId: record.id,
+    task: record.task,
+    status: record.status,
+    model: record.model ?? null,
+    tools: record.tools,
+    durationMs,
+    toolCallCount: record.toolCallCount,
+    progress: record.progress ?? null,
+    error: record.error ?? null,
+  });
+}

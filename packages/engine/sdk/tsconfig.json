@@ -1,0 +1,54 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "lib": [
+      "ES2024",
+      // DOM is intentionally included for this package:
+      // packages/sdk/src intentionally contains browser/RN clients plus Node/Bun
+      // daemon entrypoints. Public package exports and metadata checks keep
+      // runtime boundaries explicit while the umbrella SDK keeps every GoodVibes
+      // capability available from one package.
+      "DOM"
+    ],
+    "types": [
+      "node",
+      "bun"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ],
+  "references": [
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../errors"
+    },
+    {
+      "path": "../daemon-sdk"
+    },
+    {
+      "path": "../transport-core"
+    },
+    {
+      "path": "../transport-http"
+    },
+    {
+      "path": "../transport-realtime"
+    },
+    {
+      "path": "../operator-sdk"
+    },
+    {
+      "path": "../peer-sdk"
+    }
+  ]
+}

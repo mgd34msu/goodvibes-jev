@@ -1,0 +1,100 @@
+/**
+ * voice/provisioning, SDK-owned managed provisioning of the local voice runtime
+ * (piper TTS + a default voice), atomic + checksum-verified, resumable, with
+ * honest states. Nothing downloads without the user asking.
+ */
+export {
+  downloadVerifiedFile,
+  fileMatches,
+  fileMatchesCached,
+  type VerifiedDownloadSpec,
+  type VerifiedDownloadOptions,
+  type VerifiedDownloadResult,
+} from './download-verified.js';
+
+export {
+  currentVoicePlatform,
+  piperProvisionBytes,
+  PIPER_ENGINES,
+  DEFAULT_PIPER_VOICE,
+  WHISPER_ENGINES,
+  DEFAULT_WHISPER_MODEL,
+  WHISPER_UNSUPPORTED_REASON,
+  type VoicePlatform,
+  type PiperEngineManifest,
+  type PiperVoiceManifest,
+  type WhisperEngineManifest,
+  type WhisperModelManifest,
+} from './manifest.js';
+
+export {
+  WAKE_WORD_MODELS,
+  DEFAULT_WAKE_WORD_MODEL_VERSION,
+  WAKE_WORD_FRONT_END_SOURCING,
+  WAKE_WORD_FRONT_END,
+  OPENWAKEWORD_UPSTREAM_DEFAULT_THRESHOLD,
+  resolveWakeWordModel,
+  wakeWordProvisionBytes,
+  WAKE_VAD_MODEL,
+  wakeVadProvisionBytes,
+  resolveWakeVadThreshold,
+  type WakeWordModelManifest,
+  type WakeWordModelMeasurements,
+  type WakeWordFrontEndManifest,
+  type WakeVadModelManifest,
+  type WakeVadThresholdRow,
+} from './wake-word-manifest.js';
+
+export {
+  provisionLocalVoiceRuntime,
+  localVoiceRuntimeStatus,
+  resolveManagedVoicePaths,
+  resolveManagedEngine,
+  readVoiceInstallStamp,
+  writeVoiceInstallStamp,
+  type VoiceProvisionOptions,
+  type VoiceProvisionResult,
+  type VoiceProvisionProgress,
+  type VoiceRuntimeStatus,
+  type VoiceRuntimeState,
+  type ManagedVoicePaths,
+  type ArchiveExtractor,
+  type TtsProvisionState,
+  type SttProvisionState,
+  type VoiceComponentOutcome,
+  type VoiceInstallStamp,
+} from './provisioner.js';
+
+export {
+  createVoiceInstallProgressTracker,
+  type VoiceInstallProgressTracker,
+  type VoiceInstallProgressSnapshot,
+  type VoiceInstallComponentProgress,
+} from './install-progress.js';
+
+export {
+  describeSupersededVoiceKeys,
+  preconfigureLocalVoiceKeys,
+  type VoicePreconfigReceipt,
+  type VoicePreconfigDeps,
+  type VoiceKeyPreconfig,
+  type VoiceKeySkip,
+  type VoiceKeySupersede,
+} from './config-preconfigure.js';
+
+// Provisioning's last act: speak a phrase with the managed TTS and read it back
+// with the managed STT, so "provisioned" is a proven claim.
+export {
+  VOICE_PROOF_MIN_WORD_OVERLAP,
+  VOICE_PROOF_PHRASE,
+  proveVoiceRoundTrip,
+  transcriptWordOverlap,
+  type ProofEngineRunner,
+  type VoiceRoundTripProof,
+  type VoiceRoundTripProofOptions,
+} from './round-trip-proof.js';
+
+export {
+  resolveManagedVoiceRoot,
+  MANAGED_VOICE_DIRECTORY_NAME,
+} from './managed-root.js';

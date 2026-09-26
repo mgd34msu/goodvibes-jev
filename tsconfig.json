@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "packages/judgment" }]
+  "references": [{ "path": "packages/judgment" }, { "path": "packages/engine" }]
 }
