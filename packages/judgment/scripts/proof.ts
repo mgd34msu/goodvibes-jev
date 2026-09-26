@@ -11,6 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   createSystemOnePort,
+  defineBattery,
+  defineCompositeScore,
+  defineHierarchyWalker,
+  defineRankRecheck,
+  fanOut,
+  oneOf,
+  rated,
+  verifyThenEscalate,
+  yesNo,
   defineDatePartsReader,
   defineDispatch,
   defineEntityAligner,
@@ -264,6 +273,141 @@ const sections: Section[] = [
       return {
         ok: next.date === '2026-08-06' && noYear.date === '2026-08-14' && absent.date === null,
         detail: [next, noYear, absent].map(({ date, confidence, outcome, note }) => ({ date, confidence, outcome, note })),
+      };
+    },
+  },
+  {
+    name: 'compound.fan-out',
+    async run(port) {
+      const urgency = defineBattery({
+        ...header('fan-out.urgency'),
+        items: { urgent: yesNo('Does the ticket convey urgency?', STAKES_BANDS.medium.yesNo) },
+        fixtures: [{ ...one, expect: { urgent: 'yes' } }],
+      });
+      const triage = defineBattery({
+        ...header('fan-out.triage'),
+        items: {
+          category: oneOf('What kind of ticket is this?', {
+            bug_report: 'Something is broken or behaves wrongly',
+            billing: 'Charges, invoices, refunds',
+            feature_request: 'Asks for something new',
+          }, STAKES_BANDS.medium.confidence),
+          severity: rated('If this is a bug, how severe is it?', [
+            'Cosmetic; no impact to functionality',
+            'Broken or degraded feature, but a workaround exists',
+            'Blocking issue; no workaround exists',
+          ], STAKES_BANDS.medium.confidence),
+          refund: yesNo('Does the customer explicitly request a refund or credit?', STAKES_BANDS.medium.yesNo),
+        },
+        fixtures: [{ ...one, expect: { category: 'bug_report', severity: 2, refund: 'no' } }],
+      });
+      const got = await fanOut(port, 'Nobody on our team can log in since this morning. Every attempt returns a 500 error. We need this fixed now.', {
+        urgency,
+        triage,
+      });
+      const r = got.readings;
+      return {
+        ok: r.urgency.urgent.verdict === 'yes' && r.triage.category.choice === 'bug_report' && r.triage.severity.level === 2 && r.triage.refund.verdict === 'no',
+        detail: got.readings,
+      };
+    },
+  },
+  {
+    name: 'compound.rank-recheck',
+    async run(port) {
+      const compound = defineRankRecheck({
+        ...header('rank-recheck'),
+        instructions: "Which of these skills, if any, is the right one to load to help with the user's latest request?",
+        gates: {
+          acts: { instructions: "Is the assistant being asked to act on the user's files, accounts, devices, or online services, rather than only to explain or advise?" },
+          procedure: { instructions: 'Would a careful expert answering this consult a specific documented procedure or set of commands, rather than answering from general understanding?' },
+          prose: { instructions: "Could a knowledgeable generalist fully satisfy this request in prose, with no tools, no documentation, and no access to the user's files or accounts?", inverted: true },
+        },
+        gateThreshold: 0.3,
+        shortlist: 3,
+        recheckInstructions: "Exactly one of these skills is the right one to load for the user's latest request. Which one? Read what each actually does, not just its name.",
+        fitInstructions: "Does this skill do the specific thing the user's request asks for?",
+        recheckBand: { actAt: 0.7, confirmAt: 0.5 },
+        fitBand: { act: { yes: 0.6, no: 0.2 }, confirm: { yes: 0.3, no: 0.29 } },
+        fixtures: [{ ...one, options: [], expect: 'none' }],
+      });
+      const options = [
+        { id: 'apple-notes', summary: 'Manage Apple Notes via memo CLI: create, search, edit.', detail: 'Create, search and edit notes in Notes.app through the memo CLI. Notes sync to the user\'s phone through iCloud.' },
+        { id: 'apple-reminders', summary: 'Apple Reminders via remindctl: add, list, complete.', detail: 'Add, list and complete reminders in Reminders.app with remindctl.' },
+        { id: 'imessage', summary: 'Send and receive iMessages/SMS via the imsg CLI on macOS.', detail: 'Send and read iMessages and SMS with the imsg CLI.' },
+        { id: 'concept-diagrams', summary: 'Generate flat, minimal educational SVG visuals as HTML.', detail: 'Draws simple SVG diagrams that explain a concept.' },
+      ];
+      const notes = await compound.suggest(port, { request: "Save this recipe as a new note in my 'Recipes' folder in Notes.app so it syncs to my phone." }, options);
+      const monad = await compound.suggest(port, { request: 'Explain what a monad is.' }, options);
+      return { ok: notes.chosen === 'apple-notes' && monad.chosen === undefined, detail: { notes: [notes.gate, notes.shortlist, notes.chosen], monad: [monad.gate, monad.chosen] } };
+    },
+  },
+  {
+    name: 'compound.cascade',
+    async run(port) {
+      const judge = defineJudge({
+        ...header('cascade.judge'),
+        band: STAKES_BANDS.high.yesNo,
+        fixtures: [{ name: 'f', goal: 'g', criteria: ['c'], output: 'o', expect: { verdict: 'pass' } }],
+      });
+      const page = 'NYU Events Calendar. Search Events. About the Events Calendar. Report issue or provide feedback. Equal Opportunity and Non-Discrimination at NYU. Campus Map. Contact Us.';
+      const got = await verifyThenEscalate(
+        port,
+        judge,
+        [
+          { name: 'small', produce: async () => ({ registration_open_date: '', description: 'Registration opens for the fall semester' }) },
+          { name: 'strong', produce: async () => ({ registration_open_date: '', description: '' }) },
+        ],
+        {
+          goal: 'Extract the fall 2024 registration open date and a description of it from the page, leaving fields blank when the page does not state them.',
+          criteria: [
+            'Every non-empty field is stated in `evidence.page`.',
+            'A field is left empty only when `evidence.page` does not state it.',
+          ],
+          evidence: () => ({ page }),
+        },
+      );
+      return { ok: got.accepted && got.tier === 'strong', detail: got.attempts.map((a) => ({ tier: a.tier, verdict: a.judgment.verdict, criteria: a.judgment.criteria })) };
+    },
+  },
+  {
+    name: 'compound.hierarchy',
+    async run(port) {
+      const walker = defineHierarchyWalker({
+        ...header('hierarchy'),
+        tree: {
+          'Pet Supplies': {
+            'Cat Supplies': { 'Cat Beds': {}, 'Cat Window Beds & Perches': {}, 'Cat Trees & Condos': {} },
+            'Dog Supplies': { 'Dog Beds': {}, 'Dog Crates': {} },
+          },
+          Furniture: { Shelving: { 'Floating Shelves': {}, Bookcases: {} }, Beds: { 'Bed Frames': {}, Mattresses: {} } },
+        },
+        beamWidth: 3,
+        actAt: 0.7,
+        confirmAt: 0.5,
+        fixtures: [{ ...one, expect: 'Pet Supplies > Cat Supplies > Cat Window Beds & Perches' }],
+      });
+      const got = await walker.walk(port, 'Furniture listing: a wall-mounted window shelf bed. This padded floating shelf uses suction cups and a washable cushion as a sunny perch for one cat.');
+      return { ok: got.best.path.at(-1) === 'Cat Window Beds & Perches', detail: { best: got.best, separation: got.separation, beam: got.beam } };
+    },
+  },
+  {
+    name: 'compound.composite',
+    async run(port) {
+      const composite = defineCompositeScore({
+        ...header('composite'),
+        dimensions: {
+          python: { instructions: 'How deep is the candidate\'s Python experience?', levels: ['None', 'Occasional scripts', 'Regular use in a job', 'Deep expertise, years of daily production work'], band: STAKES_BANDS.low.confidence },
+          leadership: { instructions: 'How much team leadership has the candidate done?', levels: ['None', 'Mentored individuals', 'Led a small team', 'Managed managers or a large org'], band: STAKES_BANDS.low.confidence },
+        },
+        profiles: { senior_ic: { python: 0.8, leadership: 0.2 }, manager: { python: 0.2, leadership: 0.8 } },
+        fixtures: [{ ...one, expect: { python: 3, leadership: 0 } }],
+      });
+      const ic = await composite.score(port, 'Eight years writing Python daily, maintaining a large Django codebase and data pipelines. No management experience; I prefer hands-on work.');
+      const mgr = await composite.score(port, 'Director of engineering for six years, managing four engineering managers and 40 engineers. Occasionally writes small Python scripts.');
+      return {
+        ok: ic.composites.senior_ic > ic.composites.manager && mgr.composites.manager > mgr.composites.senior_ic,
+        detail: { ic: ic.composites, manager: mgr.composites },
       };
     },
   },

@@ -34,4 +34,4 @@ export {
 export { definePolicyChecklist, type PolicyChecklist, type PolicyResult, type PolicySpec } from './policy.ts';
 export { REPLY_READINGS, defineReplyReader, type ReadReply, type ReplyReader, type ReplyReadingName, type ReplySpec } from './reply.ts';
 export { defineRerank, type Candidate, type Ranked, type Rerank, type RerankFixture, type RerankSpec, type Reranking } from './rerank.ts';
-export { NONE, defineSelector, type SelectSpec, type Selection, type Selector } from './select.ts';
+export { NONE, defineSelector, runSelection, type SelectSpec, type Selection, type SelectionConfig, type Selector } from './select.ts';
