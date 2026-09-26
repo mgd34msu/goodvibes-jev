@@ -9,7 +9,7 @@ import {
   defineRuleLadder,
   defineStructureRecovery,
   encodeColumns,
-  listSystemOneModels,
+  createModelCatalog,
   noul,
   renderMarkdown,
   score,
@@ -271,13 +271,13 @@ describe('compound split', () => {
 
 describe('model listing', () => {
   test('lists the models the endpoint accepts', async () => {
-    const models = await listSystemOneModels({
+    const models = await createModelCatalog({
       endpoint: { kind: 'local', baseURL: 'http://127.0.0.1:7000', apiKey: 'k' },
       model: 'jev-1.13.0',
       timeoutMs: 1_000,
       retry: { maxRetries: 0 },
       fetch: async () => new Response(JSON.stringify({ models: [{ name: 'local-s1', description: 'local', release_date: '2026-09-01' }] }), { status: 200 }),
-    });
+    }).list();
     expect(models.map((m) => m.name)).toEqual(['local-s1']);
   });
 });

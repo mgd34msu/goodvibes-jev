@@ -1,73 +1,80 @@
 import { JudgmentError } from './errors.ts';
-import type { ChoiceQuestion, Question, Questions, ScoreQuestion } from './types.ts';
-
-/** An answer as it arrives on the wire, before it is trusted: every field unchecked. */
-interface RawAnswer {
-  readonly type?: unknown;
-  readonly noul?: unknown;
-  readonly choice?: unknown;
-  readonly score?: unknown;
-  readonly confidence?: unknown;
-  readonly probabilities?: Readonly<Record<string, unknown>>;
-}
-
-/** Throws the invalid-response error for one malformed answer. */
-type Fail = (message: string) => never;
-
-const isNumberWithin = (value: unknown, low: number, high: number): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high;
-
-const isProbability = (value: unknown): value is number => isNumberWithin(value, 0, 1);
+import type { Question, Questions } from './types.ts';
 
 /**
- * A choice or score answer carries a confidence and a probability for every
- * option or level it could have given; `label` names a key in the message.
+ * An answer as it arrives on the wire. The shape is what the endpoint
+ * promises; every value is still checked here before anything trusts it.
  */
-function checkDistribution(answer: RawAnswer, keys: readonly string[], label: (key: string) => string, fail: Fail): void {
-  if (!isProbability(answer.confidence)) fail('no valid confidence');
+interface RawAnswer {
+  readonly type?: Question['type'];
+  readonly noul?: number;
+  readonly choice?: string;
+  readonly score?: number;
+  readonly confidence?: number;
+  readonly probabilities?: Readonly<Record<string, number>>;
+}
+
+/** The answers map as it arrives on the wire, keyed by question name. */
+type WireAnswers = Readonly<Record<string, RawAnswer | null | undefined>>;
+
+/** One number an answer must carry as a probability, with the name the failure message uses. */
+interface ProbabilityField {
+  readonly what: string;
+  readonly value: number | undefined;
+}
+
+/** The options of a choice or the levels of a score, as the keys of its distribution. */
+function distributionKeys(question: Exclude<Question, { type: 'noul' }>): string[] {
+  if (question.type === 'choice') return Object.keys(question.criteria);
+  return question.criteria.map((_, level) => String(level));
+}
+
+/** Every number the answer to `question` must carry as a probability from 0 to 1. */
+function probabilityFields(question: Question, answer: RawAnswer): ProbabilityField[] {
+  if (question.type === 'noul') return [{ what: 'noul', value: answer.noul }];
   const probabilities = answer.probabilities ?? {};
-  const missing = keys.find((key) => !isProbability(probabilities[key]));
-  if (missing !== undefined) fail(`no probability for ${label(missing)}`);
+  return [
+    { what: 'confidence', value: answer.confidence },
+    ...distributionKeys(question).map((key) => ({ what: `probability for "${key}"`, value: probabilities[key] })),
+  ];
 }
 
-function checkNoul(answer: RawAnswer, fail: Fail): void {
-  if (!isProbability(answer.noul)) fail('no valid noul');
+const isNumberWithin = (value: number | undefined, low: number, high: number): boolean =>
+  typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high;
+
+/** The headline answer must be one the question offered: an offered option, or a score on the rubric. */
+function headlineProblem(question: Question, answer: RawAnswer): string | undefined {
+  if (question.type === 'choice') return distributionKeys(question).includes(answer.choice ?? '') ? undefined : 'a choice outside its criteria';
+  if (question.type === 'score') {
+    const top = question.criteria.length - 1;
+    return isNumberWithin(answer.score, 0, top) ? undefined : `a score outside 0 to ${top}`;
+  }
+  return undefined;
 }
 
-function checkChoice(question: ChoiceQuestion, answer: RawAnswer, fail: Fail): void {
-  const options = Object.keys(question.criteria);
-  if (!options.includes(answer.choice as string)) fail('a choice outside its criteria');
-  checkDistribution(answer, options, (option) => `option "${option}"`, fail);
+/** Why an answer cannot be trusted for its question, or undefined when it can. */
+function answerProblem(question: Question, answer: RawAnswer): string | undefined {
+  if (answer.type !== question.type) return `type ${String(answer.type)}, expected ${question.type}`;
+  const invalid = probabilityFields(question, answer).find(({ value }) => !isNumberWithin(value, 0, 1));
+  return headlineProblem(question, answer) ?? (invalid === undefined ? undefined : `no valid ${invalid.what}`);
 }
 
-function checkScore(question: ScoreQuestion, answer: RawAnswer, fail: Fail): void {
-  const top = question.criteria.length - 1;
-  if (!isNumberWithin(answer.score, 0, top)) fail(`a score outside 0 to ${top}`);
-  const levels = Array.from({ length: top + 1 }, (_, level) => String(level));
-  checkDistribution(answer, levels, (level) => `level ${level}`, fail);
-}
-
-function checkOne(question: Question, answer: RawAnswer, fail: Fail): void {
-  if (answer.type !== question.type) fail(`type ${String(answer.type)}, expected ${question.type}`);
-  if (question.type === 'noul') checkNoul(answer, fail);
-  else if (question.type === 'choice') checkChoice(question, answer, fail);
-  else checkScore(question, answer, fail);
-}
+const isPresentObject = <T extends object>(value: T | null | undefined): value is T => typeof value === 'object' && value !== null;
 
 /**
  * Checks that the endpoint answered every question with the matching answer
  * type and sane numbers. A malformed answer is a failed judgment, never a
  * guessed one.
  */
-export function checkAnswers(questions: Questions, answers: unknown, requestId?: string): void {
+export function checkAnswers(questions: Questions, answers: WireAnswers | null | undefined, requestId?: string): void {
   const failWith = (message: string): never => {
     throw new JudgmentError('invalid-response', message, requestId === undefined ? {} : { requestId });
   };
-  if (typeof answers !== 'object' || answers === null) failWith('response has no answers object');
-  const byName = answers as Readonly<Record<string, unknown>>;
+  if (!isPresentObject(answers)) return failWith('response has no answers object');
   for (const [name, question] of Object.entries(questions)) {
-    const answer = byName[name];
-    if (typeof answer !== 'object' || answer === null) failWith(`no answer for question "${name}"`);
-    checkOne(question, answer as RawAnswer, (message) => failWith(`answer "${name}" has ${message}`));
+    const answer = answers[name];
+    if (!isPresentObject(answer)) return failWith(`no answer for question "${name}"`);
+    const problem = answerProblem(question, answer);
+    if (problem !== undefined) failWith(`answer "${name}" has ${problem}`);
   }
 }
