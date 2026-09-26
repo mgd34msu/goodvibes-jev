@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
@@ -119,8 +121,26 @@ function assertFacadeImportsAreDeclared(
   const distFiles = files.filter(
     (file) => /^package\/(?:[^/]+\/)?dist\//.test(file) && (file.endsWith('.js') || file.endsWith('.d.ts')),
   );
+  // One extraction per tarball, then plain reads: the engine ships thousands
+  // of dist files, and a tar process per file made this scan take minutes.
+  const extracted = createSdkTempDir('goodvibes-sdk-pack-scan-');
+  try {
+    execFileSync('tar', ['-xzf', tarball, '-C', extracted], { stdio: ['ignore', 'ignore', 'inherit'] });
+    scanDistFiles(tarball, extracted, distFiles, manifest, packageSpecifiers);
+  } finally {
+    cleanupStage(extracted);
+  }
+}
+
+function scanDistFiles(
+  tarball: string,
+  extracted: string,
+  distFiles: readonly string[],
+  manifest: PackageManifestLike,
+  packageSpecifiers: readonly string[],
+): void {
   for (const file of distFiles) {
-    const content = readPackedText(tarball, file);
+    const content = readFileSync(resolve(extracted, file), 'utf8');
     for (const specifier of packageSpecifiers) {
       if (specifier === manifest.name) continue;
       if (referencesPackageSpecifier(content, specifier) && manifest.dependencies?.[specifier] === undefined) {

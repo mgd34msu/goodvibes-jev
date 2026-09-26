@@ -97,7 +97,7 @@
     "exports:check": "bun packages/engine/scripts/check-exports-coverage.ts"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "0.18.2",
+    "@arethetypeswrong/cli": "0.18.5",
     "@ast-grep/napi": "0.42.1",
     "@cloudflare/workers-types": "4.20260503.1",
     "@cyclonedx/cyclonedx-npm": "6.0.0",
