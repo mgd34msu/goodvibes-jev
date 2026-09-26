@@ -1,4 +1,5 @@
 export {
+  checkReading,
   defineBattery,
   oneOf,
   rated,
@@ -16,4 +17,10 @@ export {
   type ScoreItem,
   type YesNoItem,
 } from './battery.ts';
-export { BatteryRegistry, type AnyBattery } from './registry.ts';
+export {
+  assertDecisionHeader,
+  assertUniqueFixtures,
+  type FixtureCheck,
+  type NamedDecision,
+} from './decision.ts';
+export { BatteryRegistry } from './registry.ts';

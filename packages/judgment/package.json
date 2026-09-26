@@ -12,6 +12,7 @@
   },
   "scripts": {
     "test": "bun test",
-    "probe": "bun run scripts/probe.ts"
+    "probe": "bun run scripts/probe.ts",
+    "proof": "bun run scripts/proof.ts"
   }
 }

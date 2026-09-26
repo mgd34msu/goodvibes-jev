@@ -1,16 +1,14 @@
-import type { Battery, BatteryItems } from './battery.ts';
-
-// Registries hold batteries of every shape; the item types are erased here.
-export type AnyBattery = Battery<any>;
+import type { NamedDecision } from './decision.ts';
 
 /**
- * Every battery a package defines, by name. Calibration walks a registry to
- * run every fixture, and the decision log resolves names through it.
+ * Every named decision a package defines (fixed-question batteries and
+ * pattern instances), by name. Calibration walks a registry to run every
+ * fixture, and the decision log resolves names through it.
  */
 export class BatteryRegistry {
-  readonly #batteries = new Map<string, AnyBattery>();
+  readonly #batteries = new Map<string, NamedDecision>();
 
-  register<Items extends BatteryItems>(battery: Battery<Items>): Battery<Items> {
+  register<D extends NamedDecision>(battery: D): D {
     if (this.#batteries.has(battery.name)) {
       throw new RangeError(`battery "${battery.name}" is already registered`);
     }
@@ -18,11 +16,11 @@ export class BatteryRegistry {
     return battery;
   }
 
-  get(name: string): AnyBattery | undefined {
+  get(name: string): NamedDecision | undefined {
     return this.#batteries.get(name);
   }
 
-  list(): readonly AnyBattery[] {
+  list(): readonly NamedDecision[] {
     return [...this.#batteries.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 

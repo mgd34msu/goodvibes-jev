@@ -17,6 +17,7 @@ import {
   type ConfidenceBand,
   type YesNoBand,
 } from '../readings/bands.ts';
+import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from './decision.ts';
 import {
   readChoice,
   readScore,
@@ -133,12 +134,10 @@ export interface RunOptions<Items extends BatteryItems> {
   readonly pattern?: string;
 }
 
-export interface Battery<Items extends BatteryItems> extends BatteryDefinition<Items> {
+export interface Battery<Items extends BatteryItems> extends BatteryDefinition<Items>, NamedDecision {
   /** Asks every question (or the `only` subset) about one state in a single request. */
   run(port: JudgmentPort, state: EntryType, options?: RunOptions<Items>): Promise<BatteryRun<Items>>;
 }
-
-const NAME = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 
 function readItem(item: BatteryItems[string], answer: unknown): YesNoReading | ChoiceReading | ScoreReading {
   switch (item.kind) {
@@ -153,9 +152,8 @@ function readItem(item: BatteryItems[string], answer: unknown): YesNoReading | C
 
 export function defineBattery<const Items extends BatteryItems>(definition: BatteryDefinition<Items>): Battery<Items> {
   const { name, version, items, fixtures, accuracyFloor } = definition;
-  if (!NAME.test(name)) throw new RangeError(`battery name "${name}" must be lowercase dotted or dashed words`);
-  if (!Number.isInteger(version) || version < 1) throw new RangeError(`battery ${name}: version must be a positive integer`);
-  if (!(accuracyFloor > 0 && accuracyFloor <= 1)) throw new RangeError(`battery ${name}: accuracyFloor must be in (0, 1]`);
+  assertDecisionHeader({ name, version, accuracyFloor, fixtureCount: fixtures.length });
+  assertUniqueFixtures(name, fixtures);
   const itemNames = Object.keys(items);
   if (itemNames.length === 0) throw new RangeError(`battery ${name}: needs at least one question`);
   for (const [itemName, item] of Object.entries(items)) {
@@ -171,11 +169,8 @@ export function defineBattery<const Items extends BatteryItems>(definition: Batt
       }
     }
   }
-  const fixtureNames = new Set<string>();
   const covered = new Set<string>();
   for (const fixture of fixtures) {
-    if (fixtureNames.has(fixture.name)) throw new RangeError(`battery ${name}: duplicate fixture "${fixture.name}"`);
-    fixtureNames.add(fixture.name);
     for (const [itemName, expected] of Object.entries(fixture.expect)) {
       const item = items[itemName];
       if (item === undefined) throw new RangeError(`battery ${name}: fixture ${fixture.name} expects unknown question "${itemName}"`);
@@ -194,8 +189,24 @@ export function defineBattery<const Items extends BatteryItems>(definition: Batt
     throw new RangeError(`battery ${name}: no fixture covers ${uncovered.join(', ')}; every question needs a labelled example`);
   }
 
-  return {
+  const battery: Battery<Items> = {
     ...definition,
+    fixtureCount: fixtures.length,
+    async checkFixtures(port, options = {}) {
+      const checks: FixtureCheck[] = [];
+      for (const fixture of fixtures) {
+        const asked = Object.keys(fixture.expect) as (keyof Items & string)[];
+        const { readings } = await battery.run(port, fixture.state, {
+          only: asked,
+          site: 'calibration',
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        for (const itemName of asked) {
+          checks.push(checkReading(fixture.name, itemName, String(fixture.expect[itemName]), readings[itemName] as AnyReading));
+        }
+      }
+      return checks;
+    },
     async run(port, state, options = {}) {
       const asked = options.only ?? (itemNames as (keyof Items & string)[]);
       const questions: Record<string, BatteryItems[string]['question']> = {};
@@ -232,4 +243,42 @@ export function defineBattery<const Items extends BatteryItems>(definition: Batt
       };
     },
   };
+  return battery;
+}
+
+type AnyReading = YesNoReading | ChoiceReading | ScoreReading;
+
+/**
+ * Scores one reading against a fixture's expectation. Correctness is what
+ * the model concluded (the likelier side of a yes/no, the chosen option, the
+ * nearest level); the outcome says whether the band would have let code act.
+ */
+export function checkReading(fixture: string, aspect: string, expected: string, reading: AnyReading): FixtureCheck {
+  switch (reading.kind) {
+    case 'yes-no': {
+      const got = reading.probability >= 0.5 ? 'yes' : 'no';
+      const signal = Math.max(reading.probability, 1 - reading.probability);
+      return { fixture, aspect, expected, got, correct: got === expected, signal, outcome: reading.outcome };
+    }
+    case 'choice':
+      return {
+        fixture,
+        aspect,
+        expected,
+        got: reading.choice,
+        correct: reading.choice === expected,
+        signal: reading.confidence,
+        outcome: reading.outcome,
+      };
+    case 'score':
+      return {
+        fixture,
+        aspect,
+        expected,
+        got: String(reading.level),
+        correct: String(reading.level) === expected,
+        signal: reading.confidence,
+        outcome: reading.outcome,
+      };
+  }
 }
