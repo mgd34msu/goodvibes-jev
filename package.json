@@ -1,0 +1,24 @@
+{
+  "name": "goodvibes-jev",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "engines": {
+    "bun": "1.3.14"
+  },
+  "description": "The goodvibes platform with Jev judgment built in: the judgment foundation, the engine, and the daemon, TUI, agent and web UI products.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "products/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3"
+  }
+}

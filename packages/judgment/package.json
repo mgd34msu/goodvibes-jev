@@ -1,0 +1,10 @@
+{
+  "name": "@goodvibes-jev/judgment",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The level 0 Jev foundation: judgment port, typed readings, batteries, patterns, compound patterns, decision log and calibration.",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
