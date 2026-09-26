@@ -2,7 +2,7 @@ import {
   getPublishRegistryOverride,
   publicPackageDirs,
   getRootVersion,
-  readPackage,
+  packageNameForDir,
   run,
 } from './release-shared.ts';
 
@@ -38,13 +38,6 @@ type CommandError = Error & {
   readonly stderr?: Buffer | string;
   readonly stdout?: Buffer | string;
 };
-
-function packageNameForDir(dir: string): string {
-  const pkg = readPackage(dir);
-  const name = pkg.name;
-  if (typeof name !== 'string' || !name) throw new Error(`Package ${dir} is missing a string name.`);
-  return name;
-}
 
 function sleep(ms: number) {
   return new Promise((resolve) => {
@@ -86,19 +79,55 @@ function commandErrorText(error: unknown): string {
   ].filter(Boolean).join('\n');
 }
 
-function isMissingPublishedVersionError(error: unknown): boolean {
-  const text = commandErrorText(error);
-  return /\b(?:E404|ETARGET)\b/.test(text)
-    || /No match found for version/i.test(text)
-    || /No matching version found/i.test(text)
-    || /is not in this registry/i.test(text);
+/**
+ * npm's error code for a failed `npm view --json`.
+ *
+ * With --json, npm writes the failure to stdout as `{ "error": { "code", ... } }`,
+ * whether the package is unknown or only the version is ("No match found for
+ * version" and "is not in this registry" both arrive as code E404). The code
+ * field is a fixed format, so the decision reads it and never the wording.
+ */
+export function npmViewErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const stdout = (error as CommandError).stdout?.toString().trim();
+  if (!stdout) return null;
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    const code = (parsed as { readonly error?: { readonly code?: unknown } } | null)?.error?.code;
+    return typeof code === 'string' ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The npm error codes that mean the package or the version is absent from the registry. */
+const MISSING_CODES: ReadonlySet<string> = new Set(['E404', 'ETARGET']);
+
+export function isMissingPublishedVersionError(error: unknown): boolean {
+  const code = npmViewErrorCode(error);
+  return code !== null && MISSING_CODES.has(code);
+}
+
+/**
+ * The value of an `npm view <spec> <field> --json` answer: a JSON string, or
+ * nothing when the registry holds no such field (gitHead is often absent).
+ */
+export function parseNpmViewString(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed: unknown = JSON.parse(trimmed);
+  if (typeof parsed === 'string') return parsed || null;
+  // A spec that matches several versions answers with an array; the pinned
+  // version queried here matches one, so take its single value.
+  if (Array.isArray(parsed) && typeof parsed[parsed.length - 1] === 'string') return parsed[parsed.length - 1] as string;
+  return null;
 }
 
 function readPublishedVersion(packageName: string, options: VerifyPublishedOptions): string | null {
   try {
     const publishedVersion = run(
       'npm',
-      ['view', `${packageName}@${options.version}`, 'version', '--registry', options.registry],
+      ['view', `${packageName}@${options.version}`, 'version', '--json', '--registry', options.registry],
       process.cwd(),
       {
         auth: true,
@@ -106,9 +135,9 @@ function readPublishedVersion(packageName: string, options: VerifyPublishedOptio
         packageName,
         stdio: 'pipe',
       },
-    ).trim();
+    );
 
-    return publishedVersion || null;
+    return parseNpmViewString(publishedVersion);
   } catch (error) {
     if (isMissingPublishedVersionError(error)) {
       return null;
@@ -133,7 +162,7 @@ function readPublishedGitHead(packageName: string, options: VerifyPublishedOptio
   try {
     const gitHead = run(
       'npm',
-      ['view', `${packageName}@${options.version}`, 'gitHead', '--registry', options.registry],
+      ['view', `${packageName}@${options.version}`, 'gitHead', '--json', '--registry', options.registry],
       process.cwd(),
       {
         auth: true,
@@ -141,8 +170,8 @@ function readPublishedGitHead(packageName: string, options: VerifyPublishedOptio
         packageName,
         stdio: 'pipe',
       },
-    ).trim();
-    return gitHead || null;
+    );
+    return parseNpmViewString(gitHead);
   } catch (error) {
     if (isMissingPublishedVersionError(error)) return null;
     throw new Error(

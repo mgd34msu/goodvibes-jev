@@ -15,11 +15,13 @@
  *     failures), the wording is read by the engine failure battery through
  *     `readFailure`, and only a `transient_network` yes strong enough to act on
  *     retries. The judgment port is built from the environment the first time
- *     a reading is needed; without one the install failure is reported with
- *     the reason no reading could be made. There is no pattern-list fallback.
+ *     a reading is needed (as packages/judgment/scripts/calibrate.ts builds
+ *     one), unless one is already installed; without one the install failure
+ *     is reported with the reason no reading could be made. There is no
+ *     pattern-list fallback.
  */
 import { createSystemOnePort, judgmentConfigFromEnv } from '@goodvibes-jev/judgment';
-import { installJudgmentPort, readFailure } from '@goodvibes-jev/engine/errors';
+import { installJudgmentPort, judgmentPort, JudgmentPortMissingError, readFailure } from '@goodvibes-jev/engine/errors';
 
 type CommandError = Error & {
   readonly code?: unknown;
@@ -71,12 +73,14 @@ export function installFailureText(error: unknown): string {
   return [commandError.message, tail].filter(Boolean).join('\n');
 }
 
-let portInstalled = false;
-
-function ensureJudgmentPort(): void {
-  if (portInstalled) return;
-  installJudgmentPort(createSystemOnePort(judgmentConfigFromEnv(process.env)));
-  portInstalled = true;
+/** Uses the installed judgment port, building one from the environment when none is installed. */
+function ensureJudgmentPort(site: string): void {
+  try {
+    judgmentPort(site);
+  } catch (error) {
+    if (!(error instanceof JudgmentPortMissingError)) throw error;
+    installJudgmentPort(createSystemOnePort(judgmentConfigFromEnv(process.env)));
+  }
 }
 
 /** Whether a failed install is a transient network fault worth another attempt. */
@@ -84,7 +88,7 @@ export async function isTransientInstallFailure(error: unknown, site: string): P
   const code = installErrorCode(error);
   if (code !== null) return TRANSIENT_CODES.has(code.toUpperCase());
   try {
-    ensureJudgmentPort();
+    ensureJudgmentPort(site);
   } catch (portError) {
     const reason = portError instanceof Error ? portError.message : String(portError);
     throw new AggregateError(

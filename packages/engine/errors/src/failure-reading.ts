@@ -132,6 +132,16 @@ export const failureReading = defineBattery({
       expect: { category: 'timeout', transient_network: 'yes', billing: 'no' },
     },
     {
+      name: 'package install cut off mid-download',
+      state: 'Message: Command failed: bun add --force --no-cache @goodvibes-jev/engine zod@^4\nerror: ConnectionRefused downloading package manifest zod',
+      expect: { category: 'network', transient_network: 'yes', billing: 'no', context_exceeded: 'no' },
+    },
+    {
+      name: 'package install of a missing package',
+      state: 'Message: Command failed: bun add --force --no-cache @goodvibes-jev/engine@2.0.23\nerror: GET https://registry.npmjs.org/@goodvibes-jev%2fengine - 404\nerror: package "@goodvibes-jev/engine" not found registry.npmjs.org/@goodvibes-jev/engine 404',
+      expect: { category: 'not_found', transient_network: 'no', rate_limited: 'no' },
+    },
+    {
       name: 'tool failure unrelated to transport',
       state: 'Message: File not writable: /etc/hosts is owned by root',
       expect: { transient_network: 'no', before_response: 'no', rate_limited: 'no', provider_unusable: 'no' },
