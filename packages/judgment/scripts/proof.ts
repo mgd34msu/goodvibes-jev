@@ -14,13 +14,17 @@ import {
   calibrate,
   createSystemOnePort,
   fanOut,
+  featurize,
   formatReport,
+  noul,
+  score,
+  splitCompound,
   judgmentConfigFromEnv,
   SqliteDecisionLog,
   verifyThenEscalate,
   withDecisionLog,
 } from '../src/index.ts';
-import { judge, registry, ticketTriage, ticketUrgency } from './reference-registry.ts';
+import { judge, multipleActions, registry, ticketTriage, ticketUrgency } from './reference-registry.ts';
 
 const config = judgmentConfigFromEnv(process.env);
 const logPath = join(tmpdir(), `judgment-proof-${Date.now()}.sqlite`);
@@ -58,6 +62,26 @@ const cascade = await verifyThenEscalate(
 const cascadeOk = cascade.accepted && cascade.tier === 'strong';
 console.log(`${cascadeOk ? 'PASS' : 'FAIL'}  cascade  ${JSON.stringify(cascade.attempts.map((a) => ({ tier: a.tier, verdict: a.judgment.verdict })))}`);
 if (!cascadeOk) failed++;
+
+const split = await splitCompound(port, multipleActions, async (request) => request.split(' and '), 'turn off the living room lights and lock the front door');
+const splitOk = split.parts.length === 2 && !split.uncertain;
+console.log(`${splitOk ? 'PASS' : 'FAIL'}  compound split  ${JSON.stringify(split.parts)} p=${split.reading.probability}`);
+if (!splitOk) failed++;
+
+const columns = await featurize(
+  port,
+  {
+    oak: score('How strongly does the tasting note dwell on oak?', ['Not present', 'Mentioned in passing', 'Moderate', 'Dominant']),
+    fault: noul('Does the tasting note name a fault or defect in the wine?'),
+  },
+  ['Heavy toasted oak, vanilla and cedar dominate the palate from start to finish.', 'Bright citrus and green apple; unfortunately the wine is corked and smells of wet cardboard.'],
+  { label: 'proof.features' },
+);
+const oak = columns.find((column) => column.name === 'oak')!.values;
+const fault = columns.find((column) => column.name === 'fault')!.values;
+const featuresOk = oak[0]! > oak[1]! && fault[1]! > fault[0]! && columns.some((column) => column.name === 'oak_sd');
+console.log(`${featuresOk ? 'PASS' : 'FAIL'}  features  ${JSON.stringify(columns)}`);
+if (!featuresOk) failed++;
 
 const entries = log.query({ limit: 100_000 });
 const unlogged = entries.filter((entry) => entry.readings === undefined && entry.error === undefined);

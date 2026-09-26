@@ -15,6 +15,7 @@ export type {
   ChoiceResponse,
   EntryType,
   JsonValue,
+  ModelCard,
   NoulQuestion,
   NoulResponse,
   Question,

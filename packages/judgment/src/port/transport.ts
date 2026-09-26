@@ -1,4 +1,5 @@
 import {
+  type ModelCard,
   APIConnectionError,
   APIError,
   APIUserAbortError,
@@ -36,9 +37,8 @@ function toJudgmentError(error: unknown): JudgmentError {
   return new JudgmentError('unavailable', error instanceof Error ? error.message : String(error), { cause: error });
 }
 
-/** A JudgmentPort that asks a System One endpoint (hosted Jev or a local model). */
-export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
-  const client = new TypeSafeClient({
+function clientFor(config: JudgmentConfig): TypeSafeClient {
+  return new TypeSafeClient({
     apiKey: config.endpoint.apiKey,
     baseURL: config.endpoint.baseURL,
     defaultModel: config.model,
@@ -47,6 +47,20 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
     logLevel: 'off',
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
   });
+}
+
+/** The model names the endpoint accepts, with descriptions and release dates (GET /v1/models). */
+export async function listSystemOneModels(config: JudgmentConfig): Promise<readonly ModelCard[]> {
+  try {
+    return await clientFor(config).models.list();
+  } catch (error) {
+    throw toJudgmentError(error);
+  }
+}
+
+/** A JudgmentPort that asks a System One endpoint (hosted Jev or a local model). */
+export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
+  const client = clientFor(config);
 
   return {
     model: config.model,

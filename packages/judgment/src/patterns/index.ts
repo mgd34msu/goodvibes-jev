@@ -35,3 +35,28 @@ export { definePolicyChecklist, type PolicyChecklist, type PolicyResult, type Po
 export { REPLY_READINGS, defineReplyReader, type ReadReply, type ReplyReader, type ReplyReadingName, type ReplySpec } from './reply.ts';
 export { defineRerank, type Candidate, type Ranked, type Rerank, type RerankFixture, type RerankSpec, type Reranking } from './rerank.ts';
 export { NONE, defineSelector, runSelection, type SelectSpec, type Selection, type SelectionConfig, type Selector } from './select.ts';
+export { defineFunctionCaller, type ArgSpec, type ArgValue, type CallerSpec, type ChoiceArg, type FilledCall, type FlagArg, type FunctionCaller, type FunctionSpec, type SetArg } from './call.ts';
+export { defineCoarseningClassifier, type Coarsened, type CoarseningClassifier, type CoarseningSpec } from './coarsen.ts';
+export { defineCounter, type Count, type Counter, type CounterSpec } from './count.ts';
+export {
+  ABSENCE_METRIC,
+  FIELD_METRICS,
+  defineExtractionVerifier,
+  type ExtractionInput,
+  type ExtractionVerifier,
+  type ExtractionVerifierSpec,
+  type FieldMetric,
+  type FieldSpec,
+  type Verified,
+} from './extraction.ts';
+export { defineRuleLadder, type Laddered, type LadderSpec, type RuleLadder, type Rung } from './ladder.ts';
+export {
+  defineStructureRecovery,
+  renderMarkdown,
+  splitLines,
+  type Block,
+  type BlockType,
+  type Line,
+  type StructureRecovery,
+  type StructureSpec,
+} from './structure.ts';
