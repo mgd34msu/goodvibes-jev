@@ -38,7 +38,6 @@ export interface YesNoBand {
   readonly no: ConfidenceBand;
 }
 
-/** A stake level's bands: one confidence band, also used on both sides of a yes/no. */
 const bandsFrom = (confidence: ConfidenceBand): { readonly yesNo: YesNoBand; readonly confidence: ConfidenceBand } => ({
   yesNo: { yes: confidence, no: confidence },
   confidence,
@@ -69,17 +68,12 @@ const thresholdsOf = (band: ConfidenceBand): number[] => (band.actAt === null ? 
 /** Outcomes from the lowest confidence to the highest; a confidence reaching n thresholds has the nth. */
 const RISING_OUTCOMES: readonly Outcome[] = ['escalate', 'confirm', 'act'];
 
-/** Throws unless a confidence band's thresholds are orderedInUnit; `whole` is the band the error reports. */
-function assertOrdered(band: ConfidenceBand, whole: ConfidenceBand | YesNoBand): void {
-  if (!orderedInUnit(thresholdsOf(band))) throw new RangeError(`band thresholds out of order: ${JSON.stringify(whole)}`);
-}
-
-/** Throws unless the band can be used; a yes/no band is checked side by side. */
+/** Throws unless every side's thresholds are orderedInUnit and, for a yes/no band, no probability could confirm both sides. */
 export function assertBand(band: ConfidenceBand | YesNoBand): void {
-  if (!('yes' in band)) return assertOrdered(band, band);
-  assertOrdered(band.yes, band);
-  assertOrdered(band.no, band);
-  if (band.yes.confirmAt + band.no.confirmAt <= 1) throw new RangeError(`yes/no band sides overlap, so one probability could confirm both: ${JSON.stringify(band)}`);
+  const sides = 'yes' in band ? [band.yes, band.no] : [band];
+  const ordered = sides.every((side) => orderedInUnit(thresholdsOf(side)));
+  const overlapping = 'yes' in band && band.yes.confirmAt + band.no.confirmAt <= 1;
+  if (!ordered || overlapping) throw new RangeError(`band thresholds out of order or overlapping: ${JSON.stringify(band)}`);
 }
 
 /** The outcome a confidence reaches in a band. */

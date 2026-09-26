@@ -223,6 +223,19 @@ describe('structure recovery', () => {
     );
     expect(renderMarkdown([block('Platform team', 'list_item'), block('Web team', 'list_item')])).toBe('- Platform team\n- Web team\n');
   });
+
+  test('escapes recovered text so it renders as written, and fences code past any backticks inside it', () => {
+    const block = (text: string, type: Block['type']): Block => ({
+      text, lines: [0], gap: false, type, confidence: 1, headingLevel: 'section', step: 0.1, callout: 'note',
+    });
+    expect(renderMarkdown([block('#1 priority: fix *all* the [links] <script>x</script>', 'paragraph')])).toBe(
+      '\\#1 priority: fix \\*all\\* the \\[links\\] \\<script\\>x\\</script\\>\n',
+    );
+    expect(renderMarkdown([block('2. is a number, not a step', 'paragraph'), block('- not a bullet', 'paragraph')])).toBe(
+      '2\\. is a number, not a step\n\n\\- not a bullet\n',
+    );
+    expect(renderMarkdown([block('echo ```', 'code'), block('done', 'code')])).toBe('````\necho ```\ndone\n````\n');
+  });
 });
 
 describe('feature columns', () => {

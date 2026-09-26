@@ -53,10 +53,15 @@ function stitchQuestions(lines: readonly Line[]): Record<string, Question> {
   return Object.fromEntries(
     joinableLines(lines).map((index) => [
       lineId(index),
-      noul(`Does line ${lineId(index)} pick up mid-sentence, continuing a sentence left unfinished at the end of line ${lineId(index - 1)}?`, {
-        true: 'The line starts in the middle of a sentence that began on the previous line; the line break tore the sentence apart',
-        false: 'The line begins a new sentence, item, heading, or thought of its own',
-      }),
+      // The two lines are quoted in the question: asked by line id alone, clear continuations read near the join bar.
+      noul(
+        {
+          question: 'Does `next` continue a sentence that `previous` leaves unfinished, so the line break falls inside one sentence?',
+          previous: lines[index - 1]!.text,
+          next: lines[index]!.text,
+        },
+        { true: 'The line break falls inside one sentence: `next` continues it', false: '`next` starts a new sentence, item, heading, or thought of its own' },
+      ),
     ]),
   );
 }

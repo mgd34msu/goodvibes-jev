@@ -1,39 +1,17 @@
-import { Database } from 'bun:sqlite';
-import type { DecisionContext, JsonValue } from '../port/types.ts';
-import type { AnsweredEntry, CallRecord, DecisionEntry, DecisionId, DecisionLog, DecisionNote, DecisionQuery, FailedEntry, NewDecisionEntry } from './types.ts';
+import type { Database, Statement } from 'bun:sqlite';
+import type { JsonValue } from '../port/types.ts';
+import type { DecisionEntry, DecisionId, DecisionLog, DecisionNote, DecisionQuery, NewDecisionEntry } from './types.ts';
+import { COLUMNS, TABLE, openLog, rowsOf, type Params } from './sqlite-schema.ts';
 
-/** The one table the log keeps. */
-const TABLE = 'decisions';
+/** What reading an entry back needs from its row. */
+interface Row {
+  readonly id: string;
+  readonly entry: string;
+  readonly readings: string | null;
+  readonly action: string | null;
+}
 
-/** Bumped whenever the table shape changes; an older file is refused rather than misread. */
-const SCHEMA_VERSION = 1;
-
-/** Every column and its SQL declaration, in table order. */
-const COLUMNS = {
-  id: 'TEXT PRIMARY KEY',
-  at: 'TEXT NOT NULL',
-  status: 'TEXT NOT NULL',
-  battery: 'TEXT',
-  battery_version: 'INTEGER',
-  pattern: 'TEXT',
-  site: 'TEXT',
-  requested_model: 'TEXT NOT NULL',
-  model: 'TEXT',
-  state_hash: 'TEXT NOT NULL',
-  questions: 'TEXT NOT NULL',
-  answers: 'TEXT',
-  readings: 'TEXT',
-  action: 'TEXT',
-  latency_ms: 'REAL NOT NULL',
-  input_tokens: 'INTEGER',
-  output_tokens: 'INTEGER',
-  request_id: 'TEXT',
-  error_kind: 'TEXT',
-  error_message: 'TEXT',
-} as const;
-type Column = keyof typeof COLUMNS;
-
-/** Each note kind is stored in the column of the same name, attached after the call is recorded. */
+/** Each note kind is stored, as text, in the column of the same name. */
 type NoteColumn = DecisionNote['kind'];
 /** How a note of one kind is written to its column and read back. */
 interface NoteCodec<N extends DecisionNote> {
@@ -41,179 +19,98 @@ interface NoteCodec<N extends DecisionNote> {
   read(text: string): N;
 }
 const NOTE_CODECS: { readonly [K in NoteColumn]: NoteCodec<Extract<DecisionNote, { kind: K }>> } = {
-  readings: { write: (note) => JSON.stringify(note.readings), read: (text) => ({ kind: 'readings', readings: parseJson(text) }) },
+  readings: { write: (note) => JSON.stringify(note.readings), read: (text) => ({ kind: 'readings', readings: JSON.parse(text) as JsonValue }) },
   action: { write: (note) => note.action, read: (text) => ({ kind: 'action', action: text }) },
 };
 const NOTE_COLUMNS = Object.keys(NOTE_CODECS) as NoteColumn[];
+/** A new row stores its id and the entry; SQLite derives the rest, and notes attach later. */
+const INSERT_COLUMNS = ['id', 'entry'] as const satisfies readonly (keyof typeof COLUMNS)[];
+type InsertParams = Readonly<Record<(typeof INSERT_COLUMNS)[number], string>>;
 const codecFor = (column: NoteColumn): NoteCodec<DecisionNote> => NOTE_CODECS[column] as NoteCodec<DecisionNote>;
-type InsertColumn = Exclude<Column, NoteColumn>;
-const INSERT_COLUMNS = (Object.keys(COLUMNS) as Column[]).filter((column): column is InsertColumn => !(NOTE_COLUMNS as readonly Column[]).includes(column));
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS ${TABLE} (
-${Object.entries(COLUMNS).map(([column, declaration]) => `  ${column} ${declaration}`).join(',\n')}
-);
-CREATE INDEX IF NOT EXISTS ${TABLE}_battery_at ON ${TABLE} (battery, at);
-CREATE INDEX IF NOT EXISTS ${TABLE}_site_at ON ${TABLE} (site, at);
-CREATE INDEX IF NOT EXISTS ${TABLE}_at ON ${TABLE} (at);
-`;
+const toParams = (id: DecisionId, entry: NewDecisionEntry): InsertParams => ({ id, entry: JSON.stringify(entry) });
 
-/** A column's value as bun:sqlite returns it: numbers for INTEGER and REAL, strings for TEXT, null unless declared NOT NULL or PRIMARY KEY. */
-type ValueOf<D extends string> =
-  | (D extends `INTEGER${string}` | `REAL${string}` ? number : string)
-  | (D extends `${string}NOT NULL` | `${string}PRIMARY KEY` ? never : null);
-type Row = { readonly [C in Column]: ValueOf<(typeof COLUMNS)[C]> };
-
-type Params = Record<string, string | number | null>;
-
-/** The same record without its null entries. */
-function presentOnly<T extends Record<string, unknown>>(record: T): { [K in keyof T]?: NonNullable<T[K]> } {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== null)) as { [K in keyof T]?: NonNullable<T[K]> };
-}
-
-/** Fields stored one to one, each with the column it is stored in. */
-type FieldColumns = Readonly<Record<string, Column>>;
-
-/** The fields every entry stores as they are, answered or failed. */
-const CALL_COLUMNS = {
-  at: 'at',
-  status: 'status',
-  requestedModel: 'requested_model',
-  stateHash: 'state_hash',
-  latencyMs: 'latency_ms',
-  requestId: 'request_id',
-} as const satisfies FieldColumns;
-const CONTEXT_COLUMNS = { battery: 'battery', batteryVersion: 'battery_version', pattern: 'pattern', site: 'site' } as const satisfies Record<keyof DecisionContext, Column>;
-/** An answered entry's model and token usage. */
-const ANSWERED_COLUMNS = { model: 'model' } as const satisfies FieldColumns;
-const USAGE_COLUMNS = { inputTokens: 'input_tokens', outputTokens: 'output_tokens' } as const satisfies FieldColumns;
-/** A failed entry's error. */
-const ERROR_COLUMNS = { kind: 'error_kind', message: 'error_message' } as const satisfies FieldColumns;
-
-/** Copies fields into their columns; an absent field stores null. */
-function writeFields(map: FieldColumns, source: object): Partial<Row> {
-  return Object.fromEntries(Object.entries(map).map(([field, column]) => [column, (source as Record<string, unknown>)[field] ?? null]));
-}
-
-/** Copies columns back into their fields, as the shape `T` those fields make up; a null column leaves its field out. */
-function readFields<T extends object>(map: FieldColumns, row: Row): T {
-  return presentOnly(Object.fromEntries(Object.entries(map).map(([field, column]) => [field, row[column]]))) as T;
-}
-
-const parseJson = (text: string | null): JsonValue => (text === null ? null : (JSON.parse(text) as JsonValue));
-
-function notesOf(row: Row): DecisionNote[] {
-  return NOTE_COLUMNS.flatMap((column) => {
+function toEntry(row: Row): DecisionEntry {
+  const entry = { ...(JSON.parse(row.entry) as NewDecisionEntry), id: row.id as DecisionId };
+  if (entry.status === 'failed') return entry;
+  const notes = NOTE_COLUMNS.flatMap((column) => {
     const text = row[column];
     return text === null ? [] : [codecFor(column).read(text)];
   });
+  return { ...entry, notes };
 }
 
-function toEntry(row: Row): DecisionEntry {
-  const call = {
-    id: row.id as DecisionId,
-    ...readFields<Pick<CallRecord, 'at' | 'requestedModel' | 'stateHash' | 'latencyMs' | 'requestId'>>(CALL_COLUMNS, row),
-    context: readFields<DecisionContext>(CONTEXT_COLUMNS, row),
-    questions: parseJson(row.questions),
-  };
-  if (row.status === 'failed') return { ...call, status: 'failed', error: readFields<FailedEntry['error']>(ERROR_COLUMNS, row) };
-  return {
-    ...call,
-    ...readFields<Pick<AnsweredEntry, 'model'>>(ANSWERED_COLUMNS, row),
-    status: 'answered',
-    answers: parseJson(row.answers),
-    usage: readFields<AnsweredEntry['usage']>(USAGE_COLUMNS, row),
-    notes: notesOf(row),
-  };
-}
-
-/** Parameter names match column names. */
-type InsertParams = Pick<Row, InsertColumn>;
-
-const INSERT = `INSERT INTO ${TABLE} (${INSERT_COLUMNS.join(', ')}) VALUES (${INSERT_COLUMNS.map((column) => `$${column}`).join(', ')})`;
-
-function toParams(id: DecisionId, entry: NewDecisionEntry): InsertParams {
-  const answered = entry.status === 'answered' ? entry : undefined;
-  const failed = entry.status === 'failed' ? entry : undefined;
-  return {
-    id,
-    ...writeFields(CALL_COLUMNS, entry),
-    ...writeFields(CONTEXT_COLUMNS, entry.context),
-    ...writeFields(ANSWERED_COLUMNS, answered ?? {}),
-    ...writeFields(USAGE_COLUMNS, answered?.usage ?? {}),
-    ...writeFields(ERROR_COLUMNS, failed?.error ?? {}),
-    questions: JSON.stringify(entry.questions),
-    answers: answered === undefined ? null : JSON.stringify(answered.answers),
-  } as InsertParams;
-}
+/** Every value is bound under its column's name. */
+const param = (column: keyof typeof COLUMNS): string => `$${column}`;
+const equals = (column: keyof typeof COLUMNS): string => `${column} = ${param(column)}`;
+const ID_IS = equals('id');
+/** Every statement the log runs. */
+const SQL = {
+  insert: `INSERT INTO ${TABLE} (${INSERT_COLUMNS.join(', ')}) VALUES (${INSERT_COLUMNS.map(param).join(', ')})`,
+  attach: (column: NoteColumn) => `UPDATE ${TABLE} SET ${equals(column)} WHERE ${ID_IS} AND status = 'answered'`,
+  /** Newest first, up to $limit, meeting every condition given. */
+  matching: (conditions: readonly string[]) =>
+    `SELECT * FROM ${TABLE} WHERE ${['TRUE', ...conditions].join(' AND ')} ORDER BY at DESC, id DESC LIMIT $limit`,
+};
 
 const OUTCOME_FILTER =
   `EXISTS (SELECT 1 FROM json_each(${TABLE}.readings) WHERE json_extract(json_each.value, '$.outcome') = $outcome)`;
 
+/** The condition each query filter puts on a row; the filter's value is bound under the filter's own name. */
+const FILTERS: Readonly<Record<Exclude<keyof DecisionQuery, 'limit'>, string>> = {
+  battery: equals('battery'),
+  site: equals('site'),
+  since: 'at >= $since',
+  until: 'at < $until',
+  outcome: OUTCOME_FILTER,
+  status: equals('status'),
+};
+
 /** The WHERE clauses and parameters for a query. */
 function filterFor(query: DecisionQuery): { where: string[]; params: Params } {
-  const filters: [string | undefined, string, string][] = [
-    [query.battery, 'battery = $battery', 'battery'],
-    [query.site, 'site = $site', 'site'],
-    [query.since, 'at >= $since', 'since'],
-    [query.until, 'at < $until', 'until'],
-    [query.outcome, OUTCOME_FILTER, 'outcome'],
-    [query.status, 'status = $status', 'status'],
-  ];
-  const active = filters.filter(([value]) => value !== undefined);
-  return {
-    where: active.map(([, clause]) => clause),
-    params: Object.fromEntries(active.map(([value, , param]) => [param, value!])),
-  };
+  const active = (Object.keys(FILTERS) as (keyof typeof FILTERS)[]).flatMap((name) => {
+    const value = query[name];
+    return value === undefined ? [] : [{ name, value }];
+  });
+  return { where: active.map(({ name }) => FILTERS[name]), params: Object.fromEntries(active.map(({ name, value }) => [name, value])) };
 }
 
 /** A decision log in a SQLite file (or `:memory:`), created on first use. */
 export class SqliteDecisionLog implements DecisionLog, Disposable {
   readonly #db: Database;
+  /** The writing statements, prepared once. */
+  readonly #insert: Statement;
+  readonly #attach: Readonly<Record<NoteColumn, Statement>>;
 
   constructor(path: string) {
-    this.#db = new Database(path, { create: true, strict: true });
-    this.#db.exec('PRAGMA journal_mode = WAL;');
-    this.#useSchema(path);
-  }
-
-  /** Creates the table in a new file, or refuses a file written with another schema version. */
-  #useSchema(path: string): void {
-    const { user_version: version } = this.#db.query('PRAGMA user_version').get() as { user_version: number };
-    const existing = this.#db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $table").get({ table: TABLE }) !== null;
-    if (existing && version !== SCHEMA_VERSION) {
-      throw new RangeError(`decision log ${path} has schema version ${version}; this build writes version ${SCHEMA_VERSION}`);
-    }
-    this.#db.exec(SCHEMA);
-    this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+    this.#db = openLog(path);
+    this.#insert = this.#db.prepare(SQL.insert);
+    this.#attach = Object.fromEntries(NOTE_COLUMNS.map((column) => [column, this.#db.prepare(SQL.attach(column))])) as Record<NoteColumn, Statement>;
   }
 
   record(entry: NewDecisionEntry): DecisionId {
     const id = Bun.randomUUIDv7() as DecisionId;
-    this.#db.query(INSERT).run(toParams(id, entry));
+    this.#insert.run(toParams(id, entry));
     return id;
   }
 
   attach(id: string, note: DecisionNote): void {
     const column = note.kind;
-    const value = codecFor(column).write(note);
-    const { changes } = this.#db.query(`UPDATE ${TABLE} SET ${column} = $value WHERE id = $id AND status = 'answered'`).run({ id, value });
-    if (changes !== 1) throw new RangeError(`no answered decision ${id} to attach ${column} to`);
+    const { changes } = this.#attach[column].run({ id, [column]: codecFor(column).write(note) });
+    if (changes !== 1) throw new RangeError(`decision ${id} cannot take a ${column} note`);
   }
 
   get(id: string): DecisionEntry | undefined {
-    return this.#entries('WHERE id = $id', { id })[0];
+    return this.#entries(SQL.matching([ID_IS]), { id, limit: 1 })[0];
   }
 
   query(query: DecisionQuery = {}): readonly DecisionEntry[] {
     const { where, params } = filterFor(query);
-    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-    return this.#entries(`${clause} ORDER BY at DESC, id DESC LIMIT $limit`, { ...params, limit: query.limit ?? 1000 });
+    return this.#entries(SQL.matching(where), { ...params, limit: query.limit ?? 1000 });
   }
 
-  /** The entries a SELECT over every column returns with `tail` appended. */
-  #entries(tail: string, params: Params): DecisionEntry[] {
-    return (this.#db.query(`SELECT * FROM ${TABLE} ${tail}`).all(params) as Row[]).map(toEntry);
+  #entries(sql: string, params: Params): DecisionEntry[] {
+    return rowsOf<Row>(this.#db, sql, params).map(toEntry);
   }
 
   [Symbol.dispose](): void {

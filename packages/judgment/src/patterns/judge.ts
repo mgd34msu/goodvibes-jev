@@ -1,6 +1,6 @@
 import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { noul, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
+import { noul, type JsonValue, type JudgmentPort, type NoulQuestion, type NoulResponse } from '../port/types.ts';
 import { assertBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
@@ -24,7 +24,7 @@ export interface JudgeInput {
 export interface JudgeFixture extends JudgeInput {
   readonly name: string;
   readonly expect: {
-    readonly verdict: 'pass' | 'fail';
+    readonly verdict: Exclude<Verdict, 'uncertain'>;
     /** Indexes of criteria that should read as unmet; the rest should read as met. */
     readonly unmet?: readonly number[];
   };
@@ -73,31 +73,43 @@ const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?'
  */
 const VERDICT_OF_ANSWER: Readonly<Record<string, Verdict>> = { yes: 'fail', no: 'pass' };
 const verdictOf = (answer: string): Verdict => VERDICT_OF_ANSWER[answer] ?? 'uncertain';
-/** Indexes of the readings whose answer says the output falls short. */
-const unmetIndexes = (readings: readonly YesNoReading[]): number[] => readings.flatMap((reading, index) => (verdictOf(reading.verdict) === 'fail' ? [index] : []));
 /** The question name a criterion is asked under. */
 const criterionKey = (index: number): string => `criterion_${index}`;
 
 /** Verdicts from worst to best. */
 const WORST_FIRST: readonly Verdict[] = ['fail', 'uncertain', 'pass'];
 
-/** Folds per-criterion and goal readings into one verdict, max-style: the worst reading decides. */
-export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict: Verdict; outcome: Outcome } {
+const isActing = (reading: YesNoReading): boolean => reading.outcome === 'act';
+
+/**
+ * How a settled verdict reads the readings behind it: a fail acts when one
+ * failing reading acts and is backed by the strongest unmet probability; a
+ * pass acts only when every reading acts and is backed by the weakest met one.
+ */
+const SETTLED: Readonly<Record<'fail' | 'pass', { acts(deciding: readonly YesNoReading[]): boolean; signal(strongestUnmet: number): number }>> = {
+  fail: { acts: (deciding) => deciding.some(isActing), signal: (p) => p },
+  pass: { acts: (deciding) => deciding.every(isActing), signal: (p) => 1 - p },
+};
+
+/** The criterion readings and the goal reading a judgment rests on. */
+type JudgedReadings = Pick<Judgment, 'criteria' | 'goal'>;
+const readingsOf = ({ criteria, goal }: JudgedReadings): YesNoReading[] => [...criteria, goal];
+
+/** Folds criterion and goal readings into one verdict, max-style: the worst reading decides. Also names the unmet criteria. */
+export function aggregateJudgment(judged: JudgedReadings): Pick<Judgment, 'verdict' | 'outcome' | 'unmet'> {
+  const readings = readingsOf(judged);
   const verdicts = readings.map((reading) => verdictOf(reading.verdict));
+  const unmet = judged.criteria.flatMap((_, index) => (verdicts[index] === 'fail' ? [index] : []));
   const verdict = WORST_FIRST.find((candidate) => verdicts.includes(candidate)) ?? 'pass';
-  if (verdict === 'uncertain') return { verdict, outcome: 'escalate' };
+  if (verdict === 'uncertain') return { verdict, outcome: 'escalate', unmet };
   const deciding = readings.filter((_, index) => verdicts[index] === verdict);
-  const acting = deciding.filter((reading) => reading.outcome === 'act').length;
-  // A fail acts when one failing reading acts; a pass acts only when every reading does.
-  const confident = verdict === 'fail' ? acting > 0 : acting === deciding.length;
-  return { verdict, outcome: confident ? 'act' : 'confirm' };
+  return { verdict, outcome: SETTLED[verdict].acts(deciding) ? 'act' : 'confirm', unmet };
 }
 
-/** How strongly the readings back the verdict: the strongest unmet reading for a fail, the weakest met one otherwise. */
+/** How strongly the readings back the verdict; an uncertain verdict is scored as a pass that did not settle. */
 function verdictSignal(judgment: Judgment): number {
-  const unmetProbabilities = [...judgment.criteria, judgment.goal].map((reading) => reading.probability);
-  const strongestUnmet = Math.max(...unmetProbabilities);
-  return judgment.verdict === 'fail' ? strongestUnmet : 1 - strongestUnmet;
+  const strongestUnmet = Math.max(...readingsOf(judgment).map((reading) => reading.probability));
+  return SETTLED[judgment.verdict === 'fail' ? 'fail' : 'pass'].signal(strongestUnmet);
 }
 
 function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
@@ -119,9 +131,10 @@ function assertHasCriteria(judge: string, input: JudgeInput): void {
 function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {
   assertHasCriteria(judge, fixture);
   const unmet = fixture.expect.unmet ?? [];
-  const missing = unmet.find((index) => !(index >= 0 && index < fixture.criteria.length));
+  const missing = unmet.find((index) => fixture.criteria[index] === undefined);
   if (missing !== undefined) throw new RangeError(`judge ${judge}: fixture ${fixture.name} names criterion ${missing}, which does not exist`);
-  if (fixture.expect.verdict === 'pass' && unmet.length > 0) throw new RangeError(`judge ${judge}: fixture ${fixture.name} passes with unmet criteria`);
+  const passesWithUnmet = fixture.expect.verdict === 'pass' && unmet.length > 0;
+  if (passesWithUnmet) throw new RangeError(`judge ${judge}: fixture ${fixture.name} passes with unmet criteria`);
 }
 
 function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestion> {
@@ -139,11 +152,10 @@ export function defineJudge(spec: JudgeSpec): Judge {
       assertHasCriteria(spec.name, input);
       const state = { goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) };
       const result = await askAs(port, spec, 'judge', state, judgeQuestions(input.criteria), options);
-      const answers = result.answers as Record<string, { type: 'noul'; noul: number }>;
+      const answers = result.answers as Readonly<Record<string, NoulResponse>>;
       const criteria = input.criteria.map((_, index) => readYesNo(answers[criterionKey(index)]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
-      const { verdict, outcome } = aggregateJudgment([...criteria, goal]);
-      const unmet = unmetIndexes(criteria);
+      const { verdict, outcome, unmet } = aggregateJudgment({ criteria, goal });
       recordReadings(port, result, { verdict, outcome, goal, criteria });
       return { verdict, outcome, criteria, goal, unmet, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },

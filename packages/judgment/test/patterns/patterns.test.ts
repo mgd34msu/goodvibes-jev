@@ -68,7 +68,7 @@ describe('judge', () => {
     [[reading('yes', 'confirm'), reading('uncertain', 'escalate')], 'fail', 'confirm'],
     [[reading('no', 'act'), reading('yes', 'act')], 'fail', 'act'],
   ] as const)('aggregates max-style %#', (readings, verdict, outcome) => {
-    expect(aggregateJudgment(readings)).toEqual({ verdict, outcome });
+    expect(aggregateJudgment({ criteria: readings.slice(0, -1), goal: readings.at(-1)! })).toMatchObject({ verdict, outcome });
   });
 
   test('asks one unmet-question per criterion plus the goal in one request, and names unmet criteria', async () => {

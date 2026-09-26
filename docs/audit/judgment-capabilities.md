@@ -68,7 +68,7 @@ The proof is `bun run proof` in `packages/judgment`. It calibrates every referen
 | Math, numbers and dates | arithmetic and date comparison stay in code; dates are read as parts (`dates.ts`) |
 | Large state full of irrelevant detail | the context budget check refuses oversized requests; existence and rerank take filtered shortlists |
 | Adversarial content | the policy checklist and the passage ladder put the injection rung first; state is data, never instructions |
-| Literal reading | fixtures catch it: calibration showed a parameter-named question read "daily" as not stating a bar size, and the reworded question passes |
+| Literal reading | fixtures catch it: calibration showed a parameter-named question read "daily" as not stating a bar size, and the reworded question passes; a structure-recovery join question that named lines only by id read clear mid-sentence continuations at 0.19 to 0.40, next to the join bar, and quoting both lines in the question moved them to 0.89 to 0.97 |
 | Structural invariants | no threshold is carried between a Noul and a Choice; the selector uses both on purpose, the Choice to pick and the Nouls to gate |
 | Generation | the package never generates text; the cascade and compound split take generators as ports |
 
