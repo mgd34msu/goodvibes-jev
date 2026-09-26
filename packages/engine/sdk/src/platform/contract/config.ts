@@ -55,9 +55,14 @@ export interface ContractConfig {
 
 /** Defaults for every `contract.*` setting; the schema declares the same values. */
 export const CONTRACT_CONFIG_DEFAULTS: ContractConfig = {
-  autoCommit: false,
+  autoCommit: true,
   commitScope: 'scoped',
-  gates: [],
+  // The WRFC defaults, carried over: typecheck and lint gate every unit, build is opt-in.
+  gates: [
+    { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
+    { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },
+    { name: 'build', command: 'npm run build', enabled: false },
+  ],
   gateTimeoutMs: 120_000,
   acceptanceStakes: 'high',
   midRunChecks: true,

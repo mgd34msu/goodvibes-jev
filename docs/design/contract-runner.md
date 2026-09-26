@@ -815,9 +815,9 @@ The `ORCHESTRATION_GRAPH_*` and `ORCHESTRATION_NODE_*` events emitted today for 
 
 | Key | Type, default | Meaning |
 |---|---|---|
-| `contract.autoCommit` | boolean, false | commit the deliverable when it passes (6.5) |
+| `contract.autoCommit` | boolean, true (the WRFC default) | commit the deliverable when it passes (6.5) |
 | `contract.commitScope` | `off` \| `scoped` \| `all`, `scoped` | as 6.5 |
-| `contract.gates` | `{ name, command, enabled }[]`, [] | quality gates |
+| `contract.gates` | `{ name, command, enabled }[]`, the WRFC defaults (typecheck and lint on, build off) | quality gates |
 | `contract.gateTimeoutMs` | number, 120000 | per gate (the old `WRFC_GATE_TIMEOUT_MS`) |
 | `contract.acceptanceStakes` | `high` \| `critical`, `high` | which declared pass band the judges use (4.4) |
 | `contract.midRunChecks` | boolean, true | turn-end checks |

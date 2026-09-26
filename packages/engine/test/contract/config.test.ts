@@ -46,7 +46,7 @@ describe('the contract settings in the schema', () => {
   });
 
   test('the category defaults match the runner defaults, gates included', () => {
-    expect(DEFAULT_CONFIG.contract).toEqual({ ...CONTRACT_CONFIG_DEFAULTS, gates: [] });
+    expect(DEFAULT_CONFIG.contract).toEqual({ ...CONTRACT_CONFIG_DEFAULTS, gates: [...CONTRACT_CONFIG_DEFAULTS.gates] });
   });
 
   test('ui.contractMessages replaces ui.wrfcMessages, and no wrfc setting remains', () => {
@@ -122,7 +122,7 @@ describe('readContractConfig', () => {
     expect(readContractConfig(reader({ autoCommit: true })).autoCommit).toBe(true);
   });
 
-  test('malformed gate entries are dropped and a non-array gates value reads as none', () => {
+  test('malformed gate entries are dropped and a non-array gates value reads as the default gates', () => {
     const gates = [
       { name: 'test', command: 'bun test', enabled: true },
       { name: 'broken', enabled: true },
@@ -130,7 +130,7 @@ describe('readContractConfig', () => {
       null,
     ];
     expect(readContractConfig(reader({}, { gates })).gates).toEqual([{ name: 'test', command: 'bun test', enabled: true }]);
-    expect(readContractConfig(reader({}, { gates: 'bun test' })).gates).toEqual([]);
+    expect(readContractConfig(reader({}, { gates: 'bun test' })).gates).toEqual(CONTRACT_CONFIG_DEFAULTS.gates);
   });
 });
 

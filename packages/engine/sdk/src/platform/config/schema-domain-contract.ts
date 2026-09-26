@@ -17,9 +17,14 @@ import type { ContractSettings } from './schema-types-contract.js';
 
 export const contractConfigDefaults: { contract: ContractSettings } = {
   contract: {
-    autoCommit: false,
+    autoCommit: true,
     commitScope: 'scoped',
-    gates: [],
+    // The WRFC defaults, carried over: typecheck and lint gate every unit, build is opt-in.
+    gates: [
+      { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
+      { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },
+      { name: 'build', command: 'npm run build', enabled: false },
+    ],
     gateTimeoutMs: 120_000,
     acceptanceStakes: 'high',
     midRunChecks: true,
@@ -49,7 +54,7 @@ export const contractConfigSettings: ConfigSettingDefinition[] = [
   {
     key: 'contract.autoCommit',
     type: 'boolean',
-    default: false,
+    default: true,
     description: 'Commit the deliverable when a contract passes: worktree mode merges the contract branch, shared mode commits the paths the contract touched',
   },
   {
