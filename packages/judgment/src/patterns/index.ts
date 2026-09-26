@@ -31,7 +31,7 @@ export {
   type Judgment,
   type Verdict,
 } from './judge.ts';
-export { definePolicyChecklist, type PolicyAction, type PolicyChecklist, type PolicyResult, type PolicySpec, type PolicyThresholds } from './policy.ts';
+export { definePolicyChecklist, type PolicyAction, type PolicyChecklist, type PolicyQuestionsSpec, type PolicyResult, type PolicyRoutingSpec, type PolicySpec, type PolicyThresholds } from './policy.ts';
 export { REPLY_READINGS, defineReplyReader, type ReadReply, type ReplyReader, type ReplyReadingName, type ReplySpec } from './reply.ts';
 export { defineRerank, type Candidate, type Ranked, type Rerank, type RerankFixture, type RerankSpec, type Reranking } from './rerank.ts';
 export { NONE, defineSelector, runSelection, type SelectSpec, type Selection, type SelectionConfig, type Selector } from './select.ts';

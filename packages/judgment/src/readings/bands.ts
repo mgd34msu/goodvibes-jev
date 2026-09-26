@@ -15,23 +15,7 @@ export type Outcome = 'act' | 'confirm' | 'escalate';
  */
 export type Stakes = 'low' | 'medium' | 'high' | 'critical';
 
-/**
- * Yes/no band. A probability at or above `act.yes` is a yes to act on; at or
- * above `confirm.yes` a yes to confirm; at or below `act.no` a no to act on;
- * at or below `confirm.no` a no to confirm; anything between is uncertain and
- * escalates. Yes and no carry separate bounds because the cost of a false yes
- * and a false no usually differ.
- */
-export interface YesNoBand {
-  /** `null` means this decision never acts on a reading alone. */
-  readonly act: { readonly yes: number; readonly no: number } | null;
-  readonly confirm: { readonly yes: number; readonly no: number };
-}
-
-/**
- * Confidence band for a choice or score. Confidence at or above `actAt`
- * acts, at or above `confirmAt` confirms, below escalates.
- */
+/** Confidence band for a choice or score, read by `outcomeForConfidence`. */
 export interface ConfidenceBand {
   /** `null` means this decision never acts on a reading alone. */
   readonly actAt: number | null;
@@ -44,61 +28,67 @@ export interface ChoiceBand<O extends string = string> extends ConfidenceBand {
 }
 
 /**
- * A yes/no band symmetric around one half: acting on yes at `act` means
- * acting on no at `1 - act`, and likewise for confirming. `act` null means
- * the decision never acts on a reading alone.
+ * Yes/no band: one confidence band per side. The yes side is read on the
+ * probability of yes, the no side on the probability of no (one minus it),
+ * so each side acts, confirms or escalates the way a choice does. Anything
+ * neither side settles is uncertain and escalates. Yes and no carry separate
+ * bands because the cost of a false yes and a false no usually differ.
  */
-export function symmetricBand(act: number | null, confirm: number): YesNoBand {
-  return { act: act === null ? null : { yes: act, no: 1 - act }, confirm: { yes: confirm, no: 1 - confirm } };
+export interface YesNoBand {
+  readonly yes: ConfidenceBand;
+  readonly no: ConfidenceBand;
 }
 
-/**
- * Default thresholds per stake level: the probability or confidence at which
- * code acts, and the one at which it confirms. The numbers come from the Jev documentation's
- * worked examples (a 0.5 to 0.6 floor for anything, 0.85 and above to act on
- * a high-stakes choice, a 0.3 to 0.7 review band on yes/no). Calibration
- * replaces them with measured values battery by battery. Critical decisions
- * never act on a reading alone: they have no act bounds, so the best they can
- * do is confirm.
- */
-export const STAKES_THRESHOLDS: Readonly<Record<Stakes, { readonly act: number | null; readonly confirm: number }>> = {
-  low: { act: 0.6, confirm: 0.55 },
-  medium: { act: 0.75, confirm: 0.6 },
-  high: { act: 0.85, confirm: 0.7 },
-  critical: { act: null, confirm: 0.9 },
-};
+/** The bands one confidence band gives: itself for choices and scores, and the same band on both sides of a yes/no. */
+const bandsFrom = (confidence: ConfidenceBand): { readonly yesNo: YesNoBand; readonly confidence: ConfidenceBand } => ({
+  yesNo: { yes: confidence, no: confidence },
+  confidence,
+});
 
-/** The yes/no and confidence bands each stake level's thresholds give. */
-export const STAKES_BANDS = Object.fromEntries(
-  Object.entries(STAKES_THRESHOLDS).map(([stakes, { act, confirm }]) => [
-    stakes,
-    { yesNo: symmetricBand(act, confirm), confidence: { actAt: act, confirmAt: confirm } },
-  ]),
-) as Readonly<Record<Stakes, { readonly yesNo: YesNoBand; readonly confidence: ConfidenceBand }>>;
+/**
+ * Default bands per stake level. The numbers come from the Jev
+ * documentation's worked examples (a 0.5 to 0.6 floor for anything, 0.85 and
+ * above to act on a high-stakes choice, a 0.3 to 0.7 review band on yes/no).
+ * Calibration replaces them with measured values battery by battery.
+ * Critical decisions have no act threshold.
+ */
+export const STAKES_BANDS: Readonly<Record<Stakes, ReturnType<typeof bandsFrom>>> = {
+  low: bandsFrom({ actAt: 0.6, confirmAt: 0.55 }),
+  medium: bandsFrom({ actAt: 0.75, confirmAt: 0.6 }),
+  high: bandsFrom({ actAt: 0.85, confirmAt: 0.7 }),
+  critical: bandsFrom({ actAt: null, confirmAt: 0.9 }),
+};
 
 const inUnit = (value: number): boolean => value >= 0 && value <= 1;
 /** True when each value is no greater than the next. */
 export const isNonDecreasing = (values: readonly number[]): boolean => values.every((value, index) => index === 0 || values[index - 1]! <= value);
 
-/** Throws `message` unless the bounds lie in [0, 1] in non-decreasing order. */
-function assertOrderedInUnit(bounds: readonly number[], message: string): void {
-  if (!bounds.every(inUnit) || !isNonDecreasing(bounds)) throw new RangeError(message);
+const BAND_ORDER = 'confirmAt <= actAt within [0, 1]';
+
+/** Whether a confidence band satisfies BAND_ORDER. */
+function isOrderedBand(band: ConfidenceBand): boolean {
+  const bounds = band.actAt === null ? [band.confirmAt] : [band.confirmAt, band.actAt];
+  return bounds.every(inUnit) && isNonDecreasing(bounds);
 }
 
-/** Throws when a yes/no band is not ordered act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]. */
+/**
+ * Whether a probability could settle both sides at once: the yes side
+ * confirms from `yes.confirmAt` up, the no side from `1 - no.confirmAt` down.
+ */
+const sidesOverlap = (band: YesNoBand): boolean => band.yes.confirmAt + band.no.confirmAt <= 1;
+
+/** Throws when either side is not a well-formed confidence band, or the two sides could both settle one probability. */
 export function assertYesNoBand(band: YesNoBand): void {
-  const { act, confirm } = band;
-  const message = `yes/no band must satisfy act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]: ${JSON.stringify(band)}`;
-  assertOrderedInUnit(act === null ? [confirm.no, confirm.yes] : [act.no, confirm.no, confirm.yes, act.yes], message);
-  if (confirm.no === confirm.yes) throw new RangeError(message);
+  if (!isOrderedBand(band.yes) || !isOrderedBand(band.no)) throw new RangeError(`yes/no band sides must each satisfy ${BAND_ORDER}: ${JSON.stringify(band)}`);
+  if (sidesOverlap(band)) throw new RangeError(`yes/no band sides overlap; yes.confirmAt + no.confirmAt must exceed 1: ${JSON.stringify(band)}`);
 }
 
-/** Throws when a confidence band is not ordered confirmAt <= actAt within [0, 1]. */
+/** Throws when a confidence band does not satisfy BAND_ORDER. */
 export function assertConfidenceBand(band: ConfidenceBand): void {
-  const message = `confidence band must satisfy confirmAt <= actAt within [0, 1]: ${JSON.stringify(band)}`;
-  assertOrderedInUnit(band.actAt === null ? [band.confirmAt] : [band.confirmAt, band.actAt], message);
+  if (!isOrderedBand(band)) throw new RangeError(`confidence band must satisfy ${BAND_ORDER}: ${JSON.stringify(band)}`);
 }
 
+/** Acts at or above `actAt`, confirms at or above `confirmAt`, escalates below; the one rule every band applies. */
 export function outcomeForConfidence(confidence: number, band: ConfidenceBand): Outcome {
   if (band.actAt !== null && confidence >= band.actAt) return 'act';
   if (confidence >= band.confirmAt) return 'confirm';

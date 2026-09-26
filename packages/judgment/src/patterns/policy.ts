@@ -24,23 +24,31 @@ export interface PolicyThresholds {
  * hardens a review into the severity action. The highest-precedence action
  * wins. The probabilities never change with the policy; only the decision does.
  */
-export interface PolicySpec<H extends string, A extends string> extends PatternHeader {
-  readonly hazards: Readonly<
-    Record<H, { readonly instructions: EntryType; readonly yes: EntryType; readonly no: EntryType; readonly action: A }>
-  >;
-  readonly severity: { readonly instructions: EntryType; readonly levels: ScoreCriteria };
-  /** Every action, highest precedence first; must include 'review', and end with 'pass'. */
-  readonly precedence: readonly PolicyAction<A>[];
-  /** The action a review becomes when severity crosses the line. */
-  readonly severityAction: A;
-  readonly policies: Readonly<Record<string, PolicyThresholds>>;
-  readonly defaultPolicy: string;
+export interface PolicySpec<H extends string, A extends string> extends PatternHeader, PolicyQuestionsSpec<H, A>, PolicyRoutingSpec<A> {
   readonly fixtures: readonly {
     readonly name: string;
     readonly state: EntryType;
     readonly policy?: string;
     readonly expect: PolicyAction<A>;
   }[];
+}
+
+/** What a screening asks: one yes/no per hazard, each naming the action it triggers, and one score on severity. */
+export interface PolicyQuestionsSpec<H extends string, A extends string> {
+  readonly hazards: Readonly<
+    Record<H, { readonly instructions: EntryType; readonly yes: EntryType; readonly no: EntryType; readonly action: A }>
+  >;
+  readonly severity: { readonly instructions: EntryType; readonly levels: ScoreCriteria };
+}
+
+/** How code turns the answers into one action: precedence, the severity action and the named policies. */
+export interface PolicyRoutingSpec<A extends string> {
+  /** Every action, highest precedence first; must include 'review', and end with 'pass'. */
+  readonly precedence: readonly PolicyAction<A>[];
+  /** The action a review becomes when severity crosses the line. */
+  readonly severityAction: A;
+  readonly policies: Readonly<Record<string, PolicyThresholds>>;
+  readonly defaultPolicy: string;
 }
 
 export interface PolicyResult<H extends string, A extends string> {
@@ -60,10 +68,18 @@ export interface PolicyChecklist<H extends string, A extends string> extends Nam
 }
 
 /** The answers a screening request returns: the severity score and one yes/no per hazard. */
-type PolicyAnswers = { readonly severity: ScoreResponse } & { readonly [hazard: `hazard_${string}`]: NoulResponse };
+type PolicyAnswers = { readonly severity: ScoreResponse } & { readonly [hazard: HazardKey]: NoulResponse };
+type HazardKey = `hazard_${string}`;
+/** The question name a hazard's yes/no is asked under. */
+const hazardKey = (hazard: string): HazardKey => `hazard_${hazard}`;
 
 const thresholdsOrdered = (review: number, action: number): boolean => isNonDecreasing([0, review, action, 1]);
-const namesKnownPolicy = (policy: string | undefined, policies: Readonly<Record<string, unknown>>): boolean => policy === undefined || policy in policies;
+/** The named policy's thresholds; throws when the spec has no policy by that name. */
+function policyNamed(spec: PolicyRoutingSpec<string> & PatternHeader, policyName: string): PolicyThresholds {
+  const policy = spec.policies[policyName];
+  if (policy === undefined) throw new RangeError(`policy ${spec.name}: unknown policy "${policyName}"`);
+  return policy;
+}
 
 function validatePolicySpec<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]): DecisionIdentity {
   const header = decisionHeader(spec);
@@ -75,19 +91,19 @@ function validatePolicySpec<H extends string, A extends string>(spec: PolicySpec
   for (const [policyName, { review, action }] of Object.entries(spec.policies)) {
     if (!thresholdsOrdered(review, action)) throw new RangeError(`policy ${spec.name}: ${policyName} needs 0 <= review <= action <= 1`);
   }
-  if (!(spec.defaultPolicy in spec.policies)) throw new RangeError(`policy ${spec.name}: unknown default policy`);
+  policyNamed(spec, spec.defaultPolicy);
   for (const fixture of spec.fixtures) {
     if (!actions.has(fixture.expect)) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} expects unknown action`);
-    if (!namesKnownPolicy(fixture.policy, spec.policies)) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} names unknown policy`);
+    if (fixture.policy !== undefined) policyNamed(spec, fixture.policy);
   }
   return header;
 }
 
-function policyQuestions<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]): Record<string, Question> {
+function policyQuestions<H extends string, A extends string>(spec: PolicyQuestionsSpec<H, A>, hazards: readonly H[]): Record<string, Question> {
   const questions: Record<string, Question> = { severity: score(spec.severity.instructions, spec.severity.levels) };
   for (const hazard of hazards) {
     const { instructions, yes, no } = spec.hazards[hazard];
-    questions[`hazard_${hazard}`] = noul(instructions, { true: yes, false: no });
+    questions[hazardKey(hazard)] = noul(instructions, { true: yes, false: no });
   }
   return questions;
 }
@@ -108,8 +124,7 @@ function triggeredActions<H extends string, A extends string>(
 
 function makeRouter<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]) {
   return (probabilities: Readonly<Record<H, number>>, severity: number, policyName: string): PolicyAction<A> => {
-    const policy = spec.policies[policyName];
-    if (policy === undefined) throw new RangeError(`policy ${spec.name}: unknown policy "${policyName}"`);
+    const policy = policyNamed(spec, policyName);
     const severe = severity >= policy.severityLine;
     const triggered = triggeredActions(spec, hazards, probabilities, policy).map((action) => (severe && action === 'review' ? spec.severityAction : action));
     return spec.precedence.find((action) => triggered.includes(action as Triggered<A>)) ?? 'pass';
@@ -138,7 +153,7 @@ export function definePolicyChecklist<const H extends string, const A extends st
       const policy = options.policy ?? spec.defaultPolicy;
       const result = await askAs(port, spec, 'policy', state, questions, options);
       const answers = result.answers as PolicyAnswers;
-      const probabilities = Object.fromEntries(hazards.map((hazard) => [hazard, answers[`hazard_${hazard}`]!.noul])) as Record<H, number>;
+      const probabilities = Object.fromEntries(hazards.map((hazard) => [hazard, answers[hazardKey(hazard)]!.noul])) as Record<H, number>;
       const { score: level, confidence } = answers.severity;
       const severity = { score: level, confidence };
       const action = route(probabilities, level, policy);

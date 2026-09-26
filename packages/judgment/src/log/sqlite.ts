@@ -31,9 +31,13 @@ const COLUMNS = {
 } as const;
 type Column = keyof typeof COLUMNS;
 
-/** Columns that hold notes attached after the call is recorded; an insert leaves them empty. */
-const NOTE_COLUMNS = ['readings', 'action'] as const;
-type NoteColumn = (typeof NOTE_COLUMNS)[number];
+/** Each note kind is stored in the column of the same name, attached after the call is recorded. */
+type NoteColumn = DecisionNote['kind'];
+const NOTE_FROM_COLUMN: { readonly [K in NoteColumn]: (text: string) => Extract<DecisionNote, { kind: K }> } = {
+  readings: (text) => ({ kind: 'readings', readings: parseJson(text) }),
+  action: (text) => ({ kind: 'action', action: text }),
+};
+const NOTE_COLUMNS = Object.keys(NOTE_FROM_COLUMN) as NoteColumn[];
 type InsertColumn = Exclude<Column, NoteColumn>;
 const INSERT_COLUMNS = (Object.keys(COLUMNS) as Column[]).filter((column): column is InsertColumn => !(NOTE_COLUMNS as readonly Column[]).includes(column));
 
@@ -46,28 +50,11 @@ CREATE INDEX IF NOT EXISTS decisions_site_at ON decisions (site, at);
 CREATE INDEX IF NOT EXISTS decisions_at ON decisions (at);
 `;
 
-interface Row {
-  id: string;
-  at: string;
-  status: DecisionEntry['status'];
-  battery: string | null;
-  battery_version: number | null;
-  pattern: string | null;
-  site: string | null;
-  requested_model: string;
-  model: string | null;
-  state_hash: string;
-  questions: string;
-  answers: string | null;
-  readings: string | null;
-  action: string | null;
-  latency_ms: number;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  request_id: string | null;
-  error_kind: string | null;
-  error_message: string | null;
-}
+/** A column's value as bun:sqlite returns it: numbers for INTEGER and REAL, strings for TEXT, null unless declared NOT NULL or PRIMARY KEY. */
+type ValueOf<D extends string> =
+  | (D extends `INTEGER${string}` | `REAL${string}` ? number : string)
+  | (D extends `${string}NOT NULL` | `${string}PRIMARY KEY` ? never : null);
+type Row = { readonly [C in Column]: ValueOf<(typeof COLUMNS)[C]> };
 
 type Params = Record<string, string | number | null>;
 
@@ -83,10 +70,10 @@ function contextOf(row: Row): DecisionContext {
 const parseJson = (text: string | null): JsonValue => (text === null ? null : (JSON.parse(text) as JsonValue));
 
 function notesOf(row: Row): DecisionNote[] {
-  const notes: DecisionNote[] = [];
-  if (row.readings !== null) notes.push({ kind: 'readings', readings: parseJson(row.readings) });
-  if (row.action !== null) notes.push({ kind: 'action', action: row.action });
-  return notes;
+  return NOTE_COLUMNS.flatMap((column) => {
+    const text = row[column];
+    return text === null ? [] : [NOTE_FROM_COLUMN[column](text)];
+  });
 }
 
 function toEntry(row: Row): DecisionEntry {
@@ -114,7 +101,7 @@ function toEntry(row: Row): DecisionEntry {
 }
 
 /** Parameter names match column names. */
-type InsertParams = Readonly<Record<InsertColumn, string | number | null>>;
+type InsertParams = Pick<Row, InsertColumn>;
 
 const INSERT = `INSERT INTO decisions (${INSERT_COLUMNS.join(', ')}) VALUES (${INSERT_COLUMNS.map((column) => `$${column}`).join(', ')})`;
 

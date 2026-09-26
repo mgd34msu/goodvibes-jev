@@ -50,14 +50,19 @@ export const likelierSide = (p: number): number => Math.max(p, 1 - p);
 
 type YesNoConclusion = Pick<YesNoReading, 'verdict' | 'outcome'>;
 
-/** Where a probability falls in a yes/no band: act on either side, confirm nearer the middle, escalate in it. */
+/** Where a probability falls in a yes/no band: each side acts or confirms on its own confidence, and the middle escalates. */
 function concludeYesNo(p: number, band: YesNoBand): YesNoConclusion {
-  const { act, confirm } = band;
-  if (act !== null && p >= act.yes) return { verdict: 'yes', outcome: 'act' };
-  if (act !== null && p <= act.no) return { verdict: 'no', outcome: 'act' };
-  if (p >= confirm.yes) return { verdict: 'yes', outcome: 'confirm' };
-  if (p <= confirm.no) return { verdict: 'no', outcome: 'confirm' };
+  const onYes = outcomeForConfidence(p, band.yes);
+  if (onYes !== 'escalate') return { verdict: 'yes', outcome: onYes };
+  const onNo = outcomeForConfidence(1 - p, band.no);
+  if (onNo !== 'escalate') return { verdict: 'no', outcome: onNo };
   return { verdict: 'uncertain', outcome: 'escalate' };
+}
+
+/** A choice or score answer's confidence and what code may do with it under `band`. */
+function confident(confidence: number, band: ConfidenceBand): Pick<ScoreReading, 'confidence' | 'outcome'> {
+  assertConfidenceBand(band);
+  return { confidence, outcome: outcomeForConfidence(confidence, band) };
 }
 
 /** Reads a noul through a yes/no band. */
@@ -72,21 +77,17 @@ export function readChoice<T extends ChoiceCriteria>(
   band: ChoiceBand<keyof T & string>,
 ): ChoiceReading<keyof T & string> {
   assertConfidenceBand(band);
-  const optionBand: ConfidenceBand = band.perOption?.[answer.choice] ?? band;
-  assertConfidenceBand(optionBand);
   return {
     kind: 'choice',
     choice: answer.choice,
-    confidence: answer.confidence,
     probabilities: answer.probabilities as Readonly<Record<keyof T & string, number>>,
-    outcome: outcomeForConfidence(answer.confidence, optionBand),
+    ...confident(answer.confidence, band.perOption?.[answer.choice] ?? band),
   };
 }
 
 /** Reads a score through a confidence band. */
 export function readScore<T extends ScoreCriteria>(answer: ScoreResponse<T>, band: ConfidenceBand): ScoreReading {
-  assertConfidenceBand(band);
-  const probabilities = answer.probabilities as Readonly<Record<string, number>>;
+  const probabilities: Readonly<Record<string, number>> = answer.probabilities;
   const top = Object.keys(probabilities).length - 1;
   const levels = Array.from({ length: top + 1 }, (_, level) => probabilities[String(level)] ?? 0);
   return {
@@ -94,8 +95,7 @@ export function readScore<T extends ScoreCriteria>(answer: ScoreResponse<T>, ban
     score: answer.score,
     level: Math.min(top, Math.max(0, Math.round(answer.score))),
     normalized: top > 0 ? answer.score / top : 0,
-    confidence: answer.confidence,
     probabilities: levels,
-    outcome: outcomeForConfidence(answer.confidence, band),
+    ...confident(answer.confidence, band),
   };
 }

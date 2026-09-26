@@ -37,21 +37,22 @@ export interface Block extends Merged {
   readonly callout: CalloutKind;
 }
 
-const MARKERS: readonly (readonly [RegExp, BlockType])[] = [
-  [/^#{1,6}\s/, 'heading'],
-  [/^([-*•]|\d+[.)])\s/, 'list_item'],
-  [/^>\s?/, 'quote'],
+/** Explicit line markers and the block type each states, read in code and never sent to the model. */
+const MARKERS: readonly { readonly pattern: RegExp; readonly type: BlockType }[] = [
+  { pattern: /^#{1,6}\s/, type: 'heading' },
+  { pattern: /^([-*•]|\d+[.)])\s/, type: 'list_item' },
+  { pattern: /^>\s?/, type: 'quote' },
 ];
 /** Sentence-ending punctuation, optionally followed by closing quotes or brackets. */
 const TERMINAL = /[.!?:;…]["')\]]*$/;
 
-/** The block type an explicit marker states, read in code and never sent to the model. */
-const markerOf = (text: string) => MARKERS.find(([pattern]) => pattern.test(text));
-export const markerType = (text: string): BlockType | undefined => markerOf(text)?.[1];
-export const stripMarker = (text: string): string => {
-  const marker = markerOf(text);
-  return marker === undefined ? text : text.replace(marker[0], '');
-};
+/** A line's explicit marker read apart from its text: the type it states and the text after it. */
+function readMarker(text: string): { readonly type: BlockType | undefined; readonly body: string } {
+  const marker = MARKERS.find(({ pattern }) => pattern.test(text));
+  return marker === undefined ? { type: undefined, body: text } : { type: marker.type, body: text.replace(marker.pattern, '') };
+}
+export const markerType = (text: string): BlockType | undefined => readMarker(text).type;
+export const stripMarker = (text: string): string => readMarker(text).body;
 export const endsSentence = (text: string): boolean => TERMINAL.test(text);
 
 export function splitLines(text: string): Line[] {
@@ -68,10 +69,12 @@ export function splitLines(text: string): Line[] {
 }
 
 /** Lines that may continue the one before: no blank line between and no explicit marker. */
-export function joinableLines(lines: readonly Line[]): number[] {
-  const hasPrevious = (index: number): boolean => index > 0;
-  const unmarked = (line: Line): boolean => markerType(line.text) === undefined;
-  return lines.flatMap((line, index) => (hasPrevious(index) && !line.gap && unmarked(line) ? [index] : []));
+export const joinableLines = (lines: readonly Line[]): number[] => lines.flatMap((line, index) => (mayContinue(line, index) ? [index] : []));
+
+/** A line may continue the one before when there is one, no blank line separates them, and the line has no marker of its own. */
+function mayContinue(line: Line, index: number): boolean {
+  if (index === 0 || line.gap) return false;
+  return markerType(line.text) === undefined;
 }
 
 /** The join probability a line needs to merge into the previous block, by how that line ended. */

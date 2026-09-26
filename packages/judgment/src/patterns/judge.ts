@@ -72,8 +72,11 @@ const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?'
   false: 'The output achieves what the goal asks.',
 });
 
-/** Criterion and goal questions ask whether something falls short, so a yes reads as unmet. */
-const isUnmet = (reading: YesNoReading): boolean => reading.verdict === 'yes';
+/** Criterion and goal questions ask whether something falls short, so yes is the unmet answer. */
+const UNMET_ANSWER = 'yes';
+const isUnmet = (reading: YesNoReading): boolean => reading.verdict === UNMET_ANSWER;
+/** The question name a criterion is asked under. */
+const criterionKey = (index: number): string => `criterion_${index}`;
 
 /** Folds per-criterion and goal readings into one verdict, max-style. */
 export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict: Verdict; outcome: Outcome } {
@@ -91,12 +94,12 @@ export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict:
 
 /** How strongly the readings back the verdict: the strongest unmet reading for a fail, the weakest met one otherwise. */
 function verdictSignal(judgment: Judgment): number {
-  const readings = [...judgment.criteria, judgment.goal];
-  if (judgment.verdict === 'fail') return Math.max(...readings.map((reading) => reading.probability));
-  return Math.min(...readings.map((reading) => 1 - reading.probability));
+  const unmetProbabilities = [...judgment.criteria, judgment.goal].map((reading) => reading.probability);
+  const strongestUnmet = Math.max(...unmetProbabilities);
+  return judgment.verdict === 'fail' ? strongestUnmet : 1 - strongestUnmet;
 }
 
-const asCriterionAnswer = (answer: string): 'met' | 'unmet' => (answer === 'yes' ? 'unmet' : 'met');
+const asCriterionAnswer = (answer: string): 'met' | 'unmet' => (answer === UNMET_ANSWER ? 'unmet' : 'met');
 
 function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
   const checks = [fixtureCheck(fixture.name, 'verdict', fixture.expect.verdict, judgment.verdict, verdictSignal(judgment), judgment.outcome)];
@@ -104,13 +107,18 @@ function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[
   const expectedUnmet = new Set(fixture.expect.unmet);
   judgment.criteria.forEach((reading, index) => {
     const expected = expectedUnmet.has(index) ? 'unmet' : 'met';
-    checks.push(fixtureCheck(fixture.name, `criterion_${index}`, expected, asCriterionAnswer(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
+    checks.push(fixtureCheck(fixture.name, criterionKey(index), expected, asCriterionAnswer(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
   });
   return checks;
 }
 
+/** Throws unless there is at least one criterion to judge against. */
+function assertHasCriteria(judge: string, input: JudgeInput): void {
+  if (input.criteria.length === 0) throw new RangeError(`judge ${judge}: nothing to judge without criteria`);
+}
+
 function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {
-  if (fixture.criteria.length === 0) throw new RangeError(`judge ${judge}: fixture ${fixture.name} has no criteria`);
+  assertHasCriteria(judge, fixture);
   const unmet = fixture.expect.unmet ?? [];
   const missing = unmet.find((index) => !(index >= 0 && index < fixture.criteria.length));
   if (missing !== undefined) throw new RangeError(`judge ${judge}: fixture ${fixture.name} names criterion ${missing}, which does not exist`);
@@ -118,7 +126,7 @@ function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {
 }
 
 function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestion> {
-  return Object.fromEntries([['goal', GOAL_QUESTION], ...criteria.map((criterion, index) => [`criterion_${index}`, CRITERION_QUESTION(criterion)])]);
+  return Object.fromEntries([['goal', GOAL_QUESTION], ...criteria.map((criterion, index) => [criterionKey(index), CRITERION_QUESTION(criterion)])]);
 }
 
 export function defineJudge(spec: JudgeSpec): Judge {
@@ -129,11 +137,11 @@ export function defineJudge(spec: JudgeSpec): Judge {
   const judge: Judge = {
     ...header,
     async judge(port, input, options = {}) {
-      if (input.criteria.length === 0) throw new RangeError(`judge ${spec.name}: nothing to judge without criteria`);
+      assertHasCriteria(spec.name, input);
       const state = { goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) };
       const result = await askAs(port, spec, 'judge', state, judgeQuestions(input.criteria), options);
       const answers = result.answers as Record<string, { type: 'noul'; noul: number }>;
-      const criteria = input.criteria.map((_, index) => readYesNo(answers[`criterion_${index}`]!, spec.band));
+      const criteria = input.criteria.map((_, index) => readYesNo(answers[criterionKey(index)]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
       const { verdict, outcome } = aggregateJudgment([...criteria, goal]);
       const unmet = criteria.flatMap((reading, index) => (isUnmet(reading) ? [index] : []));

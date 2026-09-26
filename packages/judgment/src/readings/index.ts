@@ -1,11 +1,9 @@
 export {
   STAKES_BANDS,
-  STAKES_THRESHOLDS,
   assertConfidenceBand,
   assertYesNoBand,
   isNonDecreasing,
   outcomeForConfidence,
-  symmetricBand,
   type ChoiceBand,
   type ConfidenceBand,
   type Outcome,

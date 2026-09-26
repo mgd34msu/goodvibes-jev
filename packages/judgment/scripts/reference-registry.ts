@@ -151,7 +151,7 @@ const TOS = [
 
 export const existence = defineExistence({
   ...header('existence', 'Finds the line of a document that answers a question, or says none does.'),
-  band: { act: { yes: 0.7, no: 0.35 }, confirm: { yes: 0.5, no: 0.45 } },
+  band: { yes: { actAt: 0.7, confirmAt: 0.5 }, no: { actAt: 0.65, confirmAt: 0.55 } },
   fixtures: [
     { name: 'ownership', query: 'who owns the code I upload?', items: TOS, expect: { exists: 'yes', item: 'L001' } },
     { name: 'termination', query: 'can they kick me off without warning?', items: TOS, expect: { exists: 'yes', item: 'L003' } },
@@ -305,7 +305,7 @@ export const skills = defineRankRecheck({
   recheckInstructions: "Exactly one of these skills is the right one to load for the user's latest request. Which one? Read what each actually does, not just its name.",
   fitInstructions: "Does this skill do the specific thing the user's request asks for?",
   recheckBand: { actAt: 0.7, confirmAt: 0.5 },
-  fitBand: { act: { yes: 0.6, no: 0.2 }, confirm: { yes: 0.3, no: 0.29 } },
+  fitBand: { yes: { actAt: 0.6, confirmAt: 0.3 }, no: { actAt: 0.8, confirmAt: 0.71 } },
   fixtures: [
     { name: 'save a note', state: { request: "Save this recipe as a new note in my 'Recipes' folder in Notes.app so it syncs to my phone." }, options: SKILLS, expect: 'apple-notes' },
     { name: 'remind me', state: { request: 'Remind me to call the dentist tomorrow at 9.' }, options: SKILLS, expect: 'apple-reminders' },

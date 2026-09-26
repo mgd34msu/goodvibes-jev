@@ -27,6 +27,8 @@ export interface FlagArg {
 }
 export type ArgSpec = ChoiceArg | SetArg | FlagArg;
 
+export type ArgValue = string | boolean | readonly string[];
+
 export interface FunctionSpec {
   readonly description: EntryType;
   readonly args: Readonly<Record<string, ArgSpec>>;
@@ -48,11 +50,9 @@ export interface CallerSpec extends PatternHeader {
   readonly fixtures: readonly {
     readonly name: string;
     readonly state: EntryType;
-    readonly expect: { readonly fn: string; readonly args?: Readonly<Record<string, string | boolean | readonly string[]>> };
+    readonly expect: { readonly fn: string; readonly args?: Readonly<Record<string, ArgValue>> };
   }[];
 }
-
-export type ArgValue = string | boolean | readonly string[];
 
 export interface FilledCall {
   readonly fn: string;
@@ -99,34 +99,47 @@ interface ArgReading {
   readonly p: number;
 }
 
-function argQuestions(fn: string, arg: string, spec: ArgSpec): [string, Question][] {
-  const stated: [string, Question][] = spec.stated === undefined ? [] : [[statedKey(fn, arg), noul(spec.stated)]];
-  if (spec.kind === 'choice') return [...stated, [argKey(fn, arg), choice(spec.question, spec.options)]];
-  if (spec.kind === 'flag') return [...stated, [argKey(fn, arg), noul(spec.question)]];
-  return [...stated, ...spec.members.map((member, index): [string, Question] => [memberKey(fn, arg, index), noul(spec.question.replaceAll('{}', member))])];
+/** How one kind of argument is asked about and read back. */
+interface ArgKind<S extends ArgSpec> {
+  ask(fn: string, arg: string, spec: S): [string, Question][];
+  read(fn: string, arg: string, spec: S, answers: CallAnswers): ArgReading;
 }
 
-type ArgReader<K extends ArgSpec['kind']> = (fn: string, arg: string, spec: Extract<ArgSpec, { kind: K }>, answers: CallAnswers) => ArgReading;
-
-const READERS: Readonly<{ [K in ArgSpec['kind']]: ArgReader<K> }> = {
-  choice: (fn, arg, _spec, answers) => {
-    const { option, p } = answers.picked(argKey(fn, arg));
-    return { value: option, p };
+const KINDS: { readonly [K in ArgSpec['kind']]: ArgKind<Extract<ArgSpec, { kind: K }>> } = {
+  choice: {
+    ask: (fn, arg, spec) => [[argKey(fn, arg), choice(spec.question, spec.options)]],
+    read: (fn, arg, _spec, answers) => {
+      const { option, p } = answers.picked(argKey(fn, arg));
+      return { value: option, p };
+    },
   },
-  flag: (fn, arg, _spec, answers) => {
-    const p = answers.yes(argKey(fn, arg));
-    return { value: leansYes(p), p: likelierSide(p) };
+  flag: {
+    ask: (fn, arg, spec) => [[argKey(fn, arg), noul(spec.question)]],
+    read: (fn, arg, _spec, answers) => {
+      const p = answers.yes(argKey(fn, arg));
+      return { value: leansYes(p), p: likelierSide(p) };
+    },
   },
-  set: (fn, arg, spec, answers) => {
-    const members = spec.members.map((member, index) => ({ member, p: answers.yes(memberKey(fn, arg, index)) }));
-    return { value: members.filter(({ p }) => leansYes(p)).map(({ member }) => member), p: Math.min(...members.map(({ p }) => likelierSide(p))) };
+  set: {
+    ask: (fn, arg, spec) => spec.members.map((member, index) => [memberKey(fn, arg, index), noul(spec.question.replaceAll('{}', member))]),
+    read: (fn, arg, spec, answers) => {
+      const members = spec.members.map((member, index) => ({ member, p: answers.yes(memberKey(fn, arg, index)) }));
+      return { value: members.filter(({ p }) => leansYes(p)).map(({ member }) => member), p: Math.min(...members.map(({ p }) => likelierSide(p))) };
+    },
   },
 };
+
+const kindOf = (spec: ArgSpec): ArgKind<ArgSpec> => KINDS[spec.kind] as ArgKind<ArgSpec>;
+
+function argQuestions(fn: string, arg: string, spec: ArgSpec): [string, Question][] {
+  const stated: [string, Question][] = spec.stated === undefined ? [] : [[statedKey(fn, arg), noul(spec.stated)]];
+  return [...stated, ...kindOf(spec).ask(fn, arg, spec)];
+}
 
 function readArg(fn: string, arg: string, spec: ArgSpec, answers: CallAnswers): ArgReading {
   const stated = spec.stated === undefined ? 1 : answers.yes(statedKey(fn, arg));
   if (!leansYes(stated)) return { value: undefined, p: 1 - stated };
-  const reading = (READERS[spec.kind] as ArgReader<ArgSpec['kind']>)(fn, arg, spec as never, answers);
+  const reading = kindOf(spec).read(fn, arg, spec, answers);
   return { value: reading.value, p: Math.min(stated, reading.p) };
 }
 
@@ -134,12 +147,17 @@ interface NamedReading extends ArgReading {
   readonly arg: string;
 }
 
+/** The arguments that have a value, by name. */
+function statedArgs(readings: readonly { readonly arg: string; readonly value: ArgValue | undefined }[]): Record<string, ArgValue> {
+  return Object.fromEntries(readings.flatMap(({ arg, value }) => (value === undefined ? [] : [[arg, value]])));
+}
+
 function fill(spec: CallerSpec, answers: CallAnswers): FilledCall {
   const { option: fn, p: fnP } = answers.picked(ROUTE);
   const readings = Object.entries(spec.functions[fn]!.args).map(([arg, argSpec]): NamedReading => ({ arg, ...readArg(fn, arg, argSpec, answers) }));
   const weakest = readings.reduce((low, reading) => (reading.p < low.p ? reading : low), { arg: 'function', value: undefined, p: fnP } as NamedReading);
-  const args = Object.fromEntries(readings.flatMap(({ arg, value }) => (value === undefined ? [] : [[arg, value]])));
-  const omitted = readings.filter(({ value }) => value === undefined).map(({ arg }) => arg);
+  const args = statedArgs(readings);
+  const omitted = readings.map(({ arg }) => arg).filter((arg) => !(arg in args));
   return { fn, args, omitted, confidence: weakest.p, weakest: weakest.arg, outcome: outcomeForConfidence(weakest.p, spec.band) };
 }
 
@@ -172,7 +190,7 @@ export function defineFunctionCaller(spec: CallerSpec): FunctionCaller {
       checkEachFixture(spec.fixtures, options, async (fixture, run) => {
         const got = await caller.fill(port, fixture.state, run);
         const expectedArgs = fixture.expect.args ?? {};
-        const shown = Object.fromEntries(Object.keys(expectedArgs).flatMap((arg) => (got.args[arg] === undefined ? [] : [[arg, got.args[arg]!]])));
+        const shown = statedArgs(Object.keys(expectedArgs).map((arg) => ({ arg, value: got.args[arg] })));
         return fixtureCheck(fixture.name, 'call', describeCall(fixture.expect.fn, expectedArgs), describeCall(got.fn, shown), got.confidence, got.outcome);
       }),
   };

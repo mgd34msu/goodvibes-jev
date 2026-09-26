@@ -73,7 +73,7 @@ describe('rank-recheck', () => {
     recheckInstructions: 'Exactly one of these skills fits. Which?',
     fitInstructions: 'Does this skill do what the request asks?',
     recheckBand: { actAt: 0.7, confirmAt: 0.5 },
-    fitBand: { act: { yes: 0.6, no: 0.2 }, confirm: { yes: 0.3, no: 0.29 } },
+    fitBand: { yes: { actAt: 0.6, confirmAt: 0.3 }, no: { actAt: 0.8, confirmAt: 0.71 } },
     fixtures: [{ name: 'f', state: 's', options: [], expect: 'none' }],
   });
   const options = [
@@ -123,7 +123,7 @@ describe('rank-recheck definition', () => {
         recheckInstructions: 'r',
         fitInstructions: 'f',
         recheckBand: { actAt: 0.7, confirmAt: 0.5 },
-        fitBand: { act: { yes: 0.6, no: 0.3 }, confirm: { yes: 0.3, no: 0.29 } },
+        fitBand: { yes: { actAt: 0.6, confirmAt: 0.3 }, no: { actAt: 0.7, confirmAt: 0.71 } },
         fixtures: [{ name: 'f', state: 's', options: [], expect: 'none' }],
       }),
     ).toThrow(RangeError);

@@ -11,7 +11,7 @@ import {
   type YesNoBand,
 } from '../src/index.ts';
 
-const BAND: YesNoBand = { act: { yes: 0.8, no: 0.2 }, confirm: { yes: 0.6, no: 0.4 } };
+const BAND: YesNoBand = { yes: { actAt: 0.8, confirmAt: 0.6 }, no: { actAt: 0.8, confirmAt: 0.6 } };
 const noul = (p: number) => ({ type: 'noul', noul: p }) as const;
 
 describe('readYesNo', () => {
@@ -39,9 +39,9 @@ describe('readYesNo', () => {
   });
 
   test.each([
-    ['confirm bounds crossed', { act: { yes: 0.8, no: 0.2 }, confirm: { yes: 0.4, no: 0.6 } }],
-    ['act inside confirm', { act: { yes: 0.7, no: 0.2 }, confirm: { yes: 0.8, no: 0.3 } }],
-    ['outside [0, 1]', { act: { yes: 1.2, no: 0.1 }, confirm: { yes: 0.7, no: 0.3 } }],
+    ['sides overlap', { yes: { actAt: 0.8, confirmAt: 0.4 }, no: { actAt: 0.8, confirmAt: 0.4 } }],
+    ['act inside confirm', { yes: { actAt: 0.7, confirmAt: 0.8 }, no: { actAt: 0.8, confirmAt: 0.7 } }],
+    ['outside [0, 1]', { yes: { actAt: 1.2, confirmAt: 0.7 }, no: { actAt: 0.9, confirmAt: 0.7 } }],
   ])('rejects a malformed band: %s', (_label, band) => {
     expect(() => assertYesNoBand(band)).toThrow(RangeError);
   });

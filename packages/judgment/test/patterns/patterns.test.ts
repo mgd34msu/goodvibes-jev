@@ -137,7 +137,7 @@ describe('existence', () => {
   const existence = defineExistence({
     ...header,
     name: 'test.existence',
-    band: { act: { yes: 0.7, no: 0.35 }, confirm: { yes: 0.5, no: 0.45 } },
+    band: { yes: { actAt: 0.7, confirmAt: 0.5 }, no: { actAt: 0.65, confirmAt: 0.55 } },
     fixtures: [{ name: 'f', query: 'q', items: [{ id: 'L0', text: 'a' }, { id: 'L1', text: 'b' }], expect: { exists: 'yes' } }],
   });
   const items = [
@@ -286,7 +286,7 @@ describe('selector', () => {
     instructions: 'Which candidate answers `context` best?',
     fitInstructions: 'Does this candidate fully answer `context`?',
     band: { actAt: 0.7, confirmAt: 0.5 },
-    fitBand: { act: { yes: 0.7, no: 0.3 }, confirm: { yes: 0.5, no: 0.45 } },
+    fitBand: { yes: { actAt: 0.7, confirmAt: 0.5 }, no: { actAt: 0.7, confirmAt: 0.55 } },
     fixtures: [{ name: 'f', context: 'c', candidates: [{ id: 'a', content: 'x' }], expect: 'a' }],
   });
   const candidates = [
