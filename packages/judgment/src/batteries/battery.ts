@@ -116,6 +116,11 @@ export interface BatteryDefinition<Items extends BatteryItems> {
 export interface BatteryRun<Items extends BatteryItems> {
   readonly readings: { readonly [K in keyof Items]: ReadingFor<Items[K]> };
   readonly result: Omit<JudgmentResult<Questions>, 'answers'>;
+  /**
+   * Records what code did with these readings in the decision log. A no-op
+   * only when the port was built without a log, which production ports never are.
+   */
+  recordAction(action: string): void;
 }
 
 export interface RunOptions<Items extends BatteryItems> {
@@ -215,7 +220,16 @@ export function defineBattery<const Items extends BatteryItems>(definition: Batt
       for (const itemName of asked) {
         readings[itemName] = readItem(items[itemName]!, (answers as Record<string, unknown>)[itemName]);
       }
-      return { readings: readings as BatteryRun<Items>['readings'], result };
+      const { decisionId } = result;
+      const recorder = port.recorder;
+      if (decisionId !== undefined && recorder !== undefined) recorder.recordReadings(decisionId, readings);
+      return {
+        readings: readings as BatteryRun<Items>['readings'],
+        result,
+        recordAction(action) {
+          if (decisionId !== undefined && recorder !== undefined) recorder.recordAction(decisionId, action);
+        },
+      };
     },
   };
 }

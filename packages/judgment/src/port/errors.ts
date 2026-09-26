@@ -13,7 +13,9 @@ export type JudgmentErrorKind =
   /** The caller cancelled the call. */
   | 'aborted'
   /** The endpoint answered with a body that does not match the questions asked. */
-  | 'invalid-response';
+  | 'invalid-response'
+  /** The decision log could not record the call, so its answer must not be used. */
+  | 'unrecorded';
 
 export class JudgmentError extends Error {
   override readonly name = 'JudgmentError';

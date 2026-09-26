@@ -38,6 +38,7 @@ const triage = () =>
 function recordingPort(answers: Record<string, unknown>) {
   const requests: JudgmentRequest<Questions>[] = [];
   const port: JudgmentPort = {
+    model: 'jev-1.13.0',
     async ask(request) {
       requests.push(request as JudgmentRequest<Questions>);
       const picked = Object.fromEntries(Object.keys(request.questions).map((name) => [name, answers[name]]));

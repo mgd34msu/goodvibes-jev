@@ -64,6 +64,17 @@ export interface JudgmentResult<Q extends Questions> {
   readonly latencyMs: number;
   /** The endpoint's request id, when it sent one. */
   readonly requestId: string | undefined;
+  /** The decision log entry for this call, when the port records decisions. */
+  readonly decisionId?: string;
+}
+
+/**
+ * Attaches what happened after a call to its decision log entry: the banded
+ * readings a battery drew from the answers, and the action code took.
+ */
+export interface DecisionRecorder {
+  recordReadings(decisionId: string, readings: Readonly<Record<string, unknown>>): void;
+  recordAction(decisionId: string, action: string): void;
 }
 
 /**
@@ -72,7 +83,11 @@ export interface JudgmentResult<Q extends Questions> {
  * behaviour without changing the contract.
  */
 export interface JudgmentPort {
+  /** The model this port asks when a request names none. */
+  readonly model: string;
   ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>;
+  /** Present when the port records decisions. */
+  readonly recorder?: DecisionRecorder;
 }
 
 /** Question builders with the same shapes the wire expects. */

@@ -49,6 +49,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   });
 
   return {
+    model: config.model,
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       validateQuestions(request.questions);
       validateContextBudget(request.state, request.questions);
