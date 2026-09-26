@@ -25,6 +25,20 @@ export type {
   ScoreResponse,
 } from '@typesafe-ai/sdk';
 
+/**
+ * Who is asking and why. The port does not send this to the model; the
+ * decision log records it so every reading can be traced to its decision.
+ */
+export interface DecisionContext {
+  /** The battery the questions come from. */
+  readonly battery?: string;
+  readonly batteryVersion?: number;
+  /** The pattern or compound that issued the call. */
+  readonly pattern?: string;
+  /** The decision site in the product or engine. */
+  readonly site?: string;
+}
+
 /** One call: a state and the named questions to ask about it. */
 export interface JudgmentRequest<Q extends Questions> {
   /** Text, a JSON object or an array to evaluate. */
@@ -35,6 +49,8 @@ export interface JudgmentRequest<Q extends Questions> {
   readonly model?: string;
   /** Cancels the call and any pending retries. */
   readonly signal?: AbortSignal;
+  /** Attribution for the decision log; never sent to the model. */
+  readonly context?: DecisionContext;
 }
 
 /** Typed answers for one call, with what answered and what it cost. */

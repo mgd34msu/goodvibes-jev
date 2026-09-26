@@ -9,7 +9,7 @@ import {
 import { checkAnswers } from './answers.ts';
 import type { JudgmentConfig } from './config.ts';
 import { JudgmentError } from './errors.ts';
-import { validateQuestions } from './limits.ts';
+import { validateContextBudget, validateQuestions } from './limits.ts';
 import type { JudgmentPort, JudgmentRequest, JudgmentResult } from './types.ts';
 
 const RETRYABLE_STATUS = (status: number): boolean => status === 408 || status === 429 || status >= 500;
@@ -51,6 +51,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   return {
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       validateQuestions(request.questions);
+      validateContextBudget(request.state, request.questions);
       const requestedModel = request.model ?? config.model;
       const started = performance.now();
       try {
