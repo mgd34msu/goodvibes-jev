@@ -123,14 +123,13 @@ function makeHarness(projectRoot: string): Harness {
   // methods work around the same expressiveness gap internally with `as ConfigValue<K>`.
   const configManager = {
     get: (key: string): unknown => {
-      if (key === 'wrfc.commitScope') return configOverrides.commitScope;
+      if (key === 'contract.commitScope') return configOverrides.commitScope;
       return undefined;
     },
     getCategory: (category: string): unknown => {
-      if (category === 'wrfc') {
+      if (category === 'contract') {
         return {
-          scoreThreshold: 9.9,
-          maxFixAttempts: 5,
+          maxFixRounds: 5,
           autoCommit: true,
           transportRetryLimit: 1,
           transportRetryDelayMs: 1,

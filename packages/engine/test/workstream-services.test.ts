@@ -93,11 +93,10 @@ function reviewerReportOutput(score: number, passed: boolean): string {
   ].join('\n');
 }
 
-/** Mirrors wrfc-config.ts's getWrfcCommitScope contract closely enough for fromChainSpec + phase-runner: commitScope 'off' so no commit/git repo is needed, empty gates so runWrfcGateChecks trivially passes. */
+/** Mirrors contract/config.ts's getContractCommitScope contract closely enough for fromChainSpec + phase-runner: commitScope 'off' so no commit/git repo is needed, empty gates so runWrfcGateChecks trivially passes. */
 function makeConfigManager(decomposition: 'heuristic' | 'agent' = 'heuristic'): Pick<ConfigManager, 'get' | 'getCategory'> {
-  const wrfcCategory = {
-    scoreThreshold: 9.9,
-    maxFixAttempts: 3,
+  const contractCategory = {
+    maxFixRounds: 3,
     autoCommit: false,
     transportRetryLimit: 0,
     transportRetryDelayMs: 0,
@@ -109,14 +108,14 @@ function makeConfigManager(decomposition: 'heuristic' | 'agent' = 'heuristic'): 
   // concrete literal, avoids the compiler over-expanding ConfigValue<K>'s
   // large conditional type when comparing it against a literal type.
   const values: Record<string, unknown> = {
-    'wrfc.commitScope': 'off',
+    'contract.commitScope': 'off',
     // Default the decomposition to the heuristic path for the plain engine
     // wiring tests so they never spawn a real planning agent; the dedicated
     // agent-path test below overrides this.
     'planner.decomposition': decomposition,
   };
   const categories: Record<string, unknown> = {
-    wrfc: wrfcCategory,
+    contract: contractCategory,
   };
   return {
     get: configGetStub(values),

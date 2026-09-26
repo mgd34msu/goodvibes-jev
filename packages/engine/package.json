@@ -145,6 +145,7 @@
     "./sdk/platform/companion": "./sdk/src/platform/companion/index.ts",
     "./sdk/platform/config": "./sdk/src/platform/config/index.ts",
     "./sdk/platform/payments": "./sdk/src/platform/payments/index.ts",
+    "./sdk/platform/contract": "./sdk/src/platform/contract/index.ts",
     "./sdk/platform/control-plane": "./sdk/src/platform/control-plane/index.ts",
     "./sdk/platform/core": "./sdk/src/platform/core/index.ts",
     "./sdk/platform/daemon": "./sdk/src/platform/daemon/index.ts",

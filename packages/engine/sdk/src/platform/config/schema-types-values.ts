@@ -33,7 +33,7 @@ import type { ConnectorsConfigKey, ConnectorsConfigValue } from './schema-types-
 // rather than a clause per key. Both clauses were written against the inline
 // ConfigValue that used to live in schema-types.ts, and move here with it.
 import type { PaymentsConfigValueMap } from './schema-types-payments.js';
-import type { ContractConfigValueMap } from './schema-domain-contract.js';
+import type { ContractConfigValueMap } from './schema-types-contract.js';
 import type { DaemonProcessConfigValueMap } from './schema-types-daemon.js';
 import type {
   InboundEmailCapabilityPolicy,

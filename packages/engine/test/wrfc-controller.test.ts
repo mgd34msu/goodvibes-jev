@@ -234,19 +234,17 @@ function createHarness(overrides?: {
 
   const configManager: Pick<ConfigManager, 'get' | 'getCategory'> = {
     get: ((key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return threshold;
-      if (key === 'wrfc.maxFixAttempts') return maxFixAttempts;
-      if (key === 'wrfc.autoCommit') return autoCommit;
-      if (key === 'wrfc.transportRetryLimit') return transportRetryLimit;
-      if (key === 'wrfc.transportRetryDelayMs') return transportRetryDelayMs;
-      if (key === 'wrfc.commitScope') return commitScope;
+      if (key === 'contract.maxFixRounds') return maxFixAttempts;
+      if (key === 'contract.autoCommit') return autoCommit;
+      if (key === 'contract.transportRetryLimit') return transportRetryLimit;
+      if (key === 'contract.transportRetryDelayMs') return transportRetryDelayMs;
+      if (key === 'contract.commitScope') return commitScope;
       return undefined;
     }) as ConfigManager['get'],
     getCategory: ((category: string): unknown => {
-      if (category === 'wrfc') {
+      if (category === 'contract') {
         return {
-          scoreThreshold: threshold,
-          maxFixAttempts,
+          maxFixRounds: maxFixAttempts,
           autoCommit,
           transportRetryLimit,
           transportRetryDelayMs,
@@ -793,7 +791,7 @@ describe('WrfcController: happy path', () => {
   });
 });
 
-describe('WrfcController: wrfc.commitScope', () => {
+describe('WrfcController: contract.commitScope', () => {
   test('commitScope: scoped (default) stages only the paths the chain\'s engineer report claims to have touched', async () => {
     const h = createHarness({ autoCommit: true, gitRepo: true }); // commitScope defaults to 'scoped'
 
@@ -1025,16 +1023,14 @@ describe('WrfcController: gate failure', () => {
 
     const configManager: Pick<ConfigManager, 'get' | 'getCategory'> = {
       get: ((key: string): unknown => {
-        if (key === 'wrfc.scoreThreshold') return 9.9;
-        if (key === 'wrfc.maxFixAttempts') return 3;
-        if (key === 'wrfc.autoCommit') return false;
+        if (key === 'contract.maxFixRounds') return 3;
+        if (key === 'contract.autoCommit') return false;
         return undefined;
       }) as ConfigManager['get'],
       getCategory: ((category: string): unknown => {
-        if (category === 'wrfc') {
+        if (category === 'contract') {
           return {
-            scoreThreshold: 9.9,
-            maxFixAttempts: 3,
+            maxFixRounds: 3,
             autoCommit: false,
             // Gate that always fails (exit code 1)
             gates: [{ name: 'custom-check', command: 'exit 1', enabled: true }],
@@ -1126,16 +1122,14 @@ describe('WrfcController: gate failure', () => {
 
     const configManager: Pick<ConfigManager, 'get' | 'getCategory'> = {
       get: ((key: string): unknown => {
-        if (key === 'wrfc.scoreThreshold') return 9.9;
-        if (key === 'wrfc.maxFixAttempts') return 3;
-        if (key === 'wrfc.autoCommit') return false;
+        if (key === 'contract.maxFixRounds') return 3;
+        if (key === 'contract.autoCommit') return false;
         return undefined;
       }) as ConfigManager['get'],
       getCategory: ((category: string): unknown => {
-        if (category === 'wrfc') {
+        if (category === 'contract') {
           return {
-            scoreThreshold: 9.9,
-            maxFixAttempts: 3,
+            maxFixRounds: 3,
             autoCommit: false,
             gates: [{ name: 'always-fail', command: 'exit 1', enabled: true }],
           };

@@ -1,9 +1,9 @@
 /**
- * wrfc.commitScope config surface + readWrfcConfig/getWrfcCommitScope resolution.
+ * contract.commitScope config surface, as the review loop reads it, + readWrfcConfig/getWrfcCommitScope resolution.
  *
  * The behavioral (auto-commit staging) tests live in wrfc-controller.test.ts and
  * agent-worktree.test.ts. This file covers just the config schema/plumbing:
- * - wrfc.commitScope is present in CONFIG_SCHEMA as an enum defaulting to 'scoped'.
+ * - contract.commitScope is present in CONFIG_SCHEMA as an enum defaulting to 'scoped'.
  * - ConfigManager resolves it and rejects out-of-set values.
  * - readWrfcConfig()/getWrfcCommitScope() default to 'scoped' and reject invalid values.
  */
@@ -21,9 +21,9 @@ function makeConfigManager(): ConfigManager {
   return new ConfigManager({ configDir });
 }
 
-describe('CONFIG_SCHEMA: wrfc.commitScope', () => {
+describe('CONFIG_SCHEMA: contract.commitScope', () => {
   test('is present as an enum key defaulting to "scoped" with the three documented values', () => {
-    const setting = CONFIG_SCHEMA.find((s) => s.key === 'wrfc.commitScope');
+    const setting = CONFIG_SCHEMA.find((s) => s.key === 'contract.commitScope');
     expect(setting).toBeDefined();
     expect(setting!.type).toBe('enum');
     expect(setting!.default).toBe('scoped');
@@ -32,29 +32,29 @@ describe('CONFIG_SCHEMA: wrfc.commitScope', () => {
 
   test('ConfigManager.get resolves the schema default without throwing', () => {
     const manager = makeConfigManager();
-    expect(() => manager.get('wrfc.commitScope')).not.toThrow();
-    expect(manager.get('wrfc.commitScope')).toBe('scoped');
+    expect(() => manager.get('contract.commitScope')).not.toThrow();
+    expect(manager.get('contract.commitScope')).toBe('scoped');
   });
 
   test('ConfigManager.set accepts the three documented values', () => {
     const manager = makeConfigManager();
     for (const value of ['off', 'scoped', 'all'] as const) {
-      expect(() => manager.set('wrfc.commitScope', value)).not.toThrow();
-      expect(manager.get('wrfc.commitScope')).toBe(value);
+      expect(() => manager.set('contract.commitScope', value)).not.toThrow();
+      expect(manager.get('contract.commitScope')).toBe(value);
     }
   });
 
   test('ConfigManager.set rejects a value outside the enum', () => {
     const manager = makeConfigManager();
-    expect(() => manager.set('wrfc.commitScope', 'everything' as never)).toThrow();
+    expect(() => manager.set('contract.commitScope', 'everything' as never)).toThrow();
   });
 });
 
 describe('readWrfcConfig / getWrfcCommitScope', () => {
   function reader(commitScope: unknown): WrfcConfigReader {
     return {
-      get: (key: string): unknown => (key === 'wrfc.commitScope' ? commitScope : undefined),
-      getCategory: (category: string): unknown => (category === 'wrfc' ? { commitScope } : undefined),
+      get: (key: string): unknown => (key === 'contract.commitScope' ? commitScope : undefined),
+      getCategory: (category: string): unknown => (category === 'contract' ? { commitScope } : undefined),
     } as unknown as WrfcConfigReader;
   }
 

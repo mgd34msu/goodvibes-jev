@@ -103539,6 +103539,50 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         }
       },
       {
+        "id": "runtime.contracts",
+        "title": "contracts Domain Events",
+        "description": "Contract runner events: a contract from creation through shaping, planning and the plan checks, each unit and group status, every Jev check with its per-criterion readings, nudges and their consumption, regressions, stalls, planned fixes, owner escalations and replies, gates, commit, and the pass, failure or cancellation.",
+        "category": "runtime-domain",
+        "source": "builtin",
+        "transport": [
+          "sse",
+          "ws"
+        ],
+        "scopes": [
+          "read:events"
+        ],
+        "domains": [
+          "contracts"
+        ],
+        "wireEvents": [
+          "contracts"
+        ],
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {},
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          }
+        }
+      },
+      {
         "id": "runtime.control-plane",
         "title": "control-plane Domain Events",
         "description": "Control-plane client, auth, and subscription events.",
@@ -105548,9 +105592,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "genericOutputs": 0
     },
     "eventCoverage": {
-      "events": 35,
-      "withDomains": 32,
-      "withWireEvents": 35
+      "events": 36,
+      "withDomains": 33,
+      "withWireEvents": 36
     },
     "validationCoverage": {
       "methods": 507,

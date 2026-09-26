@@ -51,12 +51,11 @@ function createHarness() {
   // expressiveness gap internally with `as ConfigValue<K>`.
   const configManager = {
     get: (key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return 9.9;
-      if (key === 'wrfc.maxFixAttempts') return 3;
-      if (key === 'wrfc.autoCommit') return false;
+      if (key === 'contract.maxFixRounds') return 3;
+      if (key === 'contract.autoCommit') return false;
       return undefined;
     },
-    getCategory: (c: string): unknown => c === 'wrfc' ? { scoreThreshold: 9.9, maxFixAttempts: 3, autoCommit: false, gates: [] } : undefined,
+    getCategory: (c: string): unknown => c === 'contract' ? { maxFixRounds: 3, autoCommit: false, gates: [] } : undefined,
   } as unknown as Pick<import('../sdk/src/platform/config/manager.js').ConfigManager, 'get' | 'getCategory'>;
   const agentManager: AgentManagerLike = {
     spawn: (input) => {

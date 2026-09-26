@@ -132,13 +132,12 @@ function createHarness() {
 
   const configManager: Pick<ConfigManager, 'get' | 'getCategory'> = {
     get: ((key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return 9.9;
-      if (key === 'wrfc.maxFixAttempts') return 3;
-      if (key === 'wrfc.autoCommit') return false;
+      if (key === 'contract.maxFixRounds') return 3;
+      if (key === 'contract.autoCommit') return false;
       return undefined;
     }) as ConfigManager['get'],
     getCategory: ((category: string): unknown =>
-      category === 'wrfc' ? { scoreThreshold: 9.9, maxFixAttempts: 3, autoCommit: false, gates: [] } : undefined) as ConfigManager['getCategory'],
+      category === 'contract' ? { maxFixRounds: 3, autoCommit: false, gates: [] } : undefined) as ConfigManager['getCategory'],
   };
 
   const agentManager: AgentManagerLike = {

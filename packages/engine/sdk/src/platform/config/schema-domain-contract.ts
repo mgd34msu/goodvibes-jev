@@ -13,60 +13,7 @@
  * scalar ConfigKey and is read through getCategory('contract').
  */
 import { type ConfigSettingDefinition, intRange, numRange } from './schema-shared.js';
-
-export interface ContractSettings {
-  autoCommit: boolean;
-  commitScope: 'off' | 'scoped' | 'all';
-  gates: Array<{ name: string; command: string; enabled: boolean }>;
-  gateTimeoutMs: number;
-  acceptanceStakes: 'high' | 'critical';
-  midRunChecks: boolean;
-  evidenceNudgeLimit: number;
-  stallLimit: number;
-  maxNudgesPerUnit: number;
-  maxFixRounds: number;
-  planRepairLimit: number;
-  maxUnits: number;
-  defaultAttempts: number;
-  maxActiveContracts: number;
-  maxParallelUnits: number;
-  isolation: 'auto' | 'worktree' | 'shared';
-  heartbeatTimeoutMs: number;
-  transportRetryLimit: number;
-  transportRetryDelayMs: number;
-  nudgeTtlMs: number;
-}
-
-declare module './schema-types.js' {
-  interface GoodVibesConfig {
-    contract: ContractSettings;
-  }
-}
-
-/** Every scalar `contract.*` key and the type of its value. */
-export interface ContractConfigValueMap {
-  'contract.autoCommit': boolean;
-  'contract.commitScope': ContractSettings['commitScope'];
-  'contract.gateTimeoutMs': number;
-  'contract.acceptanceStakes': ContractSettings['acceptanceStakes'];
-  'contract.midRunChecks': boolean;
-  'contract.evidenceNudgeLimit': number;
-  'contract.stallLimit': number;
-  'contract.maxNudgesPerUnit': number;
-  'contract.maxFixRounds': number;
-  'contract.planRepairLimit': number;
-  'contract.maxUnits': number;
-  'contract.defaultAttempts': number;
-  'contract.maxActiveContracts': number;
-  'contract.maxParallelUnits': number;
-  'contract.isolation': ContractSettings['isolation'];
-  'contract.heartbeatTimeoutMs': number;
-  'contract.transportRetryLimit': number;
-  'contract.transportRetryDelayMs': number;
-  'contract.nudgeTtlMs': number;
-}
-
-export type ContractConfigKey = keyof ContractConfigValueMap;
+import type { ContractSettings } from './schema-types-contract.js';
 
 export const contractConfigDefaults: { contract: ContractSettings } = {
   contract: {

@@ -41,7 +41,7 @@ describe('the contract settings in the schema', () => {
       expect(setting).toBeDefined();
       expect(setting!.default).toEqual(CONTRACT_CONFIG_DEFAULTS[key]);
     }
-    const schemaContractKeys = CONFIG_SCHEMA.filter((entry) => entry.key.startsWith('contract.')).map((entry) => entry.key);
+    const schemaContractKeys = CONFIG_SCHEMA.filter((entry) => entry.key.startsWith('contract.')).map((entry): string => entry.key);
     expect(schemaContractKeys.sort()).toEqual(SCALAR_KEYS.map((key) => `contract.${key}`).sort());
   });
 

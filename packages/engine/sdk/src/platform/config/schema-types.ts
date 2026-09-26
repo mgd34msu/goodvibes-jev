@@ -33,7 +33,7 @@ export * from "./schema-types-permissions.js";
 import type { BackgroundAgentsMode, LineNumberMode, PermissionAction, PermissionMode, PermissionsToolConfig } from "./schema-types-permissions.js";
 export * from "./schema-types-payments.js";
 import type { PaymentsConfig, PaymentsConfigKey, PaymentsConfigValueMap } from "./schema-types-payments.js";
-import type { ContractConfigKey } from "./schema-domain-contract.js";
+import type { ContractConfigKey, ContractSettings } from "./schema-types-contract.js";
 
 export * from "./schema-types-daemon.js";
 import type {
@@ -161,6 +161,7 @@ export interface GoodVibesConfig {
   relay: RelayConfig;
   daemon: { enabled: boolean; timezone: string; connectedHost: { enabled: boolean } };
   payments: PaymentsConfig;
+  contract: ContractSettings;
     // default: enabled true, run the local session daemon (loopback only); timezone '', IANA name the daemon reckons calendar days in, empty means UTC
   danger: {
     httpListener: boolean;          // default: false. Enable HTTP webhook listener

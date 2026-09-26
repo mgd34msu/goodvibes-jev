@@ -203,7 +203,7 @@ export type AgentUsage = {
 // Warning: (ae-forgotten-export) The symbol "ConfigEvent" needs to be exported by the entry point index.d.ts
 //
 // @public
-export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | CommunicationEvent | PlannerEvent | PermissionEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
+export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | ContractEvent | CommunicationEvent | PlannerEvent | PermissionEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
 
 // @public
 export function applyPerMethodPolicy(base: ResolvedHttpRetryPolicy, methodId: string): ResolvedHttpRetryPolicy;
@@ -408,6 +408,30 @@ export function categoryForCode(code: string | undefined): DaemonErrorCategory |
 
 // @public
 export function categoryForStatus(status: number | undefined): DaemonErrorCategory | undefined;
+
+// @public (undocumented)
+export const CHECK_RESULTS: readonly ["pass", "nudge", "await-owner", "stall", "recorded"];
+
+// @public (undocumented)
+export const CHECK_SCOPES: readonly ["unit", "group", "deliverable"];
+
+// @public (undocumented)
+export const CHECK_TRIGGERS: readonly ["turn-end", "completion", "agent-failed", "fix-passed", "resume", "owner-amend"];
+
+// @public (undocumented)
+export type CheckResult = (typeof CHECK_RESULTS)[number];
+
+// @public (undocumented)
+export type CheckScope = (typeof CHECK_SCOPES)[number];
+
+// @public (undocumented)
+export type CheckTrigger = (typeof CHECK_TRIGGERS)[number];
+
+// @public
+export const CLAIM_VERIFICATION_KINDS: readonly ["files_verified", "git_corroborated", "verified_empty", "unverifiable_no_claims", "unverified"];
+
+// @public (undocumented)
+export type ClaimVerificationKind = (typeof CLAIM_VERIFICATION_KINDS)[number];
 
 // @public
 export function clientInputRecord<TInput>(input: TInput | undefined): Record<string, unknown> | undefined;
@@ -708,11 +732,284 @@ export interface Constraint {
     readonly text: string;
 }
 
+// @public (undocumented)
+export const CONTRACT_COMMIT_STATUSES: readonly ["committed", "applied", "skipped", "failed"];
+
+// @public
+export const CONTRACT_EVENT_FIELD_SPECS: {
+    readonly [T in ContractEventType]: readonly FieldSpec[];
+};
+
+// @public
+export const CONTRACT_EVENT_TYPES: readonly ["CONTRACT_CREATED", "CONTRACT_STATUS_CHANGED", "CONTRACT_SHAPED", "CONTRACT_PLANNED", "CONTRACT_PLAN_CHECKED", "CONTRACT_GROUP_STATUS_CHANGED", "CONTRACT_UNIT_STATUS_CHANGED", "CONTRACT_UNIT_SPAWNED", "CONTRACT_CHECKED", "CONTRACT_NUDGED", "CONTRACT_NUDGE_CONSUMED", "CONTRACT_CRITERION_REGRESSED", "CONTRACT_STALLED", "CONTRACT_FIX_PLANNED", "CONTRACT_ESCALATED", "CONTRACT_OWNER_REPLIED", "CONTRACT_GATE_RESULT", "CONTRACT_UNIT_SILENT", "CONTRACT_MERGE_CONFLICT", "CONTRACT_ATTEMPTS_SELECTED", "CONTRACT_COMMITTED", "CONTRACT_PASSED", "CONTRACT_FAILED", "CONTRACT_CANCELLED", "CONTRACT_SPAWN_GUARD_TRIGGERED"];
+
+// @public
+export const CONTRACT_EVENT_VALIDATORS: { readonly [T in ContractEventType]: (v: unknown) => ContractResult; };
+
+// @public
+export const CONTRACT_FAILURE_KINDS: readonly ["transport", "max_turns", "planning", "budget", "owner-rejected", "judgment-unavailable", "zombie", "other"];
+
+// @public
+export const CONTRACT_GROUP_STATUSES: readonly ["pending", "blocked", "running", "judging", "fixing", "awaiting-owner", "passed", "failed", "cancelled"];
+
+// @public
+export const CONTRACT_ORIGINS: readonly ["turn", "agent-tool", "cli", "hosted", "external", "proposal"];
+
+// @public
+export const CONTRACT_OUTCOMES: readonly ["act", "confirm", "escalate"];
+
+// @public
+export const CONTRACT_STATUSES: readonly ["queued", "shaping", "planning", "checking-plan", "running", "judging", "fixing", "committing", "awaiting-owner", "passed", "failed", "cancelled"];
+
+// @public
+export const CONTRACT_UNIT_STATUSES: readonly ["pending", "blocked", "running", "checking", "held", "nudged", "fixing", "awaiting-owner", "held-merge", "passed", "failed", "cancelled"];
+
+// @public (undocumented)
+export interface ContractCheckedCriterion {
+    // (undocumented)
+    readonly criterionId: string;
+    // (undocumented)
+    readonly outcome: ContractOutcome;
+    // (undocumented)
+    readonly probabilityUnmet: number;
+    // (undocumented)
+    readonly verdict: CriterionVerdict;
+}
+
+// @public (undocumented)
+export interface ContractCheckedGate {
+    // (undocumented)
+    readonly gate: string;
+    // (undocumented)
+    readonly passed: boolean;
+    // (undocumented)
+    readonly skipped: boolean;
+}
+
+// @public (undocumented)
+export interface ContractCheckedQuality {
+    // (undocumented)
+    readonly item: QualityItem;
+    // (undocumented)
+    readonly outcome: ContractOutcome;
+    // (undocumented)
+    readonly verdict: YesNoVerdict;
+}
+
+// @public (undocumented)
+export type ContractCommitStatus = (typeof CONTRACT_COMMIT_STATUSES)[number];
+
 // @public
 export class ContractError extends GoodVibesSdkError {
     static [Symbol.hasInstance](value: unknown): boolean;
     constructor(message: string, options?: GoodVibesSdkErrorOptions);
 }
+
+// @public (undocumented)
+export type ContractEvent = {
+    type: 'CONTRACT_CREATED';
+    contractId: string;
+    sessionId: string;
+    origin: ContractOrigin;
+    ask: string;
+    ownerAgentId: string;
+} | {
+    type: 'CONTRACT_STATUS_CHANGED';
+    contractId: string;
+    from: ContractStatus;
+    to: ContractStatus;
+} | {
+    type: 'CONTRACT_SHAPED';
+    contractId: string;
+    forbidsDelegation: ContractShapeReading;
+    requestsParallelAgents: ContractShapeReading;
+    forbidsWriting: ContractShapeReading;
+    asksForAttempts: ContractShapeReading;
+    decisionIds: readonly string[];
+} | {
+    type: 'CONTRACT_PLANNED';
+    contractId: string;
+    goal: string;
+    criteria: readonly ContractPlannedCriterion[];
+    groups: readonly ContractPlannedGroup[];
+    units: readonly ContractPlannedUnit[];
+    repair: number;
+} | {
+    type: 'CONTRACT_PLAN_CHECKED';
+    contractId: string;
+    check: PlanCheck;
+    targetId?: string | undefined;
+    passed: boolean;
+    problems: readonly ContractPlanProblem[];
+    decisionIds: readonly string[];
+} | {
+    type: 'CONTRACT_GROUP_STATUS_CHANGED';
+    contractId: string;
+    groupId: string;
+    from: ContractGroupStatus;
+    to: ContractGroupStatus;
+} | {
+    type: 'CONTRACT_UNIT_STATUS_CHANGED';
+    contractId: string;
+    groupId: string;
+    unitId: string;
+    from: ContractUnitStatus;
+    to: ContractUnitStatus;
+    agentId?: string | undefined;
+} | {
+    type: 'CONTRACT_UNIT_SPAWNED';
+    contractId: string;
+    unitId: string;
+    agentId: string;
+    route: ContractUnitRouteSummary;
+    purpose: UnitSpawnPurpose;
+} | {
+    type: 'CONTRACT_CHECKED';
+    contractId: string;
+    scope: CheckScope;
+    targetId: string;
+    checkId: string;
+    trigger: CheckTrigger;
+    result: CheckResult;
+    criteria: readonly ContractCheckedCriterion[];
+    goal: {
+        readonly verdict: CriterionVerdict;
+        readonly outcome: ContractOutcome;
+    };
+    quality: readonly ContractCheckedQuality[];
+    gates: readonly ContractCheckedGate[];
+    claims?: ClaimVerificationKind | undefined;
+    decisionIds: readonly string[];
+} | {
+    type: 'CONTRACT_NUDGED';
+    contractId: string;
+    unitId: string;
+    nudgeId: string;
+    checkId: string;
+    kinds: readonly NudgeKind[];
+    criterionIds: readonly string[];
+    delivery: NudgeDelivery;
+    agentId: string;
+} | {
+    type: 'CONTRACT_NUDGE_CONSUMED';
+    contractId: string;
+    unitId: string;
+    nudgeId: string;
+    agentId: string;
+    turn?: number | undefined;
+} | {
+    type: 'CONTRACT_CRITERION_REGRESSED';
+    contractId: string;
+    unitId: string;
+    criterionId: string;
+    metAtCheckId: string;
+    checkId: string;
+} | {
+    type: 'CONTRACT_STALLED';
+    contractId: string;
+    scope: CheckScope;
+    targetId: string;
+    route: StallRoute;
+    unmetCriterionIds: readonly string[];
+    reason: string;
+    decisionId?: string | undefined;
+} | {
+    type: 'CONTRACT_FIX_PLANNED';
+    contractId: string;
+    scope: CheckScope;
+    targetId: string;
+    groupId: string;
+    unitIds: readonly string[];
+    round: number;
+} | {
+    type: 'CONTRACT_ESCALATED';
+    contractId: string;
+    escalationId: string;
+    scope: EscalationScope;
+    targetId: string;
+    reason: EscalationReason;
+    question: string;
+    unmetCriterionIds: readonly string[];
+} | {
+    type: 'CONTRACT_OWNER_REPLIED';
+    contractId: string;
+    escalationId: string;
+    reading: OwnerReplyReading;
+    outcome: ContractOutcome;
+    action: string;
+} | {
+    type: 'CONTRACT_GATE_RESULT';
+    contractId: string;
+    targetId: string;
+    gate: string;
+    passed: boolean;
+    skipped: boolean;
+    durationMs: number;
+} | {
+    type: 'CONTRACT_UNIT_SILENT';
+    contractId: string;
+    unitId: string;
+    agentId: string;
+    silentMs: number;
+    action: UnitSilenceAction;
+} | {
+    type: 'CONTRACT_MERGE_CONFLICT';
+    contractId: string;
+    unitId: string;
+    branch: string;
+    path: string;
+    files: readonly string[];
+} | {
+    type: 'CONTRACT_ATTEMPTS_SELECTED';
+    contractId: string;
+    unitId: string;
+    candidateIds: readonly string[];
+    chosen: string | null;
+    outcome: ContractOutcome;
+    decisionId?: string | undefined;
+} | {
+    type: 'CONTRACT_COMMITTED';
+    contractId: string;
+    status: ContractCommitStatus;
+    hash?: string | undefined;
+    note: string;
+} | {
+    type: 'CONTRACT_PASSED';
+    contractId: string;
+    criteriaMet: number;
+    criteriaJudged: number;
+    excluded: number;
+    nudges: number;
+} | {
+    type: 'CONTRACT_FAILED';
+    contractId: string;
+    reason: string;
+    failureKind: ContractFailureKind;
+    membersSettled: boolean;
+    turnLimit?: number | undefined;
+    turnLimitSource?: TurnLimitSource | undefined;
+} | {
+    type: 'CONTRACT_CANCELLED';
+    contractId: string;
+    reason: string;
+    filesModified: number;
+} | {
+    type: 'CONTRACT_SPAWN_GUARD_TRIGGERED';
+    contractId?: string | undefined;
+    agentId: string;
+    depth: number;
+    activeAgents: number;
+    reason: string;
+};
+
+// @public (undocumented)
+export type ContractEventType = ContractEvent['type'];
+
+// @public (undocumented)
+export type ContractFailureKind = (typeof CONTRACT_FAILURE_KINDS)[number];
+
+// @public (undocumented)
+export type ContractGroupStatus = (typeof CONTRACT_GROUP_STATUSES)[number];
 
 // @public (undocumented)
 export interface ContractHttpDefinition {
@@ -729,6 +1026,70 @@ export interface ContractInvokeOptions {
     readonly responseSchema?: ZodType | undefined;
     // (undocumented)
     readonly signal?: AbortSignal | undefined;
+}
+
+// @public (undocumented)
+export type ContractOrigin = (typeof CONTRACT_ORIGINS)[number];
+
+// @public (undocumented)
+export type ContractOutcome = (typeof CONTRACT_OUTCOMES)[number];
+
+// @public
+export interface ContractPlannedCriterion {
+    // (undocumented)
+    readonly disposition: CriterionDisposition;
+    // (undocumented)
+    readonly dispositionReason?: string | undefined;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly origin: CriterionOrigin;
+    // (undocumented)
+    readonly quote?: string | undefined;
+    // (undocumented)
+    readonly serves: readonly string[];
+    // (undocumented)
+    readonly text: string;
+}
+
+// @public (undocumented)
+export interface ContractPlannedGroup {
+    // (undocumented)
+    readonly dependsOn: readonly string[];
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly kind: GroupKind;
+    // (undocumented)
+    readonly title: string;
+    // (undocumented)
+    readonly unitIds: readonly string[];
+}
+
+// @public (undocumented)
+export interface ContractPlannedUnit {
+    // (undocumented)
+    readonly attempts: number;
+    // (undocumented)
+    readonly dependsOn: readonly string[];
+    // (undocumented)
+    readonly groupId: string;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly role: UnitRole;
+    // (undocumented)
+    readonly title: string;
+}
+
+// @public (undocumented)
+export interface ContractPlanProblem {
+    // (undocumented)
+    readonly code: string;
+    // (undocumented)
+    readonly message: string;
+    // (undocumented)
+    readonly targetId?: string | undefined;
 }
 
 // @public
@@ -754,11 +1115,38 @@ export interface ContractRouteLike {
     readonly idempotent?: boolean | undefined;
 }
 
+// @public
+export interface ContractShapeReading {
+    // (undocumented)
+    readonly outcome: ContractOutcome;
+    readonly probability: number;
+    // (undocumented)
+    readonly verdict: YesNoVerdict;
+}
+
+// @public (undocumented)
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
+
 // @public (undocumented)
 export interface ContractStreamOptions extends ContractInvokeOptions {
     // (undocumented)
     readonly handlers: ServerSentEventHandlers;
 }
+
+// @public (undocumented)
+export interface ContractUnitRouteSummary {
+    // (undocumented)
+    readonly model: string;
+    // (undocumented)
+    readonly provider: string;
+    // (undocumented)
+    readonly reason: string;
+    // (undocumented)
+    readonly reasoningEffort?: string | undefined;
+}
+
+// @public (undocumented)
+export type ContractUnitStatus = (typeof CONTRACT_UNIT_STATUSES)[number];
 
 // @public
 export const CONTROL_PLANE_CLIENT_KINDS: readonly ["tui", "web", "slack", "discord", "ntfy", "daemon", "webhook", "homeassistant", "service", "telegram", "google-chat", "signal", "whatsapp", "telephony", "imessage", "msteams", "bluebubbles", "mattermost", "matrix"];
@@ -986,6 +1374,30 @@ export function createWebSocketRemoteError(fallbackMessage: string, body: unknow
 }): WebSocketTransportError;
 
 // @public (undocumented)
+export const CRITERION_DISPOSITIONS: readonly ["judged", "excluded", "met-by-structure"];
+
+// @public (undocumented)
+export const CRITERION_ORIGINS: readonly ["stated", "derived", "integration", "fix", "owner"];
+
+// @public (undocumented)
+export const CRITERION_STATUSES: readonly ["unread", "met", "unmet", "unshown"];
+
+// @public
+export const CRITERION_VERDICTS: readonly ["met", "unmet", "unshown"];
+
+// @public (undocumented)
+export type CriterionDisposition = (typeof CRITERION_DISPOSITIONS)[number];
+
+// @public (undocumented)
+export type CriterionOrigin = (typeof CRITERION_ORIGINS)[number];
+
+// @public (undocumented)
+export type CriterionStatus = (typeof CRITERION_STATUSES)[number];
+
+// @public (undocumented)
+export type CriterionVerdict = (typeof CRITERION_VERDICTS)[number];
+
+// @public (undocumented)
 export type CurrentModelResponse = z.infer<typeof CurrentModelResponseSchema>;
 
 // @public (undocumented)
@@ -1153,6 +1565,7 @@ export type DomainEventMap = {
     agents: AgentEvent;
     workflows: WorkflowEvent;
     orchestration: OrchestrationEvent;
+    contracts: ContractEvent;
     communication: CommunicationEvent;
     planner: PlannerEvent;
     permissions: PermissionEvent;
@@ -1187,6 +1600,18 @@ export type ErrorCategory = DaemonErrorCategory | 'contract';
 
 // @public (undocumented)
 export type ErrorSource = DaemonErrorSource | 'contract';
+
+// @public (undocumented)
+export const ESCALATION_REASONS: readonly ["plan-unresolved", "stalled", "unsettled", "fix-rounds-exhausted", "writing-unclear", "attempts-undecided", "owner-decision-needed"];
+
+// @public (undocumented)
+export const ESCALATION_SCOPES: readonly ["plan", "unit", "group", "deliverable", "shape"];
+
+// @public (undocumented)
+export type EscalationReason = (typeof ESCALATION_REASONS)[number];
+
+// @public (undocumented)
+export type EscalationScope = (typeof ESCALATION_SCOPES)[number];
 
 // @public (undocumented)
 export interface EventEnvelope<TType extends string, TPayload> {
@@ -1324,15 +1749,16 @@ readonly before_response: YesNoItem;
 export function failureState(evidence: FailureEvidence): string;
 
 // @public (undocumented)
-export type FieldKind = 'string' | 'number' | 'boolean' | 'string[]' | 'enum' | 'object';
+export type FieldKind = 'string' | 'number' | 'boolean' | 'string[]' | 'enum' | 'enum[]' | 'object' | 'object[]' | 'string|null';
 
 // @public (undocumented)
 export interface FieldSpec {
+    readonly fields?: readonly FieldSpec[] | undefined;
     // (undocumented)
     readonly key: string;
     // (undocumented)
     readonly kind: FieldKind;
-    // (undocumented)
+    readonly optional?: boolean | undefined;
     readonly values?: readonly string[] | undefined;
 }
 
@@ -1374,7 +1800,7 @@ export const FOUNDATION_METADATA: {
     readonly productId: "goodvibes";
     readonly productVersion: "2.0.23";
     readonly operatorMethodCount: 507;
-    readonly operatorEventCount: 35;
+    readonly operatorEventCount: 36;
     readonly peerEndpointCount: 6;
 };
 
@@ -1712,6 +2138,12 @@ export type GoodVibesUIEvent =
 
 // @public
 export type GoodVibesUIEventType = GoodVibesUIEvent['type'];
+
+// @public (undocumented)
+export const GROUP_KINDS: readonly ["work", "fix", "integration"];
+
+// @public (undocumented)
+export type GroupKind = (typeof GROUP_KINDS)[number];
 
 // @public (undocumented)
 export type HeaderResolver = () => MaybePromise<HeadersInit | undefined>;
@@ -2288,6 +2720,18 @@ export function normalizeStreamReconnectPolicy(policy?: StreamReconnectPolicy): 
 
 // @public (undocumented)
 export function normalizeTransportError(error: unknown): Error;
+
+// @public (undocumented)
+export const NUDGE_DELIVERIES: readonly ["hold", "bus", "wake"];
+
+// @public (undocumented)
+export const NUDGE_KINDS: readonly ["unmet", "unshown", "regression", "quality", "gate", "claims"];
+
+// @public (undocumented)
+export type NudgeDelivery = (typeof NUDGE_DELIVERIES)[number];
+
+// @public (undocumented)
+export type NudgeKind = (typeof NUDGE_KINDS)[number];
 
 // @public
 export type ObserverInvocationResult = {
@@ -24730,6 +25174,12 @@ export interface OtelTracer {
 }
 
 // @public
+export const OWNER_REPLY_READINGS: readonly ["approve", "reject", "amend", "unclear"];
+
+// @public (undocumented)
+export type OwnerReplyReading = (typeof OWNER_REPLY_READINGS)[number];
+
+// @public
 export interface PartialToolCall {
     // (undocumented)
     readonly arguments?: string | undefined;
@@ -25607,6 +26057,12 @@ export class PermissionResolver {
     get snapshot(): ControlPlaneAuthSnapshot;
 }
 
+// @public
+export const PLAN_CHECKS: readonly ["structure", "criterion-trace", "plan-coverage", "criterion-shape", "unit-shape"];
+
+// @public (undocumented)
+export type PlanCheck = (typeof PLAN_CHECKS)[number];
+
 // @public (undocumented)
 export interface PlannerDecision {
     // (undocumented)
@@ -25878,6 +26334,12 @@ export const ProviderModelRefSchema: z.ZodObject<{
 }, z.core.$strict>;
 
 // @public
+export const QUALITY_ITEMS: readonly ["placeholder", "tests_weakened", "breaks_existing", "out_of_scope", "hidden_failure", "unsupported_claims"];
+
+// @public (undocumented)
+export type QualityItem = (typeof QUALITY_ITEMS)[number];
+
+// @public
 export type QuarantineReason = 'stale_threshold' | 'unsupported' | 'operator_flagged' | 'incompatible';
 
 // @public (undocumented)
@@ -26100,7 +26562,7 @@ export type RouteSurfaceKind = (typeof ROUTE_SURFACE_KINDS)[number];
 export type RouteTargetKind = (typeof ROUTE_TARGET_KINDS)[number];
 
 // @public (undocumented)
-export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "workflows", "orchestration", "communication", "planner", "permissions", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
+export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "workflows", "orchestration", "contracts", "communication", "planner", "permissions", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
 
 // @public (undocumented)
 export type RuntimeDomainEventPayload<TDomain extends RuntimeEventTypedDomain, TEventType extends RuntimeDomainEventType<TDomain>> = RuntimeDomainEventPayloadMap[TDomain][TEventType];
@@ -26611,6 +27073,12 @@ export const SPAN_STATUS_ERROR: 2;
 
 // @public
 export function splitClientArgs<TInput, TOptions>(args: readonly unknown[]): readonly [TInput | undefined, TOptions | undefined];
+
+// @public (undocumented)
+export const STALL_ROUTES: readonly ["split", "fresh", "owner"];
+
+// @public (undocumented)
+export type StallRoute = (typeof STALL_ROUTES)[number];
 
 // @public (undocumented)
 export interface StrategyCandidate {
@@ -27205,6 +27673,9 @@ export interface TransportPaths {
 }
 
 // @public
+export const TURN_LIMIT_SOURCES: readonly ["default", "spawn-override", "policy-bound"];
+
+// @public
 export const TURN_START_EVENT_TYPE = "TURN_SUBMITTED";
 
 // @public (undocumented)
@@ -27410,6 +27881,9 @@ export interface TurnLifecycleGateOptions {
 }
 
 // @public (undocumented)
+export type TurnLimitSource = (typeof TURN_LIMIT_SOURCES)[number];
+
+// @public (undocumented)
 export type TurnStopReason = 'completed' | 'empty_response' | 'preflight_failed' | 'context_overflow' | 'provider_exhausted' | 'provider_error' | 'hook_denied' | 'tool_loop_circuit_breaker' | 'cancelled' | 'unexpected_error';
 
 // @public (undocumented)
@@ -27426,6 +27900,24 @@ export const TypedSerializedEventEnvelopeSchema: z.ZodObject<{
 
 // @public (undocumented)
 export type TypedSerializedEventEnvelopeShape = z.infer<typeof TypedSerializedEventEnvelopeSchema>;
+
+// @public (undocumented)
+export const UNIT_ROLES: readonly ["implement", "research", "design", "integration"];
+
+// @public (undocumented)
+export const UNIT_SILENCE_ACTIONS: readonly ["retried", "failed"];
+
+// @public (undocumented)
+export const UNIT_SPAWN_PURPOSES: readonly ["unit", "fresh-unit", "transport-retry", "silence-retry", "resume"];
+
+// @public (undocumented)
+export type UnitRole = (typeof UNIT_ROLES)[number];
+
+// @public (undocumented)
+export type UnitSilenceAction = (typeof UNIT_SILENCE_ACTIONS)[number];
+
+// @public (undocumented)
+export type UnitSpawnPurpose = (typeof UNIT_SPAWN_PURPOSES)[number];
 
 // @public
 export function validateKnownEvent(event: unknown): ContractResult;
@@ -27723,6 +28215,12 @@ export type WorkspaceEventType = WorkspaceEvent['type'];
 
 // @public (undocumented)
 export type WrfcState = 'pending' | 'engineering' | 'integrating' | 'reviewing' | 'fixing' | 'awaiting_gates' | 'gating' | 'passed' | 'failed' | 'committing';
+
+// @public
+export const YES_NO_VERDICTS: readonly ["yes", "no", "uncertain"];
+
+// @public (undocumented)
+export type YesNoVerdict = (typeof YES_NO_VERDICTS)[number];
 
 // Warnings were encountered during analysis:
 //

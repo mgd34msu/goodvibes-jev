@@ -89,8 +89,8 @@ function makeHarness(): Harness {
 function makeGateConfig(logPath: string): Pick<ConfigManager, 'get' | 'getCategory'> {
   const gates = [{ name: 'marker', command: `pwd >> ${JSON.stringify(logPath)}`, enabled: true }];
   return {
-    get: ((k: string) => (k === 'wrfc.transportRetryLimit' ? 0 : k === 'wrfc.commitScope' ? 'scoped' : undefined)) as ConfigManager['get'],
-    getCategory: ((c: string) => (c === 'wrfc' ? { gates, commitScope: 'scoped', transportRetryLimit: 0 } : undefined)) as unknown as ConfigManager['getCategory'],
+    get: ((k: string) => (k === 'contract.transportRetryLimit' ? 0 : k === 'contract.commitScope' ? 'scoped' : undefined)) as ConfigManager['get'],
+    getCategory: ((c: string) => (c === 'contract' ? { gates, commitScope: 'scoped', transportRetryLimit: 0 } : undefined)) as unknown as ConfigManager['getCategory'],
   };
 }
 

@@ -241,19 +241,17 @@ function createHarness(overrides?: {
   // expressiveness gap internally with `as ConfigValue<K>`.
   const configManager = {
     get: (key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return threshold;
-      if (key === 'wrfc.maxFixAttempts') return maxFixAttempts;
-      if (key === 'wrfc.autoCommit') return false;
-      if (key === 'wrfc.agentHeartbeatTimeoutMs') return agentHeartbeatTimeoutMs;
+      if (key === 'contract.maxFixRounds') return maxFixAttempts;
+      if (key === 'contract.autoCommit') return false;
+      if (key === 'contract.heartbeatTimeoutMs') return agentHeartbeatTimeoutMs;
       return undefined;
     },
     getCategory: (category: string): unknown => {
-      if (category === 'wrfc') {
+      if (category === 'contract') {
         return {
-          scoreThreshold: threshold,
-          maxFixAttempts,
+          maxFixRounds: maxFixAttempts,
           autoCommit: false,
-          agentHeartbeatTimeoutMs,
+          heartbeatTimeoutMs: agentHeartbeatTimeoutMs,
           gates: [] as Array<{ name: string; command: string; enabled: boolean }>,
         };
       }

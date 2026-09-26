@@ -121,7 +121,7 @@ describe('the contract settings load pass', () => {
     expect(threshold).toContain('wrfc.scoreThreshold (it was 9.5)');
     expect(threshold).toContain('a reading per acceptance criterion');
     expect(threshold).toContain('contract.acceptanceStakes');
-    expect(`${moves}${threshold}`).not.toContain('—');
+    expect(`${moves}${threshold}`).not.toContain('\u2014');
   });
 
   test('a kept new value is named in the receipt as the reason the old one was dropped', () => {

@@ -59,14 +59,13 @@ const ITINERARY_CONTINUATION_TASK = [
 
 function createConfigManager(): Pick<ConfigManager, 'get' | 'getCategory'> {
   const get = ((key: string): unknown => {
-    if (key === 'wrfc.scoreThreshold') return 9.9;
-    if (key === 'wrfc.maxFixAttempts') return 3;
-    if (key === 'wrfc.autoCommit') return false;
+    if (key === 'contract.maxFixRounds') return 3;
+    if (key === 'contract.autoCommit') return false;
     if (key === 'agents.maxActive') return 20;
     return undefined;
   }) as ConfigManager['get'];
   const getCategory = ((category: string): unknown => {
-    if (category === 'wrfc') {
+    if (category === 'contract') {
       return { scoreThreshold: 9.9, maxFixAttempts: 3, autoCommit: false, gates: [] };
     }
     return undefined;

@@ -144,16 +144,14 @@ function createHarness(opts?: {
 
   const configManager = {
     get: (key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return threshold;
-      if (key === 'wrfc.maxFixAttempts') return maxFixAttempts;
-      if (key === 'wrfc.autoCommit') return false;
+      if (key === 'contract.maxFixRounds') return maxFixAttempts;
+      if (key === 'contract.autoCommit') return false;
       return undefined;
     },
     getCategory: (category: string): unknown => {
-      if (category === 'wrfc') {
+      if (category === 'contract') {
         return {
-          scoreThreshold: threshold,
-          maxFixAttempts,
+          maxFixRounds: maxFixAttempts,
           autoCommit: false,
           gates: [] as Array<{ name: string; command: string; enabled: boolean }>,
         };
@@ -562,16 +560,14 @@ function createGateHarness(gateName: string) {
 
   const configManager = {
     get: (key: string): unknown => {
-      if (key === 'wrfc.scoreThreshold') return 9.9;
-      if (key === 'wrfc.maxFixAttempts') return 3;
-      if (key === 'wrfc.autoCommit') return false;
+      if (key === 'contract.maxFixRounds') return 3;
+      if (key === 'contract.autoCommit') return false;
       return undefined;
     },
     getCategory: (category: string): unknown => {
-      if (category === 'wrfc') {
+      if (category === 'contract') {
         return {
-          scoreThreshold: 9.9,
-          maxFixAttempts: 3,
+          maxFixRounds: 3,
           autoCommit: false,
           gates: [{ name: gateName, command: 'exit 1', enabled: true }],
         };

@@ -15,6 +15,7 @@ import type { StoreApi } from 'zustand';
 // Warning: (ae-forgotten-export) The symbol "AgentEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "WorkflowEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "OrchestrationEvent" needs to be exported by the entry point embed.d.ts
+// Warning: (ae-forgotten-export) The symbol "ContractEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "CommunicationEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "PlannerEvent" needs to be exported by the entry point embed.d.ts
 // Warning: (ae-forgotten-export) The symbol "PermissionEvent" needs to be exported by the entry point embed.d.ts
@@ -38,7 +39,7 @@ import type { StoreApi } from 'zustand';
 // Warning: (ae-forgotten-export) The symbol "ConfigEvent" needs to be exported by the entry point embed.d.ts
 //
 // @public
-export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | CommunicationEvent | PlannerEvent | PermissionEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
+export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | ContractEvent | CommunicationEvent | PlannerEvent | PermissionEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
 
 // @public (undocumented)
 export class ApprovalBroker {

@@ -229,7 +229,7 @@ export function createOrchestrationHarness(): OrchestrationTestHarness {
 
 /** Config manager stub: no gates configured, transport retry disabled (deterministic, fast tests). */
 export function makeFakeConfigManager(): Pick<ConfigManager, 'get' | 'getCategory'> {
-  const get = ((key: string): unknown => (key === 'wrfc.transportRetryLimit' ? 0 : undefined)) as ConfigManager['get'];
+  const get = ((key: string): unknown => (key === 'contract.transportRetryLimit' ? 0 : undefined)) as ConfigManager['get'];
   const getCategory = ((_category: string): unknown => undefined) as ConfigManager['getCategory'];
   return { get, getCategory };
 }
