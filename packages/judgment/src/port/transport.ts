@@ -1,10 +1,10 @@
 import {
-  type ModelCard,
   APIConnectionError,
   APIError,
   APIUserAbortError,
   TypeSafeClient,
   TypeSafeError,
+  type ModelCard,
   type Questions,
 } from '@typesafe-ai/sdk';
 import { checkAnswers } from './answers.ts';
@@ -58,6 +58,20 @@ export async function listSystemOneModels(config: JudgmentConfig): Promise<reado
   }
 }
 
+type WireResult = Awaited<ReturnType<TypeSafeClient['systemOne']>>;
+
+function toResult<Q extends Questions>(data: WireResult, requestedModel: string, requestId: string | undefined, started: number): JudgmentResult<Q> {
+  const { answers, model, usage } = data;
+  return {
+    answers: answers as JudgmentResult<Q>['answers'],
+    requestedModel,
+    model,
+    usage: { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens },
+    latencyMs: performance.now() - started,
+    requestId,
+  };
+}
+
 /** A JudgmentPort that asks a System One endpoint (hosted Jev or a local model). */
 export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   const client = clientFor(config);
@@ -69,22 +83,12 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
       validateContextBudget(request.state, request.questions);
       const requestedModel = request.model ?? config.model;
       const started = performance.now();
+      const body = { state: request.state, questions: request.questions, model: requestedModel };
+      const options = request.signal === undefined ? {} : { signal: request.signal };
       try {
-        const { data, requestId } = await client
-          .systemOne(
-            { state: request.state, questions: request.questions, model: requestedModel },
-            request.signal === undefined ? {} : { signal: request.signal },
-          )
-          .withResponse();
+        const { data, requestId } = await client.systemOne(body, options).withResponse();
         checkAnswers(request.questions, data.answers, requestId);
-        return {
-          answers: data.answers,
-          requestedModel,
-          model: data.model,
-          usage: { inputTokens: data.usage.input_tokens, outputTokens: data.usage.output_tokens },
-          latencyMs: performance.now() - started,
-          requestId,
-        };
+        return toResult<Q>(data, requestedModel, requestId, started);
       } catch (error) {
         throw toJudgmentError(error);
       }

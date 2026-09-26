@@ -1,8 +1,9 @@
+import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { assertYesNoBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Judging output against a goal: one yes/no per acceptance criterion, framed
@@ -74,28 +75,64 @@ const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?'
 /** Folds per-criterion and goal readings into one verdict, max-style. */
 export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict: Verdict; outcome: Outcome } {
   const unmet = readings.filter((reading) => reading.verdict === 'yes');
-  if (unmet.length > 0) {
-    return { verdict: 'fail', outcome: unmet.some((reading) => reading.outcome === 'act') ? 'act' : 'confirm' };
+  const someUnmet = unmet.length > 0;
+  const someUnsettled = readings.some((reading) => reading.verdict === 'uncertain');
+  if (someUnmet) {
+    const confidentlyUnmet = unmet.some((reading) => reading.outcome === 'act');
+    return { verdict: 'fail', outcome: confidentlyUnmet ? 'act' : 'confirm' };
   }
-  if (readings.some((reading) => reading.verdict === 'uncertain')) return { verdict: 'uncertain', outcome: 'escalate' };
-  return { verdict: 'pass', outcome: readings.every((reading) => reading.outcome === 'act') ? 'act' : 'confirm' };
+  if (someUnsettled) return { verdict: 'uncertain', outcome: 'escalate' };
+  const everyMetConfidently = readings.every((reading) => reading.outcome === 'act');
+  return { verdict: 'pass', outcome: everyMetConfidently ? 'act' : 'confirm' };
+}
+
+/** How strongly the readings back the verdict: the strongest unmet reading for a fail, the weakest met one otherwise. */
+function verdictSignal(judgment: Judgment): number {
+  const all = [...judgment.criteria, judgment.goal];
+  return judgment.verdict === 'fail'
+    ? Math.max(...all.map((reading) => reading.probability))
+    : Math.min(...all.map((reading) => 1 - reading.probability));
+}
+
+const asCriterionAnswer = (answer: string): 'met' | 'unmet' => (answer === 'yes' ? 'unmet' : 'met');
+
+function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
+  const verdictCheck: FixtureCheck = {
+    fixture: fixture.name,
+    aspect: 'verdict',
+    expected: fixture.expect.verdict,
+    got: judgment.verdict,
+    correct: judgment.verdict === fixture.expect.verdict,
+    signal: verdictSignal(judgment),
+    outcome: judgment.outcome,
+  };
+  if (fixture.expect.unmet === undefined) return [verdictCheck];
+  const expectedUnmet = new Set(fixture.expect.unmet);
+  const criterionChecks = judgment.criteria.map((reading, index): FixtureCheck => {
+    const expected = expectedUnmet.has(index) ? 'unmet' : 'met';
+    const got = asCriterionAnswer(concludedAnswer(reading));
+    return { fixture: fixture.name, aspect: `criterion_${index}`, expected, got, correct: got === expected, signal: readingSignal(reading), outcome: reading.outcome };
+  });
+  return [verdictCheck, ...criterionChecks];
+}
+
+function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {
+  if (fixture.criteria.length === 0) throw new RangeError(`judge ${judge}: fixture ${fixture.name} has no criteria`);
+  const unmet = fixture.expect.unmet ?? [];
+  const missing = unmet.find((index) => !(index >= 0 && index < fixture.criteria.length));
+  if (missing !== undefined) throw new RangeError(`judge ${judge}: fixture ${fixture.name} names criterion ${missing}, which does not exist`);
+  if (fixture.expect.verdict === 'pass' && unmet.length > 0) throw new RangeError(`judge ${judge}: fixture ${fixture.name} passes with unmet criteria`);
+}
+
+function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestion> {
+  return Object.fromEntries([['goal', GOAL_QUESTION], ...criteria.map((criterion, index) => [`criterion_${index}`, CRITERION_QUESTION(criterion)])]);
 }
 
 export function defineJudge(spec: JudgeSpec): Judge {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
   assertYesNoBand(spec.band);
-  for (const fixture of spec.fixtures) {
-    if (fixture.criteria.length === 0) throw new RangeError(`judge ${spec.name}: fixture ${fixture.name} has no criteria`);
-    for (const index of fixture.expect.unmet ?? []) {
-      if (!(index >= 0 && index < fixture.criteria.length)) {
-        throw new RangeError(`judge ${spec.name}: fixture ${fixture.name} names criterion ${index}, which does not exist`);
-      }
-    }
-    if (fixture.expect.verdict === 'pass' && (fixture.expect.unmet?.length ?? 0) > 0) {
-      throw new RangeError(`judge ${spec.name}: fixture ${fixture.name} passes with unmet criteria`);
-    }
-  }
+  for (const fixture of spec.fixtures) assertJudgeFixture(spec.name, fixture);
 
   const judge: Judge = {
     name: spec.name,
@@ -106,67 +143,19 @@ export function defineJudge(spec: JudgeSpec): Judge {
     fixtureCount: spec.fixtures.length,
     async judge(port, input, options = {}) {
       if (input.criteria.length === 0) throw new RangeError(`judge ${spec.name}: nothing to judge without criteria`);
-      const questions: Record<string, NoulQuestion> = { goal: GOAL_QUESTION };
-      input.criteria.forEach((criterion, index) => {
-        questions[`criterion_${index}`] = CRITERION_QUESTION(criterion);
-      });
-      const state = {
-        goal: input.goal,
-        output: input.output,
-        ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
-      };
-      const result = await askAs(port, spec, 'judge', state, questions, options);
+      const state = { goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) };
+      const result = await askAs(port, spec, 'judge', state, judgeQuestions(input.criteria), options);
       const answers = result.answers as Record<string, { type: 'noul'; noul: number }>;
       const criteria = input.criteria.map((_, index) => readYesNo(answers[`criterion_${index}`]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
       const { verdict, outcome } = aggregateJudgment([...criteria, goal]);
       const unmet = criteria.flatMap((reading, index) => (reading.verdict === 'yes' ? [index] : []));
       recordReadings(port, result, { verdict, outcome, goal, criteria });
-      return {
-        verdict,
-        outcome,
-        criteria,
-        goal,
-        unmet,
-        decisionId: result.decisionId,
-        recordAction: (action) => recordAction(port, result.decisionId, action),
-      };
+      return { verdict, outcome, criteria, goal, unmet, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const judgment = await judge.judge(port, fixture, { site: 'calibration', ...options });
-        const all = [...judgment.criteria, judgment.goal];
-        const signal =
-          judgment.verdict === 'fail'
-            ? Math.max(...all.map((reading) => reading.probability))
-            : Math.min(...all.map((reading) => 1 - reading.probability));
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'verdict',
-          expected: fixture.expect.verdict,
-          got: judgment.verdict,
-          correct: judgment.verdict === fixture.expect.verdict,
-          signal,
-          outcome: judgment.outcome,
-        });
-        if (fixture.expect.unmet !== undefined) {
-          const expectedUnmet = new Set(fixture.expect.unmet);
-          judgment.criteria.forEach((reading, index) => {
-            const expected = expectedUnmet.has(index) ? 'unmet' : 'met';
-            const got = reading.probability >= 0.5 ? 'unmet' : 'met';
-            checks.push({
-              fixture: fixture.name,
-              aspect: `criterion_${index}`,
-              expected,
-              got,
-              correct: got === expected,
-              signal: Math.max(reading.probability, 1 - reading.probability),
-              outcome: reading.outcome,
-            });
-          });
-        }
-      }
+      for (const fixture of spec.fixtures) checks.push(...fixtureChecks(fixture, await judge.judge(port, fixture, { ...options, site: 'calibration' })));
       return checks;
     },
   };

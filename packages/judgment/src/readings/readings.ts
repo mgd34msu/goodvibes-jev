@@ -42,15 +42,22 @@ export interface ScoreReading {
 
 export type Reading = YesNoReading | ChoiceReading | ScoreReading;
 
+type YesNoConclusion = Pick<YesNoReading, 'verdict' | 'outcome'>;
+
+/** Where a probability falls in a yes/no band: act on either side, confirm nearer the middle, escalate in it. */
+function concludeYesNo(p: number, band: YesNoBand): YesNoConclusion {
+  const { act, confirm } = band;
+  if (act !== null && p >= act.yes) return { verdict: 'yes', outcome: 'act' };
+  if (act !== null && p <= act.no) return { verdict: 'no', outcome: 'act' };
+  if (p >= confirm.yes) return { verdict: 'yes', outcome: 'confirm' };
+  if (p <= confirm.no) return { verdict: 'no', outcome: 'confirm' };
+  return { verdict: 'uncertain', outcome: 'escalate' };
+}
+
 /** Reads a noul through a yes/no band. */
 export function readYesNo(answer: NoulResponse, band: YesNoBand): YesNoReading {
   assertYesNoBand(band);
-  const p = answer.noul;
-  if (band.act !== null && p >= band.act.yes) return { kind: 'yes-no', probability: p, verdict: 'yes', outcome: 'act' };
-  if (band.act !== null && p <= band.act.no) return { kind: 'yes-no', probability: p, verdict: 'no', outcome: 'act' };
-  if (p >= band.confirm.yes) return { kind: 'yes-no', probability: p, verdict: 'yes', outcome: 'confirm' };
-  if (p <= band.confirm.no) return { kind: 'yes-no', probability: p, verdict: 'no', outcome: 'confirm' };
-  return { kind: 'yes-no', probability: p, verdict: 'uncertain', outcome: 'escalate' };
+  return { kind: 'yes-no', probability: answer.noul, ...concludeYesNo(answer.noul, band) };
 }
 
 /** Reads a choice through its band, using the chosen option's stricter band when it has one. */

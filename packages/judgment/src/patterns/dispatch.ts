@@ -3,7 +3,7 @@ import { checkReading } from '../batteries/battery.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Routing: dispatch over a closed set of handlers (intent routing and

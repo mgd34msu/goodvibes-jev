@@ -1,6 +1,6 @@
 import type { JsonValue, JudgmentPort } from '../port/types.ts';
 import type { Judge, Judgment } from '../patterns/judge.ts';
-import type { CallOptions } from '../patterns/common.ts';
+import type { CallOptions } from '../batteries/asking.ts';
 
 /** One way to produce the work, cheapest first: a small model, then a stronger one. */
 export interface Tier<O extends JsonValue> {

@@ -1,11 +1,19 @@
 import { JudgmentError } from '../port/errors.ts';
 import type { JsonValue, JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '../port/types.ts';
-import { hashState, type DecisionLog } from './types.ts';
+import { hashState, type DecisionLog, type NewDecisionEntry } from './types.ts';
 
-function unrecorded(cause: unknown): JudgmentError {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return new JudgmentError('unrecorded', `the decision log could not record this judgment: ${message}`, { cause });
+/** Runs a log write; a failure becomes an `unrecorded` judgment error. */
+function recorded<T>(write: () => T): T {
+  try {
+    return write();
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new JudgmentError('unrecorded', `the decision log could not record this judgment: ${message}`, { cause });
+  }
 }
+
+const asFailure = (error: unknown): JudgmentError =>
+  error instanceof JudgmentError ? error : new JudgmentError('unavailable', String(error), { cause: error });
 
 /**
  * Wraps a port so every call is recorded, answered or failed. When the log
@@ -13,24 +21,16 @@ function unrecorded(cause: unknown): JudgmentError {
  * on a reading the log does not hold.
  */
 export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () => Date = () => new Date()): JudgmentPort {
-  const guard = (write: () => void): void => {
-    try {
-      write();
-    } catch (error) {
-      throw unrecorded(error);
-    }
-  };
   return {
     model: inner.model,
     recorder: {
-      recordReadings: (id, readings) => guard(() => log.recordReadings(id, readings as JsonValue)),
-      recordAction: (id, action) => guard(() => log.recordAction(id, action)),
+      recordReadings: (id, readings) => recorded(() => log.recordReadings(id, readings as JsonValue)),
+      recordAction: (id, action) => recorded(() => log.recordAction(id, action)),
     },
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
-      const at = now().toISOString();
       const started = performance.now();
-      const base = {
-        at,
+      const call = {
+        at: now().toISOString(),
         context: request.context ?? {},
         stateHash: hashState(request.state),
         questions: request.questions as unknown as JsonValue,
@@ -39,35 +39,30 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
       try {
         result = await inner.ask(request);
       } catch (error) {
-        const failure =
-          error instanceof JudgmentError ? error : new JudgmentError('unavailable', String(error), { cause: error });
-        guard(() =>
-          log.record({
-            ...base,
-            requestedModel: request.model ?? inner.model,
-            model: undefined,
-            answers: undefined,
-            latencyMs: performance.now() - started,
-            usage: undefined,
-            requestId: failure.requestId,
-            error: { kind: failure.kind, message: failure.message },
-          }),
-        );
+        const failure = asFailure(error);
+        const entry: NewDecisionEntry = {
+          ...call,
+          status: 'failed',
+          requestedModel: request.model ?? inner.model,
+          latencyMs: performance.now() - started,
+          requestId: failure.requestId,
+          error: { kind: failure.kind, message: failure.message },
+        };
+        recorded(() => log.record(entry));
         throw failure;
       }
-      let decisionId = '';
-      guard(() => {
-        decisionId = log.record({
-          ...base,
+      const decisionId = recorded(() =>
+        log.record({
+          ...call,
+          status: 'answered',
           requestedModel: result.requestedModel,
           model: result.model,
           answers: result.answers as unknown as JsonValue,
           latencyMs: result.latencyMs,
           usage: result.usage,
           requestId: result.requestId,
-          error: undefined,
-        });
-      });
+        }),
+      );
       return { ...result, decisionId };
     },
   };

@@ -2,7 +2,7 @@ import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type Nam
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Classification that answers coarsely when unsure (the classification

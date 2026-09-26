@@ -2,7 +2,7 @@ import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type Nam
 import { choice, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand, type Outcome } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 export type Fidelity = 'supported' | 'contradicted' | 'unsupported' | 'fabricated';
 

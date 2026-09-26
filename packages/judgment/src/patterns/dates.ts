@@ -1,7 +1,7 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type ChoiceQuestion, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 export const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -96,6 +96,9 @@ export function dateQuestions(role: string, todayYear: number): Readonly<Record<
 }
 
 const DAY_MS = 86_400_000;
+const DAYS_IN_WEEK = 7;
+/** An unstated year means this year, unless the date is more than this many days past; then it means next year. */
+const YEAR_ROLLOVER_GRACE_DAYS = 31;
 
 function parseDay(iso: string): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -108,12 +111,13 @@ function parseDay(iso: string): Date {
 const isoDay = (date: Date): string => date.toISOString().slice(0, 10);
 const addDays = (date: Date, days: number): Date => new Date(date.getTime() + days * DAY_MS);
 /** Monday = 0 ... Sunday = 6. */
-const weekdayIndex = (date: Date): number => (date.getUTCDay() + 6) % 7;
+const weekdayIndex = (date: Date): number => (date.getUTCDay() + DAYS_IN_WEEK - 1) % DAYS_IN_WEEK;
 
 /** A calendar date, or null when the parts do not form one (February 30). */
 function calendarDate(year: number, month: number, day: number): Date | null {
   const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+  const sameParts = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  return sameParts ? date : null;
 }
 
 /**
@@ -124,9 +128,55 @@ function calendarDate(year: number, month: number, day: number): Date | null {
 export function resolveWeekday(today: Date, weekday: (typeof WEEKDAYS)[number], weekOffset: string): Date {
   const target = WEEKDAYS.indexOf(weekday);
   const monday = addDays(today, -weekdayIndex(today));
-  if (weekOffset === 'next') return addDays(monday, 7 + target);
+  if (weekOffset === 'next') return addDays(monday, DAYS_IN_WEEK + target);
   if (weekOffset === 'current') return addDays(monday, target);
-  return addDays(today, (target - weekdayIndex(today) + 7) % 7);
+  return addDays(today, (target - weekdayIndex(today) + DAYS_IN_WEEK) % DAYS_IN_WEEK);
+}
+
+/** A date the parts produced, or why they produced none. */
+type Assembled = { readonly date: Date } | { readonly note: string };
+
+/** The date an unstated year points to: this year's, or next year's when this year's is well past. */
+function withInferredYear(today: Date, month: number, day: number, label: string): Assembled {
+  const thisYear = calendarDate(today.getUTCFullYear(), month, day);
+  if (thisYear === null) return { note: `impossible date: ${label}` };
+  const longPast = thisYear.getTime() < today.getTime() - YEAR_ROLLOVER_GRACE_DAYS * DAY_MS;
+  return { date: longPast ? calendarDate(today.getUTCFullYear() + 1, month, day)! : thisYear };
+}
+
+function assembleAbsolute(parts: Parts, today: Date): Assembled {
+  const month = MONTHS.indexOf(parts.month.choice as (typeof MONTHS)[number]) + 1;
+  const day = Number(parts.day.choice);
+  const label = `${parts.month.choice} ${parts.day.choice}`;
+  if (month === 0 || !Number.isInteger(day)) return { note: 'absolute date incomplete' };
+  if (parts.year.choice === 'out_of_range') return { note: 'year outside the listed range' };
+  if (parts.year.choice === 'none') return withInferredYear(today, month, day, label);
+  const stated = calendarDate(Number(parts.year.choice), month, day);
+  return stated === null ? { note: `impossible date: ${parts.year.choice} ${label}` } : { date: stated };
+}
+
+const ANCHOR_OFFSETS: Readonly<Record<string, number>> = { today: 0, tomorrow: 1, day_after: 2 };
+
+function assembleRelative(parts: Parts, today: Date): Assembled {
+  const anchor = parts.day_anchor.choice;
+  const offset = ANCHOR_OFFSETS[anchor];
+  if (offset !== undefined) return { date: addDays(today, offset) };
+  if (anchor !== 'weekday') return { note: 'relative day not read' };
+  const weekday = parts.weekday.choice as (typeof WEEKDAYS)[number];
+  if (!WEEKDAYS.includes(weekday)) return { note: 'relative weekday not read' };
+  return { date: resolveWeekday(today, weekday, parts.week_offset.choice) };
+}
+
+/** The parts each date shape reads; their weakest confidence is the date's. */
+const PARTS_USED: Readonly<Record<string, readonly (keyof Parts)[]>> = {
+  absolute: ['mode', 'month', 'day', 'year'],
+  relative: ['mode', 'day_anchor'],
+};
+
+function partsUsed(parts: Parts): readonly (keyof Parts)[] {
+  const used = PARTS_USED[parts.mode.choice] ?? ['mode'];
+  const namesWeekday = parts.mode.choice === 'relative' && parts.day_anchor.choice === 'weekday';
+  return namesWeekday ? [...used, 'weekday', 'week_offset'] : used;
 }
 
 /** Builds the date from the parts, in code. Confidence is the weakest part the shape used. */
@@ -135,50 +185,29 @@ export function assembleDate(
   today: Date,
   band: ConfidenceBand,
 ): { date: string | null; confidence: number | null; outcome: Outcome; note: string } {
-  const used: number[] = [parts.mode.confidence];
-  const done = (date: Date | null, note = '') => {
-    const confidence = Math.min(...used);
-    return {
-      date: date === null ? null : isoDay(date),
-      confidence,
-      outcome: date === null ? ('escalate' as const) : outcomeForConfidence(confidence, band),
-      note,
-    };
-  };
   const mode = parts.mode.choice;
-  if (mode === 'none') return done(null, 'no such date stated');
-  if (mode === 'absolute') {
-    used.push(parts.month.confidence, parts.day.confidence, parts.year.confidence);
-    const monthIndex = MONTHS.indexOf(parts.month.choice as (typeof MONTHS)[number]);
-    const day = Number(parts.day.choice);
-    if (monthIndex < 0 || !Number.isInteger(day)) return done(null, 'absolute date incomplete');
-    if (parts.year.choice === 'out_of_range') return done(null, 'year outside the listed range');
-    if (parts.year.choice === 'none') {
-      const thisYear = calendarDate(today.getUTCFullYear(), monthIndex + 1, day);
-      if (thisYear === null) return done(null, `impossible date: ${parts.month.choice} ${day}`);
-      // No year stated: this year, moved to next year when it is more than a month past.
-      if (thisYear.getTime() < today.getTime() - 31 * DAY_MS) {
-        return done(calendarDate(today.getUTCFullYear() + 1, monthIndex + 1, day));
-      }
-      return done(thisYear);
-    }
-    const stated = calendarDate(Number(parts.year.choice), monthIndex + 1, day);
-    return stated === null ? done(null, `impossible date: ${parts.year.choice}-${parts.month.choice}-${day}`) : done(stated);
-  }
-  if (mode === 'relative') {
-    used.push(parts.day_anchor.confidence);
-    const anchor = parts.day_anchor.choice;
-    if (anchor === 'today') return done(today);
-    if (anchor === 'tomorrow') return done(addDays(today, 1));
-    if (anchor === 'day_after') return done(addDays(today, 2));
-    if (anchor === 'weekday') {
-      used.push(parts.weekday.confidence, parts.week_offset.confidence);
-      if (!WEEKDAYS.includes(parts.weekday.choice as (typeof WEEKDAYS)[number])) return done(null, 'relative weekday not read');
-      return done(resolveWeekday(today, parts.weekday.choice as (typeof WEEKDAYS)[number], parts.week_offset.choice));
-    }
-    return done(null, 'relative day not read');
-  }
-  return done(null, `unrecognized mode: ${mode}`);
+  const assembled: Assembled =
+    mode === 'absolute'
+      ? assembleAbsolute(parts, today)
+      : mode === 'relative'
+        ? assembleRelative(parts, today)
+        : { note: mode === 'none' ? 'no such date stated' : `unrecognized mode: ${mode}` };
+  const confidence = Math.min(...partsUsed(parts).map((part) => parts[part].confidence));
+  if ('note' in assembled) return { date: null, confidence, outcome: 'escalate', note: assembled.note };
+  return { date: isoDay(assembled.date), confidence, outcome: outcomeForConfidence(confidence, band), note: '' };
+}
+
+function dateCheck(fixture: DatePartsSpec['fixtures'][number], got: ExtractedDate): FixtureCheck {
+  const gotDate = got.date ?? 'none';
+  return {
+    fixture: fixture.name,
+    aspect: 'date',
+    expected: fixture.expect,
+    got: gotDate,
+    correct: gotDate === fixture.expect,
+    signal: got.confidence ?? 0,
+    outcome: got.outcome,
+  };
 }
 
 export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
@@ -211,17 +240,7 @@ export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) {
-        const got = await reader.extract(port, fixture.document, fixture.role, fixture.today, { site: 'calibration', ...options });
-        const gotDate = got.date ?? 'none';
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'date',
-          expected: fixture.expect,
-          got: gotDate,
-          correct: gotDate === fixture.expect,
-          signal: got.confidence ?? 0,
-          outcome: got.outcome,
-        });
+        checks.push(dateCheck(fixture, await reader.extract(port, fixture.document, fixture.role, fixture.today, { ...options, site: 'calibration' })));
       }
       return checks;
     },

@@ -3,7 +3,11 @@ export { SqliteDecisionLog } from './sqlite.ts';
 export {
   canonicalJson,
   hashState,
+  type AnsweredEntry,
   type DecisionEntry,
+  type DecisionId,
+  type FailedEntry,
+  type TokenUsage,
   type DecisionLog,
   type DecisionQuery,
   type NewDecisionEntry,

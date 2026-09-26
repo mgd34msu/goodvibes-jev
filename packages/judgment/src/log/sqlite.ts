@@ -1,11 +1,16 @@
 import { Database } from 'bun:sqlite';
-import type { JsonValue } from '../port/types.ts';
-import type { DecisionEntry, DecisionLog, DecisionQuery, NewDecisionEntry } from './types.ts';
+import type { JudgmentErrorKind } from '../port/errors.ts';
+import type { DecisionContext, JsonValue } from '../port/types.ts';
+import type { DecisionEntry, DecisionId, DecisionLog, DecisionQuery, NewDecisionEntry } from './types.ts';
+
+/** Bumped whenever the table shape changes; an older file is refused rather than misread. */
+const SCHEMA_VERSION = 1;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS decisions (
   id TEXT PRIMARY KEY,
   at TEXT NOT NULL,
+  status TEXT NOT NULL,
   battery TEXT,
   battery_version INTEGER,
   pattern TEXT,
@@ -32,6 +37,7 @@ CREATE INDEX IF NOT EXISTS decisions_at ON decisions (at);
 interface Row {
   id: string;
   at: string;
+  status: DecisionEntry['status'];
   battery: string | null;
   battery_version: number | null;
   pattern: string | null;
@@ -51,35 +57,89 @@ interface Row {
   error_message: string | null;
 }
 
-const parse = (text: string | null): JsonValue | undefined => (text === null ? undefined : (JSON.parse(text) as JsonValue));
+type Params = Record<string, string | number | null>;
+
+function contextOf(row: Row): DecisionContext {
+  return {
+    ...(row.battery === null ? {} : { battery: row.battery }),
+    ...(row.battery_version === null ? {} : { batteryVersion: row.battery_version }),
+    ...(row.pattern === null ? {} : { pattern: row.pattern }),
+    ...(row.site === null ? {} : { site: row.site }),
+  };
+}
 
 function toEntry(row: Row): DecisionEntry {
-  return {
-    id: row.id,
+  const call = {
+    id: row.id as DecisionId,
     at: row.at,
-    context: {
-      ...(row.battery === null ? {} : { battery: row.battery }),
-      ...(row.battery_version === null ? {} : { batteryVersion: row.battery_version }),
-      ...(row.pattern === null ? {} : { pattern: row.pattern }),
-      ...(row.site === null ? {} : { site: row.site }),
-    },
+    context: contextOf(row),
     requestedModel: row.requested_model,
-    model: row.model ?? undefined,
     stateHash: row.state_hash,
     questions: JSON.parse(row.questions) as JsonValue,
-    answers: parse(row.answers),
-    readings: parse(row.readings),
-    action: row.action ?? undefined,
     latencyMs: row.latency_ms,
-    usage:
-      row.input_tokens === null || row.output_tokens === null
-        ? undefined
-        : { inputTokens: row.input_tokens, outputTokens: row.output_tokens },
     requestId: row.request_id ?? undefined,
-    error:
-      row.error_kind === null
-        ? undefined
-        : { kind: row.error_kind as NonNullable<DecisionEntry['error']>['kind'], message: row.error_message ?? '' },
+  };
+  if (row.status === 'failed') {
+    return { ...call, status: 'failed', error: { kind: row.error_kind as JudgmentErrorKind, message: row.error_message ?? '' } };
+  }
+  return {
+    ...call,
+    status: 'answered',
+    model: row.model ?? '',
+    answers: JSON.parse(row.answers ?? 'null') as JsonValue,
+    usage: { inputTokens: row.input_tokens ?? 0, outputTokens: row.output_tokens ?? 0 },
+    ...(row.readings === null ? {} : { readings: JSON.parse(row.readings) as JsonValue }),
+    ...(row.action === null ? {} : { action: row.action }),
+  };
+}
+
+function toParams(id: DecisionId, entry: NewDecisionEntry): Params {
+  const answered = entry.status === 'answered' ? entry : undefined;
+  const failed = entry.status === 'failed' ? entry : undefined;
+  return {
+    id,
+    at: entry.at,
+    status: entry.status,
+    battery: entry.context.battery ?? null,
+    batteryVersion: entry.context.batteryVersion ?? null,
+    pattern: entry.context.pattern ?? null,
+    site: entry.context.site ?? null,
+    requestedModel: entry.requestedModel,
+    model: answered?.model ?? null,
+    stateHash: entry.stateHash,
+    questions: JSON.stringify(entry.questions),
+    answers: answered === undefined ? null : JSON.stringify(answered.answers),
+    latencyMs: entry.latencyMs,
+    inputTokens: answered?.usage.inputTokens ?? null,
+    outputTokens: answered?.usage.outputTokens ?? null,
+    requestId: entry.requestId ?? null,
+    errorKind: failed?.error.kind ?? null,
+    errorMessage: failed?.error.message ?? null,
+  };
+}
+
+const INSERT = `INSERT INTO decisions (id, at, status, battery, battery_version, pattern, site, requested_model, model, state_hash,
+  questions, answers, latency_ms, input_tokens, output_tokens, request_id, error_kind, error_message)
+  VALUES ($id, $at, $status, $battery, $batteryVersion, $pattern, $site, $requestedModel, $model, $stateHash,
+  $questions, $answers, $latencyMs, $inputTokens, $outputTokens, $requestId, $errorKind, $errorMessage)`;
+
+const OUTCOME_FILTER =
+  "EXISTS (SELECT 1 FROM json_each(decisions.readings) WHERE json_extract(json_each.value, '$.outcome') = $outcome)";
+
+/** The WHERE clauses and parameters for a query. */
+function filterFor(query: DecisionQuery): { where: string[]; params: Params } {
+  const filters: [string | undefined, string, string][] = [
+    [query.battery, 'battery = $battery', 'battery'],
+    [query.site, 'site = $site', 'site'],
+    [query.since, 'at >= $since', 'since'],
+    [query.until, 'at < $until', 'until'],
+    [query.outcome, OUTCOME_FILTER, 'outcome'],
+    [query.status, 'status = $status', 'status'],
+  ];
+  const active = filters.filter(([value]) => value !== undefined);
+  return {
+    where: active.map(([, clause]) => clause),
+    params: Object.fromEntries(active.map(([value, , param]) => [param, value!])),
   };
 }
 
@@ -90,37 +150,22 @@ export class SqliteDecisionLog implements DecisionLog, Disposable {
   constructor(path: string) {
     this.#db = new Database(path, { create: true, strict: true });
     this.#db.exec('PRAGMA journal_mode = WAL;');
+    this.#assertSchemaVersion(path);
     this.#db.exec(SCHEMA);
+    this.#db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
   }
 
-  record(entry: NewDecisionEntry): string {
-    const id = Bun.randomUUIDv7();
-    this.#db
-      .query(
-        `INSERT INTO decisions (id, at, battery, battery_version, pattern, site, requested_model, model, state_hash,
-           questions, answers, latency_ms, input_tokens, output_tokens, request_id, error_kind, error_message)
-         VALUES ($id, $at, $battery, $batteryVersion, $pattern, $site, $requestedModel, $model, $stateHash,
-           $questions, $answers, $latencyMs, $inputTokens, $outputTokens, $requestId, $errorKind, $errorMessage)`,
-      )
-      .run({
-        id,
-        at: entry.at,
-        battery: entry.context.battery ?? null,
-        batteryVersion: entry.context.batteryVersion ?? null,
-        pattern: entry.context.pattern ?? null,
-        site: entry.context.site ?? null,
-        requestedModel: entry.requestedModel,
-        model: entry.model ?? null,
-        stateHash: entry.stateHash,
-        questions: JSON.stringify(entry.questions),
-        answers: entry.answers === undefined ? null : JSON.stringify(entry.answers),
-        latencyMs: entry.latencyMs,
-        inputTokens: entry.usage?.inputTokens ?? null,
-        outputTokens: entry.usage?.outputTokens ?? null,
-        requestId: entry.requestId ?? null,
-        errorKind: entry.error?.kind ?? null,
-        errorMessage: entry.error?.message ?? null,
-      });
+  #assertSchemaVersion(path: string): void {
+    const { user_version: version } = this.#db.query('PRAGMA user_version').get() as { user_version: number };
+    const tables = this.#db.query("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get() as { n: number };
+    if (tables.n > 0 && version !== SCHEMA_VERSION) {
+      throw new RangeError(`decision log ${path} has schema version ${version}; this build writes version ${SCHEMA_VERSION}`);
+    }
+  }
+
+  record(entry: NewDecisionEntry): DecisionId {
+    const id = Bun.randomUUIDv7() as DecisionId;
+    this.#db.query(INSERT).run(toParams(id, entry));
     return id;
   }
 
@@ -133,8 +178,8 @@ export class SqliteDecisionLog implements DecisionLog, Disposable {
   }
 
   #update(id: string, column: 'readings' | 'action', value: string): void {
-    const { changes } = this.#db.query(`UPDATE decisions SET ${column} = $value WHERE id = $id`).run({ id, value });
-    if (changes !== 1) throw new RangeError(`no decision ${id} to attach ${column} to`);
+    const { changes } = this.#db.query(`UPDATE decisions SET ${column} = $value WHERE id = $id AND status = 'answered'`).run({ id, value });
+    if (changes !== 1) throw new RangeError(`no answered decision ${id} to attach ${column} to`);
   }
 
   get(id: string): DecisionEntry | undefined {
@@ -143,41 +188,13 @@ export class SqliteDecisionLog implements DecisionLog, Disposable {
   }
 
   query(query: DecisionQuery = {}): readonly DecisionEntry[] {
-    const where: string[] = [];
-    const params: Record<string, string | number> = {};
-    if (query.battery !== undefined) {
-      where.push('battery = $battery');
-      params['battery'] = query.battery;
-    }
-    if (query.site !== undefined) {
-      where.push('site = $site');
-      params['site'] = query.site;
-    }
-    if (query.since !== undefined) {
-      where.push('at >= $since');
-      params['since'] = query.since;
-    }
-    if (query.until !== undefined) {
-      where.push('at < $until');
-      params['until'] = query.until;
-    }
-    if (query.outcome !== undefined) {
-      where.push(
-        "EXISTS (SELECT 1 FROM json_each(decisions.readings) WHERE json_extract(json_each.value, '$.outcome') = $outcome)",
-      );
-      params['outcome'] = query.outcome;
-    }
-    if (query.failed !== undefined) where.push(query.failed ? 'error_kind IS NOT NULL' : 'error_kind IS NULL');
-    params['limit'] = query.limit ?? 1000;
-    const sql = `SELECT * FROM decisions ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY at DESC, id DESC LIMIT $limit`;
-    return (this.#db.query(sql).all(params) as Row[]).map(toEntry);
+    const { where, params } = filterFor(query);
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const sql = `SELECT * FROM decisions ${clause} ORDER BY at DESC, id DESC LIMIT $limit`;
+    return (this.#db.query(sql).all({ ...params, limit: query.limit ?? 1000 }) as Row[]).map(toEntry);
   }
 
   [Symbol.dispose](): void {
-    this.#db.close();
-  }
-
-  close(): void {
     this.#db.close();
   }
 }

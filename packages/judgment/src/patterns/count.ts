@@ -2,7 +2,7 @@ import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type Nam
 import { noul, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Counting by yes/no (Jev 1.13 jaggedness, "Counting"): Jev does not tally

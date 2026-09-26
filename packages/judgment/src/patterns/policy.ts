@@ -1,6 +1,6 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { noul, score, type EntryType, type JudgmentPort, type NoulQuestion, type ScoreCriteria } from '../port/types.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { noul, score, type EntryType, type JudgmentPort, type NoulResponse, type Question, type ScoreCriteria, type ScoreResponse } from '../port/types.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Policy checklist (guardrails for LLMs): one Noul per hazard plus one Score
@@ -48,52 +48,83 @@ export interface PolicyChecklist<H extends string, A extends string> extends Nam
   route(hazards: Readonly<Record<H, number>>, severity: number, policy: string): A | 'review' | 'pass';
 }
 
-export function definePolicyChecklist<const H extends string, const A extends string>(
-  spec: PolicySpec<H, A>,
-): PolicyChecklist<H, A> {
+type Action<A extends string> = A | 'review' | 'pass';
+
+function assertPolicySpec<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]): void {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
-  const hazardNames = Object.keys(spec.hazards) as H[];
-  if (hazardNames.length === 0) throw new RangeError(`policy ${spec.name}: needs at least one hazard`);
-  const actions = new Set<string>([...hazardNames.map((h) => spec.hazards[h].action), spec.severityAction, 'review', 'pass']);
-  for (const action of actions) {
-    if (!spec.precedence.includes(action as A)) throw new RangeError(`policy ${spec.name}: precedence is missing "${action}"`);
-  }
+  if (hazards.length === 0) throw new RangeError(`policy ${spec.name}: needs at least one hazard`);
+  const actions = new Set<string>([...hazards.map((h) => spec.hazards[h].action), spec.severityAction, 'review', 'pass']);
+  const unranked = [...actions].find((action) => !spec.precedence.includes(action as A));
+  if (unranked !== undefined) throw new RangeError(`policy ${spec.name}: precedence is missing "${unranked}"`);
   if (spec.precedence.at(-1) !== 'pass') throw new RangeError(`policy ${spec.name}: 'pass' must come last in precedence`);
-  for (const [policyName, policy] of Object.entries(spec.policies)) {
-    if (!(policy.review >= 0 && policy.review <= policy.action && policy.action <= 1)) {
-      throw new RangeError(`policy ${spec.name}: ${policyName} needs 0 <= review <= action <= 1`);
-    }
+  for (const [policyName, { review, action }] of Object.entries(spec.policies)) {
+    const ordered = review >= 0 && review <= action && action <= 1;
+    if (!ordered) throw new RangeError(`policy ${spec.name}: ${policyName} needs 0 <= review <= action <= 1`);
   }
   if (!(spec.defaultPolicy in spec.policies)) throw new RangeError(`policy ${spec.name}: unknown default policy`);
   for (const fixture of spec.fixtures) {
     if (!actions.has(fixture.expect)) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} expects unknown action`);
-    if (fixture.policy !== undefined && !(fixture.policy in spec.policies)) {
-      throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} names unknown policy`);
-    }
+    const unknownPolicy = fixture.policy !== undefined && !(fixture.policy in spec.policies);
+    if (unknownPolicy) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} names unknown policy`);
   }
+}
 
-  const questions: Record<string, NoulQuestion | ReturnType<typeof score>> = {
-    severity: score(spec.severity.instructions, spec.severity.levels),
-  };
-  for (const hazard of hazardNames) {
+function policyQuestions<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]): Record<string, Question> {
+  const questions: Record<string, Question> = { severity: score(spec.severity.instructions, spec.severity.levels) };
+  for (const hazard of hazards) {
     const { instructions, yes, no } = spec.hazards[hazard];
     questions[`hazard_${hazard}`] = noul(instructions, { true: yes, false: no });
   }
-  const topLevel = spec.severity.levels.length - 1;
+  return questions;
+}
 
-  const route = (hazards: Readonly<Record<H, number>>, severity: number, policyName: string): A | 'review' | 'pass' => {
+/** The actions a set of hazard probabilities triggers under one policy, before precedence picks one. */
+function triggeredActions<H extends string, A extends string>(
+  spec: PolicySpec<H, A>,
+  hazards: readonly H[],
+  probabilities: Readonly<Record<H, number>>,
+  policy: PolicySpec<H, A>['policies'][string],
+): (A | 'review')[] {
+  return hazards.flatMap((hazard): (A | 'review')[] => {
+    const p = probabilities[hazard];
+    if (p >= policy.action) return [spec.hazards[hazard].action];
+    return p >= policy.review ? ['review'] : [];
+  });
+}
+
+function makeRouter<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]) {
+  return (probabilities: Readonly<Record<H, number>>, severity: number, policyName: string): Action<A> => {
     const policy = spec.policies[policyName];
     if (policy === undefined) throw new RangeError(`policy ${spec.name}: unknown policy "${policyName}"`);
-    let triggered: (A | 'review')[] = [];
-    for (const hazard of hazardNames) {
-      const p = hazards[hazard];
-      if (p >= policy.action) triggered.push(spec.hazards[hazard].action);
-      else if (p >= policy.review) triggered.push('review');
-    }
-    if (severity >= policy.severityLine) triggered = triggered.map((action) => (action === 'review' ? spec.severityAction : action));
+    const severe = severity >= policy.severityLine;
+    const triggered = triggeredActions(spec, hazards, probabilities, policy).map((action) => (severe && action === 'review' ? spec.severityAction : action));
     return spec.precedence.find((action) => triggered.includes(action as A | 'review')) ?? 'pass';
   };
+}
+
+function actionCheck(fixture: { readonly name: string; readonly expect: string }, got: PolicyResult<string, string>): FixtureCheck {
+  const strongest = Math.max(...Object.values<number>(got.hazards));
+  const passed = got.action === 'pass';
+  return {
+    fixture: fixture.name,
+    aspect: 'action',
+    expected: fixture.expect,
+    got: got.action,
+    correct: got.action === fixture.expect,
+    signal: passed ? 1 - strongest : strongest,
+    outcome: got.action === 'review' ? 'escalate' : 'act',
+  };
+}
+
+export function definePolicyChecklist<const H extends string, const A extends string>(
+  spec: PolicySpec<H, A>,
+): PolicyChecklist<H, A> {
+  const hazards = Object.keys(spec.hazards) as H[];
+  assertPolicySpec(spec, hazards);
+  const questions = policyQuestions(spec, hazards);
+  const topLevel = spec.severity.levels.length - 1;
+  const route = makeRouter(spec, hazards);
 
   const checklist: PolicyChecklist<H, A> = {
     name: spec.name,
@@ -106,34 +137,20 @@ export function definePolicyChecklist<const H extends string, const A extends st
     async screen(port, state, options = {}) {
       const policy = options.policy ?? spec.defaultPolicy;
       const result = await askAs(port, spec, 'policy', state, questions, options);
-      const answers = result.answers as Record<string, unknown>;
-      const hazards = Object.fromEntries(
-        hazardNames.map((hazard) => [hazard, (answers[`hazard_${hazard}`] as { noul: number }).noul]),
-      ) as Record<H, number>;
-      const severityAnswer = answers['severity'] as { score: number; confidence: number };
-      const severity = { score: severityAnswer.score, confidence: severityAnswer.confidence };
-      const action = route(hazards, severity.score, policy);
-      recordReadings(port, result, { action, policy, hazards, severity, severityNormalized: severity.score / topLevel });
-      return { action, hazards, severity, policy, decisionId: result.decisionId, recordAction: (a) => recordAction(port, result.decisionId, a) };
+      const answers = result.answers as Readonly<Record<string, unknown>>;
+      const probabilities = Object.fromEntries(hazards.map((hazard) => [hazard, (answers[`hazard_${hazard}`] as NoulResponse).noul])) as Record<H, number>;
+      const { score: level, confidence } = answers['severity'] as ScoreResponse;
+      const severity = { score: level, confidence };
+      const action = route(probabilities, level, policy);
+      recordReadings(port, result, { action, policy, hazards: probabilities, severity, severityNormalized: level / topLevel });
+      return { action, hazards: probabilities, severity, policy, decisionId: result.decisionId, recordAction: (a) => recordAction(port, result.decisionId, a) };
     },
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) {
-        const got = await checklist.screen(port, fixture.state, {
-          site: 'calibration',
-          ...(fixture.policy === undefined ? {} : { policy: fixture.policy }),
-          ...options,
-        });
-        const strongest = Math.max(...Object.values<number>(got.hazards));
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'action',
-          expected: fixture.expect,
-          got: got.action,
-          correct: got.action === fixture.expect,
-          signal: got.action === 'pass' ? 1 - strongest : strongest,
-          outcome: got.action === 'pass' ? 'act' : got.action === 'review' ? 'escalate' : 'act',
-        });
+        const policyOption = fixture.policy === undefined ? {} : { policy: fixture.policy };
+        const got = await checklist.screen(port, fixture.state, { ...options, ...policyOption, site: 'calibration' });
+        checks.push(actionCheck(fixture, got as PolicyResult<string, string>));
       }
       return checks;
     },

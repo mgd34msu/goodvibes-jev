@@ -3,7 +3,7 @@ import type { NamedDecision } from '../batteries/decision.ts';
 import type { EntryType, JudgmentPort, ScoreCriteria } from '../port/types.ts';
 import type { ConfidenceBand } from '../readings/bands.ts';
 import type { ScoreReading } from '../readings/readings.ts';
-import type { CallOptions, PatternHeader } from '../patterns/common.ts';
+import type { CallOptions, PatternHeader } from '../batteries/asking.ts';
 
 /**
  * Composite scoring: a judgment that depends on several things is split into
@@ -39,13 +39,11 @@ export function defineCompositeScore<const D extends string, const P extends str
   spec: CompositeSpec<D, P>,
 ): CompositeScore<D, P> {
   const dimensionNames = Object.keys(spec.dimensions) as D[];
+  const totalWeight = (weights: Readonly<Record<D, number>>): number => dimensionNames.reduce((sum, dimension) => sum + weights[dimension], 0);
   for (const [profile, weights] of Object.entries(spec.profiles) as [P, Readonly<Record<D, number>>][]) {
-    const total = dimensionNames.reduce((sum, dimension) => {
-      const weight = weights[dimension];
-      if (!(weight >= 0)) throw new RangeError(`composite ${spec.name}: profile ${profile} needs a weight of 0 or more for ${dimension}`);
-      return sum + weight;
-    }, 0);
-    if (!(total > 0)) throw new RangeError(`composite ${spec.name}: profile ${profile} has no positive weight`);
+    const negative = dimensionNames.find((dimension) => !(weights[dimension] >= 0));
+    if (negative !== undefined) throw new RangeError(`composite ${spec.name}: profile ${profile} needs a weight of 0 or more for ${negative}`);
+    if (!(totalWeight(weights) > 0)) throw new RangeError(`composite ${spec.name}: profile ${profile} has no positive weight`);
   }
   const items = Object.fromEntries(
     dimensionNames.map((dimension) => {
@@ -76,9 +74,8 @@ export function defineCompositeScore<const D extends string, const P extends str
       const dimensions = run.readings as unknown as Record<D, ScoreReading>;
       const composites = Object.fromEntries(
         (Object.entries(spec.profiles) as [P, Readonly<Record<D, number>>][]).map(([profile, weights]) => {
-          const total = dimensionNames.reduce((sum, dimension) => sum + weights[dimension], 0);
           const weighted = dimensionNames.reduce((sum, dimension) => sum + weights[dimension] * dimensions[dimension].normalized, 0);
-          return [profile, weighted / total];
+          return [profile, weighted / totalWeight(weights)];
         }),
       ) as Record<P, number>;
       return { dimensions, composites, decisionId: run.result.decisionId, recordAction: (action) => run.recordAction(action) };

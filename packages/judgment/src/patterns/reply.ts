@@ -3,7 +3,7 @@ import { checkReading } from '../batteries/battery.ts';
 import { choice, type EntryType, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /** The readings a reply to a proposal can have, unless a site defines its own. */
 export const REPLY_READINGS = {

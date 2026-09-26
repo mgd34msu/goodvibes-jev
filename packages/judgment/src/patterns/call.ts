@@ -1,7 +1,7 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, noul, type EntryType, type JudgmentPort, type Question } from '../port/types.ts';
 import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /** An argument that takes one value from a fixed list. */
 export interface ChoiceArg {

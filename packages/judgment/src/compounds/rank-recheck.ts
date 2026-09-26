@@ -1,8 +1,8 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
+import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../patterns/common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 import { runSelection, type Selection } from '../patterns/select.ts';
 
 /**
@@ -57,21 +57,52 @@ export interface RankRecheck extends NamedDecision {
   suggest(port: JudgmentPort, state: EntryType, options: readonly RankOption[], call?: CallOptions): Promise<RankRecheckResult>;
 }
 
-export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
+type WideAnswers = Readonly<Record<string, { readonly noul?: number; readonly probabilities?: Readonly<Record<string, number>> }>>;
+
+function assertRankRecheckSpec(spec: RankRecheckSpec): void {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
   if (Object.keys(spec.gates).length === 0) throw new RangeError(`rank-recheck ${spec.name}: needs at least one gate question`);
-  if (!(spec.gateThreshold >= 0 && spec.gateThreshold <= 1)) throw new RangeError(`rank-recheck ${spec.name}: gateThreshold must be in [0, 1]`);
-  if (!(Number.isInteger(spec.shortlist) && spec.shortlist >= 1)) throw new RangeError(`rank-recheck ${spec.name}: shortlist must be a positive integer`);
+  const thresholdInUnit = spec.gateThreshold >= 0 && spec.gateThreshold <= 1;
+  if (!thresholdInUnit) throw new RangeError(`rank-recheck ${spec.name}: gateThreshold must be in [0, 1]`);
+  const positiveShortlist = Number.isInteger(spec.shortlist) && spec.shortlist >= 1;
+  if (!positiveShortlist) throw new RangeError(`rank-recheck ${spec.name}: shortlist must be a positive integer`);
   assertConfidenceBand(spec.recheckBand);
   assertYesNoBand(spec.fitBand);
+}
 
-  const recheck = {
-    instructions: spec.recheckInstructions,
-    fitInstructions: spec.fitInstructions,
-    band: spec.recheckBand,
-    fitBand: spec.fitBand,
-  };
+function wideQuestions(spec: RankRecheckSpec, options: readonly RankOption[]): Record<string, Question> {
+  const questions: Record<string, Question> = { which: choice(spec.instructions, Object.fromEntries(options.map((option) => [option.id, option.summary]))) };
+  for (const [gate, { instructions }] of Object.entries(spec.gates)) questions[`gate_${gate}`] = noul(instructions);
+  return questions;
+}
+
+/** The mean gate probability, each gate turned so that higher means an option is needed. */
+function gateMean(spec: RankRecheckSpec, answers: WideAnswers): number {
+  const oriented = Object.entries(spec.gates).map(([gate, { inverted }]) => {
+    const p = answers[`gate_${gate}`]!.noul!;
+    return inverted === true ? 1 - p : p;
+  });
+  return oriented.reduce((sum, p) => sum + p, 0) / oriented.length;
+}
+
+function shortlistOf(spec: RankRecheckSpec, options: readonly RankOption[], answers: WideAnswers): { id: string; probability: number }[] {
+  const probabilities = answers['which']!.probabilities!;
+  return options
+    .map((option) => ({ id: option.id, probability: probabilities[option.id] ?? 0 }))
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, spec.shortlist);
+}
+
+function chosenCheck(fixture: RankRecheckSpec['fixtures'][number], got: RankRecheckResult): FixtureCheck {
+  const gotId = got.chosen ?? 'none';
+  const signal = got.recheck === undefined ? 1 - got.gate : got.recheck.pick.confidence;
+  return { fixture: fixture.name, aspect: 'chosen', expected: fixture.expect, got: gotId, correct: gotId === fixture.expect, signal, outcome: got.outcome };
+}
+
+export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
+  assertRankRecheckSpec(spec);
+  const recheck = { instructions: spec.recheckInstructions, fitInstructions: spec.fitInstructions, band: spec.recheckBand, fitBand: spec.fitBand };
 
   const compound: RankRecheck = {
     name: spec.name,
@@ -81,56 +112,22 @@ export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
     ...(spec.model === undefined ? {} : { model: spec.model }),
     fixtureCount: spec.fixtures.length,
     async suggest(port, state, options, call = {}) {
-      if (options.length < 2 || options.length > LIMITS.maxChoiceOptions) {
-        throw new RangeError(`rank-recheck ${spec.name}: needs 2 to ${LIMITS.maxChoiceOptions} options; split larger sets into chunks`);
-      }
-      const questions: Record<string, NoulQuestion | ReturnType<typeof choice>> = {
-        which: choice(spec.instructions, Object.fromEntries(options.map((option) => [option.id, option.summary]))),
-      };
-      for (const [gate, { instructions }] of Object.entries(spec.gates)) questions[`gate_${gate}`] = noul(instructions);
-      const wide = await askAs(port, spec, 'rank-recheck.wide', state, questions, call);
-      const answers = wide.answers as Record<string, unknown>;
-      const oriented = Object.entries(spec.gates).map(([gate, { inverted }]) => {
-        const p = (answers[`gate_${gate}`] as { noul: number }).noul;
-        return inverted === true ? 1 - p : p;
-      });
-      const gate = oriented.reduce((sum, p) => sum + p, 0) / oriented.length;
-      const probabilities = (answers['which'] as { probabilities: Record<string, number> }).probabilities;
-      const shortlist = options
-        .map((option) => ({ id: option.id, probability: probabilities[option.id] ?? 0 }))
-        .sort((a, b) => b.probability - a.probability)
-        .slice(0, spec.shortlist);
+      const optionCountOk = options.length >= 2 && options.length <= LIMITS.maxChoiceOptions;
+      if (!optionCountOk) throw new RangeError(`rank-recheck ${spec.name}: needs 2 to ${LIMITS.maxChoiceOptions} options; split larger sets into chunks`);
+      const wide = await askAs(port, spec, 'rank-recheck.wide', state, wideQuestions(spec, options), call);
+      const answers = wide.answers as WideAnswers;
+      const gate = gateMean(spec, answers);
+      const shortlist = shortlistOf(spec, options, answers);
       recordReadings(port, wide, { gate, shortlist });
-      if (gate < spec.gateThreshold) {
-        return { chosen: undefined, outcome: 'act', gate, shortlist, recheck: undefined };
-      }
+      if (gate < spec.gateThreshold) return { chosen: undefined, outcome: 'act', gate, shortlist, recheck: undefined };
       const byId = new Map(options.map((option) => [option.id, option]));
-      const selection = await runSelection(
-        port,
-        spec,
-        'rank-recheck.recheck',
-        recheck,
-        state,
-        shortlist.map(({ id }) => ({ id, content: byId.get(id)!.detail })),
-        call,
-      );
+      const candidates = shortlist.map(({ id }) => ({ id, content: byId.get(id)!.detail }));
+      const selection = await runSelection(port, { header: spec, pattern: 'rank-recheck.recheck', config: recheck, context: state, candidates, options: call });
       return { chosen: selection.chosen, outcome: selection.outcome, gate, shortlist, recheck: selection };
     },
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await compound.suggest(port, fixture.state, fixture.options, { site: 'calibration', ...options });
-        const gotId = got.chosen ?? 'none';
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'chosen',
-          expected: fixture.expect,
-          got: gotId,
-          correct: gotId === fixture.expect,
-          signal: got.recheck?.pick.confidence ?? 1 - got.gate,
-          outcome: got.outcome,
-        });
-      }
+      for (const fixture of spec.fixtures) checks.push(chosenCheck(fixture, await compound.suggest(port, fixture.state, fixture.options, { ...options, site: 'calibration' })));
       return checks;
     },
   };

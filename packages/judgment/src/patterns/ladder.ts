@@ -1,6 +1,6 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JudgmentPort } from '../port/types.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /** One rung: when question `ask` is above (or below) `at`, the item takes `route`. */
 export interface Rung<Q extends string, R extends string> {

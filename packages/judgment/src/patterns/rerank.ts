@@ -2,7 +2,8 @@ import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type Nam
 import { noul, type EntryType, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
-import { askAs, mapLimit, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
+import { mapLimit } from './common.ts';
 
 /**
  * Rerank: one yes/no per query-candidate pair, each in its own request so no
@@ -57,6 +58,22 @@ const DEFAULT_CRITERIA = {
   false: 'The candidate is only on a similar topic, or does not provide what the query asks for.',
 };
 
+const DEFAULT_CONCURRENCY = 8;
+
+function topCheck(fixture: RerankFixture, best: Ranked, top: Ranked | undefined): FixtureCheck {
+  const got = top?.id ?? 'none';
+  const { probability, reading } = best;
+  return {
+    fixture: fixture.name,
+    aspect: 'top',
+    expected: fixture.expect.top,
+    got,
+    correct: got === fixture.expect.top,
+    signal: top === undefined ? 1 - probability : probability,
+    outcome: reading.outcome,
+  };
+}
+
 export function defineRerank(spec: RerankSpec): Rerank {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
@@ -78,31 +95,21 @@ export function defineRerank(spec: RerankSpec): Rerank {
     ...(spec.model === undefined ? {} : { model: spec.model }),
     fixtureCount: spec.fixtures.length,
     async rerank(port, query, candidates, options = {}) {
-      const ranked = await mapLimit(candidates, spec.concurrency ?? 8, async (candidate) => {
-        const result = await askAs(port, spec, 'rerank', { query, candidate: candidate.content }, { match: question }, options);
+      const scorePair = async ({ id, content }: Candidate): Promise<Ranked> => {
+        const result = await askAs(port, spec, 'rerank', { query, candidate: content }, { match: question }, options);
         const reading = readYesNo(result.answers.match, spec.band);
-        recordReadings(port, result, { candidate: candidate.id, match: reading });
-        return { id: candidate.id, probability: reading.probability, reading, decisionId: result.decisionId };
-      });
-      ranked.sort((a, b) => b.probability - a.probability);
-      const best = ranked[0];
-      return { ranked, top: best !== undefined && best.reading.verdict === 'yes' ? best : undefined };
+        recordReadings(port, result, { candidate: id, match: reading });
+        return { id, probability: reading.probability, reading, decisionId: result.decisionId };
+      };
+      const ranked = (await mapLimit(candidates, spec.concurrency ?? DEFAULT_CONCURRENCY, scorePair)).sort((a, b) => b.probability - a.probability);
+      const [best] = ranked;
+      return { ranked, top: best?.reading.verdict === 'yes' ? best : undefined };
     },
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) {
-        const { ranked, top } = await rerank.rerank(port, fixture.query, fixture.candidates, { site: 'calibration', ...options });
-        const best = ranked[0]!;
-        const got = top?.id ?? 'none';
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'top',
-          expected: fixture.expect.top,
-          got,
-          correct: got === fixture.expect.top,
-          signal: got === 'none' ? 1 - best.probability : best.probability,
-          outcome: best.reading.outcome,
-        });
+        const { ranked, top } = await rerank.rerank(port, fixture.query, fixture.candidates, { ...options, site: 'calibration' });
+        checks.push(topCheck(fixture, ranked[0]!, top));
       }
       return checks;
     },

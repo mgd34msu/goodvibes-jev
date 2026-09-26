@@ -67,7 +67,7 @@ describe('defineBattery', () => {
     const run = await triage().run(port, 'I was charged twice', { site: 'intake.triage' });
     expect(requests).toHaveLength(1);
     expect(Object.keys(requests[0]!.questions).sort()).toEqual(['mood', 'team', 'urgent']);
-    expect(requests[0]!.context).toEqual({ battery: 'test.ticket-triage', batteryVersion: 1, site: 'intake.triage' });
+    expect(requests[0]!.context).toEqual({ battery: 'test.ticket-triage', batteryVersion: 1, pattern: 'battery', site: 'intake.triage' });
     expect(run.readings.urgent).toMatchObject({ verdict: 'yes', outcome: 'act' });
     // billing carries a high-stakes band: 0.8 confidence confirms instead of acting.
     expect(run.readings.team).toMatchObject({ choice: 'billing', outcome: 'confirm' });

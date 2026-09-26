@@ -1,7 +1,7 @@
 import type { Battery, YesNoItem } from '../batteries/battery.ts';
 import type { EntryType, JudgmentPort } from '../port/types.ts';
 import type { YesNoReading } from '../readings/readings.ts';
-import type { CallOptions } from '../patterns/common.ts';
+import type { CallOptions } from '../batteries/asking.ts';
 
 export interface SplitResult {
   /** The request as one part, or the parts a generative splitter produced. */

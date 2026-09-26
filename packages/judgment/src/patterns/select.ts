@@ -1,12 +1,23 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader, type PatternName } from '../batteries/asking.ts';
+import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readChoice, readYesNo, type ChoiceReading, type YesNoReading } from '../readings/readings.ts';
 import type { Candidate } from './rerank.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
 
 export const NONE = 'none';
+const MAX_CANDIDATES = LIMITS.maxChoiceOptions - 1;
+
+/** The selection settings a selector or a compound's recheck pass needs. */
+export interface SelectionConfig {
+  /** What the pick is for; refer to `context` and `candidates` (each has an `id`). */
+  readonly instructions: EntryType;
+  /** What makes one candidate acceptable on its own; the candidate it asks about is named beside it. */
+  readonly fitInstructions: EntryType;
+  readonly band: ConfidenceBand;
+  readonly fitBand: YesNoBand;
+}
 
 /**
  * Candidate selection: pick one of candidates code supplied, or none. One
@@ -17,8 +28,6 @@ export const NONE = 'none';
  * for best-of-N answers, picking a span a regex found, and similar picks.
  */
 export interface SelectSpec extends PatternHeader, SelectionConfig {
-  /** `instructions`: what the pick is for; refer to `context` and `candidates` (each has an `id`).
-   *  `fitInstructions`: what makes one candidate acceptable on its own; the candidate it asks about is named beside it. */
   readonly fixtures: readonly {
     readonly name: string;
     readonly context: JsonValue;
@@ -41,68 +50,59 @@ export interface Selector extends NamedDecision {
   select(port: JudgmentPort, context: JsonValue, candidates: readonly Candidate[], options?: CallOptions): Promise<Selection>;
 }
 
-const MAX_CANDIDATES = LIMITS.maxChoiceOptions - 1;
+/** One selection request: who asks, with what settings, over which candidates. */
+export interface SelectionRequest {
+  readonly header: PatternHeader;
+  readonly pattern: PatternName;
+  readonly config: SelectionConfig;
+  readonly context: JsonValue;
+  readonly candidates: readonly Candidate[];
+  readonly options?: CallOptions;
+}
 
-/** The selection settings a selector or a compound's recheck pass needs. */
-export interface SelectionConfig {
-  readonly instructions: EntryType;
-  readonly fitInstructions: EntryType;
-  readonly band: ConfidenceBand;
-  readonly fitBand: YesNoBand;
+function assertCandidates(decision: string, ids: readonly string[]): void {
+  if (ids.length < 1 || ids.length > MAX_CANDIDATES) throw new RangeError(`selector ${decision}: needs 1 to ${MAX_CANDIDATES} candidates, got ${ids.length}`);
+  const unique = new Set(ids).size === ids.length;
+  if (!unique || ids.includes(NONE)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
+}
+
+function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Record<string, Question> {
+  const options: Record<string, EntryType> = { ...Object.fromEntries(ids.map((id) => [id, null])), [NONE]: 'None of the candidates does what is needed.' };
+  const questions: Record<string, Question> = { pick: choice(config.instructions, options) };
+  ids.forEach((id, index) => {
+    questions[`fits_${index}`] = noul({ question: config.fitInstructions, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(id)})` });
+  });
+  return questions;
 }
 
 /**
- * One selection request: a Choice over the candidates plus none, and a fit
- * Noul per candidate. Shared by selectors and by compounds that recheck a
- * shortlist, so both read candidates the same way.
+ * What code may do with a selection. A winner that also reads as fitting acts
+ * only when both readings act; a winner that does not fit escalates; a
+ * confident "none" is itself an answer to act on.
  */
-export async function runSelection(
-  port: JudgmentPort,
-  header: PatternHeader,
-  pattern: string,
-  config: SelectionConfig,
-  context: JsonValue,
-  candidates: readonly Candidate[],
-  options: CallOptions = {},
-): Promise<Selection> {
-  if (candidates.length < 1 || candidates.length > MAX_CANDIDATES) {
-    throw new RangeError(`selector ${header.name}: needs 1 to ${MAX_CANDIDATES} candidates, got ${candidates.length}`);
-  }
+export function selectionOutcome(pick: ChoiceReading, winnerFit: YesNoReading | undefined): Outcome {
+  if (pick.choice === NONE) return pick.outcome;
+  if (winnerFit?.verdict !== 'yes' || pick.outcome === 'escalate') return 'escalate';
+  const bothAct = pick.outcome === 'act' && winnerFit.outcome === 'act';
+  return bothAct ? 'act' : 'confirm';
+}
+
+/** One selection request, shared by selectors and by compounds that recheck a shortlist. */
+export async function runSelection(port: JudgmentPort, request: SelectionRequest): Promise<Selection> {
+  const { header, config, candidates } = request;
   const ids = candidates.map((candidate) => candidate.id);
-  if (new Set(ids).size !== ids.length || ids.includes(NONE)) {
-    throw new RangeError(`selector ${header.name}: candidate ids must be unique and not "${NONE}"`);
-  }
-  const choices: Record<string, EntryType> = Object.fromEntries(ids.map((id) => [id, null]));
-  choices[NONE] = 'None of the candidates does what is needed.';
-  const questions: Record<string, NoulQuestion | ReturnType<typeof choice>> = {
-    pick: choice(config.instructions, choices),
-  };
-  ids.forEach((id, index) => {
-    questions[`fits_${index}`] = noul({
-      question: config.fitInstructions,
-      candidate: `\`candidates[${index}]\` (id ${JSON.stringify(id)})`,
-    });
-  });
-  const state = { context, candidates: candidates.map((candidate) => ({ id: candidate.id, content: candidate.content })) };
-  const result = await askAs(port, header, pattern, state, questions, options);
+  assertCandidates(header.name, ids);
+  const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })) };
+  const result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options);
   const answers = result.answers as Record<string, unknown>;
   const pick = readChoice(answers['pick'] as Parameters<typeof readChoice>[0], config.band);
-  const fits = Object.fromEntries(
-    ids.map((id, index) => [id, readYesNo(answers[`fits_${index}`] as Parameters<typeof readYesNo>[0], config.fitBand)]),
-  );
-  const winnerFits = pick.choice !== NONE && fits[pick.choice]?.verdict === 'yes';
-  const chosen = winnerFits ? pick.choice : undefined;
-  const outcome: Outcome = winnerFits
-    ? pick.outcome === 'act' && fits[pick.choice]!.outcome === 'act'
-      ? 'act'
-      : pick.outcome === 'escalate'
-        ? 'escalate'
-        : 'confirm'
-    : pick.choice === NONE
-      ? pick.outcome
-      : 'escalate';
+  const fits = Object.fromEntries(ids.map((id, index) => [id, readYesNo(answers[`fits_${index}`] as Parameters<typeof readYesNo>[0], config.fitBand)]));
+  const winnerFit = fits[pick.choice];
+  const outcome = selectionOutcome(pick, winnerFit);
+  // A fitting winner is reported even when escalated, so a reviewer sees what was picked.
+  const chosen = winnerFit?.verdict === 'yes' ? pick.choice : undefined;
   recordReadings(port, result, { chosen: chosen ?? null, pick, fits });
-  return { chosen, outcome, pick, fits, decisionId: result.decisionId, recordAction: (a) => recordAction(port, result.decisionId, a) };
+  return { chosen, outcome, pick, fits, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
 }
 
 export function defineSelector(spec: SelectSpec): Selector {
@@ -111,9 +111,8 @@ export function defineSelector(spec: SelectSpec): Selector {
   assertConfidenceBand(spec.band);
   assertYesNoBand(spec.fitBand);
   for (const fixture of spec.fixtures) {
-    if (fixture.expect !== NONE && !fixture.candidates.some((candidate) => candidate.id === fixture.expect)) {
-      throw new RangeError(`selector ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect}"`);
-    }
+    const known = fixture.expect === NONE || fixture.candidates.some((candidate) => candidate.id === fixture.expect);
+    if (!known) throw new RangeError(`selector ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect}"`);
   }
 
   const selector: Selector = {
@@ -123,21 +122,14 @@ export function defineSelector(spec: SelectSpec): Selector {
     accuracyFloor: spec.accuracyFloor,
     ...(spec.model === undefined ? {} : { model: spec.model }),
     fixtureCount: spec.fixtures.length,
-    select: (port, context, candidates, options = {}) => runSelection(port, spec, 'select', spec, context, candidates, options),
+    select: (port, context, candidates, options = {}) =>
+      runSelection(port, { header: spec, pattern: 'select', config: spec, context, candidates, options }),
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) {
-        const got = await selector.select(port, fixture.context, fixture.candidates, { site: 'calibration', ...options });
+        const got = await selector.select(port, fixture.context, fixture.candidates, { ...options, site: 'calibration' });
         const gotId = got.chosen ?? NONE;
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'chosen',
-          expected: fixture.expect,
-          got: gotId,
-          correct: gotId === fixture.expect,
-          signal: got.pick.confidence,
-          outcome: got.outcome,
-        });
+        checks.push({ fixture: fixture.name, aspect: 'chosen', expected: fixture.expect, got: gotId, correct: gotId === fixture.expect, signal: got.pick.confidence, outcome: got.outcome });
       }
       return checks;
     },

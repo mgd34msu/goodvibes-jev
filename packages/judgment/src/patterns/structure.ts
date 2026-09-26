@@ -1,6 +1,6 @@
 import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, noul, type JudgmentPort, type Question } from '../port/types.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 export type BlockType = 'heading' | 'paragraph' | 'list_item' | 'quote' | 'code' | 'callout';
 

@@ -1,5 +1,5 @@
 export { defineEntityAligner, type Aligned, type Alignment, type AlignmentSpec, type EntityAligner } from './alignment.ts';
-export { askAs, mapLimit, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+export { mapLimit } from './common.ts';
 export {
   MONTHS,
   WEEKDAYS,

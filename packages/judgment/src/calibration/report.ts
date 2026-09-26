@@ -33,14 +33,21 @@ export interface CalibrationReport {
   readonly passed: boolean;
 }
 
-const BIN_EDGES = [0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.000001];
+/** Lower edges of the confidence bins: everything under 0.5 together, then finer steps toward certainty. */
+const BIN_FLOORS = [0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95] as const;
+
+/** A signal falls in a bin when it is at or above the bin's floor and below the next floor; the last bin includes 1. */
+function inBin(signal: number, from: number, to: number, isLast: boolean): boolean {
+  return signal >= from && (isLast ? signal <= to : signal < to);
+}
 
 export function confidenceBins(checks: readonly FixtureCheck[]): ConfidenceBin[] {
-  return BIN_EDGES.slice(0, -1).map((from, index) => {
-    const to = BIN_EDGES[index + 1]!;
-    const inBin = checks.filter((check) => check.signal >= from && check.signal < to);
-    const correct = inBin.filter((check) => check.correct).length;
-    return { from, to: Math.min(to, 1), checks: inBin.length, correct, accuracy: inBin.length === 0 ? null : correct / inBin.length };
+  return BIN_FLOORS.map((from, index) => {
+    const isLast = index === BIN_FLOORS.length - 1;
+    const to = isLast ? 1 : BIN_FLOORS[index + 1]!;
+    const binned = checks.filter((check) => inBin(check.signal, from, to, isLast));
+    const correct = binned.filter((check) => check.correct).length;
+    return { from, to, checks: binned.length, correct, accuracy: binned.length === 0 ? null : correct / binned.length };
   });
 }
 
@@ -92,7 +99,8 @@ export function sweep(checks: readonly FixtureCheck[], thresholds: readonly numb
 
 export const DEFAULT_SWEEP = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
 
-const pct = (value: number | null): string => (value === null ? '   -  ' : `${(value * 100).toFixed(1).padStart(5)}%`);
+const PERCENT_WIDTH = 5;
+const pct = (value: number | null): string => (value === null ? '   -  ' : `${(value * 100).toFixed(1).padStart(PERCENT_WIDTH)}%`);
 
 /** A plain-text rendering of a report for the terminal. */
 export function formatReport(report: CalibrationReport): string {

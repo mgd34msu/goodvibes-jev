@@ -1,5 +1,19 @@
 export {
+  askAs,
+  contextFor,
+  recordAction,
+  recordReadings,
+  type CallOptions,
+  type Conclusions,
+  type PatternHeader,
+  type PatternName,
+} from './asking.ts';
+export {
   checkReading,
+  concludedAnswer,
+  readItem,
+  readingSignal,
+  type AnyReading,
   defineBattery,
   oneOf,
   rated,

@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import {
   defineBattery,
@@ -53,7 +54,8 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     run.recordAction('page-owner');
     expect(run.result.decisionId).toBeString();
     const entry = log.get(run.result.decisionId!)!;
-    expect(entry.context).toEqual({ battery: 'test.urgency', batteryVersion: 3, site: 'intake.urgency' });
+    if (entry.status !== 'answered') throw new Error('expected an answered entry');
+    expect(entry.context).toEqual({ battery: 'test.urgency', batteryVersion: 3, pattern: 'battery', site: 'intake.urgency' });
     expect(entry.requestedModel).toBe('jev-1.13.0');
     expect(entry.model).toBe('jev-1.13.0');
     expect(entry.stateHash).toBe(hashState({ message: 'Payouts failing for 3 days' }));
@@ -63,7 +65,6 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     expect(entry.usage).toEqual({ inputTokens: 120, outputTokens: 9 });
     expect(entry.latencyMs).toBe(42);
     expect(entry.requestId).toBe('req-ok');
-    expect(entry.error).toBeUndefined();
   });
 
   test('records a failed call and still throws it', async () => {
@@ -71,16 +72,16 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     const port = withDecisionLog(failing, log, tick);
     const error = await battery.run(port, 'x').catch((e: unknown) => e);
     expect((error as JudgmentError).kind).toBe('unavailable');
-    const [entry] = log.query({ failed: true });
-    expect(entry?.error).toEqual({ kind: 'unavailable', message: 'System One answered HTTP 529' });
-    expect(entry?.requestedModel).toBe('jev-1.13.0');
-    expect(entry?.requestId).toBe('req-bad');
-    expect(entry?.answers).toBeUndefined();
+    const [entry] = log.query({ status: 'failed' });
+    if (entry?.status !== 'failed') throw new Error('expected a failed entry');
+    expect(entry.error).toEqual({ kind: 'unavailable', message: 'System One answered HTTP 529' });
+    expect(entry.requestedModel).toBe('jev-1.13.0');
+    expect(entry.requestId).toBe('req-bad');
   });
 
   test('a log that cannot write fails the call as unrecorded', async () => {
     const broken: DecisionLog = {
-      record() {
+      record(): never {
         throw new Error('disk full');
       },
       recordReadings() {},
@@ -124,7 +125,7 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     expect(log.query({ outcome: 'escalate' }).map((e) => e.at)).toEqual(['2026-09-26T00:02:00.000Z']);
     expect(log.query({ outcome: 'act' }).map((e) => e.at)).toEqual(['2026-09-26T00:01:00.000Z']);
     expect(log.query({ since: '2026-09-26T00:02:00.000Z', until: '2026-09-26T00:04:00.000Z' })).toHaveLength(2);
-    expect(log.query({ failed: false })).toHaveLength(3);
+    expect(log.query({ status: 'answered' })).toHaveLength(3);
     expect(log.query({ limit: 1 })).toHaveLength(1);
   });
 
@@ -140,5 +141,16 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
       expect(log.get(id)?.context.battery).toBe('test.urgency');
     }
     for (const suffix of ['', '-wal', '-shm']) await Bun.file(path + suffix).delete().catch(() => undefined);
+  });
+});
+
+describe('schema version', () => {
+  test('a log file from another schema version is refused, not misread', () => {
+    const path = `${process.env['TMPDIR'] ?? '/tmp'}/judgment-log-old-${Bun.randomUUIDv7()}.sqlite`;
+    const old = new Database(path, { create: true });
+    old.exec('CREATE TABLE decisions (id TEXT PRIMARY KEY)');
+    old.close();
+    expect(() => new SqliteDecisionLog(path)).toThrow(RangeError);
+    for (const suffix of ['', '-wal', '-shm']) Bun.file(path + suffix).delete().catch(() => undefined);
   });
 });

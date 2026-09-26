@@ -1,5 +1,6 @@
 import type { EntryType, JudgmentPort, Question, Questions } from '../port/types.ts';
-import { mapLimit, recordReadings } from '../patterns/common.ts';
+import { recordReadings } from '../batteries/asking.ts';
+import { mapLimit } from '../patterns/common.ts';
 
 /** How a Score answer becomes columns: its mean alone, or its mean and spread. */
 export type ScoreEncoding = 'mean' | 'mean_spread';

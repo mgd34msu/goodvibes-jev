@@ -2,7 +2,7 @@ import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type Nam
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import type { Outcome } from '../readings/bands.ts';
-import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../patterns/common.ts';
+import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /** A taxonomy: each label maps to its children; a leaf maps to an empty object. */
 export interface Tree {
@@ -77,29 +77,56 @@ interface Candidate {
 const scoreOf = (candidate: Candidate): number =>
   candidate.decisions === 0 ? 1 : Math.exp(candidate.logSum / candidate.decisions);
 
-export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
+const isLeaf = (tree: Tree, path: readonly string[]): boolean => Object.keys(subtree(tree, path)).length === 0;
+
+/** A path extended by one child; a node with one child decides nothing and does not count. */
+function extend(candidate: Candidate, label: string, probabilities: Readonly<Record<string, number>>): Candidate {
+  const deciding = Object.keys(probabilities).length > 1;
+  const logP = deciding ? Math.log(Math.max(probabilities[label]!, EPSILON)) : 0;
+  return { path: [...candidate.path, label], logSum: candidate.logSum + logP, decisions: candidate.decisions + (deciding ? 1 : 0) };
+}
+
+function outcomeOf(score: number, spec: HierarchySpec): Outcome {
+  if (score >= spec.actAt) return 'act';
+  return score >= spec.confirmAt ? 'confirm' : 'escalate';
+}
+
+function assertHierarchySpec(spec: HierarchySpec): void {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
-  if (!(Number.isInteger(spec.beamWidth) && spec.beamWidth >= 1)) throw new RangeError(`hierarchy ${spec.name}: beamWidth must be a positive integer`);
+  const positiveBeam = Number.isInteger(spec.beamWidth) && spec.beamWidth >= 1;
+  if (!positiveBeam) throw new RangeError(`hierarchy ${spec.name}: beamWidth must be a positive integer`);
   if (!(spec.confirmAt <= spec.actAt)) throw new RangeError(`hierarchy ${spec.name}: confirmAt must not exceed actAt`);
   assertTree(spec.name, spec.tree);
   if (Object.keys(spec.tree).length === 0) throw new RangeError(`hierarchy ${spec.name}: the tree is empty`);
   const leaves = new Set(leafPaths(spec.tree).map((path) => path.join(' > ')));
-  for (const fixture of spec.fixtures) {
-    if (!leaves.has(fixture.expect)) throw new RangeError(`hierarchy ${spec.name}: fixture ${fixture.name} expects a path that is not a leaf`);
-  }
+  const offLeaf = spec.fixtures.find((fixture) => !leaves.has(fixture.expect));
+  if (offLeaf !== undefined) throw new RangeError(`hierarchy ${spec.name}: fixture ${offLeaf.name} expects a path that is not a leaf`);
+}
 
-  async function choose(port: JudgmentPort, state: EntryType, path: readonly string[], options: CallOptions) {
+function leafCheck(fixture: HierarchySpec['fixtures'][number], walk: Walk): FixtureCheck {
+  const got = walk.best.path.join(' > ');
+  return { fixture: fixture.name, aspect: 'leaf', expected: fixture.expect, got, correct: got === fixture.expect, signal: walk.best.score, outcome: walk.outcome };
+}
+
+export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
+  assertHierarchySpec(spec);
+  const instructions = spec.instructions ?? DEFAULT_INSTRUCTIONS;
+
+  async function childProbabilities(port: JudgmentPort, state: EntryType, path: readonly string[], options: CallOptions) {
     const labels = Object.keys(subtree(spec.tree, path));
     if (labels.length === 1) return { [labels[0]!]: 1 } as Record<string, number>;
-    const question = choice(
-      path.length === 0 ? (spec.instructions ?? DEFAULT_INSTRUCTIONS) : { question: spec.instructions ?? DEFAULT_INSTRUCTIONS, under: path.join(' > ') },
-      Object.fromEntries(labels.map((label) => [label, null])),
-    );
+    const asked = path.length === 0 ? instructions : { question: instructions, under: path.join(' > ') };
+    const question = choice(asked, Object.fromEntries(labels.map((label) => [label, null])));
     const result = await askAs(port, spec, 'hierarchy', state, { child: question }, options);
-    const probabilities = result.answers.child.probabilities as Readonly<Record<string, number>>;
-    recordReadings(port, result, { path, child: result.answers.child.choice, confidence: result.answers.child.confidence });
-    return probabilities;
+    const { choice: picked, confidence, probabilities } = result.answers.child;
+    recordReadings(port, result, { path, child: picked, confidence });
+    return probabilities as Readonly<Record<string, number>>;
+  }
+
+  async function expand(port: JudgmentPort, state: EntryType, candidate: Candidate, options: CallOptions): Promise<Candidate[]> {
+    const probabilities = await childProbabilities(port, state, candidate.path, options);
+    return Object.keys(probabilities).map((label) => extend(candidate, label, probabilities));
   }
 
   const walker: HierarchyWalker = {
@@ -111,46 +138,19 @@ export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
     fixtureCount: spec.fixtures.length,
     async walk(port, state, options = {}) {
       let beam: Candidate[] = [{ path: [], logSum: 0, decisions: 0 }];
-      for (;;) {
-        const open = beam.filter((candidate) => Object.keys(subtree(spec.tree, candidate.path)).length > 0);
-        if (open.length === 0) break;
-        const done = beam.filter((candidate) => Object.keys(subtree(spec.tree, candidate.path)).length === 0);
-        const expanded = await Promise.all(
-          open.map(async (candidate) => {
-            const probabilities = await choose(port, state, candidate.path, options);
-            const labels = Object.keys(probabilities);
-            const deciding = labels.length > 1;
-            return labels.map((label) => ({
-              path: [...candidate.path, label],
-              logSum: candidate.logSum + (deciding ? Math.log(Math.max(probabilities[label]!, EPSILON)) : 0),
-              decisions: candidate.decisions + (deciding ? 1 : 0),
-            }));
-          }),
-        );
+      for (let open = beam; open.length > 0; open = beam.filter((c) => !isLeaf(spec.tree, c.path))) {
+        const done = beam.filter((c) => isLeaf(spec.tree, c.path));
+        const expanded = await Promise.all(open.map((candidate) => expand(port, state, candidate, options)));
         beam = [...done, ...expanded.flat()].sort((a, b) => scoreOf(b) - scoreOf(a)).slice(0, spec.beamWidth);
       }
       const ranked = beam.map((candidate) => ({ path: candidate.path, score: scoreOf(candidate) }));
-      const best = ranked[0]!;
-      const runnerUp = ranked[1];
+      const [best, runnerUp] = ranked as [WalkPath, WalkPath | undefined];
       const separation = runnerUp === undefined ? Number.POSITIVE_INFINITY : best.score / Math.max(runnerUp.score, EPSILON);
-      const outcome: Outcome = best.score >= spec.actAt ? 'act' : best.score >= spec.confirmAt ? 'confirm' : 'escalate';
-      return { best, beam: ranked, separation, outcome };
+      return { best, beam: ranked, separation, outcome: outcomeOf(best.score, spec) };
     },
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const walk = await walker.walk(port, fixture.state, { site: 'calibration', ...options });
-        const got = walk.best.path.join(' > ');
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'leaf',
-          expected: fixture.expect,
-          got,
-          correct: got === fixture.expect,
-          signal: walk.best.score,
-          outcome: walk.outcome,
-        });
-      }
+      for (const fixture of spec.fixtures) checks.push(leafCheck(fixture, await walker.walk(port, fixture.state, { ...options, site: 'calibration' })));
       return checks;
     },
   };

@@ -3,7 +3,7 @@ import { noul, score, type JsonValue, type JudgmentPort, type NoulQuestion } fro
 import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readScore, readYesNo, type ScoreReading, type YesNoReading } from '../readings/readings.ts';
 import { STAKES_BANDS } from '../readings/bands.ts';
-import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from './common.ts';
+import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 export type Alignment = 'distinct' | 'review' | 'same';
 const ALIGNMENTS: readonly Alignment[] = ['distinct', 'review', 'same'];

@@ -1,15 +1,12 @@
 import type { Battery, BatteryItems, ReadingFor } from '../batteries/battery.ts';
-import type { EntryType, JudgmentPort, Questions } from '../port/types.ts';
-import { readChoice, readScore, readYesNo } from '../readings/readings.ts';
-import type { ChoiceBand } from '../readings/bands.ts';
-import { recordAction, recordReadings, type CallOptions } from '../patterns/common.ts';
+import { readItem } from '../batteries/battery.ts';
+import { recordAction, recordReadings, type CallOptions } from '../batteries/asking.ts';
+import type { EntryType, JudgmentPort, Question, Questions } from '../port/types.ts';
 
 type Parts = Readonly<Record<string, Battery<BatteryItems>>>;
 
 export type FannedReadings<P extends Parts> = {
-  readonly [K in keyof P]: P[K] extends Battery<infer Items>
-    ? { readonly [I in keyof Items]: ReadingFor<Items[I]> }
-    : never;
+  readonly [K in keyof P]: P[K] extends Battery<infer Items> ? { readonly [I in keyof Items]: ReadingFor<Items[I]> } : never;
 };
 
 export interface FannedOut<P extends Parts> {
@@ -18,7 +15,34 @@ export interface FannedOut<P extends Parts> {
   recordAction(action: string): void;
 }
 
+/** A battery's question inside a fanned-out request: `<part>__<question>`. */
 const SEPARATOR = '__';
+const questionKey = (part: string, item: string): string => `${part}${SEPARATOR}${item}`;
+
+/** The one model every part is tuned on; batteries on different models cannot share a request. */
+function sharedModel(port: JudgmentPort, parts: Parts): string {
+  const models = new Set(Object.values(parts).map((battery) => battery.model ?? port.model));
+  if (models.size > 1) throw new RangeError(`fan-out batteries are tuned on different models (${[...models].join(', ')}); run them apart`);
+  return [...models][0]!;
+}
+
+function mergedQuestions(parts: Parts): Questions {
+  const questions: Record<string, Question> = {};
+  for (const [part, battery] of Object.entries(parts)) {
+    if (part.includes(SEPARATOR)) throw new RangeError(`fan-out part "${part}" may not contain "${SEPARATOR}"`);
+    for (const [item, spec] of Object.entries(battery.items)) questions[questionKey(part, item)] = spec.question;
+  }
+  return questions;
+}
+
+function readParts(parts: Parts, answers: Readonly<Record<string, unknown>>): Record<string, Record<string, unknown>> {
+  return Object.fromEntries(
+    Object.entries(parts).map(([part, battery]) => [
+      part,
+      Object.fromEntries(Object.entries(battery.items).map(([item, spec]) => [item, readItem(spec, answers[questionKey(part, item)])])),
+    ]),
+  );
+}
 
 /**
  * Speculative fan-out across batteries: every question of every battery about
@@ -34,46 +58,20 @@ export async function fanOut<const P extends Parts>(
   parts: P,
   options: CallOptions & { readonly label?: string } = {},
 ): Promise<FannedOut<P>> {
-  const names = Object.keys(parts);
-  if (names.length === 0) throw new RangeError('fan-out needs at least one battery');
-  const models = new Set(names.map((name) => parts[name]!.model ?? port.model));
-  if (models.size > 1) throw new RangeError(`fan-out batteries are tuned on different models (${[...models].join(', ')}); run them apart`);
-  const questions: Record<string, unknown> = {};
-  for (const name of names) {
-    if (name.includes(SEPARATOR)) throw new RangeError(`fan-out part "${name}" may not contain "${SEPARATOR}"`);
-    for (const [item, spec] of Object.entries(parts[name]!.items)) questions[`${name}${SEPARATOR}${item}`] = spec.question;
-  }
-  const model = [...models][0]!;
+  if (Object.keys(parts).length === 0) throw new RangeError('fan-out needs at least one battery');
+  const model = sharedModel(port, parts);
   const result = await port.ask({
     state,
-    questions: questions as Questions,
+    questions: mergedQuestions(parts),
     ...(model === port.model ? {} : { model }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     context: {
-      battery: options.label ?? names.map((name) => parts[name]!.name).join('+'),
+      battery: options.label ?? Object.values(parts).map((battery) => battery.name).join('+'),
       pattern: 'fan-out',
       ...(options.site === undefined ? {} : { site: options.site }),
     },
   });
-  const answers = result.answers as Record<string, unknown>;
-  const readings: Record<string, Record<string, unknown>> = {};
-  for (const name of names) {
-    readings[name] = {};
-    for (const [item, spec] of Object.entries(parts[name]!.items)) {
-      const answer = answers[`${name}${SEPARATOR}${item}`];
-      readings[name]![item] =
-        spec.kind === 'yes-no'
-          ? readYesNo(answer as Parameters<typeof readYesNo>[0], spec.band)
-          : spec.kind === 'choice'
-            ? readChoice(answer as Parameters<typeof readChoice>[0], spec.band as ChoiceBand)
-            : readScore(answer as Parameters<typeof readScore>[0], spec.band);
-    }
-  }
+  const readings = readParts(parts, result.answers as Readonly<Record<string, unknown>>);
   recordReadings(port, result, readings);
-  return {
-    readings: readings as FannedReadings<P>,
-    decisionId: result.decisionId,
-    recordAction: (action) => recordAction(port, result.decisionId, action),
-  };
+  return { readings: readings as FannedReadings<P>, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
 }
-
