@@ -1,8 +1,7 @@
 export {
   STAKES_BANDS,
-  assertConfidenceBand,
-  assertYesNoBand,
-  isNonDecreasing,
+  assertBand,
+  orderedInUnit,
   outcomeForConfidence,
   type ChoiceBand,
   type ConfidenceBand,

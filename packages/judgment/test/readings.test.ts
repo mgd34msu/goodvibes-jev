@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   STAKES_BANDS,
-  assertConfidenceBand,
-  assertYesNoBand,
+  assertBand,
   readChoice,
   readScore,
   readYesNo,
@@ -43,7 +42,7 @@ describe('readYesNo', () => {
     ['act inside confirm', { yes: { actAt: 0.7, confirmAt: 0.8 }, no: { actAt: 0.8, confirmAt: 0.7 } }],
     ['outside [0, 1]', { yes: { actAt: 1.2, confirmAt: 0.7 }, no: { actAt: 0.9, confirmAt: 0.7 } }],
   ])('rejects a malformed band: %s', (_label, band) => {
-    expect(() => assertYesNoBand(band)).toThrow(RangeError);
+    expect(() => assertBand(band)).toThrow(RangeError);
   });
 });
 
@@ -116,8 +115,8 @@ describe('stakes table', () => {
   test('every default band is well formed and stricter as stakes rise', () => {
     const order = ['low', 'medium', 'high', 'critical'] as const;
     for (const stakes of order) {
-      assertYesNoBand(STAKES_BANDS[stakes].yesNo);
-      assertConfidenceBand(STAKES_BANDS[stakes].confidence);
+      assertBand(STAKES_BANDS[stakes].yesNo);
+      assertBand(STAKES_BANDS[stakes].confidence);
     }
     for (let i = 1; i < order.length; i++) {
       const lower = STAKES_BANDS[order[i - 1]!].confidence;
@@ -128,6 +127,6 @@ describe('stakes table', () => {
   });
 
   test('a confidence band cannot confirm above where it acts', () => {
-    expect(() => assertConfidenceBand({ actAt: 0.5, confirmAt: 0.7 })).toThrow(RangeError);
+    expect(() => assertBand({ actAt: 0.5, confirmAt: 0.7 })).toThrow(RangeError);
   });
 });

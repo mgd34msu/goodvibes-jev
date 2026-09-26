@@ -24,8 +24,8 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
   return {
     model: inner.model,
     recorder: {
-      recordReadings: (id, readings) => recorded(() => log.recordReadings(id, readings)),
-      recordAction: (id, action) => recorded(() => log.recordAction(id, action)),
+      recordReadings: (id, readings) => recorded(() => log.attach(id, { kind: 'readings', readings })),
+      recordAction: (id, action) => recorded(() => log.attach(id, { kind: 'action', action })),
     },
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();

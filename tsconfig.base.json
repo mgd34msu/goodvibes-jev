@@ -6,6 +6,8 @@
     "lib": ["ES2024", "ESNext.Disposable"],
     "types": ["bun"],
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,

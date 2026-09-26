@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type ChoiceQuestion, type JudgmentPort } from '../port/types.ts';
-import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
+import { assertBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 export const MONTHS = [
@@ -203,7 +203,7 @@ function dateCheck(fixture: DatePartsSpec['fixtures'][number], got: ExtractedDat
 
 export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
+  assertBand(spec.band);
   for (const fixture of spec.fixtures) {
     parseDay(fixture.today);
     if (fixture.expect !== NONE) parseDay(fixture.expect);

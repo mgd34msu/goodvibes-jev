@@ -1,7 +1,6 @@
 import type { ChoiceCriteria, ChoiceResponse, NoulResponse, ScoreCriteria, ScoreResponse } from '../port/types.ts';
 import {
-  assertConfidenceBand,
-  assertYesNoBand,
+  assertBand,
   outcomeForConfidence,
   type ChoiceBand,
   type ConfidenceBand,
@@ -61,13 +60,13 @@ function concludeYesNo(p: number, band: YesNoBand): YesNoConclusion {
 
 /** A choice or score answer's confidence and what code may do with it under `band`. */
 function confident(confidence: number, band: ConfidenceBand): Pick<ScoreReading, 'confidence' | 'outcome'> {
-  assertConfidenceBand(band);
+  assertBand(band);
   return { confidence, outcome: outcomeForConfidence(confidence, band) };
 }
 
 /** Reads a noul through a yes/no band. */
 export function readYesNo(answer: NoulResponse, band: YesNoBand): YesNoReading {
-  assertYesNoBand(band);
+  assertBand(band);
   return { kind: 'yes-no', probability: answer.noul, ...concludeYesNo(answer.noul, band) };
 }
 
@@ -76,7 +75,7 @@ export function readChoice<T extends ChoiceCriteria>(
   answer: ChoiceResponse<T>,
   band: ChoiceBand<keyof T & string>,
 ): ChoiceReading<keyof T & string> {
-  assertConfidenceBand(band);
+  assertBand(band);
   return {
     kind: 'choice',
     choice: answer.choice,

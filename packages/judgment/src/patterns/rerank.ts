@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JsonValue, type JudgmentPort } from '../port/types.ts';
-import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 import { mapLimit } from './common.ts';
@@ -67,7 +67,7 @@ function topCheck(fixture: RerankFixture, best: Ranked, top: Ranked | undefined)
 
 export function defineRerank(spec: RerankSpec): Rerank {
   const header = decisionHeader(spec);
-  assertYesNoBand(spec.band);
+  assertBand(spec.band);
   for (const fixture of spec.fixtures) {
     const ids = new Set(fixture.candidates.map((candidate) => candidate.id));
     if (ids.size !== fixture.candidates.length) throw new RangeError(`rerank ${spec.name}: fixture ${fixture.name} repeats a candidate id`);

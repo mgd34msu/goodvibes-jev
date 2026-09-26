@@ -1,29 +1,31 @@
-import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, noul, type ChoiceResponse, type EntryType, type JudgmentPort, type JudgmentResult, type NoulResponse, type Question, type Questions } from '../port/types.ts';
-import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
+import { assertBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
 import { leansYes, likelierSide } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
-/** An argument that takes one value from a fixed list. */
-export interface ChoiceArg {
-  readonly kind: 'choice';
-  readonly question: EntryType;
-  readonly options: Readonly<Record<string, EntryType>>;
+/** What every argument may declare. */
+interface ArgBase {
   /** When set, the argument is optional: a yes/no on whether the request says anything about it. */
   readonly stated?: EntryType;
 }
+
+/** An argument that takes one value from a fixed list. */
+export interface ChoiceArg extends ArgBase {
+  readonly kind: 'choice';
+  readonly question: EntryType;
+  readonly options: Readonly<Record<string, EntryType>>;
+}
 /** An argument that takes any number of values from a fixed list; `question` contains `{}` for the member. */
-export interface SetArg {
+export interface SetArg extends ArgBase {
   readonly kind: 'set';
   readonly question: string;
   readonly members: readonly string[];
-  readonly stated?: EntryType;
 }
 /** An on/off argument. */
-export interface FlagArg {
+export interface FlagArg extends ArgBase {
   readonly kind: 'flag';
   readonly question: EntryType;
-  readonly stated?: EntryType;
 }
 export type ArgSpec = ChoiceArg | SetArg | FlagArg;
 
@@ -70,27 +72,28 @@ export interface FunctionCaller extends NamedDecision {
 
 const ROUTE = '__function__';
 
-/** Question names inside the one request: the argument, its members, and its was-it-stated check. */
-const argKey = (fn: string, arg: string) => `${fn}.${arg}`;
-const memberKey = (fn: string, arg: string, index: number) => `${argKey(fn, arg)}[${index}]`;
-const statedKey = (fn: string, arg: string) => `${argKey(fn, arg)}?`;
-
-/** The call's answers, read by question name through typed accessors. */
-interface CallAnswers {
-  /** The yes probability of a yes/no question. */
-  yes(question: string): number;
-  /** The chosen option of a choice and the probability behind it. */
-  picked(question: string): { readonly option: string; readonly p: number };
+/** The question names one argument is asked under: its value, each set member, and its was-it-stated check. */
+interface ArgKeys {
+  readonly value: string;
+  member(index: number): string;
+  readonly stated: string;
 }
 
-function callAnswers(answers: JudgmentResult<Questions>['answers']): CallAnswers {
-  return {
-    yes: (question) => (answers[question] as NoulResponse).noul,
-    picked: (question) => {
-      const { choice: option, probabilities } = answers[question] as ChoiceResponse;
-      return { option, p: probabilities[option]! };
-    },
-  };
+function keysFor(fn: string, arg: string): ArgKeys {
+  const value = `${fn}.${arg}`;
+  return { value, member: (index) => `${value}[${index}]`, stated: `${value}?` };
+}
+
+/** The call's answers, by question name. */
+type CallAnswers = JudgmentResult<Questions>['answers'];
+
+/** The yes probability of a yes/no question. */
+const yesOf = (answers: CallAnswers, question: string): number => (answers[question] as NoulResponse).noul;
+
+/** The chosen option of a choice and the probability behind it. */
+function pickedOf(answers: CallAnswers, question: string): { readonly option: string; readonly p: number } {
+  const { choice: option, probabilities } = answers[question] as ChoiceResponse;
+  return { option, p: probabilities[option]! };
 }
 
 /** An argument's value and how strongly its reading backs it; undefined when the request did not state it. */
@@ -101,46 +104,53 @@ interface ArgReading {
 
 /** How one kind of argument is asked about and read back. */
 interface ArgKind<S extends ArgSpec> {
-  ask(fn: string, arg: string, spec: S): [string, Question][];
-  read(fn: string, arg: string, spec: S, answers: CallAnswers): ArgReading;
+  ask(keys: ArgKeys, spec: S): [string, Question][];
+  read(keys: ArgKeys, spec: S, answers: CallAnswers): ArgReading;
 }
+
+/** A yes/no answer as an argument reading: the likelier side, and how strongly the answer backs it. */
+const yesNoReading = (p: number): { readonly value: boolean; readonly p: number } => ({ value: leansYes(p), p: likelierSide(p) });
 
 const KINDS: { readonly [K in ArgSpec['kind']]: ArgKind<Extract<ArgSpec, { kind: K }>> } = {
   choice: {
-    ask: (fn, arg, spec) => [[argKey(fn, arg), choice(spec.question, spec.options)]],
-    read: (fn, arg, _spec, answers) => {
-      const { option, p } = answers.picked(argKey(fn, arg));
+    ask: (keys, spec) => [[keys.value, choice(spec.question, spec.options)]],
+    read: (keys, _spec, answers) => {
+      const { option, p } = pickedOf(answers, keys.value);
       return { value: option, p };
     },
   },
   flag: {
-    ask: (fn, arg, spec) => [[argKey(fn, arg), noul(spec.question)]],
-    read: (fn, arg, _spec, answers) => {
-      const p = answers.yes(argKey(fn, arg));
-      return { value: leansYes(p), p: likelierSide(p) };
-    },
+    ask: (keys, spec) => [[keys.value, noul(spec.question)]],
+    read: (keys, _spec, answers) => yesNoReading(yesOf(answers, keys.value)),
   },
   set: {
-    ask: (fn, arg, spec) => spec.members.map((member, index) => [memberKey(fn, arg, index), noul(spec.question.replaceAll('{}', member))]),
-    read: (fn, arg, spec, answers) => {
-      const members = spec.members.map((member, index) => ({ member, p: answers.yes(memberKey(fn, arg, index)) }));
-      return { value: members.filter(({ p }) => leansYes(p)).map(({ member }) => member), p: Math.min(...members.map(({ p }) => likelierSide(p))) };
+    ask: (keys, spec) => spec.members.map((member, index) => [keys.member(index), noul(spec.question.replaceAll('{}', member))]),
+    read: (keys, spec, answers) => {
+      const members = spec.members.map((member, index) => ({ member, ...yesNoReading(yesOf(answers, keys.member(index))) }));
+      return { value: members.filter(({ value }) => value).map(({ member }) => member), p: Math.min(...members.map(({ p }) => p)) };
     },
   },
 };
 
 const kindOf = (spec: ArgSpec): ArgKind<ArgSpec> => KINDS[spec.kind] as ArgKind<ArgSpec>;
 
+/** An optional argument's was-it-stated question, asked and read in one place; a required argument has none and is always stated. */
+const STATED: ArgKind<ArgSpec> & { read(keys: ArgKeys, spec: ArgSpec, answers: CallAnswers): { readonly value: boolean; readonly p: number } } = {
+  ask: (keys, spec) => (spec.stated === undefined ? [] : [[keys.stated, noul(spec.stated)]]),
+  read: (keys, spec, answers) => (spec.stated === undefined ? { value: true, p: 1 } : yesNoReading(yesOf(answers, keys.stated))),
+};
+
 function argQuestions(fn: string, arg: string, spec: ArgSpec): [string, Question][] {
-  const stated: [string, Question][] = spec.stated === undefined ? [] : [[statedKey(fn, arg), noul(spec.stated)]];
-  return [...stated, ...kindOf(spec).ask(fn, arg, spec)];
+  const keys = keysFor(fn, arg);
+  return [STATED, kindOf(spec)].flatMap((kind) => kind.ask(keys, spec));
 }
 
 function readArg(fn: string, arg: string, spec: ArgSpec, answers: CallAnswers): ArgReading {
-  const stated = spec.stated === undefined ? 1 : answers.yes(statedKey(fn, arg));
-  if (!leansYes(stated)) return { value: undefined, p: 1 - stated };
-  const reading = kindOf(spec).read(fn, arg, spec, answers);
-  return { value: reading.value, p: Math.min(stated, reading.p) };
+  const keys = keysFor(fn, arg);
+  const stated = STATED.read(keys, spec, answers);
+  if (!stated.value) return { value: undefined, p: stated.p };
+  const reading = kindOf(spec).read(keys, spec, answers);
+  return { value: reading.value, p: Math.min(stated.p, reading.p) };
 }
 
 interface NamedReading extends ArgReading {
@@ -153,7 +163,7 @@ function statedArgs(readings: readonly { readonly arg: string; readonly value: A
 }
 
 function fill(spec: CallerSpec, answers: CallAnswers): FilledCall {
-  const { option: fn, p: fnP } = answers.picked(ROUTE);
+  const { option: fn, p: fnP } = pickedOf(answers, ROUTE);
   const readings = Object.entries(spec.functions[fn]!.args).map(([arg, argSpec]): NamedReading => ({ arg, ...readArg(fn, arg, argSpec, answers) }));
   const weakest = readings.reduce((low, reading) => (reading.p < low.p ? reading : low), { arg: 'function', value: undefined, p: fnP } as NamedReading);
   const args = statedArgs(readings);
@@ -165,34 +175,39 @@ const describeValue = (value: ArgValue): string => (Array.isArray(value) ? `[${[
 const describeCall = (fn: string, args: Readonly<Record<string, ArgValue>>): string =>
   `${fn}(${Object.entries(args).map(([arg, value]) => `${arg}=${describeValue(value)}`).join(', ')})`;
 
+/** Every question the one request asks: the function choice, then every function's argument questions. */
+function callQuestions(spec: CallerSpec): Record<string, Question> {
+  const functions = Object.entries(spec.functions);
+  const route = choice(spec.instructions, Object.fromEntries(functions.map(([fn, { description }]) => [fn, description])));
+  const args = functions.flatMap(([fn, { args }]) => Object.entries(args).flatMap(([arg, argSpec]) => argQuestions(fn, arg, argSpec)));
+  return Object.fromEntries([[ROUTE, route], ...args]);
+}
+
+/** Compares the filled call with the fixture's, showing only the arguments the fixture names. */
+function callCheck(fixture: CallerSpec['fixtures'][number], got: FilledCall): FixtureCheck {
+  const { fn, args = {} } = fixture.expect;
+  const shown = statedArgs(Object.keys(args).map((arg) => ({ arg, value: got.args[arg] })));
+  return fixtureCheck(fixture.name, 'call', describeCall(fn, args), describeCall(got.fn, shown), got.confidence, got.outcome);
+}
+
 export function defineFunctionCaller(spec: CallerSpec): FunctionCaller {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
+  assertBand(spec.band);
   for (const fixture of spec.fixtures) {
     if (!(fixture.expect.fn in spec.functions)) throw new RangeError(`caller ${spec.name}: fixture ${fixture.name} expects an unknown function`);
   }
-  const questions: Record<string, Question> = {
-    [ROUTE]: choice(spec.instructions, Object.fromEntries(Object.entries(spec.functions).map(([fn, f]) => [fn, f.description]))),
-  };
-  for (const [fn, f] of Object.entries(spec.functions)) {
-    for (const [arg, argSpec] of Object.entries(f.args)) for (const [name, question] of argQuestions(fn, arg, argSpec)) questions[name] = question;
-  }
+  const questions = callQuestions(spec);
 
   const caller: FunctionCaller = {
     ...header,
     async fill(port, state, options = {}) {
       const result = await askAs(port, spec, 'call', state, questions, options);
-      const call = fill(spec, callAnswers(result.answers));
+      const call = fill(spec, result.answers);
       recordReadings(port, result, call);
       return call;
     },
     checkFixtures: (port, options = {}) =>
-      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
-        const got = await caller.fill(port, fixture.state, run);
-        const expectedArgs = fixture.expect.args ?? {};
-        const shown = statedArgs(Object.keys(expectedArgs).map((arg) => ({ arg, value: got.args[arg] })));
-        return fixtureCheck(fixture.name, 'call', describeCall(fixture.expect.fn, expectedArgs), describeCall(got.fn, shown), got.confidence, got.outcome);
-      }),
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => callCheck(fixture, await caller.fill(port, fixture.state, run))),
   };
   return caller;
 }

@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, score, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
-import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
+import { assertBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readScore, readYesNo, type ScoreReading, type YesNoReading } from '../readings/readings.ts';
 import { STAKES_BANDS } from '../readings/bands.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
@@ -45,7 +45,7 @@ export interface EntityAligner extends NamedDecision {
 
 export function defineEntityAligner(spec: AlignmentSpec): EntityAligner {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
+  assertBand(spec.band);
   const levels = [
     `They describe two different ${spec.noun}s.`,
     `They describe closely related ${spec.noun}s that may or may not be the same one: a variant, a special edition, a namesake, or a record that could plausibly refer to either.`,

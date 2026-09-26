@@ -86,8 +86,7 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
       record(): never {
         throw new Error('disk full');
       },
-      recordReadings() {},
-      recordAction() {},
+      attach() {},
       get: () => undefined,
       query: () => [],
     };

@@ -17,7 +17,7 @@ export interface TokenUsage {
 }
 
 /** What every entry records about the call it describes. */
-interface CallRecord {
+export interface CallRecord {
   readonly id: DecisionId;
   /** When the call was made. */
   readonly at: IsoTime;
@@ -93,8 +93,8 @@ export interface DecisionQuery {
 export interface DecisionLog {
   /** Appends an entry and returns its id. Throws when the write fails. */
   record(entry: NewDecisionEntry): DecisionId;
-  recordReadings(id: string, readings: JsonValue): void;
-  recordAction(id: string, action: string): void;
+  /** Attaches a note to an answered entry. Throws when there is no answered entry with that id or the write fails. */
+  attach(id: string, note: DecisionNote): void;
   get(id: string): DecisionEntry | undefined;
   query(query?: DecisionQuery): readonly DecisionEntry[];
 }

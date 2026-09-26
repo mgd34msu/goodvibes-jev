@@ -1,9 +1,9 @@
 import { checkReading } from '../batteries/battery.ts';
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
-import { choice, noul, type JudgmentPort, type Question } from '../port/types.ts';
+import { choice, noul, type ChoiceResponse, type JudgmentPort, type NoulResponse, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
-import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
 
 /**
@@ -86,7 +86,7 @@ function fixtureChecks(fixture: ExistenceFixture, found: ExistenceResult): Fixtu
 
 export function defineExistence(spec: ExistenceSpec): Existence {
   const header = decisionHeader(spec);
-  assertYesNoBand(spec.band);
+  assertBand(spec.band);
   for (const fixture of spec.fixtures) {
     const known = fixture.expect.item === undefined || fixture.items.some((item) => item.id === fixture.expect.item);
     if (!known) throw new RangeError(`existence ${spec.name}: fixture ${fixture.name} expects unknown item "${fixture.expect.item}"`);
@@ -98,10 +98,7 @@ export function defineExistence(spec: ExistenceSpec): Existence {
       assertItems(spec.name, items);
       const state = items.map((item) => `${item.id}| ${item.text}`).join('\n');
       const result = await askAs(port, spec, 'existence', state, existenceQuestions(query, items), options);
-      const { where, exists: existsAnswer } = result.answers as unknown as {
-        where: { probabilities: Record<string, number> };
-        exists: { type: 'noul'; noul: number };
-      };
+      const { where, exists: existsAnswer } = result.answers as { readonly where: ChoiceResponse; readonly exists: NoulResponse };
       const exists = readYesNo(existsAnswer, spec.band);
       const ranked = rankItems(items, where.probabilities);
       const answer = exists.verdict === 'yes' ? ranked[0]?.id : undefined;

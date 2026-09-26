@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort } from '../port/types.ts';
-import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type YesNoBand } from '../readings/bands.ts';
 import { likelierSide, readYesNo, type YesNoReading } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -34,7 +34,7 @@ function itemQuestion(condition: string, index: number) {
 
 export function defineCounter(spec: CounterSpec): Counter {
   const header = decisionHeader(spec);
-  assertYesNoBand(spec.band);
+  assertBand(spec.band);
 
   const counter: Counter = {
     ...header,

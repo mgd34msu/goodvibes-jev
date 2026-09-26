@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type JudgmentPort } from '../port/types.ts';
-import { assertConfidenceBand, type ChoiceBand, type Outcome } from '../readings/bands.ts';
+import { assertBand, type ChoiceBand, type Outcome } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -60,7 +60,7 @@ export function normalizeForMatch(text: string): string {
 
 export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
+  assertBand(spec.band);
   const question = choice('How does `source` relate to `claim`?', RELATIONS);
 
   const checker: FidelityChecker = {

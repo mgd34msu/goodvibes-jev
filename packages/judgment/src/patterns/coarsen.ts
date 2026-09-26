@@ -1,6 +1,6 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
-import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
+import { assertBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -33,7 +33,7 @@ export interface CoarseningClassifier<F extends string> extends NamedDecision {
 
 export function defineCoarseningClassifier<const F extends string>(spec: CoarseningSpec<F>): CoarseningClassifier<F> {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
+  assertBand(spec.band);
   const fines = Object.keys(spec.labels) as F[];
   const known = new Set<string>([...fines, ...fines.map((fine) => spec.labels[fine].parent)]);
   for (const fixture of spec.fixtures) {

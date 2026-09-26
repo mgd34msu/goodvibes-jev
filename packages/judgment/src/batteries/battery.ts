@@ -11,8 +11,7 @@ import type {
 } from '../port/types.ts';
 import { choice, noul, score } from '../port/types.ts';
 import {
-  assertConfidenceBand,
-  assertYesNoBand,
+  assertBand,
   type ChoiceBand,
   type ConfidenceBand,
   type YesNoBand,
@@ -165,15 +164,11 @@ export function checkReading(fixture: string, aspect: string, expected: string, 
 }
 
 function assertItemBands(battery: string, itemName: string, item: BatteryItem): void {
-  if (item.kind === 'yes-no') {
-    assertYesNoBand(item.band);
-    return;
-  }
-  assertConfidenceBand(item.band);
+  assertBand(item.band);
   if (item.kind !== 'choice') return;
   for (const [option, band] of Object.entries((item.band as ChoiceBand).perOption ?? {})) {
     if (!(option in item.question.criteria)) throw new RangeError(`battery ${battery}: question ${itemName} has a band for unknown option "${option}"`);
-    assertConfidenceBand(band as ConfidenceBand);
+    assertBand(band as ConfidenceBand);
   }
 }
 

@@ -1,7 +1,7 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 import { choice, noul, type ChoiceResponse, type JudgmentPort, type JudgmentResult, type NoulResponse, type Question, type Questions } from '../port/types.ts';
-import { isNonDecreasing } from '../readings/bands.ts';
+import { orderedInUnit } from '../readings/bands.ts';
 import {
   BLOCK_TYPES,
   CALLOUT_KINDS,
@@ -118,7 +118,7 @@ function typesCheck(fixture: StructureSpec['fixtures'][number], blocks: readonly
 export function defineStructureRecovery(spec: StructureSpec): StructureRecovery {
   const header = decisionHeader(spec);
   const bars: JoinBars = { afterDangling: spec.joinAfterDangling, afterTerminal: spec.joinAfterTerminal };
-  const barsOrdered = bars.afterDangling > 0 && isNonDecreasing([bars.afterDangling, bars.afterTerminal, 1]);
+  const barsOrdered = bars.afterDangling > 0 && orderedInUnit([bars.afterDangling, bars.afterTerminal]);
   if (!barsOrdered) throw new RangeError(`structure ${spec.name}: needs 0 < joinAfterDangling <= joinAfterTerminal <= 1`);
 
   const recovery: StructureRecovery = {

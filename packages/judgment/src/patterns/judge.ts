@@ -1,19 +1,13 @@
 import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
-import { assertYesNoBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
-/**
- * Judging output against a goal: one yes/no per acceptance criterion, framed
- * so that yes means the criterion is NOT met (the escalate case is the true
- * case, as the SDE cascade recommends), plus one yes/no on the goal itself.
- * All of them ride one request. Aggregation is max-style: one confident
- * unmet criterion fails the output instead of being averaged away.
- */
+/** Judging output against a goal: one yes/no per acceptance criterion and one on the goal itself, all in one request. */
 export interface JudgeSpec extends PatternHeader {
-  /** Band on the probability that a criterion is unmet. */
+  /** Band on each criterion and goal reading. */
   readonly band: YesNoBand;
   readonly fixtures: readonly JudgeFixture[];
 }
@@ -41,7 +35,7 @@ export type Verdict = 'pass' | 'fail' | 'uncertain';
 export interface Judgment {
   readonly verdict: Verdict;
   readonly outcome: Outcome;
-  /** One reading per criterion, in order; `verdict: 'yes'` means unmet. */
+  /** One reading per criterion, in order. */
   readonly criteria: readonly YesNoReading[];
   /** Reading on whether the output fails the goal as a whole. */
   readonly goal: YesNoReading;
@@ -72,24 +66,31 @@ const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?'
   false: 'The output achieves what the goal asks.',
 });
 
-/** Criterion and goal questions ask whether something falls short, so yes is the unmet answer. */
-const UNMET_ANSWER = 'yes';
-const isUnmet = (reading: YesNoReading): boolean => reading.verdict === UNMET_ANSWER;
+/**
+ * The verdict a yes/no answer gives one criterion or the goal. The questions
+ * ask whether the output falls short, so yes fails: the escalate case is the
+ * true case, as the SDE cascade recommends.
+ */
+const VERDICT_OF_ANSWER: Readonly<Record<string, Verdict>> = { yes: 'fail', no: 'pass' };
+const verdictOf = (answer: string): Verdict => VERDICT_OF_ANSWER[answer] ?? 'uncertain';
+/** Indexes of the readings whose answer says the output falls short. */
+const unmetIndexes = (readings: readonly YesNoReading[]): number[] => readings.flatMap((reading, index) => (verdictOf(reading.verdict) === 'fail' ? [index] : []));
 /** The question name a criterion is asked under. */
 const criterionKey = (index: number): string => `criterion_${index}`;
 
-/** Folds per-criterion and goal readings into one verdict, max-style. */
+/** Verdicts from worst to best. */
+const WORST_FIRST: readonly Verdict[] = ['fail', 'uncertain', 'pass'];
+
+/** Folds per-criterion and goal readings into one verdict, max-style: the worst reading decides. */
 export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict: Verdict; outcome: Outcome } {
-  const unmet = readings.filter(isUnmet);
-  const someUnmet = unmet.length > 0;
-  const someUnsettled = readings.some((reading) => reading.verdict === 'uncertain');
-  if (someUnmet) {
-    const confidentlyUnmet = unmet.some((reading) => reading.outcome === 'act');
-    return { verdict: 'fail', outcome: confidentlyUnmet ? 'act' : 'confirm' };
-  }
-  if (someUnsettled) return { verdict: 'uncertain', outcome: 'escalate' };
-  const everyMetConfidently = readings.every((reading) => reading.outcome === 'act');
-  return { verdict: 'pass', outcome: everyMetConfidently ? 'act' : 'confirm' };
+  const verdicts = readings.map((reading) => verdictOf(reading.verdict));
+  const verdict = WORST_FIRST.find((candidate) => verdicts.includes(candidate)) ?? 'pass';
+  if (verdict === 'uncertain') return { verdict, outcome: 'escalate' };
+  const deciding = readings.filter((_, index) => verdicts[index] === verdict);
+  const acting = deciding.filter((reading) => reading.outcome === 'act').length;
+  // A fail acts when one failing reading acts; a pass acts only when every reading does.
+  const confident = verdict === 'fail' ? acting > 0 : acting === deciding.length;
+  return { verdict, outcome: confident ? 'act' : 'confirm' };
 }
 
 /** How strongly the readings back the verdict: the strongest unmet reading for a fail, the weakest met one otherwise. */
@@ -99,15 +100,13 @@ function verdictSignal(judgment: Judgment): number {
   return judgment.verdict === 'fail' ? strongestUnmet : 1 - strongestUnmet;
 }
 
-const asCriterionAnswer = (answer: string): 'met' | 'unmet' => (answer === UNMET_ANSWER ? 'unmet' : 'met');
-
 function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
   const checks = [fixtureCheck(fixture.name, 'verdict', fixture.expect.verdict, judgment.verdict, verdictSignal(judgment), judgment.outcome)];
   if (fixture.expect.unmet === undefined) return checks;
   const expectedUnmet = new Set(fixture.expect.unmet);
   judgment.criteria.forEach((reading, index) => {
-    const expected = expectedUnmet.has(index) ? 'unmet' : 'met';
-    checks.push(fixtureCheck(fixture.name, criterionKey(index), expected, asCriterionAnswer(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
+    const expected: Verdict = expectedUnmet.has(index) ? 'fail' : 'pass';
+    checks.push(fixtureCheck(fixture.name, criterionKey(index), expected, verdictOf(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
   });
   return checks;
 }
@@ -131,7 +130,7 @@ function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestio
 
 export function defineJudge(spec: JudgeSpec): Judge {
   const header = decisionHeader(spec);
-  assertYesNoBand(spec.band);
+  assertBand(spec.band);
   for (const fixture of spec.fixtures) assertJudgeFixture(spec.name, fixture);
 
   const judge: Judge = {
@@ -144,7 +143,7 @@ export function defineJudge(spec: JudgeSpec): Judge {
       const criteria = input.criteria.map((_, index) => readYesNo(answers[criterionKey(index)]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
       const { verdict, outcome } = aggregateJudgment([...criteria, goal]);
-      const unmet = criteria.flatMap((reading, index) => (isUnmet(reading) ? [index] : []));
+      const unmet = unmetIndexes(criteria);
       recordReadings(port, result, { verdict, outcome, goal, criteria });
       return { verdict, outcome, criteria, goal, unmet, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },

@@ -1,7 +1,7 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type DecisionIdentity, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
-import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 import { runSelection, type Selection } from '../patterns/select.ts';
 
@@ -66,8 +66,8 @@ function validateRankRecheckSpec(spec: RankRecheckSpec): DecisionIdentity {
   if (!thresholdInUnit) throw new RangeError(`rank-recheck ${spec.name}: gateThreshold must be in [0, 1]`);
   const positiveShortlist = Number.isInteger(spec.shortlist) && spec.shortlist >= 1;
   if (!positiveShortlist) throw new RangeError(`rank-recheck ${spec.name}: shortlist must be a positive integer`);
-  assertConfidenceBand(spec.recheckBand);
-  assertYesNoBand(spec.fitBand);
+  assertBand(spec.recheckBand);
+  assertBand(spec.fitBand);
   return header;
 }
 

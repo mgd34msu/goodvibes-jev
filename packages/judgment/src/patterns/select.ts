@@ -2,7 +2,7 @@ import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type NamedDecisio
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader, type PatternName } from '../batteries/asking.ts';
 import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
-import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
+import { assertBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readChoice, readYesNo, type ChoiceReading, type YesNoReading } from '../readings/readings.ts';
 import type { Candidate } from './rerank.ts';
 
@@ -118,8 +118,8 @@ const expectsOffered = (fixture: SelectSpec['fixtures'][number]): boolean =>
 
 export function defineSelector(spec: SelectSpec): Selector {
   const header = decisionHeader(spec);
-  assertConfidenceBand(spec.band);
-  assertYesNoBand(spec.fitBand);
+  assertBand(spec.band);
+  assertBand(spec.fitBand);
   for (const fixture of spec.fixtures) {
     if (!expectsOffered(fixture)) throw new RangeError(`selector ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect}"`);
   }
