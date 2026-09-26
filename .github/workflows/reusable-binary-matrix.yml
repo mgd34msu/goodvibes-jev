@@ -1,0 +1,127 @@
+# Reusable: binary build matrix (toolchain build-binaries + post-build-smoke)
+#
+# Consumer contract
+#   Builds the repo's compiled binaries across a target matrix using the
+#   toolchain `build-binaries` CLI (necessary builds only: the throwaway
+#   validate build is gone), runs the per-target `post-build-smoke` hook when a
+#   binary can execute on the runner, and uploads each target's artifacts.
+#
+#   Call it:
+#     jobs:
+#       binaries:
+#         uses: mgd34msu/goodvibes-sdk/.github/workflows/reusable-binary-matrix.yml@<commit-sha>
+#         with:
+#           targets: '[{"key":"linux-x64","runner":"ubuntu-latest","smoke":true,"binary":"dist/goodvibes-linux-x64"},
+#                      {"key":"darwin-arm64","runner":"macos-14","smoke":true,"binary":"dist/goodvibes-macos-arm64"}]'
+#           artifact-glob: "dist/goodvibes-* dist/lib"
+#
+#   Pin `<commit-sha>` to a full commit SHA, never `@main`; note alongside the
+#   pin which goodvibes-sdk version it corresponds to. Bumping the pin is a
+#   deliberate, reviewed change (its own commit/PR), not an automatic float
+#   onto whatever main has become.
+#
+#   Inputs:  targets (required JSON array of {key, runner, smoke, binary}),
+#            artifact-glob, artifact-prefix (default binaries), bun-version,
+#            toolchain-spec.
+#   Each leg runs `goodvibes-build-binaries --target <key>`. Smoke legs run
+#   `goodvibes-post-build-smoke --binary <the leg's own binary>`: each matrix
+#   leg only builds its own suffixed artifact, so the smoked binary MUST be the
+#   leg's (`binary` is required when smoke is true; the toolchain.config
+#   smoke.binaryDefault serves local CLI runs only, never heterogeneous matrix
+#   legs). Config (entrypoints, addon, daemon leg) comes from the caller repo's
+#   toolchain.config.json.
+#
+#   artifact-glob accepts whitespace-separated globs: spaces or newlines. The
+#   value is normalized to newline-separated form before it reaches
+#   actions/upload-artifact (whose `path` splits on newlines only), so both
+#   forms behave identically.
+
+on:
+  workflow_call:
+    inputs:
+      targets:
+        description: JSON array of {key, runner, smoke, binary} objects. `binary`
+          is the leg's own built artifact path (e.g. dist/goodvibes-linux-x64)
+          and is required when smoke is true.
+        required: true
+        type: string
+      artifact-glob:
+        description: Whitespace-separated globs (spaces or newlines) of built
+          outputs to upload per target. Normalized to newline-separated form
+          before use, so both separators work.
+        required: false
+        type: string
+        default: "dist"
+      artifact-prefix:
+        required: false
+        type: string
+        default: binaries
+      bun-version:
+        required: false
+        type: string
+        default: "1.3.14"
+      toolchain-spec:
+        required: false
+        type: string
+        default: "@goodvibes-jev/engine/toolchain"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target.key }}
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(inputs.targets) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+        with:
+          bun-version: ${{ inputs.bun-version }}
+      - name: Build target
+        env:
+          TOOLCHAIN_SPEC: ${{ inputs.toolchain-spec }}
+          TARGET_KEY: ${{ matrix.target.key }}
+        run: bunx "$TOOLCHAIN_SPEC" goodvibes-build-binaries --target "$TARGET_KEY"
+      - name: Post-build smoke (the leg's own binary)
+        if: matrix.target.smoke
+        env:
+          LEG_BINARY: ${{ matrix.target.binary }}
+          TOOLCHAIN_SPEC: ${{ inputs.toolchain-spec }}
+          TARGET_KEY: ${{ matrix.target.key }}
+        run: |
+          set -euo pipefail
+          # Every leg builds only its own suffixed artifact, so the smoke must
+          # target THIS leg's binary. A shared smoke.binaryDefault cannot serve
+          # heterogeneous matrix legs; require the explicit path.
+          if [ -z "$LEG_BINARY" ]; then
+            echo "targets[].binary is required when smoke is true (the leg's own built artifact, e.g. dist/goodvibes-${TARGET_KEY})." >&2
+            exit 1
+          fi
+          bunx "$TOOLCHAIN_SPEC" goodvibes-post-build-smoke --binary "$LEG_BINARY"
+      - name: Normalize artifact globs (spaces -> newlines)
+        id: globs
+        env:
+          RAW_GLOBS: ${{ inputs.artifact-glob }}
+        run: |
+          set -euo pipefail
+          # actions/upload-artifact `path` splits on NEWLINES only; accept
+          # space-separated values too by normalizing all whitespace runs.
+          {
+            echo 'paths<<GOODVIBES_GLOBS_EOF'
+            tr -s ' \t' '\n' <<< "$RAW_GLOBS" | sed '/^$/d'
+            echo 'GOODVIBES_GLOBS_EOF'
+          } >> "$GITHUB_OUTPUT"
+      - name: Upload target artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.target.key }}
+          path: ${{ steps.globs.outputs.paths }}
+          if-no-files-found: error
+          retention-days: 1

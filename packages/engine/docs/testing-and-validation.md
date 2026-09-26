@@ -1,0 +1,199 @@
+# Testing and validation
+
+> Consumer and contributor guidance. For internal testing architecture see [Testing Architecture](./testing.md).
+
+The SDK repo validates more than TypeScript build success. `bun run validate` is the portable command CI runs; it does not require any external repo checkout.
+
+## Run the repo's declared script, never a guessed runner
+
+**Always invoke a repository's own `package.json` script, `bun run test`, and
+never a runner you inferred from the file layout.** Getting this wrong produces
+a false regression report against work that is fine, which costs a whole round
+chasing nothing.
+
+A worked example from this repo's consumers. Running the webui's suite three
+ways, on an identical clean tree:
+
+| Invocation | Result |
+|---|---|
+| `bunx vitest run` | **159 files failed**, "no tests" |
+| `bun test` (bare) | **157 fail, 141 errors** |
+| `bun run test` (the declared script, `bun test --isolate`) | **2168 pass, 0 fail** |
+
+The first two are artifacts of the wrong runner, not defects. `vitest` cannot
+resolve `bun:test` imports at all, so every file fails at import. Bare `bun test`
+skips the `--isolate` flag the suite requires and collapses with
+`Cannot call beforeEach() after the test run has completed`, a symptom that
+looks like a real async bug and is not.
+
+Either number, reported as a regression, would have been a false alarm against
+solid work. The declared script exists because it encodes the flags the suite
+needs; treat any disagreement between your invocation and the script as your bug
+until proven otherwise.
+
+The same rule covers `typecheck`, `lint` and `build`: a repo that ships a script
+has already made these decisions, and a hand-built command silently opts out of
+them.
+
+## CI gates
+
+This is the canonical CI-gate reference for the workspace. Every push and PR to `main` runs nine standalone jobs (see `.github/workflows/ci.yml`); a tenth job, `auto-release`, runs only after all nine are green, only on a push to `main`, and only when the repository variable `RELEASE_ARMED` is set to `true`. The documentation, contract-artifact, version, changelog, error, todo, examples, API-surface, and bundle-budget checks are **not** separate jobs. They run as ordered **steps inside the single `validate` job** (see `scripts/validate.ts`).
+
+| Job | Command | Purpose |
+|------|---------|---------|
+| `validate` | `bun run validate` | Kitchen-sink validation. Runs these checks as ordered steps: API docs sync, docs/examples completeness, error/line-cap/credential-scope/changelog/version/todo/internal-id/skipped-test/architecture/platform-console gates, TypeScript build, the full typecheck gate (`typecheck`, both the composite project solution and the standalone type-test project), API-surface check (`api:check`), exports-coverage check (`exports:check`), examples typecheck, browser-compat, package metadata, no-any, pack, publint, install smoke, contract-artifact check (`contracts:check`), and bundle budget (`bundle:check`) |
+| `eval-gate` | `bun run eval:baseline:check` then `bun run eval:gate` | Runs the standing eval suite through the production eval paths against the restored build artifact. Checks the checked-in baseline for drift first, then fails on any absolute-floor failure or regression against that baseline |
+| `security-audit` | `bun audit --audit-level high` + gitleaks scan (`gitleaks/gitleaks-action`) | Runs `bun audit --audit-level high` against the workspace dependency tree and a gitleaks secret scan; the CI job invokes these two steps directly (local `bun run security:audit` covers only the dependency-audit half) |
+| `build` | `bun run build` | Builds all workspace package `dist/` output once and uploads it as a single `workspace-build-output` artifact for downstream CI jobs |
+| `platform-matrix` | `bun packages/engine/scripts/test.ts` (bun leg) plus `bun run test:rn`, `bun run test:workers`, `bun run test:workers:wrangler` legs | Restores the shared `build` job artifact (no per-leg rebuild) and runs the full Bun test suite plus the companion-bundle scan and the two Workers runtime lanes as four matrix legs of one job (see legs below) |
+| `types-resolution-check` | `bunx attw --pack packages/engine/sdk --ignore-rules no-resolution cjs-resolves-to-esm` | Validates the `exports` map resolves cleanly for every published subpath |
+| `publint-check` | `bun run publint:check` | Detects common `package.json` packaging hygiene issues before release |
+| `sbom-check` | `bun run sbom:check` | Generates the CycloneDX SBOM (`sbom.cdx.json`), asserts it is non-empty, validates the CycloneDX schema, and enforces the license policy |
+| `artifact-lane` | `bun run release:artifact-lane` | Packs every workspace package exactly as publish would, installs the tarballs into a scratch consumer, and runs the shipped conformance kit against a catalog/daemon composed from those packed artifacts, proving the tarballs are internally coherent before publish |
+
+The `platform-matrix` job runs as four matrix legs (one job, not four):
+
+- **bun.** `bun run build && bun run test` runs the full Bun test suite.
+- **rn-bundle.** `bun run build && bun run test:rn` verifies companion dist bundles, including `workers.js`, contain no `Bun.*` identifiers and no `node:*` imports.
+- **workers.** `bun run test:workers` runs the `./web` entry under Miniflare 4 (workerd V8 isolate, in-process). 9 tests validate Worker-runtime support (no `node:*`, no `Bun.*`, no client `EventSource`/`WebSocket` dependence). The dedicated `./workers` bridge is covered by source-level batch bridge tests and the `rn-bundle` companion scan.
+- **workers-wrangler.** `bun run test:workers:wrangler` runs the `./web` entry under `wrangler dev --local`. Exercises wrangler's esbuild bundling pipeline and wrangler.toml config. NOTE: wrangler dev --local shares the Miniflare 4 runtime, so this is **not** a production-workerd verification. See `test/workers/NOTES.md` for runtime coverage boundaries.
+
+## Portable validation
+
+```bash
+bun run validate
+```
+
+`bun run validate` runs the same complete ordered step list documented in the
+`validate` row of the [CI Gates](#ci-gates) table above, from API docs sync
+and docs/examples completeness through the error/line-cap/credential-scope/
+changelog/version/todo/internal-id/skipped-test/architecture/platform-console
+gates, the TypeScript build, the full typecheck gate, the API-surface and
+exports-coverage checks, examples typecheck, browser-compat, package
+metadata, no-any, pack, publint, install smoke, the contract-artifact check,
+and bundle budget.
+Test execution is owned by the `platform-matrix` jobs; run `bun run test` locally when
+you need the full Bun test suite.
+
+`bun run build` and the package test scripts share the repo workspace lock.
+That prevents tests from reading `packages/*/dist` while another build or
+validation process is cleaning and rebuilding package output. Use
+`bun run test`, `bun run test:rn`, `bun run test:workers`, or
+`bun run test:workers:wrangler` instead of invoking `bun test ...` directly
+when package `dist` imports are involved.
+
+## Focused checks
+
+For fast iteration, run the individual check that matches your change instead of
+the full `validate` job:
+
+| Command | Purpose |
+|---------|---------|
+| `bun run validate:strict` | Runs `validate`, then `types:check` and `contracts:check` for an extra-strict local pass |
+| `bun run dist:check` | Checks that committed `dist/` output is fresh relative to source (`scripts/check-dist-freshness.ts`) |
+| `bun run check:browser` | Browser/companion compatibility scan (`scripts/browser-compat-check.ts`) |
+| `bun run check:metadata` | Validates published `package.json` metadata (`scripts/package-metadata-check.ts`) |
+| `bun run any:check` | Fails on disallowed `any` types (`scripts/no-any-types.ts`) |
+| `bun run platform-console:check` | Fails on disallowed platform `console.*` usage (`scripts/no-platform-console.ts`) |
+| `bun run test-skip:check` | Fails on skipped or `.only` tests (`scripts/no-skipped-tests.ts`) |
+| `bun run security:audit` | Dependency audit at `--audit-level high` (`bun audit`) |
+
+## Contract refresh
+
+When generated contract artifacts change, refresh the canonical contract package artifacts before validating:
+
+```bash
+bun run refresh:contracts
+bun run validate
+```
+
+`bun run refresh:contracts` updates generated contract JSON artifacts in `packages/engine/contracts/artifacts`. SDK package preparation copies those artifacts into the published package. source copies were removed; sibling packages are the source of truth.
+
+## Zod opt-in validation
+
+The HTTP transport layer supports opt-in Zod v4 response validation at the transport boundary. Pass a `responseSchema` on individual method calls to validate the parsed response body:
+
+```ts
+import { z } from 'zod/v4';
+
+const result = await sdk.operator.invoke('namespace.method', input, {
+  responseSchema: z.object({ id: z.string() }),
+});
+```
+
+This is opt-in per call. There is no global schema enforcement. Schema mismatch throws a `ContractError` (a `GoodVibesSdkError` subclass with `kind: 'contract'`).
+
+## Bundle budget enforcement
+
+`bundle-budgets.json` at the repo root defines per-entry gzip size ceilings using
+`max(ceil(actual * 1.2), actual + 50)` over the last measured gzip size, a 20%
+growth multiplier with a `+50 B` floor so tiny facade entries are not failed by a
+handful of bytes. `bun run bundle:check` is both the local budget check and the
+bundle-budget step inside the `validate` job. See
+[`bundle-budgets.README.md`](../bundle-budgets.README.md) for the full
+methodology, exclusions, and per-entry rationale rules.
+
+To see current actual sizes:
+
+```bash
+bun run bundle:check
+```
+
+To update budgets after a legitimate size change:
+1. Run `bun run bundle:check` to get the new actual sizes.
+2. Set `gzip_bytes` to `max(ceil(actual * 1.2), actual + 50)` for each changed entry in `bundle-budgets.json` (the `+50 B` floor dominates for tiny entries below ~250 B).
+3. Keep the file's top-level budget note generic; do not leave stale wave/date
+   rationale in the budget baseline.
+
+## Test coverage snapshot
+
+[`COVERAGE.md`](../COVERAGE.md) is a generated snapshot of the root-level
+`test/*.test.ts` files, produced by `scripts/print-test-coverage.ts`
+(`bun packages/engine/scripts/print-test-coverage.ts > packages/engine/COVERAGE.md`). It is **not** enforced by
+any CI gate, so it can drift from the actual test set. Treat it as a
+human-readable index, not an authoritative coverage report.
+
+## License and SBOM checks
+
+License compliance is tracked through the CycloneDX SBOM generated by
+`bun run sbom:check`; the generated `sbom.cdx.json` is intentionally ignored
+because it is release/build output. CI runs the `sbom-check` job after the SDK
+build artifact is produced, validates the CycloneDX shape, and rejects blocked
+license families. Use `bun run sbom:generate` only when you need to regenerate
+the raw SBOM without running the validation and license-policy checks.
+
+## Release-gate failure scenarios
+
+Maintainer-facing guidance for the most common release-gate failures:
+
+- **Contract drift.** The contract-artifact step (`contracts:check`) fails when the SDK-embedded contract JSON no longer matches `packages/engine/contracts/artifacts`. Run `bun run refresh:contracts`, then re-run `bun run validate`.
+- **Bundle overage.** `bundle:check` fails when a JavaScript export exceeds its gzip ceiling. Investigate the size increase. If it is legitimate, update `bundle-budgets.json` using `max(ceil(actual * 1.2), actual + 50)` and record the new measurement in the entry rationale.
+- **SBOM and license policy.** `sbom-check` fails when `sbom.cdx.json` is empty or schema-invalid, or when a dependency carries a blocked license family. Resolve the offending dependency, or update the license policy if the family is acceptable.
+- **Types resolution (attw).** `types-resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json` and re-run `bunx attw --pack packages/engine`.
+
+## Workers runtime verification
+
+The `./browser` companion entry point (`createBrowserGoodVibesSdk`) is Workers-ready for Cloudflare Workers / Miniflare 4 / `workerd` (the `./web` entry is an equivalent alias, use `./browser` for new projects). CI verifies this three ways:
+
+1. `rn-bundle` statically scans the built `web.js` and `workers.js` for forbidden identifiers (`node:*`, `Bun.*`).
+2. `platform-matrix (workers)` boots the `./web` entry (the `./web` alias of the Workers-ready `./browser`) under Miniflare 4's programmatic workerd isolate and runs 9 real-runtime tests.
+3. `platform-matrix (workers-wrangler)` boots the `./web` entry via `wrangler dev --local` to exercise wrangler's esbuild pipeline and `wrangler.toml`. Note that `wrangler dev --local` uses Miniflare 4 internally, so both runtime lanes share the same isolate; see `test/workers/NOTES.md` for runtime coverage boundaries.
+
+The `./workers` entry is a small Worker bridge for daemon batch routes, Cloudflare Queue consumers, and scheduled ticks; its source-level behavior is covered by `test/cloudflare-worker-batch.test.ts`. SDK-owned Cloudflare provisioning is covered without live Cloudflare calls by `test/cloudflare-control-plane.test.ts` using an injected fake Cloudflare API client.
+
+## Type-level tests
+
+`bun run types:check` compiles type-level usage tests in `tsconfig.type-tests.json`. These catch public API type regressions without running the code, e.g. verifying that factory function return types are assignable to their documented interfaces.
+
+`bun run validate` does not call `types:check` directly. It calls `bun run typecheck`, which runs two TypeScript projects and judges each by its printed diagnostics as well as its exit code. The first is `tsc -b --force` over the composite solution, every package plus `test/` and `scripts/` via `tsconfig.tests.json`; the second is `tsc -p tsconfig.type-tests.json`, the same standalone type-test project `types:check` runs alone. The `--force` flag matters because a restored CI cache or a worktree switch can leave `tsc -b`'s incremental build info believing a change-carrying file is already up to date, so it silently reports nothing. `--force` always recompiles and reports for real.
+
+## Why each gate exists
+
+- **contract-artifact-check.** The SDK package artifact exports must match `packages/engine/contracts/artifacts`. Source copies were removed. Implementation code is no longer copied into the SDK package.
+- **error-contract-check.** The public `SDKErrorKind` taxonomy, retryable status list, and consumer-facing error-kind docs must stay aligned. Run it locally with `bun run error:check`. Internal implementation throws are allowed when they are caught and normalized at public transport/daemon boundaries.
+- **rn-bundle.** Static bundle scan. Companion surface (React Native, Expo, browser, web, workers) must be safe for Metro, Vite, webpack, and esbuild. Any `Bun.*` identifier or `node:*` import breaks mobile and browser bundlers. (Runtime verification of `./web` under workerd lives in the separate `workers` and `workers-wrangler` lanes above.)
+- **bundle:check.** Prevents accidental bundle size growth. Runs as a step in the
+  `validate` job. Each export has a gzip ceiling computed as
+  `max(ceil(actual * 1.2), actual + 50)`; the 20% multiplier plus `+50 B` floor
+  prevents transient-spike failures on tiny entries.
+- **types-check.** TypeScript type inference is non-trivial for discriminated union returns. Type tests validate at compile time without runtime overhead.

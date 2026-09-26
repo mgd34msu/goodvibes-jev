@@ -1,0 +1,372 @@
+# Public surface: @goodvibes-jev/engine/sdk
+
+> **Runtime surfaces**: See [`docs/surfaces.md`](./surfaces.md) for the full/companion surface split, supported runtimes, and CI enforcement details.
+
+This document is the single canonical source of truth for the public entry points and subpaths exported by `@goodvibes-jev/engine/sdk`; the entry-point lists in the README, getting-started, packages, exports, and surfaces docs link here rather than re-listing. Consumers should only import from paths listed here. Private repository source layout is not a package contract.
+
+## Stability levels
+
+- **stable.** Semver-guaranteed. Breaking changes require a major bump.
+- **beta.** API is settled but may have minor adjustments between minor releases.
+- **preview.** Under active development. May change without notice in any release.
+
+---
+
+## Root entry point
+
+### `.`: `@goodvibes-jev/engine/sdk`
+
+**Status:** stable
+
+Main entry point. Exports `createGoodVibesSdk`, client types, and re-exports all top-level subsystem barrels.
+
+Use this for general SDK consumption when you don't need a subsystem-specific entry.
+
+---
+
+## Subsystem entry points
+
+### `./auth`: `@goodvibes-jev/engine/sdk/auth`
+
+**Status:** stable
+
+Authentication client, token stores, and auth types. Exports `createGoodVibesAuthClient`, `createBrowserTokenStore`, `createMemoryTokenStore`, and associated types.
+
+**Stability contract:** public method signatures are stable. Internal token format may change between major versions.
+
+### `./client-auth`: `@goodvibes-jev/engine/sdk/client-auth`
+
+**Status:** beta
+
+Low-level authentication primitives, including `AutoRefreshCoordinator`, platform-specific token stores (browser, iOS keystore, Android keychain, Expo secure store), and auto-refresh options. Use `./auth` for the recommended public authentication surface; import from `./client-auth` only when you need direct access to platform-specific token store implementations or the coordinator.
+
+### `./contracts`: `@goodvibes-jev/engine/sdk/contracts`
+
+**Status:** stable
+
+ACP operator/peer contract types, runtime event domains, and method IDs. Used by both operator and peer clients.
+
+### `./contracts/node`: `@goodvibes-jev/engine/sdk/contracts/node`
+
+**Status:** stable
+
+Contract extensions for file-based artifact types. Used on the full (Bun) surface.
+
+### `./contracts/operator-contract.json`: `@goodvibes-jev/engine/sdk/contracts/operator-contract.json`
+
+**Status:** stable
+
+Raw JSON schema for the operator ACP contract. Suitable for tooling and validators.
+
+> **Bundle-budget note:** JSON artifacts are static and excluded from gzip bundle-budget tracking. See `bundle-budgets.json` comments.
+
+### `./contracts/peer-contract.json`: `@goodvibes-jev/engine/sdk/contracts/peer-contract.json`
+
+**Status:** stable
+
+Raw JSON schema for the peer ACP contract.
+
+> **Bundle-budget note:** JSON artifacts are static and excluded from gzip bundle-budget tracking.
+
+### `./contracts/operator-openapi.json`: `@goodvibes-jev/engine/sdk/contracts/operator-openapi.json`
+
+**Status:** stable
+
+Generated OpenAPI document for the operator HTTP surface, derived from the same operator contract manifest as `./contracts/operator-contract.json`. See [`docs/operator-openapi.json`](./operator-openapi.json) for the document itself.
+
+> **Bundle-budget note:** JSON artifacts are static and excluded from gzip bundle-budget tracking.
+
+### `./daemon`: `@goodvibes-jev/engine/sdk/daemon`
+
+**Status:** stable
+
+Daemon HTTP API types, route helpers, and server bootstrap utilities.
+
+### `./embed`: `@goodvibes-jev/engine/sdk/embed`
+
+**Status:** stable (frozen at 1.0)
+
+SDK Embedding API: the supported contract for embedding a GoodVibes session in another application. Exports `createEmbeddedSession` and the `EmbeddedSession` shape (`workspace`, `url`, `events`, `approvals`, `sessions`, `submit`, `stop`), `EmbedSessionOptions`, `EmbeddedSessionInput`, the re-exported `bootDaemon` factory with its `BootDaemonOptions`/`BootedDaemon` contract, and the permission-callback contract. It curates existing runtime machinery rather than adding a new engine, so breaking changes to the frozen shape are a semver-major release gated by an API Extractor report.
+
+### `./observer`: `@goodvibes-jev/engine/sdk/observer`
+
+**Status:** beta
+
+Observability helpers: `createConsoleObserver`, `createOpenTelemetryObserver`, and associated observer types. The root `@goodvibes-jev/engine/sdk` entry also re-exports this surface via `export *`; either import path is valid. Prefer `./observer` when you need tree-shaking control.
+
+### `./operator`: `@goodvibes-jev/engine/sdk/operator`
+
+**Status:** stable
+
+Operator ACP client. Use `createOperatorSdk` to connect to a running daemon.
+The operator surface is intentionally resource-oriented (`sessions`,
+`tasks`, `approvals`) because it is used by human/operator UIs that browse and
+act on daemon resources.
+
+### `./peer`: `@goodvibes-jev/engine/sdk/peer`
+
+**Status:** stable
+
+Peer ACP client. Use `createPeerSdk` for peer-to-peer connections.
+The peer surface is intentionally capability-oriented (`pairing`, `peer`,
+`work`, `operator`) because peer nodes negotiate capabilities before work is
+available. This differs from the operator client by design; both clients share
+the same generated contract ids underneath.
+
+### `./errors`: `@goodvibes-jev/engine/sdk/errors`
+
+**Status:** stable
+
+Shared error types and error-contract helpers.
+
+### `./events` and explicit event-domain subpaths: `@goodvibes-jev/engine/sdk/events`
+
+**Status:** beta
+
+Runtime event domain types. Use `./events` for the aggregate event-domain
+barrel, or an explicit `./events/<domain>` subpath for a single domain such as
+`@goodvibes-jev/engine/sdk/events/agents`.
+
+Supported event domain subpaths are: `agents`, `automation`, `communication`,
+`compaction`, `control-plane`, `deliveries`, `forensics`, `knowledge`, `mcp`,
+`ops`, `orchestration`, `permissions`, `planner`, `plugins`, `providers`,
+`routes`, `security`, `session`, `surfaces`, `tasks`, `tools`, `transport`,
+`turn`, `ui`, `watchers`, `workflows`, and `workspace`. Event implementation
+modules are not exported as deep package subpaths. What each domain carries is
+documented per event in the generated
+[runtime events reference](./reference-runtime-events.md).
+
+### `./transport-core`: `@goodvibes-jev/engine/sdk/transport-core`
+
+**Status:** stable
+
+Abstract transport interfaces, base classes, and shared transport types.
+
+### `./transport-direct`: `@goodvibes-jev/engine/sdk/transport-direct`
+
+**Status:** stable
+
+In-process direct transport (zero-latency, same-process communication). See
+[Transports](./transports.md) for the canonical facade description.
+
+### `./transport-http`: `@goodvibes-jev/engine/sdk/transport-http`
+
+**Status:** stable
+
+HTTP/REST transport implementation.
+
+### `./transport-realtime`: `@goodvibes-jev/engine/sdk/transport-realtime`
+
+**Status:** stable
+
+SSE/WebSocket realtime transport implementation.
+
+### `./browser`: `@goodvibes-jev/engine/sdk/browser`
+
+**Status:** stable
+
+Browser-optimized full SDK entry. Browser-safe entry with browser-appropriate
+reconnect/retry defaults and the complete operator route contract.
+
+### `./browser/knowledge`: `@goodvibes-jev/engine/sdk/browser/knowledge`
+
+**Status:** stable
+
+Scoped browser SDK entry for the base knowledge/wiki system. It includes base
+`knowledge.*` routes plus shared auth, provider, session, account, control, and
+SSE helpers without loading Home Assistant Home Graph route metadata.
+
+### `./browser/homeassistant`: `@goodvibes-jev/engine/sdk/browser/homeassistant`
+
+**Status:** stable
+
+Scoped browser SDK entry for Home Assistant panels. It includes
+`homeassistant.homeGraph.*` routes plus shared auth, provider, session, account,
+control, and SSE helpers without loading the base knowledge/wiki route table.
+
+### `./browser/agent`: `@goodvibes-jev/engine/sdk/browser/agent`
+
+**Status:** stable
+
+Scoped browser SDK entry for the Agent-owned knowledge environment. It routes
+`knowledge.*` / wiki calls to the agent knowledge routes plus shared auth,
+provider, session, account, control, and SSE helpers. Exports
+`createBrowserAgentSdk` and the `BrowserAgentSdk` type.
+
+### `./web`: `@goodvibes-jev/engine/sdk/web`
+
+**Status:** stable
+
+Web (browser + service workers) SDK entry.
+
+### `./workers`: `@goodvibes-jev/engine/sdk/workers`
+
+**Status:** preview
+
+Cloudflare Worker bridge for optional daemon batch integration. Exports `createGoodVibesCloudflareWorker` and structural Worker/Queue types. Use this when manually deploying a Worker that proxies `/batch/*` to the daemon, enqueues batch tick signals, consumes Cloudflare Queue messages, or runs scheduled ticks. Normal Worker-hosted clients that only need operator HTTP calls should keep using `./web`. SDK-owned Cloudflare provisioning is exposed through daemon `/api/cloudflare/*` routes rather than this Worker entry point, including token bootstrap, discovery, Workers, Queues, Tunnel, Access, DNS, KV, Durable Objects, Secrets Store, and R2.
+
+### `./react-native`: `@goodvibes-jev/engine/sdk/react-native`
+
+**Status:** stable
+
+React Native SDK entry. Excludes Node.js-only transports.
+
+### `./expo`: `@goodvibes-jev/engine/sdk/expo`
+
+**Status:** stable
+
+Expo-specific SDK entry built on top of `react-native`.
+
+### `./sql-js`: `@goodvibes-jev/engine/sdk/sql-js`
+
+**Status:** stable
+
+Types-only ambient declaration for the optional `sql.js` dependency, which ships no types of its own. This subpath has no `import` condition, only `types`; it exists so a consumer can write `import 'sql.js'` and pick up the shape with one line, rather than an importable module.
+
+---
+
+## Platform surface (`./platform/...`)
+
+### Explicit platform entrypoints: `@goodvibes-jev/engine/sdk/platform...`
+
+**Status:** beta
+
+Granular platform modules exposed through explicit public subpaths. Each path is listed intentionally rather than exposed by a wildcard.
+
+The `platform/...` surface is the canonical way for downstream consumers (e.g., the goodvibes-tui) to access platform subsystems. The package does not export a wildcard `./platform/*` pattern; every public platform path is listed intentionally in `package.json`. Paths not listed below should be considered unsupported.
+
+**Stability contract:** exported names and their TypeScript signatures are the current package contract. Pre-1.0 releases may make breaking changes; current behavior is recorded in `CHANGELOG.md`.
+
+There is no root `@goodvibes-jev/engine/sdk/platform` entry. Runtime-boundary helpers live at
+`@goodvibes-jev/engine/sdk/platform/node/runtime-boundary`; runtime capability metadata lives at
+`@goodvibes-jev/engine/sdk/platform/node`; the base knowledge system lives at
+`@goodvibes-jev/engine/sdk/platform/knowledge`; Home Assistant Home Graph extends
+that base through `@goodvibes-jev/engine/sdk/platform/knowledge/home-graph`.
+
+#### Platform subpaths: exact export map entries
+
+The following subpaths are the complete list of exported platform paths.
+Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPORTED` error.
+
+> **Note:** `etc/goodvibes-sdk.api.md` is an API Extractor report for the root `.` entry point only; it does not enumerate these subpath surfaces. This document is the authoritative subpath list.
+
+| Subpath | Description | Status |
+|---|---|---|
+| `platform/acp` | Agent Control Protocol connection and manager APIs | beta |
+| `platform/adapters` | Adapter type contracts | beta |
+| `platform/agents` | Agent orchestration, WRFC, session, and messaging APIs | beta |
+| `platform/artifacts` | Artifact store and artifact record types | beta |
+| `platform/automation` | Automation managers, jobs, schedules, routes, and delivery | beta |
+| `platform/batch` | Batch execution manager and types | beta |
+| `platform/bookmarks` | Bookmark manager | beta |
+| `platform/browser` | Browser automation as a platform capability: provisioning, sessions, snapshots, and page operations over an injected Playwright driver, with no product surface baked in | beta |
+| `platform/calendar` | External-calendar read connectivity behind `/calendar import` and `/calendar subscribe`: a vendored RFC 5545 (iCalendar) reader and a `SubscriptionStore` for named feeds with per-feed status and conditional refresh | beta |
+| `platform/channels` | Channel runtime, routing, policy, and plugin registry | beta |
+| `platform/cloudflare` | Cloudflare worker discovery, config, resources, and status helpers | beta |
+| `platform/cluster` | LAN leader election so exactly one node consumes each inbound surface (ntfy, Telegram, etc.), with elections held per surface over a LAN-only protocol | beta |
+| `platform/companion` | Companion chat sessions, routes, and persistence | beta |
+| `platform/config` | Config manager, secrets, schema, subscriptions | beta |
+| `platform/payments` | Payment decision order, budget pools, both approval/veto window state machines, taint gate, prompt rendering | beta |
+| `platform/control-plane` | Control-plane gateway, method catalog, contracts, and session broker | beta |
+| `platform/core` | Orchestrator, transcript events, execution plan | beta |
+| `platform/daemon` | HTTP server, routes, port-in-use checks | beta |
+| `platform/daemon/auto-updater` | The daemon's self-update loop: checks shortly after boot and hourly after that, and only swaps the binary at a verified no-active-work moment | beta |
+| `platform/daemon/receipts` | One-line human-readable records of daemon-side events that happened while no surface was watching, delivered once to the next surface that explicitly consumes them | beta |
+| `platform/devices` | Paired-device capabilities (camera, screen, location, clipboard, device commands) exposed as agent tools over the existing peer transport | beta |
+| `platform/discovery` | Local provider and MCP discovery | beta |
+| `platform/email` | IMAP and SMTP as a platform capability: reading a mailbox and sending plain-text mail directly over the protocols, with no provider API in between | beta |
+| `platform/email/node` | Node/Bun runtime implementation backing `platform/email` | beta |
+| `platform/export` | Markdown and session export helpers | beta |
+| `platform/git` | Git service integration | beta |
+| `platform/google` | Gmail and Google Calendar as a platform capability: connecting an account, keeping the credential alive, and reading/writing mail and events, with an app-password fast path and a Google Cloud OAuth path | beta |
+| `platform/google/node` | Node/Bun runtime implementation backing `platform/google` | beta |
+| `platform/hooks` | Hook dispatcher, matcher, runner, contracts, and workbench | beta |
+| `platform/hosted-sessions` | A conversation loop composed inside the daemon process, behind `sessions.hosted.*`, so a session outlives the client that opened it | beta |
+| `platform/integrations` | Delivery, Slack, Discord, Ntfy notifiers | beta |
+| `platform/intelligence` | LSP, tree-sitter, import graph | beta |
+| `platform/knowledge` | Knowledge store and API | beta |
+| `platform/knowledge/extensions` | Knowledge system extension contracts | beta |
+| `platform/knowledge/home-graph` | Home Assistant Home Graph extension | beta |
+| `platform/media` | Media indexing, search, and image-understanding APIs | beta |
+| `platform/mcp` | MCP config, registry, client, and sandbox bridge | beta |
+| `platform/mcp/server` | Local-first MCP server generated from the operator contract manifest, exposing the daemon's operator surface as MCP tools for external agent tooling | beta |
+| `platform/multimodal` | Multimodal input | beta |
+| `platform/node` | Runtime capability metadata plus Node-like runtime-boundary helpers; not a platform aggregate | beta |
+| `platform/node/runtime-boundary` | Client-safe runtime boundary detection (no Bun globals) | beta |
+| `platform/occasions` | Durable facts about dated things in the owner's life (birthdays, anniversaries) that the daemon raises on its own; exports the shapes and pure render helpers a surface needs, not the service or its store | beta |
+| `platform/orchestration` | The multi-agent orchestration engine: phases, gates, work items, commit exclusions, and budget ceilings | beta |
+| `platform/owner-profile` | The platform's read model of the person who owns it, backed by one Markdown file at daemon scope | beta |
+| `platform/pairing` | Companion token, QR, pairing index | beta |
+| `platform/permissions` | Permission analysis, prompts, briefs, and manager | beta |
+| `platform/personal-capture` | Capture authority (whether a turn may write to the owner profile) and the narrow store/service surface a conversational capture tool calls | beta |
+| `platform/plugins` | Plugin API, loader, and manager | beta |
+| `platform/power` | Sleep ownership: automatic work inhibition, sleep-edge handling, and the owner's keep-awake toggle | beta |
+| `platform/presentation` | The shared presentation contract used by both the TUI and the agent renderer: glyphs, tone tokens, thinking phrases, and waiting-state wording | beta |
+| `platform/profiles` | Profile manager and profile shape helpers | beta |
+| `platform/providers` | LLM provider registry, catalog, capabilities; includes `inferFallbackContextWindow` and `FALLBACK_CONTEXT_WINDOW` (added in 0.35.0), plus the shared bare-model-id resolver (`resolveModelReference`, `findClosestModelIds`, `ModelIdCandidate`, `ModelIdResolutionOptions`) so consumers stop vendoring it | beta |
+| `platform/relay` | Daemon-side relay surface: the reachability controller and the WebAuthn step-up policy hook. Node-only; the daemon never mints its own certificates | beta |
+| `platform/rewind` | Unified message-anchored rewind service (`UnifiedRewindService`) over the existing workspace-checkpoint / conversation / file-undo stores, plus its ports and plan/receipt IO types, so a consumer can construct it and thread the workspace + conversation ports | beta |
+| `platform/runtime` | Curated runtime surface exposing bootstrap, observability, operations, security, shell, state, transport, and UI as namespaces | beta |
+| `platform/runtime/bootstrap` | Background provider and MCP discovery task scheduling used during runtime startup | beta |
+| `platform/runtime/client` | The client-side seams: what a surface does at each point its own process stops and the daemon's begins | beta |
+| `platform/runtime/client-services` | The composition shape for a surface that runs its own interactive loop and reaches a daemon for everything else, distinct from the daemon-grade `RuntimeServices` graph | beta |
+| `platform/runtime/config` | Bridges in-process config changes to the runtime event bus's `config` domain so a daemon-backed client gets live change notices instead of polling | beta |
+| `platform/runtime/disposal` | The shutdown seam for a composed runtime graph: tears down every poller `createRuntimeServices` starts (config watch, fleet tick, memory governor, schedulers) | beta |
+| `platform/runtime/ecosystem` | Curated catalog and capability-bundle distribution layer: catalog/receipt/rollback machinery, SHA-256-pinned bundle distribution, and the governed marketplace index | beta |
+| `platform/runtime/emitters` | Typed emission wrappers and the `EmitterContext` used to construct them from session/turn/agent context | beta |
+| `platform/runtime/feature-announcements` | One-time feature announcement store (`FeatureAnnouncementStore`), startup announcement collection (`collectStartupAnnouncements`), sandbox-containment announcer (`createSandboxContainmentAnnouncer`), and the shared announcement ids and text. The store path and ids are shared across surfaces so announcements deduplicate everywhere | beta |
+| `platform/runtime/feature-flags` | Capability gates and per-feature settings metadata (`FEATURE_SETTINGS`), including the emergency kill switch | beta |
+| `platform/runtime/fleet` | Live process registry | beta |
+| `platform/runtime/fleet/observed` | Observed-source variant of the fleet registry | beta |
+| `platform/runtime/memory` | Memory governance layer: a registry of retained caches, a seam to pause deferrable background jobs, and a governor that samples RSS/heap and sheds memory by tier before the OS OOM-kills the process | beta |
+| `platform/runtime/memory-spine` | Host-vs-client switch for the daemon-owned single-writer memory service: a daemon host uses the local store directly, an adopted-daemon surface routes through the wire | beta |
+| `platform/runtime/observability` | Curated observability re-exports from the runtime surface | beta |
+| `platform/runtime/operations` | Remote session bundles, tasks, tools, and the ops control plane (`OpsControlPlane`) barrel | beta |
+| `platform/runtime/path-shadow` | Detects whether the binary copy the updater maintains is actually the copy the user's shell resolves on PATH | beta |
+| `platform/runtime/permissions/exec-prompt-wiring` | Exec-approval prompt wiring shared by surfaces that ask before running a command | beta |
+| `platform/runtime/permissions/localhost-fetch-approval` | `buildLocalhostFetchApproval`: the config-aware, one-time-approval gate for fetch requests targeting localhost, shared by every surface's fetch tool wiring (`LocalhostFetchApprovalDeps`, `LocalhostFetchApproval`) | beta |
+| `platform/runtime/permissions/sandbox-policy` | The sandbox-aware exec permission input: `decideSandboxedExec` (turns a base "ask" into an "allow" for a command that runs entirely inside the boundary with no host-access need, or into a named-escalation ask) plus its `SandboxPolicyDecision`/`Effect`/`Input` types, so a consumer can wire its approval flow to the sandbox policy | beta |
+| `platform/runtime/sandbox` | Sandbox host status, presets, reviews, and session registry helpers | beta |
+| `platform/runtime/security` | Auth inspection snapshots (`inspectProviderAuth`) and the divergence-gate dashboard | beta |
+| `platform/runtime/self-update` | The platform's one binary-update mechanism: download, checksum-verify, atomic swap with a kept previous version, and one-command rollback | beta |
+| `platform/runtime/session-spine` | The session-spine surface client shared by the TUI and agent, plus the cross-surface session read facade (union cache) | beta |
+| `platform/runtime/settings` | Managed settings and control-plane settings bundle helpers | beta |
+| `platform/runtime/shell` | Shell-command composition (extensions, ops, platform, services, workspace, paths) and the provider-account registry | beta |
+| `platform/runtime/state` | Runtime state primitives | beta |
+| `platform/runtime/store` | Runtime store and selectors | beta |
+| `platform/runtime/transport` | Direct, HTTP, and client transport factories used to compose a runtime's connection to a daemon | beta |
+| `platform/runtime/ui` | Curated UI surface (model-picker, provider-health); not a barrel of `runtime/ui/` subdirectory | beta |
+| `platform/runtime/voice-setup` | The daemon's managed local-voice setup service; `install()` is single-flight so concurrent callers join the in-progress install instead of starting parallel downloads | beta |
+| `platform/scheduler` | Scheduler service | beta |
+| `platform/security` | User auth, token audit, and security helpers | beta |
+| `platform/sessions` | Session manager, change tracking, and orchestration | beta |
+| `platform/skills` | The canonical skill service: Markdown+frontmatter skill documents, a progressive-disclosure read path, and CRUD, shared by every consumer instead of each carrying its own copy | beta |
+| `platform/state` | Project index, mode, file cache, undo, and KV state | beta |
+| `platform/state/store-snapshots` | Point-in-time copies of the SQLite files the platform writes: on-demand and daily-scheduled snapshots with bounded retention, and a one-command restore | beta |
+| `platform/templates` | Template manager | beta |
+| `platform/tools` | Tool registry, exec, fetch, read, write, edit, agent | beta |
+| `platform/tools/exec/sandbox` | The per-command exec sandbox runner: `detectSandboxAvailability` (host-probe → honest availability), `probeSandboxHost` (the real host probe), `buildBwrapArgv`, `resolveExecSandboxPlan`/`resolveRuntimeSandboxPlan`, `attachSandboxMeta`, and their types, so a consumer can detect the boundary and probe the host when wiring approval flows to the sandbox | beta |
+| `platform/triggers` | Stream watchers, model-free condition checks, and one-shot on-exit process-lifecycle triggers over one supervision spine; gated off by default | beta |
+| `platform/types` | Shared platform type contracts | beta |
+| `platform/utils` | Shared platform utilities | beta |
+| `platform/version` | The package's baked semver string, read from `package.json` at build time | beta |
+| `platform/voice` | Voice provider registry, provider-agnostic TTS/STT/realtime voice types, and streaming TTS primitives | beta |
+| `platform/voice/capture` | Runtime-neutral microphone capture shared by push-to-talk input and wake-word detection | beta |
+| `platform/voice/wake/runtime` | The wake-word detector's runtime-neutral half (engine, detection rules, restart policy, listener) with no filesystem access, so a browser tab can import it without pulling in provisioning | beta |
+| `platform/watchers` | Watcher registry | beta |
+| `platform/web-search` | Web search provider registry, service, and providers | beta |
+| `platform/workflow` | Workflow trigger executor | beta |
+| `platform/workspace` | Daemon home and workspace swap manager | beta |
+
+Subsystems without public subpaths are package implementation. They are consumed by exported domain seams rather than through a catch-all platform import.
+
+---
+
+## Sealed paths
+
+The following paths are intentionally NOT exported and will cause a module resolution error if imported:
+
+- Any `@goodvibes-jev/engine/sdk/platform/...` path not listed in the export map above.
+- Any `dist/...` file path reached by bypassing the package export map.
+
+Consumers must use the corresponding documented subpath when one is exported.

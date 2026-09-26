@@ -3,3 +3,36 @@ dist/
 coverage/
 *.tsbuildinfo
 .goodvibes/
+
+# Carried from goodvibes-sdk (paths re-rooted at packages/engine where they point into it).
+*.log
+.DS_Store
+sbom.cdx.json*
+# Script scratch: the release stage at the repo root, everything else in the engine.
+/.tmp/
+packages/engine/.tmp/
+
+# Verdaccio dry-run and test scratch dir
+packages/engine/.test-tmp/
+
+# api-extractor transient output (temp/ is gitignored; only etc/ baseline is committed)
+temp/
+**/temp/
+
+# wrangler dev --local cache, created inside test/workers-wrangler/ on first run
+packages/engine/test/workers-wrangler/.wrangler/
+
+# Defensive guard against accidental SQLite `:memory:` sentinel file leaks
+:memory:
+
+# Python bytecode cache from the bundled contracts artifact client; the
+# interpreter drops __pycache__/ next to the .py source.
+__pycache__/
+*.py[cod]
+
+# Review artifacts (transient)
+*-review.md
+*-review-*.md
+*-verification.md
+.claude/scheduled_tasks.lock
+.claude/worktrees/

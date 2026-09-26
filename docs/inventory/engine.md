@@ -2996,3 +2996,378 @@ Files: 2371. PORT 1868, JEV 501, DROP 2. Decision points: 175.
 | `sdk/src/platform/web-search/providers/tavily.ts` | PORT | Exports createTavilySearchProvider. |
 | `sdk/src/platform/web-search/service.ts` | PORT | Exports WebSearchServiceStatus, WebSearchService. |
 | `sdk/src/platform/web-search/types.ts` | PORT | Exports WebSearchVerbosity, WebSearchSafeSearch, WebSearchTimeRange, WebSearchResultType, WebSearchProviderCapability, WebSearchEvidence, and more. |
+
+## Files outside package source
+
+Every tracked goodvibes-sdk file outside `packages/*/src` and `test/` (`git ls-files | grep -v '^packages/[^/]*/src/' | grep -v '^test/'`), tests tooling included, with its disposition and destination. The list was generated from `git ls-files` and checked against it, and every destination exists. Nothing here is WRFC- or QEMU-specific code, so nothing is dropped; the one WRFC document is JEV. Test runner scripts and the tests tsconfig are ported by the test part of E.14.
+
+Files: 366. PORT 365, JEV 1.
+
+| File | Disposition | Destination | Note |
+|---|---|---|---|
+| `.gitattributes` | PORT | `.gitattributes` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.githooks/pre-commit` | PORT | `.githooks/pre-commit` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/CODEOWNERS` | PORT | `.github/CODEOWNERS` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/ISSUE_TEMPLATE/bug_report.md` | PORT | `.github/ISSUE_TEMPLATE/bug_report.md` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/ISSUE_TEMPLATE/feature_request.md` | PORT | `.github/ISSUE_TEMPLATE/feature_request.md` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/PULL_REQUEST_TEMPLATE.md` | PORT | `.github/PULL_REQUEST_TEMPLATE.md` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/actions/setup/action.yml` | PORT | `.github/actions/setup/action.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/ci.yml` | PORT | `.github/workflows/ci.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/public-suffix-drift.yml` | PORT | `.github/workflows/public-suffix-drift.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/release.yml` | PORT | `.github/workflows/release.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/reusable-binary-matrix.yml` | PORT | `.github/workflows/reusable-binary-matrix.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/reusable-gh-release.yml` | PORT | `.github/workflows/reusable-gh-release.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/reusable-npm-publish.yml` | PORT | `.github/workflows/reusable-npm-publish.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/reusable-release-verify.yml` | PORT | `.github/workflows/reusable-release-verify.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.github/workflows/voice-runtimes.yml` | PORT | `.github/workflows/voice-runtimes.yml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.gitignore` | PORT | `.gitignore` | Merged into the repo root .gitignore, engine paths re-rooted. |
+| `.gitleaks.toml` | PORT | `.gitleaks.toml` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.gitleaksignore` | PORT | `.gitleaksignore` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `.goodvibes/memory/decisions.json` | PORT | `packages/engine/.goodvibes/memory/decisions.json` | The SDK project memory (decisions and failures) kept with the engine it describes. |
+| `.goodvibes/memory/failures.json` | PORT | `packages/engine/.goodvibes/memory/failures.json` | The SDK project memory (decisions and failures) kept with the engine it describes. |
+| `CHANGELOG.md` | PORT | `packages/engine/CHANGELOG.md` | Release history of the engine version line. |
+| `COVERAGE.md` | PORT | `packages/engine/COVERAGE.md` | Engine-level file beside the engine package. |
+| `LICENSE` | PORT | `packages/engine/LICENSE` | Engine-level file beside the engine package. |
+| `README.md` | PORT | `packages/engine/README.md` | Engine-level file beside the engine package. |
+| `SECURITY.md` | PORT | `SECURITY.md` | Repo-wide config at the repo root; paths point at packages/engine. |
+| `api-extractor.embed.json` | PORT | `packages/engine/api-extractor.embed.json` | Project folder is the engine; engine subpaths resolved at their dist declarations. |
+| `api-extractor.json` | PORT | `packages/engine/api-extractor.json` | Project folder is the engine; engine subpaths resolved at their dist declarations. |
+| `api-extractor.terminal-shell.json` | PORT | `packages/engine/api-extractor.terminal-shell.json` | Project folder is the engine; engine subpaths resolved at their dist declarations. |
+| `bun.lock` | PORT | `bun.lock` | Merged: the repo root lockfile resolves the same dependencies and overrides. |
+| `bundle-budgets.README.md` | PORT | `packages/engine/bundle-budgets.README.md` | Engine-level file beside the engine package. |
+| `bundle-budgets.json` | PORT | `packages/engine/bundle-budgets.json` | Keys are the engine ./sdk/* exports; ./platform/types re-anchored for commit 2f03c8c, ./platform/version for commit 1d25e5d. |
+| `docs/README.md` | PORT | `packages/engine/docs/README.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/acp-agent.md` | PORT | `packages/engine/docs/acp-agent.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/android-integration.md` | PORT | `packages/engine/docs/android-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/architecture-platform.md` | PORT | `packages/engine/docs/architecture-platform.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/architecture.md` | PORT | `packages/engine/docs/architecture.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/auth.md` | PORT | `packages/engine/docs/auth.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/authentication.md` | PORT | `packages/engine/docs/authentication.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/automation.md` | PORT | `packages/engine/docs/automation.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/browser-integration.md` | PORT | `packages/engine/docs/browser-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/calendar-oauth-setup.md` | PORT | `packages/engine/docs/calendar-oauth-setup.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/channel-surfaces.md` | PORT | `packages/engine/docs/channel-surfaces.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/companion-app-patterns.md` | PORT | `packages/engine/docs/companion-app-patterns.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/companion-message-routing.md` | PORT | `packages/engine/docs/companion-message-routing.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/companion-wire-protocol.md` | PORT | `packages/engine/docs/companion-wire-protocol.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/contract-regeneration-recipe.md` | PORT | `packages/engine/docs/contract-regeneration-recipe.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/daemon-batch-processing.md` | PORT | `packages/engine/docs/daemon-batch-processing.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/daemon-embedding.md` | PORT | `packages/engine/docs/daemon-embedding.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/decisions/2026-07-05-daemon-by-default.md` | PORT | `packages/engine/docs/decisions/2026-07-05-daemon-by-default.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-05-one-broker-identity-spine.md` | PORT | `packages/engine/docs/decisions/2026-07-05-one-broker-identity-spine.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-05-presentation-contract-sdk-extraction.md` | PORT | `packages/engine/docs/decisions/2026-07-05-presentation-contract-sdk-extraction.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-05-session-spine-sdk-extraction.md` | PORT | `packages/engine/docs/decisions/2026-07-05-session-spine-sdk-extraction.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-05-session-wire-mixed-version.md` | PORT | `packages/engine/docs/decisions/2026-07-05-session-wire-mixed-version.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-calendar-connectivity-sdk-extraction.md` | PORT | `packages/engine/docs/decisions/2026-07-06-calendar-connectivity-sdk-extraction.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-calendar-oauth-connector-sdk.md` | PORT | `packages/engine/docs/decisions/2026-07-06-calendar-oauth-connector-sdk.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-config-sharing-shared-tier-and-secret-read.md` | PORT | `packages/engine/docs/decisions/2026-07-06-config-sharing-shared-tier-and-secret-read.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-core-verb-spec.md` | PORT | `packages/engine/docs/decisions/2026-07-06-core-verb-spec.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-delete-means-delete.md` | PORT | `packages/engine/docs/decisions/2026-07-06-delete-means-delete.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-foundation-io-types-hand-authored.md` | PORT | `packages/engine/docs/decisions/2026-07-06-foundation-io-types-hand-authored.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-memory-unification-canonical-store.md` | PORT | `packages/engine/docs/decisions/2026-07-06-memory-unification-canonical-store.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-memory-wire-full-detach.md` | PORT | `packages/engine/docs/decisions/2026-07-06-memory-wire-full-detach.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-shared-voice-config-tier.md` | PORT | `packages/engine/docs/decisions/2026-07-06-shared-voice-config-tier.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-06-spoken-turn-tts-policy-sdk-hoist.md` | PORT | `packages/engine/docs/decisions/2026-07-06-spoken-turn-tts-policy-sdk-hoist.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-07-home-graph-issue-triage.md` | PORT | `packages/engine/docs/decisions/2026-07-07-home-graph-issue-triage.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-07-knowledge-wiki-honesty.md` | PORT | `packages/engine/docs/decisions/2026-07-07-knowledge-wiki-honesty.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-07-web-push-subscriptions.md` | PORT | `packages/engine/docs/decisions/2026-07-07-web-push-subscriptions.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-07-webui-cross-origin-deployment.md` | PORT | `packages/engine/docs/decisions/2026-07-07-webui-cross-origin-deployment.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-14-power-and-observed-steer-live-acceptance.md` | PORT | `packages/engine/docs/decisions/2026-07-14-power-and-observed-steer-live-acceptance.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-a-discovered-merchant-is-graded-not-refused.md` | PORT | `packages/engine/docs/decisions/2026-07-27-a-discovered-merchant-is-graded-not-refused.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-approving-a-purchase-is-not-entering-a-card.md` | PORT | `packages/engine/docs/decisions/2026-07-27-approving-a-purchase-is-not-entering-a-card.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-arrival-is-not-ingest.md` | PORT | `packages/engine/docs/decisions/2026-07-27-arrival-is-not-ingest.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-calendar-start-sort-is-not-the-defect.md` | PORT | `packages/engine/docs/decisions/2026-07-27-calendar-start-sort-is-not-the-defect.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-card-entry-surfaces.md` | PORT | `packages/engine/docs/decisions/2026-07-27-card-entry-surfaces.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-daemon-refuses-derived-sends.md` | PORT | `packages/engine/docs/decisions/2026-07-27-daemon-refuses-derived-sends.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-imap-body-capability-is-probed-not-declared.md` | PORT | `packages/engine/docs/decisions/2026-07-27-imap-body-capability-is-probed-not-declared.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-inbound-message-is-a-discriminated-union.md` | PORT | `packages/engine/docs/decisions/2026-07-27-inbound-message-is-a-discriminated-union.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-only-verbatim-owner-text-carries-owner-authority.md` | PORT | `packages/engine/docs/decisions/2026-07-27-only-verbatim-owner-text-carries-owner-authority.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-payment-windows-are-deliberately-opposite.md` | PORT | `packages/engine/docs/decisions/2026-07-27-payment-windows-are-deliberately-opposite.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-27-the-cvv-is-stored.md` | PORT | `packages/engine/docs/decisions/2026-07-27-the-cvv-is-stored.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-28-foundation-io-entries-generated-for-every-verb.md` | PORT | `packages/engine/docs/decisions/2026-07-28-foundation-io-entries-generated-for-every-verb.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-28-operator-method-io-is-an-indexed-access.md` | PORT | `packages/engine/docs/decisions/2026-07-28-operator-method-io-is-an-indexed-access.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-28-payments-release-gates.md` | PORT | `packages/engine/docs/decisions/2026-07-28-payments-release-gates.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/decisions/2026-07-28-webui-repin-required-fields.md` | PORT | `packages/engine/docs/decisions/2026-07-28-webui-repin-required-fields.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/defaults.md` | PORT | `packages/engine/docs/defaults.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/embedding-api.md` | PORT | `packages/engine/docs/embedding-api.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/error-handling.md` | PORT | `packages/engine/docs/error-handling.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/error-kinds.md` | PORT | `packages/engine/docs/error-kinds.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/errors.md` | PORT | `packages/engine/docs/errors.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/expo-integration.md` | PORT | `packages/engine/docs/expo-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/exports.md` | PORT | `packages/engine/docs/exports.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/feature-settings.md` | PORT | `packages/engine/docs/feature-settings.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/getting-started.md` | PORT | `packages/engine/docs/getting-started.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/google-setup-runbook.md` | PORT | `packages/engine/docs/google-setup-runbook.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/home-graph.md` | PORT | `packages/engine/docs/home-graph.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/homeassistant-integration.md` | PORT | `packages/engine/docs/homeassistant-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/inbound-email.md` | PORT | `packages/engine/docs/inbound-email.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/ios-integration.md` | PORT | `packages/engine/docs/ios-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/knowledge-browser-history.md` | PORT | `packages/engine/docs/knowledge-browser-history.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/knowledge-pages.md` | PORT | `packages/engine/docs/knowledge-pages.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/knowledge-refinement.md` | PORT | `packages/engine/docs/knowledge-refinement.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/knowledge.md` | PORT | `packages/engine/docs/knowledge.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/media-and-search.md` | PORT | `packages/engine/docs/media-and-search.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/observability.md` | PORT | `packages/engine/docs/observability.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/occasions.md` | PORT | `packages/engine/docs/occasions.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/openapi-contract.md` | PORT | `packages/engine/docs/openapi-contract.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/operator-openapi.json` | PORT | `packages/engine/docs/operator-openapi.json` | Generated; unchanged. |
+| `docs/owner-profile.md` | PORT | `packages/engine/docs/owner-profile.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/packages.md` | PORT | `packages/engine/docs/packages.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/pairing.md` | PORT | `packages/engine/docs/pairing.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/payments.md` | PORT | `packages/engine/docs/payments.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/performance.md` | PORT | `packages/engine/docs/performance.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/plugin-bundles.md` | PORT | `packages/engine/docs/plugin-bundles.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/project-planning.md` | PORT | `packages/engine/docs/project-planning.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/provider-model-api.md` | PORT | `packages/engine/docs/provider-model-api.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/providers.md` | PORT | `packages/engine/docs/providers.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/public-surface.md` | PORT | `packages/engine/docs/public-surface.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/react-native-integration.md` | PORT | `packages/engine/docs/react-native-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/realtime-and-telemetry.md` | PORT | `packages/engine/docs/realtime-and-telemetry.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/reference-operator.md` | PORT | `packages/engine/docs/reference-operator.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/reference-peer.md` | PORT | `packages/engine/docs/reference-peer.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/reference-runtime-events.md` | PORT | `packages/engine/docs/reference-runtime-events.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/relay-zero-knowledge.md` | PORT | `packages/engine/docs/relay-zero-knowledge.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/release-and-publishing.md` | PORT | `packages/engine/docs/release-and-publishing.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/retries-and-reconnect.md` | PORT | `packages/engine/docs/retries-and-reconnect.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/reviews/2026-07-27-inbound-email-medium-findings.md` | PORT | `packages/engine/docs/reviews/2026-07-27-inbound-email-medium-findings.md` | Historical record; text unchanged apart from package names and em dashes. |
+| `docs/runtime-orchestration.md` | PORT | `packages/engine/docs/runtime-orchestration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/runtime-surfaces.md` | PORT | `packages/engine/docs/runtime-surfaces.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/secrets.md` | PORT | `packages/engine/docs/secrets.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/security.md` | PORT | `packages/engine/docs/security.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/semver-policy.md` | PORT | `packages/engine/docs/semver-policy.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/surfaces.md` | PORT | `packages/engine/docs/surfaces.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/telegram-integration.md` | PORT | `packages/engine/docs/telegram-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/testing-and-validation.md` | PORT | `packages/engine/docs/testing-and-validation.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/testing.md` | PORT | `packages/engine/docs/testing.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/tool-safety.md` | PORT | `packages/engine/docs/tool-safety.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/tools.md` | PORT | `packages/engine/docs/tools.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/transports.md` | PORT | `packages/engine/docs/transports.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/troubleshooting.md` | PORT | `packages/engine/docs/troubleshooting.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/voice-local.md` | PORT | `packages/engine/docs/voice-local.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/voice.md` | PORT | `packages/engine/docs/voice.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/wake-word-model.md` | PORT | `packages/engine/docs/wake-word-model.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/web-ui-integration.md` | PORT | `packages/engine/docs/web-ui-integration.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `docs/wrfc-constraint-propagation.md` | JEV | `packages/engine/docs/wrfc-constraint-propagation.md` | WRFC constraint propagation is carried by Jev in the contract runner (docs/inventory/wrfc-to-jev.md); ported here verbatim and rewritten as contract-runner documentation in task R. |
+| `etc/goodvibes-sdk-embed.api.md` | PORT | `packages/engine/etc/goodvibes-sdk-embed.api.md` | Regenerated from the engine build: report named @goodvibes-jev/engine; source paths re-rooted; RelayPairingPayload now inlined. |
+| `etc/goodvibes-sdk.api.md` | PORT | `packages/engine/etc/goodvibes-sdk.api.md` | Regenerated from the engine build: report named @goodvibes-jev/engine; adds the commit 2f03c8c error-reading surface; RelayPairingPayload now inlined. |
+| `etc/goodvibes-terminal-shell.api.md` | PORT | `packages/engine/etc/goodvibes-terminal-shell.api.md` | Regenerated from the engine build: report named @goodvibes-jev/engine; sdk and contracts types are inlined, not imported, because engine subpaths resolve as project files. |
+| `etc/subpath-api-surface-terminal-shell.json` | PORT | `packages/engine/etc/subpath-api-surface-terminal-shell.json` | Unchanged apart from package names. |
+| `etc/subpath-api-surface.json` | PORT | `packages/engine/etc/subpath-api-surface.json` | Re-recorded: adds the commit 2f03c8c error-reading surface (and the @goodvibes-jev/judgment/decisions import path). |
+| `eval/baseline.json` | PORT | `packages/engine/eval/baseline.json` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/README.md` | PORT | `packages/engine/examples/README.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/android-kotlin-quickstart.kt` | PORT | `packages/engine/examples/android-kotlin-quickstart.kt` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/auth-login-and-token-store.ts` | PORT | `packages/engine/examples/auth-login-and-token-store.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/browser-web-ui-quickstart.ts` | PORT | `packages/engine/examples/browser-web-ui-quickstart.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/companion-approvals-feed.ts` | PORT | `packages/engine/examples/companion-approvals-feed.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/daemon-fetch-handler-quickstart.ts` | PORT | `packages/engine/examples/daemon-fetch-handler-quickstart.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/direct-transport-quickstart.ts` | PORT | `packages/engine/examples/direct-transport-quickstart.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/embed-session-quickstart.ts` | PORT | `packages/engine/examples/embed-session-quickstart.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/expo-quickstart.tsx` | PORT | `packages/engine/examples/expo-quickstart.tsx` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/ios-swift-quickstart.swift` | PORT | `packages/engine/examples/ios-swift-quickstart.swift` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/operator-http-quickstart.mjs` | PORT | `packages/engine/examples/operator-http-quickstart.mjs` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/package.json` | PORT | `packages/engine/examples/package.json` | Depends on @goodvibes-jev/engine. |
+| `examples/peer-http-quickstart.mjs` | PORT | `packages/engine/examples/peer-http-quickstart.mjs` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/react-expo-shims.d.ts` | PORT | `packages/engine/examples/react-expo-shims.d.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/react-native-quickstart.ts` | PORT | `packages/engine/examples/react-native-quickstart.ts` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/realtime-events-quickstart.mjs` | PORT | `packages/engine/examples/realtime-events-quickstart.mjs` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/retry-and-reconnect.mjs` | PORT | `packages/engine/examples/retry-and-reconnect.mjs` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/submit-turn-quickstart.mjs` | PORT | `packages/engine/examples/submit-turn-quickstart.mjs` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `examples/tsconfig.json` | PORT | `packages/engine/examples/tsconfig.json` | Maps each engine subpath (and judgment) to its dist declarations. |
+| `native/speexdsp-wasm/NOTICE.txt` | PORT | `packages/engine/native/speexdsp-wasm/NOTICE.txt` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `native/speexdsp-wasm/README.md` | PORT | `packages/engine/native/speexdsp-wasm/README.md` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `native/speexdsp-wasm/SpeexDSP-1.2.1-COPYING.txt` | PORT | `packages/engine/native/speexdsp-wasm/SpeexDSP-1.2.1-COPYING.txt` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `native/speexdsp-wasm/gv-speex-preprocess.c` | PORT | `packages/engine/native/speexdsp-wasm/gv-speex-preprocess.c` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `native/speexdsp-wasm/os_support_custom.h` | PORT | `packages/engine/native/speexdsp-wasm/os_support_custom.h` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `native/speexdsp-wasm/speexdsp_config_types.h` | PORT | `packages/engine/native/speexdsp-wasm/speexdsp_config_types.h` | Old package names read as @goodvibes-jev/engine/<pkg>; repo paths re-rooted at packages/engine. |
+| `package.json` | PORT | `package.json` | Merged into the repo root package.json: version, engines, dependencies, overrides and every tooling command under its old name. |
+| `packages/contracts/README.md` | PORT | `packages/engine/contracts/README.md` | Already ported with the engine source. |
+| `packages/contracts/artifacts/operator-contract.json` | PORT | `packages/engine/contracts/artifacts/operator-contract.json` | Already ported with the engine source. |
+| `packages/contracts/artifacts/operator-openapi.json` | PORT | `packages/engine/contracts/artifacts/operator-openapi.json` | Already ported with the engine source. |
+| `packages/contracts/artifacts/peer-contract.json` | PORT | `packages/engine/contracts/artifacts/peer-contract.json` | Already ported with the engine source. |
+| `packages/contracts/artifacts/python/homeassistant_operator_client.py` | PORT | `packages/engine/contracts/artifacts/python/homeassistant_operator_client.py` | Already ported with the engine source. |
+| `packages/contracts/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./contracts). |
+| `packages/contracts/tsconfig.json` | PORT | `packages/engine/contracts/tsconfig.json` | Already ported with the engine source. |
+| `packages/daemon-sdk/README.md` | PORT | `packages/engine/daemon-sdk/README.md` | Already ported with the engine source. |
+| `packages/daemon-sdk/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./daemon-sdk). |
+| `packages/daemon-sdk/tsconfig.json` | PORT | `packages/engine/daemon-sdk/tsconfig.json` | Already ported with the engine source. |
+| `packages/errors/README.md` | PORT | `packages/engine/errors/README.md` | Already ported with the engine source. |
+| `packages/errors/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./errors). |
+| `packages/errors/tsconfig.json` | PORT | `packages/engine/errors/tsconfig.json` | Already ported with the engine source. |
+| `packages/operator-sdk/README.md` | PORT | `packages/engine/operator-sdk/README.md` | Already ported with the engine source. |
+| `packages/operator-sdk/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./operator-sdk). |
+| `packages/operator-sdk/tsconfig.json` | PORT | `packages/engine/operator-sdk/tsconfig.json` | Already ported with the engine source. |
+| `packages/peer-sdk/README.md` | PORT | `packages/engine/peer-sdk/README.md` | Already ported with the engine source. |
+| `packages/peer-sdk/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./peer-sdk). |
+| `packages/peer-sdk/tsconfig.json` | PORT | `packages/engine/peer-sdk/tsconfig.json` | Already ported with the engine source. |
+| `packages/sdk/LICENSE` | PORT | `packages/engine/sdk/LICENSE` | Already ported with the engine source. |
+| `packages/sdk/README.md` | PORT | `packages/engine/sdk/README.md` | Already ported with the engine source. |
+| `packages/sdk/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./sdk). |
+| `packages/sdk/tsconfig.api-extractor.json` | PORT | `packages/engine/sdk/tsconfig.api-extractor.json` | The api-extractor compile settings for this package. |
+| `packages/sdk/tsconfig.json` | PORT | `packages/engine/sdk/tsconfig.json` | Already ported with the engine source. |
+| `packages/terminal-shell/README.md` | PORT | `packages/engine/terminal-shell/README.md` | Already ported with the engine source. |
+| `packages/terminal-shell/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./terminal-shell). |
+| `packages/terminal-shell/tsconfig.api-extractor.json` | PORT | `packages/engine/terminal-shell/tsconfig.api-extractor.json` | The api-extractor compile settings for this package. |
+| `packages/terminal-shell/tsconfig.json` | PORT | `packages/engine/terminal-shell/tsconfig.json` | Already ported with the engine source. |
+| `packages/toolchain/README.md` | PORT | `packages/engine/toolchain/README.md` | Already ported with the engine source. |
+| `packages/toolchain/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./toolchain). |
+| `packages/toolchain/tsconfig.json` | PORT | `packages/engine/toolchain/tsconfig.json` | Already ported with the engine source. |
+| `packages/transport-core/README.md` | PORT | `packages/engine/transport-core/README.md` | Already ported with the engine source. |
+| `packages/transport-core/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./transport-core). |
+| `packages/transport-core/tsconfig.json` | PORT | `packages/engine/transport-core/tsconfig.json` | Already ported with the engine source. |
+| `packages/transport-http/README.md` | PORT | `packages/engine/transport-http/README.md` | Already ported with the engine source. |
+| `packages/transport-http/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./transport-http). |
+| `packages/transport-http/tsconfig.json` | PORT | `packages/engine/transport-http/tsconfig.json` | Already ported with the engine source. |
+| `packages/transport-realtime/README.md` | PORT | `packages/engine/transport-realtime/README.md` | Already ported with the engine source. |
+| `packages/transport-realtime/package.json` | PORT | `packages/engine/package.json` | Merged into the engine package.json (exports under ./transport-realtime). |
+| `packages/transport-realtime/tsconfig.json` | PORT | `packages/engine/transport-realtime/tsconfig.json` | Already ported with the engine source. |
+| `scripts/acp-agent.ts` | PORT | `packages/engine/scripts/acp-agent.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/align-dist-tags.ts` | PORT | `packages/engine/scripts/align-dist-tags.ts` | Aligns dist-tags for the engine package. |
+| `scripts/api-extractor.SETUP.md` | PORT | `packages/engine/scripts/api-extractor.SETUP.md` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/browser-compat-check.ts` | PORT | `packages/engine/scripts/browser-compat-check.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/build-speexdsp-wasm.ts` | PORT | `packages/engine/scripts/build-speexdsp-wasm.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/build-whisper-bundle.ts` | PORT | `packages/engine/scripts/build-whisper-bundle.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/build.ts` | PORT | `packages/engine/scripts/build.ts` | Builds the engine tsconfig.json (the old tsconfig.build.json); npm scripts run from the repo root. |
+| `scripts/bun-pin-rule.ts` | PORT | `packages/engine/scripts/bun-pin-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/bundle-budget.SETUP.md` | PORT | `packages/engine/scripts/bundle-budget.SETUP.md` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/bundle-budget.ts` | PORT | `packages/engine/scripts/bundle-budget.ts` | Measures the sdk entries named by the engine ./sdk/* exports at their dist files. |
+| `scripts/check-changelog.ts` | PORT | `packages/engine/scripts/check-changelog.ts` | Checks the engine CHANGELOG against the engine package version. |
+| `scripts/check-contract-artifacts.ts` | PORT | `packages/engine/scripts/check-contract-artifacts.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/check-credential-scope.ts` | PORT | `packages/engine/scripts/check-credential-scope.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/check-dist-freshness.ts` | PORT | `packages/engine/scripts/check-dist-freshness.ts` | Lists the eleven old packages built inside the engine. |
+| `scripts/check-exports-coverage.ts` | PORT | `packages/engine/scripts/check-exports-coverage.ts` | Reads the sdk platform subpaths from the engine ./sdk/platform/* exports. |
+| `scripts/check-foundation-io-coverage.ts` | PORT | `packages/engine/scripts/check-foundation-io-coverage.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/check-foundation-io-types.ts` | PORT | `packages/engine/scripts/check-foundation-io-types.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/check-internal-identifiers.ts` | PORT | `packages/engine/scripts/check-internal-identifiers.ts` | Scans <pkg>/src under the engine root; .githooks and SECURITY.md at the repo root. |
+| `scripts/check-line-cap.ts` | PORT | `packages/engine/scripts/check-line-cap.ts` | Discovers <pkg>/src under the engine root. |
+| `scripts/check-public-suffix-drift.ts` | PORT | `packages/engine/scripts/check-public-suffix-drift.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/check-subpath-api-surface.ts` | PORT | `packages/engine/scripts/check-subpath-api-surface.ts` | Reads each tracked package surface from the engine ./<pkg>/* exports at their dist declarations. |
+| `scripts/check-subpath-declared.ts` | PORT | `packages/engine/scripts/check-subpath-declared.ts` | Reads the sdk subpaths from the engine ./sdk/* exports. |
+| `scripts/create-release-tag.ts` | PORT | `packages/engine/scripts/create-release-tag.ts` | Tags from the engine package version. |
+| `scripts/docs-completeness-check.ts` | PORT | `packages/engine/scripts/docs-completeness-check.ts` | SECURITY.md read from the repo root. |
+| `scripts/error-contract-check.ts` | PORT | `packages/engine/scripts/error-contract-check.ts` | Scans the eleven old package directories; the canonical import is @goodvibes-jev/engine/errors. |
+| `scripts/eval-baseline.ts` | PORT | `packages/engine/scripts/eval-baseline.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/eval-gate.ts` | PORT | `packages/engine/scripts/eval-gate.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/flags-graduation.ts` | PORT | `packages/engine/scripts/flags-graduation.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/foundation-io-catalog.ts` | PORT | `packages/engine/scripts/foundation-io-catalog.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/foundation-io-coverage-baseline.ts` | PORT | `packages/engine/scripts/foundation-io-coverage-baseline.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/foundation-io-coverage-rule.ts` | PORT | `packages/engine/scripts/foundation-io-coverage-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/foundation-io-render.ts` | PORT | `packages/engine/scripts/foundation-io-render.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/generate-api-docs.ts` | PORT | `packages/engine/scripts/generate-api-docs.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/generate-foundation-io-entries.ts` | PORT | `packages/engine/scripts/generate-foundation-io-entries.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/generate-homeassistant-client.ts` | PORT | `packages/engine/scripts/generate-homeassistant-client.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/generate-openapi-contract.ts` | PORT | `packages/engine/scripts/generate-openapi-contract.ts` | Paths re-rooted; the generated description keeps the goodvibes-sdk contract path so the artifact is unchanged. |
+| `scripts/generate-public-suffix-data.ts` | PORT | `packages/engine/scripts/generate-public-suffix-data.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/generate-webui-facade.ts` | PORT | `packages/engine/scripts/generate-webui-facade.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/install-smoke-check.ts` | PORT | `packages/engine/scripts/install-smoke-check.ts` | Installs the packed engine; old package names read as engine subpaths. |
+| `scripts/internal-identifier-rule.ts` | PORT | `packages/engine/scripts/internal-identifier-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/leak-scan.ts` | PORT | `packages/engine/scripts/leak-scan.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/line-cap-grandfather.ts` | PORT | `packages/engine/scripts/line-cap-grandfather.ts` | Paths re-rooted; orchestrator-runner.ts ceiling 919 -> 923 for commit 2f03c8c (error meaning read by Jev). |
+| `scripts/line-cap-rule.ts` | PORT | `packages/engine/scripts/line-cap-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/no-any-types.ts` | PORT | `packages/engine/scripts/no-any-types.ts` | Scans the eleven old package directories. |
+| `scripts/no-platform-console.ts` | PORT | `packages/engine/scripts/no-platform-console.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/no-skipped-tests.ts` | PORT | `packages/engine/scripts/no-skipped-tests.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/no-todo-markers.SETUP.md` | PORT | `packages/engine/scripts/no-todo-markers.SETUP.md` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/no-todo-markers.ts` | PORT | `packages/engine/scripts/no-todo-markers.ts` | Scans the eleven old package directories. |
+| `scripts/normalize-api-eol.ts` | PORT | `packages/engine/scripts/normalize-api-eol.ts` | Resolves the API reports from the script location. |
+| `scripts/owned-test-child.ts` | PORT | `packages/engine/scripts/owned-test-child.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/pack-check.ts` | PORT | `packages/engine/scripts/pack-check.ts` | Checks the packed engine tarball; the engine carries the sdk vendor mitigations. |
+| `scripts/package-metadata-check.ts` | PORT | `packages/engine/scripts/package-metadata-check.ts` | Checks the engine package.json against the repo root package.json; .github read from the repo root. |
+| `scripts/plugin-bundle.ts` | PORT | `packages/engine/scripts/plugin-bundle.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/prepare-sdk-package.ts` | PORT | `packages/engine/scripts/prepare-sdk-package.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/print-test-coverage.ts` | PORT | `packages/engine/scripts/print-test-coverage.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/publint-check.ts` | PORT | `packages/engine/scripts/publint-check.ts` | Lints the engine package directory. |
+| `scripts/publish-packages.ts` | PORT | `packages/engine/scripts/publish-packages.ts` | Publishes the engine package; the changelog gate reads the engine version. |
+| `scripts/refresh-contract-artifacts.ts` | PORT | `packages/engine/scripts/refresh-contract-artifacts.ts` | Paths re-rooted. |
+| `scripts/release-artifact-lane.ts` | PORT | `packages/engine/scripts/release-artifact-lane.ts` | Packs the engine and runs the conformance kit against it. |
+| `scripts/release-shared.ts` | PORT | `packages/engine/scripts/release-shared.ts` | Stages, packs and publishes the one engine package (old packages are its subpaths); the stage sits in the repo root .tmp; vendored bash-language-server read from the repo root. |
+| `scripts/sbom-check.ts` | PORT | `packages/engine/scripts/sbom-check.ts` | npm scripts run from the repo root. |
+| `scripts/sbom-generate.ts` | PORT | `packages/engine/scripts/sbom-generate.ts` | Runs cyclonedx-npm over the repo root workspace; writes the SBOM beside the engine. |
+| `scripts/sbom-license-policy.ts` | PORT | `packages/engine/scripts/sbom-license-policy.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/sbom-validate.ts` | PORT | `packages/engine/scripts/sbom-validate.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/sdk-dev.ts` | PORT | `packages/engine/scripts/sdk-dev.ts` | Overlays the engine package (every old package dist) into a consumer; the build runs from the repo root. |
+| `scripts/stale-tmp-sweep.ts` | PORT | `packages/engine/scripts/stale-tmp-sweep.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/subpath-api-surface-rule.ts` | PORT | `packages/engine/scripts/subpath-api-surface-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/sweep-wake-race.ts` | PORT | `packages/engine/scripts/sweep-wake-race.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/sync-version-fallback.ts` | PORT | `packages/engine/scripts/sync-version-fallback.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/test-child-watchdog-env.ts` | PORT | `packages/engine/scripts/test-child-watchdog-env.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/test-child-watchdog.ts` | PORT | `packages/engine/scripts/test-child-watchdog.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/test-run-tmp.ts` | PORT | `packages/engine/scripts/test-run-tmp.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/test-tmp-architecture-check.ts` | PORT | `packages/engine/scripts/test-tmp-architecture-check.ts` | Checks the repo root and engine package.json scripts. |
+| `scripts/test.ts` | PORT | `packages/engine/scripts/test.ts` | Test runner script; ported by the test part of E.14. |
+| `scripts/typecheck-output-rule.ts` | PORT | `packages/engine/scripts/typecheck-output-rule.ts` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/typecheck.ts` | PORT | `packages/engine/scripts/typecheck.ts` | Builds the repo root solution plus the engine test project, then the type-test project. |
+| `scripts/validate.ts` | PORT | `packages/engine/scripts/validate.ts` | Runs the same gates through the repo root package.json. |
+| `scripts/verdaccio-dry-run.SETUP.md` | PORT | `packages/engine/scripts/verdaccio-dry-run.SETUP.md` | Layout changes only: the engine root is packages/engine, old packages/<pkg> is <pkg>. |
+| `scripts/verdaccio-dry-run.ts` | PORT | `packages/engine/scripts/verdaccio-dry-run.ts` | Publishes the engine to a local Verdaccio under the @goodvibes-jev scope and sweeps every engine subpath. |
+| `scripts/verify-published-packages.ts` | PORT | `packages/engine/scripts/verify-published-packages.ts` | Verifies the published engine package. |
+| `scripts/verify-release-tag-version.ts` | PORT | `packages/engine/scripts/verify-release-tag-version.ts` | Compares the tag with the engine package version. |
+| `scripts/version-consistency-check.ts` | PORT | `packages/engine/scripts/version-consistency-check.ts` | Compares the engine package version with the repo root package.json. |
+| `scripts/workspace-lock.ts` | PORT | `packages/engine/scripts/workspace-lock.ts` | Test runner script; ported by the test part of E.14. |
+| `tsconfig.base.json` | PORT | `packages/engine/tsconfig.base.json` | Already ported with the engine source. |
+| `tsconfig.build.json` | PORT | `packages/engine/tsconfig.json` | The emit solution; already ported as the engine tsconfig.json. |
+| `tsconfig.json` | PORT | `packages/engine/tsconfig.json` | Package references merged into the engine tsconfig.json; its tests reference is the engine tsconfig.tests.json, built with the repo root solution by scripts/typecheck.ts. |
+| `tsconfig.tests.json` | PORT | `packages/engine/tsconfig.tests.json` | Test project; ported by the test part of E.14. |
+| `tsconfig.type-tests.json` | PORT | `packages/engine/tsconfig.type-tests.json` | The consumer-vantage type-test project; ported by the test part of E.14 and compiled by scripts/typecheck.ts. |
+| `vendor/bash-language-server/CHANGELOG.md` | PORT | `vendor/bash-language-server/CHANGELOG.md` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/GOODVIBES_PATCH.md` | PORT | `vendor/bash-language-server/GOODVIBES_PATCH.md` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/README.md` | PORT | `vendor/bash-language-server/README.md` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/analyser.d.ts` | PORT | `vendor/bash-language-server/out/analyser.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/analyser.js` | PORT | `vendor/bash-language-server/out/analyser.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/builtins.d.ts` | PORT | `vendor/bash-language-server/out/builtins.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/builtins.js` | PORT | `vendor/bash-language-server/out/builtins.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/cli.d.ts` | PORT | `vendor/bash-language-server/out/cli.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/cli.js` | PORT | `vendor/bash-language-server/out/cli.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/config.d.ts` | PORT | `vendor/bash-language-server/out/config.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/config.js` | PORT | `vendor/bash-language-server/out/config.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/executables.d.ts` | PORT | `vendor/bash-language-server/out/executables.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/executables.js` | PORT | `vendor/bash-language-server/out/executables.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/parser.d.ts` | PORT | `vendor/bash-language-server/out/parser.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/parser.js` | PORT | `vendor/bash-language-server/out/parser.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/reserved-words.d.ts` | PORT | `vendor/bash-language-server/out/reserved-words.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/reserved-words.js` | PORT | `vendor/bash-language-server/out/reserved-words.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/server.d.ts` | PORT | `vendor/bash-language-server/out/server.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/server.js` | PORT | `vendor/bash-language-server/out/server.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/config.d.ts` | PORT | `vendor/bash-language-server/out/shellcheck/config.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/config.js` | PORT | `vendor/bash-language-server/out/shellcheck/config.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/directive.d.ts` | PORT | `vendor/bash-language-server/out/shellcheck/directive.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/directive.js` | PORT | `vendor/bash-language-server/out/shellcheck/directive.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/index.d.ts` | PORT | `vendor/bash-language-server/out/shellcheck/index.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/index.js` | PORT | `vendor/bash-language-server/out/shellcheck/index.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/types.d.ts` | PORT | `vendor/bash-language-server/out/shellcheck/types.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shellcheck/types.js` | PORT | `vendor/bash-language-server/out/shellcheck/types.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shfmt/index.d.ts` | PORT | `vendor/bash-language-server/out/shfmt/index.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/shfmt/index.js` | PORT | `vendor/bash-language-server/out/shfmt/index.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/snippets.d.ts` | PORT | `vendor/bash-language-server/out/snippets.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/snippets.js` | PORT | `vendor/bash-language-server/out/snippets.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/types.d.ts` | PORT | `vendor/bash-language-server/out/types.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/types.js` | PORT | `vendor/bash-language-server/out/types.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/array.d.ts` | PORT | `vendor/bash-language-server/out/util/array.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/array.js` | PORT | `vendor/bash-language-server/out/util/array.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/async.d.ts` | PORT | `vendor/bash-language-server/out/util/async.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/async.js` | PORT | `vendor/bash-language-server/out/util/async.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/declarations.d.ts` | PORT | `vendor/bash-language-server/out/util/declarations.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/declarations.js` | PORT | `vendor/bash-language-server/out/util/declarations.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/discriminate.d.ts` | PORT | `vendor/bash-language-server/out/util/discriminate.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/discriminate.js` | PORT | `vendor/bash-language-server/out/util/discriminate.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/fs.d.ts` | PORT | `vendor/bash-language-server/out/util/fs.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/fs.js` | PORT | `vendor/bash-language-server/out/util/fs.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/logger.d.ts` | PORT | `vendor/bash-language-server/out/util/logger.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/logger.js` | PORT | `vendor/bash-language-server/out/util/logger.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/lsp.d.ts` | PORT | `vendor/bash-language-server/out/util/lsp.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/lsp.js` | PORT | `vendor/bash-language-server/out/util/lsp.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/platform.d.ts` | PORT | `vendor/bash-language-server/out/util/platform.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/platform.js` | PORT | `vendor/bash-language-server/out/util/platform.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/sh.d.ts` | PORT | `vendor/bash-language-server/out/util/sh.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/sh.js` | PORT | `vendor/bash-language-server/out/util/sh.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/shebang.d.ts` | PORT | `vendor/bash-language-server/out/util/shebang.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/shebang.js` | PORT | `vendor/bash-language-server/out/util/shebang.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/sourcing.d.ts` | PORT | `vendor/bash-language-server/out/util/sourcing.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/sourcing.js` | PORT | `vendor/bash-language-server/out/util/sourcing.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/tree-sitter.d.ts` | PORT | `vendor/bash-language-server/out/util/tree-sitter.d.ts` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/out/util/tree-sitter.js` | PORT | `vendor/bash-language-server/out/util/tree-sitter.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/package.json` | PORT | `vendor/bash-language-server/package.json` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/parser.info` | PORT | `vendor/bash-language-server/parser.info` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/bash-language-server/tree-sitter-bash.wasm` | PORT | `vendor/bash-language-server/tree-sitter-bash.wasm` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/uuid-cjs/README.md` | PORT | `vendor/uuid-cjs/README.md` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/uuid-cjs/index.js` | PORT | `vendor/uuid-cjs/index.js` | Already at the repo root (vendored dependency named by the root overrides). |
+| `vendor/uuid-cjs/package.json` | PORT | `vendor/uuid-cjs/package.json` | Already at the repo root (vendored dependency named by the root overrides). |

@@ -1,0 +1,70 @@
+# Published surface matrix
+
+> Consumer surface map. For internal runtime boundary details see [Runtime Boundary Model](./runtime-surfaces.md).
+
+The `@goodvibes-jev/engine/sdk` package has companion-safe client surfaces and
+Bun-only daemon/platform surfaces.
+
+See also: [Public surface reference](./public-surface.md), the canonical list of every
+stable subpath, and [Channel surfaces](./channel-surfaces.md) for the channel runtime.
+
+## Daemon and platform surfaces (Bun-only)
+
+The full surface provides the agentic harness: tool execution, LSP and tree-sitter intelligence, MCP client/registry, workflow trigger executor, daemon HTTP server, file-based artifact storage, file state and KV caching, git service integration, ACP connection management, and companion pairing.
+
+Daemon-owned channel surfaces also live on this full surface. That includes
+Slack, Discord, ntfy, generic webhook, Telegram, Google Chat, Signal, WhatsApp,
+iMessage, Microsoft Teams, BlueBubbles, Mattermost, Matrix, and Home Assistant.
+Home Assistant is implemented as a first-class daemon surface with signed
+webhook ingress, authenticated Assist conversation routes, daemon-owned remote
+sessions with a 20-minute idle TTL, event-bus delivery, setup/manifest
+discovery, and Home Assistant REST-backed tools.
+
+Imported via the following subpaths:
+- `./daemon`
+- explicit `./platform/...` entrypoints
+
+This surface makes direct use of Bun runtime APIs, including `Bun.spawn`, `Bun.file`, `Bun.Glob`, `Bun.which`, `Bun.CryptoHasher`, `Bun.Transpiler`, and `Bun.serve`. It cannot be imported or executed outside a Bun runtime. Attempting to use it in Hermes, a browser, or Node.js will fail at runtime.
+
+**Requires a Bun runtime to import and execute.**
+
+## Root, operator, and companion surfaces (multi-runtime)
+
+The companion surface provides auth, transport (HTTP/SSE/WebSocket), runtime events, contracts, errors, observer hooks, and the optional Cloudflare Worker bridge for daemon batch queue/tick integration. It is intentionally runtime-neutral: no Bun globals, no `node:*` imports. Cloudflare account/Queue/Worker provisioning is a daemon route concern under `/api/cloudflare/*`, not companion-side service logic.
+
+Imported via:
+- package root (`@goodvibes-jev/engine/sdk`): default daemon-connected client facade
+- `./react-native`: React Native (Hermes)
+- `./browser`: browser environments
+- `./browser/knowledge`, `./browser/homeassistant`, `./browser/agent`: scoped browser companion clients (base knowledge/wiki, Home Assistant panels, and the Agent-owned knowledge environment)
+- `./web`: web and service workers (same runtime contract as `./browser`)
+- `./workers`: manual Cloudflare Worker bridge for daemon batch proxying, queue tick signals, queue consumers, and scheduled ticks
+- `./expo`: Expo (same runtime contract as `./react-native`)
+- `./auth`: auth client, token stores
+- `./client-auth`: low-level client auth primitives or platform token stores
+- `./errors`: typed error surface
+- `./events`, `./events/<domain>`: typed runtime event domains
+- `./contracts`: ACP contract types and method IDs
+- `./operator`: operator/control-plane client
+- `./observer`: observer helpers
+- `./transport-core`, `./transport-direct`, `./transport-http`, `./transport-realtime`: transport primitives. See [Transports](./transports.md) for the `./transport-direct` facade description
+- `./peer`: peer ACP client
+
+This surface works on Hermes (React Native / Expo), browser, Cloudflare Workers, and Bun. Metro's bundler (React Native) and standard browser bundlers (Vite, webpack, esbuild) can trace and bundle these entry points without modification.
+
+## Runtimes explicitly supported
+
+| Runtime | Surface | Notes |
+|---------|---------|-------|
+| Bun | Full + Companion | Dev environment, TUI, daemons, CLI apps |
+| Hermes (React Native / Expo) | Companion only | iOS and Android companion apps |
+| Browser | Companion only | Web UI apps |
+| Cloudflare Workers / workerd / Miniflare 4 | Companion only | Use `/web` for normal operator HTTP clients; use `/workers` only when manually deploying the GoodVibes Worker bridge for optional daemon batch queue/tick integration |
+
+## Runtimes not supported
+
+- **Node.js.** Not in the consumer list. The published surface does not advertise Node support. If you need Node support, open an issue.
+
+## Enforcement
+
+CI job `platform-matrix` (`rn-bundle` dimension, implemented in `test/rn-bundle-node-imports.test.ts`) verifies that the companion entry point dist bundles, `react-native.js`, `expo.js`, `browser.js`, `browser-homeassistant.js`, `browser-knowledge.js`, `web.js`, `workers.js`, `auth.js`, contain no `Bun.*` identifiers and no `node:*` imports. Any match fails CI and blocks release.

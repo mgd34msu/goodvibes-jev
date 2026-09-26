@@ -1,0 +1,513 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+# Default to read-only permissions. Individual jobs elevate as needed.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Kitchen-sink gate: docs check, typecheck, browser compat, metadata,
+  # no-any, pack check, install smoke. Deliberately self-contained, this is
+  # the 'everything works atomically' integration check that matches what a
+  # local developer runs via `bun run validate`.
+  # ---------------------------------------------------------------------------
+  validate:
+    runs-on: ubuntu-latest
+    # The whole-workspace validate lane grew past 10 minutes with the memory-
+    # governance and managed-voice suites, then past 20 as pack:check came to
+    # dominate (~16 minutes packing every workspace package at 2.0.13, two
+    # runs in a row died at exactly 20:00 mid-install:smoke while progressing
+    # honestly). 30 keeps headroom without masking a hang (individual bun
+    # tests carry their own timeouts).
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup # composite, no SHA needed
+      - name: Validate workspace
+        run: bun run validate
+
+  # ---------------------------------------------------------------------------
+  # Standing eval gate. Runs the all-floors-passing standing-gate suite through
+  # the production eval paths and fails on ANY absolute-floor failure OR
+  # regression versus the checked-in baseline (eval/baseline.json), with
+  # per-scenario results printed. The baseline drift check runs first so a stale
+  # baseline (suites/scorer changed without a deliberate `bun run eval:baseline`)
+  # fails loudly rather than silently. A required job, never continue-on-error.
+  # ---------------------------------------------------------------------------
+  eval-gate:
+    name: Eval gate (floors + regression)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      # The eval scripts execute SDK source directly (bun packages/engine/scripts/eval-*.ts ->
+      # packages/sdk/src/...), and that source imports bare workspace specifiers
+      # (@goodvibes-jev/engine/errors, etc.) whose package exports resolve to ./dist.
+      # Restore the single `build` job's artifact instead of rebuilding, the
+      # dist entrypoints those bare specifiers resolve to are the exact bytes the
+      # build job produced (build once, restore everywhere).
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Baseline drift check
+        run: bun run eval:baseline:check
+      - name: Run eval gate
+        run: bun run eval:gate
+
+  security-audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # contents: read (inherited from workflow default) is sufficient for gitleaks.
+    # Add pull-requests: write here if you want gitleaks to comment on PRs.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Dependency audit
+        run: bun audit --audit-level high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Single build job. Uploads all package dist directories as one artifact so
+  # downstream consumers test the exact same workspace package bytes. Ensures build determinism across
+  # all typed-surface and packaging checks; matches the release pipeline which
+  # builds once and publishes that artifact to npm.
+  # ---------------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Build SDK
+        run: bun run build
+      - name: Archive workspace package output
+        run: tar -czf /tmp/workspace-build-output.tgz packages/engine/*/dist
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output.tgz
+          # Retained long enough for the by-reference release to restore this
+          # exact build (the artifact-integrity handoff in release.yml downloads
+          # it by the CI run id and asserts its head SHA == the tagged SHA).
+          retention-days: 7
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Platform matrix, each platform builds and runs its test suite. Isolated
+  # because rn-bundle, workers, and workers-wrangler each exercise a distinct
+  # runtime target that the consolidated artifact would not cover.
+  # ---------------------------------------------------------------------------
+  platform-matrix:
+    name: Platform matrix (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - bun
+          - rn-bundle
+          - workers
+          - workers-wrangler
+        include:
+          # Matrix policy: single Node version (22) per run. Add a second
+          # `include` row targeting Node 24 LTS once it is released to expand
+          # runtime coverage without multiplying CI time unnecessarily.
+          # Each leg restores the single `build` job's artifact (below) and runs
+          # tests against those exact dist bytes, no per-leg rebuild. The bun
+          # leg invokes scripts/test.ts directly (not `bun run test`) so the
+          # `pretest` tsc build does not re-emit over the restored artifact.
+          - platform: bun
+            node-version: "22"
+            test-cmd: bun packages/engine/scripts/test.ts
+          - platform: rn-bundle
+            node-version: "22"
+            test-cmd: bun run test:rn
+          - platform: workers
+            node-version: "22"
+            test-cmd: bun run test:workers
+          - platform: workers-wrangler
+            node-version: "22"
+            test-cmd: bun run test:workers:wrangler
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Configure git identity for worktree/orchestration tests
+        # The orchestration worktree flow makes real git commits and relies on
+        # ambient git config (as in a real user environment). A fresh CI runner
+        # has no identity, so those commits fail and the worktree integration
+        # tests hang/timeout. Provide a deterministic identity.
+        run: |
+          git config --global user.email "ci@goodvibes.local"
+          git config --global user.name "GoodVibes CI"
+      - name: Run test suite (${{ matrix.platform }})
+        run: ${{ matrix.test-cmd }}
+      - name: Sweep the fake-IMAP suites for the lost-wake race
+        # The bun leg only: this re-runs suites the leg has already run, with
+        # one wire call delayed so a wake edge that a test pushes at the wrong
+        # moment is reliably lost instead of occasionally lost. It is the check
+        # that would have caught gate #14 before a 2-vCPU runner did. Cheap,
+        # seven small suites, and deterministic; see the script's header.
+        if: matrix.platform == 'bun'
+        run: bun run sweep:wake-race
+
+  # ---------------------------------------------------------------------------
+  # Consumer jobs that share the build artifact. Each tests the exact same
+  # bytes produced by the `build` job, eliminates the 4-parallel-builds
+  # non-determinism window from independent package builds.
+  # ---------------------------------------------------------------------------
+  types-resolution-check:
+    name: Are the types wrong? (exports map resolution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Run are-the-types-wrong check
+        run: bunx attw --pack packages/engine --ignore-rules no-resolution cjs-resolves-to-esm
+
+  publint-check:
+    name: publint (package.json hygiene)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Run publint
+        run: bun run publint:check
+
+  sbom-check:
+    name: SBOM generation + validation (CycloneDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Generate and validate SBOM
+        run: bun run sbom:check
+      - name: Upload SBOM as CI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-cdx-json
+          path: packages/engine/sbom.cdx.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Packaged-artifact coherence gate: pack every workspace package exactly as
+  # publish would, install the tarballs into a scratch consumer, and run the
+  # shipped conformance kit against a catalog/daemon composed FROM THE PACKED
+  # ARTIFACTS (descriptors-have-handlers, catalog invoke round-trips, REST
+  # parity). Proves the tarballs are internally coherent before publish. A
+  # required job, never continue-on-error; per-check honesty lives in the
+  # in-scratch conformance script (one PASS/FAIL line per check).
+  # ---------------------------------------------------------------------------
+  artifact-lane:
+    name: Packaged-artifact release lane (conformance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          # The artifact was built from this very SHA in this run's build job,
+          # it is fresh by construction. tar preserves build-time mtimes while
+          # the checkout stamps sources with checkout time, so mtime-based
+          # dist-freshness checks would misread the restore as staleness.
+          find packages/engine/*/dist -type f -exec touch {} +
+      - name: Run packaged-artifact release lane
+        run: bun run release:artifact-lane
+
+  # ---------------------------------------------------------------------------
+  # Zero-touch release. Runs only after EVERY gating job above is green (its
+  # `needs` covers all of them, so GitHub schedules it last and only on full
+  # success), and only for pushes to main. When the release commit's version has
+  # no tag yet, it creates the annotated tag at this SHA and dispatches
+  # release.yml at that tag with mode=release.
+  #
+  # Why the dispatch (not just the tag push): a tag pushed with GITHUB_TOKEN does
+  # NOT trigger workflows, so the tag alone would never start release.yml. The
+  # documented exception is that a workflow_dispatch API call made with
+  # GITHUB_TOKEN DOES create a run, so we push the tag (for provenance + the
+  # manual redo path) and then explicitly dispatch the release at that tag ref.
+  # Idempotent, but not blindly: an already-existing tag is a no-op only when
+  # release.yml actually has a run for that tag. A tag with no release run is
+  # the tagged-then-dispatch-failed state, and it gets re-dispatched.
+  # ---------------------------------------------------------------------------
+  auto-release:
+    name: Auto-release (tag + dispatch on green)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # RELEASE_ARMED holds the zero-touch release while a version accumulates
+    # work across multiple pushes. Unset or any value other than 'true' means
+    # CI runs green without tagging or publishing; setting the repo variable
+    # to 'true' is the deliberate act that lets the next green push release.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'
+    needs:
+      - validate
+      - eval-gate
+      - security-audit
+      - build
+      - platform-matrix
+      - types-resolution-check
+      - publint-check
+      - sbom-check
+      - artifact-lane
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Read version from package.json
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Tag the release and dispatch release.yml (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          MANUAL_REDO="gh workflow run release.yml --repo ${REPO} --ref refs/tags/${TAG} -f mode=release -f ref=refs/tags/${TAG}"
+
+          # Dispatch release.yml AT THE TAG REF. A workflow_dispatch API call
+          # under GITHUB_TOKEN does create a run (the documented exception to
+          # token-driven events not triggering workflows), which is why the tag
+          # push alone is not enough.
+          #
+          # `--ref` is the part that matters: it decides what github.ref and
+          # github.sha are for the whole release run. The `-f ref=` INPUT is
+          # inert today, since every expression in release.yml that reads
+          # inputs.ref short-circuits on mode == 'release' before reaching it.
+          # It is passed anyway so the input never carries its "main" default
+          # into a release run if one of those expressions is ever reordered.
+          dispatch_release() {
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if gh workflow run release.yml --ref "refs/tags/${TAG}" -f mode=release -f "ref=refs/tags/${TAG}"; then
+                echo "Dispatched release.yml for ${TAG} (mode=release)."
+                return 0
+              fi
+              echo "gh workflow run failed (attempt ${attempt}/8); retrying in 7s…" >&2
+              sleep 7
+            done
+            return 1
+          }
+
+          # How many release.yml runs exist for this tag, in ANY state. Queued,
+          # running, and FAILED all count: this job's question is "was the
+          # release ever started", not "did it succeed". A failed run is a
+          # visible thing an operator re-runs by hand, whereas a tag with no run
+          # at all is invisible, and only the second one is this job's to fix.
+          #
+          # Two queries because neither alone is sufficient: the server-side
+          # `branch` filter is unbounded in history but its tag semantics are
+          # not contractual, and the recent-runs scan reads head_branch
+          # directly but only sees the last 100 runs. Prints a count, or
+          # nothing at all when the API could not answer.
+          release_run_count() {
+            local filtered scanned
+            filtered=$(gh api "repos/${REPO}/actions/workflows/release.yml/runs?branch=${TAG}&per_page=1" \
+              --jq '.total_count' 2>/dev/null) || filtered=""
+            scanned=$(gh api "repos/${REPO}/actions/workflows/release.yml/runs?per_page=100" \
+              --jq "[.workflow_runs[] | select(.head_branch == \"${TAG}\")] | length" 2>/dev/null) || scanned=""
+            [[ "$filtered" =~ ^[0-9]+$ ]] || filtered=""
+            [[ "$scanned" =~ ^[0-9]+$ ]] || scanned=""
+            if [ -z "$filtered" ] && [ -z "$scanned" ]; then
+              return 1
+            fi
+            # The larger of the two, never the sum: a run both queries see must
+            # not be reported twice.
+            if [ "${filtered:-0}" -ge "${scanned:-0}" ]; then echo "${filtered:-0}"; else echo "${scanned:-0}"; fi
+          }
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}"; then
+            # The tag exists (a re-run of this job, a manually pushed tag, or an
+            # earlier run that tagged and then failed to dispatch). That is only
+            # a no-op if release.yml actually ran for the tag; exiting 0 without
+            # checking reported a green "nothing to do" over a release that was
+            # never started.
+            echo "Tag ${TAG} already exists on origin; checking whether release.yml ran for it."
+            COUNT=""
+            for attempt in 1 2 3 4 5; do
+              if COUNT=$(release_run_count); then
+                break
+              fi
+              COUNT=""
+              if [ "$attempt" -lt 5 ]; then
+                echo "release.yml run lookup failed (attempt ${attempt}/5); retrying in 7s…" >&2
+                sleep 7
+              fi
+            done
+            if [ -z "$COUNT" ]; then
+              echo "ERROR: could not determine whether release.yml ever ran for ${TAG}." >&2
+              echo "Refusing to report success over an unknown release state. Check the Actions tab," >&2
+              echo "and if no release run exists for ${TAG}, run:" >&2
+              echo "  ${MANUAL_REDO}" >&2
+              exit 1
+            fi
+            if [ "$COUNT" -gt 0 ]; then
+              # Deliberately NOT a claim that the release succeeded. This job
+              # only guarantees a release run was started for the tag; the run
+              # may have failed, and if it did, re-running it is a human
+              # decision, not something to re-dispatch automatically.
+              echo "release.yml has ${COUNT} run record(s) for ${TAG}, so the release was started; this job is done."
+              echo "That is NOT a statement that the release succeeded. If ${TAG} is not on npm, check the run at"
+              echo "  ${GITHUB_SERVER_URL:-https://github.com}/${REPO}/actions/workflows/release.yml"
+              echo "and re-run it from the Actions tab, or dispatch a fresh one with:"
+              echo "  ${MANUAL_REDO}"
+              exit 0
+            fi
+            echo "Tag ${TAG} exists but NO release.yml run does; re-dispatching." >&2
+            if dispatch_release; then
+              exit 0
+            fi
+            echo "ERROR: failed to dispatch release.yml for ${TAG} after 8 attempts." >&2
+            echo "Redo it manually with:" >&2
+            echo "  ${MANUAL_REDO}" >&2
+            exit 1
+          fi
+
+          git config user.name "GoodVibes CI"
+          git config user.email "ci@goodvibes.local"
+          git tag -a "${TAG}" -m "release ${VERSION}" "${SHA}"
+          # Push with GITHUB_TOKEN: this does NOT trigger release.yml (token
+          # pushes never trigger workflows), which is why we dispatch below.
+          git push origin "refs/tags/${TAG}"
+          echo "Created and pushed ${TAG} at ${SHA}."
+          if dispatch_release; then
+            exit 0
+          fi
+          echo "ERROR: failed to dispatch release.yml for ${TAG} after 8 attempts." >&2
+          echo "The tag is pushed; redo the dispatch manually with:" >&2
+          echo "  ${MANUAL_REDO}" >&2
+          exit 1

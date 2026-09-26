@@ -1,0 +1,98 @@
+# Semver policy
+
+This document defines what constitutes a breaking change, a minor addition, or a patch fix for `@goodvibes-jev/engine/sdk` and its published sub-packages. It is the authoritative reference used when tagging releases and reviewing CHANGELOG entries.
+
+Violations of this policy are a release gate failure. A version bump that misclassifies a breaking change as minor or patch must be corrected before publish.
+
+---
+
+## Major bump: breaking changes
+
+The following changes require a major version bump:
+
+- **Removing a public export** from any subpath export entry (e.g. removing `createGoodVibesSdk` from `@goodvibes-jev/engine/sdk` or any equivalent factory from a named subpath)
+- **Changing a public export's type signature in a narrowing direction**: removing a property from a public interface or type, narrowing an accepted parameter type, making an optional field required, or removing a union member from a parameter type
+- **Renaming or changing the value of an `SDKErrorKind` union member** (e.g. renaming `'auth'` to `'authentication'`, or `'not-found'` to `'notFound'`). The full current union has 12 values: `'auth' | 'config' | 'contract' | 'network' | 'not-found' | 'protocol' | 'rate-limit' | 'service' | 'internal' | 'tool' | 'validation' | 'unknown'`
+- **Renaming an SDK factory function** (e.g. renaming `createGoodVibesSdk`, `createBrowserGoodVibesSdk`, `createWebGoodVibesSdk`, `createReactNativeGoodVibesSdk`, `createExpoGoodVibesSdk`, `createPeerSdk`, or `createGoodVibesAuthClient`)
+- **Changing the resolution target of a subpath export** in a way that breaks consumers (e.g. moving `./browser` to resolve to a different module without a redirect, or replacing `./web` with `./browser` in the exports map)
+- **Changing wire-format or transport defaults** in a way that breaks existing consumers without opt-in (e.g. shortening the default realtime reconnect backoff cap of 30 s, changing default retry counts, or changing default headers). The HTTP transport has no built-in default request timeout; cancellation is caller-driven via `AbortSignal`, so there is no timeout default to break here
+- **Removing a supported runtime from the runtime matrix**, currently `bun`, `browser`, `react-native` / Hermes, and `workers`. `node` as a standalone target is not a documented supported runtime; the `engines.node` field in `packages/engine/package.json` reflects the build/Bun host requirement, not a tested Node consumer surface. See [Published surface matrix](./surfaces.md) for the full surface split.
+- **Adding a new required config field** to `GoodVibesSdkOptions` or any public options interface, or promoting an existing optional field to required
+
+---
+
+## Minor bump: additive, non-breaking changes
+
+The following changes require a minor version bump:
+
+- Adding a new public export to any subpath entry
+- Adding a new optional field to a public options interface or type
+- Adding a new `SDKErrorKind` union member value
+- Adding a new subpath export entry (e.g. a new `./workers` entry)
+- Widening a return type in a direction that does not remove or narrow existing members (e.g. adding a new property to a returned object type)
+- Adding a new runtime to the supported runtime matrix
+- Bumping the minimum supported TypeScript version. See [TypeScript support](#typescript-support)
+
+---
+
+## Patch bump: fixes and internal changes
+
+The following changes are patch-level:
+
+- Bug fixes that do not alter the public API surface
+- Documentation corrections
+- Internal refactors that do not affect the observable behavior of any public export
+- Dependency version updates that do not affect the public API
+- Performance improvements with no behavioral change
+
+---
+
+## What is NOT covered by semver
+
+The following are explicitly out of scope and may change at any time without a major or minor bump:
+
+- **Repository source file paths.** These are not part of the public surface and are subject to change without notice. Do not bypass the package export map.
+- **`dist/` internal file paths.** Consume the SDK via the package exports map (e.g. `@goodvibes-jev/engine/sdk`, `@goodvibes-jev/engine/sdk/browser`), not by importing from `dist/` file paths directly.
+- **Error `.message` strings.** These are human-readable and may be improved across releases. Use `err.kind` (an `SDKErrorKind` value) and `err.code` for programmatic handling, not `err.message`.
+- **`GoodVibesSdkError` subclass identity.** Do not use `instanceof ConfigurationError`, `instanceof ContractError`, etc. for control flow. Use `err.kind` instead. Subclass structure is internal.
+
+---
+
+## Removal process
+
+For pre-1.0 releases, the project may remove or rename public exports when the
+owner accepts the breaking change and `CHANGELOG.md` documents it. For 1.0 and
+later releases, removals require a major bump and a replacement path when one
+exists.
+
+When a replacement exists, document the replacement in the changelog and the
+affected feature doc.
+
+Example:
+
+```ts
+/**
+ * Use `createBrowserGoodVibesSdk` from `@goodvibes-jev/engine/sdk/browser` for browser/web clients.
+ * (`createWebGoodVibesSdk` from `./web` is an equivalent alias.)
+ */
+export function createBrowserGoodVibesSdk(/* ... */) { /* ... */ }
+```
+
+---
+
+## TypeScript support
+
+The minimum supported TypeScript version is **6.0**. This is the lowest version against which the SDK's type signatures are tested. The repository pins `typescript: 6.0.3` (an exact version, not a range); CI validates types against that pin.
+
+Bumping the minimum supported TypeScript version is treated as a **minor bump**, not a major bump. This follows common practice in the TypeScript ecosystem (see e.g. the DefinitelyTyped policy). Most consumers upgrade TypeScript frequently and a minimum TypeScript bump rarely requires application code changes.
+
+If a TypeScript version bump requires consumers to change their application-level type annotations, that case will be assessed individually and may be treated as major.
+
+---
+
+## Enforcement
+
+The CHANGELOG gate (`bun run changelog:check`) verifies that every release has a properly labeled section. Version bump classification is a required part of the PR description for any release PR. Misclassified bumps are caught in review before merge.
+
+API surface checks and changelog review are the enforcement mechanisms for
+unintended public-surface drift.

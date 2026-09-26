@@ -1,0 +1,61 @@
+import { execFileSync } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SDK_ROOT = resolve(__dirname, '..');
+// npm scripts live in the repo root package.json.
+const REPO_ROOT = resolve(SDK_ROOT, '../..');
+
+function run(command: string, args: readonly string[], label?: string): void {
+  if (label) console.log(`[validate] ${label} ...`);
+  execFileSync(command, args, {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+  });
+}
+
+run('bun', ['packages/engine/scripts/generate-api-docs.ts', '--check'], 'api-docs:check');
+run('bun', ['packages/engine/scripts/docs-completeness-check.ts'], 'docs:completeness');
+run('bun', ['run', 'error:check'], 'error:check');
+run('bun', ['run', 'line:check'], 'line:check');
+// Beside line:check for the same reason: a source-only scan with no build
+// dependency (~0.6s over 2181 files). It ran only in the local pre-commit hook,
+// so a push that bypassed the hook reached CI with an unclassified credential
+// write and every one of the ten CI jobs stayed green.
+run('bun', ['run', 'credential-scope:check'], 'credential-scope:check');
+run('bun', ['run', 'changelog:check'], 'changelog:check');
+run('bun', ['run', 'version:check'], 'version:check');
+run('bun', ['run', 'todo:check'], 'todo:check');
+run('bun', ['run', 'internal-id:check'], 'internal-id:check');
+run('bun', ['run', 'test-skip:check'], 'test-skip:check');
+run('bun', ['run', 'architecture:check'], 'architecture:check');
+run('bun', ['run', 'platform-console:check'], 'platform-console:check');
+run('bun', ['run', 'build'], 'build');
+// typecheck runs the composite solution (which now includes test/ and
+// scripts/ via tsconfig.tests.json) AND the standalone type-test project,
+// judging each by its output as well as its exit code. It supersedes the
+// bare types:check that used to run here.
+run('bun', ['run', 'typecheck'], 'typecheck');
+run('bun', ['run', 'api:check'], 'api:check');
+// Beside api:check rather than inside it, because they ask opposite questions.
+// api:check iterates FROM the exports map and compares what each DECLARED
+// subpath exposes, so a module the map omits is never examined. This asks
+// whether every module with a public face is reachable from a published package
+// at all, the check that would have caught platform/owner-profile shipping
+// unreachable while every other gate stayed green.
+run('bun', ['run', 'exports:check'], 'exports:check');
+// examples typecheck also runs locally so `bun run validate` catches type
+// errors without a separate CI step.
+run('bun', ['run', '--cwd', 'packages/engine/examples', 'typecheck'], 'examples:typecheck');
+run('bun', ['packages/engine/scripts/browser-compat-check.ts'], 'browser-compat:check');
+run('bun', ['packages/engine/scripts/package-metadata-check.ts'], 'package-metadata:check');
+run('bun', ['run', 'any:check'], 'any:check');
+// Test execution is owned by the CI platform-matrix (bun) job; removing it
+// from validate eliminates the duplicate test run that used to execute on
+// every push. Local callers can still run `bun run test` explicitly.
+run('bun', ['run', 'pack:check'], 'pack:check');
+run('bun', ['run', 'publint:check'], 'publint:check');
+run('bun', ['run', 'install:smoke'], 'install:smoke');
+run('bun', ['run', 'contracts:check'], 'contracts:check');
+run('bun', ['run', 'bundle:check'], 'bundle:check');

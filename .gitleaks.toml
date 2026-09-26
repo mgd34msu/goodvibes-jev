@@ -1,0 +1,46 @@
+# gitleaks configuration
+#
+# Starts from the stock ruleset and narrows two classes of false match. Both
+# entries below match a specific SHAPE that key material never has, so a real
+# credential committed to this tree is still reported.
+#
+# The Web Push subscription shape (RFC 8291) names the receiver's public P-256
+# point `p256dh` and the receiver's authentication secret `auth`. Code that
+# handles a subscription therefore reads and writes property paths ending in
+# `keys.p256dh` and `keys.auth`, and passes those same dotted paths as FIELD
+# LABELS into argument validation so a refusal can name the field it refused:
+#
+#     const keysChanged = prior.keys.p256dh !== input.keys.p256dh;
+#     const p256dh = requireString(keys.p256dh, 'notifications.keys.p256dh');
+#
+# The generic-api-key rule scores those dotted paths as high-entropy strings and
+# reports the FIELD NAME as though it were a credential value. The names cannot
+# change: they are the wire format every push service expects.
+#
+# The allowlist below matches only a dotted path that ENDS in `keys.p256dh` or
+# `keys.auth`. Key material itself never has that shape, so a real subscription
+# key pasted into the tree is still reported.
+#
+# The second class is one literal fixture in the untrusted-content taint tests.
+# That check exists because a long verbatim token: an account reference, a
+# booking code: copied out of a mailbox into an outgoing message is derivation
+# even when no prose comes with it. Demonstrating it needs a string that is
+# long, has no spaces, and is not English, which is the same description as a
+# credential; the generic-api-key rule scores it as one. The fixture spells out
+# what it is: it base64-decodes to `exampletokenvaluenotreallyasecret0198`.
+#
+# It is allowlisted as that exact literal rather than by path or by file, so
+# any OTHER high-entropy string appearing in the security tests is still
+# reported. The entry is needed in config rather than fixed in the file because
+# the string is already in committed history, which a later edit cannot reach.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Web Push subscription field names (RFC 8291) and one taint-test fixture, neither is key material"
+regexes = [
+  '''^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*keys\.p256dh$''',
+  '''^(?:[A-Za-z_$][A-Za-z0-9_$]*\.)*keys\.auth$''',
+  '''^ZXhhbXBsZXRva2VudmFsdWVub3RyZWFsbHlhc2VjcmV0MDE5OA$''',
+]

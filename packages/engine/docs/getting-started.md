@@ -1,0 +1,260 @@
+# Getting started
+
+> **What this SDK is:** `@goodvibes-jev/engine/sdk` is a client SDK for the GoodVibes daemon.
+> It does **not** call Anthropic, OpenAI, Gemini, or any other AI provider directly. The daemon
+> orchestrates those on your behalf. If you need to call a provider directly, use their official
+> SDK instead. If you don't have a daemon yet, see [Daemon embedding](./daemon-embedding.md).
+
+This SDK has two surfaces. Read the [Published Surface Matrix](./surfaces.md) (the consumer surface map; the internal runtime-boundary model lives in [Runtime Surfaces](./runtime-surfaces.md)) to understand which applies to you:
+- **Full surface.** Bun consumers (TUI, daemon, CLI).
+- **Companion surface.** Hermes (React Native or Expo), browser, or Cloudflare Workers consumers.
+
+## Install
+
+```bash
+bun add @goodvibes-jev/engine/sdk
+# or
+npm install @goodvibes-jev/engine/sdk
+```
+
+This installs one package. Import only the entry points you need.
+
+## Bun quickstart (full surface)
+
+For Bun services, TUI apps, and CLI tools, use the root entry point:
+
+```ts
+import { createGoodVibesSdk } from '@goodvibes-jev/engine/sdk';
+import { createMemoryTokenStore } from '@goodvibes-jev/engine/sdk/auth';
+
+const sdk = createGoodVibesSdk({
+  baseUrl: process.env.GOODVIBES_BASE_URL ?? 'http://127.0.0.1:3421',
+  tokenStore: createMemoryTokenStore(process.env.GOODVIBES_TOKEN ?? null),
+});
+
+const snapshot = await sdk.operator.control.snapshot();
+console.log(snapshot);
+```
+
+If you have a static token and don't need login/logout flows, `authToken` is sufficient:
+
+```ts
+const sdk = createGoodVibesSdk({
+  baseUrl: 'http://127.0.0.1:3421',
+  authToken: process.env.GOODVIBES_TOKEN,
+});
+```
+
+For daemon embedding in a Bun server host, call `dispatchDaemonApiRoutes(req, handlers)` inside your server's `fetch` handler. It returns `Promise<Response | null>`; when the result is `null`, no daemon route matched, so fall through to your own router:
+
+```ts
+import { dispatchDaemonApiRoutes } from '@goodvibes-jev/engine/sdk/daemon';
+
+// handlers: DaemonApiRouteHandlers; an optional extensions array can inject extra route dispatchers.
+Bun.serve({
+  async fetch(req) {
+    const res = await dispatchDaemonApiRoutes(req, handlers);
+    if (res) return res;
+    return new Response('Not found', { status: 404 }); // your own router goes here
+  },
+});
+```
+
+## Companion quickstart (React Native, Expo, browser, Cloudflare Workers)
+
+For companion apps and web UIs, use the runtime-specific entry point. These entry points contain no Bun globals and bundle cleanly with Metro, Vite, webpack, and esbuild.
+
+For a React Native or Expo deep-dive, see [React Native integration](./react-native-integration.md) and [Expo integration](./expo-integration.md). For browser and web UI, see [Browser integration](./browser-integration.md) and [Web UI integration](./web-ui-integration.md). For the optional Cloudflare Worker bridge around daemon batch routes, see [Daemon batch processing](./daemon-batch-processing.md).
+
+### React Native
+
+```ts
+import { createReactNativeGoodVibesSdk } from '@goodvibes-jev/engine/sdk/react-native';
+
+const token = await SecureStore.getItemAsync('gv-token');
+
+const sdk = createReactNativeGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  authToken: token,
+});
+
+// The daemon authenticates the upgrade request itself, so the WebSocket must
+// carry the bearer token as a header. React Native's WebSocket accepts
+// (url, protocols, { headers }); hand the SDK a wrapper that attaches it.
+// The full typed wrapper is in docs/react-native-integration.md.
+const AuthorizedWebSocket = function (url: string | URL): WebSocket {
+  return new (WebSocket as never)(String(url), [], {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+} as unknown as typeof WebSocket;
+
+const stop = sdk.realtime.viaWebSocket(AuthorizedWebSocket)
+  .agents.on('AGENT_COMPLETED', (event) => {
+    console.log(event);
+  });
+```
+
+### Expo
+
+```ts
+import { createExpoGoodVibesSdk } from '@goodvibes-jev/engine/sdk/expo';
+
+const sdk = createExpoGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  authToken: await SecureStore.getItemAsync('gv-token'),
+});
+```
+
+### Browser / web app
+
+```ts
+import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
+import { createBrowserTokenStore } from '@goodvibes-jev/engine/sdk/auth';
+
+const sdk = createBrowserGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  tokenStore: createBrowserTokenStore(),
+});
+
+// SSE for live dashboards:
+const stop = sdk.realtime.viaSse().agents.on('AGENT_COMPLETED', (event) => {
+  console.log('agent completed', event);
+});
+```
+
+### Cloudflare Worker batch bridge
+
+Cloudflare is optional and off by default. For onboarding, call the daemon's
+`/api/cloudflare/*` routes so the SDK validates the token and account and provisions
+Queues, DLQ, Worker secrets, queue consumer, and cron trigger.
+
+```ts
+import { createGoodVibesCloudflareWorker } from '@goodvibes-jev/engine/sdk/workers';
+
+// Reads GOODVIBES_DAEMON_URL, GOODVIBES_OPERATOR_TOKEN, and
+// GOODVIBES_WORKER_TOKEN from Worker environment bindings.
+export default createGoodVibesCloudflareWorker();
+```
+
+## Auth options: `tokenStore` vs `authToken`
+
+The SDK accepts two auth options, with the following precedence (highest first):
+
+1. **`tokenStore`.** A `GoodVibesTokenStore` object with `getToken`, `setToken`, and `clearToken`.
+   Recommended for any interactive or long-lived client.
+
+2. **`getAuthToken`.** An async resolver with signature `() => Promise<string | null>`.
+   Use for dynamic token resolution without the full store interface.
+
+3. **`authToken`.** A static value. The TypeScript type is `string | null | undefined`. Setting it to `null` or omitting it both mean "unauthenticated". Lowest precedence. Use only for short-lived scripts or when the token is static. See [client.ts JSDoc](../packages/sdk/src/client.ts) `Auth token precedence` block for the canonical type definition.
+
+When `tokenStore` is present, `auth.login()` and `auth.clearToken()` automatically persist changes through the store.
+
+## Login flow with token persistence
+
+```ts
+import { createGoodVibesSdk } from '@goodvibes-jev/engine/sdk';
+import { createMemoryTokenStore } from '@goodvibes-jev/engine/sdk/auth';
+
+const sdk = createGoodVibesSdk({
+  baseUrl: 'http://127.0.0.1:3421',
+  tokenStore: createMemoryTokenStore(),
+});
+
+await sdk.auth.login({
+  username: 'alice',
+  password: 'secret',
+});
+
+const current = await sdk.auth.current();
+console.log(current.principalId);
+```
+
+## Realtime transports
+
+```ts
+// SSE (Bun, browser dashboards)
+const stop = sdk.realtime.viaSse().agents.on('AGENT_COMPLETED', (event) => { /* handle */ });
+
+// WebSocket (React Native, Expo, persistent duplex)
+const stop = sdk.realtime.viaWebSocket().agents.on('AGENT_COMPLETED', (event) => { /* handle */ });
+```
+
+Recommended defaults:
+- Bun (TUI / daemon): SSE
+- Browser web UI: SSE for same-origin operator sessions
+- React Native / Expo: WebSocket
+
+## Error handling
+
+All SDK errors are instances of `GoodVibesSdkError` with a typed `kind` discriminant. Import from `@goodvibes-jev/engine/sdk/errors`:
+
+```ts
+import { GoodVibesSdkError } from '@goodvibes-jev/engine/sdk/errors';
+
+try {
+  await sdk.operator.control.snapshot();
+} catch (err) {
+  if (err instanceof GoodVibesSdkError) {
+    switch (err.kind) {
+      case 'auth':
+        // re-authenticate
+        break;
+      case 'network':
+        // check connectivity
+        break;
+      default:
+        throw err;
+    }
+  }
+  throw err;
+}
+```
+
+See [Error kinds reference](./error-kinds.md) for all `SDKErrorKind` values.
+
+## Observability
+
+The SDK ships an `SDKObserver` interface and a built-in `createConsoleObserver` adapter:
+
+```ts
+import { createGoodVibesSdk, createConsoleObserver } from '@goodvibes-jev/engine/sdk';
+
+const sdk = createGoodVibesSdk({
+  baseUrl: 'http://127.0.0.1:3421',
+  observer: createConsoleObserver(),
+});
+```
+
+See [Observability](./observability.md) for the `SDKObserver` interface and available adapters.
+
+## Choosing an entry point
+
+- `@goodvibes-jev/engine/sdk`: Bun full surface. Use this for TUI, daemon, and CLI apps.
+- `@goodvibes-jev/engine/sdk/daemon`: Bun server hosts embedding daemon routes.
+- `@goodvibes-jev/engine/sdk/react-native`: React Native (Hermes) companion apps.
+- `@goodvibes-jev/engine/sdk/expo`: Expo companion defaults and Expo secure token stores.
+- `@goodvibes-jev/engine/sdk/browser`: browser apps that need the full operator contract.
+- `@goodvibes-jev/engine/sdk/browser/knowledge`: base knowledge/wiki WebUI apps.
+- `@goodvibes-jev/engine/sdk/browser/homeassistant`: Home Assistant browser panels.
+- `@goodvibes-jev/engine/sdk/browser/agent`: agent-scoped browser companion. Routes Knowledge and Wiki calls to the Agent-owned knowledge environment.
+- `@goodvibes-jev/engine/sdk/web`: full browser and service-worker defaults for apps that need the complete operator contract. See [Web UI integration](./web-ui-integration.md).
+- `@goodvibes-jev/engine/sdk/operator`: operator/control-plane client only.
+- `@goodvibes-jev/engine/sdk/peer`: peer/distributed-runtime client only.
+- `@goodvibes-jev/engine/sdk/auth`: token storage helpers and auth flows.
+- `@goodvibes-jev/engine/sdk/errors`: typed error classes.
+- `@goodvibes-jev/engine/sdk/transport-*`: low-level transport primitives, including `@goodvibes-jev/engine/sdk/transport-direct` for an in-process direct transport.
+
+See [Package guide](./packages.md) for a full decision matrix, and the canonical [Public surface](./public-surface.md) for every published entry point.
+
+## Next reads
+
+- [Published surface matrix](./surfaces.md)
+- [Authentication](./authentication.md)
+- [Error handling](./error-handling.md)
+- [Error kinds reference](./error-kinds.md)
+- [Observability](./observability.md)
+- [Realtime and telemetry](./realtime-and-telemetry.md)
+- [Retries and reconnect](./retries-and-reconnect.md)
+- [Companion app patterns](./companion-app-patterns.md)
+- [Daemon embedding](./daemon-embedding.md)

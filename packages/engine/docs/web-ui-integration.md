@@ -1,0 +1,226 @@
+# Web UI integration
+
+This is the **companion surface** for web UI applications (browser runtime). See [Runtime Surfaces](./surfaces.md).
+
+Web UI apps cannot run the full agentic surface (tool execution, LSP, MCP, workflows, daemon HTTP). Those require Bun. This guide covers web-UI-specific patterns: entrypoint selection, companion chat, attachments, and voice playback. The shared browser foundation, auth, transport, realtime, error handling, and observability, lives in [Browser integration](./browser-integration.md).
+
+Use the narrowest browser entrypoint that matches the app. A normal GoodVibes
+WebUI that presents the base knowledge/wiki system should use
+`@goodvibes-jev/engine/sdk/browser/knowledge`; it contains base knowledge routes,
+shared session/auth/provider routes, and realtime domains without loading Home
+Assistant Home Graph route metadata. Use `@goodvibes-jev/engine/sdk/browser` only
+when the app intentionally needs the complete operator route contract.
+
+```ts
+import { createBrowserKnowledgeSdk } from '@goodvibes-jev/engine/sdk/browser/knowledge';
+
+const sdk = createBrowserKnowledgeSdk({
+  baseUrl: 'https://goodvibes.example.com',
+});
+```
+
+## Deployment topology: same-origin vs cross-origin
+
+The daemon can reach a browser two ways. Both are opt-in and off by default; the
+daemon stays loopback-only until you enable one.
+
+**Same-origin bundle serving (recommended).** Set `controlPlane.webui.serve` on and
+point `controlPlane.webui.bundleDir` at the built web UI directory (`index.html` +
+`assets/`). The daemon then serves the bundle at `/` from its own origin, so the
+browser's same-origin policy is a non-issue. Bundle and API share one origin. Static
+assets carry correct content types and caching (hashed `assets/*` immutable, the shell
+`no-cache`), and unknown navigation routes fall back to `index.html` (SPA). The daemon's
+own routes always keep precedence over the bundle: every `/api/*` path, `/login`,
+`/webhook/*`, `/task`, the OpenAI-compatible prefix, and every other top-level path
+segment any operator method advertises (for example `/status` and `/config`) is
+dispatched to the API and never served as a file, so an SPA fallback can never shadow
+a liveness probe or an admin read with the HTML shell. The bundle is public; the
+app still token-authenticates every API call.
+
+For cross-machine reach, front the single daemon origin with `tailscale serve` over
+HTTPS: bundle + API arrive same-origin on the Tailscale hostname with zero CORS. This
+is the supported remote path.
+
+**Cross-origin (dev or separate host).** When the UI is served from a different origin,
+the Vite dev server on `http://localhost:5173`, or a deliberately separate static host
+set `controlPlane.cors.enabled` on and list the exact browser origins in
+`controlPlane.cors.allowedOrigins` (comma-separated). The daemon then answers OPTIONS
+preflight and emits `Access-Control-Allow-*` only for those origins, never a wildcard,
+credentials allowlist-gated, `Authorization` allowed so the bearer-token flow works.
+A non-allowlisted origin is refused honestly (403 preflight, no allow-origin header).
+CORS controls only which origin may read a response; it does not change any route's auth
+or admin scoping.
+
+## Recommended model
+
+For a browser-based web UI:
+- use the narrowest scoped browser entrypoint
+- prefer same-origin cookie-backed auth when hosting the UI with the daemon
+- use `sdk.realtime.viaSse()` for dashboards and live status panes
+- use `sdk.knowledge.*` or `sdk.operator.invoke(...)` for the base knowledge/wiki methods exposed by the scoped entrypoint
+- use `sdk.chat.*` for standalone companion chat sessions
+- use `sdk.operator.invoke('control.snapshot', {})` for shared control-plane state
+- treat realtime as live update flow, not as the only source of truth
+
+## Choosing browser entrypoints
+
+`@goodvibes-jev/engine/sdk/browser/knowledge` is the default for the base GoodVibes
+WebUI. `@goodvibes-jev/engine/sdk/browser/homeassistant` is for Home Assistant
+panels and includes Home Graph routes without pulling the base knowledge/wiki
+route table. `@goodvibes-jev/engine/sdk/browser/agent` (via `createBrowserAgentSdk`)
+scopes to the GoodVibes Agent surface: the agent's own knowledge/wiki space
+served under `/api/goodvibes-agent/knowledge`, plus work-plan, artifact, and
+companion-chat routes. `@goodvibes-jev/engine/sdk/browser` and
+`@goodvibes-jev/engine/sdk/web` remain full all-method browser clients for
+applications that need the entire operator contract.
+
+See [public-surface.md](./public-surface.md) for the full entry-point reference.
+
+## Typical web UI pattern
+
+1. Load an initial snapshot with operator APIs.
+2. Subscribe to runtime events or telemetry streams.
+3. Refresh affected read models when key events arrive.
+4. Keep mutation calls on HTTP even when realtime is enabled.
+
+## Companion chat
+
+Use `sdk.chat` from `@goodvibes-jev/engine/sdk/browser/knowledge` for standalone
+browser chat. These sessions are separate from operator task sessions and do
+not call `sessions.followUp`.
+
+```ts
+const created = await sdk.chat.sessions.create({
+  title: 'WebUI chat',
+  provider: 'openai-subscriber',
+  model: 'gpt-5.5',
+});
+
+await sdk.chat.events.stream(created.sessionId, {
+  onEvent(eventName, payload) {
+    // companion-chat.turn.delta / companion-chat.turn.completed / companion-chat.turn.error
+  },
+});
+
+await sdk.chat.messages.create(created.sessionId, {
+  body: 'Hello',
+});
+```
+
+`provider` is the selected runtime provider row id from the model catalog, for
+example `openai-subscriber`. `model` is the selected model id for that provider
+row, for example `gpt-5.5`. When a runtime provider is an alias for a catalog
+provider, the daemon also accepts the provider-qualified registry key as
+`model`, such as `openai:gpt-5.5`, as long as `provider` remains the selected
+runtime provider row id.
+
+Use `sdk.chat.sessions.list()` for the chat sidebar and
+`sdk.chat.sessions.update(sessionId, { provider, model })` when a user changes
+the model for an existing companion-chat session. Do not send provider/model on
+`messages.create`; message creation uses the session's stored route.
+
+### Chat attachments
+
+Companion chat attachments are artifact-backed. Upload the file to the daemon
+artifact store first, then reference the returned artifact id when creating the
+chat message. Do not encode files in message metadata and do not create local
+attachment-only state in the WebUI.
+
+```ts
+const uploaded = await sdk.artifacts.create({
+  filename: file.name,
+  mimeType: file.type || 'application/octet-stream',
+  dataBase64: await fileToBase64(file),
+  metadata: { surface: 'webui' },
+});
+
+await sdk.chat.messages.create(created.sessionId, {
+  body: 'Use this file in your answer.',
+  attachments: [
+    {
+      artifactId: uploaded.artifact.id,
+      label: file.name,
+    },
+  ],
+});
+```
+
+`messages.create` accepts text-only, attachment-only, and text-plus-attachment
+messages, up to 8 attachments per message. Message history and
+`companion-chat.turn.started` events include the resolved attachment descriptors.
+
+What the daemon does with an attachment depends on its size and MIME type. A text
+artifact (`text/*`, `application/json`, `application/xml`, `application/yaml`, or
+`text/csv`) up to 200 KB is read back and inlined into the provider prompt as plain
+text. An image artifact (`image/png`, `image/jpeg`, `image/gif`, or `image/webp`) up
+to 20 MB is base64-encoded and passed as multimodal image content. Everything else,
+and anything over those size limits, stays a durable artifact reference: the model
+sees only a text summary listing the attachment's name, MIME type, and size, not
+its contents.
+
+## Voice playback (streaming TTS)
+
+`POST /api/voice/tts/stream` returns raw audio bytes as a stream (see
+[Voice and Streaming TTS](./voice.md)). A web UI owns local playback. Read the
+`fetch` response body as a `ReadableStream` and feed it to the Web Audio API or
+a `MediaSource` so audio starts before the full clip arrives.
+
+```ts
+const controller = new AbortController();
+const res = await fetch(`${baseUrl}/api/voice/tts/stream`, {
+  method: 'POST',
+  credentials: 'include',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ providerId: 'elevenlabs', text: 'Read this aloud' }),
+  signal: controller.signal,
+});
+
+if (!res.ok || !res.body) {
+  throw new Error(`tts/stream failed: ${res.status}`);
+}
+
+const mediaSource = new MediaSource();
+const audio = new Audio();
+audio.src = URL.createObjectURL(mediaSource);
+
+mediaSource.addEventListener('sourceopen', async () => {
+  const contentType = res.headers.get('content-type') ?? 'audio/mpeg';
+  const sourceBuffer = mediaSource.addSourceBuffer(contentType);
+  const reader = res.body!.getReader();
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    await new Promise((resolve) => {
+      sourceBuffer.addEventListener('updateend', resolve, { once: true });
+      sourceBuffer.appendBuffer(value);
+    });
+  }
+  mediaSource.endOfStream();
+});
+
+await audio.play();
+```
+
+The `Content-Type` and `X-GoodVibes-Audio-Format` response headers describe the
+audio encoding; use them to pick the `MediaSource` MIME type or Web Audio decode
+path. Call `controller.abort()` when the user stops playback so the daemon
+cancels the upstream provider stream.
+
+## Error handling
+
+All SDK errors extend `GoodVibesSdkError` and expose the same `kind` taxonomy
+across every browser surface. See
+[Browser Integration → Error handling](./browser-integration.md#error-handling)
+for the handling pattern and [Error Kinds](./error-kinds.md) for the full
+taxonomy.
+
+## Observability
+
+Observability works from web UI contexts exactly as on the full surface. Import
+observer helpers from `@goodvibes-jev/engine/sdk/observer` so scoped browser bundles
+stay narrow, and pass `createConsoleObserver()` as the `observer` option when
+creating the SDK. See
+[Browser Integration → Observability](./browser-integration.md#observability) for
+the shared example and [Observability](./observability.md) for the full observer
+API.

@@ -1,0 +1,120 @@
+# Browser integration
+
+This is the **companion surface** for browser runtimes. See [Runtime Surfaces](./surfaces.md).
+
+Browser apps cannot run the full agentic surface (tool execution, LSP, MCP, workflows, daemon HTTP). Those require Bun. This guide is the shared foundation for every browser entrypoint: auth, transport, realtime events, error handling, and observability. For web-UI-application patterns built on this foundation, entrypoint selection, companion chat, attachments, and voice playback, see [Web UI integration](./web-ui-integration.md).
+
+Use `@goodvibes-jev/engine/sdk/browser` when a browser app needs the complete
+operator route contract. Use scoped browser entrypoints when an app owns one
+extension surface:
+
+- `@goodvibes-jev/engine/sdk/browser/knowledge` for the base knowledge/wiki WebUI.
+- `@goodvibes-jev/engine/sdk/browser/homeassistant` for Home Assistant panels.
+- `@goodvibes-jev/engine/sdk/browser/agent` (`createBrowserAgentSdk`) for the GoodVibes Agent surface: the agent's own knowledge/wiki space under `/api/goodvibes-agent/knowledge`, plus work-plan, artifact, and companion-chat routes.
+
+```ts
+import { createBrowserGoodVibesSdk } from '@goodvibes-jev/engine/sdk/browser';
+
+const sdk = createBrowserGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+});
+```
+
+Scoped entrypoints expose the same auth/token options and shared session routes
+without loading unrelated route metadata:
+
+```ts
+import { createBrowserKnowledgeSdk } from '@goodvibes-jev/engine/sdk/browser/knowledge';
+
+const sdk = createBrowserKnowledgeSdk({
+  baseUrl: 'https://goodvibes.example.com',
+});
+
+await sdk.knowledge.status();
+```
+
+## Auth
+
+Preferred browser auth modes:
+- same-origin cookie session
+- bearer token when operating cross-origin or inside a custom shell
+
+The HTTP transport always uses `credentials: 'include'`, so same-origin cookie-backed sessions work without additional wiring.
+
+If you are using bearer tokens in the browser, pair the SDK with `createBrowserTokenStore()` or your own `tokenStore` implementation.
+
+## Realtime
+
+For browser UIs:
+- use `sdk.realtime.viaSse()` for operator dashboards and status views
+- use `sdk.realtime.viaWebSocket()` when you need a persistent duplex connection model
+
+The browser entrypoint also enables conservative defaults for:
+- HTTP retry on safe/idempotent requests
+- SSE reconnect
+- WebSocket reconnect
+
+## Example
+
+```ts
+const events = sdk.realtime.viaSse();
+const unsubscribe = events.agents.on('AGENT_COMPLETED', (event) => {
+  console.log(event);
+});
+```
+
+## Same-origin recommendation
+
+If the web UI is hosted with the daemon:
+- prefer same-origin routing
+- prefer cookie-backed session auth
+- use SSE for live operator dashboards
+
+If the app is cross-origin:
+- use bearer tokens
+- validate CORS explicitly
+- prefer WebSocket if the deployment path is hostile to SSE
+
+## Error handling
+
+All SDK errors extend `GoodVibesSdkError`. See [Error Kinds](./error-kinds.md) for the full taxonomy.
+
+```ts
+import { GoodVibesSdkError } from '@goodvibes-jev/engine/sdk/errors';
+
+try {
+  await sdk.operator.control.snapshot();
+} catch (err) {
+  if (err instanceof GoodVibesSdkError) {
+    switch (err.kind) {
+      case 'auth':
+        // session expired, redirect to login or refresh token
+        break;
+      case 'network':
+        // transport failure, reconnect SSE/WS or retry
+        break;
+      case 'service':
+        // daemon or upstream service returned 5xx, log and degrade gracefully
+        break;
+      case 'protocol':
+        // SDK/client and daemon disagreed about the wire contract
+        break;
+      default:
+        throw err;
+    }
+  }
+}
+```
+
+## Observability
+
+`SDKObserver` is the right mechanism for dev-time logging in browser consoles. `createConsoleObserver()` logs auth transitions (`console.log`) and errors (`console.error`) by default; pass `createConsoleObserver({ level: 'debug' })` to also trace transport activity and every runtime event via `console.debug`. See [Observability](./observability.md) for the full observer API.
+
+```ts
+import { createConsoleObserver } from '@goodvibes-jev/engine/sdk/observer';
+
+const sdk = createBrowserGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  observer: createConsoleObserver({ level: 'debug' }),
+});
+```

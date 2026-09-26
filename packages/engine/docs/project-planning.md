@@ -1,0 +1,336 @@
+# Project planning
+
+Project Planning is the SDK support layer for the TUI's conversational planning
+loop. It stores project-scoped planning artifacts in the knowledge system and
+can evaluate whether a plan is ready to execute, but it does not start,
+resume, or drive planning conversations.
+
+Accessible via `@goodvibes-jev/engine/sdk/platform/knowledge` (daemon embedders). Consumer apps interact through operator methods documented below.
+
+## Boundary
+
+The SDK never decides what to ask or when to ask it; it only stores what the
+conversation produces and reports whether the result is ready to execute. The
+TUI is what actually runs the planning conversation, and it owns:
+
+- **Detecting planning intent.** Recognizing, from ordinary conversation, that
+  the user wants to plan something rather than just chat or make a one-off
+  request.
+- **Inspecting the project.** Reading the repo, its docs, its settings, and
+  existing knowledge records before asking the user anything, so questions
+  are informed rather than generic.
+- **The interview loop.** Driving the back-and-forth that turns a vague ask
+  into a goal, a scope, and a list of open questions.
+- **Asking one question at a time.** Keeping the conversation disciplined
+  rather than dumping a checklist on the user at once.
+- **The passive planning panel.** Rendering the state the SDK returns as a
+  visible plan the user can watch build up.
+- **Execution approval.** Deciding when a plan is actually ready to hand to
+  agents, which the SDK can recommend against but never force.
+- **Agent assignment UX.** Presenting which agent would take which task and
+  letting the user confirm or change it.
+
+The SDK owns the passive infrastructure underneath that experience:
+
+- **Shared TypeScript types and operator contracts** that the TUI, webui, and
+  daemon all use to agree on the shape of a plan.
+- **Project-scoped durable planning artifacts**, the actual records described
+  below, persisted so a plan survives a restart.
+- **Project-language and ambiguity records**, so a term the user has already
+  clarified is not re-litigated in a later conversation or by a different
+  agent.
+- **Decision records**, for choices worth remembering beyond the code itself.
+- **Task, dependency, verification, and agent-assignment metadata**, the
+  structured pieces a plan decomposes into once it has a goal.
+- **Readiness evaluation**, which inspects a plan and returns concrete gaps
+  and a next question rather than a bare yes/no.
+- **Knowledge and wiki storage helpers**, since planning artifacts are stored
+  as ordinary knowledge records rather than a separate persistence system.
+
+The daemon never initiates planning on its own. It exposes storage and
+evaluation routes only. Home Assistant, companion apps, ntfy, Slack, webhooks,
+and other programmatic surfaces are not routed into planning loops by this
+feature.
+
+## Work plans
+
+Project work plans are the shared durable task model for TUI, WebUI, APK,
+daemon planning, and WRFC correlation. They replace surface-local task lists
+when a client needs project-scoped work tracking that survives process restarts
+and is visible across surfaces.
+
+Work-plan task records include a stable task id, title, notes, owner, status,
+priority/order, timestamps, source, tags, an optional parent task id, linked
+artifact/source/node ids, and the origin surface. A set of correlation fields
+ties each visible task back to the machinery that produced or worked it, so
+WRFC children and planning decisions never appear as unrelated work.
+
+| Correlation field | What it links the task to |
+| --- | --- |
+| `chainId` | The WRFC owner chain the task belongs to |
+| `phaseId` | The specific phase within that chain |
+| `agentId` | The agent currently or last working the task |
+| `turnId` | The conversation turn that produced the task |
+| `decisionId` | The recorded planning decision behind the task |
+| `sourceMessageId` | The message the task originated from |
+
+The SDK validates the work-plan status vocabulary
+(`ProjectWorkPlanTaskStatus`), and status transitions go through the dedicated
+status route rather than free-form patches.
+
+| Status | What it means |
+| --- | --- |
+| `pending` | Created and waiting to be picked up |
+| `in_progress` | Actively being worked |
+| `blocked` | Cannot proceed until something else resolves |
+| `done` | Completed successfully |
+| `failed` | Ended without completing |
+| `cancelled` | Deliberately abandoned |
+
+Do not confuse this with `ProjectPlanningTaskStatus`, the separate enum used by
+the planning-state `tasks` field (`ProjectPlanningTask`). Its members are
+hyphenated (`in-progress` rather than `in_progress`), it says `completed`
+rather than `done`, it has no `failed` or `cancelled`, and it adds `deferred`
+for work postponed by a planning decision.
+
+Operator methods are exposed under `projectPlanning.workPlan.*` and daemon
+routes under `/api/projects/planning/work-plan`. Clients should use those
+routes instead of reading TUI-local files. TUI-local work-plan storage can be
+used as a migration/fallback cache, but the SDK store is the shared product
+model.
+
+Task changes emit planner-domain events so clients can refresh snapshots or
+apply deltas instead of polling.
+
+| Event | When it fires |
+| --- | --- |
+| `WORK_PLAN_TASK_CREATED` | A new task was created |
+| `WORK_PLAN_TASK_UPDATED` | A task's fields were patched |
+| `WORK_PLAN_TASK_STATUS_CHANGED` | A task moved through the status route |
+| `WORK_PLAN_TASK_DELETED` | A task was removed |
+| `WORK_PLAN_SNAPSHOT_INVALIDATED` | A bulk change made cached snapshots stale, such as a reorder or clear-completed |
+
+WRFC and planning integrations should link visible tasks to owner chains and
+phase children through the correlation fields rather than presenting child
+agents as unrelated work.
+
+## Knowledge spaces
+
+Planning artifacts live in project knowledge spaces:
+
+```text
+project:<projectId>
+```
+
+Routes accept either `projectId` or a full `knowledgeSpaceId`. If neither is
+provided, the daemon uses a stable project id derived from its working
+directory. TUI clients should still pass their own stable project id so
+workspace-specific planning, language, decisions, and future wiki pages do not
+bleed across unrelated projects.
+
+Project spaces are isolated by default. Related projects can link records
+explicitly later, but reads and writes for this feature default to the current
+project space only.
+
+## Artifacts
+
+Planning records are stored as `KnowledgeSourceRecord` rows with:
+
+- `connectorId: "goodvibes-project-planning"`
+- `sourceType: "dataset"`
+- `metadata.projectPlanning: true`
+- `metadata.planningArtifactKind`, one of the four kinds below
+- `metadata.planningArtifactId`, the id of the individual record (a task id, a decision id)
+- `metadata.projectId`
+- `metadata.knowledgeSpaceId`
+- `metadata.value`, the artifact itself
+
+Artifact kinds:
+
+| Kind | Purpose |
+|---|---|
+| `state` | Live planning state for the current project conversation |
+| `decision` | Durable decision record for meaningful choices |
+| `language` | Canonical project vocabulary and resolved ambiguities |
+| `work-plan` | Shared durable project task list; persisted as a planning artifact (see Work Plans above) |
+
+This keeps planning integrated with the knowledge/wiki store without adding a
+separate persistence system.
+
+## Planning state
+
+The planning state shape is designed for the TUI planning panel and execution
+handoff:
+
+```ts
+{
+  id: string;
+  projectId: string;
+  knowledgeSpaceId: string;
+  goal: string;
+  scope?: string;
+  knownContext: string[];
+  openQuestions: ProjectPlanningQuestion[];
+  answeredQuestions: ProjectPlanningQuestion[];
+  decisions: ProjectPlanningDecision[];
+  assumptions: string[];
+  constraints: string[];
+  risks: string[];
+  tasks: ProjectPlanningTask[];
+  dependencies: ProjectPlanningDependency[];
+  verificationGates: ProjectPlanningVerificationGate[];
+  agentAssignments: ProjectPlanningAgentAssignment[];
+  readiness: "not-ready" | "needs-user-input" | "executable";
+  executionApproved: boolean;
+  createdAt: number;
+  updatedAt: number;
+  metadata?: Record<string, unknown>;
+}
+```
+
+The SDK does not decide what the TUI should ask next by itself. It returns gaps
+and a suggested `nextQuestion` so the TUI can keep the conversation disciplined
+while preserving conversational control.
+
+## Readiness evaluation
+
+`ProjectPlanningService.evaluate()` and
+`POST /api/projects/planning/evaluate` are pure evaluators. They do not persist
+state unless the caller separately upserts state.
+
+The evaluator checks for:
+
+- missing goal
+- missing scope or constraints
+- unresolved questions
+- ambiguous language such as `better`, `improve`, or `agent channel`
+- missing task decomposition
+- missing dependency graph for multi-task plans
+- missing verification gates
+- missing user approval before execution
+
+The output contains:
+
+- `readiness`
+- `gaps`
+- `nextQuestion` when a gap has a concrete question
+- the normalized state with the evaluated readiness
+
+## Decision records
+
+Decision records should be used for meaningful project choices, not every small
+implementation detail. A decision belongs here when reversal would be expensive,
+when maintainers need context beyond the code, or when real alternatives and
+tradeoffs existed.
+
+Stored fields include:
+
+- title
+- context
+- chosen decision
+- rejected alternatives
+- reasoning
+- consequences
+- status
+
+## Project language
+
+Project language records prevent future TUI turns and agents from re-litigating
+terminology. They can store:
+
+- canonical terms
+- terms to avoid because they are ambiguous
+- aliases
+- relationships between concepts
+- example scenarios
+- resolved ambiguity records
+
+Example:
+
+```json
+{
+  "terms": [
+    {
+      "term": "Surface",
+      "definition": "A user-facing channel where GoodVibes can receive or send interaction.",
+      "avoid": ["client", "integration"]
+    }
+  ],
+  "ambiguities": [
+    {
+      "phrase": "agent channel",
+      "resolution": "Use ntfy chat channel for normal chat and ntfy agent channel for background agent work."
+    }
+  ]
+}
+```
+
+## Routes
+
+| Route | Method | Admin | Purpose |
+|---|---|---:|---|
+| `/api/projects/planning/status` | `GET` | no | Return artifact counts and passive capabilities |
+| `/api/projects/planning/state` | `GET` | no | Read the current planning state |
+| `/api/projects/planning/state` | `POST` | yes | Persist planning state and evaluated readiness |
+| `/api/projects/planning/evaluate` | `POST` | no | Evaluate inline or stored state without mutating |
+| `/api/projects/planning/decisions` | `GET` | no | List project decisions |
+| `/api/projects/planning/decisions` | `POST` | yes | Record a project decision |
+| `/api/projects/planning/language` | `GET` | no | Read project vocabulary and ambiguity records |
+| `/api/projects/planning/language` | `POST` | yes | Update project vocabulary and ambiguity records |
+| `/api/projects/planning/work-plan` | `GET` | no | Read the work-plan snapshot |
+| `/api/projects/planning/work-plan/tasks` | `GET` | no | Read the work-plan snapshot (task view) |
+| `/api/projects/planning/work-plan/tasks` | `POST` | yes | Create a work-plan task |
+| `/api/projects/planning/work-plan/tasks/reorder` | `POST` | yes | Reorder work-plan tasks |
+| `/api/projects/planning/work-plan/clear-completed` | `POST` | yes | Clear completed work-plan tasks |
+| `/api/projects/planning/work-plan/tasks/:taskId` | `GET` | no | Get a single work-plan task |
+| `/api/projects/planning/work-plan/tasks/:taskId` | `PATCH` | yes | Update a work-plan task |
+| `/api/projects/planning/work-plan/tasks/:taskId` | `DELETE` | yes | Delete a work-plan task |
+| `/api/projects/planning/work-plan/tasks/:taskId/status` | `POST` | yes | Set a work-plan task status |
+
+Each operator method mirrors one of the routes above; the planning methods
+manage the interview and decision artifacts, and the work-plan methods manage
+durable tasks.
+
+| Method | What it does |
+| --- | --- |
+| `projectPlanning.status` | Return passive planning artifact counts and capabilities without starting a planning loop |
+| `projectPlanning.state.get` | Return the current project-scoped planning state artifact |
+| `projectPlanning.state.upsert` | Persist planning state from the interview loop and evaluate readiness |
+| `projectPlanning.evaluate` | Validate planning state and return gaps and next-question hints without mutating anything |
+| `projectPlanning.decisions.list` | Return durable decision records from the project planning space |
+| `projectPlanning.decisions.record` | Persist a meaningful project decision for future context |
+| `projectPlanning.language.get` | Return canonical project vocabulary and resolved ambiguity records |
+| `projectPlanning.language.upsert` | Persist vocabulary and ambiguity resolutions without touching live sessions |
+| `projectPlanning.workPlan.snapshot` | Return the durable work-plan snapshot with tasks and status counts |
+| `projectPlanning.workPlan.tasks.list` | List tasks with optional status, owner, parent, or WRFC-chain filters |
+| `projectPlanning.workPlan.task.create` | Create a durable work-plan task |
+| `projectPlanning.workPlan.task.get` | Fetch one task by id |
+| `projectPlanning.workPlan.task.update` | Patch a task |
+| `projectPlanning.workPlan.task.status` | Validate and apply a status transition |
+| `projectPlanning.workPlan.task.delete` | Delete a task |
+| `projectPlanning.workPlan.tasks.reorder` | Replace the work plan's task ordering |
+| `projectPlanning.workPlan.clearCompleted` | Remove completed tasks, clearing `done` only by default |
+- `projectPlanning.workPlan.tasks.reorder`
+- `projectPlanning.workPlan.clearCompleted`
+
+## TUI integration shape
+
+The TUI should use this feature as a passive backing store:
+
+1. Detect planning intent in a normal conversation.
+2. Inspect code, docs, settings, and existing project knowledge before asking.
+3. Upsert planning state as context is discovered.
+4. Call `projectPlanning.evaluate` for readiness gaps.
+5. Ask one precise question at a time in the normal conversation.
+6. Update project language and decision records as answers resolve ambiguity.
+7. Decompose tasks, dependencies, verification gates, and agent assignments.
+8. Request user approval before execution.
+9. Execute locally or delegate agents only after approval.
+
+The planning panel can render the same state returned by the SDK. The daemon
+does not own panel state or conversational transitions.
+
+## Next reads
+
+- [Runtime orchestration](./runtime-orchestration.md): how WRFC chains and agent work correlate to work-plan tasks.
+- [Automation and watchers](./automation.md): operator-method families for daemon-hosted jobs and schedules.

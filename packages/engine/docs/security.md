@@ -1,0 +1,498 @@
+# GoodVibes SDK security best practices
+
+> **Surface scope:** This document describes the security model for the **full surface (Bun runtime)**. Companion consumers (React Native, browser, Hermes) operate through the subset of the security stack exposed via `./react-native`, `./browser`, and related companion-surface barrels. See [Runtime Surfaces](./surfaces.md) for the full surface breakdown.
+
+This guide covers the security model of the GoodVibes daemon and SDK. It is intended for operators embedding the daemon, developers building surfaces, and anyone configuring authentication for production deployments.
+
+For vulnerability reporting, see [`SECURITY.md`](../SECURITY.md) at the repo root.
+
+---
+
+## Authentication modes
+
+The daemon accepts bearer tokens and session cookies. A presented bearer token is checked
+against three sources in order, a per-device pairing token first, then the legacy shared token,
+then a user session. Only the shared-token and session-login paths are configured at daemon
+startup; per-device pairing tokens are minted on demand whenever a device pairs.
+
+### Per-device pairing tokens
+
+**When to use:** this is the current pairing mechanism for companion apps and browsers. See
+[Companion app pairing](./pairing.md) for the full mint/revoke/migrate flow.
+
+Every device that pairs mints its own named, individually-revocable token
+(`PairingTokenManager`, prefix `gvp_`) instead of sharing one operator-wide token. Only a
+SHA-256 hash of each token is persisted; the plaintext is returned exactly once, at mint
+time. Revoking one device's token (`pairing.tokens.delete`) leaves every other paired
+device working. A device pairing while already at the `device.nodes.maxPaired` cap that is
+re-pairing under its existing name supersedes its own prior token rather than being
+refused; a genuinely new device at the cap is refused with a named, actionable error.
+
+A device still holding the legacy shared token calls `pairing.tokens.migrate` once to mint
+its own per-device token without disrupting other clients; `pairing.tokens.revokeShared`
+then turns the legacy shared token off entirely, after which only per-device tokens and
+user sessions authenticate.
+
+A paired device (per-device token or legacy shared token) carries the same operator
+authority as the shared token: `isOperatorAdmin()` returns true for either.
+
+### Shared bearer token
+
+**When to use:** local development, single-user deployments, service-to-service connections where you control both ends.
+
+A single static token is configured. Every request that presents this token is granted full access. Authentication hashes both the presented and configured token to fixed-length SHA-256 digests and compares those digests with a constant-time comparison (`timingSafeEqual`). Hashing first guarantees both buffers are 32 bytes, so neither an early-exit nor a buffer-length check can leak token length through a timing side-channel:
+
+```ts
+function matchesSharedToken(token: string, sharedToken: string): boolean {
+  // Hash both sides to 32-byte SHA-256 digests so the buffers are always equal
+  // length before timingSafeEqual. There is deliberately no early-return on a
+  // length mismatch, which would otherwise leak token length via timing.
+  const aHash = createHash('sha256').update(token).digest();
+  const bHash = createHash('sha256').update(sharedToken).digest();
+  return timingSafeEqual(aHash, bHash);
+}
+```
+
+**Implications:**
+- No user concept; all requests are effectively admin
+- Token exposure means full daemon compromise
+- Suitable only when network access to the daemon is already restricted (localhost, private LAN, VPN)
+- Do not use in multi-user environments
+
+### Session login
+
+**When to use:** multi-user deployments, web UI access, companion apps where individual identity matters.
+
+Users authenticate with a username and password via the login endpoint. On success, the daemon issues a session token (random 32-byte hex string). Subsequent requests present this token as a bearer credential or in the `goodvibes_session` cookie.
+
+`UserAuthManager` manages the user store and sessions:
+- Passwords are hashed with **scrypt** (64-byte key, random salt). The stored hash format is `base64(salt):N:r:p:base64(derived)` (salt, the scrypt cost parameters, then the derived key); the legacy 2-part `salt:hash` form is still accepted on verify for backward compatibility
+- Default session TTL is **1 hour** (`DEFAULT_SESSION_TTL_MS = 3_600_000`)
+- Sessions are pruned on access; expired sessions are rejected and cleaned up
+- Local auth status reports expose `tokenFingerprint` only; raw session bearer tokens are not returned by status APIs
+- On first boot with no user store, the daemon bootstraps a default admin account and writes a plaintext credential file for initial login; this file should be deleted after the first login
+- Login failures are locked out per account, independent of the per-IP login rate limiter below. Failures are tracked by username and never leak whether the username exists; an unknown username still runs a constant-time password check against a dummy hash. The lockout escalates with repeated failures, 30 seconds at 6-9 failures, 5 minutes at 10-19, and 30 minutes at 20 or more. The thresholds are set above the default 5-per-minute IP login budget so the per-IP limiter throttles an attacker before the account lock engages for a normal in-budget attempt. A successful login clears the failure count.
+
+Session tokens are carried as:
+1. `Authorization: Bearer <token>` header
+2. `goodvibes_session` cookie (HTTP-only, SameSite=Lax, Secure when on HTTPS)
+
+The session cookie is set on login and cleared on logout by the daemon's internal cookie builders (`buildOperatorSessionCookie()` / `buildExpiredOperatorSessionCookie()`). These builders are daemon-host HTTP wiring and are **not** exported from the `@goodvibes-jev/engine/sdk/platform/security` barrel.
+
+**Role model:**
+- Users may have any combination of string roles
+- `isOperatorAdmin()` returns true for shared-token requests, per-device pairing-token requests, OR for session users with the `admin` role
+- Admin-gated routes call `requireElevatedAccess` before proceeding
+
+---
+
+## Token management
+
+**Public subpath:** `@goodvibes-jev/engine/sdk/platform/security`: exports `SpawnTokenManager`, `ApiTokenAuditor`, the `TokenScopePolicy` type, `UserAuthManager`, `isOperatorAdmin`, and `authenticateOperatorToken`. (The operator session cookie builders referenced above are internal daemon wiring and are not part of this barrel.)
+
+### Spawn tokens
+
+`SpawnTokenManager` governs sub-agent spawning. When the orchestrator spawns an agent, it issues a cryptographically signed `SpawnToken`:
+
+```ts
+interface SpawnToken {
+  type: 'orchestrator' | 'agent';
+  sessionId: string;
+  issuedTo: string;     // agent ID
+  issuedBy: string;     // issuing agent or orchestrator ID
+  depth: number;        // current nesting depth
+  maxDepth: number;     // configured depth limit
+  canGenerate: boolean; // whether this token may generate child tokens
+  expiresAt: number;    // epoch ms expiry
+  signature: string;    // HMAC-SHA256 over the token fields
+}
+```
+
+Tokens are signed with a per-session HMAC secret. Before spawning, `canSpawn()` checks, in order:
+1. Recursion is enabled in the `OrchestrationPolicyConfig`
+2. Total active agent count is within `maxActiveAgents`
+3. Nesting depth is within the configured `maxDepth`
+4. Token signature is valid, registered, and not revoked
+5. Token has not expired (default TTL: 1 hour)
+
+Tokens can be revoked by signature via `revoke(tokenSignature)`. Revoked tokens are rejected even if unexpired.
+
+### API token auditing
+
+`ApiTokenAuditor` enforces scope minimization and rotation cadence for registered API tokens (LLM provider keys, integration credentials, etc.).
+
+**Two audit dimensions:**
+
+1. **Scope audit.** Each token is evaluated against its `TokenScopePolicy`. Tokens holding scopes outside `allowedScopes` are flagged as violations.
+2. **Rotation audit.** Tokens are checked against the policy's `rotationCadenceMs` (default: **90 days**). A warning is emitted when `msUntilDue ≤ rotationWarningThresholdMs` (default: **14 days**). When overdue, the token is flagged.
+
+**Managed vs advisory mode:**
+
+| Mode | Behavior |
+|---|---|
+| `managed: true` | Tokens with scope violations or overdue rotation are **blocked** from use |
+| `managed: false` | Violations are reported via `SecurityEvent` emissions but tokens remain usable |
+
+> **Settings gate:** managed-mode blocking only takes effect while `security.tokenAudit.enabled` is on (its default). With the audit off, even `managed: true` instances behave as advisory. See [Feature settings](./feature-settings.md) for how capabilities are configured.
+
+```ts
+const auditor = new ApiTokenAuditor({ managed: true });
+auditor.registerPolicy({
+  id: 'openai',
+  name: 'OpenAI API',
+  allowedScopes: ['completions:write', 'models:read'],
+  rotationCadenceMs: 90 * 24 * 60 * 60 * 1000,
+});
+auditor.registerToken({
+  id: 'tok_main',
+  label: 'OPENAI_API_KEY',
+  issuedAt: Date.now(),
+  grantedScopes: ['completions:write', 'models:read'],
+  policyId: 'openai',
+});
+const report = auditor.auditAll();
+```
+
+On rotation: call `deregisterToken(oldId)` then `registerToken(newMetadata)` to update the registry.
+
+### Token storage recommendations
+
+- **Per-device pairing tokens** are stored, hashed, under `<surfaceRoot>/control-plane/pairing-tokens.json` (a daemon's `surfaceRoot` is `tui` for historical reasons; see [Companion app pairing](./pairing.md)). Only a SHA-256 hash is persisted; the plaintext is returned once, at mint time.
+- **The legacy shared/operator token** is stored at `<daemonHomeDir>/operator-tokens.json` (default: `~/.goodvibes/daemon/operator-tokens.json`). The file is written at mode `0600`. Consumers should keep the daemon-home directory outside any project tree.
+- **Session tokens** are in-memory only; they are not persisted to disk.
+- **Spawn tokens** are in-memory per session; they expire automatically.
+- **API keys and provider credentials** should be stored via `SecretsManager` in secure (encrypted) mode, not plaintext. See [Secret Management](#secret-management) below.
+
+---
+
+## Companion app pairing
+
+**Public subpath:** `@goodvibes-jev/engine/sdk/platform/pairing` (daemon embedders).
+
+Pairing connects a companion app or browser to the daemon without requiring the user to
+manually enter credentials, by scanning a QR code or opening a deep link. For the full
+pairing walkthrough, both the current per-device token flow and the legacy shared-token
+flow, the deep-link/QR content, offer set, migration path, and client integration, see
+[Companion app pairing](./pairing.md).
+
+### Security properties
+
+1. **Two token shapes.** The current mechanism mints a named, individually-revocable
+   **per-device token** (prefix `gvp_`) for every pairing; only its SHA-256 hash is
+   persisted, and the plaintext is returned exactly once, at mint time. The **legacy
+   shared token** (prefix `gv_`, `randomBytes(24)` base64url-encoded, 192 bits of entropy)
+   is stored in full at `<daemonHomeDir>/operator-tokens.json` and is shared by every
+   client that has not migrated off it.
+
+2. **Deep link, not a raw connection blob.** The current QR/deep-link content is the
+   `#pair=<token>` URL fragment (plus an `offers=` key); the legacy flow instead encoded a
+   raw JSON connection object as the QR content. A `#` fragment is never sent to a server,
+   so the current flow's one-time token cannot leak through an access log or `Referer`
+   header.
+
+3. **No challenge-response.** Pairing is a direct token transfer. Security relies on the
+   QR/link being shown only in a trusted context, the transport using TLS when the daemon
+   is reachable over a network, and the token being individually revocable
+   (`pairing.tokens.delete` for a per-device token; `pairing.tokens.revokeShared` turns the
+   legacy shared token off for everyone using it).
+
+4. **Connection.** After scanning, the companion app connects using `transport-http` with
+   `Authorization: Bearer <token>`. The daemon validates this through the normal
+   `authenticateOperatorToken()` path, which checks per-device pairing tokens before the
+   legacy shared token.
+
+5. **Device cap.** Pairing a device beyond the configured `device.nodes.maxPaired` limit is
+   refused with a named, actionable error rather than silently succeeding; a device
+   re-pairing under a name it already holds is never refused by the cap.
+
+---
+
+## Network security
+
+### Security settings report
+
+SDK hosts can expose a user-facing explanation of security-relevant settings with:
+
+- `getSecuritySettingsReport(gates)` from the runtime surface
+- `IntegrationHelperService.getSecuritySettingsReport()`
+- daemon `GET /api/security-settings`
+- gateway method `security.settings`
+
+Each report entry includes the setting key, default state, current state, what the setting does, why the disabled state is less restrictive, what enabling it changes, and any operational requirements. This is intended for TUI/onboarding flows so users see exactly which security-relevant settings are on, off, and why.
+
+The current report covers ten security-sensitive settings, each guarding one
+enforcement mechanism. Their enablement shapes and defaults are in the
+[feature settings catalog](./feature-settings.md); the security angle of each
+is what it guards.
+
+| Setting | What it guards |
+| --- | --- |
+| `fetch.sanitizeMode` | How untrusted web content is sanitized before the model sees it |
+| `permissions.engine` | Whether the layered policy engine evaluates tool/path/parameter rules |
+| `permissions.simulation` | Shadow dual-evaluation that records permission divergences without blocking |
+| `permissions.divergenceDashboard` | The divergence aggregation that gates enforce-mode transitions |
+| `policy.registryEnabled` | The policy bundle promote/rollback registry |
+| `policy.requireSignedBundles` | HMAC validation of policy bundles in managed mode |
+| `runtime.toolBudget.enforced` | Hard wall-clock, token, and cost limits on tool execution |
+| `permissions.commandParser` | Per-segment AST evaluation of shell commands before execution |
+| `security.tokenAudit.enabled` | Advisory auditing of token scopes and rotation |
+| `tools.contractVerification` | Registration-time verification that keeps malformed tools out of the registry |
+
+### TLS
+
+When the daemon is accessed over a network (not localhost), TLS is strongly recommended. The session cookie system sets the `Secure` attribute automatically when the request comes over HTTPS (or via a trusted proxy with `X-Forwarded-Proto: https`):
+
+```ts
+function isSecureRequest(req: Request, trustProxy = false): boolean {
+  // checks req.url protocol, then x-forwarded-proto if trustProxy
+}
+```
+
+For reverse proxies (nginx, Caddy, Traefik), set `trustProxy: true` in the daemon config so the `Secure` cookie attribute is applied correctly.
+
+### CORS
+
+CORS policy should be configured at the network edge (reverse proxy) or in the daemon's HTTP server configuration. Do not rely on the browser's same-origin restriction alone when deploying the web UI on a different origin than the daemon.
+
+### Rate Limiting {#rate-limiting}
+
+The daemon ships two built-in rate limiters:
+
+- **General rate limiter.** 60 requests per minute per IP address (configurable via `rateLimit` option). Applied to all routes except login.
+- **Login rate limiter.** 5 requests per minute per IP address (configurable via `loginRateLimit` option). Applied to `POST /login` to prevent online brute-force attacks.
+
+For production deployments, place an additional rate-limiting reverse proxy (nginx, Traefik middleware, Cloudflare) **in front of** the daemon to provide a defence-in-depth second layer and to protect against:
+- High-volume denial-of-service via expensive LLM requests that the per-IP limiter alone may not catch
+- Enumeration attacks on the knowledge or session endpoints from rotating IPs
+- Distributed login brute-force from botnets that bypass per-IP limits
+
+The reverse proxy rate limiter supplements the daemon's built-in limits; do not remove the built-in limits when adding a proxy.
+
+### Private host SSRF protection
+
+The remote fetch proxy has explicit SSRF protection via `resolvePrivateHostFetchOptions()` (in `http-policy.ts`), applied by the media and artifact fetch routes. When a client requests a fetch to a private/internal host, the daemon checks:
+1. `network.remoteFetch.allowPrivateHosts` must be `true` in config (disabled by default)
+2. Elevated access must be granted (`requireElevatedAccess` returns null)
+
+If either check fails, the request is rejected with HTTP 403. Do not enable `allowPrivateHosts` unless your deployment specifically requires internal URL resolution.
+
+The `fetch` tool sanitizes responses by default (`fetch.sanitizeMode`, default `safe-text`). It classifies initial hosts and every redirect target before reading the response, blocks private/link-local/cloud-metadata targets absolutely, gates localhost dev servers behind a one-tap per-project approval (`fetch.allowLocalhost`), applies unknown-host safe-text sanitization, and stops reading once `max_content_length` is reached. Setting `fetch.sanitizeMode` to `none` skips content sanitization only. Host blocking is unaffected.
+
+---
+
+## Secret management
+
+**Public subpath:** `@goodvibes-jev/engine/sdk/platform/config` (daemon embedders).
+
+### SecretsManager
+
+`SecretsManager` provides layered credential storage with three enforced policies:
+
+| Policy | Description | Use Case |
+|---|---|---|
+| `plaintext_allowed` | Secrets may be written to unencrypted files | Local development only |
+| `preferred_secure` | Use encrypted storage when available; fall back to plaintext | Default for most deployments |
+| `require_secure` | Reject all plaintext writes; encrypted storage is mandatory | Production / multi-user |
+
+Encrypted stores use AES-256-GCM with a key derived at runtime. Plaintext stores are JSON files, useful for development but not suitable for production.
+
+The read order follows a precedence hierarchy:
+1. Environment variables (highest precedence, always checked first)
+2. Project-scoped secure store
+3. Project-scoped plaintext store
+4. User-scoped secure store
+5. User-scoped plaintext store (lowest precedence)
+
+Use `inspect()` to audit the current storage state: it reports the active policy, whether secure storage is available, how many keys are in each store, and any warnings about plaintext storage of sensitive keys.
+
+### Secret refs
+
+Instead of storing secret values directly in config files, use secret references, a URI (`goodvibes://secrets/...`) or a structured object pointing to an external secret source. The supported sources (`env`, `goodvibes`, `file`, `exec`, `1password`, `bitwarden`/`vaultwarden`, `bitwarden-secrets-manager`/`bws`), the `goodvibes://` URI shape, and resolution semantics (`resolveSecretRef()`) are documented canonically in [Secret References](./secrets.md). The generic `secret://...` scheme is intentionally not accepted.
+
+Slack setup uses this same URI mechanism. Direct setup writes Slack token values to the GoodVibes secret store and places references such as `goodvibes://secrets/goodvibes/SLACK_BOT_TOKEN` and `goodvibes://secrets/goodvibes/SLACK_APP_TOKEN` in config. Service-registry based Slack setup can use `primary`, `signingSecret`, `webhookUrl`, and `appToken` fields.
+
+**Best practices:**
+- Prefer `1password` or `bitwarden-secrets-manager` for production deployments
+- Use `env` refs for CI/CD pipelines
+- Use `exec` refs sparingly and validate the command does not echo secrets to stderr
+- Never commit `goodvibes://secrets/goodvibes/...` refs that point to keys only present in a plaintext local store
+
+---
+
+## Permission system
+
+**Public subpath:** `@goodvibes-jev/engine/sdk/platform/runtime`: use the `security.*` namespace for policy simulation and signed policy bundles. Tool-execution permission checks remain daemon-host wiring.
+
+Every tool call goes through the `PermissionManager` before execution.
+
+### Categories
+
+| Category | Tools | Examples |
+|---|---|---|
+| `read` | File reads, information queries | `read_file`, `list_directory`, `search` |
+| `write` | File writes, state mutations | `write_file`, `edit_file`, `create_directory` |
+| `execute` | Shell execution, process spawning | `bash`, `exec`, `run_script` |
+| `delegate` | Agent spawning, ACP tasks | `precision_agent`, delegate tools |
+
+### Risk levels
+
+`analyzePermissionRequest()` classifies each tool call:
+
+| Risk Level | Criteria |
+|---|---|
+| `low` | Read-only access to project files; no side effects |
+| `medium` | Writes within the project directory; bounded blast radius |
+| `high` | Writes outside project, shell execution, external network access |
+| `critical` | Writes to system paths, secrets exposure detection, destructive operations |
+
+The analyzer detects inline secrets in command arguments using pattern matching (`SECRET_NAME_PATTERN`, `INLINE_SECRET_PATTERN`) and flags them as critical risk.
+
+### Decision sources
+
+Permission decisions are evaluated in this order, and the first layer that reaches an
+opinion wins:
+
+1. **`behavior.autoApprove`.** When true, every call is approved (`sourceLayer:
+   config_policy`, `reasonCode: config_allow`) before anything else runs.
+2. **`permissions.mode`.** Four of the five modes settle most calls outright:
+   `allow-all` approves everything (`mode_allow_all`); `plan` allows reads and refuses
+   every mutating/exec/delegate call with a structured plan-mode denial (`plan_mode`),
+   steering the model toward presenting a plan instead of acting; `accept-edits`
+   auto-approves reads and file writes (`mode_accept_edits`) but lets `execute`/`delegate`
+   calls fall through to the layers below; `custom` checks the per-tool
+   `permissions.tools` setting (`config_allow` / `config_deny`, or falls through on
+   `prompt`). The fifth mode, the default `prompt`, auto-approves reads (except a
+   gated credential-store read) and falls through for everything else.
+3. **The policy engine**, only when the `permissions-policy-engine` feature is on. It
+   layers hardcoded safety guardrails (`safety_check` / `safety_guardrail`, deny-only,
+   cannot be overridden) over programmatic policies registered at runtime
+   (`managed_policy`) over the mode/default layers above.
+4. **`session_override`.** A cached allow/deny decision from earlier in this session.
+5. **`user_rule`.** A durable, remembered decision that survives a restart (distinct from
+   the in-memory session cache).
+6. **`user_prompt`.** Falls through to an interactive prompt; the operator's choice can be
+   remembered as a session or durable rule for next time.
+
+`checkDetailed()` returns a `PermissionCheckResult` with `approved: boolean`, `persisted: boolean` (whether to cache for session), `sourceLayer`, `reasonCode`, and the full `analysis`.
+
+### Auto-approve policies
+
+When `behavior.autoApprove: true` is set in config (default `false`), all tool calls are approved without prompting; the decision is reported with `sourceLayer: config_policy` and `reasonCode: config_allow`. The distinct `permissions.mode: 'allow-all'` setting also approves every call, but reports `reasonCode: mode_allow_all`. This is appropriate for headless automation runs. For interactive use, leave this disabled and configure explicit per-tool permissions, or use `plan` mode to require an explicit plan before any mutating call:
+
+```yaml
+permissions:
+  mode: custom
+  tools:
+    read: allow
+    find: allow
+    exec: prompt
+    write: prompt
+```
+
+---
+
+## Daemon security hardening
+
+### Port binding
+
+By default, the daemon binds to `localhost` only. If you need network access, bind to a specific interface rather than `0.0.0.0` unless you have a firewall or reverse proxy handling ingress. Exposing the daemon port directly to the internet without TLS and rate limiting is not supported.
+
+### Authentication requirement
+
+Always configure either a shared token or session auth before exposing the daemon to any network beyond localhost. A daemon with no auth configured accepts all requests.
+
+### Admin vs user roles
+
+- **Admin principals** (shared-token requests, or session users with the `admin` role): full access to all routes including control plane, user management, and config mutation
+- **Non-admin principals**: access to conversational and operational routes only; admin-gated routes return 403
+
+When creating user accounts with `UserAuthManager.addUser()`, the default role is `['admin']`. For least-privilege companion or integration accounts, pass a custom role array that excludes `admin`.
+
+### Principal kinds and scopes
+
+The `AuthenticatedPrincipal` type carries a `principalKind` (`user` | `bot` | `service` | `token`) and a `scopes` array. Route handlers use `buildMissingScopeBody()` to enforce required scopes before processing a request. Scope violations return a structured error with `requiredScopes`, `grantedScopes`, and `missingScopes` fields.
+
+### Bootstrap credential file
+
+**Note:** The bootstrap credential file is written internally during first-boot bootstrap and by `rotatePassword('admin', …)`; the only public `UserAuthManager` method that touches it directly is `clearBootstrapCredentialFile()` (accessed as `authManager.clearBootstrapCredentialFile()`). The `UserAuthManager` class is importable from `@goodvibes-jev/engine/sdk/platform/security`; host code reaches the configured, operational instance through daemon/runtime composition rather than instantiating it ad hoc.
+
+#### What it is and when it is created
+
+On first boot, if no persistent user store exists (`auth-users.json` is absent or empty), `UserAuthManager` calls `loadOrBootstrapUsers()`, which:
+
+1. Generates a 16-byte cryptographically random password (`randomBytes(16).toString('hex')`) for the default `admin` account
+2. Hashes and stores the password in the user store file (`bootstrapFilePath`, e.g. `.goodvibes/tui/auth-users.json`)
+3. Writes the raw plaintext credentials to a second file (`bootstrapCredentialPath`, e.g. `.goodvibes/tui/auth-bootstrap.txt`) and sets its permissions to `0o600` (owner read/write only)
+
+The bootstrap file format is plain key-value text:
+
+```
+GoodVibes bootstrap auth
+username=admin
+password=<32-hex-chars>
+purpose=Use these credentials only for local daemon/http listener /login routes when those surfaces are enabled.
+note=Normal SDK host usage does not require these credentials.
+```
+
+This file is an **output**, not an authentication input. The runtime reads it only for drift detection and to recognize bootstrap-credential logins; the hash in `auth-users.json` is authoritative, so edits to this file do not change the stored password hash.
+
+#### Drift detection
+
+Every time `UserAuthManager` is constructed (daemon startup), `detectBootstrapCredentialDrift()` runs automatically when operating in file-backed mode. It reads the bootstrap file and verifies that the stored password still matches the hash in `auth-users.json`. If they have drifted, for example because someone manually edited the file, a `warn`-level log is emitted:
+
+```
+Bootstrap credential file password does not match the stored hash; /login with this password will fail.
+Rotate the password via UserAuthManager.rotatePassword() or regenerate the credential by deleting both files so they are re-created in sync.
+```
+
+Drift detection fires only on file-backed instances; test configs that pass explicit `users` are exempt.
+
+#### Recommended lifecycle after first login
+
+1. Log in once using the bootstrap credentials (via the `/login` route)
+2. Immediately rotate the admin password to a value you control:
+   ```ts
+   authManager.rotatePassword('admin', newPassword);
+   ```
+   `rotatePassword()` updates the user store, revokes all active sessions for that user, and overwrites the bootstrap file with the new password.
+3. Delete the bootstrap file:
+   ```ts
+   authManager.clearBootstrapCredentialFile(); // returns true if the file existed and was removed
+   ```
+   Alternatively, delete the file manually: `rm .goodvibes/tui/auth-bootstrap.txt`.
+   Or, from a remote operator client using the SDK:
+   ```ts
+   // Requires admin access. Available via the operator control surface
+   // (HTTP DELETE /api/local-auth/bootstrap-file).
+   await sdk.operator.invoke('local_auth.bootstrap.delete', {});
+   ```
+4. Verify the file is gone:
+   ```ts
+   const snap = authManager.inspect();
+   console.assert(!snap.bootstrapCredentialPresent, 'Bootstrap file still present!');
+   ```
+
+#### Failure modes
+
+| Situation | Outcome |
+|---|---|
+| Bootstrap file deleted before first login | Re-bootstrap by deleting both `auth-bootstrap.txt` **and** `auth-users.json`; both files are regenerated on next start |
+| `auth-users.json` deleted while `auth-bootstrap.txt` still exists | Daemon re-bootstraps with a new password; the previous bootstrap file becomes stale. Drift detection will warn on next start |
+| Both files deleted | Clean re-bootstrap: a new admin account and new bootstrap file are created. All existing sessions are invalidated (sessions are in-memory) |
+| Bootstrap file manually edited | Password mismatch; `/login` will reject the edited password. Drift detection warns on next startup. Fix by calling `rotatePassword()` to bring both files back in sync |
+
+There is no recovery path for a forgotten admin password beyond deleting both files to trigger a re-bootstrap.
+
+#### Security implications
+
+- The bootstrap file contains a **plaintext password**. `0o600` limits access to the file owner, but it is not encrypted.
+- Keep `bootstrapCredentialPath` outside the project root to prevent accidental inclusion in Docker `COPY` layers, version control, or build artifacts.
+- Do not leave the file present after first login. A stale bootstrap file is a standing credential that grants admin access to any process running as the same OS user.
+- The bootstrap file path should be added to `.gitignore` and `.dockerignore` as a matter of policy, even though it lives outside the project root by convention.
+
+### Logging guidance
+
+- Token values, passwords, and secret values must never appear in log output
+- The `ApiTokenAuditor` logs token IDs and labels, never the secret value itself
+- `UserAuthManager` stores only hashed passwords; plaintext passwords are never retained after hashing
+- Structured error responses from the daemon expose route names and scope names but not internal state or credential values

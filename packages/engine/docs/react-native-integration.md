@@ -1,0 +1,152 @@
+# React Native integration
+
+This is the **companion surface** for React Native (Hermes). See [Published Surface Matrix](./surfaces.md).
+
+React Native apps cannot run the full agentic surface (tool execution, LSP, MCP, workflows, daemon HTTP). Those require Bun. This guide covers auth, transport, realtime events, and error handling for the companion surface.
+
+Use `@goodvibes-jev/engine/sdk/react-native` for Android and iOS apps.
+
+```ts
+import { createReactNativeGoodVibesSdk } from '@goodvibes-jev/engine/sdk/react-native';
+
+const sdk = createReactNativeGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  authToken: token,
+});
+```
+
+## Installation
+
+```bash
+npm install @goodvibes-jev/engine/sdk
+```
+
+See [Getting started](./getting-started.md#install) for the canonical install command and version. For persistent secure token storage on bare React Native, also install the optional peer dependency [`react-native-keychain`](https://github.com/oblador/react-native-keychain) (`>=8.0.0`); it is only needed when you use `createIOSKeychainTokenStore` / `createAndroidKeystoreTokenStore`.
+
+## Realtime
+
+The React Native realtime surface is WebSocket-only. `sdk.realtime` exposes `runtime()` and `viaWebSocket()`. There is no `viaSse()`. SSE is unavailable on this surface, so the inherited `realtime.sseReconnect` option is a no-op here. Only `webSocketReconnect` applies.
+
+The daemon authenticates the WebSocket upgrade request itself and answers 401
+when it carries neither an `Authorization` header nor an operator session
+cookie. The SDK's in-band auth frame is only read after an authenticated
+upgrade. React Native's `WebSocket` accepts a headers option, so pass a
+wrapper as the `WebSocketImpl` that attaches the bearer token to the upgrade:
+
+```ts
+const token = await SecureStore.getItemAsync('gv-token');
+
+// React Native's WebSocket accepts (url, protocols, { headers }); the DOM
+// types do not declare the third argument, hence the constructor cast.
+type RNWebSocketCtor = new (
+  url: string,
+  protocols: string[],
+  options: { headers: Record<string, string> },
+) => WebSocket;
+
+const AuthorizedWebSocket = function (url: string | URL): WebSocket {
+  return new (WebSocket as unknown as RNWebSocketCtor)(
+    String(url),
+    [],
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+} as unknown as typeof WebSocket;
+
+const events = sdk.realtime.viaWebSocket(AuthorizedWebSocket);
+const unsubscribe = events.agents.on('AGENT_COMPLETED', (event) => {
+  console.log(event);
+});
+```
+
+The factory applies React-Native-tuned defaults that you can override through `GoodVibesSdkOptions`:
+
+- `realtime.webSocketReconnect`: `{ enabled: true, baseDelayMs: 500, maxDelayMs: 5000 }`
+- `retry` (HTTP): `{ maxAttempts: 3, baseDelayMs: 250, maxDelayMs: 2000 }`
+- `realtime.onError`: called when the realtime transport hits an unrecoverable error
+
+To scope a feed to a single session, wrap it with `forSession` (re-exported from `@goodvibes-jev/engine/sdk/react-native`):
+
+```ts
+import { createReactNativeGoodVibesSdk, forSession } from '@goodvibes-jev/engine/sdk/react-native';
+
+const sessionEvents = forSession(sdk.realtime.viaWebSocket(AuthorizedWebSocket), sessionId);
+sessionEvents.agents.on('AGENT_COMPLETED', (event) => console.log(event));
+```
+
+## Token storage
+
+Pass a `tokenStore` to persist and rotate the bearer token. `tokenStore` is the highest-precedence auth option. It overrides both `getAuthToken` and the static `authToken`. Use `createIOSKeychainTokenStore` (iOS Keychain) or `createAndroidKeystoreTokenStore` (Android Keystore), both exported from `@goodvibes-jev/engine/sdk/react-native`, rather than rolling a custom `GoodVibesTokenStore`:
+
+```ts
+import {
+  createReactNativeGoodVibesSdk,
+  createIOSKeychainTokenStore,
+} from '@goodvibes-jev/engine/sdk/react-native';
+
+const sdk = createReactNativeGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  tokenStore: createIOSKeychainTokenStore(),
+});
+```
+
+On Android, use `createAndroidKeystoreTokenStore()` in place of the Keychain store.
+
+## Error handling
+
+All SDK errors extend `GoodVibesSdkError`. See [Error Kinds](./error-kinds.md) for the full taxonomy.
+
+```ts
+import { GoodVibesSdkError } from '@goodvibes-jev/engine/sdk/errors';
+
+try {
+  await sdk.operator.control.snapshot();
+} catch (err) {
+  if (err instanceof GoodVibesSdkError) {
+    switch (err.kind) {
+      case 'auth':
+        // token expired, refresh and retry
+        break;
+      case 'network':
+        // transport failure, reconnect or surface to user
+        break;
+      case 'service':
+        // daemon or upstream service returned 5xx, log and degrade gracefully
+        break;
+      case 'protocol':
+        // SDK/client and daemon disagreed about the wire contract
+        break;
+      default:
+        throw err;
+    }
+  }
+}
+```
+
+## Observability
+
+`SDKObserver` and `createConsoleObserver` work from React Native exactly like from the full surface. They are imported from `@goodvibes-jev/engine/sdk` root, which is companion-safe. See [Observability](./observability.md) for the full observer API.
+
+```ts
+import { createConsoleObserver } from '@goodvibes-jev/engine/sdk';
+
+const sdk = createReactNativeGoodVibesSdk({
+  baseUrl: 'https://goodvibes.example.com',
+  authToken: token,
+  observer: createConsoleObserver(),
+});
+```
+
+## Example
+
+See [react-native-quickstart.ts](../examples/react-native-quickstart.ts) for a runnable end-to-end example.
+
+## Notes
+
+- `fetch` can come from the React Native runtime or be injected explicitly.
+- `WebSocket` can come from the runtime or be passed through `WebSocketImpl`.
+- The React Native entrypoint is WebSocket-only; SSE (`viaSse`) is not exposed and `sseReconnect` is a no-op.
+- Provide a token store or `getAuthToken` when token state can rotate during the app session. See [Token storage](#token-storage).
+- Reconnect after foreground/resume and network transitions.
+- Use HTTP for snapshots/mutations and WebSocket for live updates.
+- For Expo-managed apps, use [expo-integration.md](./expo-integration.md).
+- For native Kotlin or Swift apps, use [android-integration.md](./android-integration.md) and [ios-integration.md](./ios-integration.md).
