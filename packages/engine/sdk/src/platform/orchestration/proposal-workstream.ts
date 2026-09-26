@@ -46,7 +46,7 @@
  * the assembler.
  */
 import type { ConfigManager } from '../config/manager.js';
-import { getWrfcCommitScope } from '../agents/wrfc-config.js';
+import { getContractCommitScope } from '../contract/config.js';
 import type { PlanProposal } from '../core/plan-proposal.js';
 import { engineerReviewPhases } from './controller-compat.js';
 import type { CreateWorkstreamInput } from './engine.js';
@@ -140,7 +140,7 @@ export function fromPlanProposal(
 ): CreateWorkstreamInput {
   assertAcyclicAndResolved(proposal);
 
-  const commitScope = getWrfcCommitScope(configManager);
+  const commitScope = getContractCommitScope(configManager);
   const capacity = Math.max(1, opts.capacity ?? proposal.workItems.length);
 
   const items: WorkItemSpec[] = proposal.workItems.map((wi) => ({

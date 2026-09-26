@@ -52,7 +52,7 @@
  *    row's description for the measurement that overrode it.
  *
  * `voice.wake.models` is a comma-separated list rather than the design's `string[]`.
- * Array-valued config (`conversationGate.gatedSurfaces`, `wrfc.gates`) is not a
+ * Array-valued config (`conversationGate.gatedSurfaces`, `contract.gates`) is not a
  * scalar ConfigKey in this schema and so cannot appear in a settings workspace; a
  * model list the user cannot edit from settings would not be a configurable feature.
  * {@link parseWakeModelList} is the one place the scalar is split.

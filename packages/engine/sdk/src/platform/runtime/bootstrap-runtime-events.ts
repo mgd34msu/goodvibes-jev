@@ -3,6 +3,7 @@ import type { ConversationFollowUpItem } from '../core/conversation-follow-ups.j
 import type { AgentEvent, ProviderEvent, RuntimeEventBus, WorkflowEvent } from './events/index.js';
 import type { createDomainDispatch } from './store/index.js';
 import type { WrfcController } from '../agents/wrfc-controller.js';
+import { getWrfcScoreThreshold } from '../agents/wrfc-config.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { finishWorkstreamLabel, rememberWorkstreamLabel, workstreamLabel } from '../channels/workstream-labels.js';
 
@@ -160,7 +161,7 @@ export function registerHostRuntimeEvents(
 
   unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_REVIEW_COMPLETED' }>>('WORKFLOW_REVIEW_COMPLETED', ({ payload }) => {
     const icon = payload.passed ? '\u2713' : '\u2717';
-    const threshold = configManager.get('wrfc.scoreThreshold') as number;
+    const threshold = getWrfcScoreThreshold(configManager);
     const suffix = payload.passed ? '' : ` - Minimum score is ${threshold}/10, spawning a fix agent ...`;
     withRouter(getSystemMessageRouter, (router) => {
       router.wrfc(`[WRFC] ${icon} Review ${payload.chainId.slice(0, 12)}: ${payload.score}/10${suffix}`);

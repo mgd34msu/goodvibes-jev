@@ -46,6 +46,7 @@ import './schema-domain-voice-local.js';
 import { coreConfigDefaults, coreHeadConfigSettings, coreTailConfigSettings } from './schema-domain-core.js';
 import { runtimeConfigDefaults, runtimePrimaryConfigSettings, runtimeSecondaryConfigSettings } from './schema-domain-runtime.js';
 import { conversationGateConfigDefaults, conversationGateConfigSettings } from './schema-domain-conversation-gate.js';
+import { contractConfigDefaults, contractConfigSettings } from './schema-domain-contract.js';
 import { hostedSessionsConfigDefaults, hostedSessionsConfigSettings } from './schema-domain-hosted-sessions.js';
 import { atRestConfigDefaults, atRestConfigSettings } from './schema-domain-at-rest.js';
 import { learningConfigDefaults, learningConfigSettings } from './schema-domain-learning.js';
@@ -117,7 +118,7 @@ export const DEFAULT_CONFIG = {
   daemon: coreConfigDefaults.daemon,
   danger: coreConfigDefaults.danger,
   tools: coreConfigDefaults.tools,
-  wrfc: coreConfigDefaults.wrfc,
+  contract: contractConfigDefaults.contract,
   cache: coreConfigDefaults.cache,
   helper: coreConfigDefaults.helper,
   notifications: coreConfigDefaults.notifications,
@@ -157,6 +158,7 @@ export const CONFIG_SCHEMA: ConfigSetting[] = [
   ...triggersConfigSettings,
   ...updateConfigSettings,
   ...coreTailConfigSettings,
+  ...contractConfigSettings,
   ...featureConfigSettings,
   ...featureControlSettings,
   ...pricingConfigSettings,

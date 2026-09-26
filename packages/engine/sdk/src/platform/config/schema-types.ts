@@ -33,6 +33,7 @@ export * from "./schema-types-permissions.js";
 import type { BackgroundAgentsMode, LineNumberMode, PermissionAction, PermissionMode, PermissionsToolConfig } from "./schema-types-permissions.js";
 export * from "./schema-types-payments.js";
 import type { PaymentsConfig, PaymentsConfigKey, PaymentsConfigValueMap } from "./schema-types-payments.js";
+import type { ContractConfigKey } from "./schema-domain-contract.js";
 
 export * from "./schema-types-daemon.js";
 import type {
@@ -143,7 +144,7 @@ export interface GoodVibesConfig {
     voiceEnabled: boolean;
     systemMessages: 'panel' | 'conversation' | 'both';
     operationalMessages: 'panel' | 'conversation' | 'both';
-    wrfcMessages: 'panel' | 'conversation' | 'both';
+    contractMessages: 'panel' | 'conversation' | 'both';
   };
   tts: TtsConfig;
   release: {
@@ -174,18 +175,6 @@ export interface GoodVibesConfig {
     overflowSpillBackend: 'file' | 'ledger' | 'diagnostics'; // default: 'file'. Where overflow content spills
     contractVerification: boolean;  // default: true. Registration-time contract checks on every tool
     outputSchemaFingerprints: boolean; // default: false. Append _meta schema fingerprints to find/analyze/inspect results
-  };
-  wrfc: {
-    scoreThreshold: number;
-    maxFixAttempts: number;
-    autoCommit: boolean;
-    agentHeartbeatTimeoutMs: number;
-    transportRetryLimit: number;
-    transportRetryDelayMs: number;
-    commitScope: 'off' | 'scoped' | 'all';   // default: 'scoped'
-    // NOTE: gates is an array of objects and does not fit the scalar-value dot-path config API.
-    // Access via configManager.getCategory('wrfc').gates, not via ConfigKey/ConfigValue.
-    gates: Array<{ name: string; command: string; enabled: boolean }>;
   };
   cache: {
     enabled: boolean;                    // default: true
@@ -324,7 +313,7 @@ export type ConfigKey =
   | 'ui.voiceEnabled'
   | 'ui.systemMessages'
   | 'ui.operationalMessages'
-  | 'ui.wrfcMessages'
+  | 'ui.contractMessages'
   | 'tts.provider'
   | 'tts.voice'
   | 'tts.llmProvider'
@@ -343,13 +332,7 @@ export type ConfigKey =
   | 'tools.overflowSpillBackend'
   | 'tools.contractVerification'
   | 'tools.outputSchemaFingerprints'
-  | 'wrfc.scoreThreshold'
-  | 'wrfc.maxFixAttempts'
-  | 'wrfc.autoCommit'
-  | 'wrfc.commitScope'
-  | 'wrfc.agentHeartbeatTimeoutMs'
-  | 'wrfc.transportRetryLimit'
-  | 'wrfc.transportRetryDelayMs'
+  | ContractConfigKey
   | 'cache.enabled'
   | 'cache.stableTtl'
   | 'cache.monitorHitRate'

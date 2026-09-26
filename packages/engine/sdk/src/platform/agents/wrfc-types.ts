@@ -1,6 +1,7 @@
 import type { CompletionReport, Constraint, ReviewerReport } from './completion-report.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { FanoutCollapseInfo } from '../tools/agent/schema.js';
+import type { QualityGateResult } from '../contract/gates.js';
 
 /** Queued chain waiting to start. */
 export interface QueuedChain {
@@ -225,17 +226,4 @@ export interface WrfcChain {
   touchedPaths?: string[] | undefined;
 }
 
-/** Quality gate definition. */
-export interface QualityGate {
-  name: string;
-  command: string;
-  enabled: boolean;
-}
-
-/** Result of running a quality gate. */
-export interface QualityGateResult {
-  gate: QualityGate['name'];
-  passed: boolean;
-  output: string;
-  durationMs: number;
-}
+export type { QualityGate, QualityGateResult } from '../contract/gates.js';

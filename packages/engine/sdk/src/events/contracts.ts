@@ -137,9 +137,13 @@ import {
   validateSurfaceAccountDegraded,
   validateSurfaceCapabilityChanged,
 } from './contracts/automation-route.js';
+import { CONTRACT_EVENT_VALIDATORS } from './contracts/contract-runner.js';
+
+export { CONTRACT_EVENT_FIELD_SPECS, CONTRACT_EVENT_VALIDATORS } from './contracts/contract-runner.js';
 
 // Domain-grouping rule: entries are arranged by event domain (turn/tool, agent,
-// mcp, plugin, automation, route, control-plane, delivery, watcher, surface).
+// mcp, plugin, automation, route, control-plane, delivery, watcher, surface,
+// contracts).
 // Within each domain group entries are sorted alphabetically by key.
 // Event types without a registered validator are not listed here, they pass
 // through validateKnownEvent as unknown and are documented in that function.
@@ -207,6 +211,8 @@ const EVENT_VALIDATORS: Record<string, (v: unknown) => import('./contracts/share
   SURFACE_CAPABILITY_CHANGED: validateSurfaceCapabilityChanged,
   SURFACE_DISABLED: validateSurfaceDisabled,
   SURFACE_ENABLED: validateSurfaceEnabled,
+  // contracts domain (every CONTRACT_* type; the table is exhaustive by type)
+  ...CONTRACT_EVENT_VALIDATORS,
 };
 
 /**

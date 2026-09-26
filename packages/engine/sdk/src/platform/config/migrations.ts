@@ -678,3 +678,120 @@ export function migrateOccasionsFinalStretchRemoval(
     ...(typeof legacy === 'number' && Number.isFinite(legacy) ? { removedValue: legacy } : {}),
   };
 }
+
+/** One setting carried from the retired review loop onto the contract runner. */
+export interface WrfcSettingMove {
+  /** The dotted name that was on disk. */
+  readonly from: string;
+  /** The dotted name it now has. */
+  readonly to: string;
+  /** False when the new name already held a value, which was kept; the old value was dropped. */
+  readonly moved: boolean;
+}
+
+/** Outcome of moving the `wrfc.*` settings onto `contract.*`. */
+export interface WrfcSettingsMigrationResult {
+  readonly config: Record<string, unknown>;
+  /** True when at least one old key was present and moved or removed. */
+  readonly migrated: boolean;
+  /** Every renamed key that was present, in the order of {@link WRFC_SETTING_RENAMES}. */
+  readonly moves: readonly WrfcSettingMove[];
+  /** True when `wrfc.scoreThreshold` was present and removed. */
+  readonly scoreThresholdRemoved: boolean;
+  /** The removed threshold, so the receipt can quote it back. */
+  readonly removedScoreThreshold?: number | undefined;
+}
+
+/**
+ * Every retired review-loop setting that has a contract-runner successor, old
+ * dotted name to new. `wrfc.gates` is the one array among them; it moves whole.
+ *
+ * Exported for the same reason the payments rename list is: a key the platform
+ * is about to move itself is not a key the platform does not understand.
+ */
+export const WRFC_SETTING_RENAMES: ReadonlyArray<readonly [string, string]> = [
+  ['wrfc.autoCommit', 'contract.autoCommit'],
+  ['wrfc.commitScope', 'contract.commitScope'],
+  ['wrfc.gates', 'contract.gates'],
+  ['wrfc.transportRetryLimit', 'contract.transportRetryLimit'],
+  ['wrfc.transportRetryDelayMs', 'contract.transportRetryDelayMs'],
+  ['wrfc.agentHeartbeatTimeoutMs', 'contract.heartbeatTimeoutMs'],
+  ['wrfc.maxFixAttempts', 'contract.maxFixRounds'],
+  ['ui.wrfcMessages', 'ui.contractMessages'],
+];
+
+/**
+ * The retired pass mark. It has no successor: acceptance is no longer one
+ * score from a reviewer's prose but one reading per acceptance criterion, and
+ * how strong a reading must be is `contract.acceptanceStakes`.
+ */
+export const RETIRED_WRFC_SCORE_THRESHOLD_KEY = 'wrfc.scoreThreshold';
+
+function splitDotted(key: string): readonly [string, string] {
+  const dot = key.indexOf('.');
+  return [key.slice(0, dot), key.slice(dot + 1)];
+}
+
+/**
+ * Move the `wrfc.*` settings (and `ui.wrfcMessages`) onto their `contract.*`
+ * successors and remove `wrfc.scoreThreshold`.
+ *
+ * Values move unchanged. A value already under the new name is kept and the
+ * old key is still removed: the new name is the one the reader uses, so a file
+ * carrying both must not have the new value overwritten by the old one. A
+ * `wrfc` section left empty goes too; a `wrfc` key this migration does not
+ * know stays where it is, so the settings screen reports it rather than it
+ * vanishing unannounced.
+ *
+ * Idempotent; a file with none of the old keys is returned untouched.
+ */
+export function migrateWrfcSettings(parsed: Record<string, unknown>): WrfcSettingsMigrationResult {
+  const retiredKeys = [...WRFC_SETTING_RENAMES.map(([from]) => from), RETIRED_WRFC_SCORE_THRESHOLD_KEY];
+  const present = retiredKeys.filter((key) => {
+    const [section, field] = splitDotted(key);
+    const holder = parsed[section];
+    return isPlainObject(holder) && field in holder;
+  });
+  if (present.length === 0) return { config: parsed, migrated: false, moves: [], scoreThresholdRemoved: false };
+
+  const config = structuredClone(parsed);
+  const moves: WrfcSettingMove[] = [];
+  for (const [from, to] of WRFC_SETTING_RENAMES) {
+    const [fromSection, fromField] = splitDotted(from);
+    const source = config[fromSection];
+    if (!isPlainObject(source) || !(fromField in source)) continue;
+    const value = source[fromField];
+    delete source[fromField];
+    const [toSection, toField] = splitDotted(to);
+    const target = isPlainObject(config[toSection]) ? config[toSection] : {};
+    const moved = !(toField in target);
+    if (moved) target[toField] = value;
+    config[toSection] = target;
+    moves.push({ from, to, moved });
+  }
+
+  const [thresholdSection, thresholdField] = splitDotted(RETIRED_WRFC_SCORE_THRESHOLD_KEY);
+  const wrfc = config[thresholdSection];
+  let scoreThresholdRemoved = false;
+  let removedScoreThreshold: number | undefined;
+  if (isPlainObject(wrfc) && thresholdField in wrfc) {
+    const legacy = wrfc[thresholdField];
+    delete wrfc[thresholdField];
+    scoreThresholdRemoved = true;
+    if (typeof legacy === 'number' && Number.isFinite(legacy)) removedScoreThreshold = legacy;
+  }
+  // A section that held nothing else goes too, so the file does not keep an
+  // empty `wrfc: {}` or `ui: {}` behind.
+  for (const section of ['wrfc', 'ui']) {
+    const holder = config[section];
+    if (isPlainObject(holder) && Object.keys(holder).length === 0) delete config[section];
+  }
+
+  return {
+    config,
+    migrated: true,
+    moves,
+    scoreThresholdRemoved,
+    ...(removedScoreThreshold === undefined ? {} : { removedScoreThreshold }),
+  };
+}

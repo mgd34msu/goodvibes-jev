@@ -9,7 +9,7 @@
  * (wrfc-reporting.ts) for the phantom-work guard, runWrfcGateChecks
  * (wrfc-gate-runtime.ts) for quality gates, AgentWorktree.commitWorkingTree
  * for scoped commits, and the transport-retry / WrfcChainFailureKind pattern
- * (isTransportFailureMessage + getWrfcTransportRetryLimit/DelayMs) for
+ * (isTransportFailureMessage + getContractTransportRetryLimit/DelayMs) for
  * bounded respawn-on-transport-blip.
  *
  * REALITY-WINS DIVERGENCE from the brief's design (c): WrfcController itself
@@ -58,7 +58,7 @@ import {
 } from '../agents/completion-report.js';
 import { verifyEngineerClaims } from '../agents/wrfc-reporting.js';
 import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
-import { getWrfcTransportRetryDelayMs, getWrfcTransportRetryLimit } from '../agents/wrfc-config.js';
+import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
 import { isTransportFailureMessage } from '../types/errors.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -68,7 +68,7 @@ import { classifyBookkeepingFailure } from './bookkeeping.js';
 import { mergeWorkItemUsage } from './types.js';
 import type { CommitExclusion, GateOutcome, Phase, PhaseCommitOutcome, PhaseResult, PriceProvenanceFn, WorkItem, WorkItemUsage, Workstream } from './types.js';
 
-/** Narrow structural pick, testable with stubs, mirrors AgentManagerLike (wrfc-config.ts). */
+/** Narrow structural pick, testable with stubs, mirrors AgentManagerLike (contract/types.ts). */
 export type PhaseRunnerAgentManagerLike = Pick<
   AgentManager,
   'spawn' | 'getStatus' | 'cancel' | 'registerCancellationSignal' | 'releaseCancellationSignal'
@@ -460,14 +460,14 @@ export async function runPhase(
   }
 
   if (outcome.status === 'failed') {
-    const retryLimit = getWrfcTransportRetryLimit(deps.configManager);
+    const retryLimit = getContractTransportRetryLimit(deps.configManager);
     if (
       item.transportRetryCount < retryLimit &&
       await isTransportFailureMessage(outcome.record?.error ?? '', 'orchestration.phase-runner.transport-retry')
     ) {
       item.transportRetryCount += 1;
       await worktree.cleanup(record.id).catch(() => undefined);
-      await sleep(getWrfcTransportRetryDelayMs(deps.configManager));
+      await sleep(getContractTransportRetryDelayMs(deps.configManager));
       return runPhase(workstream, item, phase, priorReports, deps);
     }
     await worktree.cleanup(record.id).catch(() => undefined);

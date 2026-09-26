@@ -33,6 +33,7 @@ import type { ConnectorsConfigKey, ConnectorsConfigValue } from './schema-types-
 // rather than a clause per key. Both clauses were written against the inline
 // ConfigValue that used to live in schema-types.ts, and move here with it.
 import type { PaymentsConfigValueMap } from './schema-types-payments.js';
+import type { ContractConfigValueMap } from './schema-domain-contract.js';
 import type { DaemonProcessConfigValueMap } from './schema-types-daemon.js';
 import type {
   InboundEmailCapabilityPolicy,
@@ -120,7 +121,7 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'ui.voiceEnabled' ? boolean :
   K extends 'ui.systemMessages' ? 'panel' | 'conversation' | 'both' :
   K extends 'ui.operationalMessages' ? 'panel' | 'conversation' | 'both' :
-  K extends 'ui.wrfcMessages' ? 'panel' | 'conversation' | 'both' :
+  K extends 'ui.contractMessages' ? 'panel' | 'conversation' | 'both' :
   K extends 'tts.provider' ? string :
   K extends 'tts.voice' ? string :
   K extends 'tts.llmProvider' ? string :
@@ -140,13 +141,7 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'tools.overflowSpillBackend' ? 'file' | 'ledger' | 'diagnostics' :
   K extends 'tools.contractVerification' ? boolean :
   K extends 'tools.outputSchemaFingerprints' ? boolean :
-  K extends 'wrfc.scoreThreshold' ? number :
-  K extends 'wrfc.maxFixAttempts' ? number :
-  K extends 'wrfc.autoCommit' ? boolean :
-  K extends 'wrfc.commitScope' ? 'off' | 'scoped' | 'all' :
-  K extends 'wrfc.agentHeartbeatTimeoutMs' ? number :
-  K extends 'wrfc.transportRetryLimit' ? number :
-  K extends 'wrfc.transportRetryDelayMs' ? number :
+  K extends keyof ContractConfigValueMap ? ContractConfigValueMap[K] :
   K extends 'cache.enabled' ? boolean :
   K extends 'cache.stableTtl' ? '5m' | '1h' :
   K extends 'cache.monitorHitRate' ? boolean :

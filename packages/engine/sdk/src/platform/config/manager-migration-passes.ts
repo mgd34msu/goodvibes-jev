@@ -15,6 +15,7 @@ import {
   migrateLegacyFeatureToggles,
   migrateOccasionsFinalStretchRemoval,
   migratePaymentsBudgetAmounts,
+  migrateWrfcSettings,
 } from './migrations.js';
 import { isFrozenDefaultDump, stripFrozenDefaults } from './settings-io.js';
 import {
@@ -378,6 +379,61 @@ export function applyOccasionsFinalStretchMigrationPass(
 }
 
 /**
+ * The retired review loop's settings move onto the contract runner, with a
+ * receipt naming every key, and `wrfc.scoreThreshold` is removed with a receipt
+ * of its own saying what replaced it.
+ *
+ * The runner has no pass mark to carry the threshold to. A unit passes only when
+ * each of its acceptance criteria reads met, and the one thing left to tune is
+ * how strong that reading must be, which is `contract.acceptanceStakes`. The
+ * old number is quoted back so its owner can see what was set.
+ *
+ * Surface files only: these keys were never daemon-owned, so the daemon tier
+ * never holds them.
+ */
+export function applyContractSettingsMigrationPass(
+  parsed: Record<string, unknown>,
+  sourcePath: string,
+  receipt: MigrationReceiptSink,
+): Record<string, unknown> {
+  const result = migrateWrfcSettings(parsed);
+  if (!result.migrated) return parsed;
+  persistMigratedFile(sourcePath, result.config, 'contract settings migration');
+  if (result.moves.length > 0) {
+    const moved = result.moves
+      .map((move) => (move.moved
+        ? `${move.from} is now ${move.to}`
+        : `${move.from} was dropped because ${move.to} was already set`))
+      .join('; ');
+    const receiptText =
+      'Settings renamed: the review loop\'s settings now belong to the contract runner, which checks '
+      + `each piece of work against its acceptance criteria while it is being done. ${moved} (${sourcePath}). `
+      + 'Your values moved unchanged.';
+    logger.info(receiptText);
+    try {
+      receipt(`settings-migration-contract-settings:${sourcePath}`, receiptText);
+    } catch (err) {
+      logger.warn(`contract settings migration receipt could not be queued: ${summarizeError(err)}`);
+    }
+  }
+  if (result.scoreThresholdRemoved) {
+    const quoted = result.removedScoreThreshold === undefined ? '' : ` (it was ${result.removedScoreThreshold})`;
+    const receiptText =
+      `Setting removed: wrfc.scoreThreshold${quoted} is gone from ${sourcePath}. `
+      + 'Work is no longer passed on one review score. Acceptance is now a reading per acceptance criterion, '
+      + 'and a piece of work passes only when every criterion reads met. How strong a reading must be is '
+      + 'contract.acceptanceStakes: high by default, or critical for the strictest pass band.';
+    logger.info(receiptText);
+    try {
+      receipt(`settings-migration-wrfc-score-threshold:${sourcePath}`, receiptText);
+    } catch (err) {
+      logger.warn(`wrfc.scoreThreshold removal receipt could not be queued: ${summarizeError(err)}`);
+    }
+  }
+  return result.config;
+}
+
+/**
  * Every load-time pass over the DAEMON TIER, in order.
  *
  * A separate sequence from {@link runLoadMigrationPasses} because it is a
@@ -434,5 +490,6 @@ export function runLoadMigrationPasses(
   // `daemon.enabled: false` arrived via that alias is split too.
   config = applyDaemonConnectedHostSplitMigrationPass(config, sourcePath, receipt);
   config = applyPaymentsBudgetMigrationPass(config, sourcePath, receipt);
+  config = applyContractSettingsMigrationPass(config, sourcePath, receipt);
   return applyDefaultStripMigrationPass(config, sourcePath, receipt);
 }

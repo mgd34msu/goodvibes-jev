@@ -103,7 +103,7 @@ export const coreConfigDefaults = {
     voiceEnabled: false,
     systemMessages: 'panel',
     operationalMessages: 'panel',
-    wrfcMessages: 'both',
+    contractMessages: 'both',
   },
   tts: {
     provider: 'elevenlabs',
@@ -135,20 +135,6 @@ export const coreConfigDefaults = {
     overflowSpillBackend: 'file',
     contractVerification: true,
     outputSchemaFingerprints: false,
-  },
-  wrfc: {
-    scoreThreshold: 9.9,
-    maxFixAttempts: 5,
-    autoCommit: true,
-    commitScope: 'scoped',
-    agentHeartbeatTimeoutMs: 0,
-    transportRetryLimit: 1,
-    transportRetryDelayMs: 5000,
-    gates: [
-      { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
-      { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },
-      { name: 'build', command: 'npm run build', enabled: false },
-    ],
   },
   cache: {
     enabled: true,
@@ -687,10 +673,10 @@ export const coreHeadConfigSettings: ConfigSettingDefinition[] = [
     enumValues: ['panel', 'conversation', 'both'],
   },
   {
-    key: 'ui.wrfcMessages',
+    key: 'ui.contractMessages',
     type: 'enum',
     default: 'both',
-    description: 'Where WRFC lifecycle updates render by default: panel, conversation, or both',
+    description: 'Where contract lifecycle updates (status, checks, corrections, owner questions, the outcome) render by default: panel, conversation, or both',
     enumValues: ['panel', 'conversation', 'both'],
   },
   {
@@ -767,54 +753,6 @@ export const coreTailConfigSettings: ConfigSettingDefinition[] = [
     description:
       'Where large tool-output overflow content spills: file (on-disk .overflow, default), ledger (execution ledger), or diagnostics. An injected custom backend still takes precedence.',
     enumValues: ['file', 'ledger', 'diagnostics'],
-  },
-  {
-    key: 'wrfc.scoreThreshold',
-    type: 'number',
-    default: 9.9,
-    description: 'Minimum review score to pass WRFC (0-10)',
-    ...numRange(0, 10),
-  },
-  {
-    key: 'wrfc.maxFixAttempts',
-    type: 'number',
-    default: 5,
-    description: 'Maximum gate retry depth before aborting WRFC chain',
-    ...numRange(1, 20),
-  },
-  {
-    key: 'wrfc.autoCommit',
-    type: 'boolean',
-    default: true,
-    description: 'Auto-commit when WRFC chain passes review and quality gates',
-  },
-  {
-    key: 'wrfc.commitScope',
-    type: 'enum',
-    default: 'scoped',
-    description: 'Scope of files staged on WRFC auto-commit: off (never commit), scoped (only chain-touched files, default), all (legacy full-tree git add -A)',
-    enumValues: ['off', 'scoped', 'all'],
-  },
-  {
-    key: 'wrfc.agentHeartbeatTimeoutMs',
-    type: 'number',
-    default: 0,
-    description: 'Watchdog timeout in ms for silent WRFC child agents. 0 = disabled.',
-    validate: (v) => typeof v === 'number' && v >= 0,
-  },
-  {
-    key: 'wrfc.transportRetryLimit',
-    type: 'number',
-    default: 1,
-    description: 'How many times a WRFC chain auto-retries a transport/network-classified child-agent failure (respawning the same role) before failing the chain. 0 disables the retry.',
-    ...numRange(0, 5),
-  },
-  {
-    key: 'wrfc.transportRetryDelayMs',
-    type: 'number',
-    default: 5000,
-    description: 'Backoff delay in ms before respawning a WRFC child agent after a transport-classified failure.',
-    ...numRange(0, 60000),
   },
   {
     key: 'cache.enabled',

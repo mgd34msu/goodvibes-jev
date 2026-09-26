@@ -27,6 +27,9 @@
   ],
   "references": [
     {
+      "path": "../../judgment"
+    },
+    {
       "path": "../contracts"
     },
     {

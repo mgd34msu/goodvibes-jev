@@ -5,6 +5,7 @@ import type { CompletionReport, Constraint, ConstraintFinding, EngineerReport, R
 import { parseCompletionReport } from './completion-report.js';
 import { buildFixerConstraintAddendum, buildReviewerConstraintAddendum } from './wrfc-prompt-addenda.js';
 import type { QualityGateResult } from './wrfc-types.js';
+import type { ClaimVerificationKind, ClaimVerificationResult } from '../contract/claims.js';
 import { logger } from '../utils/logger.js';
 
 const REVIEW_BRIEF_ITEM_LIMIT = 6;
@@ -102,49 +103,7 @@ export function parseEngineerCompletionReport(rawOutput: string, _template?: str
   } as EngineerReport;
 }
 
-/**
- * Discriminator for claim verification outcome:
- * - 'files_verified': claims present and all found on disk.
- * - 'git_corroborated': claims present, some missing on disk, but git diff shows changes.
- * - 'verified_empty': no claims made but git diff shows changes (engineer did real work without listing files).
- * - 'unverifiable_no_claims': no claims AND no git diff, suspicious; treated as phantom work.
- * - 'unverified': claims present but not found on disk and git shows no changes.
- */
-export type ClaimVerificationKind =
-  | 'files_verified'
-  | 'git_corroborated'
-  | 'verified_empty'
-  | 'unverifiable_no_claims'
-  | 'unverified';
-
-/** Per-file result for claim verification. */
-export interface ClaimVerificationResult {
-  /** All paths claimed as created, modified, or deleted. */
-  claimedPaths: string[];
-  /** Paths that exist on disk (for created/modified claims). */
-  foundPaths: string[];
-  /** Paths that were claimed but not found on disk. */
-  missingPaths: string[];
-  /** Whether git diff/status shows any changes since the engineer started. */
-  gitDiffDetected: boolean | null;
-  /**
-   * Tri-state discriminator. Use this instead of the bare `verified` boolean
-   * to distinguish 'unverifiable_no_claims' (suspicious) from 'verified_empty'
-   * (legit no-file work with a git diff). Controllers must treat 'unverifiable_no_claims'
-   * as phantom work and inject a synthetic issue.
-   */
-  kind: ClaimVerificationKind;
-  /**
-   * Convenience: true iff kind is NOT 'unverified' or 'unverifiable_no_claims'.
-   * NOTE: Callers should use `kind` directly when deciding whether to set `chain.claimsVerified`.
-   * In particular, `unverifiable_no_claims` returns `verified: false` here but the controller
-   * intentionally leaves `chain.claimsVerified` as `undefined` (not `false`) because suspicion
-   * cannot be confirmed. Do NOT blindly propagate `result.verified` into chain state.
-   */
-  verified: boolean;
-  /** Human-readable summary of what was and wasn't found. */
-  summary: string;
-}
+export type { ClaimVerificationKind, ClaimVerificationResult } from '../contract/claims.js';
 
 /**
  * Verifies that an engineer's self-reported work actually materialised on disk.

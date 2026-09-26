@@ -2,7 +2,7 @@ import { type ConfigSettingDefinition, intRange, numRange, port } from './schema
 
 /**
  * Per-project worktree cold-start setup (resolveWorktreeSetupConfig). Both fields
- * are arrays, so, like notifications.webhookUrls / wrfc.gates, they are NOT
+ * are arrays, so, like notifications.webhookUrls / contract.gates, they are NOT
  * scalar ConfigKeys; read them via getCategory('worktree').setup. The domain is
  * augmented onto GoodVibesConfig here (co-located with its default below) so
  * schema-types.ts stays under its grandfathered line ceiling; registering it is

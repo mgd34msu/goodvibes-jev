@@ -1,111 +1,78 @@
-import type { ConfigManager } from '../config/manager.js';
-import type { AgentManager } from '../tools/agent/index.js';
+/**
+ * The review loop's settings, read from the `contract.*` settings that
+ * replaced them (config/schema-domain-contract.ts). This module and the
+ * controller that reads it are deleted with the rest of the review loop in
+ * ledger task R.10; until then the controller follows the migrated values.
+ *
+ * `wrfc.scoreThreshold` has no successor setting: the contract runner judges
+ * each acceptance criterion instead of a review score, so the controller keeps
+ * the old default pass mark as a constant.
+ */
+import {
+  readContractConfig,
+  type ContractCommitScope,
+  type ContractConfigReader,
+} from '../contract/config.js';
+import type { QualityGate } from '../contract/gates.js';
 
-export type AgentManagerLike = Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'listByCohort' | 'clear'>;
-export type WrfcCommitScope = 'off' | 'scoped' | 'all';
+export type { AgentManagerLike } from '../contract/types.js';
+export type WrfcCommitScope = ContractCommitScope;
+export type WrfcConfigReader = ContractConfigReader;
 
-const WRFC_COMMIT_SCOPES: readonly WrfcCommitScope[] = ['off', 'scoped', 'all'];
-
-function isWrfcCommitScope(value: unknown): value is WrfcCommitScope {
-  return typeof value === 'string' && (WRFC_COMMIT_SCOPES as readonly string[]).includes(value);
-}
+/** The old default pass mark, the value every installation ran with unless it set its own. */
+export const WRFC_SCORE_THRESHOLD = 9.9;
 
 export type WrfcConfigLike = {
   scoreThreshold: number;
   maxFixAttempts: number;
   autoCommit: boolean;
-  /**
-   * Scope of files staged on WRFC auto-commit:
-   * - 'off': never commit on gate pass.
-   * - 'scoped' (default): stage only the paths the chain's own completion reports claim
-   *   to have touched (see collectChainTouchedPaths in wrfc-controller.ts).
-   * - 'all': legacy full-tree `git add -A` sweep.
-   */
   commitScope: WrfcCommitScope;
-  gates: Array<{ name: string; command: string; enabled: boolean }>;
-  /**
-   * How long (in ms) to wait for an agent event before treating a running agent
-   * as hung/silent and failing the chain. Default: 0 (disabled).
-   */
+  gates: QualityGate[];
   agentHeartbeatTimeoutMs: number;
-  /**
-   * How many times a chain will auto-retry a transport-classified child-agent
-   * failure (respawning the same role) before failing the chain outright.
-   * Separate from maxFixAttempts, a transport blip is not a fix cycle. Default: 1.
-   */
   transportRetryLimit: number;
-  /**
-   * How long (in ms) to wait before respawning after a transport-classified
-   * failure. Default: 5000.
-   */
   transportRetryDelayMs: number;
 };
 
-export type WrfcConfigReader = Pick<ConfigManager, 'get' | 'getCategory'>;
-
 export function readWrfcConfig(configManager: WrfcConfigReader): WrfcConfigLike {
-  const wrfcConfig = configManager.getCategory('wrfc') as Partial<WrfcConfigLike> | undefined;
-  // Number.isFinite (not typeof === 'number') so a NaN/Infinity config value is
-  // rejected rather than poisoning the numeric bounds: a NaN maxFixAttempts makes
-  // `fixAttempts >= maxFixAttempts` always false, so the fix loop never terminates.
-  const rawScore = configManager.get('wrfc.scoreThreshold');
-  const rawMax = configManager.get('wrfc.maxFixAttempts');
-  const rawHeartbeat = configManager.get('wrfc.agentHeartbeatTimeoutMs');
-  const rawTransportRetryLimit = configManager.get('wrfc.transportRetryLimit');
-  const rawTransportRetryDelayMs = configManager.get('wrfc.transportRetryDelayMs');
+  const config = readContractConfig(configManager);
   return {
-    scoreThreshold: Number.isFinite(rawScore)
-      ? (rawScore as number)
-      : Number.isFinite(wrfcConfig?.scoreThreshold) ? (wrfcConfig?.scoreThreshold as number) : 9.9,
-    maxFixAttempts: Number.isFinite(rawMax)
-      ? (rawMax as number)
-      : Number.isFinite(wrfcConfig?.maxFixAttempts) ? (wrfcConfig?.maxFixAttempts as number) : 5,
-    autoCommit:
-      typeof configManager.get('wrfc.autoCommit') === 'boolean'
-        ? (configManager.get('wrfc.autoCommit') as boolean)
-        : wrfcConfig?.autoCommit ?? false,
-    commitScope: isWrfcCommitScope(configManager.get('wrfc.commitScope'))
-      ? (configManager.get('wrfc.commitScope') as WrfcCommitScope)
-      : isWrfcCommitScope(wrfcConfig?.commitScope) ? wrfcConfig!.commitScope : 'scoped',
-    gates: Array.isArray(wrfcConfig?.gates) ? wrfcConfig.gates : [],
-    agentHeartbeatTimeoutMs: Number.isFinite(rawHeartbeat)
-      ? (rawHeartbeat as number)
-      : Number.isFinite(wrfcConfig?.agentHeartbeatTimeoutMs) ? (wrfcConfig?.agentHeartbeatTimeoutMs as number) : 0,
-    transportRetryLimit: Number.isFinite(rawTransportRetryLimit)
-      ? (rawTransportRetryLimit as number)
-      : Number.isFinite(wrfcConfig?.transportRetryLimit) ? (wrfcConfig?.transportRetryLimit as number) : 1,
-    transportRetryDelayMs: Number.isFinite(rawTransportRetryDelayMs)
-      ? (rawTransportRetryDelayMs as number)
-      : Number.isFinite(wrfcConfig?.transportRetryDelayMs) ? (wrfcConfig?.transportRetryDelayMs as number) : 5_000,
+    scoreThreshold: WRFC_SCORE_THRESHOLD,
+    maxFixAttempts: config.maxFixRounds,
+    autoCommit: config.autoCommit,
+    commitScope: config.commitScope,
+    gates: [...config.gates],
+    agentHeartbeatTimeoutMs: config.heartbeatTimeoutMs,
+    transportRetryLimit: config.transportRetryLimit,
+    transportRetryDelayMs: config.transportRetryDelayMs,
   };
 }
 
 export function getWrfcAgentHeartbeatTimeoutMs(configManager: WrfcConfigReader): number {
-  return readWrfcConfig(configManager).agentHeartbeatTimeoutMs ?? 0;
+  return readWrfcConfig(configManager).agentHeartbeatTimeoutMs;
 }
 
 export function getWrfcTransportRetryLimit(configManager: WrfcConfigReader): number {
-  return readWrfcConfig(configManager).transportRetryLimit ?? 1;
+  return readWrfcConfig(configManager).transportRetryLimit;
 }
 
 export function getWrfcTransportRetryDelayMs(configManager: WrfcConfigReader): number {
-  return readWrfcConfig(configManager).transportRetryDelayMs ?? 5_000;
+  return readWrfcConfig(configManager).transportRetryDelayMs;
 }
 
-export function getWrfcScoreThreshold(configManager: WrfcConfigReader): number {
-  return readWrfcConfig(configManager).scoreThreshold ?? 9.9;
+export function getWrfcScoreThreshold(_configManager: WrfcConfigReader): number {
+  return WRFC_SCORE_THRESHOLD;
 }
 
 export function getWrfcMaxFixAttempts(configManager: WrfcConfigReader): number {
-  return readWrfcConfig(configManager).maxFixAttempts ?? 5;
+  return readWrfcConfig(configManager).maxFixAttempts;
 }
 
 export function getWrfcAutoCommit(configManager: WrfcConfigReader): boolean {
-  return readWrfcConfig(configManager).autoCommit ?? false;
+  return readWrfcConfig(configManager).autoCommit;
 }
 
 export function getWrfcCommitScope(configManager: WrfcConfigReader): WrfcCommitScope {
-  return readWrfcConfig(configManager).commitScope ?? 'scoped';
+  return readWrfcConfig(configManager).commitScope;
 }
 
 export function getEnabledWrfcGates(configManager: WrfcConfigReader): WrfcConfigLike['gates'] {

@@ -18,8 +18,9 @@
  * shift or invalidate.
  */
 
-import type { WrfcAgentRole, QualityGateResult } from '../agents/wrfc-types.js';
-import type { WrfcCommitScope } from '../agents/wrfc-config.js';
+import type { WrfcAgentRole } from '../agents/wrfc-types.js';
+import type { QualityGateResult } from '../contract/gates.js';
+import type { ContractCommitScope } from '../contract/config.js';
 import type { CompletionReport, ConstraintFinding } from '../agents/completion-report.js';
 
 /** A named agent role, OR an archetype name loaded via ArchetypeLoader. */
@@ -29,7 +30,7 @@ export type PhaseKind = 'plan' | 'engineer' | 'review' | 'fix' | 'gate' | 'integ
 
 /** The gate policy a phase enforces before an item may advance past it. */
 export interface PhaseGateSpec {
-  readonly scope: WrfcCommitScope;
+  readonly scope: ContractCommitScope;
   readonly gates: readonly string[];
 }
 

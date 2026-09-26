@@ -7,6 +7,7 @@ export const RUNTIME_EVENT_DOMAINS = [
   "agents",
   "workflows",
   "orchestration",
+  "contracts",
   "communication",
   "planner",
   "permissions",
