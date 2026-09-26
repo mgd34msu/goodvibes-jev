@@ -3,6 +3,12 @@ import type { JudgmentErrorKind } from '../port/errors.ts';
 
 /** A decision log entry's id. */
 export type DecisionId = string & { readonly __decisionId: true };
+/** An ISO 8601 timestamp. */
+export type IsoTime = string & { readonly __isoTime: true };
+/** SHA-256 of a state's canonical JSON, in hex. */
+export type StateHash = string & { readonly __stateHash: true };
+
+export const isoTime = (date: Date): IsoTime => date.toISOString() as IsoTime;
 
 /** Token counts for one answered call. */
 export interface TokenUsage {
@@ -13,18 +19,18 @@ export interface TokenUsage {
 /** What every entry records about the call it describes. */
 interface CallRecord {
   readonly id: DecisionId;
-  /** ISO 8601 time the call was made. */
-  readonly at: string;
+  /** When the call was made. */
+  readonly at: IsoTime;
   readonly context: DecisionContext;
   readonly requestedModel: string;
-  /** SHA-256 of the canonical state JSON; the state itself is not stored. */
-  readonly stateHash: string;
+  /** The state itself is not stored. */
+  readonly stateHash: StateHash;
   readonly questions: JsonValue;
   readonly latencyMs: number;
   readonly requestId: string | undefined;
 }
 
-/** A call the endpoint answered. Readings and the action are attached afterwards, when a decision draws them. */
+/** A call the endpoint answered. */
 export interface AnsweredEntry extends CallRecord {
   readonly status: 'answered';
   /** The versioned model that answered. */
@@ -32,8 +38,10 @@ export interface AnsweredEntry extends CallRecord {
   /** Raw answers as the endpoint returned them. */
   readonly answers: JsonValue;
   readonly usage: TokenUsage;
-  readonly readings?: JsonValue;
-  readonly action?: string;
+  /** What the decision concluded from the answers; null until it is attached. */
+  readonly readings: JsonValue | null;
+  /** What code did with the decision; null until it says. */
+  readonly action: string | null;
 }
 
 /** A call that failed; nothing was read from it. */
@@ -75,7 +83,7 @@ export interface DecisionLog {
 }
 
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
+  Object.prototype.toString.call(value) === '[object Object]';
 
 const sortKeys = (value: Readonly<Record<string, unknown>>): Record<string, unknown> =>
   Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
@@ -86,6 +94,6 @@ export function canonicalJson(value: EntryType | JsonValue | undefined): string 
   return JSON.stringify(value, (_key, inner: unknown) => (isPlainObject(inner) ? sortKeys(inner) : inner));
 }
 
-export function hashState(state: EntryType): string {
-  return Bun.CryptoHasher.hash('sha256', canonicalJson(state), 'hex');
+export function hashState(state: EntryType): StateHash {
+  return Bun.CryptoHasher.hash('sha256', canonicalJson(state), 'hex') as StateHash;
 }

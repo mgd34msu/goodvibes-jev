@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import type { JudgmentErrorKind } from '../port/errors.ts';
 import type { DecisionContext, JsonValue } from '../port/types.ts';
-import type { DecisionEntry, DecisionId, DecisionLog, DecisionQuery, NewDecisionEntry } from './types.ts';
+import type { DecisionEntry, DecisionId, DecisionLog, DecisionQuery, IsoTime, NewDecisionEntry, StateHash } from './types.ts';
 
 /** Bumped whenever the table shape changes; an older file is refused rather than misread. */
 const SCHEMA_VERSION = 1;
@@ -59,22 +59,24 @@ interface Row {
 
 type Params = Record<string, string | number | null>;
 
-function contextOf(row: Row): DecisionContext {
-  return {
-    ...(row.battery === null ? {} : { battery: row.battery }),
-    ...(row.battery_version === null ? {} : { batteryVersion: row.battery_version }),
-    ...(row.pattern === null ? {} : { pattern: row.pattern }),
-    ...(row.site === null ? {} : { site: row.site }),
-  };
+/** The same record without its null entries. */
+function presentOnly<T extends Record<string, unknown>>(record: T): { [K in keyof T]?: NonNullable<T[K]> } {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== null)) as { [K in keyof T]?: NonNullable<T[K]> };
 }
+
+function contextOf(row: Row): DecisionContext {
+  return presentOnly({ battery: row.battery, batteryVersion: row.battery_version, pattern: row.pattern, site: row.site });
+}
+
+const parseJson = (text: string | null): JsonValue | null => (text === null ? null : (JSON.parse(text) as JsonValue));
 
 function toEntry(row: Row): DecisionEntry {
   const call = {
     id: row.id as DecisionId,
-    at: row.at,
+    at: row.at as IsoTime,
     context: contextOf(row),
     requestedModel: row.requested_model,
-    stateHash: row.state_hash,
+    stateHash: row.state_hash as StateHash,
     questions: JSON.parse(row.questions) as JsonValue,
     latencyMs: row.latency_ms,
     requestId: row.request_id ?? undefined,
@@ -86,10 +88,10 @@ function toEntry(row: Row): DecisionEntry {
     ...call,
     status: 'answered',
     model: row.model ?? '',
-    answers: JSON.parse(row.answers ?? 'null') as JsonValue,
+    answers: parseJson(row.answers),
     usage: { inputTokens: row.input_tokens ?? 0, outputTokens: row.output_tokens ?? 0 },
-    ...(row.readings === null ? {} : { readings: JSON.parse(row.readings) as JsonValue }),
-    ...(row.action === null ? {} : { action: row.action }),
+    readings: parseJson(row.readings),
+    action: row.action,
   };
 }
 

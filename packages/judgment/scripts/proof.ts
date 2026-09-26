@@ -84,7 +84,7 @@ console.log(`${featuresOk ? 'PASS' : 'FAIL'}  features  ${JSON.stringify(columns
 if (!featuresOk) failed++;
 
 const entries = log.query({ limit: 100_000 });
-const unlogged = entries.filter((entry) => entry.status === 'answered' && entry.readings === undefined);
+const unlogged = entries.filter((entry) => entry.status === 'answered' && entry.readings === null);
 console.log(`\ndecision log: ${entries.length} entries at ${logPath}; ${unlogged.length} without readings`);
 if (unlogged.length > 0) failed++;
 process.exit(failed === 0 ? 0 : 1);

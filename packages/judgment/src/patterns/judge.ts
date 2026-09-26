@@ -1,5 +1,5 @@
 import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { assertYesNoBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
@@ -88,32 +88,22 @@ export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict:
 
 /** How strongly the readings back the verdict: the strongest unmet reading for a fail, the weakest met one otherwise. */
 function verdictSignal(judgment: Judgment): number {
-  const all = [...judgment.criteria, judgment.goal];
-  return judgment.verdict === 'fail'
-    ? Math.max(...all.map((reading) => reading.probability))
-    : Math.min(...all.map((reading) => 1 - reading.probability));
+  const readings = [...judgment.criteria, judgment.goal];
+  if (judgment.verdict === 'fail') return Math.max(...readings.map((reading) => reading.probability));
+  return Math.min(...readings.map((reading) => 1 - reading.probability));
 }
 
 const asCriterionAnswer = (answer: string): 'met' | 'unmet' => (answer === 'yes' ? 'unmet' : 'met');
 
 function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
-  const verdictCheck: FixtureCheck = {
-    fixture: fixture.name,
-    aspect: 'verdict',
-    expected: fixture.expect.verdict,
-    got: judgment.verdict,
-    correct: judgment.verdict === fixture.expect.verdict,
-    signal: verdictSignal(judgment),
-    outcome: judgment.outcome,
-  };
-  if (fixture.expect.unmet === undefined) return [verdictCheck];
+  const checks = [fixtureCheck(fixture.name, 'verdict', fixture.expect.verdict, judgment.verdict, verdictSignal(judgment), judgment.outcome)];
+  if (fixture.expect.unmet === undefined) return checks;
   const expectedUnmet = new Set(fixture.expect.unmet);
-  const criterionChecks = judgment.criteria.map((reading, index): FixtureCheck => {
+  judgment.criteria.forEach((reading, index) => {
     const expected = expectedUnmet.has(index) ? 'unmet' : 'met';
-    const got = asCriterionAnswer(concludedAnswer(reading));
-    return { fixture: fixture.name, aspect: `criterion_${index}`, expected, got, correct: got === expected, signal: readingSignal(reading), outcome: reading.outcome };
+    checks.push(fixtureCheck(fixture.name, `criterion_${index}`, expected, asCriterionAnswer(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
   });
-  return [verdictCheck, ...criterionChecks];
+  return checks;
 }
 
 function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {

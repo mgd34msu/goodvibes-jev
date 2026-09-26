@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -69,19 +69,34 @@ export interface ExtractionVerifierSpec extends PatternHeader {
   })[];
 }
 
+/** One per-field check's result: the probability that the field is wrong in the way the metric asks. */
+export interface FieldCheck {
+  readonly field: string;
+  readonly metric: string;
+  readonly p: number;
+}
+
 export interface Verified {
   readonly escalate: boolean;
-  /** `field::metric` checks at or above the firing line, strongest first. */
-  readonly fired: readonly { readonly check: string; readonly p: number }[];
-  readonly checks: Readonly<Record<string, number>>;
+  /** Checks at or above the firing line, strongest first. */
+  readonly fired: readonly FieldCheck[];
+  readonly checks: readonly FieldCheck[];
 }
 
 export interface ExtractionVerifier extends NamedDecision {
   verify(port: JudgmentPort, input: ExtractionInput, options?: CallOptions): Promise<Verified>;
 }
 
-const isEmpty = (value: JsonValue | undefined): boolean =>
-  value === undefined || value === null || ((typeof value === 'string' || Array.isArray(value)) && value.length === 0);
+const isBlank = (value: JsonValue | undefined): boolean => value === undefined || value === null;
+const hasNoLength = (value: JsonValue | undefined): boolean => (typeof value === 'string' || Array.isArray(value)) && value.length === 0;
+const isEmpty = (value: JsonValue | undefined): boolean => isBlank(value) || hasNoLength(value);
+
+const SEPARATOR = '::';
+const checkKey = (field: string, metric: string): string => `${field}${SEPARATOR}${metric}`;
+const toFieldCheck = ([key, p]: [string, number]): FieldCheck => {
+  const [field, metric] = key.split(SEPARATOR) as [string, string];
+  return { field, metric, p };
+};
 
 function fieldQuestions(name: string, spec: FieldSpec, value: JsonValue | undefined): [string, NoulQuestion][] {
   const fieldSpec = { path: name, type: spec.type ?? 'unknown', description: spec.description ?? '', required: spec.required ?? false };
@@ -90,8 +105,8 @@ function fieldQuestions(name: string, spec: FieldSpec, value: JsonValue | undefi
       true: metric.wrong,
       false: metric.right,
     });
-  if (isEmpty(value)) return [[`${name}::absence_wrong`, ask(ABSENCE_METRIC)]];
-  return Object.entries(FIELD_METRICS).map(([metric, spec_]) => [`${name}::${metric}`, ask(spec_)]);
+  if (isEmpty(value)) return [[checkKey(name, 'absence_wrong'), ask(ABSENCE_METRIC)]];
+  return Object.entries(FIELD_METRICS).map(([metric, spec_]) => [checkKey(name, metric), ask(spec_)]);
 }
 
 export function defineExtractionVerifier(spec: ExtractionVerifierSpec): ExtractionVerifier {
@@ -112,11 +127,8 @@ export function defineExtractionVerifier(spec: ExtractionVerifierSpec): Extracti
       );
       const state = { instruction: input.instruction, source_text: input.source, extraction: input.record } as EntryType;
       const result = await askAs(port, spec, 'extraction', state, questions, options);
-      const checks = Object.fromEntries(Object.entries(result.answers).map(([name, answer]) => [name, (answer as { noul: number }).noul]));
-      const fired = Object.entries(checks)
-        .filter(([, p]) => p >= spec.fireAt)
-        .sort((a, b) => b[1] - a[1])
-        .map(([check, p]) => ({ check, p }));
+      const checks = Object.entries(result.answers).map(([key, answer]) => toFieldCheck([key, (answer as { noul: number }).noul]));
+      const fired = checks.filter(({ p }) => p >= spec.fireAt).sort((a, b) => b.p - a.p);
       const verified = { escalate: fired.length > 0, fired, checks };
       recordReadings(port, result, verified);
       return verified;
@@ -124,17 +136,10 @@ export function defineExtractionVerifier(spec: ExtractionVerifierSpec): Extracti
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) {
-        const got = await verifier.verify(port, fixture, { site: 'calibration', ...options });
-        const strongest = Math.max(...Object.values(got.checks));
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'escalate',
-          expected: String(fixture.expect.escalate),
-          got: String(got.escalate),
-          correct: got.escalate === fixture.expect.escalate,
-          signal: got.escalate ? strongest : 1 - strongest,
-          outcome: 'act',
-        });
+        const got = await verifier.verify(port, fixture, { ...options, site: 'calibration' });
+        const strongest = Math.max(...got.checks.map(({ p }) => p));
+        const signal = got.escalate ? strongest : 1 - strongest;
+        checks.push(fixtureCheck(fixture.name, 'escalate', String(fixture.expect.escalate), String(got.escalate), signal, 'act'));
       }
       return checks;
     },

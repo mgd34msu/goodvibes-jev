@@ -1,53 +1,54 @@
 import { JudgmentError } from './errors.ts';
 import type { ChoiceQuestion, Question, Questions, ScoreQuestion } from './types.ts';
 
-/** An answer as it arrives on the wire, before it is trusted. */
-type RawAnswer = Readonly<Record<string, unknown>>;
+/** An answer as it arrives on the wire, before it is trusted: every field unchecked. */
+interface RawAnswer {
+  readonly type?: unknown;
+  readonly noul?: unknown;
+  readonly choice?: unknown;
+  readonly score?: unknown;
+  readonly confidence?: unknown;
+  readonly probabilities?: Readonly<Record<string, unknown>>;
+}
 
 /** Throws the invalid-response error for one malformed answer. */
 type Fail = (message: string) => never;
 
-const isProbability = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+const isNumberWithin = (value: unknown, low: number, high: number): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= low && value <= high;
 
-const probabilitiesOf = (answer: RawAnswer): Readonly<Record<string, unknown>> =>
-  (answer['probabilities'] as Readonly<Record<string, unknown>> | undefined) ?? {};
+const isProbability = (value: unknown): value is number => isNumberWithin(value, 0, 1);
 
-/** Every expected key of a distribution must carry a probability. */
-function requireDistribution(answer: RawAnswer, keys: readonly string[], describe: (key: string) => string, fail: Fail): void {
-  const probabilities = probabilitiesOf(answer);
+/**
+ * A choice or score answer carries a confidence and a probability for every
+ * option or level it could have given; `label` names a key in the message.
+ */
+function checkDistribution(answer: RawAnswer, keys: readonly string[], label: (key: string) => string, fail: Fail): void {
+  if (!isProbability(answer.confidence)) fail('no valid confidence');
+  const probabilities = answer.probabilities ?? {};
   const missing = keys.find((key) => !isProbability(probabilities[key]));
-  if (missing !== undefined) fail(`no probability for ${describe(missing)}`);
-}
-
-function requireConfidence(answer: RawAnswer, fail: Fail): void {
-  if (!isProbability(answer['confidence'])) fail('no valid confidence');
+  if (missing !== undefined) fail(`no probability for ${label(missing)}`);
 }
 
 function checkNoul(answer: RawAnswer, fail: Fail): void {
-  if (!isProbability(answer['noul'])) fail('no valid noul');
+  if (!isProbability(answer.noul)) fail('no valid noul');
 }
 
 function checkChoice(question: ChoiceQuestion, answer: RawAnswer, fail: Fail): void {
-  const chosen = answer['choice'];
-  const chosenIsOffered = typeof chosen === 'string' && chosen in question.criteria;
-  if (!chosenIsOffered) fail('a choice outside its criteria');
-  requireConfidence(answer, fail);
-  requireDistribution(answer, Object.keys(question.criteria), (option) => `option "${option}"`, fail);
+  const options = Object.keys(question.criteria);
+  if (!options.includes(answer.choice as string)) fail('a choice outside its criteria');
+  checkDistribution(answer, options, (option) => `option "${option}"`, fail);
 }
 
 function checkScore(question: ScoreQuestion, answer: RawAnswer, fail: Fail): void {
   const top = question.criteria.length - 1;
-  const value = answer['score'];
-  const onTheRubric = typeof value === 'number' && value >= 0 && value <= top;
-  if (!onTheRubric) fail(`a score outside 0 to ${top}`);
-  requireConfidence(answer, fail);
+  if (!isNumberWithin(answer.score, 0, top)) fail(`a score outside 0 to ${top}`);
   const levels = Array.from({ length: top + 1 }, (_, level) => String(level));
-  requireDistribution(answer, levels, (level) => `level ${level}`, fail);
+  checkDistribution(answer, levels, (level) => `level ${level}`, fail);
 }
 
 function checkOne(question: Question, answer: RawAnswer, fail: Fail): void {
-  if (answer['type'] !== question.type) fail(`type ${String(answer['type'])}, expected ${question.type}`);
+  if (answer.type !== question.type) fail(`type ${String(answer.type)}, expected ${question.type}`);
   if (question.type === 'noul') checkNoul(answer, fail);
   else if (question.type === 'choice') checkChoice(question, answer, fail);
   else checkScore(question, answer, fail);

@@ -1,4 +1,7 @@
 import type { DecisionContext, EntryType, JudgmentPort, JudgmentResult, Questions } from '../port/types.ts';
+import type { PatternHeader } from './decision.ts';
+
+export type { PatternHeader } from './decision.ts';
 
 /** The patterns and compounds that issue calls, as the decision log names them. */
 export type PatternName =
@@ -28,15 +31,6 @@ export type PatternName =
   | 'features'
   | 'compound-split';
 
-/** What every named decision declares about itself. */
-export interface PatternHeader {
-  readonly name: string;
-  readonly version: number;
-  readonly description: string;
-  readonly accuracyFloor: number;
-  readonly model?: string;
-}
-
 export interface CallOptions {
   readonly signal?: AbortSignal;
   /** The decision site, recorded in the decision log. */
@@ -45,6 +39,9 @@ export interface CallOptions {
 
 /** What a decision concluded, as the decision log keeps it. */
 export type Conclusions = Readonly<Record<string, unknown>>;
+
+/** A call's decision log entry, when the port keeps a log. */
+type DecisionIdOf = JudgmentResult<Questions>['decisionId'];
 
 /** The attribution a call carries into the decision log. */
 export function contextFor(header: PatternHeader, pattern: PatternName, site: string | undefined): DecisionContext {
@@ -70,11 +67,12 @@ export function askAs<const Q extends Questions>(
 }
 
 /** Attaches a decision's conclusions to its call's decision log entry. */
-export function recordReadings(port: JudgmentPort, result: { readonly decisionId?: string }, conclusions: object): void {
-  if (result.decisionId !== undefined) port.recorder?.recordReadings(result.decisionId, conclusions as Conclusions);
+export function recordReadings<C extends object>(port: JudgmentPort, result: { readonly decisionId?: DecisionIdOf }, conclusions: C): void {
+  const { decisionId } = result;
+  if (decisionId !== undefined) port.recorder?.recordReadings(decisionId, conclusions as Conclusions);
 }
 
 /** Records what code did with a decision; a no-op when the port keeps no log. */
-export function recordAction(port: JudgmentPort, decisionId: string | undefined, action: string): void {
+export function recordAction(port: JudgmentPort, decisionId: DecisionIdOf, action: string): void {
   if (decisionId !== undefined) port.recorder?.recordAction(decisionId, action);
 }

@@ -71,28 +71,25 @@ export const STAKES_BANDS: Readonly<Record<Stakes, { readonly yesNo: YesNoBand; 
 };
 
 const inUnit = (value: number): boolean => value >= 0 && value <= 1;
+const nonDecreasing = (values: readonly number[]): boolean => values.every((value, index) => index === 0 || values[index - 1]! <= value);
 
-/** True when every value lies in [0, 1] and each is no greater than the next. */
-function ascendingInUnit(values: readonly number[]): boolean {
-  return values.every(inUnit) && values.every((value, index) => index === 0 || values[index - 1]! <= value);
+/** Throws `message` unless the bounds lie in [0, 1] in non-decreasing order. */
+function assertOrderedInUnit(bounds: readonly number[], message: string): void {
+  if (!bounds.every(inUnit) || !nonDecreasing(bounds)) throw new RangeError(message);
 }
 
 /** Throws when a yes/no band is not ordered act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]. */
 export function assertYesNoBand(band: YesNoBand): void {
   const { act, confirm } = band;
-  const bounds = act === null ? [confirm.no, confirm.yes] : [act.no, confirm.no, confirm.yes, act.yes];
-  const middleIsOpen = confirm.no < confirm.yes;
-  if (!ascendingInUnit(bounds) || !middleIsOpen) {
-    throw new RangeError(`yes/no band must satisfy act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]: ${JSON.stringify(band)}`);
-  }
+  const message = `yes/no band must satisfy act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]: ${JSON.stringify(band)}`;
+  assertOrderedInUnit(act === null ? [confirm.no, confirm.yes] : [act.no, confirm.no, confirm.yes, act.yes], message);
+  if (confirm.no === confirm.yes) throw new RangeError(message);
 }
 
 /** Throws when a confidence band is not ordered confirmAt <= actAt within [0, 1]. */
 export function assertConfidenceBand(band: ConfidenceBand): void {
-  const bounds = band.actAt === null ? [band.confirmAt] : [band.confirmAt, band.actAt];
-  if (!ascendingInUnit(bounds)) {
-    throw new RangeError(`confidence band must satisfy confirmAt <= actAt within [0, 1]: ${JSON.stringify(band)}`);
-  }
+  const message = `confidence band must satisfy confirmAt <= actAt within [0, 1]: ${JSON.stringify(band)}`;
+  assertOrderedInUnit(band.actAt === null ? [band.confirmAt] : [band.confirmAt, band.actAt], message);
 }
 
 export function outcomeForConfidence(confidence: number, band: ConfidenceBand): Outcome {

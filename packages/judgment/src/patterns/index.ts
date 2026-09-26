@@ -45,18 +45,12 @@ export {
   type ExtractionInput,
   type ExtractionVerifier,
   type ExtractionVerifierSpec,
+  type FieldCheck,
   type FieldMetric,
   type FieldSpec,
   type Verified,
 } from './extraction.ts';
 export { defineRuleLadder, type Laddered, type LadderSpec, type RuleLadder, type Rung } from './ladder.ts';
-export {
-  defineStructureRecovery,
-  renderMarkdown,
-  splitLines,
-  type Block,
-  type BlockType,
-  type Line,
-  type StructureRecovery,
-  type StructureSpec,
-} from './structure.ts';
+export { defineStructureRecovery, type StructureRecovery, type StructureSpec } from './structure.ts';
+export { mergeLines, splitLines, type Block, type BlockType, type JoinBars, type Line } from './structure-blocks.ts';
+export { renderMarkdown } from './structure-render.ts';

@@ -21,11 +21,12 @@ function toJudgmentError(error: unknown): JudgmentError {
     return new JudgmentError('aborted', 'the judgment call was cancelled', { cause: error });
   }
   if (error instanceof APIError) {
-    const kind = RETRYABLE_STATUS(error.status) ? 'unavailable' : 'rejected';
-    return new JudgmentError(kind, `System One answered HTTP ${error.status}: ${error.message}`, {
+    const { status, message, requestId } = error;
+    const kind = RETRYABLE_STATUS(status) ? 'unavailable' : 'rejected';
+    return new JudgmentError(kind, `System One answered HTTP ${status}: ${message}`, {
       cause: error,
-      status: error.status,
-      ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+      status,
+      ...(requestId === undefined ? {} : { requestId }),
     });
   }
   if (error instanceof APIConnectionError) {
@@ -38,14 +39,16 @@ function toJudgmentError(error: unknown): JudgmentError {
 }
 
 function clientFor(config: JudgmentConfig): TypeSafeClient {
+  const { endpoint, model, timeoutMs, retry, fetch } = config;
+  const { apiKey, baseURL } = endpoint;
   return new TypeSafeClient({
-    apiKey: config.endpoint.apiKey,
-    baseURL: config.endpoint.baseURL,
-    defaultModel: config.model,
-    timeout: config.timeoutMs,
-    retry: config.retry,
+    apiKey,
+    baseURL,
+    defaultModel: model,
+    timeout: timeoutMs,
+    retry,
     logLevel: 'off',
-    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    ...(fetch === undefined ? {} : { fetch }),
   });
 }
 
@@ -86,7 +89,8 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
       const body = { state: request.state, questions: request.questions, model: requestedModel };
       const options = request.signal === undefined ? {} : { signal: request.signal };
       try {
-        const { data, requestId } = await client.systemOne(body, options).withResponse();
+        const pending = client.systemOne(body, options);
+        const { data, requestId } = await pending.withResponse();
         checkAnswers(request.questions, data.answers, requestId);
         return toResult<Q>(data, requestedModel, requestId, started);
       } catch (error) {

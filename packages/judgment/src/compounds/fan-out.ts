@@ -1,7 +1,10 @@
-import type { Battery, BatteryItems, ReadingFor } from '../batteries/battery.ts';
+import type { AnyReading, Battery, BatteryItems, ReadingFor } from '../batteries/battery.ts';
 import { readItem } from '../batteries/battery.ts';
 import { recordAction, recordReadings, type CallOptions } from '../batteries/asking.ts';
-import type { EntryType, JudgmentPort, Question, Questions } from '../port/types.ts';
+import type { EntryType, JudgmentPort, JudgmentResult, Question, Questions } from '../port/types.ts';
+
+type WireAnswers = JudgmentResult<Questions>['answers'];
+type PartReadings = Readonly<Record<string, Readonly<Record<string, AnyReading>>>>;
 
 type Parts = Readonly<Record<string, Battery<BatteryItems>>>;
 
@@ -35,7 +38,7 @@ function mergedQuestions(parts: Parts): Questions {
   return questions;
 }
 
-function readParts(parts: Parts, answers: Readonly<Record<string, unknown>>): Record<string, Record<string, unknown>> {
+function readParts(parts: Parts, answers: WireAnswers): PartReadings {
   return Object.fromEntries(
     Object.entries(parts).map(([part, battery]) => [
       part,
@@ -71,7 +74,7 @@ export async function fanOut<const P extends Parts>(
       ...(options.site === undefined ? {} : { site: options.site }),
     },
   });
-  const readings = readParts(parts, result.answers as Readonly<Record<string, unknown>>);
+  const readings = readParts(parts, result.answers);
   recordReadings(port, result, readings);
-  return { readings: readings as FannedReadings<P>, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
+  return { readings: readings as unknown as FannedReadings<P>, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
 }

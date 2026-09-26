@@ -10,7 +10,12 @@ export interface Column {
   readonly values: readonly number[];
 }
 
-type Answer = { type: 'noul'; noul: number } | { type: 'score'; probabilities: Record<string, number> } | { type: 'choice'; probabilities: Record<string, number> };
+type Distribution = Readonly<Record<string, number>>;
+/** An answer as feature encoding reads it: a yes/no probability or a distribution over options or levels. */
+type Answer = { readonly type: 'noul'; readonly noul: number } | { readonly type: 'score' | 'choice'; readonly probabilities: Distribution };
+
+const probabilityOf = (answer: Answer, key: string): number => (answer.type === 'noul' ? 0 : (answer.probabilities[key] ?? 0));
+const yesOf = (answer: Answer): number => (answer.type === 'noul' ? answer.noul : 0);
 
 function scoreColumns(name: string, probabilities: readonly (readonly number[])[], encoding: ScoreEncoding): Column[] {
   const means = probabilities.map((row) => row.reduce((sum, p, level) => sum + p * level, 0));
@@ -32,16 +37,12 @@ function scoreColumns(name: string, probabilities: readonly (readonly number[])[
 export function encodeColumns(questions: Questions, rows: readonly Readonly<Record<string, Answer>>[], encoding: ScoreEncoding): Column[] {
   return Object.entries(questions).flatMap(([name, question]: [string, Question]) => {
     const answers = rows.map((row) => row[name]!);
-    if (question.type === 'noul') return [{ name, values: answers.map((answer) => (answer as { noul: number }).noul) }];
+    if (question.type === 'noul') return [{ name, values: answers.map(yesOf) }];
     if (question.type === 'score') {
-      const levels = question.criteria.length;
-      const probabilities = answers.map((answer) => Array.from({ length: levels }, (_, level) => (answer as { probabilities: Record<string, number> }).probabilities[String(level)] ?? 0));
-      return scoreColumns(name, probabilities, encoding);
+      const levels = Array.from({ length: question.criteria.length }, (_, level) => String(level));
+      return scoreColumns(name, answers.map((answer) => levels.map((level) => probabilityOf(answer, level))), encoding);
     }
-    return Object.keys(question.criteria).map((option) => ({
-      name: `${name}=${option}`,
-      values: answers.map((answer) => (answer as { probabilities: Record<string, number> }).probabilities[option] ?? 0),
-    }));
+    return Object.keys(question.criteria).map((option) => ({ name: `${name}=${option}`, values: answers.map((answer) => probabilityOf(answer, option)) }));
   });
 }
 

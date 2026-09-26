@@ -115,15 +115,15 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     await port.ask({ state: 'raw', questions: { q: { type: 'noul', instructions: 'Q?' } } }); // 00:03, no battery
     await battery.run(withDecisionLog(failing, log, tick), 'three').catch(() => undefined); // 00:04, failed
 
-    expect(log.query().map((e) => e.at)).toEqual([
+    expect(log.query().map((e) => String(e.at))).toEqual([
       '2026-09-26T00:04:00.000Z',
       '2026-09-26T00:03:00.000Z',
       '2026-09-26T00:02:00.000Z',
       '2026-09-26T00:01:00.000Z',
     ]);
     expect(log.query({ battery: 'test.urgency' })).toHaveLength(3);
-    expect(log.query({ outcome: 'escalate' }).map((e) => e.at)).toEqual(['2026-09-26T00:02:00.000Z']);
-    expect(log.query({ outcome: 'act' }).map((e) => e.at)).toEqual(['2026-09-26T00:01:00.000Z']);
+    expect(log.query({ outcome: 'escalate' }).map((e) => String(e.at))).toEqual(['2026-09-26T00:02:00.000Z']);
+    expect(log.query({ outcome: 'act' }).map((e) => String(e.at))).toEqual(['2026-09-26T00:01:00.000Z']);
     expect(log.query({ since: '2026-09-26T00:02:00.000Z', until: '2026-09-26T00:04:00.000Z' })).toHaveLength(2);
     expect(log.query({ status: 'answered' })).toHaveLength(3);
     expect(log.query({ limit: 1 })).toHaveLength(1);

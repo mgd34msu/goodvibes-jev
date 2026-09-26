@@ -21,6 +21,18 @@ export interface FixtureCheck {
   readonly outcome: Outcome;
 }
 
+/** A check whose correctness is whether the decision's answer equals the fixture's. */
+export function fixtureCheck(
+  fixture: string,
+  aspect: string,
+  expected: string,
+  got: string,
+  signal: number,
+  outcome: Outcome,
+): FixtureCheck {
+  return { fixture, aspect, expected, got, correct: got === expected, signal, outcome };
+}
+
 /**
  * A named decision: anything that asks System One on behalf of one decision
  * site and can prove itself against labelled fixtures. Fixed-question
@@ -39,6 +51,9 @@ export interface NamedDecision {
   /** Runs every fixture live and returns one check per expectation. */
   checkFixtures(port: JudgmentPort, options?: { readonly signal?: AbortSignal }): Promise<readonly FixtureCheck[]>;
 }
+
+/** What every named decision declares about itself before it can run. */
+export type PatternHeader = Pick<NamedDecision, 'name' | 'version' | 'description' | 'accuracyFloor' | 'model'>;
 
 const NAME = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 

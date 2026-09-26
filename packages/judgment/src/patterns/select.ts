@@ -60,10 +60,12 @@ export interface SelectionRequest {
   readonly options?: CallOptions;
 }
 
+const withinCandidateLimit = (count: number): boolean => count >= 1 && count <= MAX_CANDIDATES;
+const distinctAndNotNone = (ids: readonly string[]): boolean => new Set(ids).size === ids.length && !ids.includes(NONE);
+
 function assertCandidates(decision: string, ids: readonly string[]): void {
-  if (ids.length < 1 || ids.length > MAX_CANDIDATES) throw new RangeError(`selector ${decision}: needs 1 to ${MAX_CANDIDATES} candidates, got ${ids.length}`);
-  const unique = new Set(ids).size === ids.length;
-  if (!unique || ids.includes(NONE)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
+  if (!withinCandidateLimit(ids.length)) throw new RangeError(`selector ${decision}: needs 1 to ${MAX_CANDIDATES} candidates, got ${ids.length}`);
+  if (!distinctAndNotNone(ids)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
 }
 
 function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Record<string, Question> {
@@ -82,9 +84,9 @@ function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Re
  */
 export function selectionOutcome(pick: ChoiceReading, winnerFit: YesNoReading | undefined): Outcome {
   if (pick.choice === NONE) return pick.outcome;
-  if (winnerFit?.verdict !== 'yes' || pick.outcome === 'escalate') return 'escalate';
-  const bothAct = pick.outcome === 'act' && winnerFit.outcome === 'act';
-  return bothAct ? 'act' : 'confirm';
+  if (winnerFit?.verdict !== 'yes') return 'escalate';
+  if (pick.outcome === 'escalate') return 'escalate';
+  return pick.outcome === 'act' && winnerFit.outcome === 'act' ? 'act' : 'confirm';
 }
 
 /** One selection request, shared by selectors and by compounds that recheck a shortlist. */

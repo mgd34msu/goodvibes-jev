@@ -1,6 +1,6 @@
 import { JudgmentError } from '../port/errors.ts';
 import type { JsonValue, JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '../port/types.ts';
-import { hashState, type DecisionLog, type NewDecisionEntry } from './types.ts';
+import { hashState, isoTime, type DecisionLog, type NewDecisionEntry } from './types.ts';
 
 /** Runs a log write; a failure becomes an `unrecorded` judgment error. */
 function recorded<T>(write: () => T): T {
@@ -30,7 +30,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();
       const call = {
-        at: now().toISOString(),
+        at: isoTime(now()),
         context: request.context ?? {},
         stateHash: hashState(request.state),
         questions: request.questions as unknown as JsonValue,

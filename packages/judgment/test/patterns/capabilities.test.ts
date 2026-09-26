@@ -171,7 +171,7 @@ describe('extraction verifier', () => {
     expect(names).toContain('registration_open_date::absence_wrong');
     expect(names.filter((n) => n.startsWith('description::')).length).toBe(4);
     expect(got.escalate).toBe(true);
-    expect(got.fired.map((f) => f.check)).toEqual(['description::hallucinated', 'description::off_target']);
+    expect(got.fired.map((f) => `${f.field}::${f.metric}`)).toEqual(['description::hallucinated', 'description::off_target']);
   });
 });
 

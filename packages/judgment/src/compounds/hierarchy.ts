@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import type { Outcome } from '../readings/bands.ts';
@@ -105,29 +105,47 @@ function assertHierarchySpec(spec: HierarchySpec): void {
 }
 
 function leafCheck(fixture: HierarchySpec['fixtures'][number], walk: Walk): FixtureCheck {
-  const got = walk.best.path.join(' > ');
-  return { fixture: fixture.name, aspect: 'leaf', expected: fixture.expect, got, correct: got === fixture.expect, signal: walk.best.score, outcome: walk.outcome };
+  const { best, outcome } = walk;
+  return fixtureCheck(fixture.name, 'leaf', fixture.expect, best.path.join(' > '), best.score, outcome);
+}
+
+/** The probability of each direct child of `path`; a lone child is certain and is not asked. */
+async function childProbabilities(port: JudgmentPort, spec: HierarchySpec, state: EntryType, path: readonly string[], options: CallOptions) {
+  const labels = Object.keys(subtree(spec.tree, path));
+  if (labels.length === 1) return { [labels[0]!]: 1 } as Readonly<Record<string, number>>;
+  const instructions = spec.instructions ?? DEFAULT_INSTRUCTIONS;
+  const asked = path.length === 0 ? instructions : { question: instructions, under: path.join(' > ') };
+  const question = choice(asked, Object.fromEntries(labels.map((label) => [label, null])));
+  const result = await askAs(port, spec, 'hierarchy', state, { child: question }, options);
+  const { choice: picked, confidence, probabilities } = result.answers.child;
+  recordReadings(port, result, { path, child: picked, confidence });
+  return probabilities as Readonly<Record<string, number>>;
+}
+
+async function expand(port: JudgmentPort, spec: HierarchySpec, state: EntryType, candidate: Candidate, options: CallOptions): Promise<Candidate[]> {
+  const probabilities = await childProbabilities(port, spec, state, candidate.path, options);
+  return Object.keys(probabilities).map((label) => extend(candidate, label, probabilities));
+}
+
+/** Expands every open path in the beam, level by level, keeping the best `beamWidth` until all reach leaves. */
+async function beamSearch(port: JudgmentPort, spec: HierarchySpec, state: EntryType, options: CallOptions): Promise<WalkPath[]> {
+  let beam: Candidate[] = [{ path: [], logSum: 0, decisions: 0 }];
+  for (let open = beam; open.length > 0; open = beam.filter((c) => !isLeaf(spec.tree, c.path))) {
+    const done = beam.filter((c) => isLeaf(spec.tree, c.path));
+    const expanded = await Promise.all(open.map((candidate) => expand(port, spec, state, candidate, options)));
+    beam = [...done, ...expanded.flat()].sort((a, b) => scoreOf(b) - scoreOf(a)).slice(0, spec.beamWidth);
+  }
+  return beam.map((candidate) => ({ path: candidate.path, score: scoreOf(candidate) }));
+}
+
+function summarizeWalk(ranked: readonly WalkPath[], spec: HierarchySpec): Walk {
+  const [best, runnerUp] = ranked as [WalkPath, WalkPath | undefined];
+  const separation = runnerUp === undefined ? Number.POSITIVE_INFINITY : best.score / Math.max(runnerUp.score, EPSILON);
+  return { best, beam: ranked, separation, outcome: outcomeOf(best.score, spec) };
 }
 
 export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
   assertHierarchySpec(spec);
-  const instructions = spec.instructions ?? DEFAULT_INSTRUCTIONS;
-
-  async function childProbabilities(port: JudgmentPort, state: EntryType, path: readonly string[], options: CallOptions) {
-    const labels = Object.keys(subtree(spec.tree, path));
-    if (labels.length === 1) return { [labels[0]!]: 1 } as Record<string, number>;
-    const asked = path.length === 0 ? instructions : { question: instructions, under: path.join(' > ') };
-    const question = choice(asked, Object.fromEntries(labels.map((label) => [label, null])));
-    const result = await askAs(port, spec, 'hierarchy', state, { child: question }, options);
-    const { choice: picked, confidence, probabilities } = result.answers.child;
-    recordReadings(port, result, { path, child: picked, confidence });
-    return probabilities as Readonly<Record<string, number>>;
-  }
-
-  async function expand(port: JudgmentPort, state: EntryType, candidate: Candidate, options: CallOptions): Promise<Candidate[]> {
-    const probabilities = await childProbabilities(port, state, candidate.path, options);
-    return Object.keys(probabilities).map((label) => extend(candidate, label, probabilities));
-  }
 
   const walker: HierarchyWalker = {
     name: spec.name,
@@ -136,18 +154,7 @@ export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
     accuracyFloor: spec.accuracyFloor,
     ...(spec.model === undefined ? {} : { model: spec.model }),
     fixtureCount: spec.fixtures.length,
-    async walk(port, state, options = {}) {
-      let beam: Candidate[] = [{ path: [], logSum: 0, decisions: 0 }];
-      for (let open = beam; open.length > 0; open = beam.filter((c) => !isLeaf(spec.tree, c.path))) {
-        const done = beam.filter((c) => isLeaf(spec.tree, c.path));
-        const expanded = await Promise.all(open.map((candidate) => expand(port, state, candidate, options)));
-        beam = [...done, ...expanded.flat()].sort((a, b) => scoreOf(b) - scoreOf(a)).slice(0, spec.beamWidth);
-      }
-      const ranked = beam.map((candidate) => ({ path: candidate.path, score: scoreOf(candidate) }));
-      const [best, runnerUp] = ranked as [WalkPath, WalkPath | undefined];
-      const separation = runnerUp === undefined ? Number.POSITIVE_INFINITY : best.score / Math.max(runnerUp.score, EPSILON);
-      return { best, beam: ranked, separation, outcome: outcomeOf(best.score, spec) };
-    },
+    walk: async (port, state, options = {}) => summarizeWalk(await beamSearch(port, spec, state, options), spec),
     async checkFixtures(port, options = {}) {
       const checks: FixtureCheck[] = [];
       for (const fixture of spec.fixtures) checks.push(leafCheck(fixture, await walker.walk(port, fixture.state, { ...options, site: 'calibration' })));

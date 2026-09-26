@@ -34,7 +34,9 @@ export {
 export {
   assertDecisionHeader,
   assertUniqueFixtures,
+  fixtureCheck,
   type FixtureCheck,
   type NamedDecision,
+  type PatternHeader as DecisionHeader,
 } from './decision.ts';
 export { BatteryRegistry } from './registry.ts';

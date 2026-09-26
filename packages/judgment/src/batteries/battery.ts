@@ -26,7 +26,7 @@ import {
   type YesNoReading,
 } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type PatternName } from './asking.ts';
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from './decision.ts';
+import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from './decision.ts';
 
 export interface YesNoItem {
   readonly kind: 'yes-no';
@@ -159,8 +159,7 @@ export function readingSignal(reading: AnyReading): number {
  * code act on it.
  */
 export function checkReading(fixture: string, aspect: string, expected: string, reading: AnyReading): FixtureCheck {
-  const got = concludedAnswer(reading);
-  return { fixture, aspect, expected, got, correct: got === expected, signal: readingSignal(reading), outcome: reading.outcome };
+  return fixtureCheck(fixture, aspect, expected, concludedAnswer(reading), readingSignal(reading), reading.outcome);
 }
 
 function assertItemBands(battery: string, itemName: string, item: BatteryItem): void {

@@ -50,6 +50,9 @@ export interface PolicyChecklist<H extends string, A extends string> extends Nam
 
 type Action<A extends string> = A | 'review' | 'pass';
 
+const thresholdsOrdered = (review: number, action: number): boolean => 0 <= review && review <= action && action <= 1;
+const namesKnownPolicy = (policy: string | undefined, policies: Readonly<Record<string, unknown>>): boolean => policy === undefined || policy in policies;
+
 function assertPolicySpec<H extends string, A extends string>(spec: PolicySpec<H, A>, hazards: readonly H[]): void {
   assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
   assertUniqueFixtures(spec.name, spec.fixtures);
@@ -59,14 +62,12 @@ function assertPolicySpec<H extends string, A extends string>(spec: PolicySpec<H
   if (unranked !== undefined) throw new RangeError(`policy ${spec.name}: precedence is missing "${unranked}"`);
   if (spec.precedence.at(-1) !== 'pass') throw new RangeError(`policy ${spec.name}: 'pass' must come last in precedence`);
   for (const [policyName, { review, action }] of Object.entries(spec.policies)) {
-    const ordered = review >= 0 && review <= action && action <= 1;
-    if (!ordered) throw new RangeError(`policy ${spec.name}: ${policyName} needs 0 <= review <= action <= 1`);
+    if (!thresholdsOrdered(review, action)) throw new RangeError(`policy ${spec.name}: ${policyName} needs 0 <= review <= action <= 1`);
   }
   if (!(spec.defaultPolicy in spec.policies)) throw new RangeError(`policy ${spec.name}: unknown default policy`);
   for (const fixture of spec.fixtures) {
     if (!actions.has(fixture.expect)) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} expects unknown action`);
-    const unknownPolicy = fixture.policy !== undefined && !(fixture.policy in spec.policies);
-    if (unknownPolicy) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} names unknown policy`);
+    if (!namesKnownPolicy(fixture.policy, spec.policies)) throw new RangeError(`policy ${spec.name}: fixture ${fixture.name} names unknown policy`);
   }
 }
 
