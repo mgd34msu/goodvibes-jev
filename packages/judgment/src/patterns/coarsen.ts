@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
@@ -32,8 +32,7 @@ export interface CoarseningClassifier<F extends string> extends NamedDecision {
 }
 
 export function defineCoarseningClassifier<const F extends string>(spec: CoarseningSpec<F>): CoarseningClassifier<F> {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   const fines = Object.keys(spec.labels) as F[];
   const known = new Set<string>([...fines, ...fines.map((fine) => spec.labels[fine].parent)]);
@@ -43,12 +42,7 @@ export function defineCoarseningClassifier<const F extends string>(spec: Coarsen
   const question = choice(spec.instructions, Object.fromEntries(fines.map((fine) => [fine, spec.labels[fine].description])));
 
   const classifier: CoarseningClassifier<F> = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async classify(port, state, options = {}) {
       const result = await askAs(port, spec, 'coarsen', state, { label: question }, options);
       const reading = readChoice(result.answers.label, spec.band) as ChoiceReading<F>;
@@ -63,22 +57,11 @@ export function defineCoarseningClassifier<const F extends string>(spec: Coarsen
       recordReadings(port, result, { level: coarsened.level, label: coarsened.label, reading });
       return coarsened;
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await classifier.classify(port, fixture.state, { site: 'calibration', ...options });
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'label',
-          expected: fixture.expect,
-          got: got.label,
-          correct: got.label === fixture.expect,
-          signal: got.reading.confidence,
-          outcome: got.reading.outcome,
-        });
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await classifier.classify(port, fixture.state, run);
+        return fixtureCheck(fixture.name, 'label', fixture.expect, got.label, got.reading.confidence, got.reading.outcome);
+      }),
   };
   return classifier;
 }

@@ -20,21 +20,24 @@ const RENDER_ONE: Readonly<Record<Exclude<BlockType, 'list_item' | 'code'>, (blo
   paragraph: (block) => block.text,
 };
 
-function renderGroup(type: BlockType, items: readonly Block[]): string {
-  if (type === 'list_item') return renderList(items);
-  if (type === 'code') return [CODE_FENCE, ...items.map((block) => block.text), CODE_FENCE].join('\n');
-  return RENDER_ONE[type](items[0]!);
-}
+/** Block types whose consecutive blocks render together: list items as one list, code lines as one fence. */
+const RENDER_GROUP: Readonly<Record<'list_item' | 'code', (items: readonly Block[]) => string>> = {
+  list_item: renderList,
+  code: (items) => [CODE_FENCE, ...items.map((block) => block.text), CODE_FENCE].join('\n'),
+};
 
-/** Consecutive list items form one list and consecutive code lines one fence; every other block stands alone. */
-const groupsWith = (type: BlockType): boolean => type === 'list_item' || type === 'code';
+const isGrouped = (type: BlockType): type is keyof typeof RENDER_GROUP => type in RENDER_GROUP;
+
+function renderGroup(type: BlockType, items: readonly Block[]): string {
+  return isGrouped(type) ? RENDER_GROUP[type](items) : RENDER_ONE[type](items[0]!);
+}
 
 /** Renders recovered blocks as Markdown, using only characters from the input plus markup. */
 export function renderMarkdown(blocks: readonly Block[]): string {
   const groups: [BlockType, Block[]][] = [];
   for (const block of blocks) {
     const last = groups.at(-1);
-    if (last?.[0] === block.type && groupsWith(block.type)) last[1].push(block);
+    if (last?.[0] === block.type && isGrouped(block.type)) last[1].push(block);
     else groups.push([block.type, [block]]);
   }
   return `${groups.map(([type, items]) => renderGroup(type, items)).join('\n\n')}\n`;

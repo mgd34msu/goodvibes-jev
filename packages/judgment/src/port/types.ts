@@ -1,4 +1,5 @@
 import type {
+  JsonValue,
   ChoiceCriteria,
   ChoiceQuestion,
   EntryType,
@@ -74,7 +75,7 @@ export interface JudgmentResult<Q extends Questions> {
  * readings a battery drew from the answers, and the action code took.
  */
 export interface DecisionRecorder {
-  recordReadings(decisionId: string, readings: Readonly<Record<string, unknown>>): void;
+  recordReadings(decisionId: string, readings: JsonValue): void;
   recordAction(decisionId: string, action: string): void;
 }
 
@@ -109,3 +110,8 @@ export const score = <const T extends ScoreCriteria>(
   instructions: EntryType,
   criteria: T,
 ): ScoreQuestion<T> => ({ type: 'score', instructions, criteria });
+
+/** A JSON snapshot of a value, as the decision log stores questions, answers and readings. */
+export function toJson(value: object): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
+}

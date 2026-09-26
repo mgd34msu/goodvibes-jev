@@ -1,7 +1,7 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
-import { readYesNo, type YesNoReading } from '../readings/readings.ts';
+import { likelierSide, readYesNo, type YesNoReading } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /**
@@ -33,17 +33,11 @@ function itemQuestion(condition: string, index: number) {
 }
 
 export function defineCounter(spec: CounterSpec): Counter {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertYesNoBand(spec.band);
 
   const counter: Counter = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async count(port, items, options = {}) {
       if (items.length === 0) return { count: 0, uncertain: [], readings: [] };
       const questions = Object.fromEntries(items.map((_, index) => [`item_${index}`, itemQuestion(spec.condition, index)]));
@@ -55,23 +49,12 @@ export function defineCounter(spec: CounterSpec): Counter {
       recordReadings(port, result, { count, uncertain });
       return { count, uncertain, readings };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await counter.count(port, fixture.items, { site: 'calibration', ...options });
-        const weakest = Math.min(...got.readings.map((reading) => Math.max(reading.probability, 1 - reading.probability)));
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'count',
-          expected: String(fixture.expect),
-          got: String(got.count),
-          correct: got.count === fixture.expect,
-          signal: weakest,
-          outcome: got.uncertain.length === 0 ? 'act' : 'escalate',
-        });
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await counter.count(port, fixture.items, run);
+        const weakest = Math.min(...got.readings.map((reading) => likelierSide(reading.probability)));
+        return fixtureCheck(fixture.name, 'count', String(fixture.expect), String(got.count), weakest, got.uncertain.length === 0 ? 'act' : 'escalate');
+      }),
   };
   return counter;
 }

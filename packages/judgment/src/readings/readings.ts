@@ -42,6 +42,12 @@ export interface ScoreReading {
 
 export type Reading = YesNoReading | ChoiceReading | ScoreReading;
 
+/** Whether a yes/no probability leans yes: yes is the likelier side. Ties lean yes. */
+export const leansYes = (p: number): boolean => p >= 0.5;
+
+/** How strongly a yes/no probability backs its likelier side, from 0.5 to 1. */
+export const likelierSide = (p: number): number => Math.max(p, 1 - p);
+
 type YesNoConclusion = Pick<YesNoReading, 'verdict' | 'outcome'>;
 
 /** Where a probability falls in a yes/no band: act on either side, confirm nearer the middle, escalate in it. */

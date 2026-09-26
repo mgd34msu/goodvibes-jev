@@ -21,6 +21,9 @@ export interface FixtureCheck {
   readonly outcome: Outcome;
 }
 
+/** What a fixture expects, and a check reports, when a decision finds nothing to pick. */
+export const NONE = 'none';
+
 /** A check whose correctness is whether the decision's answer equals the fixture's. */
 export function fixtureCheck(
   fixture: string,
@@ -58,7 +61,7 @@ export type PatternHeader = Pick<NamedDecision, 'name' | 'version' | 'descriptio
 const NAME = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
 
 /** Validates the fields every named decision shares. */
-export function assertDecisionHeader(header: {
+function assertDecisionHeader(header: {
   readonly name: string;
   readonly version: number;
   readonly accuracyFloor: number;
@@ -72,10 +75,40 @@ export function assertDecisionHeader(header: {
 }
 
 /** Rejects fixture lists with repeated names. */
-export function assertUniqueFixtures(decision: string, fixtures: readonly { readonly name: string }[]): void {
+function assertUniqueFixtures(decision: string, fixtures: readonly { readonly name: string }[]): void {
   const seen = new Set<string>();
   for (const { name } of fixtures) {
     if (seen.has(name)) throw new RangeError(`decision ${decision}: duplicate fixture "${name}"`);
     seen.add(name);
   }
+}
+
+/** What a named decision carries besides its fixture check. */
+export type DecisionIdentity = Omit<NamedDecision, 'checkFixtures'>;
+
+/** Validates a pattern's header and fixture names, and returns the header its named decision carries. */
+export function decisionHeader(spec: PatternHeader & { readonly fixtures: readonly { readonly name: string }[] }): DecisionIdentity {
+  const { name, version, description, accuracyFloor, model, fixtures } = spec;
+  const header = { name, version, description, accuracyFloor, ...(model === undefined ? {} : { model }), fixtureCount: fixtures.length };
+  assertDecisionHeader(header);
+  assertUniqueFixtures(name, fixtures);
+  return header;
+}
+
+/** How a fixture runs live: with the caller's signal, its calls marked as calibration in the decision log. */
+export interface CalibrationRun {
+  readonly signal?: AbortSignal;
+  readonly site: 'calibration';
+}
+
+/** Runs every fixture live, one at a time, and gathers the checks each one produces. */
+export async function checkEachFixture<F>(
+  fixtures: readonly F[],
+  options: { readonly signal?: AbortSignal },
+  check: (fixture: F, run: CalibrationRun) => Promise<FixtureCheck | readonly FixtureCheck[]>,
+): Promise<FixtureCheck[]> {
+  const run: CalibrationRun = { ...options, site: 'calibration' };
+  const checks: FixtureCheck[] = [];
+  for (const fixture of fixtures) checks.push(...[await check(fixture, run)].flat());
+  return checks;
 }

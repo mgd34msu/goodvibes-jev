@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type ChoiceQuestion, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
@@ -198,34 +198,19 @@ export function assembleDate(
 }
 
 function dateCheck(fixture: DatePartsSpec['fixtures'][number], got: ExtractedDate): FixtureCheck {
-  const gotDate = got.date ?? 'none';
-  return {
-    fixture: fixture.name,
-    aspect: 'date',
-    expected: fixture.expect,
-    got: gotDate,
-    correct: gotDate === fixture.expect,
-    signal: got.confidence ?? 0,
-    outcome: got.outcome,
-  };
+  return fixtureCheck(fixture.name, 'date', fixture.expect, got.date ?? NONE, got.confidence ?? 0, got.outcome);
 }
 
 export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   for (const fixture of spec.fixtures) {
     parseDay(fixture.today);
-    if (fixture.expect !== 'none') parseDay(fixture.expect);
+    if (fixture.expect !== NONE) parseDay(fixture.expect);
   }
 
   const reader: DatePartsReader = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async extract(port, document, role, today, options = {}) {
       const todayDate = parseDay(today);
       const questions = dateQuestions(role, todayDate.getUTCFullYear());
@@ -237,13 +222,8 @@ export function defineDatePartsReader(spec: DatePartsSpec): DatePartsReader {
       recordReadings(port, result, { ...assembled, today, parts });
       return { ...assembled, decisionId: result.decisionId, recordAction: (a) => recordAction(port, result.decisionId, a) };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        checks.push(dateCheck(fixture, await reader.extract(port, fixture.document, fixture.role, fixture.today, { ...options, site: 'calibration' })));
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => dateCheck(fixture, await reader.extract(port, fixture.document, fixture.role, fixture.today, run))),
   };
   return reader;
 }

@@ -1,5 +1,5 @@
 import { defineBattery, rated, type Battery, type ScoreItem } from '../batteries/battery.ts';
-import type { NamedDecision } from '../batteries/decision.ts';
+import { decisionHeader, type NamedDecision } from '../batteries/decision.ts';
 import type { EntryType, JudgmentPort, ScoreCriteria } from '../port/types.ts';
 import type { ConfidenceBand } from '../readings/bands.ts';
 import type { ScoreReading } from '../readings/readings.ts';
@@ -51,23 +51,15 @@ export function defineCompositeScore<const D extends string, const P extends str
       return [dimension, rated(instructions, levels, band)];
     }),
   ) as Record<D, ScoreItem<ScoreCriteria>>;
+  const header = decisionHeader(spec);
   const battery: Battery<Record<D, ScoreItem<ScoreCriteria>>> = defineBattery({
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
+    ...header,
     items,
     fixtures: spec.fixtures as never,
   });
 
   return {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: battery.fixtureCount,
+    ...header,
     checkFixtures: (port, options) => battery.checkFixtures(port, options),
     async score(port, state, options = {}) {
       const run = await battery.run(port, state, { pattern: 'composite', ...options });

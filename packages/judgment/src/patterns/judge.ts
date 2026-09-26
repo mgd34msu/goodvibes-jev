@@ -1,5 +1,5 @@
 import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { assertYesNoBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
@@ -72,9 +72,12 @@ const GOAL_QUESTION: NoulQuestion = noul('Does `output` fail to achieve `goal`?'
   false: 'The output achieves what the goal asks.',
 });
 
+/** Criterion and goal questions ask whether something falls short, so a yes reads as unmet. */
+const isUnmet = (reading: YesNoReading): boolean => reading.verdict === 'yes';
+
 /** Folds per-criterion and goal readings into one verdict, max-style. */
 export function aggregateJudgment(readings: readonly YesNoReading[]): { verdict: Verdict; outcome: Outcome } {
-  const unmet = readings.filter((reading) => reading.verdict === 'yes');
+  const unmet = readings.filter(isUnmet);
   const someUnmet = unmet.length > 0;
   const someUnsettled = readings.some((reading) => reading.verdict === 'uncertain');
   if (someUnmet) {
@@ -119,18 +122,12 @@ function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestio
 }
 
 export function defineJudge(spec: JudgeSpec): Judge {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertYesNoBand(spec.band);
   for (const fixture of spec.fixtures) assertJudgeFixture(spec.name, fixture);
 
   const judge: Judge = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async judge(port, input, options = {}) {
       if (input.criteria.length === 0) throw new RangeError(`judge ${spec.name}: nothing to judge without criteria`);
       const state = { goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) };
@@ -139,15 +136,12 @@ export function defineJudge(spec: JudgeSpec): Judge {
       const criteria = input.criteria.map((_, index) => readYesNo(answers[`criterion_${index}`]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
       const { verdict, outcome } = aggregateJudgment([...criteria, goal]);
-      const unmet = criteria.flatMap((reading, index) => (reading.verdict === 'yes' ? [index] : []));
+      const unmet = criteria.flatMap((reading, index) => (isUnmet(reading) ? [index] : []));
       recordReadings(port, result, { verdict, outcome, goal, criteria });
       return { verdict, outcome, criteria, goal, unmet, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) checks.push(...fixtureChecks(fixture, await judge.judge(port, fixture, { ...options, site: 'calibration' })));
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => fixtureChecks(fixture, await judge.judge(port, fixture, run))),
   };
   return judge;
 }

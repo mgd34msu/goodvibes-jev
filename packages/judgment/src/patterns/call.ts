@@ -1,6 +1,7 @@
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { choice, noul, type EntryType, type JudgmentPort, type Question } from '../port/types.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { choice, noul, type ChoiceResponse, type EntryType, type JudgmentPort, type JudgmentResult, type NoulResponse, type Question, type Questions } from '../port/types.ts';
 import { assertConfidenceBand, outcomeForConfidence, type ConfidenceBand, type Outcome } from '../readings/bands.ts';
+import { leansYes, likelierSide } from '../readings/readings.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
 /** An argument that takes one value from a fixed list. */
@@ -68,28 +69,35 @@ export interface FunctionCaller extends NamedDecision {
 }
 
 const ROUTE = '__function__';
-/** A yes/no at or above this reads as yes: the likelier side. */
-const LIKELIER = 0.5;
 
 /** Question names inside the one request: the argument, its members, and its was-it-stated check. */
 const argKey = (fn: string, arg: string) => `${fn}.${arg}`;
 const memberKey = (fn: string, arg: string, index: number) => `${argKey(fn, arg)}[${index}]`;
 const statedKey = (fn: string, arg: string) => `${argKey(fn, arg)}?`;
 
-interface WireAnswer {
-  readonly noul?: number;
-  readonly choice?: string;
-  readonly probabilities?: Readonly<Record<string, number>>;
+/** The call's answers, read by question name through typed accessors. */
+interface CallAnswers {
+  /** The yes probability of a yes/no question. */
+  yes(question: string): number;
+  /** The chosen option of a choice and the probability behind it. */
+  picked(question: string): { readonly option: string; readonly p: number };
 }
-type Answers = Readonly<Record<string, WireAnswer>>;
+
+function callAnswers(answers: JudgmentResult<Questions>['answers']): CallAnswers {
+  return {
+    yes: (question) => (answers[question] as NoulResponse).noul,
+    picked: (question) => {
+      const { choice: option, probabilities } = answers[question] as ChoiceResponse;
+      return { option, p: probabilities[option]! };
+    },
+  };
+}
 
 /** An argument's value and how strongly its reading backs it; undefined when the request did not state it. */
 interface ArgReading {
   readonly value: ArgValue | undefined;
   readonly p: number;
 }
-
-const strength = (p: number): number => Math.max(p, 1 - p);
 
 function argQuestions(fn: string, arg: string, spec: ArgSpec): [string, Question][] {
   const stated: [string, Question][] = spec.stated === undefined ? [] : [[statedKey(fn, arg), noul(spec.stated)]];
@@ -98,32 +106,38 @@ function argQuestions(fn: string, arg: string, spec: ArgSpec): [string, Question
   return [...stated, ...spec.members.map((member, index): [string, Question] => [memberKey(fn, arg, index), noul(spec.question.replaceAll('{}', member))])];
 }
 
-const READERS: Readonly<{ [K in ArgSpec['kind']]: (fn: string, arg: string, spec: Extract<ArgSpec, { kind: K }>, answers: Answers) => ArgReading }> = {
+type ArgReader<K extends ArgSpec['kind']> = (fn: string, arg: string, spec: Extract<ArgSpec, { kind: K }>, answers: CallAnswers) => ArgReading;
+
+const READERS: Readonly<{ [K in ArgSpec['kind']]: ArgReader<K> }> = {
   choice: (fn, arg, _spec, answers) => {
-    const { choice: chosen, probabilities } = answers[argKey(fn, arg)]!;
-    return { value: chosen!, p: probabilities![chosen!]! };
+    const { option, p } = answers.picked(argKey(fn, arg));
+    return { value: option, p };
   },
   flag: (fn, arg, _spec, answers) => {
-    const p = answers[argKey(fn, arg)]!.noul!;
-    return { value: p >= LIKELIER, p: strength(p) };
+    const p = answers.yes(argKey(fn, arg));
+    return { value: leansYes(p), p: likelierSide(p) };
   },
   set: (fn, arg, spec, answers) => {
-    const members = spec.members.map((member, index) => ({ member, p: answers[memberKey(fn, arg, index)]!.noul! }));
-    return { value: members.filter(({ p }) => p >= LIKELIER).map(({ member }) => member), p: Math.min(...members.map(({ p }) => strength(p))) };
+    const members = spec.members.map((member, index) => ({ member, p: answers.yes(memberKey(fn, arg, index)) }));
+    return { value: members.filter(({ p }) => leansYes(p)).map(({ member }) => member), p: Math.min(...members.map(({ p }) => likelierSide(p))) };
   },
 };
 
-function readArg(fn: string, arg: string, spec: ArgSpec, answers: Answers): ArgReading {
-  const stated = spec.stated === undefined ? 1 : answers[statedKey(fn, arg)]!.noul!;
-  if (stated < LIKELIER) return { value: undefined, p: 1 - stated };
-  const reading = (READERS[spec.kind] as (fn: string, arg: string, spec: ArgSpec, answers: Answers) => ArgReading)(fn, arg, spec, answers);
+function readArg(fn: string, arg: string, spec: ArgSpec, answers: CallAnswers): ArgReading {
+  const stated = spec.stated === undefined ? 1 : answers.yes(statedKey(fn, arg));
+  if (!leansYes(stated)) return { value: undefined, p: 1 - stated };
+  const reading = (READERS[spec.kind] as ArgReader<ArgSpec['kind']>)(fn, arg, spec as never, answers);
   return { value: reading.value, p: Math.min(stated, reading.p) };
 }
 
-function fill(spec: CallerSpec, answers: Answers): FilledCall {
-  const { choice: fn, probabilities } = answers[ROUTE]! as Required<Pick<WireAnswer, 'choice' | 'probabilities'>>;
-  const readings = Object.entries(spec.functions[fn]!.args).map(([arg, argSpec]) => ({ arg, ...readArg(fn, arg, argSpec, answers) }));
-  const weakest = readings.reduce((low, reading) => (reading.p < low.p ? reading : low), { arg: 'function', value: undefined, p: probabilities[fn]! } as { arg: string; value: ArgValue | undefined; p: number });
+interface NamedReading extends ArgReading {
+  readonly arg: string;
+}
+
+function fill(spec: CallerSpec, answers: CallAnswers): FilledCall {
+  const { option: fn, p: fnP } = answers.picked(ROUTE);
+  const readings = Object.entries(spec.functions[fn]!.args).map(([arg, argSpec]): NamedReading => ({ arg, ...readArg(fn, arg, argSpec, answers) }));
+  const weakest = readings.reduce((low, reading) => (reading.p < low.p ? reading : low), { arg: 'function', value: undefined, p: fnP } as NamedReading);
   const args = Object.fromEntries(readings.flatMap(({ arg, value }) => (value === undefined ? [] : [[arg, value]])));
   const omitted = readings.filter(({ value }) => value === undefined).map(({ arg }) => arg);
   return { fn, args, omitted, confidence: weakest.p, weakest: weakest.arg, outcome: outcomeForConfidence(weakest.p, spec.band) };
@@ -134,8 +148,7 @@ const describeCall = (fn: string, args: Readonly<Record<string, ArgValue>>): str
   `${fn}(${Object.entries(args).map(([arg, value]) => `${arg}=${describeValue(value)}`).join(', ')})`;
 
 export function defineFunctionCaller(spec: CallerSpec): FunctionCaller {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   for (const fixture of spec.fixtures) {
     if (!(fixture.expect.fn in spec.functions)) throw new RangeError(`caller ${spec.name}: fixture ${fixture.name} expects an unknown function`);
@@ -148,28 +161,20 @@ export function defineFunctionCaller(spec: CallerSpec): FunctionCaller {
   }
 
   const caller: FunctionCaller = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async fill(port, state, options = {}) {
       const result = await askAs(port, spec, 'call', state, questions, options);
-      const call = fill(spec, result.answers as unknown as Answers);
+      const call = fill(spec, callAnswers(result.answers));
       recordReadings(port, result, call);
       return call;
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await caller.fill(port, fixture.state, { site: 'calibration', ...options });
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await caller.fill(port, fixture.state, run);
         const expectedArgs = fixture.expect.args ?? {};
         const shown = Object.fromEntries(Object.keys(expectedArgs).flatMap((arg) => (got.args[arg] === undefined ? [] : [[arg, got.args[arg]!]])));
-        checks.push(fixtureCheck(fixture.name, 'call', describeCall(fixture.expect.fn, expectedArgs), describeCall(got.fn, shown), got.confidence, got.outcome));
-      }
-      return checks;
-    },
+        return fixtureCheck(fixture.name, 'call', describeCall(fixture.expect.fn, expectedArgs), describeCall(got.fn, shown), got.confidence, got.outcome);
+      }),
   };
   return caller;
 }

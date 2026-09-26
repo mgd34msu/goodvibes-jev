@@ -1,5 +1,5 @@
 import { JudgmentError } from '../port/errors.ts';
-import type { JsonValue, JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '../port/types.ts';
+import { toJson, type JudgmentPort, type JudgmentRequest, type JudgmentResult, type Questions } from '../port/types.ts';
 import { hashState, isoTime, type DecisionLog, type NewDecisionEntry } from './types.ts';
 
 /** Runs a log write; a failure becomes an `unrecorded` judgment error. */
@@ -24,7 +24,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
   return {
     model: inner.model,
     recorder: {
-      recordReadings: (id, readings) => recorded(() => log.recordReadings(id, readings as JsonValue)),
+      recordReadings: (id, readings) => recorded(() => log.recordReadings(id, readings)),
       recordAction: (id, action) => recorded(() => log.recordAction(id, action)),
     },
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
@@ -33,7 +33,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         at: isoTime(now()),
         context: request.context ?? {},
         stateHash: hashState(request.state),
-        questions: request.questions as unknown as JsonValue,
+        questions: toJson(request.questions),
       };
       let result: JudgmentResult<Q>;
       try {
@@ -57,7 +57,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
           status: 'answered',
           requestedModel: result.requestedModel,
           model: result.model,
-          answers: result.answers as unknown as JsonValue,
+          answers: toJson(result.answers),
           latencyMs: result.latencyMs,
           usage: result.usage,
           requestId: result.requestId,

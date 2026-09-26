@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, type NamedDecision } from '../batteries/decision.ts';
 import { checkReading } from '../batteries/battery.ts';
 import { choice, type EntryType, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand } from '../readings/bands.ts';
@@ -45,8 +45,7 @@ export interface ReplyReader<R extends string> extends NamedDecision {
 }
 
 export function defineReplyReader<const R extends string = ReplyReadingName>(spec: ReplySpec<R>): ReplyReader<R> {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   const readings = (spec.readings ?? REPLY_READINGS) as Readonly<Record<string, EntryType>>;
   for (const fixture of spec.fixtures) {
@@ -57,26 +56,18 @@ export function defineReplyReader<const R extends string = ReplyReadingName>(spe
   const question = choice('What does `reply` say about `proposal`?', readings);
 
   const reader: ReplyReader<R> = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async read(port, proposal, reply, options = {}) {
       const result = await askAs(port, spec, 'reply', { proposal, reply }, { reading: question }, options);
       const reading = readChoice(result.answers.reading, spec.band as ChoiceBand) as ChoiceReading<R>;
       recordReadings(port, result, { reading });
       return { reading, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const { reading } = await reader.read(port, fixture.proposal, fixture.reply, { site: 'calibration', ...options });
-        checks.push(checkReading(fixture.name, 'reading', fixture.expect, reading));
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const { reading } = await reader.read(port, fixture.proposal, fixture.reply, run);
+        return checkReading(fixture.name, 'reading', fixture.expect, reading);
+      }),
   };
   return reader;
 }

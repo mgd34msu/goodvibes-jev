@@ -1,8 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import {
+  actionOf,
   defineBattery,
   hashState,
+  readingsOf,
   JudgmentError,
   SqliteDecisionLog,
   STAKES_BANDS,
@@ -60,8 +62,8 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     expect(entry.model).toBe('jev-1.13.0');
     expect(entry.stateHash).toBe(hashState({ message: 'Payouts failing for 3 days' }));
     expect(entry.answers).toEqual({ urgent: { type: 'noul', noul: 0.93 } });
-    expect(entry.readings).toEqual({ urgent: { kind: 'yes-no', probability: 0.93, verdict: 'yes', outcome: 'act' } });
-    expect(entry.action).toBe('page-owner');
+    expect(readingsOf(entry)).toEqual({ urgent: { kind: 'yes-no', probability: 0.93, verdict: 'yes', outcome: 'act' } });
+    expect(actionOf(entry)).toBe('page-owner');
     expect(entry.usage).toEqual({ inputTokens: 120, outputTokens: 9 });
     expect(entry.latencyMs).toBe(42);
     expect(entry.requestId).toBe('req-ok');

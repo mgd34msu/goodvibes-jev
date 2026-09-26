@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -9,8 +9,14 @@ export interface FieldMetric {
   readonly right: string;
 }
 
+/** The per-field checks for a field that holds a value. */
+export type ValueMetric = 'hallucinated' | 'off_target' | 'name_mismatch' | 'format_violation';
+/** The one check for an empty field. */
+export type AbsenceMetric = 'absence_wrong';
+export type Metric = ValueMetric | AbsenceMetric;
+
 /** The SDE cascade's per-field metrics for a field that holds a value. */
-export const FIELD_METRICS: Readonly<Record<string, FieldMetric>> = {
+export const FIELD_METRICS: Readonly<Record<ValueMetric, FieldMetric>> = {
   hallucinated: {
     question: 'Is the `extracted_field` unsupported by, or absent from, the source text?',
     wrong: 'The value is not supported by, or is absent from, the source text.',
@@ -72,7 +78,7 @@ export interface ExtractionVerifierSpec extends PatternHeader {
 /** One per-field check's result: the probability that the field is wrong in the way the metric asks. */
 export interface FieldCheck {
   readonly field: string;
-  readonly metric: string;
+  readonly metric: Metric;
   readonly p: number;
 }
 
@@ -92,9 +98,9 @@ const hasNoLength = (value: JsonValue | undefined): boolean => (typeof value ===
 const isEmpty = (value: JsonValue | undefined): boolean => isBlank(value) || hasNoLength(value);
 
 const SEPARATOR = '::';
-const checkKey = (field: string, metric: string): string => `${field}${SEPARATOR}${metric}`;
+const checkKey = (field: string, metric: Metric): string => `${field}${SEPARATOR}${metric}`;
 const toFieldCheck = ([key, p]: [string, number]): FieldCheck => {
-  const [field, metric] = key.split(SEPARATOR) as [string, string];
+  const [field, metric] = key.split(SEPARATOR) as [string, Metric];
   return { field, metric, p };
 };
 
@@ -106,21 +112,15 @@ function fieldQuestions(name: string, spec: FieldSpec, value: JsonValue | undefi
       false: metric.right,
     });
   if (isEmpty(value)) return [[checkKey(name, 'absence_wrong'), ask(ABSENCE_METRIC)]];
-  return Object.entries(FIELD_METRICS).map(([metric, spec_]) => [checkKey(name, metric), ask(spec_)]);
+  return (Object.entries(FIELD_METRICS) as [ValueMetric, FieldMetric][]).map(([metric, spec_]) => [checkKey(name, metric), ask(spec_)]);
 }
 
 export function defineExtractionVerifier(spec: ExtractionVerifierSpec): ExtractionVerifier {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   if (!(spec.fireAt > 0 && spec.fireAt <= 1)) throw new RangeError(`extraction verifier ${spec.name}: fireAt must be in (0, 1]`);
 
   const verifier: ExtractionVerifier = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async verify(port, input, options = {}) {
       const questions = Object.fromEntries(
         Object.entries(input.fields).flatMap(([name, field]) => fieldQuestions(name, field, input.record[name])),
@@ -133,16 +133,13 @@ export function defineExtractionVerifier(spec: ExtractionVerifierSpec): Extracti
       recordReadings(port, result, verified);
       return verified;
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await verifier.verify(port, fixture, { ...options, site: 'calibration' });
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await verifier.verify(port, fixture, run);
         const strongest = Math.max(...got.checks.map(({ p }) => p));
         const signal = got.escalate ? strongest : 1 - strongest;
-        checks.push(fixtureCheck(fixture.name, 'escalate', String(fixture.expect.escalate), String(got.escalate), signal, 'act'));
-      }
-      return checks;
-    },
+        return fixtureCheck(fixture.name, 'escalate', String(fixture.expect.escalate), String(got.escalate), signal, 'act');
+      }),
   };
   return verifier;
 }

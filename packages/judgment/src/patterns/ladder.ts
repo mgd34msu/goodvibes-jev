@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
@@ -43,8 +43,7 @@ function matches(probability: number, rung: Rung<string, string>): boolean {
 }
 
 export function defineRuleLadder<const Q extends string, const R extends string>(spec: LadderSpec<Q, R>): RuleLadder<Q, R> {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   const names = Object.keys(spec.questions) as Q[];
   for (const rung of spec.rungs) {
     if (!names.includes(rung.ask)) throw new RangeError(`ladder ${spec.name}: a rung asks unknown question "${rung.ask}"`);
@@ -64,12 +63,7 @@ export function defineRuleLadder<const Q extends string, const R extends string>
   };
 
   const ladder: RuleLadder<Q, R> = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     climb,
     async route(port, state, options = {}) {
       const result = await askAs(port, spec, 'ladder', state, questions, options);
@@ -79,24 +73,13 @@ export function defineRuleLadder<const Q extends string, const R extends string>
       recordReadings(port, result, { route, rung: rung ?? null, probabilities });
       return { route, rung, probabilities };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await ladder.route(port, fixture.state, { site: 'calibration', ...options });
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await ladder.route(port, fixture.state, run);
         const deciding = got.rung === undefined ? undefined : spec.rungs[got.rung]!;
         const p = deciding === undefined ? 1 : got.probabilities[deciding.ask];
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'route',
-          expected: fixture.expect,
-          got: got.route,
-          correct: got.route === fixture.expect,
-          signal: deciding?.when === 'below' ? 1 - p : p,
-          outcome: 'act',
-        });
-      }
-      return checks;
-    },
+        return fixtureCheck(fixture.name, 'route', fixture.expect, got.route, deciding?.when === 'below' ? 1 - p : p, 'act');
+      }),
   };
   return ladder;
 }

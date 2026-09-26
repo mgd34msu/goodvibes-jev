@@ -17,6 +17,7 @@ import {
   featurize,
   formatReport,
   noul,
+  readingsOf,
   score,
   splitCompound,
   judgmentConfigFromEnv,
@@ -54,8 +55,8 @@ const cascade = await verifyThenEscalate(
     { name: 'strong', produce: async () => ({ registration_open_date: '', description: '' }) },
   ],
   {
-    goal: 'Extract the fall registration open date and a description of it, leaving fields blank when the page does not state them.',
-    criteria: ['Every non-empty field is stated in `evidence.page`.', 'A field is left empty only when `evidence.page` does not state it.'],
+    goal: 'Report what `evidence.page` states about the fall registration open date: the date and a description of it where the page states them, and empty fields where it does not.',
+    criteria: ['No field contains anything `evidence.page` does not state.', 'A field is left empty only when `evidence.page` does not state it.'],
     evidence: () => ({ page }),
   },
 );
@@ -84,7 +85,7 @@ console.log(`${featuresOk ? 'PASS' : 'FAIL'}  features  ${JSON.stringify(columns
 if (!featuresOk) failed++;
 
 const entries = log.query({ limit: 100_000 });
-const unlogged = entries.filter((entry) => entry.status === 'answered' && entry.readings === null);
+const unlogged = entries.filter((entry) => entry.status === 'answered' && readingsOf(entry) === undefined);
 console.log(`\ndecision log: ${entries.length} entries at ${logPath}; ${unlogged.length} without readings`);
 if (unlogged.length > 0) failed++;
 process.exit(failed === 0 ? 0 : 1);

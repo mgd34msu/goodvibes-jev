@@ -42,13 +42,16 @@ const MARKERS: readonly (readonly [RegExp, BlockType])[] = [
   [/^([-*•]|\d+[.)])\s/, 'list_item'],
   [/^>\s?/, 'quote'],
 ];
-const ANY_MARKER = /^(#{1,6}\s|[-*•]\s|\d+[.)]\s|>\s?)/;
 /** Sentence-ending punctuation, optionally followed by closing quotes or brackets. */
 const TERMINAL = /[.!?:;…]["')\]]*$/;
 
 /** The block type an explicit marker states, read in code and never sent to the model. */
-export const markerType = (text: string): BlockType | undefined => MARKERS.find(([pattern]) => pattern.test(text))?.[1];
-export const stripMarker = (text: string): string => text.replace(ANY_MARKER, '');
+const markerOf = (text: string) => MARKERS.find(([pattern]) => pattern.test(text));
+export const markerType = (text: string): BlockType | undefined => markerOf(text)?.[1];
+export const stripMarker = (text: string): string => {
+  const marker = markerOf(text);
+  return marker === undefined ? text : text.replace(marker[0], '');
+};
 export const endsSentence = (text: string): boolean => TERMINAL.test(text);
 
 export function splitLines(text: string): Line[] {
@@ -65,8 +68,11 @@ export function splitLines(text: string): Line[] {
 }
 
 /** Lines that may continue the one before: no blank line between and no explicit marker. */
-export const joinableLines = (lines: readonly Line[]): number[] =>
-  lines.flatMap((line, index) => (index > 0 && !line.gap && markerType(line.text) === undefined ? [index] : []));
+export function joinableLines(lines: readonly Line[]): number[] {
+  const hasPrevious = (index: number): boolean => index > 0;
+  const unmarked = (line: Line): boolean => markerType(line.text) === undefined;
+  return lines.flatMap((line, index) => (hasPrevious(index) && !line.gap && unmarked(line) ? [index] : []));
+}
 
 /** The join probability a line needs to merge into the previous block, by how that line ended. */
 export interface JoinBars {
@@ -77,12 +83,11 @@ export interface JoinBars {
 /** Merges each line into the previous block when its join probability clears the bar set by the previous line's ending. */
 export function mergeLines(lines: readonly Line[], joins: Readonly<Record<number, number>>, bars: JoinBars): Merged[] {
   const blocks: { text: string; lines: number[]; gap: boolean }[] = [];
+  const barAfter = (previous: Line | undefined): number => (previous !== undefined && endsSentence(previous.text) ? bars.afterTerminal : bars.afterDangling);
+  const clearsBar = (index: number): boolean => (joins[index] ?? 0) >= barAfter(lines[index - 1]);
   lines.forEach((line, index) => {
-    const previous = lines[index - 1];
-    const bar = previous !== undefined && endsSentence(previous.text) ? bars.afterTerminal : bars.afterDangling;
     const last = blocks.at(-1);
-    const continues = last !== undefined && (joins[index] ?? 0) >= bar;
-    if (continues) {
+    if (last !== undefined && clearsBar(index)) {
       last.text += ` ${line.text}`;
       last.lines.push(index);
     } else {

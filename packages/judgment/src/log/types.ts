@@ -30,6 +30,11 @@ interface CallRecord {
   readonly requestId: string | undefined;
 }
 
+/** Something recorded about a call after it answered: what the decision concluded, or what code did with it. */
+export type DecisionNote =
+  | { readonly kind: 'readings'; readonly readings: JsonValue }
+  | { readonly kind: 'action'; readonly action: string };
+
 /** A call the endpoint answered. */
 export interface AnsweredEntry extends CallRecord {
   readonly status: 'answered';
@@ -38,10 +43,22 @@ export interface AnsweredEntry extends CallRecord {
   /** Raw answers as the endpoint returned them. */
   readonly answers: JsonValue;
   readonly usage: TokenUsage;
-  /** What the decision concluded from the answers; null until it is attached. */
-  readonly readings: JsonValue | null;
-  /** What code did with the decision; null until it says. */
-  readonly action: string | null;
+  /** Notes attached after the call, in the order they were recorded. */
+  readonly notes: readonly DecisionNote[];
+}
+
+/** What the decision concluded from an entry's answers, when it has said. */
+export function readingsOf(entry: DecisionEntry): JsonValue | undefined {
+  if (entry.status !== 'answered') return undefined;
+  const note = entry.notes.find((candidate) => candidate.kind === 'readings');
+  return note?.kind === 'readings' ? note.readings : undefined;
+}
+
+/** What code did with an entry's decision, when it has said. */
+export function actionOf(entry: DecisionEntry): string | undefined {
+  if (entry.status !== 'answered') return undefined;
+  const note = entry.notes.find((candidate) => candidate.kind === 'action');
+  return note?.kind === 'action' ? note.action : undefined;
 }
 
 /** A call that failed; nothing was read from it. */
@@ -53,7 +70,7 @@ export interface FailedEntry extends CallRecord {
 export type DecisionEntry = AnsweredEntry | FailedEntry;
 
 /** What a caller supplies to record an entry; the log assigns the id. */
-export type NewDecisionEntry = Omit<AnsweredEntry, 'id' | 'readings' | 'action'> | Omit<FailedEntry, 'id'>;
+export type NewDecisionEntry = Omit<AnsweredEntry, 'id' | 'notes'> | Omit<FailedEntry, 'id'>;
 
 export interface DecisionQuery {
   readonly battery?: string;

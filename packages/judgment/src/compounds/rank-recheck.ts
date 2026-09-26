@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type DecisionIdentity, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
@@ -59,9 +59,8 @@ export interface RankRecheck extends NamedDecision {
 
 type WideAnswers = Readonly<Record<string, { readonly noul?: number; readonly probabilities?: Readonly<Record<string, number>> }>>;
 
-function assertRankRecheckSpec(spec: RankRecheckSpec): void {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+function validateRankRecheckSpec(spec: RankRecheckSpec): DecisionIdentity {
+  const header = decisionHeader(spec);
   if (Object.keys(spec.gates).length === 0) throw new RangeError(`rank-recheck ${spec.name}: needs at least one gate question`);
   const thresholdInUnit = spec.gateThreshold >= 0 && spec.gateThreshold <= 1;
   if (!thresholdInUnit) throw new RangeError(`rank-recheck ${spec.name}: gateThreshold must be in [0, 1]`);
@@ -69,6 +68,7 @@ function assertRankRecheckSpec(spec: RankRecheckSpec): void {
   if (!positiveShortlist) throw new RangeError(`rank-recheck ${spec.name}: shortlist must be a positive integer`);
   assertConfidenceBand(spec.recheckBand);
   assertYesNoBand(spec.fitBand);
+  return header;
 }
 
 function wideQuestions(spec: RankRecheckSpec, options: readonly RankOption[]): Record<string, Question> {
@@ -95,22 +95,16 @@ function shortlistOf(spec: RankRecheckSpec, options: readonly RankOption[], answ
 }
 
 function chosenCheck(fixture: RankRecheckSpec['fixtures'][number], got: RankRecheckResult): FixtureCheck {
-  const gotId = got.chosen ?? 'none';
   const signal = got.recheck === undefined ? 1 - got.gate : got.recheck.pick.confidence;
-  return { fixture: fixture.name, aspect: 'chosen', expected: fixture.expect, got: gotId, correct: gotId === fixture.expect, signal, outcome: got.outcome };
+  return fixtureCheck(fixture.name, 'chosen', fixture.expect, got.chosen ?? NONE, signal, got.outcome);
 }
 
 export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
-  assertRankRecheckSpec(spec);
+  const header = validateRankRecheckSpec(spec);
   const recheck = { instructions: spec.recheckInstructions, fitInstructions: spec.fitInstructions, band: spec.recheckBand, fitBand: spec.fitBand };
 
   const compound: RankRecheck = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async suggest(port, state, options, call = {}) {
       const optionCountOk = options.length >= 2 && options.length <= LIMITS.maxChoiceOptions;
       if (!optionCountOk) throw new RangeError(`rank-recheck ${spec.name}: needs 2 to ${LIMITS.maxChoiceOptions} options; split larger sets into chunks`);
@@ -125,11 +119,8 @@ export function defineRankRecheck(spec: RankRecheckSpec): RankRecheck {
       const selection = await runSelection(port, { header: spec, pattern: 'rank-recheck.recheck', config: recheck, context: state, candidates, options: call });
       return { chosen: selection.chosen, outcome: selection.outcome, gate, shortlist, recheck: selection };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) checks.push(chosenCheck(fixture, await compound.suggest(port, fixture.state, fixture.options, { ...options, site: 'calibration' })));
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => chosenCheck(fixture, await compound.suggest(port, fixture.state, fixture.options, run))),
   };
   return compound;
 }

@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader, type PatternName } from '../batteries/asking.ts';
 import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
@@ -6,7 +6,8 @@ import { assertConfidenceBand, assertYesNoBand, type ConfidenceBand, type Outcom
 import { readChoice, readYesNo, type ChoiceReading, type YesNoReading } from '../readings/readings.ts';
 import type { Candidate } from './rerank.ts';
 
-export const NONE = 'none';
+export { NONE };
+
 const MAX_CANDIDATES = LIMITS.maxChoiceOptions - 1;
 
 /** The selection settings a selector or a compound's recheck pass needs. */
@@ -61,11 +62,14 @@ export interface SelectionRequest {
 }
 
 const withinCandidateLimit = (count: number): boolean => count >= 1 && count <= MAX_CANDIDATES;
-const distinctAndNotNone = (ids: readonly string[]): boolean => new Set(ids).size === ids.length && !ids.includes(NONE);
+const allDistinct = (ids: readonly string[]): boolean => new Set(ids).size === ids.length;
+const avoidsNone = (ids: readonly string[]): boolean => !ids.includes(NONE);
+/** Candidate ids a selection can offer as options: distinct, and never the "none" option's name. */
+const usableIds = (ids: readonly string[]): boolean => allDistinct(ids) && avoidsNone(ids);
 
 function assertCandidates(decision: string, ids: readonly string[]): void {
   if (!withinCandidateLimit(ids.length)) throw new RangeError(`selector ${decision}: needs 1 to ${MAX_CANDIDATES} candidates, got ${ids.length}`);
-  if (!distinctAndNotNone(ids)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
+  if (!usableIds(ids)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
 }
 
 function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Record<string, Question> {
@@ -86,7 +90,8 @@ export function selectionOutcome(pick: ChoiceReading, winnerFit: YesNoReading | 
   if (pick.choice === NONE) return pick.outcome;
   if (winnerFit?.verdict !== 'yes') return 'escalate';
   if (pick.outcome === 'escalate') return 'escalate';
-  return pick.outcome === 'act' && winnerFit.outcome === 'act' ? 'act' : 'confirm';
+  const bothAct = pick.outcome === 'act' && winnerFit.outcome === 'act';
+  return bothAct ? 'act' : 'confirm';
 }
 
 /** One selection request, shared by selectors and by compounds that recheck a shortlist. */
@@ -107,34 +112,27 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
   return { chosen, outcome, pick, fits, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
 }
 
+/** Whether a fixture expects "none" or one of the candidates it offers. */
+const expectsOffered = (fixture: SelectSpec['fixtures'][number]): boolean =>
+  fixture.expect === NONE || fixture.candidates.some((candidate) => candidate.id === fixture.expect);
+
 export function defineSelector(spec: SelectSpec): Selector {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   assertYesNoBand(spec.fitBand);
   for (const fixture of spec.fixtures) {
-    const known = fixture.expect === NONE || fixture.candidates.some((candidate) => candidate.id === fixture.expect);
-    if (!known) throw new RangeError(`selector ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect}"`);
+    if (!expectsOffered(fixture)) throw new RangeError(`selector ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect}"`);
   }
 
   const selector: Selector = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     select: (port, context, candidates, options = {}) =>
       runSelection(port, { header: spec, pattern: 'select', config: spec, context, candidates, options }),
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await selector.select(port, fixture.context, fixture.candidates, { ...options, site: 'calibration' });
-        const gotId = got.chosen ?? NONE;
-        checks.push({ fixture: fixture.name, aspect: 'chosen', expected: fixture.expect, got: gotId, correct: gotId === fixture.expect, signal: got.pick.confidence, outcome: got.outcome });
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await selector.select(port, fixture.context, fixture.candidates, run);
+        return fixtureCheck(fixture.name, 'chosen', fixture.expect, got.chosen ?? NONE, got.pick.confidence, got.outcome);
+      }),
   };
   return selector;
 }

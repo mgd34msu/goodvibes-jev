@@ -18,6 +18,8 @@ import {
   type YesNoBand,
 } from '../readings/bands.ts';
 import {
+  leansYes,
+  likelierSide,
   readChoice,
   readScore,
   readYesNo,
@@ -26,7 +28,7 @@ import {
   type YesNoReading,
 } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type PatternName } from './asking.ts';
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from './decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from './decision.ts';
 
 export interface YesNoItem {
   readonly kind: 'yes-no';
@@ -144,13 +146,13 @@ export function readItem(item: BatteryItem, answer: unknown): AnyReading {
 
 /** The answer a reading settles on: the likelier side of a yes/no, the chosen option, the nearest level. */
 export function concludedAnswer(reading: AnyReading): string {
-  if (reading.kind === 'yes-no') return reading.probability >= 0.5 ? 'yes' : 'no';
+  if (reading.kind === 'yes-no') return leansYes(reading.probability) ? 'yes' : 'no';
   return reading.kind === 'choice' ? reading.choice : String(reading.level);
 }
 
 /** How strongly the reading backs its answer: the winning probability of a yes/no, else the confidence. */
 export function readingSignal(reading: AnyReading): number {
-  return reading.kind === 'yes-no' ? Math.max(reading.probability, 1 - reading.probability) : reading.confidence;
+  return reading.kind === 'yes-no' ? likelierSide(reading.probability) : reading.confidence;
 }
 
 /**
@@ -210,15 +212,14 @@ function questionsFor<Items extends BatteryItems>(battery: string, items: Items,
 
 export function defineBattery<const Items extends BatteryItems>(definition: BatteryDefinition<Items>): Battery<Items> {
   const { name, items, fixtures } = definition;
-  assertDecisionHeader({ ...definition, fixtureCount: fixtures.length });
-  assertUniqueFixtures(name, fixtures);
+  const header = decisionHeader(definition);
   if (Object.keys(items).length === 0) throw new RangeError(`battery ${name}: needs at least one question`);
   for (const [itemName, item] of Object.entries(items)) assertItemBands(name, itemName, item);
   assertFixturesCover(name, items, fixtures);
 
   const battery: Battery<Items> = {
     ...definition,
-    fixtureCount: fixtures.length,
+    ...header,
     async run(port, state, options = {}) {
       const asked = options.only ?? Object.keys(items);
       const { answers, ...result } = await askAs(port, definition, options.pattern ?? 'battery', state, questionsFor(name, items, asked), options);
@@ -230,15 +231,12 @@ export function defineBattery<const Items extends BatteryItems>(definition: Batt
         recordAction: (action) => recordAction(port, result.decisionId, action),
       };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of fixtures) {
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(fixtures, options, async (fixture, run) => {
         const asked = Object.keys(fixture.expect) as (keyof Items & string)[];
-        const { readings } = await battery.run(port, fixture.state, { ...options, only: asked, site: 'calibration' });
-        for (const itemName of asked) checks.push(checkReading(fixture.name, itemName, String(fixture.expect[itemName]), readings[itemName] as AnyReading));
-      }
-      return checks;
-    },
+        const { readings } = await battery.run(port, fixture.state, { ...run, only: asked });
+        return asked.map((itemName) => checkReading(fixture.name, itemName, String(fixture.expect[itemName]), readings[itemName] as AnyReading));
+      }),
   };
   return battery;
 }

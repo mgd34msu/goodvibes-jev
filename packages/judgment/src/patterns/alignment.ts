@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, score, type JsonValue, type JudgmentPort, type NoulQuestion } from '../port/types.ts';
 import { assertConfidenceBand, type ConfidenceBand } from '../readings/bands.ts';
 import { readScore, readYesNo, type ScoreReading, type YesNoReading } from '../readings/readings.ts';
@@ -44,8 +44,7 @@ export interface EntityAligner extends NamedDecision {
 }
 
 export function defineEntityAligner(spec: AlignmentSpec): EntityAligner {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   const levels = [
     `They describe two different ${spec.noun}s.`,
@@ -61,12 +60,7 @@ export function defineEntityAligner(spec: AlignmentSpec): EntityAligner {
   const fieldBand = STAKES_BANDS.medium.yesNo;
 
   const aligner: EntityAligner = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async align(port, a, b, options = {}) {
       const result = await askAs(port, spec, 'alignment', { entity_a: a, entity_b: b }, questions, options);
       const answers = result.answers as Record<string, unknown>;
@@ -79,22 +73,11 @@ export function defineEntityAligner(spec: AlignmentSpec): EntityAligner {
       recordReadings(port, result, { alignment, link: reading, fields });
       return { alignment, reading, fields, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const aligned = await aligner.align(port, fixture.a, fixture.b, { site: 'calibration', ...options });
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'alignment',
-          expected: fixture.expect,
-          got: aligned.alignment,
-          correct: aligned.alignment === fixture.expect,
-          signal: aligned.reading.confidence,
-          outcome: aligned.reading.outcome,
-        });
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const aligned = await aligner.align(port, fixture.a, fixture.b, run);
+        return fixtureCheck(fixture.name, 'alignment', fixture.expect, aligned.alignment, aligned.reading.confidence, aligned.reading.outcome);
+      }),
   };
   return aligner;
 }

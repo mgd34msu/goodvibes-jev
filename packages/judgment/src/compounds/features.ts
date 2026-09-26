@@ -1,4 +1,4 @@
-import type { EntryType, JudgmentPort, Question, Questions } from '../port/types.ts';
+import type { ChoiceResponse, EntryType, JudgmentPort, NoulResponse, Question, Questions, ScoreResponse } from '../port/types.ts';
 import { recordReadings } from '../batteries/asking.ts';
 import { mapLimit } from '../patterns/common.ts';
 
@@ -10,11 +10,12 @@ export interface Column {
   readonly values: readonly number[];
 }
 
-type Distribution = Readonly<Record<string, number>>;
 /** An answer as feature encoding reads it: a yes/no probability or a distribution over options or levels. */
-type Answer = { readonly type: 'noul'; readonly noul: number } | { readonly type: 'score' | 'choice'; readonly probabilities: Distribution };
+type Answer = NoulResponse | ChoiceResponse | ScoreResponse;
 
-const probabilityOf = (answer: Answer, key: string): number => (answer.type === 'noul' ? 0 : (answer.probabilities[key] ?? 0));
+/** The distribution a choice or score answer carries over its options or levels; a yes/no carries none. */
+const distributionOf = (answer: Answer): Readonly<Record<string, number>> => (answer.type === 'noul' ? {} : answer.probabilities);
+const probabilityOf = (answer: Answer, key: string): number => distributionOf(answer)[key] ?? 0;
 const yesOf = (answer: Answer): number => (answer.type === 'noul' ? answer.noul : 0);
 
 function scoreColumns(name: string, probabilities: readonly (readonly number[])[], encoding: ScoreEncoding): Column[] {
@@ -46,6 +47,17 @@ export function encodeColumns(questions: Questions, rows: readonly Readonly<Reco
   });
 }
 
+/** One row of column values, by column name. */
+type Row = ReadonlyMap<string, number>;
+
+const rowOf = (columns: readonly Column[]): Row => new Map(columns.map(({ name, values }) => [name, values[0]!]));
+
+/** Stacks one-row encodings into columns, in the first row's column order. */
+function stack(rows: readonly Row[]): Column[] {
+  const names = [...(rows[0]?.keys() ?? [])];
+  return names.map((name) => ({ name, values: rows.map((row) => row.get(name)!) }));
+}
+
 /** Asks one question set about many states (one request per state, bounded in flight) and encodes the answers. */
 export async function featurize(
   port: JudgmentPort,
@@ -53,11 +65,13 @@ export async function featurize(
   states: readonly EntryType[],
   options: { readonly encoding?: ScoreEncoding; readonly concurrency?: number; readonly label?: string } = {},
 ): Promise<Column[]> {
+  const encoding = options.encoding ?? 'mean_spread';
+  const context = { pattern: 'features', ...(options.label === undefined ? {} : { battery: options.label }) };
   const rows = await mapLimit(states, options.concurrency ?? 8, async (state) => {
-    const result = await port.ask({ state, questions, context: { pattern: 'features', ...(options.label === undefined ? {} : { battery: options.label }) } });
-    const row = result.answers as unknown as Record<string, Answer>;
-    recordReadings(port, result, { columns: encodeColumns(questions, [row], options.encoding ?? 'mean_spread').map(({ name, values }) => ({ name, value: values[0]! })) });
+    const result = await port.ask({ state, questions, context });
+    const row = rowOf(encodeColumns(questions, [result.answers as Readonly<Record<string, Answer>>], encoding));
+    recordReadings(port, result, { columns: Object.fromEntries(row) });
     return row;
   });
-  return encodeColumns(questions, rows, options.encoding ?? 'mean_spread');
+  return stack(rows);
 }

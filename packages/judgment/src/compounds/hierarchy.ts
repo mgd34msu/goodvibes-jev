@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type DecisionIdentity, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
 import type { Outcome } from '../readings/bands.ts';
@@ -91,9 +91,8 @@ function outcomeOf(score: number, spec: HierarchySpec): Outcome {
   return score >= spec.confirmAt ? 'confirm' : 'escalate';
 }
 
-function assertHierarchySpec(spec: HierarchySpec): void {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+function validateHierarchySpec(spec: HierarchySpec): DecisionIdentity {
+  const header = decisionHeader(spec);
   const positiveBeam = Number.isInteger(spec.beamWidth) && spec.beamWidth >= 1;
   if (!positiveBeam) throw new RangeError(`hierarchy ${spec.name}: beamWidth must be a positive integer`);
   if (!(spec.confirmAt <= spec.actAt)) throw new RangeError(`hierarchy ${spec.name}: confirmAt must not exceed actAt`);
@@ -102,6 +101,7 @@ function assertHierarchySpec(spec: HierarchySpec): void {
   const leaves = new Set(leafPaths(spec.tree).map((path) => path.join(' > ')));
   const offLeaf = spec.fixtures.find((fixture) => !leaves.has(fixture.expect));
   if (offLeaf !== undefined) throw new RangeError(`hierarchy ${spec.name}: fixture ${offLeaf.name} expects a path that is not a leaf`);
+  return header;
 }
 
 function leafCheck(fixture: HierarchySpec['fixtures'][number], walk: Walk): FixtureCheck {
@@ -145,21 +145,13 @@ function summarizeWalk(ranked: readonly WalkPath[], spec: HierarchySpec): Walk {
 }
 
 export function defineHierarchyWalker(spec: HierarchySpec): HierarchyWalker {
-  assertHierarchySpec(spec);
+  const header = validateHierarchySpec(spec);
 
   const walker: HierarchyWalker = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     walk: async (port, state, options = {}) => summarizeWalk(await beamSearch(port, spec, state, options), spec),
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) checks.push(leafCheck(fixture, await walker.walk(port, fixture.state, { ...options, site: 'calibration' })));
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => leafCheck(fixture, await walker.walk(port, fixture.state, run))),
   };
   return walker;
 }

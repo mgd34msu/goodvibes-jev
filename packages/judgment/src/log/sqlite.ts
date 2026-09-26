@@ -1,33 +1,45 @@
 import { Database } from 'bun:sqlite';
 import type { JudgmentErrorKind } from '../port/errors.ts';
 import type { DecisionContext, JsonValue } from '../port/types.ts';
-import type { DecisionEntry, DecisionId, DecisionLog, DecisionQuery, IsoTime, NewDecisionEntry, StateHash } from './types.ts';
+import type { DecisionEntry, DecisionId, DecisionLog, DecisionNote, DecisionQuery, IsoTime, NewDecisionEntry, StateHash } from './types.ts';
 
 /** Bumped whenever the table shape changes; an older file is refused rather than misread. */
 const SCHEMA_VERSION = 1;
 
+/** Every column and its SQL declaration, in table order. */
+const COLUMNS = {
+  id: 'TEXT PRIMARY KEY',
+  at: 'TEXT NOT NULL',
+  status: 'TEXT NOT NULL',
+  battery: 'TEXT',
+  battery_version: 'INTEGER',
+  pattern: 'TEXT',
+  site: 'TEXT',
+  requested_model: 'TEXT NOT NULL',
+  model: 'TEXT',
+  state_hash: 'TEXT NOT NULL',
+  questions: 'TEXT NOT NULL',
+  answers: 'TEXT',
+  readings: 'TEXT',
+  action: 'TEXT',
+  latency_ms: 'REAL NOT NULL',
+  input_tokens: 'INTEGER',
+  output_tokens: 'INTEGER',
+  request_id: 'TEXT',
+  error_kind: 'TEXT',
+  error_message: 'TEXT',
+} as const;
+type Column = keyof typeof COLUMNS;
+
+/** Columns that hold notes attached after the call is recorded; an insert leaves them empty. */
+const NOTE_COLUMNS = ['readings', 'action'] as const;
+type NoteColumn = (typeof NOTE_COLUMNS)[number];
+type InsertColumn = Exclude<Column, NoteColumn>;
+const INSERT_COLUMNS = (Object.keys(COLUMNS) as Column[]).filter((column): column is InsertColumn => !(NOTE_COLUMNS as readonly Column[]).includes(column));
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS decisions (
-  id TEXT PRIMARY KEY,
-  at TEXT NOT NULL,
-  status TEXT NOT NULL,
-  battery TEXT,
-  battery_version INTEGER,
-  pattern TEXT,
-  site TEXT,
-  requested_model TEXT NOT NULL,
-  model TEXT,
-  state_hash TEXT NOT NULL,
-  questions TEXT NOT NULL,
-  answers TEXT,
-  readings TEXT,
-  action TEXT,
-  latency_ms REAL NOT NULL,
-  input_tokens INTEGER,
-  output_tokens INTEGER,
-  request_id TEXT,
-  error_kind TEXT,
-  error_message TEXT
+${Object.entries(COLUMNS).map(([column, declaration]) => `  ${column} ${declaration}`).join(',\n')}
 );
 CREATE INDEX IF NOT EXISTS decisions_battery_at ON decisions (battery, at);
 CREATE INDEX IF NOT EXISTS decisions_site_at ON decisions (site, at);
@@ -68,7 +80,14 @@ function contextOf(row: Row): DecisionContext {
   return presentOnly({ battery: row.battery, batteryVersion: row.battery_version, pattern: row.pattern, site: row.site });
 }
 
-const parseJson = (text: string | null): JsonValue | null => (text === null ? null : (JSON.parse(text) as JsonValue));
+const parseJson = (text: string | null): JsonValue => (text === null ? null : (JSON.parse(text) as JsonValue));
+
+function notesOf(row: Row): DecisionNote[] {
+  const notes: DecisionNote[] = [];
+  if (row.readings !== null) notes.push({ kind: 'readings', readings: parseJson(row.readings) });
+  if (row.action !== null) notes.push({ kind: 'action', action: row.action });
+  return notes;
+}
 
 function toEntry(row: Row): DecisionEntry {
   const call = {
@@ -77,7 +96,7 @@ function toEntry(row: Row): DecisionEntry {
     context: contextOf(row),
     requestedModel: row.requested_model,
     stateHash: row.state_hash as StateHash,
-    questions: JSON.parse(row.questions) as JsonValue,
+    questions: parseJson(row.questions),
     latencyMs: row.latency_ms,
     requestId: row.request_id ?? undefined,
   };
@@ -90,40 +109,40 @@ function toEntry(row: Row): DecisionEntry {
     model: row.model ?? '',
     answers: parseJson(row.answers),
     usage: { inputTokens: row.input_tokens ?? 0, outputTokens: row.output_tokens ?? 0 },
-    readings: parseJson(row.readings),
-    action: row.action,
+    notes: notesOf(row),
   };
 }
 
-function toParams(id: DecisionId, entry: NewDecisionEntry): Params {
+/** Parameter names match column names. */
+type InsertParams = Readonly<Record<InsertColumn, string | number | null>>;
+
+const INSERT = `INSERT INTO decisions (${INSERT_COLUMNS.join(', ')}) VALUES (${INSERT_COLUMNS.map((column) => `$${column}`).join(', ')})`;
+
+function toParams(id: DecisionId, entry: NewDecisionEntry): InsertParams {
   const answered = entry.status === 'answered' ? entry : undefined;
   const failed = entry.status === 'failed' ? entry : undefined;
+  const { context } = entry;
   return {
     id,
     at: entry.at,
     status: entry.status,
-    battery: entry.context.battery ?? null,
-    batteryVersion: entry.context.batteryVersion ?? null,
-    pattern: entry.context.pattern ?? null,
-    site: entry.context.site ?? null,
-    requestedModel: entry.requestedModel,
+    battery: context.battery ?? null,
+    battery_version: context.batteryVersion ?? null,
+    pattern: context.pattern ?? null,
+    site: context.site ?? null,
+    requested_model: entry.requestedModel,
     model: answered?.model ?? null,
-    stateHash: entry.stateHash,
+    state_hash: entry.stateHash,
     questions: JSON.stringify(entry.questions),
     answers: answered === undefined ? null : JSON.stringify(answered.answers),
-    latencyMs: entry.latencyMs,
-    inputTokens: answered?.usage.inputTokens ?? null,
-    outputTokens: answered?.usage.outputTokens ?? null,
-    requestId: entry.requestId ?? null,
-    errorKind: failed?.error.kind ?? null,
-    errorMessage: failed?.error.message ?? null,
+    latency_ms: entry.latencyMs,
+    input_tokens: answered?.usage.inputTokens ?? null,
+    output_tokens: answered?.usage.outputTokens ?? null,
+    request_id: entry.requestId ?? null,
+    error_kind: failed?.error.kind ?? null,
+    error_message: failed?.error.message ?? null,
   };
 }
-
-const INSERT = `INSERT INTO decisions (id, at, status, battery, battery_version, pattern, site, requested_model, model, state_hash,
-  questions, answers, latency_ms, input_tokens, output_tokens, request_id, error_kind, error_message)
-  VALUES ($id, $at, $status, $battery, $batteryVersion, $pattern, $site, $requestedModel, $model, $stateHash,
-  $questions, $answers, $latencyMs, $inputTokens, $outputTokens, $requestId, $errorKind, $errorMessage)`;
 
 const OUTCOME_FILTER =
   "EXISTS (SELECT 1 FROM json_each(decisions.readings) WHERE json_extract(json_each.value, '$.outcome') = $outcome)";
@@ -179,7 +198,7 @@ export class SqliteDecisionLog implements DecisionLog, Disposable {
     this.#update(id, 'action', action);
   }
 
-  #update(id: string, column: 'readings' | 'action', value: string): void {
+  #update(id: string, column: NoteColumn, value: string): void {
     const { changes } = this.#db.query(`UPDATE decisions SET ${column} = $value WHERE id = $id AND status = 'answered'`).run({ id, value });
     if (changes !== 1) throw new RangeError(`no answered decision ${id} to attach ${column} to`);
   }

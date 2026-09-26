@@ -4,7 +4,6 @@ export {
   recordAction,
   recordReadings,
   type CallOptions,
-  type Conclusions,
   type PatternHeader,
   type PatternName,
 } from './asking.ts';
@@ -32,8 +31,10 @@ export {
   type YesNoItem,
 } from './battery.ts';
 export {
-  assertDecisionHeader,
-  assertUniqueFixtures,
+  checkEachFixture,
+  decisionHeader,
+  type CalibrationRun,
+  type DecisionIdentity,
   fixtureCheck,
   type FixtureCheck,
   type NamedDecision,

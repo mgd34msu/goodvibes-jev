@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, type NamedDecision } from '../batteries/decision.ts';
 import { checkReading } from '../batteries/battery.ts';
 import { choice, type EntryType, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand } from '../readings/bands.ts';
@@ -33,8 +33,7 @@ export interface Dispatch<R extends string> extends NamedDecision {
 }
 
 export function defineDispatch<const R extends string>(spec: DispatchSpec<R>): Dispatch<R> {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   const routes = Object.keys(spec.routes) as R[];
   for (const fixture of spec.fixtures) {
@@ -45,12 +44,7 @@ export function defineDispatch<const R extends string>(spec: DispatchSpec<R>): D
   const question = choice(spec.instructions, spec.routes as Readonly<Record<string, EntryType>>);
 
   const dispatch: Dispatch<R> = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     routes,
     async route(port, state, options = {}) {
       const result = await askAs(port, spec, 'dispatch', state, { route: question }, options);
@@ -63,14 +57,11 @@ export function defineDispatch<const R extends string>(spec: DispatchSpec<R>): D
         recordAction: (action) => recordAction(port, result.decisionId, action),
       };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const { reading } = await dispatch.route(port, fixture.state, { site: 'calibration', ...options });
-        checks.push(checkReading(fixture.name, 'route', fixture.expect, reading));
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const { reading } = await dispatch.route(port, fixture.state, run);
+        return checkReading(fixture.name, 'route', fixture.expect, reading);
+      }),
   };
   return dispatch;
 }

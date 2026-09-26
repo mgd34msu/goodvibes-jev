@@ -44,38 +44,45 @@ export interface ChoiceBand<O extends string = string> extends ConfidenceBand {
 }
 
 /**
- * Default bands per stake level. The numbers come from the Jev documentation's
+ * A yes/no band symmetric around one half: acting on yes at `act` means
+ * acting on no at `1 - act`, and likewise for confirming. `act` null means
+ * the decision never acts on a reading alone.
+ */
+export function symmetricBand(act: number | null, confirm: number): YesNoBand {
+  return { act: act === null ? null : { yes: act, no: 1 - act }, confirm: { yes: confirm, no: 1 - confirm } };
+}
+
+/**
+ * Default thresholds per stake level: the probability or confidence at which
+ * code acts, and the one at which it confirms. The numbers come from the Jev documentation's
  * worked examples (a 0.5 to 0.6 floor for anything, 0.85 and above to act on
  * a high-stakes choice, a 0.3 to 0.7 review band on yes/no). Calibration
  * replaces them with measured values battery by battery. Critical decisions
  * never act on a reading alone: they have no act bounds, so the best they can
  * do is confirm.
  */
-export const STAKES_BANDS: Readonly<Record<Stakes, { readonly yesNo: YesNoBand; readonly confidence: ConfidenceBand }>> = {
-  low: {
-    yesNo: { act: { yes: 0.6, no: 0.4 }, confirm: { yes: 0.55, no: 0.45 } },
-    confidence: { actAt: 0.6, confirmAt: 0.5 },
-  },
-  medium: {
-    yesNo: { act: { yes: 0.7, no: 0.3 }, confirm: { yes: 0.6, no: 0.4 } },
-    confidence: { actAt: 0.75, confirmAt: 0.6 },
-  },
-  high: {
-    yesNo: { act: { yes: 0.85, no: 0.15 }, confirm: { yes: 0.7, no: 0.3 } },
-    confidence: { actAt: 0.85, confirmAt: 0.6 },
-  },
-  critical: {
-    yesNo: { act: null, confirm: { yes: 0.9, no: 0.1 } },
-    confidence: { actAt: null, confirmAt: 0.9 },
-  },
+export const STAKES_THRESHOLDS: Readonly<Record<Stakes, { readonly act: number | null; readonly confirm: number }>> = {
+  low: { act: 0.6, confirm: 0.55 },
+  medium: { act: 0.75, confirm: 0.6 },
+  high: { act: 0.85, confirm: 0.7 },
+  critical: { act: null, confirm: 0.9 },
 };
 
+/** The yes/no and confidence bands each stake level's thresholds give. */
+export const STAKES_BANDS = Object.fromEntries(
+  Object.entries(STAKES_THRESHOLDS).map(([stakes, { act, confirm }]) => [
+    stakes,
+    { yesNo: symmetricBand(act, confirm), confidence: { actAt: act, confirmAt: confirm } },
+  ]),
+) as Readonly<Record<Stakes, { readonly yesNo: YesNoBand; readonly confidence: ConfidenceBand }>>;
+
 const inUnit = (value: number): boolean => value >= 0 && value <= 1;
-const nonDecreasing = (values: readonly number[]): boolean => values.every((value, index) => index === 0 || values[index - 1]! <= value);
+/** True when each value is no greater than the next. */
+export const isNonDecreasing = (values: readonly number[]): boolean => values.every((value, index) => index === 0 || values[index - 1]! <= value);
 
 /** Throws `message` unless the bounds lie in [0, 1] in non-decreasing order. */
 function assertOrderedInUnit(bounds: readonly number[], message: string): void {
-  if (!bounds.every(inUnit) || !nonDecreasing(bounds)) throw new RangeError(message);
+  if (!bounds.every(inUnit) || !isNonDecreasing(bounds)) throw new RangeError(message);
 }
 
 /** Throws when a yes/no band is not ordered act.no <= confirm.no < confirm.yes <= act.yes within [0, 1]. */

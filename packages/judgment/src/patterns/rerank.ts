@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { noul, type EntryType, type JsonValue, type JudgmentPort } from '../port/types.ts';
 import { assertYesNoBand, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
@@ -61,39 +61,24 @@ const DEFAULT_CRITERIA = {
 const DEFAULT_CONCURRENCY = 8;
 
 function topCheck(fixture: RerankFixture, best: Ranked, top: Ranked | undefined): FixtureCheck {
-  const got = top?.id ?? 'none';
   const { probability, reading } = best;
-  return {
-    fixture: fixture.name,
-    aspect: 'top',
-    expected: fixture.expect.top,
-    got,
-    correct: got === fixture.expect.top,
-    signal: top === undefined ? 1 - probability : probability,
-    outcome: reading.outcome,
-  };
+  return fixtureCheck(fixture.name, 'top', fixture.expect.top, top?.id ?? NONE, top === undefined ? 1 - probability : probability, reading.outcome);
 }
 
 export function defineRerank(spec: RerankSpec): Rerank {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertYesNoBand(spec.band);
   for (const fixture of spec.fixtures) {
     const ids = new Set(fixture.candidates.map((candidate) => candidate.id));
     if (ids.size !== fixture.candidates.length) throw new RangeError(`rerank ${spec.name}: fixture ${fixture.name} repeats a candidate id`);
-    if (fixture.expect.top !== 'none' && !ids.has(fixture.expect.top)) {
+    if (fixture.expect.top !== NONE && !ids.has(fixture.expect.top)) {
       throw new RangeError(`rerank ${spec.name}: fixture ${fixture.name} expects unknown candidate "${fixture.expect.top}"`);
     }
   }
   const question = noul(spec.instructions ?? DEFAULT_INSTRUCTIONS, spec.criteria ?? DEFAULT_CRITERIA);
 
   const rerank: Rerank = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async rerank(port, query, candidates, options = {}) {
       const scorePair = async ({ id, content }: Candidate): Promise<Ranked> => {
         const result = await askAs(port, spec, 'rerank', { query, candidate: content }, { match: question }, options);
@@ -105,14 +90,11 @@ export function defineRerank(spec: RerankSpec): Rerank {
       const [best] = ranked;
       return { ranked, top: best?.reading.verdict === 'yes' ? best : undefined };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const { ranked, top } = await rerank.rerank(port, fixture.query, fixture.candidates, { ...options, site: 'calibration' });
-        checks.push(topCheck(fixture, ranked[0]!, top));
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const { ranked, top } = await rerank.rerank(port, fixture.query, fixture.candidates, run);
+        return topCheck(fixture, ranked[0]!, top);
+      }),
   };
   return rerank;
 }

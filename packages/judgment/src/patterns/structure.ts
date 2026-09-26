@@ -1,6 +1,7 @@
-import { assertDecisionHeader, assertUniqueFixtures, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
-import { choice, noul, type JudgmentPort, type Question } from '../port/types.ts';
+import { choice, noul, type ChoiceResponse, type JudgmentPort, type JudgmentResult, type NoulResponse, type Question, type Questions } from '../port/types.ts';
+import { isNonDecreasing } from '../readings/bands.ts';
 import {
   BLOCK_TYPES,
   CALLOUT_KINDS,
@@ -73,24 +74,22 @@ function blockQuestions(block: Merged, index: number): [string, Question][] {
   return questions;
 }
 
-interface WireAnswer {
-  readonly choice?: string;
-  readonly confidence?: number;
-  readonly noul?: number;
-}
-type Answers = Readonly<Record<string, WireAnswer>>;
+type WireAnswers = JudgmentResult<Questions>['answers'];
 
-function toBlock(block: Merged, index: number, answers: Answers): Block {
+const choiceAt = (answers: WireAnswers, key: string): ChoiceResponse | undefined => answers[key] as ChoiceResponse | undefined;
+const yesAt = (answers: WireAnswers, key: string): number => (answers[key] as NoulResponse).noul;
+
+function toBlock(block: Merged, index: number, answers: WireAnswers): Block {
   const id = blockId(index);
   const marked = markerType(block.text);
-  const asked = answers[`type_${id}`];
+  const asked = choiceAt(answers, `type_${id}`);
   return {
     ...block,
     type: marked ?? (asked!.choice as BlockType),
-    confidence: marked === undefined ? asked!.confidence! : 1,
-    headingLevel: (answers[`hlevel_${id}`]?.choice ?? 'section') as HeadingLevel,
-    step: answers[`step_${id}`]!.noul!,
-    callout: answers[`callout_${id}`]!.choice as CalloutKind,
+    confidence: marked === undefined ? asked!.confidence : 1,
+    headingLevel: (choiceAt(answers, `hlevel_${id}`)?.choice ?? 'section') as HeadingLevel,
+    step: yesAt(answers, `step_${id}`),
+    callout: choiceAt(answers, `callout_${id}`)!.choice as CalloutKind,
   };
 }
 
@@ -98,7 +97,7 @@ async function stitch(port: JudgmentPort, spec: StructureSpec, lines: readonly L
   const questions = stitchQuestions(lines);
   if (Object.keys(questions).length === 0) return {};
   const result = await askAs(port, spec, 'structure.stitch', tag(lines, lineId), questions, options);
-  const joins = Object.fromEntries(Object.entries(result.answers).map(([id, answer]) => [Number(id.slice(1)), (answer as WireAnswer).noul!]));
+  const joins = Object.fromEntries(Object.keys(result.answers).map((id) => [Number(id.slice(1)), yesAt(result.answers, id)]));
   recordReadings(port, result, { joins });
   return joins;
 }
@@ -106,7 +105,7 @@ async function stitch(port: JudgmentPort, spec: StructureSpec, lines: readonly L
 async function classify(port: JudgmentPort, spec: StructureSpec, merged: readonly Merged[], options: CallOptions): Promise<Block[]> {
   const questions = Object.fromEntries(merged.flatMap(blockQuestions));
   const result = await askAs(port, spec, 'structure.classify', tag(merged, blockId), questions, options);
-  const blocks = merged.map((block, index) => toBlock(block, index, result.answers as unknown as Answers));
+  const blocks = merged.map((block, index) => toBlock(block, index, result.answers));
   recordReadings(port, result, { types: blocks.map((block) => block.type) });
   return blocks;
 }
@@ -117,30 +116,21 @@ function typesCheck(fixture: StructureSpec['fixtures'][number], blocks: readonly
 }
 
 export function defineStructureRecovery(spec: StructureSpec): StructureRecovery {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   const bars: JoinBars = { afterDangling: spec.joinAfterDangling, afterTerminal: spec.joinAfterTerminal };
-  const barsOrdered = 0 < bars.afterDangling && bars.afterDangling <= bars.afterTerminal && bars.afterTerminal <= 1;
+  const barsOrdered = bars.afterDangling > 0 && isNonDecreasing([bars.afterDangling, bars.afterTerminal, 1]);
   if (!barsOrdered) throw new RangeError(`structure ${spec.name}: needs 0 < joinAfterDangling <= joinAfterTerminal <= 1`);
 
   const recovery: StructureRecovery = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async recover(port, text, options = {}) {
       const lines = splitLines(text);
       if (lines.length === 0) return [];
       const joins = await stitch(port, spec, lines, options);
       return classify(port, spec, mergeLines(lines, joins, bars), options);
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) checks.push(typesCheck(fixture, await recovery.recover(port, fixture.text, { ...options, site: 'calibration' })));
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => typesCheck(fixture, await recovery.recover(port, fixture.text, run))),
   };
   return recovery;
 }

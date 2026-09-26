@@ -1,4 +1,4 @@
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { choice, type JudgmentPort } from '../port/types.ts';
 import { assertConfidenceBand, type ChoiceBand, type Outcome } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
@@ -59,18 +59,12 @@ export function normalizeForMatch(text: string): string {
 }
 
 export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertConfidenceBand(spec.band);
   const question = choice('How does `source` relate to `claim`?', RELATIONS);
 
   const checker: FidelityChecker = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async check(port, claim, source, quote, options = {}) {
       if (quote !== undefined && !normalizeForMatch(source).includes(normalizeForMatch(quote))) {
         return { fidelity: 'fabricated', reading: undefined, outcome: 'act', decisionId: undefined, recordAction: () => {} };
@@ -87,22 +81,11 @@ export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
         recordAction: (action) => recordAction(port, result.decisionId, action),
       };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        const got = await checker.check(port, fixture.claim, fixture.source, fixture.quote, { site: 'calibration', ...options });
-        checks.push({
-          fixture: fixture.name,
-          aspect: 'fidelity',
-          expected: fixture.expect,
-          got: got.fidelity,
-          correct: got.fidelity === fixture.expect,
-          signal: got.reading?.confidence ?? 1,
-          outcome: got.outcome,
-        });
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => {
+        const got = await checker.check(port, fixture.claim, fixture.source, fixture.quote, run);
+        return fixtureCheck(fixture.name, 'fidelity', fixture.expect, got.fidelity, got.reading?.confidence ?? 1, got.outcome);
+      }),
   };
   return checker;
 }

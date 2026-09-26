@@ -1,4 +1,4 @@
-import type { DecisionContext, EntryType, JudgmentPort, JudgmentResult, Questions } from '../port/types.ts';
+import { toJson, type DecisionContext, type EntryType, type JudgmentPort, type JudgmentResult, type Questions } from '../port/types.ts';
 import type { PatternHeader } from './decision.ts';
 
 export type { PatternHeader } from './decision.ts';
@@ -37,8 +37,6 @@ export interface CallOptions {
   readonly site?: string;
 }
 
-/** What a decision concluded, as the decision log keeps it. */
-export type Conclusions = Readonly<Record<string, unknown>>;
 
 /** A call's decision log entry, when the port keeps a log. */
 type DecisionIdOf = JudgmentResult<Questions>['decisionId'];
@@ -69,7 +67,7 @@ export function askAs<const Q extends Questions>(
 /** Attaches a decision's conclusions to its call's decision log entry. */
 export function recordReadings<C extends object>(port: JudgmentPort, result: { readonly decisionId?: DecisionIdOf }, conclusions: C): void {
   const { decisionId } = result;
-  if (decisionId !== undefined) port.recorder?.recordReadings(decisionId, conclusions as Conclusions);
+  if (decisionId !== undefined) port.recorder?.recordReadings(decisionId, toJson(conclusions));
 }
 
 /** Records what code did with a decision; a no-op when the port keeps no log. */

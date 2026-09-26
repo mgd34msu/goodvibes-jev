@@ -1,5 +1,5 @@
 import { checkReading } from '../batteries/battery.ts';
-import { assertDecisionHeader, assertUniqueFixtures, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
+import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 import { choice, noul, type JudgmentPort, type Question } from '../port/types.ts';
 import { LIMITS } from '../port/limits.ts';
@@ -81,21 +81,11 @@ function fixtureChecks(fixture: ExistenceFixture, found: ExistenceResult): Fixtu
   const existsCheck = checkReading(fixture.name, 'exists', fixture.expect.exists, found.exists);
   if (fixture.expect.item === undefined) return [existsCheck];
   const [best] = found.ranked as [RankedItem];
-  const itemCheck: FixtureCheck = {
-    fixture: fixture.name,
-    aspect: 'item',
-    expected: fixture.expect.item,
-    got: best.id,
-    correct: best.id === fixture.expect.item,
-    signal: best.relevance,
-    outcome: found.exists.outcome,
-  };
-  return [existsCheck, itemCheck];
+  return [existsCheck, fixtureCheck(fixture.name, 'item', fixture.expect.item, best.id, best.relevance, found.exists.outcome)];
 }
 
 export function defineExistence(spec: ExistenceSpec): Existence {
-  assertDecisionHeader({ ...spec, fixtureCount: spec.fixtures.length });
-  assertUniqueFixtures(spec.name, spec.fixtures);
+  const header = decisionHeader(spec);
   assertYesNoBand(spec.band);
   for (const fixture of spec.fixtures) {
     const known = fixture.expect.item === undefined || fixture.items.some((item) => item.id === fixture.expect.item);
@@ -103,12 +93,7 @@ export function defineExistence(spec: ExistenceSpec): Existence {
   }
 
   const existence: Existence = {
-    name: spec.name,
-    version: spec.version,
-    description: spec.description,
-    accuracyFloor: spec.accuracyFloor,
-    ...(spec.model === undefined ? {} : { model: spec.model }),
-    fixtureCount: spec.fixtures.length,
+    ...header,
     async find(port, query, items, options = {}) {
       assertItems(spec.name, items);
       const state = items.map((item) => `${item.id}| ${item.text}`).join('\n');
@@ -123,13 +108,8 @@ export function defineExistence(spec: ExistenceSpec): Existence {
       recordReadings(port, result, { exists, answer: answer ?? null, top: ranked.slice(0, LOGGED_TOP_ITEMS) });
       return { exists, ranked, answer, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
     },
-    async checkFixtures(port, options = {}) {
-      const checks: FixtureCheck[] = [];
-      for (const fixture of spec.fixtures) {
-        checks.push(...fixtureChecks(fixture, await existence.find(port, fixture.query, fixture.items, { ...options, site: 'calibration' })));
-      }
-      return checks;
-    },
+    checkFixtures: (port, options = {}) =>
+      checkEachFixture(spec.fixtures, options, async (fixture, run) => fixtureChecks(fixture, await existence.find(port, fixture.query, fixture.items, run))),
   };
   return existence;
 }
