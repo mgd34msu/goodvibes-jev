@@ -1,0 +1,177 @@
+/**
+ * buildOperatorContract must use the catalog parameter.
+ */
+import { describe, expect, test } from 'bun:test';
+import { buildOperatorContract } from '../sdk/src/platform/control-plane/operator-contract.js';
+import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  expect(value, label).toBeTruthy();
+  expect(typeof value, label).toBe('object');
+  return value as Record<string, unknown>;
+}
+
+function propertySchema(schema: Record<string, unknown>, path: readonly string[]): Record<string, unknown> {
+  let current: Record<string, unknown> = schema;
+  for (const segment of path) {
+    const properties = asRecord(current.properties, `${segment} parent properties`);
+    current = asRecord(properties[segment], `${segment} schema`);
+  }
+  return current;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: create a catalog with known counts
+// ---------------------------------------------------------------------------
+
+function makeMinimalCatalog(options: { methods: number; events: number }): GatewayMethodCatalog {
+  // includeBuiltins: false, clean slate so we control the exact counts
+  const catalog = new GatewayMethodCatalog({ includeBuiltins: false });
+
+  for (let i = 0; i < options.methods; i++) {
+    catalog.register({
+      id: `test.method.${i}`,
+      title: `Test Method ${i}`,
+      description: `Synthetic method for testing`,
+      category: 'test',
+      source: 'plugin',
+      access: 'authenticated',
+      transport: ['http'],
+      scopes: ['read'],
+      pluginId: 'test-plugin',
+    });
+  }
+
+  for (let i = 0; i < options.events; i++) {
+    catalog.registerEvent({
+      id: `test.event.${i}`,
+      title: `Test Event ${i}`,
+      description: `Synthetic event for testing`,
+      category: 'test',
+      source: 'plugin',
+      transport: ['sse'],
+      scopes: ['read:events'],
+      pluginId: 'test-plugin',
+    });
+  }
+
+  return catalog;
+}
+
+// ---------------------------------------------------------------------------
+// Core invariant: contract.operator.methods/events reflect catalog
+// ---------------------------------------------------------------------------
+
+describe('buildOperatorContract uses catalog parameter', () => {
+  test('contract.operator.methods has exactly N methods when catalog has N methods', () => {
+    const N = 3;
+    const catalog = makeMinimalCatalog({ methods: N, events: 0 });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.methods).toHaveLength(N);
+  });
+
+  test('contract.operator.events has exactly M events when catalog has M events', () => {
+    const M = 5;
+    const catalog = makeMinimalCatalog({ methods: 0, events: M });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.events).toHaveLength(M);
+  });
+
+  test('contract.operator.methods and events reflect independent counts simultaneously', () => {
+    const N = 4;
+    const M = 7;
+    const catalog = makeMinimalCatalog({ methods: N, events: M });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.methods).toHaveLength(N);
+    expect(contract.operator.events).toHaveLength(M);
+  });
+
+  test('different catalogs produce different method counts (non-static behavior)', () => {
+    const catalogA = makeMinimalCatalog({ methods: 2, events: 0 });
+    const catalogB = makeMinimalCatalog({ methods: 6, events: 0 });
+    const contractA = buildOperatorContract(catalogA);
+    const contractB = buildOperatorContract(catalogB);
+    expect(contractA.operator.methods).toHaveLength(2);
+    expect(contractB.operator.methods).toHaveLength(6);
+    // The counts must differ, if both returned the static contract, they'd be equal
+    expect(contractA.operator.methods.length).not.toBe(contractB.operator.methods.length);
+  });
+
+  test('empty catalog produces empty methods and events arrays', () => {
+    const catalog = makeMinimalCatalog({ methods: 0, events: 0 });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.methods).toHaveLength(0);
+    expect(contract.operator.events).toHaveLength(0);
+  });
+
+  test('schemaCoverage.methods matches catalog method count', () => {
+    const N = 5;
+    const catalog = makeMinimalCatalog({ methods: N, events: 0 });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.schemaCoverage.methods).toBe(N);
+  });
+
+  test('eventCoverage.events matches catalog event count', () => {
+    const M = 3;
+    const catalog = makeMinimalCatalog({ methods: 0, events: M });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.operator.eventCoverage.events).toBe(M);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Static fields are preserved (product, auth, transports, peer)
+// ---------------------------------------------------------------------------
+
+describe('buildOperatorContract preserves static contract fields', () => {
+  test('product.id is preserved from static contract', () => {
+    const catalog = makeMinimalCatalog({ methods: 1, events: 1 });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.product.id).toBe('goodvibes');
+  });
+
+  test('auth modes are preserved from static contract', () => {
+    const catalog = makeMinimalCatalog({ methods: 0, events: 0 });
+    const contract = buildOperatorContract(catalog);
+    expect(contract.auth.modes).toEqual(['shared-bearer', 'session-login']);
+  });
+
+  test('version is set to current SDK VERSION string', () => {
+    const catalog = makeMinimalCatalog({ methods: 0, events: 0 });
+    const contract = buildOperatorContract(catalog);
+    // Version must be a semver-like string set dynamically by the contract builder.
+    expect(typeof contract.product.version).toBe('string');
+    expect(contract.product.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
+describe('built-in operator contract method schemas', () => {
+  test('sessions.create output matches the shared session record returned by daemon routes', () => {
+    const catalog = new GatewayMethodCatalog();
+    const contract = buildOperatorContract(catalog);
+    const method = contract.operator.methods.find((entry) => entry.id === 'sessions.create');
+    expect(method).toBeTruthy();
+
+    const outputSchema = asRecord(method?.outputSchema, 'sessions.create outputSchema');
+    const sessionSchema = propertySchema(outputSchema, ['session']);
+    const sessionProperties = asRecord(sessionSchema.properties, 'session properties');
+    const required = sessionSchema.required;
+
+    // Per docs/decisions/2026-07-05-session-wire-mixed-version.md (the enum leg),
+    // the READ record's `kind` is an OPEN enum: a plain string with NO enum
+    // constraint, so response validation tolerates a mixed-version daemon emitting
+    // a kind this reader does not model (the normalizer backfills display). The
+    // strict enum lives on the WRITE path (sessions.register input) only.
+    expect(sessionProperties.kind).toMatchObject({ type: 'string' });
+    expect(asRecord(sessionProperties.kind, 'kind schema').enum).toBeUndefined();
+    expect(sessionProperties.lastActivityAt).toMatchObject({ type: 'number' });
+    // `project` is still a real, typed field on the record...
+    expect(sessionProperties.project).toMatchObject({ type: 'string' });
+    expect(Array.isArray(required) ? required : []).toEqual(expect.arrayContaining(['kind', 'lastActivityAt']));
+    // ...but per docs/decisions/2026-07-05-session-wire-mixed-version.md, readers must
+    // tolerate a mixed-version daemon that omits it, so it is NOT contractually
+    // required on the wire response, the schema-level gate must not preempt
+    // normalizeSharedSessionRecord's backfill to 'unknown'.
+    expect(Array.isArray(required) ? required : []).not.toContain('project');
+  });
+});

@@ -1,0 +1,131 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  classifyDaemonProbe,
+  decideDaemonAdoption,
+  startHostServices,
+  type DaemonIdentityProbeResult,
+  type HostServicesConfig,
+} from '../sdk/src/platform/runtime/bootstrap.ts';
+import { isDaemonVersionCompatible } from '../sdk/src/platform/runtime/daemon-version-compat.ts';
+
+/**
+ * The shared adopt-or-spawn decision policy. Asserts the pure ruling and the two
+ * hoist properties: the version band-check is ALWAYS applied before adopting
+ * (the agent's stub skipped it), and adopt-only is a config flag that adopts a
+ * compatible daemon but never spawns one.
+ */
+
+const compatible = (_local: string, remote: string | undefined): boolean => remote === '1.0.0';
+const realBand = isDaemonVersionCompatible;
+const goodvibes = (version: string): DaemonIdentityProbeResult => ({ kind: 'goodvibes', status: 'running', version });
+
+describe('classifyDaemonProbe', () => {
+  test('goodvibes + compatible band → adopt', () => {
+    expect(classifyDaemonProbe({ identity: goodvibes('1.0.0'), localVersion: '1.0.0', versionCompatible: compatible })).toBe('adopt');
+  });
+  test('goodvibes + incompatible band → incompatible', () => {
+    expect(classifyDaemonProbe({ identity: goodvibes('2.0.0'), localVersion: '1.0.0', versionCompatible: compatible })).toBe('incompatible');
+  });
+  test('unverified occupant → blocked', () => {
+    expect(classifyDaemonProbe({ identity: { kind: 'unauthorized' }, localVersion: '1.0.0', versionCompatible: compatible })).toBe('blocked');
+    expect(classifyDaemonProbe({ identity: { kind: 'unknown' }, localVersion: '1.0.0', versionCompatible: compatible })).toBe('blocked');
+  });
+  test('the platform build wins over the artifact version: daemon 1.28.x carrying sdk 2.x adopts on a 2.x surface', () => {
+    // The shipped defect: the daemon's own release number (1.28.x) was
+    // band-checked against a surface's SDK version (2.x), so every surface
+    // refused the daemon it was released alongside and silently ran
+    // local-only for three weeks.
+    const identity = { kind: 'goodvibes' as const, status: 'running', version: '1.28.23', platformVersion: '2.0.21' };
+    expect(classifyDaemonProbe({ identity, localVersion: '2.0.21', versionCompatible: realBand })).toBe('adopt');
+  });
+  test('a daemon too old to report a platform build is judged by its artifact version', () => {
+    const identity = { kind: 'goodvibes' as const, status: 'running', version: '1.28.19' };
+    expect(classifyDaemonProbe({ identity, localVersion: '2.0.21', versionCompatible: realBand })).toBe('incompatible');
+  });
+  test('a platform-build mismatch still refuses, whatever the artifact numbers say', () => {
+    const identity = { kind: 'goodvibes' as const, status: 'running', version: '2.0.21', platformVersion: '3.0.0' };
+    expect(classifyDaemonProbe({ identity, localVersion: '2.0.21', versionCompatible: realBand })).toBe('incompatible');
+  });
+});
+
+describe('decideDaemonAdoption', () => {
+  const base = { localVersion: '1.0.0', versionCompatible: compatible, adoptOnly: false };
+
+  test('disabled when not enabled', () => {
+    expect(decideDaemonAdoption({ ...base, enabled: false, portInUse: false, identity: null }).action).toBe('disabled');
+  });
+  test('port free → spawn the standalone daemon; there is no in-process option', () => {
+    // The whole port-free ruling: spawn, or (under adopt-only) run without one.
+    // Hosting a daemon inside the calling process is not one of the outcomes.
+    const decision = decideDaemonAdoption({ ...base, enabled: true, portInUse: false, identity: null });
+    expect(decision.action).toBe('spawn');
+    expect(decision.reason).toContain('detached');
+  });
+  test('port in use + compatible → adopt', () => {
+    expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: true, identity: goodvibes('1.0.0') }).action).toBe('adopt');
+  });
+  test('port in use + incompatible → incompatible', () => {
+    expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: true, identity: goodvibes('2.0.0') }).action).toBe('incompatible');
+  });
+  test('port in use + unverified → blocked', () => {
+    expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: true, identity: { kind: 'unknown', reason: 'HTTP 404' } }).action).toBe('blocked');
+  });
+
+  describe('adopt-only policy', () => {
+    test('port free → adopt-only-idle (never spawns)', () => {
+      expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: false, identity: null, adoptOnly: true }).action).toBe('adopt-only-idle');
+    });
+    test('compatible daemon present → adopt', () => {
+      expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: true, identity: goodvibes('1.0.0'), adoptOnly: true }).action).toBe('adopt');
+    });
+    test('ALWAYS version-checks: an incompatible daemon is refused even under adopt-only', () => {
+      // This is the agent-stub gap the hoist closes, it would have adopted blindly.
+      expect(decideDaemonAdoption({ ...base, enabled: true, portInUse: true, identity: goodvibes('9.9.9'), adoptOnly: true }).action).toBe('incompatible');
+    });
+  });
+});
+
+// ── Integration: adopt-only flows through startHostServices ────────────────────
+
+function baseConfig(values: Record<string, boolean | number | string> = {}): HostServicesConfig {
+  const merged: Record<string, boolean | number | string> = {
+    'daemon.enabled': true,
+    'danger.httpListener': false,
+    'controlPlane.host': '127.0.0.1',
+    'controlPlane.port': 3421,
+    'httpListener.host': '127.0.0.1',
+    'httpListener.port': 3422,
+    ...values,
+  };
+  return { get: (key) => merged[key] ?? false };
+}
+
+const runtimeBus = {} as never;
+const hookDispatcher = {} as never;
+const runtimeServices = { localUserAuthManager: {}, configManager: {} } as never;
+
+describe('startHostServices: adopt-only policy', () => {
+  test('port free + adoptOnly: never spawns, reports unavailable', async () => {
+    let spawnCalled = false;
+    const handle = await startHostServices(baseConfig(), runtimeBus, hookDispatcher, runtimeServices, {
+      adoptOnly: true,
+      probeDaemonPortInUse: async () => false,
+      spawnDetachedDaemon: () => { spawnCalled = true; return { pid: 1, unref() {} }; },
+    });
+    expect(spawnCalled).toBe(false);
+    expect(handle.daemonServer).toBeNull();
+    expect(handle.daemonStatus.mode).toBe('unavailable');
+    expect(handle.daemonStatus.reason).toContain('adopt-only');
+  });
+
+  test('compatible daemon present + adoptOnly: adopts as external', async () => {
+    const handle = await startHostServices(baseConfig(), runtimeBus, hookDispatcher, runtimeServices, {
+      adoptOnly: true,
+      isDaemonVersionCompatible: () => true,
+      probeDaemonPortInUse: async () => true,
+      probeDaemonIdentity: async () => ({ kind: 'goodvibes' as const, status: 'running', version: '1.2.3' }),
+    });
+    expect(handle.daemonStatus.mode).toBe('external');
+    expect(handle.daemonStatus.version).toBe('1.2.3');
+  });
+});

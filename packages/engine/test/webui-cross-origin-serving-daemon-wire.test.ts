@@ -1,0 +1,396 @@
+/**
+ * webui-cross-origin-serving-daemon-wire.test.ts
+ *
+ * Proves the opt-in same-origin bundle serving + cross-origin (CORS) capabilities
+ * against a REAL daemon booted on an ephemeral port with an isolated home. Never
+ * touches the operator's real daemons (127.0.0.1:3421 / 0.0.0.0:4444).
+ *
+ * Coverage (per the SDK-DEPLOY brief):
+ *   1. Both capabilities OFF (default): GET / and OPTIONS behave exactly as today
+ *      (401 without a token, 404 with one), and no Access-Control-Allow-Origin is
+ *      ever emitted, byte-parity with the pre-change daemon.
+ *   2. Serving ON: GET / serves the bundle index.html same-origin without a token,
+ *      hashed assets serve, and SPA navigation routes fall back to index.html.
+ *   3. API precedence holds: /api/* is dispatched to the API, never served as a
+ *      static file, and still requires auth (no-token -> 401) with serving ON.
+ *   4. CORS preflight from an allowlisted origin returns 2xx with an echoed
+ *      Access-Control-Allow-Origin + Allow-Headers that includes Authorization.
+ *   5. A non-allowlisted origin is refused honestly (403 preflight, no ACAO; actual
+ *      request carries no ACAO).
+ *   6. No credentialed wildcard is possible: ACAO is always the exact origin, never
+ *      '*', and Allow-Credentials rides only with a specific origin.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
+import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { resolveWebuiServingPosture } from '../sdk/src/platform/daemon/http/webui-serving.ts';
+
+const TOKEN = 'test-webui-serving-token';
+const ALLOWED_ORIGIN = 'http://localhost:5173';
+const OTHER_ORIGIN = 'http://evil.example.com';
+
+const INDEX_HTML = '<!doctype html><html><head><title>bundle</title></head><body><div id="root"></div><script src="/assets/app-deadbeef.js"></script></body></html>';
+const APP_JS = 'console.log("goodvibes web ui bundle");';
+// Deliberately different text from INDEX_HTML: the assertions below tell the two
+// directory keys apart by which document came back, not by a status code.
+const STATIC_INDEX_HTML = '<!doctype html><html><head><title>static assets</title></head><body>web.staticAssetsDir</body></html>';
+
+let onHome: string;
+let onWork: string;
+let offHome: string;
+let offWork: string;
+let bundleDir: string;
+let staticAssetsDir: string;
+let servingOn: BootedDaemon;
+let servingOff: BootedDaemon;
+let servingStaticOnly: BootedDaemon;
+let staticHome: string;
+let staticWork: string;
+
+function auth(extra: Record<string, string> = {}): Record<string, string> {
+  return { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json', ...extra };
+}
+
+beforeAll(async () => {
+  // A minimal built bundle: index.html + a hashed asset under /assets.
+  bundleDir = mkdtempSync(join(tmpdir(), 'webui-bundle-'));
+  mkdirSync(join(bundleDir, 'assets'), { recursive: true });
+  writeFileSync(join(bundleDir, 'index.html'), INDEX_HTML);
+  writeFileSync(join(bundleDir, 'assets', 'app-deadbeef.js'), APP_JS);
+
+  // Daemon with BOTH capabilities enabled.
+  onHome = mkdtempSync(join(tmpdir(), 'webui-on-home-'));
+  onWork = mkdtempSync(join(tmpdir(), 'webui-on-work-'));
+  const onConfig = new ConfigManager({ workingDir: onWork, homeDir: onHome, surfaceRoot: 'goodvibes' });
+  onConfig.set('controlPlane.webui.serve', true);
+  onConfig.set('controlPlane.webui.bundleDir', bundleDir);
+  onConfig.set('controlPlane.cors.enabled', true);
+  onConfig.set('controlPlane.cors.allowedOrigins', ALLOWED_ORIGIN);
+  servingOn = await bootDaemon({
+    homeDirectory: onHome,
+    workingDir: onWork,
+    daemonHomeDir: join(onHome, 'daemon'),
+    port: 0,
+    host: '127.0.0.1',
+    token: TOKEN,
+    configManager: onConfig,
+  });
+
+  // Daemon whose ONLY configured directory is web.staticAssetsDir: bundleDir is
+  // left at its shipped empty default, which before this key was read meant
+  // serve: true served nothing at all.
+  staticAssetsDir = mkdtempSync(join(tmpdir(), 'webui-static-assets-'));
+  writeFileSync(join(staticAssetsDir, 'index.html'), STATIC_INDEX_HTML);
+  staticHome = mkdtempSync(join(tmpdir(), 'webui-static-home-'));
+  staticWork = mkdtempSync(join(tmpdir(), 'webui-static-work-'));
+  const staticConfig = new ConfigManager({ workingDir: staticWork, homeDir: staticHome, surfaceRoot: 'goodvibes' });
+  staticConfig.set('controlPlane.webui.serve', true);
+  staticConfig.set('web.staticAssetsDir', staticAssetsDir);
+  servingStaticOnly = await bootDaemon({
+    homeDirectory: staticHome,
+    workingDir: staticWork,
+    daemonHomeDir: join(staticHome, 'daemon'),
+    port: 0,
+    host: '127.0.0.1',
+    token: TOKEN,
+    configManager: staticConfig,
+  });
+
+  // Daemon with defaults (both capabilities OFF) for byte-parity checks.
+  offHome = mkdtempSync(join(tmpdir(), 'webui-off-home-'));
+  offWork = mkdtempSync(join(tmpdir(), 'webui-off-work-'));
+  servingOff = await bootDaemon({
+    homeDirectory: offHome,
+    workingDir: offWork,
+    daemonHomeDir: join(offHome, 'daemon'),
+    port: 0,
+    host: '127.0.0.1',
+    token: TOKEN,
+  });
+});
+
+afterAll(async () => {
+  await servingOn?.stop();
+  await servingOff?.stop();
+  await servingStaticOnly?.stop();
+  for (const dir of [onHome, onWork, offHome, offWork, bundleDir, staticAssetsDir, staticHome, staticWork]) {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe('capabilities OFF: byte-parity with today', () => {
+  test('GET / without a token is 401 (unchanged) and emits no allow-origin', async () => {
+    const res = await fetch(`${servingOff.url}/`);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    await res.body?.cancel();
+  });
+
+  test('GET / with a token is 404 (no bundle configured)', async () => {
+    const res = await fetch(`${servingOff.url}/`, { headers: auth() });
+    expect(res.status).toBe(404);
+    await res.body?.cancel();
+  });
+
+  test('OPTIONS with an origin is 401 (unchanged) and emits no allow-origin', async () => {
+    const res = await fetch(`${servingOff.url}/api/sessions`, {
+      method: 'OPTIONS',
+      headers: { origin: ALLOWED_ORIGIN, 'access-control-request-method': 'GET' },
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    await res.body?.cancel();
+  });
+});
+
+describe('bundle serving ON: same-origin, public, SPA fallback', () => {
+  test('GET / serves index.html without a token', async () => {
+    const res = await fetch(`${servingOn.url}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    const body = await res.text();
+    expect(body).toContain('<div id="root"></div>');
+  });
+
+  test('a hashed asset serves with an immutable cache and JS content-type', async () => {
+    const res = await fetch(`${servingOn.url}/assets/app-deadbeef.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('javascript');
+    expect(res.headers.get('cache-control') ?? '').toContain('immutable');
+    const body = await res.text();
+    expect(body).toContain('goodvibes web ui bundle');
+  });
+
+  test('an unknown navigation route falls back to index.html (SPA)', async () => {
+    const res = await fetch(`${servingOn.url}/sessions/abc`, { headers: { accept: 'text/html' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    const body = await res.text();
+    expect(body).toContain('<div id="root"></div>');
+  });
+
+  test('a missing concrete asset is an honest 404, not the HTML shell', async () => {
+    const res = await fetch(`${servingOn.url}/assets/does-not-exist.js`);
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).not.toContain('<div id="root"></div>');
+  });
+
+  test('a traversal-shaped request never leaks a file outside the bundle', async () => {
+    // The URL layer collapses every `..` (literal or percent-encoded) before the
+    // daemon sees it, so a traversal attempt can only ever resolve inside the
+    // bundle root, it must return the app shell / 404, never system file bytes.
+    const res = await fetch(`${servingOn.url}/%2e%2e/%2e%2e/etc/passwd`);
+    const body = await res.text();
+    expect(body).not.toContain('root:');
+    expect([200, 404]).toContain(res.status);
+  });
+});
+
+describe('API precedence + auth hold with serving ON', () => {
+  test('GET /api/sessions is dispatched to the API, not served as a file (no token -> 401)', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`);
+    expect(res.status).toBe(401);
+    await res.body?.cancel();
+  });
+
+  test('GET /api/sessions with a token reaches the sessions surface (200 JSON)', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`, { headers: auth() });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { sessions: unknown[] };
+    expect(Array.isArray(body.sessions)).toBe(true);
+  });
+
+  // /status and /config are extension-less GETs at the top level, which is
+  // exactly the shape the SPA fallback answers with index.html. They are the
+  // daemon's, and every client reads them: /status carries the client
+  // compatibility floor header on the probe each surface already makes, and
+  // /config backs the web surface's own admin, receipts and settings reads.
+  test('GET /status is the daemon\'s JSON, never the app shell, and carries the floor header', async () => {
+    const res = await fetch(`${servingOn.url}/status`, { headers: auth() });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('application/json');
+    expect(res.headers.get('x-goodvibes-client-floor')).toBeTruthy();
+    const body = await res.json() as { version?: unknown };
+    expect(typeof body.version).toBe('string');
+  });
+
+  test('the floor header rides /status on the plain path too, not only with serving on', async () => {
+    // The forward floor is only load-bearing if the router actually WRITES it:
+    // clients read it on the /status probe they already make, and a constant
+    // threaded into a context with no emitter is an inert gate. Pinned on both
+    // daemons, bundle serving on and off, because bundle serving is what was
+    // shadowing this route in the first place.
+    const withServing = await fetch(`${servingOn.url}/status`, { headers: auth() });
+    const withoutServing = await fetch(`${servingOff.url}/status`, { headers: auth() });
+    expect(withServing.headers.get('x-goodvibes-client-floor')).toBeTruthy();
+    expect(withoutServing.headers.get('x-goodvibes-client-floor')).toBeTruthy();
+    // The same value on both: the floor is a property of the build, not of
+    // whichever optional capability happens to be switched on.
+    expect(withServing.headers.get('x-goodvibes-client-floor'))
+      .toBe(withoutServing.headers.get('x-goodvibes-client-floor'));
+    await withServing.body?.cancel();
+    await withoutServing.body?.cancel();
+  });
+
+  test('the floor header survives the CORS decoration wrapper', async () => {
+    // applyCorsHeaders rebuilds the Response, so a header set upstream can be
+    // dropped by a copy that forgets it. This is the cross-origin read the web
+    // surface actually makes.
+    const res = await fetch(`${servingOn.url}/status`, { headers: auth({ origin: ALLOWED_ORIGIN }) });
+    expect(res.headers.get('x-goodvibes-client-floor')).toBeTruthy();
+    expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
+    await res.body?.cancel();
+  });
+
+  test('GET /status without a token is the daemon\'s own refusal, not a 200 HTML shell', async () => {
+    const res = await fetch(`${servingOn.url}/status`);
+    expect(res.status).not.toBe(200);
+    const body = await res.text();
+    expect(body).not.toContain('<div id="root"></div>');
+  });
+
+  test('GET /config and /config/credentials reach the daemon, not the bundle', async () => {
+    for (const path of ['/config', '/config/credentials']) {
+      const res = await fetch(`${servingOn.url}${path}`, { headers: auth() });
+      expect(res.headers.get('content-type') ?? '').toContain('application/json');
+      const body = await res.text();
+      expect(body).not.toContain('<div id="root"></div>');
+    }
+  });
+
+  test('an SPA route that merely starts with a reserved root still falls back to the shell', async () => {
+    // Boundary-aware reservation: `/configuration` is not `/config`.
+    const res = await fetch(`${servingOn.url}/configuration`, { headers: { accept: 'text/html' } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('<div id="root"></div>');
+  });
+});
+
+describe('CORS preflight + emission (allowlist-gated, no wildcard)', () => {
+  test('preflight from an allowlisted origin returns 204 with echoed ACAO + Authorization in Allow-Headers', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: ALLOWED_ORIGIN,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization, content-type',
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
+    expect(res.headers.get('access-control-allow-origin')).not.toBe('*');
+    expect(res.headers.get('access-control-allow-credentials')).toBe('true');
+    expect((res.headers.get('access-control-allow-headers') ?? '').toLowerCase()).toContain('authorization');
+    expect(res.headers.get('vary') ?? '').toContain('Origin');
+    await res.body?.cancel();
+  });
+
+  test('an allowlisted actual request carries an echoed ACAO (never a wildcard)', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`, { headers: auth({ origin: ALLOWED_ORIGIN }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
+    expect(res.headers.get('access-control-allow-origin')).not.toBe('*');
+    expect(res.headers.get('access-control-allow-credentials')).toBe('true');
+    await res.json();
+  });
+
+  test('preflight from a non-allowlisted origin is refused (403, no ACAO)', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`, {
+      method: 'OPTIONS',
+      headers: { origin: OTHER_ORIGIN, 'access-control-request-method': 'GET' },
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    await res.body?.cancel();
+  });
+
+  test('a non-allowlisted actual request is processed but carries no ACAO', async () => {
+    const res = await fetch(`${servingOn.url}/api/sessions`, { headers: auth({ origin: OTHER_ORIGIN }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    await res.json();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which config key names the served directory
+// ---------------------------------------------------------------------------
+//
+// `web.staticAssetsDir` had a schema row, a default of 'dist/web' and a
+// description promising it was the embedded web surface's static asset
+// directory, and no reader anywhere: serving read only
+// `controlPlane.webui.bundleDir`. These pin the resolved precedence at both
+// positions, in the pure resolver and against a real daemon.
+
+/** A ConfigManager stand-in for the resolver: it reads keys and nothing else. */
+function postureConfig(values: Record<string, unknown>): ConfigManager {
+  return { get: (key: string) => values[key] } as unknown as ConfigManager;
+}
+
+describe('static-directory precedence between the two directory keys', () => {
+  test('bundleDir wins when both name a directory', () => {
+    const posture = resolveWebuiServingPosture(postureConfig({
+      'controlPlane.webui.serve': true,
+      'controlPlane.webui.bundleDir': '/srv/bundle',
+      'web.staticAssetsDir': '/srv/assets',
+    }));
+    expect(posture.bundleDir).toBe('/srv/bundle');
+    expect(posture.bundleDirSource).toBe('controlPlane.webui.bundleDir');
+  });
+
+  test('web.staticAssetsDir supplies the directory when bundleDir is empty', () => {
+    const posture = resolveWebuiServingPosture(postureConfig({
+      'controlPlane.webui.serve': true,
+      'controlPlane.webui.bundleDir': '',
+      'web.staticAssetsDir': '/srv/assets',
+    }));
+    expect(posture.bundleDir).toBe('/srv/assets');
+    expect(posture.bundleDirSource).toBe('web.staticAssetsDir');
+  });
+
+  test('whitespace in either key counts as empty, not as a directory named " "', () => {
+    const posture = resolveWebuiServingPosture(postureConfig({
+      'controlPlane.webui.serve': true,
+      'controlPlane.webui.bundleDir': '   ',
+      'web.staticAssetsDir': '  /srv/assets  ',
+    }));
+    expect(posture.bundleDir).toBe('/srv/assets');
+    expect(posture.bundleDirSource).toBe('web.staticAssetsDir');
+  });
+
+  test('both empty leaves nothing to serve, and neither key is credited', () => {
+    const posture = resolveWebuiServingPosture(postureConfig({
+      'controlPlane.webui.serve': true,
+      'controlPlane.webui.bundleDir': '',
+      'web.staticAssetsDir': '',
+    }));
+    expect(posture.bundleDir).toBe('');
+    expect(posture.bundleDirSource).toBe('');
+  });
+
+  test('neither directory key turns serving on by itself', () => {
+    const posture = resolveWebuiServingPosture(postureConfig({
+      'controlPlane.webui.bundleDir': '/srv/bundle',
+      'web.staticAssetsDir': '/srv/assets',
+    }));
+    expect(posture.serveBundle).toBe(false);
+  });
+
+  test('a real daemon configured with only web.staticAssetsDir serves that directory', async () => {
+    const res = await fetch(`${servingStaticOnly.url}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    expect(await res.text()).toBe(STATIC_INDEX_HTML);
+  });
+
+  test('a real daemon with bundleDir set serves the bundle, not the assets dir', async () => {
+    const res = await fetch(`${servingOn.url}/`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(INDEX_HTML);
+  });
+});

@@ -1,0 +1,739 @@
+/**
+ * companion-chat-routes.test.ts
+ *
+ * Tests for: create session, post message, SSE event stream, get session,
+ * delete session. Uses a mock provider that returns deterministic text.
+ */
+
+import { describe, expect, test, beforeEach } from 'bun:test';
+import { Buffer } from 'node:buffer';
+import { settleEvents } from './_helpers/test-timeout.js';
+import { trackDisposables } from './_helpers/disposables.ts';
+import { CompanionChatManager } from '../sdk/src/platform/companion/companion-chat-manager.js';
+import { dispatchCompanionChatRoutes } from '../sdk/src/platform/companion/companion-chat-routes.js';
+import type {
+  CompanionChatEventPublisher,
+  CompanionChatManagerConfig,
+  CompanionLLMProvider,
+  CompanionProviderChunk,
+} from '../sdk/src/platform/companion/companion-chat-manager.js';
+import type { CompanionChatRouteContext } from '../sdk/src/platform/companion/companion-chat-route-types.js';
+import type { ArtifactDescriptor } from '../sdk/src/platform/artifacts/types.js';
+import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
+
+const disposables = trackDisposables();
+
+// ---------------------------------------------------------------------------
+// Mock provider, returns deterministic chunks
+// ---------------------------------------------------------------------------
+
+function makeMockProvider(reply = 'Hello from assistant'): CompanionLLMProvider {
+  return {
+    async *chatStream() {
+      const words = reply.split(' ');
+      for (const word of words) {
+        yield { type: 'text_delta', delta: word + ' ' } satisfies CompanionProviderChunk;
+      }
+      yield { type: 'done' } satisfies CompanionProviderChunk;
+    },
+  };
+}
+
+function makeCapturingProvider(
+  calls: Array<{ model: string | null; provider: string | null }>,
+): CompanionLLMProvider {
+  return {
+    async *chatStream(_messages, options) {
+      calls.push({
+        model: options.model ?? null,
+        provider: options.provider ?? null,
+      });
+      yield { type: 'text_delta', delta: 'ok' } satisfies CompanionProviderChunk;
+      yield { type: 'done' } satisfies CompanionProviderChunk;
+    },
+  };
+}
+
+function makeMessageCapturingProvider(
+  calls: ProviderMessage[][],
+): CompanionLLMProvider {
+  return {
+    async *chatStream(messages) {
+      calls.push(messages);
+      yield { type: 'text_delta', delta: 'ok' } satisfies CompanionProviderChunk;
+      yield { type: 'done' } satisfies CompanionProviderChunk;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mock event publisher
+// ---------------------------------------------------------------------------
+
+function makeEventPublisher(): CompanionChatEventPublisher & {
+  events: Array<{ event: string; payload: unknown; filter?: unknown }>;
+} {
+  const events: Array<{ event: string; payload: unknown; filter?: unknown }> = [];
+  return {
+    events,
+    publishEvent(event, payload, filter?) {
+      events.push({ event, payload, filter });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeRequest(method: string, url: string, body?: unknown): Request {
+  return new Request(url, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : {},
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+}
+
+function makeContext(
+  chatManager: CompanionChatManager,
+  openSessionEventStream?: (req: Request, sessionId: string) => Response,
+): CompanionChatRouteContext {
+  return {
+    chatManager,
+    async parseJsonBody(req) {
+      try {
+        return await req.json();
+      } catch {
+        return new Response('Bad JSON', { status: 400 });
+      }
+    },
+    async parseOptionalJsonBody(req) {
+      const text = await req.text();
+      if (!text) return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return new Response('Bad JSON', { status: 400 });
+      }
+    },
+    openSessionEventStream: openSessionEventStream ?? ((_req, sessionId) => {
+      return new Response(`data: connected sessionId=${sessionId}\n\n`, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('companion-chat-routes: create session', () => {
+  let manager: CompanionChatManager;
+  let publisher: ReturnType<typeof makeEventPublisher>;
+
+  beforeEach(() => {
+    publisher = makeEventPublisher();
+    const config: CompanionChatManagerConfig = {
+      provider: makeMockProvider(),
+      eventPublisher: publisher,
+      gcIntervalMs: 999_999,
+    };
+    manager = disposables.add(new CompanionChatManager(config));
+  });
+
+  test('POST /api/companion/chat/sessions returns 201 with sessionId', async () => {
+    const req = makeRequest('POST', 'http://localhost/api/companion/chat/sessions', {
+      title: 'Test session',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(req, ctx);
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(201);
+    const body = await res!.json();
+    expect(typeof body.sessionId).toBe('string');
+    expect(body.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(typeof body.createdAt).toBe('number');
+    expect(body.session).toMatchObject({
+      id: body.sessionId,
+      kind: 'companion-chat',
+      title: 'Test session',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      status: 'active',
+    });
+  });
+
+  test('POST /api/companion/chat/sessions with no body rejects when no default resolver is configured', async () => {
+    const req = new Request('http://localhost/api/companion/chat/sessions', { method: 'POST' });
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(req, ctx);
+    expect(res!.status).toBe(400);
+    const body = await res!.json();
+    expect(body.code).toBe('NO_MODEL_CONFIGURED');
+  });
+
+  test('GET /api/companion/chat/sessions/:id returns session + empty messages', async () => {
+    // Create session first
+    const createReq = makeRequest('POST', 'http://localhost/api/companion/chat/sessions', {
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
+    const ctx = makeContext(manager);
+    const createRes = await dispatchCompanionChatRoutes(createReq, ctx);
+    const { sessionId } = await createRes!.json();
+
+    const getReq = makeRequest('GET', `http://localhost/api/companion/chat/sessions/${sessionId}`);
+    const getRes = await dispatchCompanionChatRoutes(getReq, ctx);
+    expect(getRes!.status).toBe(200);
+    const body = await getRes!.json();
+    expect(body.session.id).toBe(sessionId);
+    expect(body.session.kind).toBe('companion-chat');
+    expect(body.messages).toBeInstanceOf(Array);
+    expect(body.messages).toHaveLength(0);
+  });
+
+  test('GET /api/companion/chat/sessions lists active sessions newest first', async () => {
+    const ctx = makeContext(manager);
+    const older = manager.createSession({ title: 'Older', provider: 'openai', model: 'openai:gpt-5.5' });
+    await settleEvents(2);
+    const newer = manager.createSession({ title: 'Newer', provider: 'anthropic', model: 'anthropic:claude-sonnet' });
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/companion/chat/sessions?limit=10'),
+      ctx,
+    );
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body.totals).toEqual({ sessions: 2, active: 2, closed: 0 });
+    expect(body.sessions.map((session: { id: string }) => session.id)).toEqual([newer.id, older.id]);
+  });
+
+  test('GET /api/companion/chat/sessions excludes closed sessions unless requested', async () => {
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ provider: 'openai', model: 'openai:gpt-5.5' });
+    manager.closeSession(session.id);
+
+    const activeOnly = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/companion/chat/sessions'),
+      ctx,
+    );
+    expect(activeOnly!.status).toBe(200);
+    expect((await activeOnly!.json()).sessions).toHaveLength(0);
+
+    const includeClosed = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/companion/chat/sessions?includeClosed=true'),
+      ctx,
+    );
+    expect(includeClosed!.status).toBe(200);
+    const body = await includeClosed!.json();
+    expect(body.sessions).toHaveLength(1);
+    expect(body.sessions[0].status).toBe('closed');
+  });
+
+  test('GET unknown session returns 404', async () => {
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/companion/chat/sessions/no-such-session'),
+      ctx,
+    );
+    expect(res!.status).toBe(404);
+  });
+});
+
+describe('companion-chat-routes: update session', () => {
+  test('PATCH updates session-local provider/model without using global provider state', async () => {
+    const calls: Array<{ model: string | null; provider: string | null }> = [];
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeCapturingProvider(calls),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ provider: 'openai', model: 'gpt-5.4' });
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('PATCH', `http://localhost/api/companion/chat/sessions/${session.id}`, {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-5',
+      }),
+      ctx,
+    );
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body.session.provider).toBe('anthropic');
+    expect(body.session.model).toBe('claude-sonnet-4-5');
+
+    await manager.postMessage(session.id, 'use the session model');
+    await settleEvents(25);
+    expect(calls.at(-1)).toEqual({ provider: 'anthropic', model: 'claude-sonnet-4-5' });
+  });
+
+  test('PATCH rejects a partial provider/model update', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession();
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('PATCH', `http://localhost/api/companion/chat/sessions/${session.id}`, {
+        model: 'openai:gpt-5.5',
+      }),
+      ctx,
+    );
+    expect(res!.status).toBe(400);
+    const body = await res!.json();
+    expect(body.code).toBe('INVALID_MODEL_ROUTE');
+  });
+
+  test('PATCH unknown session returns 404', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('PATCH', 'http://localhost/api/companion/chat/sessions/ghost-id', {
+        provider: 'openai',
+        model: 'gpt-5.5',
+      }),
+      ctx,
+    );
+    expect(res!.status).toBe(404);
+  });
+});
+
+describe('companion-chat-routes: post message and events', () => {
+  let manager: CompanionChatManager;
+  let publisher: ReturnType<typeof makeEventPublisher>;
+
+  beforeEach(() => {
+    publisher = makeEventPublisher();
+    manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider('The answer is 42'),
+        eventPublisher: publisher,
+        gcIntervalMs: 999_999,
+      }),
+    );
+  });
+
+  test('POST message returns 202 with messageId', async () => {
+    const ctx = makeContext(manager);
+    // Create session
+    const createRes = await dispatchCompanionChatRoutes(
+      makeRequest('POST', 'http://localhost/api/companion/chat/sessions', {
+        provider: 'anthropic',
+        model: 'claude-sonnet',
+      }),
+      ctx,
+    );
+    const { sessionId } = await createRes!.json();
+
+    // Post a message
+    const msgRes = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${sessionId}/messages`, {
+        content: 'What is the answer?',
+      }),
+      ctx,
+    );
+    expect(msgRes!.status).toBe(202);
+    const body = await msgRes!.json();
+    expect(typeof body.messageId).toBe('string');
+  });
+
+  test('POST empty content returns 400', async () => {
+    const ctx = makeContext(manager);
+    const session = manager.createSession();
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${session.id}/messages`, {
+        content: '',
+      }),
+      ctx,
+    );
+    expect(res!.status).toBe(400);
+  });
+
+  test('POST message persists artifact attachments and exposes them to events/provider prompt', async () => {
+    const providerCalls: ProviderMessage[][] = [];
+    const publisher = makeEventPublisher();
+    const artifact: ArtifactDescriptor = {
+      id: 'artifact-note',
+      kind: 'document',
+      mimeType: 'text/plain',
+      filename: 'note.txt',
+      sizeBytes: 16,
+      sha256: 'abc123',
+      createdAt: 123,
+      acquisitionMode: 'inline-data',
+      fetchMode: 'not-applicable',
+      metadata: { source: 'test' },
+    };
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMessageCapturingProvider(providerCalls),
+        eventPublisher: publisher,
+        gcIntervalMs: 999_999,
+        artifactStore: {
+          get: (id) => id === artifact.id ? artifact : null,
+          async readContent() {
+            return {
+              record: { mimeType: artifact.mimeType, filename: artifact.filename },
+              buffer: Buffer.from('hello attachment'),
+            };
+          },
+        },
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ provider: 'openai', model: 'openai:gpt-5.5' });
+
+    const msgRes = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${session.id}/messages`, {
+        attachments: [{ artifactId: artifact.id, label: 'Note' }],
+      }),
+      ctx,
+    );
+    expect(msgRes!.status).toBe(202);
+    await settleEvents();
+
+    const messagesRes = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}/messages`),
+      ctx,
+    );
+    const messagesBody = await messagesRes!.json();
+    expect(messagesBody.messages[0].attachments).toHaveLength(1);
+    expect(messagesBody.messages[0].attachments[0]).toMatchObject({
+      artifactId: artifact.id,
+      filename: 'note.txt',
+      label: 'Note',
+    });
+
+    const started = publisher.events.find((event) => (event.payload as { type?: string }).type === 'turn.started');
+    expect((started!.payload as { envelope: { attachments?: unknown[] } }).envelope.attachments).toHaveLength(1);
+    const firstUserMessage = providerCalls[0]![0]!;
+    expect(firstUserMessage.role).toBe('user');
+    expect(String(firstUserMessage.content)).toContain('hello attachment');
+  });
+
+  test('POST message rejects unknown attachment artifacts', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+        artifactStore: {
+          get: () => null,
+          async readContent() {
+            throw new Error('not used');
+          },
+        },
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ provider: 'openai', model: 'openai:gpt-5.5' });
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${session.id}/messages`, {
+        body: 'review this',
+        attachments: [{ artifactId: 'missing' }],
+      }),
+      ctx,
+    );
+    expect(res!.status).toBe(404);
+    expect((await res!.json()).code).toBe('UNKNOWN_ARTIFACT');
+  });
+
+  test('events arrive in order: started -> deltas -> completed', async () => {
+    const ctx = makeContext(manager);
+    const session = manager.createSession();
+
+    // Register a subscriber so events are routed
+    manager.registerSubscriber(session.id, `client:${session.id}`);
+
+    // Post message, turn runs async; we wait for turn.completed event
+    await manager.postMessage(session.id, 'Hello');
+
+    // Give the async turn a tick to complete
+    await settleEvents();
+
+    const eventTypes = publisher.events.map((e) => {
+      const payload = e.payload as { type?: string };
+      return payload.type ?? e.event;
+    });
+
+    expect(eventTypes[0]).toBe('turn.started');
+    // At least one delta
+    expect(eventTypes.some((t) => t === 'turn.delta')).toBe(true);
+    // Completed comes last
+    expect(eventTypes[eventTypes.length - 1]).toBe('turn.completed');
+  });
+
+  test('GET events returns SSE response for active session', async () => {
+    const ctx = makeContext(manager);
+    const session = manager.createSession();
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}/events`),
+      ctx,
+    );
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get('content-type')).toContain('text/event-stream');
+  });
+
+  test('GET events for closed session returns 410', async () => {
+    const ctx = makeContext(manager);
+    const session = manager.createSession();
+    manager.closeSession(session.id);
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}/events`),
+      ctx,
+    );
+    expect(res!.status).toBe(410);
+  });
+
+  test('non-companion paths return null (fall-through)', async () => {
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/sessions'),
+      ctx,
+    );
+    expect(res).toBeNull();
+  });
+});
+
+describe('companion-chat-routes: close vs delete (delete-means-delete)', () => {
+  test('POST /close soft-closes: status closed, session still gettable', async () => {
+    const publisher = makeEventPublisher();
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: publisher,
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ title: 'To close' });
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${session.id}/close`),
+      ctx,
+    );
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body.status).toBe('closed');
+
+    // The record is preserved, still gettable, just closed.
+    const getRes = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(getRes!.status).toBe(200);
+
+    // Further messages are rejected against the closed session.
+    const msgRes = await dispatchCompanionChatRoutes(
+      makeRequest('POST', `http://localhost/api/companion/chat/sessions/${session.id}/messages`, {
+        content: 'Will fail',
+      }),
+      ctx,
+    );
+    expect(msgRes!.status).toBe(409);
+  });
+
+  test('DELETE on an ACTIVE session is rejected 409 SESSION_ACTIVE (close it first)', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ title: 'Still active' });
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('DELETE', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(res!.status).toBe(409);
+    const body = await res!.json();
+    expect(body.code).toBe('SESSION_ACTIVE');
+
+    // The session is untouched by the rejected delete.
+    const getRes = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(getRes!.status).toBe(200);
+  });
+
+  test('DELETE on a CLOSED session hard-removes it: gone even with includeClosed', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ title: 'To delete' });
+    manager.closeSession(session.id);
+
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('DELETE', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body).toEqual({ sessionId: session.id, deleted: true });
+
+    // GONE, not merely filtered by includeClosed:false; it is absent outright.
+    const getRes = await dispatchCompanionChatRoutes(
+      makeRequest('GET', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(getRes!.status).toBe(404);
+
+    const listRes = await dispatchCompanionChatRoutes(
+      makeRequest('GET', 'http://localhost/api/companion/chat/sessions?includeClosed=true'),
+      ctx,
+    );
+    expect(listRes!.status).toBe(200);
+    const listBody = await listRes!.json();
+    expect((listBody.sessions as Array<{ id: string }>).some((s) => s.id === session.id)).toBe(false);
+  });
+
+  test('DELETE of an already-deleted id is an honest 404, never a 200-noop', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const session = manager.createSession({ title: 'Delete twice' });
+    manager.closeSession(session.id);
+
+    const first = await dispatchCompanionChatRoutes(
+      makeRequest('DELETE', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(first!.status).toBe(200);
+
+    const second = await dispatchCompanionChatRoutes(
+      makeRequest('DELETE', `http://localhost/api/companion/chat/sessions/${session.id}`),
+      ctx,
+    );
+    expect(second!.status).toBe(404);
+    const body = await second!.json();
+    expect(body.code).toBe('SESSION_NOT_FOUND');
+  });
+
+  test('DELETE unknown session returns 404', async () => {
+    const manager = disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+    const ctx = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(
+      makeRequest('DELETE', 'http://localhost/api/companion/chat/sessions/ghost-id'),
+      ctx,
+    );
+    expect(res!.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Turn control routes: turns/cancel + messages/steer
+// ---------------------------------------------------------------------------
+
+describe('companion-chat-routes: turn cancel + steer', () => {
+  function makeTurnControlManager(): CompanionChatManager {
+    return disposables.add(
+      new CompanionChatManager({
+        provider: makeMockProvider(),
+        eventPublisher: makeEventPublisher(),
+        gcIntervalMs: 999_999,
+      }),
+    );
+  }
+
+  test('POST /turns/cancel with no turn in flight returns the benign 404 NO_ACTIVE_TURN', async () => {
+    const manager = makeTurnControlManager();
+    const context = makeContext(manager);
+    const session = manager.createSession({ provider: 'p', model: 'm' });
+    const res = await dispatchCompanionChatRoutes(
+      new Request(`http://d/api/companion/chat/sessions/${session.id}/turns/cancel`, { method: 'POST' }),
+      context,
+    );
+    expect(res?.status).toBe(404);
+    const body = (await res!.json()) as { code: string };
+    expect(body.code).toBe('NO_ACTIVE_TURN');
+  });
+
+  test('POST /turns/cancel on an unknown session returns 404 SESSION_NOT_FOUND', async () => {
+    const manager = makeTurnControlManager();
+    const context = makeContext(manager);
+    const res = await dispatchCompanionChatRoutes(
+      new Request('http://d/api/companion/chat/sessions/nope/turns/cancel', { method: 'POST' }),
+      context,
+    );
+    expect(res?.status).toBe(404);
+    const body = (await res!.json()) as { code: string };
+    expect(body.code).toBe('SESSION_NOT_FOUND');
+  });
+
+  test('POST /messages/steer with no active turn sends normally (202, steered)', async () => {
+    const manager = makeTurnControlManager();
+    const context = makeContext(manager);
+    const session = manager.createSession({ provider: 'p', model: 'm' });
+    const res = await dispatchCompanionChatRoutes(
+      new Request(`http://d/api/companion/chat/sessions/${session.id}/messages/steer`, {
+        method: 'POST',
+        body: JSON.stringify({ body: 'urgent question' }),
+        headers: { 'content-type': 'application/json' },
+      }),
+      context,
+    );
+    expect(res?.status).toBe(202);
+    const body = (await res!.json()) as { steered: boolean; messageId: string; cancelledTurnId?: string };
+    expect(body.steered).toBe(true);
+    expect(body.messageId).not.toBe('');
+    expect(body.cancelledTurnId).toBeUndefined();
+    await settleEvents();
+    const messages = manager.getMessages(session.id);
+    expect(messages.some((m) => m.role === 'user' && m.content === 'urgent question')).toBe(true);
+  });
+
+  test('POST /messages/steer with an empty payload returns 400 INVALID_ARGUMENT', async () => {
+    const manager = makeTurnControlManager();
+    const context = makeContext(manager);
+    const session = manager.createSession({ provider: 'p', model: 'm' });
+    const res = await dispatchCompanionChatRoutes(
+      new Request(`http://d/api/companion/chat/sessions/${session.id}/messages/steer`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+        headers: { 'content-type': 'application/json' },
+      }),
+      context,
+    );
+    expect(res?.status).toBe(400);
+    const body = (await res!.json()) as { code: string };
+    expect(body.code).toBe('INVALID_ARGUMENT');
+  });
+});

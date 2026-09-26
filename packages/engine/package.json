@@ -261,6 +261,13 @@
     "./transport-realtime/runtime-events": "./transport-realtime/src/runtime-events.ts",
     "./transport-realtime/relay-transport": "./transport-realtime/src/relay-transport.ts"
   },
+  "scripts": {
+    "test": "bun scripts/test.ts",
+    "test:rn": "bun scripts/test.ts test/rn-bundle-node-imports.test.ts",
+    "test:workers": "bun scripts/test.ts test/workers/workers.test.ts",
+    "test:workers:wrangler": "bun scripts/test.ts test/workers-wrangler/wrangler.test.ts",
+    "test-skip:check": "bun scripts/no-skipped-tests.ts"
+  },
   "dependencies": {
     "@goodvibes-jev/judgment": "workspace:*",
     "zod": "4.4.3",

@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": true
+  },
+  "include": [
+    "test/types/**/*.ts"
+  ],
+  // The engine's package names resolve to source (the exports map points at
+  // src), so without references this project would re-check every engine
+  // source file under this config's options. With them, imports of engine
+  // files read the referenced projects' declaration output instead, which is
+  // the consumer vantage these type tests exist for. It is still a project of
+  // its own, not part of tsconfig.tests.json: compiling test/types there makes
+  // neighbouring inferred types unnameable (TS2883).
+  "references": [
+    { "path": "./contracts" },
+    { "path": "./errors" },
+    { "path": "./daemon-sdk" },
+    { "path": "./transport-core" },
+    { "path": "./transport-http" },
+    { "path": "./transport-realtime" },
+    { "path": "./operator-sdk" },
+    { "path": "./peer-sdk" },
+    { "path": "./sdk" }
+  ]
+}

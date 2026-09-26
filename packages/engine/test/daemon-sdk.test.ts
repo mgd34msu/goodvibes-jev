@@ -1,0 +1,357 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  createDaemonChannelRouteHandlers,
+  createDaemonControlRouteHandlers,
+  createDaemonKnowledgeRouteHandlers,
+  createDaemonMediaRouteHandlers,
+  createDaemonSystemRouteHandlers,
+  dispatchDaemonApiRoutes,
+  jsonErrorResponse,
+} from '../daemon-sdk/dist/index.js';
+import { GoodVibesSdkError } from '../errors/dist/index.js';
+import sdkPackage from '../package.json' with { type: 'json' };
+
+describe('daemon sdk', () => {
+  test('builds control route handlers from injected host services', async () => {
+    const handlers = createDaemonControlRouteHandlers({
+      authToken: 'shared-token',
+      version: sdkPackage.version,
+      sessionCookieName: 'goodvibes_session',
+      controlPlaneGateway: {
+        getSnapshot: () => ({ ok: true }),
+        renderWebUi: () => new Response('<html></html>', { status: 200 }),
+        listRecentEvents: (limit) => [{ id: 'evt-1', limit }],
+        listSurfaceMessages: () => [{ id: 'msg-1' }],
+        listClients: () => [{ id: 'client-1' }],
+        createEventStream: () => new Response('stream', { status: 200 }),
+      },
+      extractAuthToken: (req) => req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '',
+      resolveAuthenticatedPrincipal: () => ({
+        principalId: 'tester',
+        principalKind: 'user',
+        admin: true,
+        scopes: ['read:control-plane'],
+      }),
+      gatewayMethods: {
+        list: () => [{ id: 'tasks.create' }],
+        listEvents: () => [{ id: 'runtime.turn' }],
+        get: (methodId) => methodId === 'tasks.create'
+          ? { dangerous: false, access: 'authenticated' }
+          : null,
+      },
+      getOperatorContract: () => ({ version: 1, product: { id: 'goodvibes' } }),
+      invokeGatewayMethodCall: async () => ({ status: 200, ok: true, body: { invoked: true } }),
+      parseOptionalJsonBody: async () => null,
+      requireAdmin: () => null,
+      requireAuthenticatedSession: () => ({ username: 'tester', roles: ['admin'] }),
+      login: () => Response.json({
+        authenticated: true,
+        token: 'session-token',
+        username: 'tester',
+        expiresAt: Date.now() + 60_000,
+      }),
+    });
+
+    const statusResponse = await handlers.getStatus(new Request('http://127.0.0.1/status', {
+      headers: { Authorization: 'Bearer token-123' },
+    }));
+    expect(statusResponse.status).toBe(200);
+    const status = await statusResponse.json() as { version: string };
+    expect(status.version).toBe(sdkPackage.version);
+
+    const authResponse = await handlers.getCurrentAuth(new Request('http://127.0.0.1/api/control-plane/auth', {
+      headers: {
+        Authorization: 'Bearer token-123',
+        Cookie: 'goodvibes_session=session-123',
+      },
+    }));
+    expect(authResponse.status).toBe(200);
+    const auth = await authResponse.json() as { authenticated: boolean; roles: string[] };
+    expect(auth.authenticated).toBe(true);
+    expect(auth.roles).toEqual(['admin']);
+
+    const loginResponse = await handlers.postLogin(new Request('http://127.0.0.1/login', { method: 'POST' }));
+    expect(loginResponse.status).toBe(200);
+    expect(await loginResponse.json()).toMatchObject({ authenticated: true, username: 'tester' });
+  });
+
+  test('dispatches daemon api routes to the matching handler', async () => {
+    const response = await dispatchDaemonApiRoutes(
+      new Request('http://127.0.0.1/api/v1/telemetry/events', { method: 'GET' }),
+      {
+        getTelemetryEvents: () => Response.json({ ok: true }),
+      } as never,
+    );
+
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toEqual({ ok: true });
+  });
+
+  test('builds structured daemon error responses', async () => {
+    const response = jsonErrorResponse(new GoodVibesSdkError('provider rejected auth', {
+      code: 'PROVIDER_ERROR',
+      category: 'authentication',
+      source: 'provider',
+      recoverable: false,
+      status: 401,
+      hint: 'wrong token',
+      provider: 'inceptionlabs',
+      operation: 'chat',
+      phase: 'request',
+      requestId: 'req-401',
+      providerCode: 'invalid_api_key',
+    }), { status: 400, isPrivileged: true });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'provider rejected auth (phase=request, code=invalid_api_key, request_id=req-401)',
+      hint: 'wrong token',
+      code: 'PROVIDER_ERROR',
+      category: 'authentication',
+      source: 'provider',
+      recoverable: false,
+      status: 400,
+      provider: 'inceptionlabs',
+      operation: 'chat',
+      phase: 'request',
+      requestId: 'req-401',
+      providerCode: 'invalid_api_key',
+    });
+  });
+
+  test('builds structured daemon error responses from foreign provider-style errors', async () => {
+    const response = jsonErrorResponse({
+      message: 'inceptionlabs chat request failed 401: token rejected',
+      code: 'PROVIDER_ERROR',
+      recoverable: false,
+      statusCode: 401,
+      category: 'authentication',
+      guidance: 'The provider rejected authentication. Possible causes include invalid or expired credentials, missing account/session state, account restrictions, or the wrong provider/endpoint receiving the request.',
+      source: 'provider',
+      provider: 'inceptionlabs',
+      operation: 'chat',
+      phase: 'request',
+      requestId: 'req-401',
+      providerCode: 'invalid_api_key',
+    }, { status: 400, isPrivileged: true });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'inceptionlabs chat request failed 401: token rejected (code=invalid_api_key, request_id=req-401)',
+      hint: 'The provider rejected authentication. Possible causes include invalid or expired credentials, missing account/session state, account restrictions, or the wrong provider/endpoint receiving the request.',
+      code: 'PROVIDER_ERROR',
+      category: 'authentication',
+      source: 'provider',
+      recoverable: false,
+      status: 400,
+      provider: 'inceptionlabs',
+      operation: 'chat',
+      phase: 'request',
+      requestId: 'req-401',
+      providerCode: 'invalid_api_key',
+    });
+  });
+
+  test('exports channel, system, knowledge, and media route builders', async () => {
+    const channelHandlers = createDaemonChannelRouteHandlers({
+      channelPlugins: {
+        listAccounts: async () => [],
+        getAccount: async () => null,
+        getSetupSchema: async () => null,
+        doctor: async () => null,
+        listRepairActions: async () => [],
+        getLifecycleState: async () => null,
+        runAccountAction: async () => null,
+        listCapabilities: async () => [],
+        listTools: async () => [],
+        listAgentTools: () => [],
+        runTool: async () => null,
+        listOperatorActions: async () => [],
+        runOperatorAction: async () => null,
+        resolveTarget: async () => null,
+        authorizeActorAction: async () => null,
+        resolveAllowlist: async () => null,
+        editAllowlist: async () => null,
+        listStatus: async () => [],
+        queryDirectory: async () => [],
+      },
+      channelPolicy: {
+        listPolicies: () => [],
+        upsertPolicy: async () => ({}),
+        listAudit: () => [],
+      },
+      parseJsonBody: async () => ({}),
+      parseOptionalJsonBody: async () => null,
+      requireAdmin: () => null,
+      surfaceRegistry: {
+        list: () => [{ id: 'discord' }],
+      },
+    });
+    expect(await (await channelHandlers.getSurfaces()).json()).toEqual({
+      surfaces: [{ id: 'discord' }],
+    });
+
+    const systemHandlers = createDaemonSystemRouteHandlers({
+      approvalBroker: {
+        claimApproval: async () => null,
+        cancelApproval: async () => null,
+        resolveApproval: async () => null,
+      },
+      configManager: {
+        get: () => true,
+        getAll: () => ({ demo: true }),
+        setDynamic: () => undefined,
+      },
+      credentialStatus: null,
+      swapManager: null,
+      integrationHelpers: null,
+      inspectInboundTls: (surface) => ({ surface, mode: 'off' }),
+      inspectOutboundTls: () => ({ mode: 'system' }),
+      isValidConfigKey: () => true,
+      parseJsonBody: async () => ({}),
+      parseOptionalJsonBody: async () => null,
+      platformServiceManager: {
+        status: () => ({ running: true }),
+        install: () => ({ ok: true }),
+        start: () => ({ ok: true }),
+        stop: () => ({ ok: true }),
+        restart: () => ({ ok: true }),
+        uninstall: () => ({ ok: true }),
+      },
+      recordApiResponse: (_req, _path, response) => response,
+      requireAdmin: () => null,
+      requireAuthenticatedSession: () => ({ username: 'tester', roles: ['admin'] }),
+      routeBindings: {
+        listBindings: () => [],
+        upsertBinding: async () => ({}),
+        patchBinding: async () => ({}),
+        removeBinding: async () => true,
+      },
+      watcherRegistry: {
+        list: () => [],
+        removeWatcher: () => true,
+        registerWatcher: (input) => input,
+        getWatcher: () => null,
+        startWatcher: () => null,
+        stopWatcher: () => null,
+        runWatcherNow: async () => null,
+      },
+    });
+    expect(typeof systemHandlers.getServiceStatus).toBe('function'); // getServiceStatus is a function
+
+    const knowledgeHandlers = createDaemonKnowledgeRouteHandlers({
+      artifactStore: { create: async () => ({}) },
+      configManager: { get: () => false },
+      inspectGraphqlAccess: () => ({ requiredScopes: [] }),
+      normalizeAtSchedule: (at) => ({ kind: 'at', at }),
+      normalizeEverySchedule: (interval, anchorAt) => ({ kind: 'every', interval, anchorAt }),
+      normalizeCronSchedule: (expression, timezone, staggerMs) => ({ kind: 'cron', expression, timezone, staggerMs }),
+      parseJsonBody: async () => ({}),
+      parseOptionalJsonBody: async () => null,
+      parseJsonText: () => ({}),
+      requireAdmin: () => null,
+      resolveAuthenticatedPrincipal: () => null,
+      knowledgeService: {
+        getStatus: async () => ({ ok: true }),
+        querySources: () => ({ total: 0, items: [] }),
+        queryNodes: () => ({ total: 0, items: [] }),
+        queryIssues: () => ({ total: 0, items: [] }),
+        reviewIssue: async () => ({}),
+        getItemScoped: () => null,
+        listConnectors: () => [],
+        getConnector: () => null,
+        doctorConnector: async () => null,
+        listProjectionTargets: async () => [],
+        map: async () => ({}),
+        listExtractions: () => [],
+        listUsageRecords: () => [],
+        listConsolidationCandidates: () => [],
+        getConsolidationCandidate: () => null,
+        listConsolidationReports: () => [],
+        getConsolidationReport: () => null,
+        getExtraction: () => null,
+        getSourceExtraction: () => null,
+        listJobs: () => [],
+        getJob: () => null,
+        listJobRuns: () => [],
+        listRefinementTasks: () => [],
+        getRefinementTask: () => null,
+        runRefinement: async () => ({}),
+        cancelRefinementTask: async () => null,
+        listSchedules: () => [],
+        getSchedule: () => null,
+        ingestUrl: async () => ({}),
+        ingestArtifact: async () => ({}),
+        syncBrowserHistory: async () => ({}),
+        importBookmarksFromFile: async () => ({}),
+        importUrlsFromFile: async () => ({}),
+        ingestConnectorInput: async () => ({}),
+        searchScoped: () => [],
+        ask: async () => ({}),
+        buildPacket: async () => ({}),
+        decideConsolidationCandidate: async () => ({}),
+        runJob: async () => ({}),
+        lint: async () => [],
+        reindex: async () => ({}),
+        saveSchedule: async () => ({}),
+        deleteSchedule: async () => false,
+        setScheduleEnabled: async () => null,
+        renderProjection: async () => ({}),
+        materializeProjection: async () => ({}),
+      },
+      knowledgeGraphqlService: {
+        schemaText: 'type Query { status: String! }',
+        execute: async () => ({ data: { status: 'ok' } }),
+      },
+    });
+    expect(await (await knowledgeHandlers.getKnowledgeGraphqlSchema()).json()).toMatchObject({
+      schema: 'type Query { status: String! }',
+    });
+
+    const mediaHandlers = createDaemonMediaRouteHandlers({
+      artifactStore: {
+        list: () => [{ id: 'artifact-1' }],
+        create: async () => ({}),
+        get: () => null,
+        readContent: async () => ({
+          record: { mimeType: 'text/plain' },
+          buffer: new Uint8Array([1, 2, 3]),
+        }),
+      },
+      configManager: { get: () => true },
+      mediaProviders: {
+        status: async () => [],
+        findProvider: () => null,
+      },
+      multimodalService: {
+        getStatus: async () => ({ ok: true }),
+        listProviders: async () => [],
+        analyze: async () => ({}),
+        buildPacket: () => ({}),
+        writeBackAnalysis: async () => ({}),
+      },
+      parseJsonBody: async () => ({}),
+      requireAdmin: () => null,
+      voiceService: {
+        getStatus: async () => ({ providers: [] }),
+        listVoices: async () => [],
+        synthesize: async () => ({}),
+        synthesizeStream: async () => ({
+          providerId: 'test-provider',
+          mimeType: 'audio/wav',
+          format: 'wav',
+          chunks: (async function* () {})(),
+          metadata: {},
+        }),
+        transcribe: async () => ({}),
+        openRealtimeSession: async () => ({}),
+      },
+      webSearchService: {
+        getStatus: async () => ({ providers: [] }),
+        search: async () => ({}),
+      },
+    });
+    expect(await (await mediaHandlers.getArtifacts()).json()).toEqual({
+      artifacts: [{ id: 'artifact-1' }],
+    });
+  });
+});

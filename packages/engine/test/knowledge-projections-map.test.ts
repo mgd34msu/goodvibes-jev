@@ -1,0 +1,1371 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
+import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { listGeneratedKnowledgePages } from '../sdk/src/platform/knowledge/generated-pages.js';
+import { materializeGeneratedKnowledgeProjection } from '../sdk/src/platform/knowledge/generated-projections.js';
+import { renderDevicePassportPage } from '../sdk/src/platform/knowledge/home-graph/rendering.js';
+import { buildKnowledgePacketSync } from '../sdk/src/platform/knowledge/packet.js';
+import { KnowledgeProjectionService } from '../sdk/src/platform/knowledge/projections.js';
+import { renderKnowledgeMap } from '../sdk/src/platform/knowledge/map.js';
+import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
+import { knowledgeSpaceMetadata } from '../sdk/src/platform/knowledge/spaces.js';
+import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { semanticFactId } from '../sdk/src/platform/knowledge/semantic/utils.js';
+import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
+import { trackDisposables } from './_helpers/disposables.ts';
+
+const tmpRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of tmpRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// KnowledgeService's constructor builds a KnowledgeScheduleService that owns a
+// setTimeout chain (packages/sdk/src/platform/knowledge/scheduling.ts); dispose()
+// is declared private (compile-time only), so the disposer casts to reach it.
+const disposables = trackDisposables();
+function disposeKnowledgeService(service: KnowledgeService): void {
+  (service as unknown as { dispose(): void }).dispose();
+}
+
+describe('knowledge generated projections and maps', () => {
+  test('deletes replaced generated page artifacts when regenerated markdown changes', async () => {
+    const { store, artifactStore } = createStores();
+    const topic = await store.upsertNode({
+      kind: 'topic',
+      slug: 'device-page-target',
+      title: 'Device Page Target',
+      aliases: [],
+      confidence: 90,
+    });
+
+    const first = await materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nFirst version.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'node', id: topic.id },
+    });
+    const second = await materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nSecond version with changed content.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'node', id: topic.id },
+    });
+
+    expect(first.artifact.id).not.toBe(second.artifact.id);
+    expect(artifactStore.get(first.artifact.id)).toBeNull();
+    expect(artifactStore.get(second.artifact.id)).not.toBeNull();
+  });
+
+  test('keeps the previous generated artifact when replacement source persistence fails', async () => {
+    const { store, artifactStore } = createStores();
+    const first = await materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nFirst version.',
+      projectionKind: 'test-generated-page',
+    });
+    const failingStore = Object.create(store) as KnowledgeStore;
+    failingStore.upsertSource = async () => {
+        throw new Error('source persistence failed');
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: failingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nSecond version.',
+      projectionKind: 'test-generated-page',
+    })).rejects.toThrow('source persistence failed');
+
+    expect(artifactStore.get(first.artifact.id)).not.toBeNull();
+    expect(store.getSource(first.source.id)?.artifactId).toBe(first.artifact.id);
+    expect(artifactStore.list(20).map((artifact) => artifact.id)).toEqual([first.artifact.id]);
+  });
+
+  test('rejects missing generated page targets before replacing the persisted source artifact', async () => {
+    const { store, artifactStore } = createStores();
+    const first = await materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nFirst version.',
+      projectionKind: 'test-generated-page',
+    });
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nSecond version with invalid target.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'node', id: 'missing-node' },
+    })).rejects.toThrow('target node does not exist');
+
+    expect(artifactStore.get(first.artifact.id)).not.toBeNull();
+    expect(store.getSource(first.source.id)?.artifactId).toBe(first.artifact.id);
+    expect(artifactStore.list(20).map((artifact) => artifact.id)).toEqual([first.artifact.id]);
+  });
+
+  test('rejects missing generated page artifact targets before creating projection artifacts', async () => {
+    const { store, artifactStore } = createStores();
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-device-page-target',
+      canonicalUri: 'knowledge://generated/device/page-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nInvalid artifact target.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'artifact', id: 'missing-artifact' },
+    })).rejects.toThrow('target artifact does not exist');
+
+    expect(store.getSource('kg-gen-device-page-target')).toBeNull();
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('rejects unsupported generated page target kinds before creating projection artifacts', async () => {
+    const { store, artifactStore } = createStores();
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-unsupported-target',
+      canonicalUri: 'knowledge://generated/device/unsupported-target',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nUnsupported target kind.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'session', id: 'session-1' } as never,
+    })).rejects.toThrow('target kind is not supported: session');
+
+    expect(store.getSource('kg-gen-unsupported-target')).toBeNull();
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('removes newly-created projection artifacts when cancellation happens before source persistence', async () => {
+    const { store, artifactStore } = createStores();
+    const controller = new AbortController();
+    const abortingArtifactStore = Object.create(artifactStore) as ArtifactStore;
+    abortingArtifactStore.create = async (input) => {
+      const artifact = await artifactStore.create(input);
+      controller.abort();
+      return artifact;
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore: abortingArtifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-cancelled-device-page',
+      canonicalUri: 'knowledge://generated/device/cancelled-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nCancelled before source persistence.',
+      projectionKind: 'test-generated-page',
+      signal: controller.signal,
+    })).rejects.toThrow('Generated knowledge projection was cancelled');
+
+    expect(store.getSource('kg-gen-cancelled-device-page')).toBeNull();
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('removes newly-created generated sources when cancellation happens after source persistence', async () => {
+    const { store, artifactStore } = createStores();
+    const controller = new AbortController();
+    const abortingStore = Object.create(store) as KnowledgeStore;
+    abortingStore.upsertSource = async (input) => {
+      const source = await store.upsertSource(input);
+      controller.abort();
+      return source;
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: abortingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-source-cancelled-device-page',
+      canonicalUri: 'knowledge://generated/device/source-cancelled-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nCancelled after source persistence.',
+      projectionKind: 'test-generated-page',
+      signal: controller.signal,
+    })).rejects.toThrow('Generated knowledge projection was cancelled');
+
+    expect(store.getSource('kg-gen-source-cancelled-device-page')).toBeNull();
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('removes newly-created generated sources when source persistence throws after writing', async () => {
+    const { store, artifactStore } = createStores();
+    const failingStore = Object.create(store) as KnowledgeStore;
+    failingStore.upsertSource = async (input) => {
+      await store.upsertSource(input);
+      throw new Error('source write failed after persistence');
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: failingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-source-failed-device-page',
+      canonicalUri: 'knowledge://generated/device/source-failed-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nSource write fails after persistence.',
+      projectionKind: 'test-generated-page',
+    })).rejects.toThrow('source write failed after persistence');
+
+    expect(store.getSource('kg-gen-source-failed-device-page')).toBeNull();
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('removes newly-created generated edges when cancellation happens after edge persistence', async () => {
+    const { store, artifactStore } = createStores();
+    const target = await store.upsertNode({
+      kind: 'topic',
+      slug: 'edge-cancel-target',
+      title: 'Edge Cancel Target',
+    });
+    const controller = new AbortController();
+    const abortingStore = Object.create(store) as KnowledgeStore;
+    abortingStore.upsertEdge = async (input) => {
+      const edge = await store.upsertEdge(input);
+      controller.abort();
+      return edge;
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: abortingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-edge-cancelled-device-page',
+      canonicalUri: 'knowledge://generated/device/edge-cancelled-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nCancelled after edge persistence.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'node', id: target.id },
+      signal: controller.signal,
+    })).rejects.toThrow('Generated knowledge projection was cancelled');
+
+    expect(store.getSource('kg-gen-edge-cancelled-device-page')).toBeNull();
+    expect(store.listEdges()).not.toContainEqual(expect.objectContaining({
+      fromKind: 'source',
+      fromId: 'kg-gen-edge-cancelled-device-page',
+      toKind: 'node',
+      toId: target.id,
+    }));
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('removes newly-created generated edges when edge persistence throws after writing', async () => {
+    const { store, artifactStore } = createStores();
+    const target = await store.upsertNode({
+      kind: 'topic',
+      slug: 'edge-fail-target',
+      title: 'Edge Fail Target',
+    });
+    const failingStore = Object.create(store) as KnowledgeStore;
+    failingStore.upsertEdge = async (input) => {
+      await store.upsertEdge(input);
+      throw new Error('edge write failed after persistence');
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: failingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-edge-failed-device-page',
+      canonicalUri: 'knowledge://generated/device/edge-failed-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nEdge write fails after persistence.',
+      projectionKind: 'test-generated-page',
+      target: { kind: 'node', id: target.id },
+    })).rejects.toThrow('edge write failed after persistence');
+
+    expect(store.getSource('kg-gen-edge-failed-device-page')).toBeNull();
+    expect(store.listEdges()).not.toContainEqual(expect.objectContaining({
+      fromKind: 'source',
+      fromId: 'kg-gen-edge-failed-device-page',
+      toKind: 'node',
+      toId: target.id,
+    }));
+    expect(artifactStore.list(20)).toEqual([]);
+  });
+
+  test('restores previous generated source and edge records exactly after replacement cancellation', async () => {
+    const { store, artifactStore } = createStores();
+    const target = await store.upsertNode({
+      kind: 'topic',
+      slug: 'restore-target',
+      title: 'Restore Target',
+    });
+    const first = await materializeGeneratedKnowledgeProjection({
+      store,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: 'kg-gen-restored-device-page',
+      canonicalUri: 'knowledge://generated/device/restored-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nOriginal content.',
+      projectionKind: 'test-generated-page',
+      metadata: { originalOnly: true },
+      edgeMetadata: { edgeOriginalOnly: true },
+      target: { kind: 'node', id: target.id },
+    });
+    const previousSource = store.getSource(first.source.id)!;
+    const previousEdge = first.linked!;
+    const controller = new AbortController();
+    const abortingStore = Object.create(store) as KnowledgeStore;
+    abortingStore.upsertEdge = async (input) => {
+      const edge = await store.upsertEdge(input);
+      controller.abort();
+      return edge;
+    };
+
+    await expect(materializeGeneratedKnowledgeProjection({
+      store: abortingStore,
+      artifactStore,
+      connectorId: 'generated-pages',
+      sourceId: first.source.id,
+      canonicalUri: 'knowledge://generated/device/restored-page',
+      title: 'Generated Device Page',
+      filename: 'device-page.md',
+      markdown: '# Device\n\nReplacement content.',
+      projectionKind: 'test-generated-page',
+      metadata: { replacementOnly: true },
+      edgeMetadata: { edgeReplacementOnly: true },
+      target: { kind: 'node', id: target.id },
+      signal: controller.signal,
+    })).rejects.toThrow('Generated knowledge projection was cancelled');
+
+    expect(store.getSource(first.source.id)).toEqual(previousSource);
+    expect(store.getSource(first.source.id)?.metadata).not.toHaveProperty('replacementOnly');
+    expect(store.listEdges().find((edge) => edge.id === previousEdge.id)).toEqual(previousEdge);
+    expect(store.listEdges().find((edge) => edge.id === previousEdge.id)?.metadata).not.toHaveProperty('edgeReplacementOnly');
+    expect(artifactStore.get(first.artifact.id)).not.toBeNull();
+    expect(artifactStore.list(20).map((artifact) => artifact.id)).toEqual([first.artifact.id]);
+  });
+
+  test('materializes base knowledge projections as stable generated sources', async () => {
+    const { store, artifactStore } = createStores();
+    const projectionService = new KnowledgeProjectionService(store, artifactStore);
+    const source = await store.upsertSource({
+      connectorId: 'manual',
+      sourceType: 'document',
+      title: 'Project Manual',
+      canonicalUri: 'manual://project',
+      summary: 'Operational notes.',
+      tags: ['manual'],
+      status: 'indexed',
+      metadata: {
+        evidence: 'raw extracted evidence should stay out of generated markdown',
+        table: [['raw', 'table', 'debris']],
+      },
+    });
+    const node = await store.upsertNode({
+      kind: 'topic',
+      slug: 'operations',
+      title: 'Operations',
+      summary: 'Operations notes.',
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: source.id,
+      toKind: 'node',
+      toId: node.id,
+      relation: 'mentions',
+    });
+
+    const first = await projectionService.materialize({ kind: 'source', id: source.id });
+    const second = await projectionService.materialize({ kind: 'source', id: source.id });
+    const generatedSources = store.listSources(20).filter((entry) => entry.metadata.generatedProjection === true);
+    const map = renderKnowledgeMap({
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      issues: store.listIssues(20),
+    }, { includeSources: true });
+
+    expect(first.artifactCreated).toBe(true);
+    expect(second.artifactCreated).toBe(false);
+    expect(second.artifact.id).toBe(first.artifact.id);
+    expect(generatedSources).toHaveLength(1);
+    expect(first.source?.metadata.generatedKnowledgePage).toBe(true);
+    expect(map.nodes.some((entry) => entry.id === generatedSources[0]!.id)).toBe(true);
+    expect(map.svg).toContain('Project Manual');
+    const { buffer } = await artifactStore.readContent(first.artifact.id);
+    const markdown = buffer.toString('utf-8');
+    expect(markdown).not.toContain('## Metadata JSON');
+    expect(markdown).not.toContain('raw extracted evidence');
+    expect(markdown).not.toContain('raw\",\"table\",\"debris');
+  });
+
+  test('lists targetless generated pages instead of hiding them', async () => {
+    const { store, artifactStore } = createStores();
+    const artifact = await artifactStore.create({
+      kind: 'document',
+      mimeType: 'text/markdown',
+      filename: 'knowledge-packet.md',
+      text: '# Knowledge Packet',
+      metadata: { generatedKnowledgePage: true },
+    });
+    const source = await store.upsertSource({
+      connectorId: 'knowledge-projection',
+      sourceType: 'document',
+      title: 'Knowledge Packet',
+      canonicalUri: 'knowledge://generated/packet/test',
+      tags: ['generated-page'],
+      status: 'indexed',
+      artifactId: artifact.id,
+      metadata: {
+        generatedKnowledgePage: true,
+        generatedProjection: true,
+        projectionKind: 'packet',
+      },
+    });
+
+    const pages = await listGeneratedKnowledgePages({
+      artifactStore,
+      spaceId: 'default',
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      limit: 20,
+      includeMarkdown: true,
+    });
+
+    expect(pages.pages.map((page) => page.source.id)).toContain(source.id);
+    expect(pages.pages.find((page) => page.source.id === source.id)?.target).toBeUndefined();
+    expect(pages.pages.find((page) => page.source.id === source.id)?.markdown).toBe('# Knowledge Packet');
+  });
+
+  test('scopes generated page listings to the requested knowledge space', async () => {
+    const { store, artifactStore } = createStores();
+    const defaultPage = await store.upsertSource({
+      connectorId: 'knowledge-projection',
+      sourceType: 'document',
+      title: 'Default Space Packet',
+      canonicalUri: 'knowledge://generated/default-space',
+      tags: ['generated-page'],
+      status: 'indexed',
+      metadata: {
+        generatedKnowledgePage: true,
+        generatedProjection: true,
+        projectionKind: 'packet',
+      },
+    });
+    const otherPage = await store.upsertSource({
+      connectorId: 'knowledge-projection',
+      sourceType: 'document',
+      title: 'Other Space Packet',
+      canonicalUri: 'knowledge://generated/other-space',
+      tags: ['generated-page'],
+      status: 'indexed',
+      metadata: {
+        knowledgeSpaceId: 'project:other',
+        generatedKnowledgePage: true,
+        generatedProjection: true,
+        projectionKind: 'packet',
+      },
+    });
+
+    const pages = await listGeneratedKnowledgePages({
+      artifactStore,
+      spaceId: 'default',
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      limit: 20,
+      includeMarkdown: false,
+    });
+
+    expect(pages.pages.map((page) => page.source.id)).toContain(defaultPage.id);
+    expect(pages.pages.map((page) => page.source.id)).not.toContain(otherPage.id);
+  });
+
+  test('hides generated pages whose recorded target is stale', async () => {
+    const { store, artifactStore } = createStores();
+    const staleTarget = await store.upsertNode({
+      kind: 'topic',
+      slug: 'retired-device',
+      title: 'Retired Device',
+      status: 'stale',
+    });
+    const fact = await store.upsertNode({
+      kind: 'fact',
+      slug: 'active-fact',
+      title: 'Active fact',
+      status: 'active',
+      metadata: { semanticKind: 'fact', factKind: 'specification' },
+    });
+    const source = await store.upsertSource({
+      connectorId: 'knowledge-projection',
+      sourceType: 'document',
+      title: 'Retired Device Page',
+      canonicalUri: 'knowledge://generated/retired-device',
+      tags: ['generated-page'],
+      status: 'indexed',
+      metadata: {
+        generatedKnowledgePage: true,
+        generatedProjection: true,
+        generatedTargetNodeId: staleTarget.id,
+      },
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: source.id,
+      toKind: 'node',
+      toId: fact.id,
+      relation: 'supports_fact',
+    });
+
+    const pages = await listGeneratedKnowledgePages({
+      artifactStore,
+      spaceId: 'default',
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      limit: 20,
+      includeMarkdown: false,
+    });
+
+    expect(pages.pages.map((page) => page.source.id)).not.toContain(source.id);
+  });
+
+  test('ignores inactive generated page target edges', async () => {
+    const { store, artifactStore } = createStores();
+    const target = await store.upsertNode({
+      kind: 'topic',
+      slug: 'active-target',
+      title: 'Active Target',
+      status: 'active',
+    });
+    const source = await store.upsertSource({
+      connectorId: 'knowledge-projection',
+      sourceType: 'document',
+      title: 'Unlinked Page',
+      canonicalUri: 'knowledge://generated/unlinked-page',
+      tags: ['generated-page'],
+      status: 'indexed',
+      metadata: {
+        generatedKnowledgePage: true,
+        generatedProjection: true,
+        projectionKind: 'packet',
+      },
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: source.id,
+      toKind: 'node',
+      toId: target.id,
+      relation: 'source_for',
+      metadata: { linkStatus: 'unlinked' },
+    });
+
+    const pages = await listGeneratedKnowledgePages({
+      artifactStore,
+      spaceId: 'default',
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      limit: 20,
+      includeMarkdown: false,
+    });
+    const page = pages.pages.find((entry) => entry.source.id === source.id);
+
+    expect(page).toBeDefined();
+    expect(page?.target).toBeUndefined();
+    expect(page?.subject).toBeUndefined();
+  });
+
+  test('renders generated page facts without raw evidence detail', async () => {
+    const { store } = createStores();
+    const device = await store.upsertNode({
+      kind: 'ha_device',
+      slug: 'living-room-tv',
+      title: 'Living Room TV',
+      status: 'active',
+    });
+    const fact = await store.upsertNode({
+      kind: 'fact',
+      slug: 'display-feature',
+      title: 'Display features',
+      status: 'active',
+      sourceId: 'manual-source',
+      metadata: {
+        semanticKind: 'fact',
+        factKind: 'specification',
+        value: 'Dolby Vision',
+        evidence: 'RAW PAGE TABLE SHOULD NOT RENDER',
+        sourceId: 'manual-source',
+        subjectIds: [device.id],
+      },
+    });
+    const rawOnlyFact = await store.upsertNode({
+      kind: 'fact',
+      slug: 'raw-evidence-fragment',
+      title: 'Raw evidence fragment',
+      status: 'active',
+      sourceId: 'manual-source',
+      metadata: {
+        semanticKind: 'fact',
+        factKind: 'specification',
+        evidence: 'Raw evidence fragment: RAW PAGE TABLE SHOULD NOT RENDER',
+        sourceId: 'manual-source',
+        subjectIds: [device.id],
+      },
+    });
+
+    const markdown = renderDevicePassportPage({
+      spaceId: 'default',
+      device,
+      entities: [],
+      sources: [],
+      issues: [],
+      missingFields: [],
+      semanticFacts: [fact, rawOnlyFact],
+    });
+
+    expect(markdown).toContain('- Display features: Dolby Vision');
+    expect(markdown).not.toContain('Raw evidence fragment');
+    expect(markdown).not.toContain('RAW PAGE TABLE SHOULD NOT RENDER');
+  });
+
+  test('canonical semantic fact ids are source-independent when a subject is known', () => {
+    const first = semanticFactId({
+      spaceId: 'homeassistant:house-1',
+      kind: 'specification',
+      title: 'Audio capabilities',
+      value: '2 x 10W speakers',
+      subjectIds: ['device-tv'],
+      fallbackScope: 'source-a',
+    });
+    const second = semanticFactId({
+      spaceId: 'homeassistant:house-1',
+      kind: 'specification',
+      title: 'Audio capabilities',
+      value: '2 x 10W speakers',
+      subjectIds: ['device-tv'],
+      fallbackScope: 'source-b',
+    });
+
+    expect(second).toBe(first);
+  });
+
+  test('filters base knowledge maps with multi-select facets before layout', async () => {
+    const { store } = createStores();
+    const manual = await store.upsertSource({
+      connectorId: 'manual',
+      sourceType: 'manual',
+      title: 'Operations Manual',
+      canonicalUri: 'manual://operations',
+      tags: ['ops', 'manual'],
+      status: 'indexed',
+    });
+    const note = await store.upsertSource({
+      connectorId: 'notes',
+      sourceType: 'document',
+      title: 'Deployment Notes',
+      canonicalUri: 'notes://deployment',
+      tags: ['deploy'],
+      status: 'indexed',
+    });
+    const topic = await store.upsertNode({ kind: 'topic', slug: 'operations', title: 'Operations', sourceId: manual.id });
+    const capability = await store.upsertNode({ kind: 'capability', slug: 'deploy', title: 'Deployment', sourceId: note.id });
+    await store.upsertEdge({ fromKind: 'source', fromId: manual.id, toKind: 'node', toId: topic.id, relation: 'documents' });
+    await store.upsertEdge({ fromKind: 'source', fromId: note.id, toKind: 'node', toId: capability.id, relation: 'documents' });
+
+    const map = renderKnowledgeMap({
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      issues: store.listIssues(20),
+    }, {
+      includeSources: true,
+      nodeKinds: ['topic', 'capability'],
+      sourceTypes: ['manual'],
+    });
+
+    expect(map.nodes.map((entry) => entry.id)).toContain(manual.id);
+    expect(map.nodes.map((entry) => entry.id)).not.toContain(note.id);
+    expect(map.nodes.map((entry) => entry.id)).toContain(topic.id);
+    expect(map.nodes.map((entry) => entry.id)).toContain(capability.id);
+    expect(map.facets?.sourceTypes.some((entry) => entry.value === 'manual' && entry.count === 1)).toBe(true);
+    expect(map.facets?.nodeKinds.some((entry) => entry.value === 'capability')).toBe(true);
+  });
+
+  test('keeps extension spaces out of regular knowledge maps, projections, and packets by default', async () => {
+    const { store, artifactStore } = createStores();
+    const baseSource = await store.upsertSource({
+      connectorId: 'manual',
+      sourceType: 'document',
+      title: 'Base Knowledge Manual',
+      canonicalUri: 'manual://base-widget',
+      summary: 'Base widget setup and operation notes.',
+      tags: ['base'],
+      status: 'indexed',
+    });
+    const baseNode = await store.upsertNode({
+      kind: 'topic',
+      slug: 'base-widget',
+      title: 'Base Widget',
+      summary: 'Base widget knowledge.',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+    const haSource = await store.upsertSource({
+      connectorId: 'homeassistant',
+      sourceType: 'document',
+      title: 'Home Assistant LG Passport',
+      canonicalUri: 'homeassistant://device/lg-tv',
+      summary: 'LG webOS Smart TV Home Graph passport.',
+      tags: ['homeassistant'],
+      status: 'indexed',
+      metadata: { knowledgeSpaceId: 'homeassistant:test', namespace: 'homeassistant:test' },
+    });
+    const haNode = await store.upsertNode({
+      kind: 'ha_device',
+      slug: 'lg-webos-smart-tv',
+      title: 'LG webOS Smart TV',
+      summary: 'LG 86NANO90UNA Home Graph device.',
+      metadata: { knowledgeSpaceId: 'homeassistant:test', namespace: 'homeassistant:test' },
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: baseSource.id,
+      toKind: 'node',
+      toId: baseNode.id,
+      relation: 'documents',
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: haSource.id,
+      toKind: 'node',
+      toId: haNode.id,
+      relation: 'documents',
+    });
+
+    const projectionService = new KnowledgeProjectionService(store, artifactStore);
+    const defaultTargets = await projectionService.listTargets(20);
+    const defaultBundle = await projectionService.render({ kind: 'bundle', limit: 10 });
+    const allBundle = await projectionService.render({ kind: 'bundle', limit: 10, includeAllSpaces: true });
+    const haBundle = await projectionService.render({ kind: 'bundle', limit: 10, knowledgeSpaceId: 'homeassistant:test' });
+    const defaultMap = renderKnowledgeMap({
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      issues: store.listIssues(20),
+    }, { includeSources: true });
+    const allMap = renderKnowledgeMap({
+      sources: store.listSources(20),
+      nodes: store.listNodes(20),
+      edges: store.listEdges(),
+      issues: store.listIssues(20),
+    }, { includeSources: true, includeAllSpaces: true });
+    const defaultPacket = buildKnowledgePacketSync(packetContext(store), 'LG webOS Smart TV', [], 10);
+    const allPacket = buildKnowledgePacketSync(packetContext(store), 'LG webOS Smart TV', [], 10, { includeAllSpaces: true });
+
+    expect(defaultTargets.map((target) => target.title)).toContain('Base Knowledge Manual');
+    expect(defaultTargets.map((target) => target.title)).not.toContain('Home Assistant LG Passport');
+    expect(defaultBundle.pages.map((page) => page.content).join('\n')).toContain('Base Knowledge Manual');
+    expect(defaultBundle.pages.map((page) => page.content).join('\n')).not.toContain('Home Assistant LG Passport');
+    expect(defaultBundle.pages.map((page) => page.content).join('\n')).not.toContain('LG webOS Smart TV');
+    expect(allBundle.pages.map((page) => page.content).join('\n')).toContain('Home Assistant LG Passport');
+    expect(haBundle.pages.map((page) => page.content).join('\n')).toContain('LG webOS Smart TV');
+    expect(haBundle.pages.map((page) => page.content).join('\n')).not.toContain('Base Knowledge Manual');
+    expect(defaultMap.nodes.map((entry) => entry.id)).toContain(baseNode.id);
+    expect(defaultMap.nodes.map((entry) => entry.id)).not.toContain(haNode.id);
+    expect(defaultMap.nodes.map((entry) => entry.id)).not.toContain(haSource.id);
+    expect(defaultMap.facets?.nodeKinds.some((entry) => entry.value === 'ha_device')).toBe(false);
+    expect(allMap.nodes.map((entry) => entry.id)).toContain(haNode.id);
+    expect(allMap.facets?.nodeKinds.some((entry) => entry.value === 'ha_device')).toBe(true);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(haNode.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(haSource.id);
+    expect(allPacket?.items.map((item) => item.id)).toContain(haNode.id);
+  });
+
+  test('default knowledge views reject unscoped source-derived extension records', async () => {
+    const { store, artifactStore } = createStores();
+    const baseSource = await store.upsertSource({
+      connectorId: 'manual',
+      sourceType: 'document',
+      title: 'Base Knowledge Manual',
+      canonicalUri: 'manual://base-widget',
+      tags: ['base'],
+      status: 'indexed',
+    });
+    const baseNode = await store.upsertNode({
+      kind: 'topic',
+      slug: 'default-base-widget',
+      title: 'Base Widget',
+      sourceId: baseSource.id,
+    });
+    const haSource = await store.upsertSource({
+      connectorId: 'homeassistant',
+      sourceType: 'document',
+      title: 'Sony BRAVIA repair source',
+      canonicalUri: 'https://www.displayspecifications.com/en/model/example',
+      tags: ['homeassistant'],
+      status: 'indexed',
+      metadata: knowledgeSpaceMetadata('homeassistant:test'),
+    });
+    const leakedNode = await store.upsertNode({
+      kind: 'topic',
+      slug: 'sony-bravia-xbr-55x850b',
+      title: 'BRAVIA XBR-55X850B',
+      sourceId: haSource.id,
+      metadata: knowledgeSpaceMetadata('homeassistant:test', {
+        sourceId: haSource.id,
+      }),
+    });
+    await store.replaceNodeRecord({
+      ...leakedNode,
+      metadata: {
+        sourceId: haSource.id,
+        tag: 'BRAVIA XBR-55X850B',
+      },
+    });
+    const haDevice = await store.upsertNode({
+      kind: 'ha_device',
+      slug: 'lg-86nano90una',
+      title: 'LG webOS Smart TV',
+      metadata: knowledgeSpaceMetadata('homeassistant:test', {
+        manufacturer: 'LG',
+        model: '86NANO90UNA',
+      }),
+    });
+    const leakedIssue = await store.upsertIssue({
+      severity: 'info',
+      code: 'knowledge.answer_gap',
+      message: 'No knowledge answer available for: What features does the TV have?',
+      sourceId: haSource.id,
+      nodeId: leakedNode.id,
+      metadata: knowledgeSpaceMetadata('homeassistant:test', {
+        query: 'What features does the TV have?',
+      }),
+    });
+    await store.replaceIssueRecord({
+      ...leakedIssue,
+      metadata: {
+        query: 'What features does the TV have?',
+      },
+    });
+    const explicitDefaultGap = await store.upsertNode({
+      kind: 'knowledge_gap',
+      slug: 'default-scoped-ha-answer-gap',
+      title: 'What smart TV features does it have?',
+      summary: 'The answer gap was incorrectly written as default while linked to an HA object.',
+      metadata: knowledgeSpaceMetadata('default', {
+        linkedObjectIds: [haDevice.id],
+        subject: 'LG 86NANO90UNA Smart TV Specifications',
+      }),
+    });
+    const explicitDefaultIssue = await store.upsertIssue({
+      id: 'sem-answer-gap-issue-default-linked-ha',
+      severity: 'info',
+      code: 'knowledge.answer_gap',
+      message: 'No knowledge answer available for: What smart TV features does it have?',
+      nodeId: explicitDefaultGap.id,
+      metadata: knowledgeSpaceMetadata('default', {
+        linkedObjectIds: [haDevice.id],
+        subject: 'LG 86NANO90UNA Smart TV Specifications',
+      }),
+    });
+    await store.replaceNodeRecord({
+      ...explicitDefaultGap,
+      metadata: knowledgeSpaceMetadata('default', {
+        linkedObjectIds: [haDevice.id],
+        subject: 'LG 86NANO90UNA Smart TV Specifications',
+      }),
+    });
+    await store.replaceIssueRecord({
+      ...explicitDefaultIssue,
+      metadata: knowledgeSpaceMetadata('default', {
+        linkedObjectIds: [haDevice.id],
+        subject: 'LG 86NANO90UNA Smart TV Specifications',
+      }),
+    });
+    const edgeOnlyTopic = await store.upsertNode({
+      kind: 'topic',
+      slug: 'edge-only-bravia-topic',
+      title: 'BRAVIA XBR-55X850B',
+      summary: 'Topic tag BRAVIA XBR-55X850B.',
+      metadata: { tag: 'BRAVIA XBR-55X850B' },
+    });
+    const edgeOnlyDomain = await store.upsertNode({
+      kind: 'domain',
+      slug: 'edge-only-displayspecifications-domain',
+      title: 'www.displayspecifications.com',
+      summary: 'Knowledge sources cataloged under www.displayspecifications.com.',
+      metadata: { hostname: 'www.displayspecifications.com' },
+    });
+    const orphanCatalogTopic = await store.upsertNode({
+      kind: 'topic',
+      slug: 'orphan-displayspecifications-topic',
+      title: 'DisplaySpecifications',
+      summary: 'Topic tag DisplaySpecifications.',
+      metadata: { tag: 'DisplaySpecifications' },
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: haSource.id,
+      toKind: 'node',
+      toId: leakedNode.id,
+      relation: 'documents',
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: haSource.id,
+      toKind: 'node',
+      toId: edgeOnlyTopic.id,
+      relation: 'tagged_with',
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: haSource.id,
+      toKind: 'node',
+      toId: edgeOnlyDomain.id,
+      relation: 'belongs_to_domain',
+    });
+    const orphanAnswerGap = await store.upsertNode({
+      id: 'sem-answer-gap-orphan-home-assistant',
+      kind: 'knowledge_gap',
+      slug: 'orphan-home-assistant-answer-gap',
+      title: 'BRAVIA XBR-55X850B Home Assistant',
+      summary: 'No indexed evidence matched the question.',
+      metadata: knowledgeSpaceMetadata('default', {
+        semanticKind: 'gap',
+        gapKind: 'answer',
+        query: 'BRAVIA XBR-55X850B Home Assistant',
+        sourceIds: [],
+        linkedObjectIds: [],
+        visibility: 'refinement',
+        displayRole: 'knowledge-gap',
+        semantic: true,
+      }),
+    });
+    const orphanAnswerIssue = await store.upsertIssue({
+      id: 'sem-answer-gap-issue-orphan-home-assistant',
+      severity: 'info',
+      code: 'knowledge.answer_gap',
+      message: 'No knowledge answer available for: BRAVIA XBR-55X850B Home Assistant',
+      nodeId: orphanAnswerGap.id,
+      metadata: knowledgeSpaceMetadata('default', {
+        query: 'BRAVIA XBR-55X850B Home Assistant',
+        sourceIds: [],
+        linkedObjectIds: [],
+        semantic: true,
+      }),
+    });
+    const agentAmbiguitySource = await store.upsertSource({
+      id: 'source-goodvibes-homeassistant-agent',
+      connectorId: 'url',
+      sourceType: 'url',
+      title: 'Navigation Menu',
+      sourceUri: 'https://github.com/mgd34msu/goodvibes-homeassistant',
+      canonicalUri: 'https://github.com/mgd34msu/goodvibes-homeassistant',
+      summary: 'Home Assistant GoodVibes conversation agent repository.',
+      tags: ['github'],
+      status: 'indexed',
+      metadata: knowledgeSpaceMetadata('default', {
+        hostname: 'github.com',
+      }),
+    });
+    const tvFact = await store.upsertNode({
+      id: 'sem-fact-agent-default-tv-network',
+      kind: 'fact',
+      slug: 'agent-default-tv-network',
+      title: 'Network and wireless capabilities',
+      summary: 'The TV includes Wi-Fi, Bluetooth, and Ethernet capabilities.',
+      sourceId: agentAmbiguitySource.id,
+      metadata: knowledgeSpaceMetadata('default', {
+        semanticKind: 'fact',
+        factKind: 'feature',
+        sourceId: agentAmbiguitySource.id,
+      }),
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: agentAmbiguitySource.id,
+      toKind: 'node',
+      toId: tvFact.id,
+      relation: 'supports_fact',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+    const productNavigationSources = await Promise.all([
+      store.upsertSource({
+        id: 'source-goodvibes-root-navigation',
+        connectorId: 'url',
+        sourceType: 'url',
+        title: 'Navigation Menu',
+        sourceUri: 'https://github.com/mgd34msu/goodvibes',
+        canonicalUri: 'https://github.com/mgd34msu/goodvibes',
+        summary: 'GitHub repository navigation for the root GoodVibes repository.',
+        tags: ['github'],
+        status: 'indexed',
+        metadata: knowledgeSpaceMetadata('default', { hostname: 'github.com' }),
+      }),
+      store.upsertSource({
+        id: 'source-goodvibes-plugin-navigation',
+        connectorId: 'url',
+        sourceType: 'url',
+        title: 'Navigation Menu',
+        sourceUri: 'https://github.com/mgd34msu/goodvibes-plugin',
+        canonicalUri: 'https://github.com/mgd34msu/goodvibes-plugin',
+        summary: 'GitHub repository navigation for GoodVibes Plugin.',
+        tags: ['github'],
+        status: 'indexed',
+        metadata: knowledgeSpaceMetadata('default', { hostname: 'github.com' }),
+      }),
+      store.upsertSource({
+        id: 'source-goodvibes-tui-navigation',
+        connectorId: 'url',
+        sourceType: 'url',
+        title: 'Navigation Menu',
+        sourceUri: 'https://github.com/mgd34msu/goodvibes-tui',
+        canonicalUri: 'https://github.com/mgd34msu/goodvibes-tui',
+        summary: 'GitHub repository navigation for GoodVibes TUI.',
+        tags: ['github'],
+        status: 'indexed',
+        metadata: knowledgeSpaceMetadata('default', { hostname: 'github.com' }),
+      }),
+      store.upsertSource({
+        id: 'source-goodvibes-desktop-navigation',
+        connectorId: 'url',
+        sourceType: 'url',
+        title: 'Navigation Menu',
+        sourceUri: 'https://github.com/mgd34msu/goodvibes-desktop',
+        canonicalUri: 'https://github.com/mgd34msu/goodvibes-desktop',
+        summary: 'GitHub repository navigation for GoodVibes Desktop.',
+        tags: ['github'],
+        status: 'indexed',
+        metadata: knowledgeSpaceMetadata('default', { hostname: 'github.com' }),
+      }),
+    ]);
+    const productNavigationFact = await store.upsertNode({
+      id: 'sem-fact-goodvibes-navigation-tv-fragment',
+      kind: 'fact',
+      slug: 'goodvibes-navigation-tv-fragment',
+      title: 'Input and output ports',
+      summary: 'The TV has HDMI and audio output ports.',
+      sourceId: productNavigationSources[0].id,
+      metadata: knowledgeSpaceMetadata('default', {
+        semanticKind: 'fact',
+        factKind: 'feature',
+        sourceId: productNavigationSources[0].id,
+      }),
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: productNavigationSources[0].id,
+      toKind: 'node',
+      toId: productNavigationFact.id,
+      relation: 'supports_fact',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+    const productNavigationMemory = await store.upsertNode({
+      id: 'memory-goodvibes-root-navigation',
+      kind: 'memory',
+      slug: 'memory-goodvibes-root-navigation',
+      title: 'Navigation Menu',
+      summary: 'Remembered GitHub navigation from https://github.com/mgd34msu/goodvibes.',
+      sourceId: productNavigationSources[0].id,
+      metadata: knowledgeSpaceMetadata('default', {
+        memoryId: 'memory-goodvibes-root-navigation',
+        sourceId: productNavigationSources[0].id,
+        sourceUri: 'https://github.com/mgd34msu/goodvibes',
+        reviewState: 'reviewed',
+      }),
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: productNavigationSources[0].id,
+      toKind: 'node',
+      toId: productNavigationMemory.id,
+      relation: 'documents',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+    const orphanNavigationMemory = await store.upsertNode({
+      id: 'memory-github-navigation-standalone',
+      kind: 'memory',
+      slug: 'memory-github-navigation-standalone',
+      title: 'Navigation Menu',
+      summary: 'Terminal AI coding agent with automated write-review-fix-check pipelines.',
+      metadata: knowledgeSpaceMetadata('default', {
+        memoryId: 'mem-github-navigation-standalone',
+        scope: 'project',
+        cls: 'fact',
+        reviewState: 'reviewed',
+      }),
+    });
+    const githubRepairSource = await store.upsertSource({
+      id: 'source-github-semantic-repair-navigation',
+      connectorId: 'semantic-gap-repair',
+      sourceType: 'url',
+      title: 'Cohere-Labs-Community/language-confusion - GitHub',
+      sourceUri: 'https://github.com/Cohere-Labs-Community/language-confusion',
+      canonicalUri: 'https://github.com/Cohere-Labs-Community/language-confusion',
+      summary: 'Repository for a language confusion benchmark. We read every piece of feedback, and take your input very seriously.',
+      tags: ['semantic-gap-repair', 'gap-repair'],
+      status: 'indexed',
+      metadata: knowledgeSpaceMetadata('default', {
+        sourceDiscovery: {
+          purpose: 'semantic-gap-repair',
+          sourceDomain: 'github.com',
+        },
+      }),
+    });
+    await store.upsertExtraction({
+      sourceId: githubRepairSource.id,
+      extractorId: 'html',
+      format: 'html',
+      summary: 'Repository for the language confusion benchmark.',
+      excerpt: 'Search code, repositories, users, issues, pull requests...',
+      sections: [
+        'Navigation Menu',
+        'Search code, repositories, users, issues, pull requests...',
+        'Repository files navigation',
+        'Language Confusion Benchmark',
+      ],
+      links: [],
+      estimatedTokens: 40,
+    });
+    const legacyAgentWikiSource = await store.upsertSource({
+      id: 'source-legacy-goodvibes-agents',
+      connectorId: 'wiki',
+      sourceType: 'document',
+      title: 'Specification: GoodVibes Agents with YAML frontmatter',
+      canonicalUri: 'goodvibes://wiki/default-specification-goodvibes-agents-with-yaml-frontmatter',
+      summary: 'Legacy default-space GoodVibes Agent wiki content.',
+      status: 'indexed',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+    const legacyAgentWikiNode = await store.upsertNode({
+      id: 'node-legacy-goodvibes-agents',
+      kind: 'wiki_page',
+      slug: 'default-specification-goodvibes-agents-with-yaml-frontmatter',
+      title: 'Specification: GoodVibes Agents with YAML frontmatter',
+      summary: 'GoodVibes Agent YAML frontmatter specification.',
+      sourceId: legacyAgentWikiSource.id,
+      metadata: knowledgeSpaceMetadata('default', {
+        sourceId: legacyAgentWikiSource.id,
+      }),
+    });
+    await store.upsertEdge({
+      fromKind: 'source',
+      fromId: legacyAgentWikiSource.id,
+      toKind: 'node',
+      toId: legacyAgentWikiNode.id,
+      relation: 'documents',
+      metadata: knowledgeSpaceMetadata('default'),
+    });
+
+    const memoryRoot = mkdtempSync(join(tmpdir(), 'goodvibes-knowledge-projection-memory-'));
+    tmpRoots.push(memoryRoot);
+    const memoryConfigManager = new ConfigManager({ configDir: join(memoryRoot, 'config') });
+    const memoryStore = new MemoryStore(undefined, {
+      embeddingRegistry: new MemoryEmbeddingProviderRegistry({ configManager: memoryConfigManager }),
+      enableVectorIndex: false,
+    });
+    await memoryStore.init();
+    const memoryRegistry = new MemoryRegistry(memoryStore);
+
+    const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, {
+      memoryRegistry,
+    }), disposeKnowledgeService);
+    const projectionService = new KnowledgeProjectionService(store, artifactStore);
+
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).toContain(baseNode.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(leakedNode.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(explicitDefaultGap.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(edgeOnlyTopic.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(edgeOnlyDomain.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanCatalogTopic.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanAnswerGap.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(tvFact.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(productNavigationFact.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(productNavigationMemory.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(orphanNavigationMemory.id);
+    expect(service.queryNodes({ limit: 100 }).items.map((node) => node.id)).not.toContain(legacyAgentWikiNode.id);
+    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(agentAmbiguitySource.id);
+    for (const source of productNavigationSources) {
+      expect(service.querySources({ limit: 100 }).items.map((entry) => entry.id)).not.toContain(source.id);
+    }
+    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(githubRepairSource.id);
+    expect(service.querySources({ limit: 100 }).items.map((source) => source.id)).not.toContain(legacyAgentWikiSource.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(leakedNode.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(explicitDefaultGap.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(edgeOnlyTopic.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(edgeOnlyDomain.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).toContain(orphanCatalogTopic.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(orphanAnswerGap.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(tvFact.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(productNavigationFact.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(productNavigationMemory.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(orphanNavigationMemory.id);
+    expect(service.queryNodes({ limit: 100, includeAllSpaces: true }).items.map((node) => node.id)).not.toContain(legacyAgentWikiNode.id);
+    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(agentAmbiguitySource.id);
+    for (const source of productNavigationSources) {
+      expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((entry) => entry.id)).not.toContain(source.id);
+    }
+    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(githubRepairSource.id);
+    expect(service.querySources({ limit: 100, includeAllSpaces: true }).items.map((source) => source.id)).not.toContain(legacyAgentWikiSource.id);
+    expect(service.queryNodes({ limit: 100, knowledgeSpaceId: 'homeassistant:test' }).items.map((node) => node.id)).toContain(edgeOnlyTopic.id);
+    expect(service.queryNodes({ limit: 100, knowledgeSpaceId: 'homeassistant:test' }).items.map((node) => node.id)).toContain(edgeOnlyDomain.id);
+    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(leakedIssue.id);
+    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(explicitDefaultIssue.id);
+    expect(service.queryIssues({ limit: 100 }).items.map((issue) => issue.id)).not.toContain(orphanAnswerIssue.id);
+    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(leakedIssue.id);
+    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(explicitDefaultIssue.id);
+    expect(service.queryIssues({ limit: 100, includeAllSpaces: true }).items.map((issue) => issue.id)).not.toContain(orphanAnswerIssue.id);
+
+    const defaultTargets = await projectionService.listTargets(100);
+    const defaultPacket = buildKnowledgePacketSync(packetContext(store), 'BRAVIA Home Assistant', [], 10);
+    const defaultMap = renderKnowledgeMap({
+      sources: store.listSources(100),
+      nodes: store.listNodes(100),
+      edges: store.listEdges(),
+      issues: store.listIssues(100),
+    }, { includeSources: true });
+
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(leakedNode.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(edgeOnlyTopic.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(edgeOnlyDomain.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(orphanCatalogTopic.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(orphanAnswerGap.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(tvFact.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(productNavigationFact.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(productNavigationMemory.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(orphanNavigationMemory.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(githubRepairSource.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(legacyAgentWikiNode.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(leakedIssue.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(explicitDefaultIssue.id);
+    expect(defaultTargets.map((target) => target.itemId)).not.toContain(orphanAnswerIssue.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(leakedNode.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(leakedIssue.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(explicitDefaultGap.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(edgeOnlyTopic.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(edgeOnlyDomain.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(orphanCatalogTopic.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(orphanAnswerGap.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(tvFact.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(productNavigationFact.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(productNavigationMemory.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(orphanNavigationMemory.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(githubRepairSource.id);
+    expect(defaultPacket?.items.map((item) => item.id)).not.toContain(legacyAgentWikiNode.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(leakedNode.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(leakedIssue.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(explicitDefaultIssue.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(edgeOnlyTopic.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(edgeOnlyDomain.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(orphanCatalogTopic.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(orphanAnswerGap.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(tvFact.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(agentAmbiguitySource.id);
+    for (const source of productNavigationSources) {
+      expect(defaultMap.nodes.map((node) => node.id)).not.toContain(source.id);
+    }
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(productNavigationFact.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(productNavigationMemory.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(orphanNavigationMemory.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(githubRepairSource.id);
+    expect(defaultMap.nodes.map((node) => node.id)).not.toContain(legacyAgentWikiNode.id);
+
+    const defaultAnswer = await service.ask({
+      query: 'What features does the BRAVIA XBR-55X850B have?',
+      includeSources: true,
+      includeLinkedObjects: true,
+      includeConfidence: true,
+    });
+    expect(defaultAnswer.results.map((result) => result.id)).not.toContain(leakedNode.id);
+    expect(defaultAnswer.answer.sources.map((source) => source.id)).not.toContain(haSource.id);
+    expect(defaultAnswer.answer.linkedObjects.map((node) => node.id)).not.toContain(leakedNode.id);
+    const agentAnswer = await service.ask({
+      query: 'What is GoodVibes Agent?',
+      includeSources: true,
+      includeLinkedObjects: true,
+      includeConfidence: true,
+    });
+    expect(agentAnswer.answer.sources.map((source) => source.id)).not.toContain(agentAmbiguitySource.id);
+    for (const source of productNavigationSources) {
+      expect(agentAnswer.answer.sources.map((entry) => entry.id)).not.toContain(source.id);
+    }
+    expect(agentAnswer.answer.sources.map((source) => source.id)).not.toContain(legacyAgentWikiSource.id);
+    expect(agentAnswer.answer.facts.map((fact) => fact.id)).not.toContain(tvFact.id);
+    expect(agentAnswer.answer.facts.map((fact) => fact.id)).not.toContain(productNavigationFact.id);
+    expect(agentAnswer.results.map((result) => result.id)).not.toContain(legacyAgentWikiNode.id);
+    expect(agentAnswer.results.map((result) => result.id)).not.toContain(productNavigationFact.id);
+    expect(agentAnswer.results.map((result) => result.id)).not.toContain(productNavigationMemory.id);
+    expect(agentAnswer.results.map((result) => result.id)).not.toContain(orphanNavigationMemory.id);
+    expect(agentAnswer.results.map((result) => result.id)).not.toContain(githubRepairSource.id);
+    expect(agentAnswer.results).toEqual([]);
+    expect(agentAnswer.answer.sources).toEqual([]);
+    expect(agentAnswer.answer.facts).toEqual([]);
+    expect(agentAnswer.answer.confidence).toBe(0);
+    expect(agentAnswer.answer.gaps).toEqual([]);
+  });
+});
+
+function createStores(): {
+  readonly store: KnowledgeStore;
+  readonly artifactStore: ArtifactStore;
+} {
+  const root = mkdtempSync(join(tmpdir(), 'goodvibes-knowledge-projection-'));
+  tmpRoots.push(root);
+  return {
+    store: new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') }),
+    artifactStore: new ArtifactStore({ rootDir: join(root, 'artifacts') }),
+  };
+}
+
+function packetContext(store: KnowledgeStore): Parameters<typeof buildKnowledgePacketSync>[0] {
+  return {
+    store,
+    deferUsage: () => {},
+    emitIfReady: () => {},
+  };
+}

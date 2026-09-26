@@ -94,7 +94,8 @@ export interface RepoRow {
   readonly error?: string;
 }
 
-export const SDK_PACKAGE_NAME = '@goodvibes-jev/engine/sdk';
+/** The engine package a consumer depends on (the same name as DEFAULT_SDK_PACKAGE in config.ts). */
+export const SDK_PACKAGE_NAME = '@goodvibes-jev/engine';
 
 /** Render the sdk-consumer pin ⇄ latest column. `n/a` for non-consumer kinds. */
 export function classifySdkPin(pin: string | null, latest: string | null, kind: RepoKind): string {

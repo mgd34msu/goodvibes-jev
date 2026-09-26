@@ -1,0 +1,42 @@
+/**
+ * Coverage-gap smoke test, platform/runtime/inspection/state-inspector
+ * Verifies that createStateInspector constructs a working inspector and
+ * its methods return correct observable shapes.
+ * Closes coverage gap: platform/runtime/inspection/state-inspector
+ */
+
+import { describe, expect, test } from 'bun:test';
+import { createStateInspector } from '../sdk/src/platform/runtime/inspection/state-inspector.js';
+
+describe('platform/runtime/inspection/state-inspector: behavior smoke', () => {
+  test('getSnapshot returns an object with domains array and capturedAt timestamp', () => {
+    const inspector = createStateInspector({ domains: [] });
+    const snapshot = inspector.getSnapshot();
+    expect(snapshot).not.toBeNull(); // presence-only: inspector snapshot returned
+    expect(snapshot.domains).toBeInstanceOf(Array);
+    expect(typeof snapshot.capturedAt).toBe('number');
+  });
+
+  test('registeredDomainNames returns an empty array when no domains registered', () => {
+    const inspector = createStateInspector({ domains: [] });
+    const names = inspector.registeredDomainNames();
+    expect(names).toBeInstanceOf(Array);
+    expect(names.length).toBe(0);
+  });
+
+  test('totalTransitions starts at 0', () => {
+    const inspector = createStateInspector({ domains: [] });
+    // totalTransitions is a getter property, not a method
+    expect(inspector.totalTransitions).toBe(0);
+  });
+
+  test('subscribe returns an object with id and unsubscribe function', () => {
+    const inspector = createStateInspector({ domains: [] });
+    const sub = inspector.subscribe(() => {}, 'smoke-test-subscriber');
+    expect(typeof sub.id).toBe('string');
+    // Exercise unsubscribe without error
+    sub.unsubscribe();
+    // subscriptionCount is a getter property, not a method
+    expect(inspector.subscriptionCount).toBe(0);
+  });
+});

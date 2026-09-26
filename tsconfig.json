@@ -1,4 +1,9 @@
 {
   "files": [],
-  "references": [{ "path": "packages/judgment" }, { "path": "packages/engine" }]
+  "references": [
+    { "path": "packages/judgment" },
+    { "path": "packages/engine" },
+    { "path": "packages/engine/tsconfig.tests.json" },
+    { "path": "packages/engine/tsconfig.type-tests.json" }
+  ]
 }

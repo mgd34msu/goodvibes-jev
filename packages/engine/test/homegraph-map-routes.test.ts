@@ -1,0 +1,80 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
+import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
+import { HomeGraphService } from '../sdk/src/platform/knowledge/index.js';
+import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { trackDisposables } from './_helpers/disposables.ts';
+
+/**
+ * HomeGraphService.syncSnapshot() starts a self-improvement pump
+ * fire-and-forget behind an AbortController, it sleeps in 15s rounds and
+ * calls the semantic service (and therefore fetch) between them, for the rest
+ * of the process. dispose() aborts it.
+ */
+const disposables = trackDisposables();
+
+const tmpRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of tmpRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe('Home Graph map routes', () => {
+  test('accepts query, trailing slash, and JSON body map requests', async () => {
+    const { service, artifactStore } = createHomeGraphService();
+    await service.syncSnapshot({
+      installationId: 'house-1',
+      areas: [{ id: 'living-room', name: 'Living Room' }],
+      devices: [
+        { id: 'thermostat', name: 'Thermostat', areaId: 'living-room' },
+        { id: 'tv', name: 'Living Room TV', areaId: 'living-room' },
+      ],
+      entities: [
+        { entityId: 'climate.thermostat', name: 'Thermostat', deviceId: 'thermostat', areaId: 'living-room', metadata: { domain: 'climate' } },
+        { entityId: 'media_player.tv', name: 'Living Room TV', deviceId: 'tv', areaId: 'living-room', metadata: { domain: 'media_player' } },
+      ],
+    });
+    const routes = new HomeGraphRoutes({
+      artifactStore,
+      homeGraphService: service,
+      parseJsonBody: async (req) => await req.json() as Record<string, unknown>,
+      parseOptionalJsonBody: async (req) => {
+        const text = await req.text();
+        return text ? JSON.parse(text) as Record<string, unknown> : {};
+      },
+      requireAdmin: () => null,
+    });
+
+    const query = await routes.handle(new Request('http://daemon.local/api/homeassistant/home-graph/map?installationId=house-1'));
+    const slash = await routes.handle(new Request('http://daemon.local/api/homeassistant/home-graph/map/?installationId=house-1'));
+    const post = await routes.handle(new Request('http://daemon.local/api/homeassistant/home-graph/map', {
+      method: 'POST',
+      body: JSON.stringify({ installationId: 'house-1', limit: 10, includeSources: false, ha: { domains: ['media_player'] } }),
+    }));
+
+    expect(query?.status).toBe(200);
+    expect(slash?.status).toBe(200);
+    expect(post?.status).toBe(200);
+    expect((await slash!.json() as { readonly svg: string }).svg).toContain('Thermostat');
+    const filtered = await post!.json() as { readonly nodes: readonly { readonly title: string }[]; readonly facets?: { readonly homeAssistant?: Record<string, readonly { readonly value: string; readonly count: number }[]> } };
+    expect(filtered.nodes.some((node) => node.title === 'Living Room TV')).toBe(true);
+    expect(filtered.nodes.some((node) => node.title === 'Thermostat')).toBe(false);
+    expect(filtered.facets?.homeAssistant?.domains?.some((entry) => entry.value === 'media_player')).toBe(true);
+  });
+});
+
+function createHomeGraphService(): {
+  readonly artifactStore: ArtifactStore;
+  readonly service: HomeGraphService;
+} {
+  const root = mkdtempSync(join(tmpdir(), 'goodvibes-homegraph-map-routes-'));
+  tmpRoots.push(root);
+  const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
+  const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
+  return { artifactStore, service: disposables.add(new HomeGraphService(store, artifactStore)) };
+}

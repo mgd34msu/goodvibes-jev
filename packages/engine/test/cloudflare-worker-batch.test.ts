@@ -1,0 +1,82 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  createGoodVibesCloudflareWorker,
+  type GoodVibesCloudflareQueuePayload,
+} from '../sdk/src/workers.js';
+
+describe('Cloudflare Worker batch bridge', () => {
+  test('proxies batch job creation directly to the daemon by default', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      calls.push({ url: String(input), ...(init !== undefined ? { init } : {}) });
+      return Response.json({ job: { id: 'batch-job-1' } }, { status: 202 });
+    }) as typeof fetch;
+    try {
+      const worker = createGoodVibesCloudflareWorker();
+      const res = await worker.fetch(
+        new Request('https://worker.example/batch/jobs', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer worker-token', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request: { messages: [{ role: 'user', content: 'hi' }] } }),
+        }),
+        {
+          GOODVIBES_DAEMON_URL: 'https://daemon.example',
+          GOODVIBES_OPERATOR_TOKEN: 'token',
+          GOODVIBES_WORKER_TOKEN: 'worker-token',
+        },
+        { waitUntil: () => undefined },
+      );
+      expect(res.status).toBe(202);
+      expect(calls[0]?.url).toBe('https://daemon.example/api/batch/jobs');
+      expect(calls[0]?.init?.method).toBe('POST');
+      const headers = calls[0]?.init?.headers as Headers;
+      expect(headers.get('Authorization')).toBe('Bearer token');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('queues tick signals without queueing prompt payloads', async () => {
+    const messages: GoodVibesCloudflareQueuePayload[] = [];
+    const worker = createGoodVibesCloudflareWorker();
+    const res = await worker.fetch(
+      new Request('https://worker.example/batch/tick/enqueue', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer worker-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      }),
+      {
+        GOODVIBES_WORKER_TOKEN: 'worker-token',
+        GOODVIBES_BATCH_QUEUE: {
+          async send(message) {
+            messages.push(message);
+          },
+        },
+      },
+      { waitUntil: () => undefined },
+    );
+    expect(res.status).toBe(202);
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    expect(message?.type).toBe('batch.tick');
+    if (message?.type !== 'batch.tick') throw new Error('expected a batch.tick queue payload');
+    expect(message.force).toBe(true);
+    expect(typeof message.enqueuedAt).toBe('number');
+  });
+
+  test('requires a worker token for non-health endpoints by default', async () => {
+    const worker = createGoodVibesCloudflareWorker();
+    const res = await worker.fetch(
+      new Request('https://worker.example/batch/tick/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      }),
+      {},
+      { waitUntil: () => undefined },
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: 'WORKER_AUTH_TOKEN_REQUIRED' });
+  });
+});

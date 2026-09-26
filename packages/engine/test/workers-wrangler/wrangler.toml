@@ -1,0 +1,20 @@
+# wrangler.toml — wrangler-CLI harness for @pellux/goodvibes-sdk
+#
+# Points wrangler dev at the test worker entry (test/workers-wrangler/worker.ts).
+# wrangler bundles via its own esbuild pipeline, resolving relative imports
+# (../../sdk/dist/web.js) from the entry file location.
+#
+# compatibility_date: 2026-04-01 — within the last quarter of writing.
+# Bump quarterly. This date governs which compat flags workerd enables by default.
+#
+# Do NOT add CF_API_TOKEN or account_id — wrangler dev --local does not require them.
+
+name = "goodvibes-sdk-workers-test"
+main = "worker.ts"
+compatibility_date = "2026-04-01"
+# nodejs_compat compatibility flag enables Node.js built-in polyfills (fs, path, etc.)
+# that the SDK imports transitively. node_compat = true was removed in wrangler v4;
+# the replacement is the nodejs_compat compatibility flag.
+compatibility_flags = ["nodejs_compat"]
+
+# No KV, D1, R2, or other bindings needed — pure HTTP + global API surface test.

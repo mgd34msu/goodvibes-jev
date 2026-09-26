@@ -1,0 +1,139 @@
+import { describe, expect, test } from 'bun:test';
+import { createDomainDispatch, createRuntimeStore } from '../sdk/src/platform/runtime/store/index.js';
+import { SchedulerTaskAdapter } from '../sdk/src/platform/runtime/tasks/adapters/scheduler-adapter.js';
+import type { ScheduledTask, TaskRunRecord } from '../sdk/src/platform/scheduler/scheduler.js';
+
+describe('runtime store lifecycle seams', () => {
+  test('task events do not synthesize records or double-count terminal state', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+
+    dispatch.dispatchTaskEvent({ type: 'TASK_COMPLETED', taskId: 'missing-task', durationMs: 1 });
+    expect(store.getState().tasks.tasks.has('missing-task')).toBe(false);
+    expect(store.getState().tasks.totalCompleted).toBe(0);
+
+    dispatch.dispatchTaskEvent({ type: 'TASK_CREATED', taskId: 'task-1', description: 'Run build', priority: 0 });
+    dispatch.dispatchTaskEvent({ type: 'TASK_CREATED', taskId: 'task-1', description: 'Run build again', priority: 0 });
+    dispatch.dispatchTaskEvent({ type: 'TASK_STARTED', taskId: 'task-1' });
+    dispatch.dispatchTaskEvent({ type: 'TASK_COMPLETED', taskId: 'task-1', durationMs: 12 });
+    dispatch.dispatchTaskEvent({ type: 'TASK_COMPLETED', taskId: 'task-1', durationMs: 24 });
+    dispatch.dispatchTaskEvent({ type: 'TASK_FAILED', taskId: 'task-1', error: 'late failure', durationMs: 30 });
+
+    const tasks = store.getState().tasks;
+    expect(tasks.totalCreated).toBe(1);
+    expect(tasks.totalCompleted).toBe(1);
+    expect(tasks.totalFailed).toBe(0);
+    expect(tasks.tasks.get('task-1')?.status).toBe('completed');
+  });
+
+  test('agent events do not synthesize records or double-count terminal state', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'missing-agent', durationMs: 1 });
+    expect(store.getState().agents.agents.has('missing-agent')).toBe(false);
+    expect(store.getState().agents.totalCompleted).toBe(0);
+
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'agent-1', task: 'Inspect state' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'agent-1', task: 'Inspect state again' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_RUNNING', agentId: 'agent-1' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'agent-1', durationMs: 12 });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'agent-1', durationMs: 24 });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_FAILED', agentId: 'agent-1', error: 'late failure', durationMs: 30 });
+
+    const agents = store.getState().agents;
+    expect(agents.totalSpawned).toBe(1);
+    expect(agents.totalCompleted).toBe(1);
+    expect(agents.totalFailed).toBe(0);
+    expect(agents.agents.get('agent-1')?.status).toBe('completed');
+  });
+
+  test('AGENT_COMPLETED usage populates RuntimeAgent.usage; omitting it leaves usage undefined', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'agent-usage', task: 'Do work' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_RUNNING', agentId: 'agent-usage' });
+    dispatch.dispatchAgentEvent({
+      type: 'AGENT_COMPLETED',
+      agentId: 'agent-usage',
+      durationMs: 12,
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10, cacheWriteTokens: 5 },
+    });
+
+    expect(store.getState().agents.agents.get('agent-usage')?.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+    });
+
+    // A second agent whose AGENT_COMPLETED omits usage must not fabricate a zeroed reading.
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'agent-no-usage', task: 'Do other work' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'agent-no-usage', durationMs: 5 });
+    expect(store.getState().agents.agents.get('agent-no-usage')?.usage).toBeUndefined();
+  });
+
+  test('WRFC owner running/progress events can revive a prematurely terminal owner record', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'owner-1', task: 'Run WRFC chain' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'owner-1', durationMs: 10, output: 'premature' });
+    expect(store.getState().agents.agents.get('owner-1')?.status).toBe('completed');
+    expect(store.getState().agents.totalCompleted).toBe(1);
+
+    dispatch.dispatchAgentEvent({
+      type: 'AGENT_RUNNING',
+      agentId: 'owner-1',
+      wrfcId: 'wrfc-1',
+      wrfcRole: 'owner',
+      wrfcPhaseOrder: 0,
+    });
+    dispatch.dispatchAgentEvent({
+      type: 'AGENT_PROGRESS',
+      agentId: 'owner-1',
+      progress: 'WRFC owner supervising child agents',
+      wrfcId: 'wrfc-1',
+      wrfcRole: 'owner',
+      wrfcPhaseOrder: 0,
+    });
+
+    const agent = store.getState().agents.agents.get('owner-1');
+    expect(agent?.status).toBe('running');
+    expect(agent?.endedAt).toBeUndefined();
+    expect(agent?.result).toBeUndefined();
+    expect(agent?.wrfcRef).toEqual({ chainId: 'wrfc-1', chainRole: 'owner', phaseOrder: 0 });
+    expect(store.getState().agents.activeAgentIds).toContain('owner-1');
+    expect(store.getState().agents.totalCompleted).toBe(0);
+  });
+
+  test('scheduler adapter preserves failed run status when wrapping history', () => {
+    const store = createRuntimeStore();
+    const adapter = new SchedulerTaskAdapter(store);
+    const run: TaskRunRecord = {
+      taskId: 'scheduled-1',
+      agentId: 'run-agent-1',
+      startedAt: Date.now(),
+      status: 'failed',
+      error: 'scheduled job failed',
+    };
+    const scheduledTask: ScheduledTask = {
+      id: 'scheduled-1',
+      name: 'Nightly check',
+      cron: '0 0 * * *',
+      prompt: 'Check runtime state',
+      enabled: true,
+      runCount: 1,
+      missedRuns: 0,
+      createdAt: Date.now(),
+    };
+
+    const taskId = adapter.wrapScheduledRun(run, scheduledTask);
+    const task = store.getState().tasks.tasks.get(taskId);
+
+    expect(task?.status).toBe('failed');
+    expect(task?.error).toBe('scheduled job failed');
+    expect(store.getState().tasks.totalFailed).toBe(1);
+  });
+});

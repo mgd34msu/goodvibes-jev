@@ -1,0 +1,31 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": true,
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2024", "ESNext.Disposable", "DOM"],
+    "types": ["node", "bun"]
+  },
+  "include": ["test/**/*.ts", "scripts/**/*.ts"],
+  // test/types/** is the CONSUMER-vantage type-test project. It resolves
+  // everything through the package NAME, which is the only vantage point from
+  // which a declaration-emit gap is visible, and it is compiled by
+  // tsconfig.type-tests.json instead. Compiling it here as well makes
+  // neighbouring inferred types unnameable (TS2883). The root typecheck
+  // builds both projects, so nothing is dropped by excluding it here.
+  "exclude": ["test/types/**"],
+  "references": [
+    { "path": "./contracts" },
+    { "path": "./errors" },
+    { "path": "./daemon-sdk" },
+    { "path": "./transport-core" },
+    { "path": "./transport-http" },
+    { "path": "./transport-realtime" },
+    { "path": "./operator-sdk" },
+    { "path": "./peer-sdk" },
+    { "path": "./sdk" },
+    { "path": "./terminal-shell" },
+    { "path": "./toolchain" }
+  ]
+}
