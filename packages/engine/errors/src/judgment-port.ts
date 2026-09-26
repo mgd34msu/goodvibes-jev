@@ -1,4 +1,4 @@
-import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import type { JudgmentPort } from '@goodvibes-jev/judgment/decisions';
 
 /**
  * The judgment port every engine decision site reads through. The composition

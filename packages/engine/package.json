@@ -1,8 +1,23 @@
 {
   "name": "@goodvibes-jev/engine",
-  "version": "0.0.0",
+  "version": "2.0.23",
   "private": true,
   "type": "module",
+  "bin": {
+    "goodvibes-toolchain": "./toolchain/dist/bin/toolchain.js",
+    "goodvibes-sdk-pin-gate": "./toolchain/dist/bin/sdk-pin-gate.js",
+    "goodvibes-build-binaries": "./toolchain/dist/bin/build-binaries.js",
+    "goodvibes-release-cut": "./toolchain/dist/bin/release-cut.js",
+    "goodvibes-coverage-gate": "./toolchain/dist/bin/coverage-gate.js",
+    "goodvibes-verification-ledger": "./toolchain/dist/bin/verification-ledger.js",
+    "goodvibes-post-build-smoke": "./toolchain/dist/bin/post-build-smoke.js",
+    "goodvibes-package-install-check": "./toolchain/dist/bin/package-install-check.js",
+    "goodvibes-publish-package": "./toolchain/dist/bin/publish-package.js",
+    "goodvibes-per-job-green": "./toolchain/dist/bin/per-job-green.js",
+    "goodvibes-changelog-gate": "./toolchain/dist/bin/changelog-gate.js",
+    "goodvibes-sha256sums": "./toolchain/dist/bin/sha256sums.js",
+    "goodvibes-train-status": "./toolchain/dist/bin/train-status.js"
+  },
   "description": "The platform library: the old goodvibes-sdk packages, with Jev judgment at every decision point.",
   "exports": {
     "./contracts": "./contracts/src/index.ts",

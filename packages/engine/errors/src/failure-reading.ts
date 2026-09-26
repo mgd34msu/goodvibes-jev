@@ -5,7 +5,7 @@ import {
   yesNo,
   type ChoiceReading,
   type YesNoReading,
-} from '@goodvibes-jev/judgment';
+} from '@goodvibes-jev/judgment/decisions';
 import type { DaemonErrorCategory } from './daemon-error-contract.js';
 import { judgmentPort } from './judgment-port.js';
 

@@ -7,8 +7,9 @@ const PKG_DIR = resolve(import.meta.dir, '../../toolchain');
 const DISPATCHER_SRC = resolve(PKG_DIR, 'src/bin/toolchain.ts');
 const DISPATCHER_DIST = resolve(PKG_DIR, 'dist/bin/toolchain.js');
 
+// The toolchain's bins live in the engine manifest, with paths under ./toolchain/.
 function binMap(): Record<string, string> {
-  return (JSON.parse(readFileSync(resolve(PKG_DIR, 'package.json'), 'utf8')) as { bin: Record<string, string> }).bin;
+  return (JSON.parse(readFileSync(resolve(PKG_DIR, '..', 'package.json'), 'utf8')) as { bin: Record<string, string> }).bin;
 }
 
 function dispatcherTools(): string[] {
@@ -24,7 +25,7 @@ describe('goodvibes-toolchain dispatcher', () => {
     // bunx matches the bin whose name equals the package's final path segment.
     // Without this entry, bunx falls back to the FIRST bin in the map and runs
     // the wrong tool with the intended tool name as a stray argument.
-    expect(binMap()['goodvibes-toolchain']).toBe('./dist/bin/toolchain.js');
+    expect(binMap()['goodvibes-toolchain']).toBe('./toolchain/dist/bin/toolchain.js');
     // Keep it first so any first-bin fallback ALSO lands on the dispatcher.
     expect(Object.keys(binMap())[0]).toBe('goodvibes-toolchain');
   });
