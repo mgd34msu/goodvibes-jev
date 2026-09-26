@@ -6,5 +6,12 @@
   "description": "The level 0 Jev foundation: judgment port, typed readings, batteries, patterns, compound patterns, decision log and calibration.",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.6.0"
+  },
+  "scripts": {
+    "test": "bun test",
+    "probe": "bun run scripts/probe.ts"
   }
 }
