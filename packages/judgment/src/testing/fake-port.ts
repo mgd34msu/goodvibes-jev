@@ -1,4 +1,4 @@
-import type { EntryType, JudgmentPort, JudgmentRequest, Question, Questions } from '../src/index.ts';
+import type { EntryType, JudgmentPort, JudgmentRequest, Question, Questions } from '../index.ts';
 
 export type Answerer = (name: string, question: Question, state: EntryType) => unknown;
 

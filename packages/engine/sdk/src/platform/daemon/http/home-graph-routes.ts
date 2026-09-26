@@ -16,7 +16,7 @@ import type {
   HomeGraphReviewInput,
   HomeGraphSnapshotInput,
 } from '../../knowledge/index.js';
-import { jsonErrorResponse } from './error-response.js';
+import { readJsonErrorResponse } from './error-response.js';
 import { readBoundedPositiveInteger, readOptionalBoundedInteger } from './route-helpers.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -177,7 +177,7 @@ export class HomeGraphRoutes {
       }
       return Response.json({ error: 'Unknown Home Graph route' }, { status: 404 });
     } catch (error) {
-      return jsonErrorResponse(error, { status: 400 });
+      return readJsonErrorResponse(error, { status: 400 });
     }
   }
 

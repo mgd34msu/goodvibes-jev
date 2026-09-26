@@ -662,3 +662,19 @@ export function createHttpStatusError(
     hint: fallbackHint,
   });
 }
+
+export { installJudgmentPort, judgmentPort, JudgmentPortMissingError } from './judgment-port.js';
+export {
+  categoryDependsOnWording,
+  categoryForCode,
+  categoryForStatus,
+  failureReading,
+  failureState,
+  settleCategory,
+  forgetFailureReadings,
+  readFailure,
+  type FailureCategory,
+  type FailureConclusions,
+  type FailureEvidence,
+  type FailureQuestion,
+} from './failure-reading.js';

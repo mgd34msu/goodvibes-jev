@@ -1,4 +1,12 @@
-import { GoodVibesSdkError, HttpStatusError, RETRYABLE_STATUS_CODES } from '@goodvibes-jev/engine/errors';
+import {
+  categoryForStatus,
+  GoodVibesSdkError,
+  HttpStatusError,
+  readFailure,
+  RETRYABLE_STATUS_CODES,
+  type FailureConclusions,
+  type FailureEvidence,
+} from '@goodvibes-jev/engine/errors';
 
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
@@ -51,50 +59,6 @@ export interface AppErrorOptions {
 
 export interface ProviderErrorOptions extends AppErrorOptions {
   readonly statusCode?: number | undefined;
-}
-
-/**
- * Wording that means "this account cannot pay for the call", as opposed to
- * "you are going too fast". Providers do NOT agree on a status code for it:
- * Anthropic returns 400 with "Your credit balance is too low to access the
- * Anthropic API", and OpenAI returns 429 with `insufficient_quota`. Both are
- * permanent until someone tops up the account, so both must stay out of the
- * rate-limit bucket that retries on a fixed backoff.
- *
- * Deliberately narrow. A bare "quota" or "limit" is not here, because those
- * genuinely do appear on per-minute limits that a retry does clear.
- *
- * Keep in sync with the twin in utils/error-display.ts.
- */
-const BILLING_MESSAGE_PATTERN = /credit balance|insufficient[_\s-](?:credit|credits|quota|balance|funds)|out of credits|purchase credits|no credits|payment required|plans?[_\s&-]+billing|billing details/;
-
-function inferErrorCategory(message: string, statusCode?: number): PlatformErrorCategory {
-  const msg = message.toLowerCase();
-
-  if (statusCode === 401) return 'authentication';
-  if (statusCode === 402) return 'billing';
-  if (statusCode === 403) return 'authorization';
-  if (statusCode === 404) return 'not_found';
-  if (statusCode === 408) return 'timeout';
-  // 429 and 400 are both overloaded buckets: providers put a spent account
-  // behind each of them. Reading the wording first is what stops "your credit
-  // balance is too low" from being reported (and retried) as a rate limit or
-  // as a malformed request.
-  if (statusCode === 429) return BILLING_MESSAGE_PATTERN.test(msg) ? 'billing' : 'rate_limit';
-  if (statusCode === 400) return BILLING_MESSAGE_PATTERN.test(msg) ? 'billing' : 'bad_request';
-  if (statusCode !== undefined && statusCode >= 500) return 'service';
-
-  if (/api[_\s-]?key|auth|token|credential|jwt|unauthoriz/.test(msg)) return 'authentication';
-  if (/forbidden|access denied|not allowed|permission denied/.test(msg)) return 'authorization';
-  if (/payment required|billing|credit|credits|quota|insufficient balance|depleted/.test(msg)) return 'billing';
-  if (/rate.limit|too many requests|throttl/.test(msg)) return 'rate_limit';
-  if (/timed?[\s_-]?out|etimedout|timeout|deadline exceeded/.test(msg)) return 'timeout';
-  if (/econnrefused|enotfound|ehostunreach|econnreset|socket hang up|fetch failed|dns|tls|ssl|certificate/.test(msg)) return 'network';
-  if (/not found|unknown model|no such model|unknown endpoint|unsupported model/.test(msg)) return 'not_found';
-  if (/invalid request|bad request|invalid argument|malformed|schema|unsupported parameter/.test(msg)) return 'bad_request';
-  if (/invalid json|parse|no response body|stream ended|unexpected eof|malformed response/.test(msg)) return 'protocol';
-
-  return 'unknown';
 }
 
 function inferProviderGuidance(category: PlatformErrorCategory, statusCode?: number): string | undefined {
@@ -196,7 +160,9 @@ export class ProviderError extends AppError {
       ? { ...maybeOptions, statusCode: statusCodeOrOptions }
       : (statusCodeOrOptions ?? {});
     const statusCode = options.statusCode;
-    const category = options.category ?? inferErrorCategory(message, statusCode);
+    // The status fixes a provisional category; whether a 400 or 429 is really a
+    // spent account is read from the wording where it matters (readProviderFailure).
+    const category = options.category ?? categoryForStatus(statusCode) ?? 'unknown';
     const retryAfterMs = inferRetryAfterMs(message, statusCode, options.retryAfterMs);
     const guidance = options.guidance ?? inferProviderGuidance(category, statusCode);
 
@@ -255,151 +221,107 @@ export class RenderError extends AppError {
   }
 }
 
+/** The evidence a failure reading is about: the message and the fixed fields around it. */
+export function failureEvidence(err: Error): FailureEvidence {
+  const structuredCode = (err as { readonly code?: unknown }).code;
+  const code = err instanceof AppError
+    ? err.providerCode
+    : typeof structuredCode === 'string' ? structuredCode : undefined;
+  return {
+    message: err.message,
+    status: err instanceof AppError ? err.statusCode : undefined,
+    code,
+    errorName: err.name,
+  };
+}
+
+/** Reads what an error's wording says about the failure (one Jev request per distinct wording). */
+export function readErrorFailure(err: Error, site: string): Promise<FailureConclusions> {
+  return readFailure(failureEvidence(err), site);
+}
+
 /**
- * Returns true when the provider rejected the call because the account cannot
- * pay for it, credits exhausted, balance too low, plan quota spent.
+ * Whether the provider rejected the call because the account cannot pay for
+ * it: credits exhausted, balance too low, plan quota spent.
  *
  * This is NOT a rate limit and must never be retried on one. An Anthropic 400
  * carrying "Your credit balance is too low" was being reported as
- * "rate limited on turn 1, retrying in 60s" and retried three times: three
- * minutes burned per agent, and a message that sent the reader looking for a
- * throughput problem that did not exist.
+ * "rate limited on turn 1, retrying in 60s" and retried three times.
  *
- * Checked in this order so a structured classification always beats text:
- * an explicit `billing` category (which {@link inferErrorCategory} now derives
- * from a 400/429 whose wording says so), then 402, then the message.
+ * Structure decides first (an explicit `billing` category, a 402); otherwise
+ * Jev reads the wording.
  */
-export function isBillingOrCreditError(err: unknown): boolean {
-  if (err instanceof AppError) {
-    if (err.category === 'billing') return true;
-    if (err.statusCode === 402) return true;
-  }
+export async function isBillingOrCreditError(err: unknown, site = 'types.errors.billing'): Promise<boolean> {
+  if (err instanceof AppError && (err.category === 'billing' || err.statusCode === 402)) return true;
   if (!(err instanceof Error)) return false;
-  return BILLING_MESSAGE_PATTERN.test(err.message.toLowerCase());
+  return (await readErrorFailure(err, site)).billing;
 }
 
 /**
- * Returns true when the error indicates a rate limit or quota exhaustion.
- * Used by SyntheticProvider and AgentOrchestrator to decide whether to
- * back-off and retry vs. escalate the error.
+ * Whether the error is a rate limit or an exhausted quota. Used by
+ * SyntheticProvider and AgentOrchestrator to decide whether to back off and
+ * retry or escalate.
  *
  * Callers that decide whether to WAIT AND RETRY the same endpoint must check
- * {@link isBillingOrCreditError} first, a spent account matches the quota
- * wording here, and waiting does not fix it. Callers that decide whether to
- * ROTATE to another backend (SyntheticProvider) are right to treat both the
- * same way, since a different account may well have credit.
+ * {@link isBillingOrCreditError} first: a spent account is a quota failure,
+ * and waiting does not fix it. Callers that ROTATE to another backend
+ * (SyntheticProvider) are right to treat both the same way, since a
+ * different account may well have credit.
  */
-export function isRateLimitOrQuotaError(err: unknown): boolean {
-  if (err instanceof ProviderError) {
-    if (err.statusCode === 429 || err.statusCode === 402) return true;
-    const msg = err.message.toLowerCase();
-    return /rate.limit|too many requests|quota exceeded|throttl|depleted|credits/.test(msg);
-  }
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    return msg.includes('429') || msg.includes('402') || /rate.limit|too many requests|quota exceeded|depleted|credits/.test(msg);
-  }
-  return false;
-}
-
-/**
- * Returns true when the error indicates the model's context window was exceeded.
- * Covers OpenAI, Anthropic, and generic provider error messages.
- */
-export function isContextSizeExceededError(err: unknown): boolean {
+export async function isRateLimitOrQuotaError(err: unknown, site = 'types.errors.rate-limit'): Promise<boolean> {
+  if (err instanceof ProviderError && (err.statusCode === 429 || err.statusCode === 402)) return true;
   if (!(err instanceof Error)) return false;
-  const msg = err.message.toLowerCase();
-  return (
-    msg.includes('context_length_exceeded') ||
-    msg.includes('context length exceeded') ||
-    msg.includes('context size exceeded') ||
-    msg.includes('context window exceeded') ||
-    msg.includes('maximum context length') ||
-    msg.includes('prompt is too long') ||
-    msg.includes('input too long') ||
-    msg.includes('tokens exceed') ||
-    msg.includes('exceeds the model') ||
-    (msg.includes('context') && msg.includes('exceed'))
-  );
+  return (await readErrorFailure(err, site)).rateLimited;
+}
+
+/** Whether the error says the model's context window was exceeded. */
+export async function isContextSizeExceededError(err: unknown, site = 'types.errors.context-exceeded'): Promise<boolean> {
+  if (!(err instanceof Error)) return false;
+  return (await readErrorFailure(err, site)).contextExceeded;
 }
 
 /**
- * Message substrings that indicate a transient network/transport failure when the
- * error object itself carries no structured classification (e.g. a plain Error
- * surfaced through a code path that doesn't go through transport-http). Kept
- * narrow-ish but includes the bare "socket" and "closed unexpectedly" wording seen
- * in practice for abrupt connection-closure failures that the older, stricter
- * substring list did not recognize.
+ * Whether an error message (already reduced to a plain string, e.g. after
+ * crossing an event-bus boundary) describes a transient network or
+ * transport failure. Prefer {@link isNetworkTransportError} whenever the
+ * original error object is still available, since it trusts structured
+ * classification before reading any text.
  */
-const TRANSPORT_FAILURE_MESSAGE_PATTERNS = [
-  'fetch failed',
-  'econnrefused',
-  'enotfound',
-  'network error',
-  'network timeout',
-  'networkerror',
-  'econnreset',
-  'etimedout',
-  'socket hang up',
-  'dns',
-  'connection lost',
-  'epipe',
-  'ehostunreach',
-  'socket connection closure',
-  'closed unexpectedly',
-  'socket',
-];
-
-/**
- * Returns true when an error message (already reduced to a plain string, e.g. after
- * having crossed an event-bus boundary) looks like a transient network/transport
- * failure. This is a best-effort, message-only heuristic, prefer
- * {@link isNetworkTransportError} whenever the original error object is still
- * available, since it trusts the structured classification instead of guessing
- * from text.
- */
-export function isTransportFailureMessage(message: string): boolean {
-  const msg = message.toLowerCase();
-  return TRANSPORT_FAILURE_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern));
+export async function isTransportFailureMessage(message: string, site = 'types.errors.transport-message'): Promise<boolean> {
+  if (message.trim().length === 0) return false;
+  return (await readFailure({ message }, site)).transientNetwork;
 }
 
 /**
- * Returns true when the error indicates a transient network/transport failure
- * (as opposed to a programmer error or a permanent provider rejection).
+ * Whether the error is a transient network or transport failure (as opposed
+ * to a programmer error or a permanent provider rejection).
  *
- * When the error is an `HttpStatusError` (e.g. produced by
- * `createNetworkTransportError` in `@pellux/transport-http`), its structured
- * `category`/`recoverable` fields are trusted directly rather than re-derived
- * from the message text, that classification already accounts for TypeErrors,
- * POSIX network errno codes, and undici `UND_ERR_*` codes. The `instanceof`
- * check is branded (see HttpStatusError's Symbol.hasInstance), so a plain object
- * that merely happens to carry `recoverable`/`category` properties will not be
- * mistaken for one and trigger a false-positive retry.
- *
- * Falls back to {@link isTransportFailureMessage} for errors that are not an
- * HttpStatusError instance.
+ * An `HttpStatusError` (e.g. from `createNetworkTransportError` in the HTTP
+ * transport) is trusted on its structured `category`/`recoverable` fields,
+ * which already account for TypeErrors, POSIX errno codes and undici
+ * `UND_ERR_*` codes. The `instanceof` check is branded (see HttpStatusError's
+ * Symbol.hasInstance), so a plain object carrying those properties is not
+ * mistaken for one. Other errors are read by Jev.
  */
-export function isNetworkTransportError(err: unknown): boolean {
+export async function isNetworkTransportError(err: unknown, site = 'types.errors.network-transport'): Promise<boolean> {
   if (err instanceof HttpStatusError) {
     return err.category === 'network' && err.recoverable === true;
   }
   if (!(err instanceof Error)) return false;
-  return isTransportFailureMessage(err.message);
+  return (await readErrorFailure(err, site)).transientNetwork;
 }
 
 /**
- * Returns true when the error indicates the provider is non-transient
- * (auth failures, connection refused, host not found, timeout).
- * 500/503 are deliberately excluded, server errors are transient and
- * eligible for retry. Only permanent auth/billing failures are flagged here.
- * Used to trigger graceful degradation / alternative model suggestions.
+ * Whether the provider cannot serve requests as configured (credentials
+ * rejected, no credit, access denied, or unreachable), as opposed to a
+ * transient failure. 500 and 503 are not non-transient: server errors are
+ * eligible for retry. Used to trigger graceful degradation and alternative
+ * model suggestions.
  */
-export function isNonTransientProviderFailure(err: unknown): boolean {
+export async function isNonTransientProviderFailure(err: unknown, site = 'types.errors.non-transient'): Promise<boolean> {
   if (!(err instanceof Error)) return false;
-  if (err instanceof ProviderError) {
-    const NON_TRANSIENT_CODES = new Set([401, 402, 403]);
-    if (err.statusCode !== undefined && NON_TRANSIENT_CODES.has(err.statusCode)) return true;
-  }
-  const msg = err.message.toLowerCase();
-  return msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('timeout') || msg.includes('fetch failed');
+  if (err instanceof ProviderError && err.statusCode !== undefined && NON_TRANSIENT_STATUS.has(err.statusCode)) return true;
+  return (await readErrorFailure(err, site)).providerUnusable;
 }
+
+const NON_TRANSIENT_STATUS: ReadonlySet<number> = new Set([401, 402, 403]);

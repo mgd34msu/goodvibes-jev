@@ -643,7 +643,9 @@ export class WrfcController {
       'AGENT_FAILED',
       ({ payload }) => {
         this.agentLastSeen.set(payload.agentId, Date.now());
-        this.onAgentFailed(payload.agentId, payload.error);
+        this.onAgentFailed(payload.agentId, payload.error).catch((error: unknown) => {
+          logger.error('WrfcController: agent failure handling failed', { agentId: payload.agentId, error: summarizeError(error) });
+        });
       },
     );
     const unsubCancelled = this.runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_CANCELLED' }>>(
@@ -824,7 +826,7 @@ export class WrfcController {
     await this.checkAndRunGatesForAll();
   }
 
-  private onAgentFailed(agentId: string, errorMessage?: string): void {
+  private async onAgentFailed(agentId: string, errorMessage?: string): Promise<void> {
     const chain = this.findChainByAgentId(agentId);
     if (!chain) return;
     // A non-owner child failure on an already-terminal chain must be a no-op:
@@ -850,6 +852,9 @@ export class WrfcController {
       return;
     }
     const reason = errorMessage ?? `Agent ${agentId} failed`;
+    const transportFailure = await isTransportFailureMessage(reason, 'agents.wrfc.transport-retry');
+    // The chain may have finished while the failure was being read.
+    if (isChainTerminal(chain.state)) return;
     // A transport-classified failure of the most recently spawned child gets one
     // bounded automatic retry (respawn same role/task) before the chain is failed
     // outright, see retryTransportFailure. Guarding on lastChildSpawn.agentId
@@ -857,7 +862,7 @@ export class WrfcController {
     // for an agent that isn't the chain's current active child.
     if (
       chain.lastChildSpawn?.agentId === agentId &&
-      isTransportFailureMessage(reason) &&
+      transportFailure &&
       (chain.transportRetryCount ?? 0) < getWrfcTransportRetryLimit(this.configManager)
     ) {
       this.retryTransportFailure(chain, chain.lastChildSpawn, reason);
@@ -869,7 +874,7 @@ export class WrfcController {
     // applied limit + source onto the outcome so a consumer never regexes prose.
     const failedRecord = this.agentManager.getStatus(agentId);
     const isTurnBudget = failedRecord?.failureReason === 'max_turns' || isTurnBudgetExhaustedMessage(reason);
-    const failureKind = isTransportFailureMessage(reason) ? 'transport' : isTurnBudget ? 'max_turns' : 'other';
+    const failureKind = transportFailure ? 'transport' : isTurnBudget ? 'max_turns' : 'other';
     this.failChain(chain, reason, failureKind, failedRecord?.turnBudget);
   }
 

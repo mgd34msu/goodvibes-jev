@@ -262,6 +262,7 @@
     "./transport-realtime/relay-transport": "./transport-realtime/src/relay-transport.ts"
   },
   "dependencies": {
+    "@goodvibes-jev/judgment": "workspace:*",
     "zod": "4.4.3",
     "zustand": "5.0.12"
   },

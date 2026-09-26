@@ -1,6 +1,6 @@
 import { MEMORY_RECORD_NOT_FOUND_CODE } from '@goodvibes-jev/engine/errors';
 import type { DaemonIntegrationRouteHandlers } from './context.js';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import type { DaemonIntegrationRouteContext, IntegrationHelperServiceLike, RuntimeEventDomain } from './integration-route-types.js';
 import {
   createRouteBodySchema,
@@ -162,7 +162,7 @@ export function createDaemonIntegrationRouteHandlers(
         context.memoryEmbeddingRegistry.setDefaultProvider(input.providerId);
         return Response.json(await context.memoryRegistry.doctor());
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     // Canonical-store record CRUD/search. The daemon is the single writer; a client
@@ -176,7 +176,7 @@ export function createDaemonIntegrationRouteHandlers(
         const record = await context.memoryRegistry.add(input);
         return Response.json({ record }, { status: 201 });
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     postMemoryRecordSearch: async (req) => {
@@ -259,7 +259,7 @@ export function createDaemonIntegrationRouteHandlers(
       try {
         return Response.json({ result: await context.memoryRegistry.importBundle(input.bundle) });
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     getLocalAuth: (req) => {
@@ -277,7 +277,7 @@ export function createDaemonIntegrationRouteHandlers(
       try {
         return Response.json({ user: context.userAuth.addUser(input.username, input.password, input.roles) }, { status: 201 });
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     deleteLocalAuthUser: (username, req) => {
@@ -289,7 +289,7 @@ export function createDaemonIntegrationRouteHandlers(
           ? Response.json({ deleted: true })
           : jsonErrorResponse({ error: 'Unknown user' }, { status: 404 });
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     postLocalAuthPassword: async (username, req) => {
@@ -303,7 +303,7 @@ export function createDaemonIntegrationRouteHandlers(
         context.userAuth.rotatePassword(username, input.password);
         return Response.json({ rotated: true });
       } catch (error) {
-        return jsonErrorResponse(error, { status: 400 });
+        return readJsonErrorResponse(error, { status: 400 });
       }
     },
     deleteLocalAuthSession: (sessionId, req) => {

@@ -501,7 +501,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       if (streamSessionStarted && context.runtimeBus) {
         emitStreamEnd(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId });
       }
-      if (isContextSizeExceededError(chatErr) && !contextOverflowRetried) {
+      if (!contextOverflowRetried && await isContextSizeExceededError(chatErr, 'core.turn-loop.context-exceeded')) {
         // The provider rejected the request as exceeding the model's context
         // window (e.g. openai-codex 'context_length_exceeded'). This is the
         // authoritative signal that the effective window is smaller than the

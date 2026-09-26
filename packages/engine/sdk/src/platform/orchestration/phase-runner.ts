@@ -460,9 +460,11 @@ export async function runPhase(
   }
 
   if (outcome.status === 'failed') {
-    const transportFailure = isTransportFailureMessage(outcome.record?.error ?? '');
     const retryLimit = getWrfcTransportRetryLimit(deps.configManager);
-    if (transportFailure && item.transportRetryCount < retryLimit) {
+    if (
+      item.transportRetryCount < retryLimit &&
+      await isTransportFailureMessage(outcome.record?.error ?? '', 'orchestration.phase-runner.transport-retry')
+    ) {
       item.transportRetryCount += 1;
       await worktree.cleanup(record.id).catch(() => undefined);
       await sleep(getWrfcTransportRetryDelayMs(deps.configManager));

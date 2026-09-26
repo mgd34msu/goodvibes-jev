@@ -181,7 +181,7 @@ export {
   handleRemotePeerWorkPull,
   handleRemotePeerWorkComplete,
 } from './remote-routes.js';
-export { buildErrorResponseBody, jsonErrorResponse, summarizeErrorForRecord } from './error-response.js';
+export { buildErrorResponseBody, jsonErrorResponse, readErrorResponseBody, readJsonErrorResponse, summarizeErrorForRecord } from './error-response.js';
 export {
   decodeCursor,
   encodeCursor,

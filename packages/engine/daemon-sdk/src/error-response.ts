@@ -1,8 +1,14 @@
 import {
+  categoryDependsOnWording,
+  categoryForCode,
+  categoryForStatus,
   DaemonErrorCategory,
   type DaemonErrorSource,
+  type FailureConclusions,
   GoodVibesSdkError,
   isStructuredDaemonErrorBody,
+  readFailure,
+  settleCategory,
   type StructuredDaemonErrorBody,
 } from '@goodvibes-jev/engine/errors';
 
@@ -21,6 +27,11 @@ export interface JsonErrorResponseOptions {
    * Pass `true` only for admin/operator-authenticated callers.
    */
   readonly isPrivileged?: boolean | undefined;
+  /**
+   * What Jev read in the error's wording. Without it the category comes from
+   * structure alone; {@link readErrorResponseBody} supplies it.
+   */
+  readonly failure?: FailureConclusions | undefined;
 }
 
 interface StructuredErrorLike {
@@ -126,86 +137,21 @@ function readMessage(error: unknown, fallbackMessage?: string): string {
 }
 
 /**
- * Wording a spent account is reported with. Kept identical to the platform's
- * own copies (`platform/types/errors.ts`, `platform/utils/error-display.ts`) so
- * the daemon wire body and the platform agree on what "out of credit" is.
+ * The category structure fixes: an explicit category, an errno code in the
+ * message, the HTTP status, a structured errno code, or a message that is
+ * exactly an errno code. 400 and 429 stay provisional: providers report a
+ * spent account under both, and `rate_limit` reads as retryable, so a caller
+ * would wait out a condition that never clears. Whether one is really billing
+ * is read from the wording (see settleCategory in the errors package).
  */
-const BILLING_MESSAGE_PATTERN = /credit balance|insufficient[_\s-](?:credit|credits|quota|balance|funds)|out of credits|purchase credits|no credits|payment required|plans?[_\s&-]+billing|billing details/;
-
-/**
- * Category implied by the transport, refined by what the response SAID.
- *
- * 400 and 429 are deliberately not decided on the status alone. Providers
- * report a spent account under both, Anthropic returns 400 with "credit
- * balance is too low", and several return 429 for exhausted credit rather than
- * throughput, so a status-only rule labels a billing failure `bad_request` or
- * `rate_limit`. That matters beyond the wording: `rate_limit` reads as
- * retryable, so a caller waits out a condition that never clears.
- *
- * The message is consulted only for those two statuses; every other status is
- * unambiguous on its own.
- */
-function inferCategory(message: string, status?: number, code?: string): DaemonErrorCategory {
-  const msg = (message.length > MAX_INFER_MESSAGE_LENGTH
-    ? message.slice(0, MAX_INFER_MESSAGE_LENGTH)
-    : message).toLowerCase();
-  if (status === 401) return DaemonErrorCategory.AUTHENTICATION;
-  if (status === 402) return DaemonErrorCategory.BILLING;
-  if (status === 403) return DaemonErrorCategory.AUTHORIZATION;
-  if (status === 404) return DaemonErrorCategory.NOT_FOUND;
-  if (status === 408 || status === 504) return DaemonErrorCategory.TIMEOUT;
-  if (status === 429) return BILLING_MESSAGE_PATTERN.test(msg) ? DaemonErrorCategory.BILLING : DaemonErrorCategory.RATE_LIMIT;
-  if (status === 400) return BILLING_MESSAGE_PATTERN.test(msg) ? DaemonErrorCategory.BILLING : DaemonErrorCategory.BAD_REQUEST;
-  if (status !== undefined && status >= 500) return DaemonErrorCategory.SERVICE;
-
-  const normalizedCode = code?.toUpperCase();
-  if (normalizedCode === 'ECONNREFUSED'
-    || normalizedCode === 'ENOTFOUND'
-    || normalizedCode === 'EAI_AGAIN'
-    || normalizedCode === 'EHOSTUNREACH'
-    || normalizedCode === 'ECONNRESET') {
-    return DaemonErrorCategory.NETWORK;
-  }
-  if (normalizedCode === 'ETIMEDOUT' || normalizedCode === 'ECONNABORTED') return DaemonErrorCategory.TIMEOUT;
-  return DaemonErrorCategory.UNKNOWN;
-}
-
-const MAX_INFER_MESSAGE_LENGTH = 2_000;
-
-// fast-path exact-code lookup to avoid regex on the hot path for
-// well-known error codes that appear frequently in daemon responses.
-const FAST_PATH_CODE_CATEGORIES: ReadonlyMap<string, DaemonErrorCategory> = new Map([
-  ['ECONNREFUSED', DaemonErrorCategory.NETWORK],
-  ['ENOTFOUND', DaemonErrorCategory.NETWORK],
-  ['EAI_AGAIN', DaemonErrorCategory.NETWORK],
-  ['EHOSTUNREACH', DaemonErrorCategory.NETWORK],
-  ['ECONNRESET', DaemonErrorCategory.NETWORK],
-  ['ETIMEDOUT', DaemonErrorCategory.TIMEOUT],
-  ['ECONNABORTED', DaemonErrorCategory.TIMEOUT],
-]);
-
-function inferCategoryFromMessage(message: string): DaemonErrorCategory {
-  // check exact code match before falling through to regex.
-  const fastPath = FAST_PATH_CODE_CATEGORIES.get(message.trim().toUpperCase());
-  if (fastPath !== undefined) return fastPath;
-  // Cap length before lowercasing to avoid regex on unbounded strings.
-  const msg = message.length > MAX_INFER_MESSAGE_LENGTH
-    ? message.slice(0, MAX_INFER_MESSAGE_LENGTH).toLowerCase()
-    : message.toLowerCase();
-  // Order matters: credential/authentication patterns are intentionally checked
-  // before generic bad-request wording so provider credential failures remain
-  // actionable for clients.
-  // Use word boundaries to avoid false positives on 'authority', 'author', etc.
-  if (/api[_\s-]?key|\bauth\b|\btoken\b|credential|\bjwt\b|unauthoriz/.test(msg)) return DaemonErrorCategory.AUTHENTICATION;
-  if (/forbidden|access denied|permission denied|not allowed/.test(msg)) return DaemonErrorCategory.AUTHORIZATION;
-  if (/billing|payment required|credits?|quota|depleted|insufficient balance/.test(msg)) return DaemonErrorCategory.BILLING;
-  if (/rate.limit|too many requests|throttl/.test(msg)) return DaemonErrorCategory.RATE_LIMIT;
-  if (/timed?[\s_-]?out|etimedout|deadline exceeded/.test(msg)) return DaemonErrorCategory.TIMEOUT;
-  if (/econnrefused|enotfound|ehostunreach|econnreset|socket hang up|fetch failed|dns|tls|ssl|certificate/.test(msg)) return DaemonErrorCategory.NETWORK;
-  if (/not found|unknown model|no such model|unsupported model|unknown endpoint/.test(msg)) return DaemonErrorCategory.NOT_FOUND;
-  if (/invalid request|bad request|invalid argument|schema|malformed|unsupported parameter/.test(msg)) return DaemonErrorCategory.BAD_REQUEST;
-  if (/invalid json|parse|no response body|unexpected eof|stream ended|malformed response/.test(msg)) return DaemonErrorCategory.PROTOCOL;
-  return DaemonErrorCategory.UNKNOWN;
+function fixedCategory(
+  explicit: DaemonErrorCategory | undefined,
+  network: { readonly category: DaemonErrorCategory } | undefined,
+  status: number | undefined,
+  code: string | undefined,
+  message: string,
+): DaemonErrorCategory | undefined {
+  return explicit ?? network?.category ?? categoryForStatus(status) ?? categoryForCode(code) ?? categoryForCode(message);
 }
 
 /**
@@ -375,19 +321,18 @@ export function buildErrorResponseBody(
     const phase = error.phase;
     const requestId = error.requestId;
     const network = getNetworkErrorMessage(message, provider);
-    const inferred = inferCategory(message, status, error.code ?? providerCode);
-    const messageCategory = inferred === DaemonErrorCategory.UNKNOWN
-      ? inferCategoryFromMessage(message)
-      : inferred;
-    const category = normalizeCategory(error.category) ?? network?.category ?? messageCategory;
+    const fixed = fixedCategory(normalizeCategory(error.category), network, status, error.code ?? providerCode, message);
     const providerAttributed = isProviderAttributed({
-      source: normalizeSource(error.source),
+      source: normalizeSource(error.source) ?? options.source,
       provider,
       providerCode,
       providerType: error.providerType,
     });
-    const hint = (error instanceof GoodVibesSdkError ? error.hint : error.hint ?? error.guidance)
-      ?? inferHint(category, status, providerAttributed);
+    const category = settleCategory(fixed, status, providerAttributed, options.failure);
+    // A reading that turned a provisional category into billing replaces the
+    // hint the error carried for that provisional category.
+    const ownHint = category === fixed ? (error instanceof GoodVibesSdkError ? error.hint : error.hint ?? error.guidance) : undefined;
+    const hint = ownHint ?? inferHint(category, status, providerAttributed);
     const summary = buildSummary(network?.summary ?? message, {
       requestId,
       providerCode,
@@ -428,15 +373,11 @@ export function buildErrorResponseBody(
     const retryAfterMs = readNumberProperty(error.retryAfterMs);
     const message = error.error.trim() || options.fallbackMessage || 'Unexpected error';
     const network = getNetworkErrorMessage(message, provider);
-    const inferred = inferCategory(message, status, code ?? providerCode);
-    const messageCategory = inferred === DaemonErrorCategory.UNKNOWN
-      ? inferCategoryFromMessage(message)
-      : inferred;
-    const category = normalizeCategory(readStringProperty(error.category)) ?? network?.category ?? messageCategory;
-    const providerAttributed = isProviderAttributed({ source, provider, providerCode, providerType });
-    const hint = readStringProperty(error.hint)
-      ?? readStringProperty(error.guidance)
-      ?? inferHint(category, status, providerAttributed);
+    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), network, status, code ?? providerCode, message);
+    const providerAttributed = isProviderAttributed({ source: source ?? options.source, provider, providerCode, providerType });
+    const category = settleCategory(fixed, status, providerAttributed, options.failure);
+    const ownHint = category === fixed ? readStringProperty(error.hint) ?? readStringProperty(error.guidance) : undefined;
+    const hint = ownHint ?? inferHint(category, status, providerAttributed);
     return {
       error: buildSummary(network?.summary ?? message, { requestId, providerCode, phase }),
       ...(hint ? { hint } : {}),
@@ -457,11 +398,7 @@ export function buildErrorResponseBody(
   }
   const message = readMessage(error, options.fallbackMessage);
   const network = getNetworkErrorMessage(message);
-  const inferred = inferCategory(message, options.status);
-  const messageCategory = inferred === DaemonErrorCategory.UNKNOWN
-    ? inferCategoryFromMessage(message)
-    : inferred;
-  const category = network?.category ?? messageCategory;
+  const category = settleCategory(fixedCategory(undefined, network, options.status, undefined, message), options.status, options.source === 'provider', options.failure);
   const hint = inferHint(category, options.status, options.source === 'provider');
   return {
     error: network?.summary ?? message,
@@ -472,16 +409,101 @@ export function buildErrorResponseBody(
   };
 }
 
+/** What a reading of the error would be about, and whether structure leaves the category open. */
+interface Wording {
+  readonly message: string;
+  readonly status: number | undefined;
+  readonly code: string | undefined;
+  readonly errorName: string | undefined;
+  readonly open: boolean;
+}
+
+function wordingOf(error: unknown, options: JsonErrorResponseOptions): Wording | undefined {
+  if (isStructuredDaemonErrorBody(error)) return undefined;
+  if (error instanceof GoodVibesSdkError || isStructuredErrorLike(error)) {
+    const status = error instanceof GoodVibesSdkError ? error.status : error.status ?? error.statusCode;
+    const code = error.code ?? error.providerCode;
+    const fixed = fixedCategory(normalizeCategory(error.category), getNetworkErrorMessage(error.message, error.provider), status, code, error.message);
+    const fromProvider = isProviderAttributed({
+      source: normalizeSource(error.source) ?? options.source,
+      provider: error.provider,
+      providerCode: error.providerCode,
+      providerType: error.providerType,
+    });
+    return { message: error.message, status, code, errorName: error instanceof Error ? error.name : undefined, open: categoryDependsOnWording(fixed, status, fromProvider) };
+  }
+  if (isErrorPropertyLike(error)) {
+    const rawStatus = readNumberProperty(error.status) ?? readNumberProperty(error.statusCode);
+    const status = rawStatus !== undefined && rawStatus >= 100 && rawStatus <= 599 ? rawStatus : options.status;
+    const code = readStringProperty(error.code) ?? readStringProperty(error.providerCode);
+    const message = error.error.trim() || options.fallbackMessage || 'Unexpected error';
+    const provider = readStringProperty(error.provider);
+    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), getNetworkErrorMessage(message, provider), status, code, message);
+    const fromProvider = isProviderAttributed({
+      source: normalizeSource(readStringProperty(error.source)) ?? options.source,
+      provider,
+      providerCode: readStringProperty(error.providerCode),
+      providerType: readStringProperty(error.providerType),
+    });
+    return { message, status, code, errorName: undefined, open: categoryDependsOnWording(fixed, status, fromProvider) };
+  }
+  const message = readMessage(error, options.fallbackMessage);
+  const fixed = fixedCategory(undefined, getNetworkErrorMessage(message), options.status, undefined, message);
+  return {
+    message,
+    status: options.status,
+    code: undefined,
+    errorName: error instanceof Error ? error.name : undefined,
+    open: categoryDependsOnWording(fixed, options.status, options.source === 'provider'),
+  };
+}
+
+/**
+ * {@link buildErrorResponseBody} with the error's wording read by Jev when
+ * structure leaves the category open (no category from status, code or the
+ * error itself, or a 400 or 429 that may be a spent account). Otherwise no
+ * request is made.
+ */
+export async function readErrorResponseBody(
+  error: unknown,
+  options: JsonErrorResponseOptions & { readonly site?: string | undefined } = {},
+): Promise<StructuredDaemonErrorBody> {
+  const wording = wordingOf(error, options);
+  if (wording === undefined || !wording.open) return buildErrorResponseBody(error, options);
+  const failure = await readFailure(
+    { message: wording.message, status: wording.status, code: wording.code, errorName: wording.errorName },
+    options.site ?? 'daemon.error-response',
+  );
+  return buildErrorResponseBody(error, { ...options, failure });
+}
+
 /**
  * Produce a JSON `Response` from any thrown value, normalizing to a
- * `StructuredDaemonErrorBody` before writing the wire response.
+ * `StructuredDaemonErrorBody` before writing the wire response. The category
+ * comes from structure (the error's own category, status, errno code); a
+ * caught error whose category depends on its wording goes through
+ * {@link readJsonErrorResponse} instead.
  *
  * @param error - The caught value (any type).
  * @param options - Optional status, fallback message, source, and privilege flag.
  * @returns A `Response` with `Content-Type: application/json` and the resolved status.
  */
 export function jsonErrorResponse(error: unknown, options: JsonErrorResponseOptions = {}): Response {
-  const body = buildErrorResponseBody(error, options);
+  return responseFor(buildErrorResponseBody(error, options), options);
+}
+
+/**
+ * {@link jsonErrorResponse} for a caught error: when structure leaves the
+ * category open, Jev reads the wording first (see {@link readErrorResponseBody}).
+ */
+export async function readJsonErrorResponse(
+  error: unknown,
+  options: JsonErrorResponseOptions & { readonly site?: string | undefined } = {},
+): Promise<Response> {
+  return responseFor(await readErrorResponseBody(error, options), options);
+}
+
+function responseFor(body: StructuredDaemonErrorBody, options: JsonErrorResponseOptions): Response {
   const status = options.status ?? body.status ?? 500;
   return Response.json(
     { ...body, status },

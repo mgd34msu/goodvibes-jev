@@ -1,7 +1,7 @@
 import type { DaemonRuntimeAutomationRouteHandlers } from './context.js';
 import type { DaemonRuntimeRouteContext } from './runtime-route-types.js';
 import { withAdmin } from './auth-helpers.js';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import { hasPaginationParams, paginateItems } from './pagination.js';
 import {
   createRouteBodySchema,
@@ -132,7 +132,7 @@ async function handlePostSchedule(context: DaemonRuntimeRouteContext, req: Reque
     });
     return Response.json(job, { status: 201 });
   } catch (e: unknown) {
-    return jsonErrorResponse(e, { status: 400, fallbackMessage: 'Failed to create schedule' });
+    return readJsonErrorResponse(e, { status: 400, fallbackMessage: 'Failed to create schedule' });
   }
 }
 
@@ -155,7 +155,7 @@ async function handlePatchSchedule(context: DaemonRuntimeRouteContext, id: strin
       ? Response.json(updated)
       : jsonErrorResponse({ error: `Schedule not found: ${id}` }, { status: 404 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to update schedule' });
+    return readJsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to update schedule' });
   }
 }
 
@@ -180,7 +180,7 @@ async function handleRunScheduleNow(context: DaemonRuntimeRouteContext, id: stri
     const run = await context.automationManager.runNow(job.id);
     return Response.json({ jobId: job.id, runId: run.id, agentId: run.agentId, status: run.status });
   } catch (e: unknown) {
-    return jsonErrorResponse(e, { status: 500, fallbackMessage: 'Failed to run schedule' });
+    return readJsonErrorResponse(e, { status: 500, fallbackMessage: 'Failed to run schedule' });
   }
 }
 
@@ -218,7 +218,7 @@ async function handleAutomationRunAction(
     return context.recordApiResponse(
       req,
       `/api/automation/runs/${runId}/${action}`,
-      jsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to retry automation run' }),
+      await readJsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to retry automation run' }),
     );
   }
 }

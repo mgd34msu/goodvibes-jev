@@ -376,8 +376,8 @@ export class SyntheticProvider implements LLMProvider {
         // and billing is tested first so a credit failure that arrives as a
         // 400 (Anthropic's shape) rotates here instead of falling into the
         // "malformed request, stop trying" branch below.
-        const outOfCredit = isBillingOrCreditError(err);
-        if (outOfCredit || isRateLimitOrQuotaError(err)) {
+        const outOfCredit = await isBillingOrCreditError(err, 'providers.synthetic.rotate');
+        if (outOfCredit || await isRateLimitOrQuotaError(err, 'providers.synthetic.rotate')) {
           // Record cooldown
           const cooldownMs = (err instanceof ProviderError && err.retryAfterMs)
             ? err.retryAfterMs

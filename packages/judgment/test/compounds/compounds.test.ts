@@ -12,7 +12,7 @@ import {
   verifyThenEscalate,
   yesNo,
 } from '../../src/index.ts';
-import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '../fake-port.ts';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '../../src/testing/fake-port.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 

@@ -1,5 +1,5 @@
 import type { DaemonRemoteManagementRouteHandlers } from './context.js';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import {
   createRouteBodySchema,
   createRouteBodySchemaRegistry,
@@ -557,7 +557,7 @@ async function handleInvokeRemotePeer(context: DaemonRemoteRouteContext, peerId:
     });
     return Response.json(invoked, { status: 202 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 404 });
+    return readJsonErrorResponse(error, { status: 404 });
   }
 }
 

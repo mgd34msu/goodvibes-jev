@@ -3,7 +3,7 @@ import { mkdtemp, open, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 
 export type ArtifactUploadFieldMap = Record<string, unknown>;
 
@@ -257,7 +257,7 @@ async function createArtifactFromStreamingMultipart(
     // the connection is left healthy for reuse regardless of which error
     // this is.
     const status = error instanceof GoodVibesSdkError && error.status ? error.status : 400;
-    return jsonErrorResponse(error, { status });
+    return readJsonErrorResponse(error, { status });
   } finally {
     await spooled?.cleanup();
   }

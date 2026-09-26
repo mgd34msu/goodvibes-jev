@@ -4,7 +4,7 @@ import type { ToolRegistry } from '../tools/registry.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
 import { ProviderError, isNonTransientProviderFailure } from '../types/errors.js';
 import type { HookEvent, HookResult } from '../hooks/types.js';
-import { formatError, summarizeError } from '../utils/error-display.js';
+import { readFormattedError, summarizeError } from '../utils/error-display.js';
 import type { ModelDefinition } from '../providers/registry.js';
 import type { ContentPart } from '../providers/interface.js';
 import { notifyCompletion } from '../utils/notify.js';
@@ -647,7 +647,7 @@ export class Orchestrator {
       // --- Phase 3: Post-turn reconciliation ---
       await this.runTurnReconcile(turnId, configManager, providerRegistry);
     } catch (err: unknown) {
-      this.handleTurnError(err, turnId, configManager, providerRegistry);
+      await this.handleTurnError(err, turnId, configManager, providerRegistry);
     } finally {
       this.finalizeTurn(turnStartTime, submissionKey, turnId, configManager);
     }
@@ -840,12 +840,12 @@ export class Orchestrator {
   }
 
   /** Catch handler: route to abort path or error path. */
-  private handleTurnError(
+  private async handleTurnError(
     err: unknown,
     turnId: string,
     configManager: ReturnType<typeof requireConfigManager>,
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
-  ): void {
+  ): Promise<void> {
     if (this.abortController?.signal.aborted) {
       // Clean up streaming block if one was active when aborted
       if (this.isStreaming) {
@@ -870,7 +870,8 @@ export class Orchestrator {
     }
 
     const error = err instanceof Error ? err : new Error(summarizeError(err));
-    const msg = formatError(error, {
+    const msg = await readFormattedError(error, {
+      site: 'core.orchestrator.turn-error',
       ...(error instanceof ProviderError
         ? { provider: providerRegistry.getCurrentModel().provider, source: 'provider' as const }
         : {}),
@@ -879,7 +880,7 @@ export class Orchestrator {
     this.requestRender();
     // Graceful degradation, suggest alternative when provider fails non-transiently
     const autoSwitch = configManager.get('behavior.suggestAlternativeOnProviderFail') as boolean;
-    if (autoSwitch && isNonTransientProviderFailure(err)) {
+    if (autoSwitch && await isNonTransientProviderFailure(err, 'core.orchestrator.suggest-alternative')) {
       const currentModel = providerRegistry.getCurrentModel();
       const alt = currentModel ? providerRegistry.findAlternativeModel(currentModel.registryKey) : null;
       if (alt) {

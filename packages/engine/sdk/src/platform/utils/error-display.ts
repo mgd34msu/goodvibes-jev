@@ -1,16 +1,23 @@
+import {
+  categoryDependsOnWording,
+  categoryForStatus,
+  readFailure,
+  settleCategory,
+  type FailureConclusions,
+} from '@goodvibes-jev/engine/errors';
 import { AppError, ProviderError, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
 import type { StructuredDaemonErrorBody } from '../types/daemon-error-contract.js';
 import { redactSensitiveData } from './redaction.js';
 
 const MAX_ERROR_LENGTH = 240;
 
-// NOTE: The error classifier below (NETWORK_ERROR_PATTERNS, inferCategory, inferHint,
-// buildSummary, getNetworkErrorMessage) is intentionally duplicated from
-// packages/daemon-sdk/src/error-response.ts. The two copies operate on different error
-// hierarchies (platform AppError/NormalizedError vs daemon GoodVibesSdkError) and are
-// deliberately NOT extracted into @pellux/goodvibes-errors in this patch to avoid a
-// risky cross-package move in a published library. Keep this classifier in sync with
-// that twin so the two cannot drift further.
+// NOTE: Category rules (status and errno tables, the billing override, the Jev
+// failure reading) live once in the errors package and are shared with
+// daemon-sdk/src/error-response.ts. The summary and hint helpers below
+// (NETWORK_ERROR_PATTERNS, inferHint, buildSummary, getNetworkErrorMessage) are
+// still duplicated there because the two copies format different error
+// hierarchies (platform AppError/NormalizedError vs daemon GoodVibesSdkError);
+// keep them in sync.
 const NETWORK_ERROR_PATTERNS: Array<{ pattern: RegExp; category: PlatformErrorCategory; message: (provider?: string) => string }> = [
   {
     pattern: /ECONNREFUSED/i,
@@ -52,6 +59,11 @@ export interface ErrorNormalizationOptions {
   readonly provider?: string | undefined;
   readonly fallbackMessage?: string | undefined;
   readonly source?: PlatformErrorSource | undefined;
+  /**
+   * What Jev read in the error's wording. Without it, category and source
+   * come from structure alone; {@link readNormalizedError} supplies it.
+   */
+  readonly failure?: FailureConclusions | undefined;
 }
 
 export interface ProviderErrorNormalizationOptions extends ProviderErrorOptions {
@@ -110,39 +122,6 @@ function cleanMessage(msg: string, fallbackMessage?: string): string {
   return fallbackMessage ?? 'Unexpected error';
 }
 
-/**
- * "This account cannot pay for the call", in the wording providers actually
- * use. Anthropic returns it with a 400, OpenAI with a 429 `insufficient_quota`
- *, so the status code alone cannot tell a spent account from a malformed
- * request or a throughput limit. Keep in sync with the twin in
- * types/errors.ts.
- */
-const BILLING_MESSAGE_PATTERN = /credit balance|insufficient[_\s-](?:credit|credits|quota|balance|funds)|out of credits|purchase credits|no credits|payment required|plans?[_\s&-]+billing|billing details/;
-
-function inferCategory(message: string, statusCode?: number): PlatformErrorCategory {
-  const msg = message.toLowerCase();
-  if (statusCode === 401) return 'authentication';
-  if (statusCode === 402) return 'billing';
-  if (statusCode === 403) return 'authorization';
-  if (statusCode === 404) return 'not_found';
-  if (statusCode === 408 || statusCode === 504) return 'timeout';
-  if (statusCode === 429) return BILLING_MESSAGE_PATTERN.test(msg) ? 'billing' : 'rate_limit';
-  if (statusCode === 400) return BILLING_MESSAGE_PATTERN.test(msg) ? 'billing' : 'bad_request';
-  if (statusCode !== undefined && statusCode >= 500) return 'service';
-
-  // Word boundaries avoid false positives on "authorization"/"author"/"authority" (matches the daemon-sdk twin).
-  if (/api[_\s-]?key|\bauth\b|\btoken\b|credential|\bjwt\b|unauthoriz/.test(msg)) return 'authentication';
-  if (/forbidden|access denied|permission denied|not allowed/.test(msg)) return 'authorization';
-  if (/billing|payment required|credits?|quota|depleted|insufficient balance/.test(msg)) return 'billing';
-  if (/rate.limit|too many requests|throttl/.test(msg)) return 'rate_limit';
-  if (/timed?[\s_-]?out|etimedout|deadline exceeded/.test(msg)) return 'timeout';
-  if (/econnrefused|enotfound|ehostunreach|econnreset|socket hang up|fetch failed|dns|tls|ssl|certificate/.test(msg)) return 'network';
-  if (/not found|unknown model|no such model|unsupported model|unknown endpoint/.test(msg)) return 'not_found';
-  if (/invalid request|bad request|invalid argument|schema|malformed|unsupported parameter/.test(msg)) return 'bad_request';
-  if (/invalid json|parse|no response body|unexpected eof|stream ended|malformed response/.test(msg)) return 'protocol';
-  return 'unknown';
-}
-
 function inferHint(category: PlatformErrorCategory, statusCode?: number): string | undefined {
   switch (category) {
     case 'rate_limit':
@@ -172,10 +151,17 @@ function inferHint(category: PlatformErrorCategory, statusCode?: number): string
   }
 }
 
-function inferSource(error: unknown, override?: PlatformErrorSource): PlatformErrorSource {
+/** Whether the source is still open once structure has spoken: only a TypeError with no stated source. */
+function sourceDependsOnWording(error: unknown, override?: PlatformErrorSource): boolean {
+  if (override || (error instanceof AppError && error.source)) return false;
+  return error instanceof Error && error.name === 'TypeError';
+}
+
+function inferSource(error: unknown, override: PlatformErrorSource | undefined, failure: FailureConclusions | undefined): PlatformErrorSource {
   if (override) return override;
   if (error instanceof AppError && error.source) return error.source as PlatformErrorSource;
-  if (error instanceof Error && error.name === 'TypeError' && /fetch/i.test(error.message)) return 'transport';
+  // A TypeError that failed before any response came back is the fetch transport failing.
+  if (error instanceof Error && error.name === 'TypeError' && failure?.beforeResponse === true) return 'transport';
   return 'unknown';
 }
 
@@ -228,7 +214,18 @@ export function redactedErrorMessage(error: unknown): string {
   return redactSensitiveData(extractErrorMessage(error));
 }
 
-export function normalizeError(error: unknown, options: ErrorNormalizationOptions = {}): NormalizedError {
+interface ErrorStructure {
+  readonly rawMessage: string;
+  readonly statusCode: number | undefined;
+  readonly provider: string | undefined;
+  readonly network: { category: PlatformErrorCategory; summary: string } | undefined;
+  /** The category structure fixes: the error's own, an errno code in the message, or the status. */
+  readonly fixed: PlatformErrorCategory | undefined;
+  /** Whether a provider produced the error; only a provider's 400 or 429 can turn out to be billing. */
+  readonly fromProvider: boolean;
+}
+
+function structureOf(error: unknown, options: ErrorNormalizationOptions): ErrorStructure {
   // Redact Bearer tokens and API keys before any further processing.
   const rawMessage = redactSensitiveData(extractErrorMessage(error));
   const statusCode = error instanceof AppError
@@ -238,20 +235,30 @@ export function normalizeError(error: unknown, options: ErrorNormalizationOption
       : error && typeof error === 'object' && 'status' in error && typeof (error as { status?: unknown }).status === 'number'
         ? (error as { status: number }).status
         : undefined;
-
   const provider = options.provider ?? (error instanceof AppError ? error.provider : undefined);
-  const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage);
   const network = getNetworkErrorMessage(rawMessage, provider);
-  const category = (error instanceof AppError && error.category
-    ? error.category
-    : network?.category ?? inferCategory(cleanedMessage, statusCode)) as PlatformErrorCategory;
-  const source = inferSource(error, options.source);
+  const own = error instanceof AppError && error.category ? error.category as PlatformErrorCategory : undefined;
+  const fixed = own && own !== 'unknown' ? own : network?.category ?? categoryForStatus(statusCode);
+  const fromProvider = error instanceof ProviderError
+    || options.source === 'provider'
+    || (error instanceof AppError && error.source === 'provider')
+    || provider !== undefined;
+  return { rawMessage, statusCode, provider, network, fixed, fromProvider };
+}
+
+export function normalizeError(error: unknown, options: ErrorNormalizationOptions = {}): NormalizedError {
+  const { rawMessage, statusCode, provider, network, fixed, fromProvider } = structureOf(error, options);
+  const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage);
+  const category = settleCategory(fixed, statusCode, fromProvider, options.failure) as PlatformErrorCategory;
+  const source = inferSource(error, options.source, options.failure);
   const summary = buildSummary(network?.summary ?? cleanedMessage, {
     requestId: error instanceof AppError ? error.requestId : undefined,
     providerCode: error instanceof AppError ? error.providerCode : undefined,
     phase: error instanceof AppError ? error.phase : undefined,
   });
-  const hint = error instanceof AppError && error.guidance
+  // A reading that turned a provisional category into billing also replaces
+  // the guidance the error was built with for that provisional category.
+  const hint = error instanceof AppError && error.guidance && category === fixed
     ? error.guidance
     : inferHint(category, statusCode);
 
@@ -275,12 +282,44 @@ export function normalizeError(error: unknown, options: ErrorNormalizationOption
   };
 }
 
+/**
+ * {@link normalizeError} with the error's wording read by Jev wherever the
+ * wording can change the category or source. When structure already settles
+ * both, no request is made.
+ */
+export async function readNormalizedError(
+  error: unknown,
+  options: ErrorNormalizationOptions & { readonly site: string },
+): Promise<NormalizedError> {
+  const { rawMessage, statusCode, fixed, fromProvider } = structureOf(error, options);
+  const wordingMatters = categoryDependsOnWording(fixed, statusCode, fromProvider) || sourceDependsOnWording(error, options.source);
+  if (!wordingMatters || rawMessage.trim().length === 0) return normalizeError(error, options);
+  const failure = await readFailure({
+    message: rawMessage,
+    status: statusCode,
+    code: error instanceof AppError ? error.providerCode : undefined,
+    errorName: error instanceof Error ? error.name : undefined,
+  }, options.site);
+  return normalizeError(error, { ...options, failure });
+}
+
 export function summarizeError(error: unknown, options: ErrorNormalizationOptions = {}): string {
   return normalizeError(error, options).summary;
 }
 
 export function formatError(error: unknown, options: ErrorNormalizationOptions = {}): string {
-  const normalized = normalizeError(error, options);
+  return formatNormalized(normalizeError(error, options));
+}
+
+/** {@link formatError} with the wording read by Jev where it matters (see {@link readNormalizedError}). */
+export async function readFormattedError(
+  error: unknown,
+  options: ErrorNormalizationOptions & { readonly site: string },
+): Promise<string> {
+  return formatNormalized(await readNormalizedError(error, options));
+}
+
+function formatNormalized(normalized: NormalizedError): string {
   const lines = [normalized.summary];
   if (normalized.hint) {
     lines.push(`  Hint: ${normalized.hint}`);

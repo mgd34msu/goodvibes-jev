@@ -1,6 +1,6 @@
 import type { DaemonMediaRouteHandlers } from './context.js';
 import { resolvePrivateHostFetchOptions } from './http-policy.js';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import { createArtifactFromUploadRequest, isArtifactUploadRequest } from './artifact-upload.js';
 import {
   createRouteBodySchema,
@@ -214,7 +214,7 @@ async function handleVoiceTts(context: DaemonMediaRouteContext, req: Request): P
         { status: 409 },
       );
     }
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -235,7 +235,7 @@ async function handleVoiceTtsStream(context: DaemonMediaRouteContext, req: Reque
         { status: 409 },
       );
     }
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -300,7 +300,7 @@ async function handleVoiceStt(context: DaemonMediaRouteContext, req: Request): P
         { status: 409 },
       );
     }
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -329,7 +329,7 @@ async function handleVoiceRealtimeSession(context: DaemonMediaRouteContext, req:
         { status: 409 },
       );
     }
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -392,7 +392,7 @@ async function handleArtifactCreate(context: DaemonMediaRouteContext, req: Reque
     });
     return Response.json({ artifact }, { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -413,7 +413,7 @@ async function handleArtifactContent(context: DaemonMediaRouteContext, artifactI
     }
     return new Response(bytes as BodyInit, { status: 200, headers });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 404 });
+    return readJsonErrorResponse(error, { status: 404 });
   }
 }
 
@@ -427,7 +427,7 @@ async function handleWebSearch(context: DaemonMediaRouteContext, req: Request): 
   try {
     return Response.json(await context.webSearchService.search(input));
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -530,7 +530,7 @@ async function handleMultimodalAnalyze(context: DaemonMediaRouteContext, req: Re
       ...(writebackResult ? { writeback: writebackResult } : {}),
     }, { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -572,6 +572,6 @@ async function handleMultimodalWriteback(context: DaemonMediaRouteContext, req: 
     );
     return Response.json({ writeback }, { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }

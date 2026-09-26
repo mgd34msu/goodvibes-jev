@@ -4,7 +4,7 @@ import {
   resolvePrivateHostFetchOptions,
 } from './http-policy.js';
 import { GoodVibesSdkError, DaemonErrorCategory } from '@goodvibes-jev/engine/errors';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import { paginateItems, hasPaginationParams } from './pagination.js';
 import { createArtifactFromUploadRequest, isArtifactUploadRequest } from './artifact-upload.js';
 import {
@@ -426,7 +426,7 @@ function readKnowledgeSchedule(
         throw new GoodVibesSdkError('Invalid schedule kind. Expected schedule.kind to be one of: "at", "every", or "cron".', { category: DaemonErrorCategory.BAD_REQUEST, source: 'contract', recoverable: false });
     }
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -502,7 +502,7 @@ async function handleKnowledgeGraphql(context: DaemonKnowledgeRouteContext, req:
   try {
     access = context.inspectGraphqlAccess(parsed.query, parsed.operationName);
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 
   const scopeDenied = buildMissingScopeBody('knowledge GraphQL operation', access.requiredScopes, principal.scopes);
@@ -564,7 +564,7 @@ async function handleKnowledgeIngestUrl(context: DaemonKnowledgeRouteContext, re
       ...(typeof body.metadata === 'object' && body.metadata !== null ? { metadata: body.metadata as Record<string, unknown> } : {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -581,7 +581,7 @@ async function handleKnowledgeIngestArtifact(context: DaemonKnowledgeRouteContex
         artifactId: uploaded.artifactId,
       }), { status: 201 });
     } catch (error) {
-      return jsonErrorResponse(error, { status: 400 });
+      return readJsonErrorResponse(error, { status: 400 });
     }
   }
 
@@ -605,7 +605,7 @@ async function handleKnowledgeIngestArtifact(context: DaemonKnowledgeRouteContex
       ...(typeof body.metadata === 'object' && body.metadata !== null ? { metadata: body.metadata as Record<string, unknown> } : {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -632,7 +632,7 @@ async function handleKnowledgeSyncBrowserHistory(context: DaemonKnowledgeRouteCo
       ...(sourceKinds?.length ? { sourceKinds } : {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -652,7 +652,7 @@ async function handleKnowledgeImportBookmarks(context: DaemonKnowledgeRouteConte
       ...(privateHostFetchOptions ?? {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -672,7 +672,7 @@ async function handleKnowledgeImportUrls(context: DaemonKnowledgeRouteContext, r
       ...(privateHostFetchOptions ?? {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -695,7 +695,7 @@ async function handleKnowledgeIngestConnector(context: DaemonKnowledgeRouteConte
       ...(privateHostFetchOptions ?? {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -756,7 +756,7 @@ async function handleKnowledgeReviewIssue(context: DaemonKnowledgeRouteContext, 
       || ((error as { code?: unknown }).code === 'NOT_FOUND'
         && (error as { status?: unknown }).status === 404)
     );
-    return jsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
+    return readJsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
   }
 }
 
@@ -790,7 +790,7 @@ async function handleKnowledgeDecideCandidate(context: DaemonKnowledgeRouteConte
       || ((error as { code?: unknown }).code === 'NOT_FOUND'
         && (error as { status?: unknown }).status === 404)
     );
-    return jsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
+    return readJsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
   }
 }
 
@@ -817,7 +817,7 @@ async function handleKnowledgeRunJob(context: DaemonKnowledgeRouteContext, jobId
       || ((error as { code?: unknown }).code === 'NOT_FOUND'
         && (error as { status?: unknown }).status === 404)
     );
-    return jsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
+    return readJsonErrorResponse(error, { status: isNotFound ? 404 : 400 });
   }
 }
 
@@ -842,7 +842,7 @@ async function handleKnowledgeSaveSchedule(context: DaemonKnowledgeRouteContext,
       }),
     }, { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -868,7 +868,7 @@ async function handleKnowledgeRenderProjection(context: DaemonKnowledgeRouteCont
   try {
     return Response.json(await context.knowledgeService.renderProjection(parsed));
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 
@@ -885,7 +885,7 @@ async function handleKnowledgeMaterializeProjection(context: DaemonKnowledgeRout
       ...(typeof body.filename === 'string' ? { filename: body.filename } : {}),
     }), { status: 201 });
   } catch (error) {
-    return jsonErrorResponse(error, { status: 400 });
+    return readJsonErrorResponse(error, { status: 400 });
   }
 }
 

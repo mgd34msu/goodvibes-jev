@@ -19,7 +19,7 @@ import {
   yesNo,
   type Block,
 } from '../../src/index.ts';
-import { choiceAnswer, fakePort, noulAnswer } from '../fake-port.ts';
+import { choiceAnswer, fakePort, noulAnswer } from '../../src/testing/fake-port.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 

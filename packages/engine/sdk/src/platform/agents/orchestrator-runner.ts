@@ -695,9 +695,9 @@ export async function runAgentTask(
             break;
           } catch (chatErr) {
             if (
-              isContextSizeExceededError(chatErr) &&
               !contextRetried &&
-              (context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true)
+              (context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true) &&
+              await isContextSizeExceededError(chatErr, 'agents.orchestrator-runner.context-exceeded')
             ) {
               contextRetried = true;
               // Learn the endpoint's real ceiling from the rejection so every
@@ -738,7 +738,7 @@ export async function runAgentTask(
               setAgentProgress(record, `Model fallback → ${activeRouteId}`, 'owner'); // their reply, not the machine
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
               context.emitOrchestrationProgress(record, record.progress ?? '');
-            } else if (isNetworkTransportError(chatErr) && networkAttempt < NETWORK_RETRY_DELAYS_MS.length) {
+            } else if (networkAttempt < NETWORK_RETRY_DELAYS_MS.length && await isNetworkTransportError(chatErr, 'agents.orchestrator-runner.network-retry')) {
               const delayMs = NETWORK_RETRY_DELAYS_MS[networkAttempt]!;
               const delaySec = Math.round(delayMs / 1000);
               logger.warn(
@@ -759,7 +759,11 @@ export async function runAgentTask(
             // A spent account matches the quota wording here but never clears by
             // waiting: excluded, it falls to `throw` with its own `billing`
             // category, not "rate limited, retrying in 60s" three times over.
-            } else if (isRateLimitOrQuotaError(chatErr) && !isBillingOrCreditError(chatErr) && rateLimitAttempt < RATE_LIMIT_MAX_RETRIES) {
+            } else if (
+              rateLimitAttempt < RATE_LIMIT_MAX_RETRIES &&
+              await isRateLimitOrQuotaError(chatErr, 'agents.orchestrator-runner.rate-limit-retry') &&
+              !(await isBillingOrCreditError(chatErr, 'agents.orchestrator-runner.rate-limit-retry'))
+            ) {
               const delaySec = Math.round(RATE_LIMIT_RETRY_DELAY_MS / 1000);
               logger.warn(
                 `Agent ${record.id}: rate limited on turn ${turn}, retrying in ${delaySec}s (attempt ${rateLimitAttempt + 1}/${RATE_LIMIT_MAX_RETRIES})`,

@@ -6,7 +6,7 @@ import {
   readOptionalStringField,
   type JsonRecord,
 } from './route-helpers.js';
-import { jsonErrorResponse } from './error-response.js';
+import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import { withAdmin } from './auth-helpers.js';
 import type {
   ApprovalRememberTier,
@@ -237,7 +237,7 @@ export function createDaemonSystemRouteHandlers(
       try {
         context.configManager.setDynamic(key, value);
       } catch (error: unknown) {
-        return jsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to set config' });
+        return readJsonErrorResponse(error, { status: 400, fallbackMessage: 'Failed to set config' });
       }
       // Report what the host now HOLDS, not what the caller asked for.
       //
