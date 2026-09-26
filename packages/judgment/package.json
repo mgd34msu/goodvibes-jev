@@ -13,6 +13,7 @@
   "scripts": {
     "test": "bun test",
     "probe": "bun run scripts/probe.ts",
-    "proof": "bun run scripts/proof.ts"
+    "proof": "bun run scripts/proof.ts",
+    "calibrate": "bun run scripts/calibrate.ts"
   }
 }
