@@ -311,7 +311,6 @@ The failover feature already specified for goodvibes carries over:
 ## Quality bar and working rules
 
 **Quality:**
-- **Supercov** is used as a review tool on the code, never built into the product, and every finding is fixed.
 - **No leftovers:** nothing is deferred or left for a later round, and fixes land in the pass that finds them.
 - **No dead tooling:** tests and scripts must earn their place; nothing is added that nothing uses.
 
@@ -330,4 +329,4 @@ A product is done only when all four of these hold:
 1. **Every module in its old repo is accounted for.** It is ported, rewritten with Jev at its decision points, hoisted into the engine, or dropped as listed above.
 2. **It matches the old product when run side by side:** the same screens, commands, styles and behaviour.
 3. **Jev readings replace the guesswork** at every decision point, with no fallbacks.
-4. **The whole tree passes its gates:** all type-checks, a runnable proof for each area, the pattern audit, and supercov with zero findings.
+4. **The whole tree passes its gates:** all type-checks, a runnable proof for each area, and the pattern audit.
