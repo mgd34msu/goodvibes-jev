@@ -12,6 +12,8 @@ import type { FsReader } from './effects.js';
 import { type SdkPinConfig, resolveSdkPinConfig } from '../config.js';
 
 const EXACT_SEMVER = /^\d+\.\d+\.\d+$/;
+/** A dependency on the engine through the monorepo workspace (`workspace:*`, `workspace:^`). */
+const WORKSPACE_PIN = /^workspace:/;
 
 /** One gate outcome; ok=false carries a human-readable reason. */
 export interface GateResult {
@@ -38,8 +40,16 @@ export function readSdkPin(fs: FsReader, config: SdkPinConfig): string | null {
   return typeof pin === 'string' ? pin : null;
 }
 
+const escapeForPattern = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Import specifiers that reach the engine: the package name itself, or a
+ * relative path into the engine's source (`packages/engine/...`, or the old
+ * `goodvibes-sdk` checkout), which bypasses the published entry points.
+ */
 function collectImportSpecifiers(fs: FsReader, roots: readonly string[], sdkPackage: string): string[] {
-  const pattern = /(?:from\s+|require\(|import\()\s*['"]([^'"]*goodvibes-sdk[^'"]*)['"]/g;
+  const target = `${escapeForPattern(sdkPackage)}|packages/engine/|goodvibes-sdk`;
+  const pattern = new RegExp(`(?:from\\s+|require\\(|import\\()\\s*['"]([^'"]*(?:${target})[^'"]*)['"]`, 'g');
   const found: string[] = [];
   const walk = (dir: string): void => {
     let entries: readonly string[];
@@ -99,13 +109,35 @@ export function runSdkPinGate(fs: FsReader, partial: Partial<SdkPinConfig> | und
 
   const pin = readSdkPin(fs, config);
   const pinExact = pin !== null && EXACT_SEMVER.test(pin);
+  const pinWorkspace = pin !== null && WORKSPACE_PIN.test(pin);
   results.push({
     id: 'sdk-pin-exact-semver',
-    ok: pinExact,
-    detail: pinExact
+    ok: pinExact || pinWorkspace,
+    detail: pinExact || pinWorkspace
       ? `${config.sdkPackage} pinned to ${pin}`
-      : `${config.sdkPackage} pin in ${config.pinSource} must be exact X.Y.Z (found: ${pin ?? 'missing'})`,
+      : `${config.sdkPackage} pin in ${config.pinSource} must be exact X.Y.Z or a workspace dependency (found: ${pin ?? 'missing'})`,
   });
+
+  if (pinWorkspace) {
+    // A workspace dependency has no version to match: the gate is that the
+    // installed package is the workspace link and the lockfile records it so.
+    const installedPath = `node_modules/${config.sdkPackage}/package.json`;
+    results.push({
+      id: 'installed-matches-pin',
+      ok: fs.exists(installedPath),
+      detail: fs.exists(installedPath)
+        ? `${config.sdkPackage} is installed from the workspace`
+        : `${config.sdkPackage} is not installed (run install)`,
+    });
+    const lockResolves = fs.exists(config.lockfile) && fs.readText(config.lockfile).includes(`${config.sdkPackage}@workspace:`);
+    results.push({
+      id: 'lockfile-resolves-pin',
+      ok: lockResolves,
+      detail: lockResolves
+        ? `${config.lockfile} resolves ${config.sdkPackage} from the workspace`
+        : `${config.lockfile} does not resolve ${config.sdkPackage} from the workspace (run install)`,
+    });
+  }
 
   if (pinExact && pin) {
     const installedPath = `node_modules/${config.sdkPackage}/package.json`;

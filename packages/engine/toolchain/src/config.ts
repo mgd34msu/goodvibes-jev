@@ -15,7 +15,7 @@ import { z } from 'zod/v4';
 
 /** Where the SDK dependency pin lives and how the pin gate is parameterized. */
 export interface SdkPinConfig {
-  /** npm name of the pinned SDK package, e.g. `@pellux/goodvibes-sdk`. */
+  /** Name of the engine package the repo depends on, e.g. `@goodvibes-jev/engine`. */
   readonly sdkPackage: string;
   /** Manifest group the pin is read from. TUI/webui use `dependencies`; the agent bundles the SDK as a `devDependencies` pin. */
   readonly pinSource: 'dependencies' | 'devDependencies';
@@ -140,7 +140,7 @@ export interface ToolchainConfig {
   readonly perJobGreen?: PerJobGreenConfig;
 }
 
-export const DEFAULT_SDK_PACKAGE = '@goodvibes-jev/engine/sdk';
+export const DEFAULT_SDK_PACKAGE = '@goodvibes-jev/engine';
 export const DEFAULT_LOCKFILE = 'bun.lock';
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 export const DEFAULT_POLL_INTERVAL_MS = 20_000;

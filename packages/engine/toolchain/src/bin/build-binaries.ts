@@ -7,7 +7,7 @@ import { loadToolchainConfig } from '../lib/load-config.js';
 import { realExec, realFsReader, consoleLogger } from '../lib/effects.js';
 import { resolveTargets, runBuildBinaries } from '../lib/build-binaries.js';
 import { readDependencyManifest, type DependencyManifest } from '../lib/optional-externals.js';
-import type { BinaryTarget, BuildConfig } from '../config.js';
+import { DEFAULT_SDK_PACKAGE, type BinaryTarget, type BuildConfig } from '../config.js';
 
 const root = process.cwd();
 const config = loadToolchainConfig(root);
@@ -65,7 +65,7 @@ function dependencyManifests(): DependencyManifest[] {
   const found: DependencyManifest[] = [];
   const own = readDependencyManifest(fs, 'package.json', 'this package');
   if (own) found.push(own);
-  const sdkPackage = config.sdkPin?.sdkPackage ?? '@goodvibes-jev/engine/sdk';
+  const sdkPackage = config.sdkPin?.sdkPackage ?? DEFAULT_SDK_PACKAGE;
   const sdk = readDependencyManifest(fs, join('node_modules', sdkPackage, 'package.json'), sdkPackage);
   if (sdk) found.push(sdk);
   return found;
