@@ -134,6 +134,10 @@ async function startVerdaccio(): Promise<VerdaccioHandle> {
     `server:`,
     `  keepAliveTimeout: 60`,
     ``,
+    `# The engine ships every old package in one tarball; its publish request`,
+    `# (base64 in JSON) exceeds Verdaccio's 10mb default, which npmjs.org does not impose.`,
+    `max_body_size: 100mb`,
+    ``,
     `logs:`,
     `  - { type: stdout, format: pretty, level: warn }`,
   ].join('\n');
@@ -363,9 +367,15 @@ if (existsSync(nestedInternal)) {
 // package's own manifest, so a new subpath is covered because it exists, not
 // because someone remembered to add it here.
 const manifest = req(ENGINE + '/package.json');
-const subpaths = Object.keys(manifest.exports ?? {})
-  .filter((key) => key.startsWith('.'))
-  .filter((key) => !key.endsWith('.json'));
+// A types-only entry (./sdk/sql-js, an ambient declaration) has no runtime
+// module to import, so only entries with an import or default condition count.
+const hasRuntimeTarget = (value) =>
+  typeof value === 'string' || (value && (typeof value.import === 'string' || typeof value.default === 'string'));
+const subpaths = Object.entries(manifest.exports ?? {})
+  .filter(([key]) => key.startsWith('.'))
+  .filter(([key]) => !key.endsWith('.json'))
+  .filter(([, value]) => hasRuntimeTarget(value))
+  .map(([key]) => key);
 if (subpaths.length < 50)
   throw new Error('expected the exports map to declare many subpaths, saw ' + subpaths.length);
 
