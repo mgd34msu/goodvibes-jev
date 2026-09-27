@@ -242,7 +242,7 @@ export class ContractRun {
     settlement.resolve(outcome);
   }
 
-  /** Ends every unit that is not terminal with `to`: holds released, checks aborted. */
+  /** Ends every unit that is not terminal with `to` (holds released, checks aborted), and every open group. */
   endOpenUnits(to: 'failed' | 'cancelled', reason: string): void {
     for (const unit of this.contract.units) {
       const runtime = this.unitRuntimes.get(unit.id);
@@ -254,7 +254,9 @@ export class ContractRun {
     }
     for (const group of this.contract.groups) {
       if (group.status === 'passed' || group.status === 'failed' || group.status === 'cancelled') continue;
-      this.moveGroup(group, to);
+      // A group that holds a failed unit failed with it; the others stop with the contract.
+      const holdsFailure = this.contract.units.some((unit) => unit.groupId === group.id && unit.status === 'failed');
+      this.moveGroup(group, holdsFailure ? 'failed' : to);
     }
   }
 }

@@ -188,6 +188,7 @@ describe('transport retry through the failure reading', () => {
     expect(done.failureKind).toBe('transport');
     expect(done.units[0]!.status).toBe('failed');
     expect(done.units[0]!.transportRetries).toBe(1);
+    expect(done.groups[0]!.status).toBe('failed');
     expect(h.manager.getStatus(owner.id)!.status).toBe('failed');
     expect(eventsOf(h, 'CONTRACT_FAILED')[0]).toMatchObject({ failureKind: 'transport' });
   });
