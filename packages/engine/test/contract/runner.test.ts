@@ -291,7 +291,7 @@ describe('the active-contract cap', () => {
 });
 
 describe('isolation', () => {
-  test('worktree mode: the unit works in its own worktree and passes only once its branch merged into the contract branch', async () => {
+  test('worktree mode: the unit works in its own worktree, passes once its branch merged into the contract branch, and the deliverable is merged into the base branch', async () => {
     const h = use(makeHarness({
       plan: oneUnitPlan(1),
       contract: { isolation: 'auto' },
@@ -306,8 +306,10 @@ describe('isolation', () => {
     expect(statuses.slice(-2)).toEqual(['held-merge', 'passed']);
     const onBranch = spawnSync('git', ['-C', h.root, 'show', `${done.branch!}:src/csv.ts`], { encoding: 'utf-8' });
     expect(onBranch.stdout).toBe('export const parse = 1;\n');
-    // Nothing reached the base branch: only a passing deliverable does (the commit step, R.6).
-    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
+    // The passing deliverable was merged into the base branch, and the contract worktree removed.
+    expect(done.commit?.status).toBe('committed');
+    expect(spawnSync('git', ['-C', h.root, 'show', 'main:src/csv.ts'], { encoding: 'utf-8' }).stdout).toBe('export const parse = 1;\n');
+    expect(existsSync(done.worktreePath!)).toBe(false);
   });
 
   test('the shared-tree lock admits one holder at a time per tree, in arrival order, and a withdrawn waiter is skipped', async () => {
@@ -379,7 +381,16 @@ describe('the pass guarantee', () => {
       });
       outputs.push('final attempt [p=0.03,0.03,0.03]');
       const steps: AgentStep[] = outputs.map((text, index) => ({ files: { 'src/csv.ts': `${index}\n` }, text }));
-      const h = makeHarness({ plan: oneUnitPlan(3), contract: { stallLimit: 20, maxNudgesPerUnit: 20, evidenceNudgeLimit: 20 }, scripts: { u1: () => steps } });
+      // Correction and the owner are not what this reads: a stall or an owner question ends the sequence.
+      const h = makeHarness({
+        plan: oneUnitPlan(3),
+        contract: { stallLimit: 20, maxNudgesPerUnit: 20, evidenceNudgeLimit: 20 },
+        scripts: { u1: () => steps },
+        steps: {
+          unitStalled: async (run, unitId) => run.control.fail('other', `unit ${unitId} stalled`),
+          unitAwaitsOwner: async (run, unitId) => run.control.fail('other', `unit ${unitId} awaits the owner`),
+        },
+      });
       try {
         const violations: string[] = [];
         h.runner.on((event) => {

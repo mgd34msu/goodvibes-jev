@@ -20,6 +20,7 @@ import type { ReviewerReport } from '../agents/completion-report.js';
 import { engineerPhases } from './controller-compat.js';
 import type { WrfcCommitScope } from '../agents/wrfc-config.js';
 import type { CreateWorkstreamInput } from './engine.js';
+import { clusterOf, ELASTIC_PHASE_CAPACITY, planTaskGraph as planGraph } from './task-graph.js';
 import type { WorkItemSpec } from './types.js';
 
 /** Where a parsed task came from in the review record. */
@@ -36,8 +37,6 @@ export interface ReviewTask {
   /** File citations from the review record (drive shared-file edges + clusters). */
   readonly files: readonly string[];
 }
-
-const SEVERITY_RANK: Record<ReviewTask['severity'], number> = { critical: 0, major: 1, minor: 2 };
 
 /** Parse the reviewer's findings + acceptance checklist + constraint findings into typed tasks. */
 export function parseReviewIntoTasks(input: {
@@ -94,79 +93,30 @@ export function parseReviewIntoTasks(input: {
   return tasks;
 }
 
-/** File-cluster label: the first two path segments (subsystem granularity), or 'general'. */
-export function clusterOf(files: readonly string[]): string {
-  const first = files[0];
-  if (!first) return 'general';
-  const segments = first.split('/').filter(Boolean);
-  return segments.slice(0, Math.min(2, Math.max(1, segments.length - 1))).join('/') || segments[0] || 'general';
-}
-
 /** An optional judgment hook adding semantic-prerequisite edges beyond the heuristics. */
 export type SemanticEdgePlanner = (tasks: readonly ReviewTask[]) => ReadonlyArray<{ readonly from: string; readonly to: string }>;
 
+export { clusterOf, ELASTIC_PHASE_CAPACITY };
+
 /**
- * The planner pass: coalesce by file-cluster and draw the initial dependency
- * graph. Edges (from DEPENDS ON to):
- * - shared-file: tasks citing the same file serialize, severity-first (a
- *   critical fix lands before a minor one touches the same file);
- * - semantic-prerequisite: file-less verification tasks (checklist/constraint)
- *   wait for every finding fix in the graph, the verification is over the
- *   fixed deliverable, not the broken one; a custom `semanticEdges` hook may
- *   add judgment edges on top.
+ * The review tasks placed in one graph (task-graph.ts): shared-file edges,
+ * then semantic prerequisites: file-less verification tasks
+ * (checklist/constraint) wait for every finding fix, and a custom
+ * `semanticEdges` hook may add more on top.
  */
 export function planTaskGraph(
   tasks: readonly ReviewTask[],
   semanticEdges?: SemanticEdgePlanner,
 ): { specs: WorkItemSpec[]; edgeCount: number } {
-  const edges = new Map<string, Set<string>>();
-  const addEdge = (from: string, to: string): void => {
-    if (from === to) return;
-    const set = edges.get(from) ?? new Set<string>();
-    set.add(to);
-    edges.set(from, set);
-  };
-
-  // Shared-file serialization, severity-first then parse order.
-  const byFile = new Map<string, ReviewTask[]>();
-  for (const task of tasks) {
-    for (const file of task.files) {
-      const list = byFile.get(file) ?? [];
-      list.push(task);
-      byFile.set(file, list);
-    }
-  }
-  for (const sameFile of byFile.values()) {
-    if (sameFile.length < 2) continue;
-    const ordered = [...sameFile].sort(
-      (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || a.id.localeCompare(b.id, undefined, { numeric: true }),
-    );
-    for (let i = 1; i < ordered.length; i++) addEdge(ordered[i]!.id, ordered[i - 1]!.id);
-  }
-
-  // Semantic prerequisites: verification tasks run over the FIXED deliverable.
-  const findingTasks = tasks.filter((task) => task.source === 'finding');
-  for (const task of tasks) {
-    if (task.source === 'finding') continue;
-    for (const finding of findingTasks) addEdge(task.id, finding.id);
-  }
-  for (const edge of semanticEdges?.(tasks) ?? []) addEdge(edge.from, edge.to);
-
-  const specs: WorkItemSpec[] = tasks.map((task) => ({
-    id: task.id,
-    title: task.title,
-    task: task.description,
-    dependsOn: [...(edges.get(task.id) ?? [])],
-    cluster: clusterOf(task.files),
-    files: task.files,
-  }));
-  let edgeCount = 0;
-  for (const set of edges.values()) edgeCount += set.size;
-  return { specs, edgeCount };
+  const findingIds = tasks.filter((task) => task.source === 'finding').map((task) => task.id);
+  return planGraph(
+    tasks.map((task) => ({ id: task.id, title: task.title, task: task.description, severity: task.severity, files: task.files })),
+    () => [
+      ...tasks.filter((task) => task.source !== 'finding').flatMap((task) => findingIds.map((to) => ({ from: task.id, to }))),
+      ...(semanticEdges?.(tasks) ?? []),
+    ],
+  );
 }
-
-/** Per-phase capacity for elastic fix graphs: the fleet ceiling is the real limiter. */
-export const ELASTIC_PHASE_CAPACITY = 64;
 
 /** Assemble the full CreateWorkstreamInput for one planned-fix cycle. */
 export function planFixWorkstream(input: {

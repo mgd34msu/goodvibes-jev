@@ -805,7 +805,7 @@ export class Orchestrator {
       getAlreadyInjectedKnowledgeIds: () => this.getAlreadyInjectedKnowledgeIds(),
       addInjectedKnowledgeIds: (ids) => { this.addInjectedKnowledgeIds(ids); },
       recordTurnKnowledgeInjection: (record) => { this.recordTurnKnowledgeInjection(record); },
-      nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(),
+      nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
     });
   }
 

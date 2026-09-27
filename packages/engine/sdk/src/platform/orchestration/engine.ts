@@ -53,6 +53,7 @@ import {
   type HeldMergeGroup,
 } from './types.js';
 import type { ConfigManager } from '../config/manager.js';
+import type { UnitRoute } from '../contract/types.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { WorktreeRegistry } from '../runtime/worktree/registry.js';
 import { runWorktreeSetup, resolveEffectiveWorktreeSetup } from '../runtime/worktree/setup.js';
@@ -152,9 +153,10 @@ export interface OrchestrationEngine {
    * Re-queue a non-terminal item to its first phase (the discovering task's
    * "may re-queue"); cancels its in-flight agent. `task`, when given, replaces
    * the item's task for the next agent (the contract runner adds a unit's
-   * "Previous checks" to its brief).
+   * "Previous checks" to its brief); `route`, when given, the model the next
+   * agent runs on (a contract unit's fresh agent).
    */
-  requeueItem(itemId: string, reason: string, task?: string): boolean;
+  requeueItem(itemId: string, reason: string, task?: string, route?: UnitRoute): boolean;
   /** The surface-facing task graph: nodes, edges, states, elastic-pool state, stalled tells. */
   getGraphSnapshot(workstreamId: string): WorkstreamGraphSnapshot | null;
   serializeWorkstream(workstreamId: string): string | null;
@@ -644,12 +646,14 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     return result;
   }
 
-  function requeueItem(itemId: string, reason: string, task?: string): boolean {
+  function requeueItem(itemId: string, reason: string, task?: string, route?: UnitRoute): boolean {
     const found = findItemAndWorkstream(itemId);
     if (!found) return false;
     const { workstream, item } = found;
     if (item.state === 'passed' || item.state === 'failed') return false;
     if (task !== undefined && task.trim().length > 0) item.task = task;
+    // The engine owns the item: a contract unit's fresh agent runs on the new route.
+    if (route !== undefined) Object.assign(item, { route });
     if (item.state === 'in-phase') requeuedInFlight.add(itemId);
     cancellation.abort(itemId);
     if (item.agentId) deps.agentManager.cancel(item.agentId, 'interrupt');

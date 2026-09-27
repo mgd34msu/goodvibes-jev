@@ -43,7 +43,10 @@ import {
   emitMalformedToolUseWarning,
   handleFinalResponseOutcome,
   handleToolResponseOutcome,
+  bindContractSession,
+  holdSessionFinalResponse,
   type ChatResponseWithReasoning,
+  type ContractSessionHooks,
 } from './orchestrator-turn-helpers.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
 import { buildWrfcWorkflowRoutingPrompt } from './wrfc-routing.js';
@@ -212,6 +215,8 @@ export interface OrchestratorTurnLoopContext {
   readonly recordTurnKnowledgeInjection: (record: TurnInjectionRecord) => void;
   /** Monotonic per-Orchestrator-lifetime sequence number for TurnInjectionRecord.turn. */
   readonly nextTurnKnowledgeSequence: () => number;
+  /** The contract runner's hooks: a session-mode contract's unit is worked, held and nudged in this session's turns (design 6.6). */
+  readonly contractHooks?: ContractSessionHooks | undefined;
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
@@ -246,6 +251,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // cannot compound. Reset implicitly to null on every NEW executeOrchestratorTurnLoop()
   // call (a fresh runTurn() always recomputes from scratch on its own iteration 1).
   let turnKnowledgeBlock: string | null = null;
+  const contractSession = bindContractSession(context.contractHooks, context.sessionId, context.turnId);
 
   while (continueLoop) {
     let streamAccumulated = '';
@@ -708,6 +714,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         requestRender: context.requestRender,
         sessionId: context.sessionId,
         memoryRecordIds: [...turnMemoryRecordIds],
+        contractSession,
       });
 
       const allFailed = results.results.length > 0 && results.results.every((result) => result.success === false);
@@ -749,6 +756,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       reasoning: reasoningForMsg,
       reasoningSummary: reasoningSummaryForMsg,
     };
+    // A session-mode unit's turn is held where it would complete; a nudge keeps the turn going.
+    if (contractSession && await holdSessionFinalResponse({ ...context, emitterContext: (id) => context.emitterContext(id) }, contractSession, enrichedResponse)) continue;
     continueLoop = handleFinalResponseOutcome({
       conversation: context.conversation,
       agentManager: context.agentManager,

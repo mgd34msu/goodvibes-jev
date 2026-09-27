@@ -47,7 +47,9 @@ export { createOrchestrationEngine } from './engine.js';
 
 // The fix-phase rework: review findings as a second task source, the
 // dynamic-graph muscles, the elastic pool, and the planned-fix runner.
-export { parseReviewIntoTasks, planTaskGraph, planFixWorkstream, clusterOf, ELASTIC_PHASE_CAPACITY } from './review-task-source.js';
+export { parseReviewIntoTasks, planFixWorkstream } from './review-task-source.js';
+export { planTaskGraph, clusterOf, ELASTIC_PHASE_CAPACITY } from './task-graph.js';
+export type { ExtraEdges, GraphTask, TaskSeverity } from './task-graph.js';
 export type { ReviewTask, ReviewTaskSource, SemanticEdgePlanner } from './review-task-source.js';
 export { createFixWorkstreamRunner } from './fix-workstream-runner.js';
 export type { FixWorkstreamRunner, FixWorkstreamOutcome, FixWorkstreamRunnerDeps } from './fix-workstream-runner.js';

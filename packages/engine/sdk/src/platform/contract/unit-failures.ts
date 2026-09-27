@@ -53,6 +53,13 @@ export interface UnitFailureDeps {
   readonly requeueUnit: (run: ContractRun, unit: ContractUnit, reason: string, purpose: SpawnPurpose, firstTurn?: string) => void;
 }
 
+/**
+ * Statuses in which a unit's agent was let go on purpose: correction took the
+ * unit (fixing), the owner has it (awaiting-owner), or a fresh agent is on its
+ * way (pending, blocked). That agent completing or failing means nothing.
+ */
+const RELEASED: ReadonlySet<ContractUnit['status']> = new Set(['fixing', 'awaiting-owner', 'pending', 'blocked']);
+
 export interface UnitFailureHandling {
   /** The watchdog found an agent silent past the timeout. */
   onSilent(agent: WatchedAgent, silentMs: number): void;
@@ -110,7 +117,7 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
       run.settle(unit, 'completed');
       return;
     }
-    if (isTerminalUnitStatus(unit.status)) return;
+    if (isTerminalUnitStatus(unit.status) || RELEASED.has(unit.status)) return;
     // The loop completed without holding (no contract hooks in its run
     // context): the work was never checked at completion, so check it now; a
     // nudge wakes the completed agent.
@@ -124,7 +131,7 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
     const found = locate(agentId);
     if (found === null) return;
     const { run, unit } = found;
-    if (isTerminalUnitStatus(unit.status) || unit.status === 'held-merge') return;
+    if (isTerminalUnitStatus(unit.status) || unit.status === 'held-merge' || RELEASED.has(unit.status)) return;
     const runtime = run.runtime(unit);
     deps.checks.supersede(runtime);
     const record = deps.agentManager.getStatus(agentId);

@@ -68,6 +68,7 @@ export type {
   ShapeReading,
   StartContractInput,
   StatusChange,
+  TreeBaseline,
   UnitCheck,
   UnitRole,
   UnitRoute,
@@ -120,12 +121,49 @@ export {
 } from './store.js';
 export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, ContractStoreOptions } from './store.js';
 export { CHANGING_TOOLS, createUnitCheckLoop } from './agent-hooks.js';
-export type { ContractAgentHooks, ContractHoldOutcome, UnitCheckEscalations, UnitCheckLoop, UnitCheckLoopDeps } from './agent-hooks.js';
+export type { ContractAgentHooks, ContractHoldOutcome, ContractSessionHooks, UnitCheckEscalations, UnitCheckLoop, UnitCheckLoopDeps } from './agent-hooks.js';
 // Running contracts (sections 2.2, 4, 6.1, 7.3 and 7.4).
 export { createContractRunner, filesModified, resolveIsolation } from './runner.js';
-export type { ContractRunner, ContractRunnerDeps, ContractSteps, StartedContract } from './runner.js';
+export type { ContractRunner, ContractRunnerDeps, StartedContract } from './runner.js';
+// Correction and finishing (sections 5 and 6).
+export { createContractSteps } from './steps.js';
+export type { ContractSteps, ContractStepsWithReplies, StepContext } from './steps.js';
+export { SESSION_NO_DELEGATION_NOTE, STALL_ROUTE_SITE, checkSummaries, createCorrection } from './correction.js';
+export type { Correction, TargetFinding } from './correction.js';
+export { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFreshGroup, validateFixPlan } from './fix-plan.js';
+export type { FixBrief, FixScope } from './fix-plan.js';
+export { COMPLETION_SITES, buildContractCommitMessage, contractTree, createCompletion } from './completion.js';
+export type { Completion } from './completion.js';
+export {
+  AMENDMENT_FAILED_LINE,
+  APPROVAL_REFUSED_LINE,
+  ASK_AGAIN_LINE,
+  NAME_AN_ATTEMPT_LINE,
+  OWNER_REPLY_SITE,
+  PLAN_UNRUNNABLE_LINE,
+  REASON_SENTENCES,
+  buildAttemptsQuestion,
+  buildEscalationQuestion,
+  createEscalations,
+  standingCriteria,
+  targetCriteria,
+} from './escalation.js';
+export type { EscalationInput, Escalations, OwnerReplyAction, OwnerReplyOutcome, Rejudge } from './escalation.js';
+export { amendTarget, buildAmendmentPrompt, buildAmendmentRequest, parseAmendment } from './amendment.js';
+export type { AmendmentOutcome } from './amendment.js';
+export { CONTRACT_PASSED_WITHOUT_OUTPUT, answerUnit, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from './answer.js';
+export {
+  CONTRACT_TASK_STATUS,
+  CONTRACT_WORK_PLAN_SOURCE,
+  UNIT_TASK_STATUS,
+  completePlanItemsForUnit,
+  contractTaskId,
+  createContractPlanSync,
+  unitTaskId,
+} from './plan-sync.js';
+export type { ContractPlanSync, ContractPlanSyncDeps, ExecutionPlans, WorkPlanService } from './plan-sync.js';
 export { ContractRun, failureFromError, isAbortError } from './run-context.js';
-export type { InFlightCheck, RunControl, RunEnv, SpawnPurpose, UnitRuntime } from './run-context.js';
+export type { InFlightCheck, RunControl, RunEnv, SessionTurnState, SpawnPurpose, UnitRuntime } from './run-context.js';
 export { createGroupRunner, takeBaseline } from './group-runner.js';
 export type { ContractEngineInput, GroupRunner, GroupRunnerDeps, GroupSteps } from './group-runner.js';
 export {
@@ -213,6 +251,10 @@ export type { NudgeDispatch, NudgeFindings, NudgeTargetState, NudgeTransport } f
 export { UNIT_JUDGES, UNIT_JUDGE_BANDS, unitJudgeDecision } from './batteries/unit-judge.js';
 export { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, unitQuality } from './batteries/unit-quality.js';
 export { unmetSeverity } from './batteries/unmet-severity.js';
+export { STALL_ROUTE_OPTIONS, stallRoute } from './batteries/stall-route.js';
+export { GROUP_JUDGES, groupJudgeDecision } from './batteries/group-judge.js';
+export { DELIVERABLE_JUDGES, deliverableJudgeDecision } from './batteries/deliverable-judge.js';
+export { ownerReply } from './batteries/owner-reply.js';
 export { BEST_OF_N_FIT_INSTRUCTIONS, BEST_OF_N_INSTRUCTIONS, bestOfN } from './batteries/best-of-n.js';
 // Planning (section 3).
 export {
@@ -253,7 +295,7 @@ export type {
   PlannedUnit,
   UnitToolContract,
 } from './plan-schema.js';
-export { EXCLUDED_TOPOLOGY_REASON, PLAN_CHECK_SITES, readCriterionDispositions, runPlanChecks, unitShapeState } from './plan-checks.js';
+export { EXCLUDED_TOPOLOGY_REASON, PLAN_CHECK_SITES, readCriterionDispositions, runPlanChecks, runUnitShapeChecks, unitShapeState } from './plan-checks.js';
 export type { CriterionDispositionRuling, JevPlanCheck, PlanCheckOptions, PlanCheckReport, PlanCheckUsage, PlanVerdict } from './plan-checks.js';
 export {
   acceptEscalatedPlan,

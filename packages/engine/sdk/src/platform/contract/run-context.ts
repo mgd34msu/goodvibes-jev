@@ -12,6 +12,7 @@ import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
 import type { OrchestrationEngine } from '../orchestration/engine.js';
+import type { AgentRecord } from '../tools/agent/index.js';
 import type { ContractUnitOutcome } from '../orchestration/phase-runner.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ContractHoldOutcome } from './agent-hooks.js';
@@ -69,6 +70,24 @@ export interface UnitRuntime {
   cwd: string;
   /** Aborted when the unit is cancelled or failed; checks run under it. */
   readonly abort: AbortController;
+  /**
+   * When set, a check's evidence is limited to these paths: after a planned
+   * fix, the unit's re-check reads its own files and those its fixes changed,
+   * not what a sibling merged meanwhile.
+   */
+  evidencePaths: ReadonlySet<string> | null;
+  /** A session-mode unit (design 6.6): the session's turn that works on it. */
+  session: SessionTurnState | null;
+}
+
+/** The session turn a session-mode unit is bound to (design 6.6). */
+export interface SessionTurnState {
+  /** The session's stand-in record for the turn: `id` is the turn id, and it carries the contract binding. */
+  readonly record: AgentRecord;
+  /** The turn is live: a mid-run nudge reaches it at the turn loop's next model call. */
+  active: boolean;
+  /** Mid-run nudges waiting for the turn loop, oldest first. */
+  readonly queued: { readonly message: string; readonly nudgeId: string }[];
 }
 
 /** What a contract failure reads as, from the error that caused it. */
@@ -216,6 +235,8 @@ export class ContractRun {
         agentStartedAt: this.env.now(),
         cwd: this.contract.worktreePath ?? this.contract.projectRoot,
         abort: new AbortController(),
+        evidencePaths: null,
+        session: null,
       };
       this.unitRuntimes.set(unit.id, runtime);
     }

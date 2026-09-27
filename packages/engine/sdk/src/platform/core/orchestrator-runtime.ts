@@ -11,8 +11,11 @@ import type { SessionMemoryStore } from './session-memory.js';
 import type { FavoritesStore } from '../providers/favorites.js';
 import type { TurnKnowledgeRegistrySource, TurnCodeIndexSource } from '../agents/turn-knowledge-injection.js';
 import type { CodeIndexReindexScheduler } from '../state/code-index-reindex.js';
+import type { ContractSessionHooks } from './orchestrator-turn-helpers.js';
 
 export type OrchestratorCoreServices = {
+  /** The contract runner's hooks: a session-mode contract's unit is worked by this session's turns (contract runner design 6.6). */
+  contractHooks?: ContractSessionHooks | undefined;
   configManager?: Pick<ConfigManager, 'get' | 'getCategory' | 'getWorkingDirectory'> | undefined;
   providerRegistry?: ProviderRegistry | undefined;
   cacheHitTracker?: Pick<CacheHitTracker, 'getMetrics'> | undefined;

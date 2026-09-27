@@ -296,6 +296,19 @@ export async function runPlanChecks(plan: ContractPlan, ask: string, shape: Requ
 }
 
 /**
+ * Only the unit checks (role and scope), for a planned-fix group (design
+ * 5.2): its criteria trace to criteria that already trace to the user, so
+ * trace and coverage are not asked again.
+ */
+export async function runUnitShapeChecks(
+  plan: ContractPlan,
+  options: PlanCheckOptions = {},
+): Promise<{ readonly problems: readonly PlanProblem[]; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage }> {
+  const units = await checkUnits(planCheckPort(), plan, options);
+  return { problems: units.problems, decisionIds: units.decisionIds, usage: totalUsage([units]) };
+}
+
+/**
  * Only the dispositions, for a plan the owner approved as it stands: the
  * owner settles the plan's problems, but which criteria are topology-only is
  * still read, since those are never judged.

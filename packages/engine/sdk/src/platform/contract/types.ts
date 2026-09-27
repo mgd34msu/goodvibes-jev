@@ -187,7 +187,8 @@ export interface UnitCheck {
   readonly claims?: { readonly kind: ClaimVerificationKind; readonly summary: string } | undefined;
   readonly gates?: readonly QualityGateResult[] | undefined;
   readonly goal: { readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome };
-  readonly quality: Readonly<Record<QualityItem, { readonly verdict: YesNoVerdict; readonly outcome: Outcome }>>;
+  /** Every quality item for a unit check; group and deliverable checks read no quality items. */
+  readonly quality: Readonly<Partial<Record<QualityItem, { readonly verdict: YesNoVerdict; readonly outcome: Outcome }>>>;
   readonly result: CheckResult;
   /**
    * Every problem kind the check found, whatever its result (a turn-end check
@@ -215,6 +216,12 @@ export interface Nudge {
 }
 
 // ── The tree ──────────────────────────────────────────────────────────────────
+
+/** A working tree as it stood at some moment: HEAD and the hashes of paths already dirty. Diffs are measured against it. */
+export interface TreeBaseline {
+  readonly head: string | null;
+  readonly dirty: Readonly<Record<string, string | null>>;
+}
 
 export interface ContractUnit {
   readonly id: string;
@@ -244,7 +251,7 @@ export interface ContractUnit {
    * first agent is spawned: in the shared project root, or in the unit's
    * item worktree in worktree mode (where it is the item branch's base).
    */
-  baseline?: { readonly head: string | null; readonly dirty: Readonly<Record<string, string | null>> } | undefined;
+  baseline?: TreeBaseline | undefined;
   usage: WorkItemUsage;
   /** The unit's completion summary. */
   answer?: string | undefined;
@@ -295,6 +302,8 @@ export interface ContractGroup {
   status: GroupStatus;
   checks: UnitCheck[];
   fixRounds: number;
+  /** The tree the group check's diff is measured against, taken when the group starts (design 6.4). */
+  baseline?: TreeBaseline | undefined;
   usage: WorkItemUsage;
 }
 
@@ -351,11 +360,16 @@ export interface Contract {
   readonly ownerAgentId: string;
   readonly parentAgentId?: string | undefined;
   readonly projectRoot: string;
-  readonly isolation: 'worktree' | 'shared';
+  /** Settled when the contract is shaped: a session-mode contract (design 6.6) works in the shared tree. */
+  isolation: 'worktree' | 'shared';
   /** Worktree mode: `contract/<short>`. */
-  readonly branch?: string | undefined;
-  readonly worktreePath?: string | undefined;
-  readonly baseBranch?: string | undefined;
+  branch?: string | undefined;
+  worktreePath?: string | undefined;
+  baseBranch?: string | undefined;
+  /** The contract's tree when its groups started: the deliverable diff and the shared-mode commit are measured against it. */
+  baseline?: TreeBaseline | undefined;
+  /** The user forbade delegation (design 6.6): the session's own turns do the one unit, and no sub-agent is ever spawned. */
+  sessionMode?: boolean | undefined;
   /** The whole contract's token and cost ceiling; each group's workstream gets what remains of it when the group starts. */
   readonly budget?: BudgetCeiling | undefined;
   goal: string;

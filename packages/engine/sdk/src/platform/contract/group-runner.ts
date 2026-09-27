@@ -59,6 +59,8 @@ export interface GroupSteps extends AttemptSteps {
   groupsPassed(run: ContractRun): Promise<void>;
   /** A unit's branch conflicted when it merged into the contract branch (7.4): route it to a planned fix (5.1). */
   unitMergeConflict(run: ContractRun, unitId: string, files: readonly string[]): Promise<void>;
+  /** A planned-fix group passed: check its target (a unit, a group or the deliverable) again (5.2). */
+  fixGroupPassed(run: ContractRun, groupId: string): Promise<void>;
 }
 
 export interface GroupRunnerDeps {
@@ -80,6 +82,8 @@ export interface GroupRunner {
   /** A unit passed; its group may be done. */
   unitPassed(run: ContractRun, unit: ContractUnit): void;
   passGroup(run: ContractRun, groupId: string): void;
+  /** Starts a group now, whatever it depends on: a planned-fix group added while the contract runs (5.2). */
+  startGroupNow(run: ContractRun, groupId: string): void;
   /** Gives a unit a fresh agent: its brief with "Previous checks", and `firstTurn` after it when given. */
   requeueUnit(run: ContractRun, unit: ContractUnit, reason: string, purpose: SpawnPurpose, firstTurn?: string): void;
   /** Stops every unit agent still working, and the engine. */
@@ -127,6 +131,8 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     });
     run.engine = engine;
     run.unsubscribeEngine = engine.on((event) => onEngineEvent(run, event));
+    // The deliverable's diff and the shared-mode commit are measured from here.
+    contract.baseline ??= takeBaseline(contract.worktreePath ?? contract.projectRoot);
     run.moveContract('running');
     startReadyGroups(run);
   }
@@ -146,7 +152,9 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     run.startingGroups.add(group.id);
     try {
       const units = contract.units.filter((unit) => unit.groupId === group.id);
-      if (contract.isolation === 'shared') {
+      // A fix group for a unit runs inside the unit's group, which already holds the shared tree.
+      const inheritsTree = group.kind === 'fix' && group.repairs?.scope === 'unit';
+      if (contract.isolation === 'shared' && !inheritsTree) {
         const release = await acquireSharedTree(contract.projectRoot, run.abort.signal);
         if (run.terminal) {
           release();
@@ -167,6 +175,8 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
         if (run.terminal) return;
       }
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);
+      // The group check's diff is measured from here (6.4).
+      group.baseline ??= takeBaseline(contract.worktreePath ?? contract.projectRoot);
       const input: CreateWorkstreamInput = groupWorkstreamInput(contract, group, run.env.config(), contract.usage);
       const engine = run.engine;
       if (engine === null) throw new Error(`contract ${contract.id} has no engine`);
@@ -341,6 +351,11 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     if (group === undefined || run.terminal) return;
     run.moveGroup(group, 'passed');
     run.decide('group-passed', group.id, `every unit of ${group.id} passed${group.criteria.length === 0 ? '' : ' and the group check passed'}`);
+    if (group.kind === 'fix') {
+      // A planned fix passed: its target is checked again; the target decides what runs next.
+      void deps.steps.fixGroupPassed(run, group.id).catch((error: unknown) => stepFailed(run, `fix group ${group.id}'s target could not be checked again`, error));
+      return;
+    }
     if (run.contract.groups.every((candidate) => candidate.status === 'passed')) {
       void deps.steps.groupsPassed(run).catch((error: unknown) => stepFailed(run, 'the deliverable could not be judged', error));
       return;
@@ -367,7 +382,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     if (agentId !== undefined) deps.watchdog.forget(agentId);
     run.moveUnit(unit, 'pending');
     const task = [briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit), unit), firstTurn].filter((part): part is string => part !== undefined && part.length > 0).join('\n\n');
-    if (!engine.requeueItem(unit.id, reason, task)) deps.failUnit(run, unit, 'other', `unit ${unit.id} could not be given a fresh agent (${reason})`);
+    if (!engine.requeueItem(unit.id, reason, task, unit.route)) deps.failUnit(run, unit, 'other', `unit ${unit.id} could not be given a fresh agent (${reason})`);
   }
 
   function stopRun(run: ContractRun): void {
@@ -393,5 +408,11 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     run.sharedTreeReleases.clear();
   }
 
-  return { startRun, unitPassed, passGroup, requeueUnit, stopRun };
+  function startGroupNow(run: ContractRun, groupId: string): void {
+    const group = run.group(groupId);
+    if (group === undefined || run.terminal || run.startingGroups.has(group.id) || (group.status !== 'pending' && group.status !== 'blocked')) return;
+    void startGroup(run, group);
+  }
+
+  return { startRun, unitPassed, passGroup, startGroupNow, requeueUnit, stopRun };
 }

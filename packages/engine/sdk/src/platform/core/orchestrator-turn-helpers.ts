@@ -8,11 +8,12 @@ import type { AdaptivePlanner } from './adaptive-planner.js';
 import type { ExecutionPlan, PlanItem } from './execution-plan.js';
 import type { ExecutionPlanManager } from './execution-plan.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
-import { emitPlanStrategySelected, emitToolReconciled, emitTurnCompleted } from '../runtime/emitters/index.js';
+import { emitCommunicationConsumed, emitPlanStrategySelected, emitToolReconciled, emitTurnCompleted } from '../runtime/emitters/index.js';
 import { buildSyntheticResult } from './tool-reconciliation.js';
 import { autoSpawnPendingItems } from './orchestrator-tool-runtime.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
-import type { AgentManager } from '../tools/agent/index.js';
+import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
+import type { ContractSessionHooks } from '../contract/agent-hooks.js';
 import { buildWrfcWorkflowRoutingPrompt, toolResultIndicatesAuthoritativeWrfcChain } from './wrfc-routing.js';
 
 type EmitterContextFactory = (turnId: string) => import('../runtime/emitters/index.js').EmitterContext;
@@ -115,6 +116,94 @@ export function prepareConversationForTurn(
   return preTurnPlan;
 }
 
+export type { ContractSessionHooks };
+
+/** Binds this turn to the session-mode unit waiting in the session, when there is one. */
+export function bindContractSession(hooks: ContractSessionHooks | undefined, sessionId: string, turnId: string): ContractSessionTurn | undefined {
+  const record = hooks?.sessionTurn(sessionId, turnId) ?? null;
+  return hooks === undefined || record === null ? undefined : { hooks, record, turn: 0 };
+}
+
+/**
+ * A session-mode contract's unit bound to this turn (contract runner design
+ * 6.6): the turn is the unit's executor. Its tool turns are reported to the
+ * runner, and where the turn would complete it is held for the unit's check;
+ * a nudge comes back as a user message and the turn goes on.
+ */
+export interface ContractSessionTurn {
+  readonly hooks: ContractSessionHooks;
+  /** The turn's stand-in record: `id` is the turn id, and it carries the unit binding. */
+  readonly record: AgentRecord;
+  /** Tool rounds reported so far this turn. */
+  turn: number;
+}
+
+type ConsumedEmitterArgs = { readonly runtimeBus: RuntimeEventBus | null; readonly emitterContext: EmitterContextFactory; readonly turnId: string };
+
+function nudgeConsumed(args: ConsumedEmitterArgs, session: ContractSessionTurn, nudgeId: string): void {
+  if (!args.runtimeBus) return;
+  emitCommunicationConsumed(args.runtimeBus, args.emitterContext(args.turnId), { messageId: nudgeId, agentId: session.record.id, turn: session.turn });
+}
+
+/** Reports a tool round of a session-mode turn to the contract runner; a hook fault is logged, never thrown into the turn. */
+export function reportSessionToolRound(session: ContractSessionTurn, round: { readonly toolCalls: readonly ToolCall[]; readonly results: readonly ToolResult[]; readonly assistantText: string }): void {
+  session.turn += 1;
+  try {
+    session.hooks.onTurnEnd(session.record, {
+      turn: session.turn,
+      toolCalls: round.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments as Record<string, unknown> })),
+      results: round.results,
+      assistantText: round.assistantText,
+    });
+  } catch (error) {
+    logger.warn('Orchestrator: the contract turn-end hook failed', { turnId: session.record.id, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+/** Adds the mid-run nudges the runner queued for this session turn, as user messages, before the next model call. */
+export function drainSessionNudges(args: ConsumedEmitterArgs & { readonly conversation: ConversationManager }, session: ContractSessionTurn): void {
+  for (let nudge = session.hooks.takeSessionNudge(session.record); nudge !== null; nudge = session.hooks.takeSessionNudge(session.record)) {
+    args.conversation.addUserMessage(nudge.message);
+    nudgeConsumed(args, session, nudge.nudgeId);
+  }
+}
+
+/**
+ * Holds a session-mode turn where it would complete, while the runner checks
+ * the unit. On a nudge, `beforeNudge` runs (the final answer joins the
+ * conversation), the nudge is added as a user message, and true is returned:
+ * the turn goes on with another model call. False lets the turn complete.
+ */
+export async function holdSessionCompletion(
+  args: ConsumedEmitterArgs & { readonly conversation: ConversationManager },
+  session: ContractSessionTurn,
+  output: string,
+  beforeNudge?: () => void,
+): Promise<boolean> {
+  session.record.fullOutput = output;
+  const outcome = await session.hooks.holdCompletion(session.record);
+  if (outcome.kind !== 'continue') return false;
+  beforeNudge?.();
+  args.conversation.addUserMessage(outcome.message);
+  nudgeConsumed(args, session, outcome.nudgeId);
+  return true;
+}
+
+/** The final-answer hold: on a nudge the answer joins the conversation before the nudge, and the turn goes on. */
+export function holdSessionFinalResponse(
+  args: ConsumedEmitterArgs & { readonly conversation: ConversationManager; readonly providerRegistry: Pick<ProviderRegistry, 'getCurrentModel'> },
+  session: ContractSessionTurn,
+  response: ChatResponseWithReasoning,
+): Promise<boolean> {
+  return holdSessionCompletion(args, session, response.content, () => args.conversation.addAssistantMessage(response.content, {
+    reasoningContent: response.reasoning || undefined,
+    reasoningSummary: response.reasoningSummary || undefined,
+    usage: response.usage,
+    model: args.providerRegistry.getCurrentModel().displayName,
+    provider: args.providerRegistry.getCurrentModel().provider,
+  }));
+}
+
 function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], userText: string): ToolCall[] {
   const authoritativeTask = userText.trim();
   if (!authoritativeTask) return [...toolCalls];
@@ -152,6 +241,8 @@ export async function handleToolResponseOutcome(args: {
   sessionId?: string | undefined;
   /** This turn's MEMORY-sourced injected knowledge ids, stamped onto TURN_COMPLETED as metadata.memory.recordIds when non-empty (absent otherwise). */
   memoryRecordIds?: readonly string[] | undefined;
+  /** The session-mode contract unit this turn works on, when there is one. */
+  contractSession?: ContractSessionTurn | undefined;
 }): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
   const toolCalls = attachAuthoritativeTaskToAgentCalls(args.response.toolCalls, args.userText);
   args.setPendingToolCalls(toolCalls);
@@ -167,6 +258,7 @@ export async function handleToolResponseOutcome(args: {
   const results = await args.executeToolCalls(args.turnId, toolCalls);
   args.conversation.addToolResults(results);
   args.setPendingToolCalls([]);
+  if (args.contractSession) reportSessionToolRound(args.contractSession, { toolCalls, results, assistantText: args.response.content });
 
   const allImages = (results as Array<ToolResult & { _images?: Array<{ path: string; base64: string; mediaType: string; description: string }> }>)
     .filter(r => Array.isArray(r._images) && r._images.length > 0)
@@ -235,6 +327,10 @@ export async function handleToolResponseOutcome(args: {
         }
       }
     }
+    // A session-mode unit's turn is held where it would complete, like a sub-agent (contract runner design 6.6).
+    if (args.contractSession && await holdSessionCompletion(args, args.contractSession, args.response.content)) {
+      return { continueLoop: true, results };
+    }
     if (args.runtimeBus) {
       emitTurnCompleted(args.runtimeBus, args.emitterContext(args.turnId), {
         turnId: args.turnId,
@@ -251,6 +347,7 @@ export async function handleToolResponseOutcome(args: {
       'Update the execution plan to reflect completed work. Mark items as COMPLETE or IN_PROGRESS with the agent ID.'
     );
   }
+  if (args.contractSession) drainSessionNudges(args, args.contractSession);
 
   return { continueLoop: true, results };
 }

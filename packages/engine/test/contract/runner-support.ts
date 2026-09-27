@@ -32,10 +32,11 @@ import {
   ContractStore,
   createContractRunner,
   type ContractHoldOutcome,
-  type ContractRun,
   type ContractRouteSelector,
   type ContractRunner,
   type ContractSteps,
+  type ExecutionPlans,
+  type WorkPlanService,
   type ContractTurnRecord,
   type UnitRoute,
 } from '../../sdk/src/platform/contract/index.js';
@@ -179,25 +180,11 @@ export interface HarnessOptions {
   readonly planner?: DecompositionRunner;
   /** The route selector; defaults to one fixed route. */
   readonly routeSelector?: ContractRouteSelector;
+  readonly workPlanService?: WorkPlanService;
+  readonly planManager?: ExecutionPlans;
 }
 
 const ROUTE: UnitRoute = { model: 'provider-a:model-a', provider: 'provider-a', reason: 'test tier' };
-
-/** Passing steps: every group passes when its units did, and the contract passes with the last unit's answer. */
-export function passingSteps(): ContractSteps {
-  return {
-    unitStalled: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} stalled`),
-    unitAwaitsOwner: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} awaits the owner`),
-    unitMergeConflict: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} conflicted`),
-    attemptsUndecided: async (run, unitId) => run.control.fail('other', `test: unit ${unitId}'s attempts are undecided`),
-    groupUnitsPassed: async (run, groupId) => run.control.passGroup(groupId),
-    groupsPassed: async (run: ContractRun) => {
-      run.moveContract('judging');
-      run.moveContract('committing');
-      run.control.finishPassed({ answer: run.contract.units.at(-1)?.answer ?? '', statusLine: `Contract ${run.id} passed` });
-    },
-  };
-}
 
 function configManager(contract: Record<string, unknown>): Pick<ConfigManager, 'get' | 'getCategory'> {
   const values: Record<string, unknown> = { isolation: 'shared', gates: [], transportRetryDelayMs: 0, ...contract };
@@ -312,7 +299,9 @@ export function makeHarness(options: HarnessOptions): Harness {
     priceUsage: (_model, usage) => (usage.inputTokens + usage.outputTokens) / 1_000_000,
     priceProvenance: () => ({ source: 'catalog', asOf: '2026-09-01' }),
     store,
-    steps: { ...passingSteps(), ...options.steps },
+    ...(options.steps === undefined ? {} : { steps: options.steps }),
+    ...(options.workPlanService === undefined ? {} : { workPlanService: options.workPlanService }),
+    ...(options.planManager === undefined ? {} : { planManager: options.planManager }),
     repositoryMap: async () => 'README.md',
   });
   runner.on((event) => events.push(event));

@@ -226,6 +226,8 @@ export interface UnitEvidenceSources {
   readonly worktree?: Pick<IsolatedWorktree, 'diff'> | undefined;
   readonly configManager: ContractConfigReader;
   readonly runtimeBus: RuntimeEventBus;
+  /** When given, only these changed paths are evidence (a unit's re-check after a planned fix). */
+  readonly paths?: ReadonlySet<string> | null | undefined;
 }
 
 /** Triggers whose evidence includes gate results (design 4.3). */
@@ -248,7 +250,9 @@ export async function collectUnitEvidence(
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
 ): Promise<UnitEvidence> {
-  const changes = await collectChanges(unit, sources);
+  const collected = await collectChanges(unit, sources);
+  const scope = sources.paths;
+  const changes = scope === null || scope === undefined ? collected : collected.filter((change) => scope.has(change.path));
   const claims = trigger === 'completion' ? verifyUnitClaims(parseUnitCompletionReport(sources.output), sources.cwd) : undefined;
   const gates = GATED_TRIGGERS.has(trigger)
     ? await runContractGates({

@@ -16,11 +16,17 @@
  *   back to the agent as a nudge and it keeps working.
  * - A nudge reaches a held agent through its hold, a running agent through the
  *   message bus as a steer, and a stopped agent by waking it.
+ * - Session mode (design 6.6): the session's own turn does the unit's work.
+ *   The core turn loop binds its turn to the unit (`sessionTurn`), reports
+ *   tool turns and holds at completion exactly as a sub-agent does, and takes
+ *   mid-run nudges at its next model call (`takeSessionNudge`). No sub-agent
+ *   is spawned.
  *
  * Nothing here judges: the readings come from check.ts, and the mapping from
  * readings to outcomes is code there and in progress.ts.
  */
 import type { AgentMessageBus } from '../agents/message-bus.js';
+import type { WorkItem } from '../orchestration/types.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { logger } from '../utils/logger.js';
@@ -29,6 +35,7 @@ import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, ru
 import type { ContractConfigReader } from './config.js';
 import { collectUnitEvidence, type ContractTurnRecord } from './evidence.js';
 import { createNudge, dispatchNudge, type NudgeTargetState } from './nudge.js';
+import { takeBaseline } from './group-runner.js';
 import { describeStall } from './progress.js';
 import { failureFromError, isAbortError, type ContractRun, type InFlightCheck, type UnitRuntime } from './run-context.js';
 import { isTerminalUnitStatus, type CheckTrigger, type ContractFailureKind, type ContractUnit } from './types.js';
@@ -53,6 +60,18 @@ export interface ContractAgentHooks {
   onTurnEnd(record: AgentRecord, turn: ContractTurnRecord): void;
   /** When the agent would complete. The loop awaits it before finishing. */
   holdCompletion(record: AgentRecord): Promise<ContractHoldOutcome>;
+}
+
+/** The hooks the core turn loop calls: the agent hooks, and binding a session's turn to a session-mode unit (design 6.6). */
+export interface ContractSessionHooks extends ContractAgentHooks {
+  /**
+   * Session mode: binds a session's turn to the session-mode unit waiting for
+   * work in that session, and returns the turn's stand-in record (its id is the
+   * turn id). Null when no session-mode unit waits in the session.
+   */
+  sessionTurn(sessionId: string, turnId: string): AgentRecord | null;
+  /** Session mode: the oldest mid-run nudge waiting for the turn, taken once. */
+  takeSessionNudge(record: AgentRecord): { readonly message: string; readonly nudgeId: string } | null;
 }
 
 // ── The runner's side ─────────────────────────────────────────────────────────
@@ -84,14 +103,18 @@ export interface UnitCheckLoopDeps {
   readonly unitPassed: (run: ContractRun, unit: ContractUnit) => void;
   /** Gives the unit a fresh agent with its brief, "Previous checks" and `firstTurn` after them. */
   readonly respawnUnit: (run: ContractRun, unit: ContractUnit, reason: string, firstTurn: string) => void;
+  /** Session mode: the session-mode contract and its unit waiting for work in `sessionId`. */
+  readonly sessionUnit: (sessionId: string) => { readonly run: ContractRun; readonly unit: ContractUnit } | null;
 }
 
 export interface UnitCheckLoop {
-  readonly hooks: ContractAgentHooks;
-  /** Runs one check of a unit now. */
-  runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger): Promise<void>;
+  readonly hooks: ContractSessionHooks;
+  /** Runs one check of a unit now; `output`, when given, is what the check reads as the unit's output (a re-check after a planned fix). */
+  runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, output?: string): Promise<void>;
   /** Marks a check in flight as superseded and stops it. */
   supersede(runtime: UnitRuntime): void;
+  /** Passes a unit whose every criterion reads met (a check's pass, or the owner confirming unshown readings). */
+  passUnit(run: ContractRun, unit: ContractUnit, output: string, action: string): void;
 }
 
 /** Statuses in which a unit's agent is working and a mid-run check may start. */
@@ -139,15 +162,23 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     if (!WORKING.has(unit.status) && unit.status !== 'checking') return Promise.resolve({ kind: 'release' });
     supersede(runtime);
     return new Promise<ContractHoldOutcome>((resolve) => {
-      runtime.hold = { agentId: record.id, resolve };
+      runtime.hold = {
+        agentId: record.id,
+        resolve: (outcome) => {
+          // A session turn released at its completion point ends; the next turn binds again.
+          if (outcome.kind === 'release' && runtime.session !== null) runtime.session.active = false;
+          resolve(outcome);
+        },
+      };
       run.moveUnit(unit, 'held');
       void runCheck(run, unit, 'completion');
     });
   }
 
-  /** Where the unit's agent is, for delivering a nudge (4.7). */
+  /** Where the unit's agent is, for delivering a nudge (4.7). A session turn that ended takes its next nudge at the next completion check. */
   function targetState(unit: ContractUnit, runtime: UnitRuntime): NudgeTargetState | 'stopped' {
     if (runtime.hold !== null) return 'held';
+    if (runtime.session !== null) return runtime.session.active && runtime.session.record.id === unit.activeAgentId ? 'running' : 'stopped';
     const record = unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId);
     if (record === null) return 'gone';
     if (record.status === 'running' || record.status === 'pending') return 'running';
@@ -156,7 +187,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     return 'stopped';
   }
 
-  async function runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger): Promise<void> {
+  async function runCheck(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, given?: string): Promise<void> {
     const runtime = run.runtime(unit);
     const config = run.env.config();
     const check: InFlightCheck = { trigger, abort: new AbortController(), superseded: false };
@@ -166,14 +197,15 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     let outcome: UnitCheckOutcome;
     let output: string;
     try {
-      const record = unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId);
-      output = trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? runtime.lastAssistantText);
+      const record = runtime.session?.record ?? (unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId));
+      output = given ?? (trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? runtime.lastAssistantText));
       const evidence = await collectUnitEvidence(run.contract, unit, trigger, {
         output,
         turns: runtime.turns,
         cwd: runtime.cwd,
         configManager: deps.configManager,
         runtimeBus: deps.runtimeBus,
+        paths: runtime.evidencePaths,
       });
       if (check.superseded || signal.aborted) return;
       outcome = await runUnitCheck({ contract: run.contract, unit, trigger, evidence, settings: checkSettings(config), now: run.env.now(), signal });
@@ -232,21 +264,29 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       outcome.recordAction('recorded');
       return;
     }
+    if (check.result === 'nudge' && ownAgentClosed(run, unit)) {
+      // The unit's work merged for a planned fix and its item closed: no agent
+      // of its own can take a nudge, so correction takes the problems (5.2).
+      run.decide('stalled', unit.id, `check ${check.id} did not pass and the unit's own agent can no longer work on it`, check.decisionIds);
+      await routeToCorrection(run, unit, outcome);
+      return;
+    }
     if (check.result === 'nudge') {
       deliver(run, unit, runtime, outcome);
       return;
     }
     if (check.result === 'pass') {
-      pass(run, unit, runtime, outcome, output);
+      outcome.recordAction('passed');
+      passUnit(run, unit, output);
+      return;
+    }
+    if (check.result === 'stall') {
+      run.decide('stalled', unit.id, describeStall(outcome.stall!), check.decisionIds);
+      await routeToCorrection(run, unit, outcome);
       return;
     }
     try {
-      if (check.result === 'stall') {
-        run.decide('stalled', unit.id, describeStall(outcome.stall!), check.decisionIds);
-        await deps.escalations.unitStalled(run, unit.id, outcome);
-      } else {
-        await deps.escalations.unitAwaitsOwner(run, unit.id, outcome);
-      }
+      await deps.escalations.unitAwaitsOwner(run, unit.id, outcome);
     } catch (error) {
       if (run.terminal) return;
       const failure = failureFromError(error);
@@ -254,11 +294,39 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     }
   }
 
-  function pass(run: ContractRun, unit: ContractUnit, runtime: UnitRuntime, outcome: DecidedCheck, output: string): void {
+  async function routeToCorrection(run: ContractRun, unit: ContractUnit, outcome: DecidedCheck): Promise<void> {
+    try {
+      await deps.escalations.unitStalled(run, unit.id, outcome);
+    } catch (error) {
+      if (run.terminal) return;
+      const failure = failureFromError(error);
+      deps.failContract(run, failure.kind, `unit ${unit.id} could not be routed after check ${outcome.check.id}: ${failure.reason}`);
+    }
+  }
+
+  /** The unit's own work item already closed (worktree mode, its work merged for a planned fix): no agent of its own can work on it. */
+  function ownAgentClosed(run: ContractRun, unit: ContractUnit): boolean {
+    if (run.contract.isolation !== 'worktree' || run.contract.sessionMode === true) return false;
+    const item = engineItem(run, unit.id);
+    return item !== undefined && (item.state === 'passed' || item.state === 'failed');
+  }
+
+  /**
+   * Whether a passing unit still waits for its branch to merge into the
+   * contract branch: worktree mode, unless its item already integrated (a
+   * unit whose work merged, or conflicted, before a planned fix).
+   */
+  function awaitsMerge(run: ContractRun, unit: ContractUnit): boolean {
+    if (run.contract.isolation !== 'worktree' || run.contract.sessionMode === true) return false;
+    const item = engineItem(run, unit.id);
+    return item?.mergeState !== 'merged' && item?.mergeState !== 'conflict';
+  }
+
+  function passUnit(run: ContractRun, unit: ContractUnit, output: string, action?: string): void {
+    const runtime = run.runtime(unit);
     unit.answer = output;
-    outcome.recordAction('passed');
-    // Worktree mode: the unit's branch still has to merge into the contract branch.
-    run.moveUnit(unit, run.contract.isolation === 'worktree' ? 'held-merge' : 'passed');
+    if (action !== undefined) run.decide('checked', unit.id, action);
+    run.moveUnit(unit, awaitsMerge(run, unit) ? 'held-merge' : 'passed');
     if (runtime.hold !== null) {
       run.releaseHold(unit);
     } else {
@@ -275,6 +343,12 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     if (found === undefined) throw new Error(`check ${check.id} decided a nudge without its text`);
     const state = targetState(unit, runtime);
     if (state === 'stopped' || (check.trigger === 'turn-end' && state !== 'running')) {
+      if (runtime.session !== null && check.trigger !== 'turn-end') {
+        // A session turn that ended: the next turn takes the work up and its completion check reads everything again.
+        if (unit.status === 'checking') run.moveUnit(unit, 'running');
+        outcome.recordAction('recorded: the session turn ended; the next turn is checked at its completion');
+        return;
+      }
       // A mid-run nudge for an agent that has since stopped: its next check (completion or failure) reads everything again.
       if (unit.status === 'checking') run.moveUnit(unit, 'running');
       outcome.recordAction('recorded: the agent stopped before a mid-run nudge could reach it');
@@ -296,7 +370,10 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     run.decide('nudged', unit.id, `check ${check.id}: ${found.kinds.join(', ')} (${nudge.delivery})`, check.decisionIds);
     run.emit({ type: 'CONTRACT_NUDGED', contractId: run.id, unitId: unit.id, nudgeId: nudge.id, checkId: check.id, kinds: nudge.kinds, criterionIds: nudge.criterionIds, delivery: nudge.delivery, agentId });
     outcome.recordAction(`nudged (${nudge.delivery})`);
-    if (state === 'gone') {
+    if (runtime.session !== null) {
+      // A live session turn: the turn loop adds the nudge before its next model call.
+      runtime.session.queued.push({ message: nudge.text, nudgeId: nudge.id });
+    } else if (state === 'gone') {
       deps.respawnUnit(run, unit, `the agent for unit ${unit.id} is gone; a fresh agent takes the nudge`, nudge.text);
     } else {
       const sent = dispatchNudge(nudge, state, { messageBus: deps.messageBus, agentManager: deps.agentManager, nudgeTtlMs: run.env.config().nudgeTtlMs });
@@ -325,5 +402,53 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     }
   }
 
-  return { hooks: { onTurnEnd, holdCompletion }, runCheck, supersede };
+  function sessionTurn(sessionId: string, turnId: string): AgentRecord | null {
+    const found = deps.sessionUnit(sessionId);
+    if (found === null) return null;
+    const { run, unit } = found;
+    const runtime = run.runtime(unit);
+    const record = sessionRecord(run, unit, turnId);
+    runtime.session = { record, active: true, queued: [...(runtime.session?.queued ?? [])] };
+    unit.activeAgentId = turnId;
+    unit.agentIds.push(turnId);
+    runtime.cwd = run.contract.projectRoot;
+    runtime.agentStartedAt = run.env.now();
+    unit.baseline ??= takeBaseline(run.contract.projectRoot);
+    return record;
+  }
+
+  function takeSessionNudge(record: AgentRecord): { readonly message: string; readonly nudgeId: string } | null {
+    const found = locate(record);
+    return found?.runtime.session?.queued.shift() ?? null;
+  }
+
+  return { hooks: { onTurnEnd, holdCompletion, sessionTurn, takeSessionNudge }, runCheck, supersede, passUnit };
+}
+
+/** The stand-in record for a session turn working on a session-mode unit: it runs no agent of its own. */
+function sessionRecord(run: ContractRun, unit: ContractUnit, turnId: string): AgentRecord {
+  return {
+    id: turnId,
+    task: unit.brief,
+    template: 'session',
+    tools: [],
+    status: 'running',
+    startedAt: run.env.now(),
+    toolCallCount: 0,
+    orchestrationDepth: 0,
+    executionProtocol: 'direct',
+    reviewMode: 'contract',
+    communicationLane: 'parent-only',
+    contractId: run.id,
+    contractRole: 'unit',
+    contractUnitId: unit.id,
+  };
+}
+
+function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
+  for (const workstream of run.engine?.listWorkstreams() ?? []) {
+    const item = workstream.items.find((candidate) => candidate.id === itemId);
+    if (item !== undefined) return item;
+  }
+  return undefined;
 }

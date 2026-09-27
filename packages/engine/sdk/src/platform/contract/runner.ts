@@ -15,7 +15,13 @@
  *   only), usage and tool-call totals are the contract's.
  *
  * Group and deliverable judging, stall routing, owner escalations and the
- * commit are the correction and completion steps (R.6), handed in as `steps`.
+ * commit are the correction and completion steps (steps.ts). The owner's
+ * replies to escalations arrive through `reply`.
+ *
+ * Session mode (design 6.6): when the user forbids delegation, the contract's
+ * one unit is done by the session's own turns (the core turn loop binds its
+ * turn to the unit and is held and nudged exactly as a sub-agent is); no
+ * engine runs and no sub-agent is spawned.
  */
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -31,13 +37,17 @@ import { emptyWorkItemUsage, type PriceProvenanceFn } from '../orchestration/typ
 import { emitAgentCancelled, emitAgentCompleted, emitAgentFailed } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
-import { createUnitCheckLoop, type ContractAgentHooks, type UnitCheckEscalations } from './agent-hooks.js';
+import { delegationForbidden } from './batteries/request-shape.js';
+import { createUnitCheckLoop, type ContractSessionHooks } from './agent-hooks.js';
 import { readContractConfig, type ContractConfigReader } from './config.js';
 import { emitContractEvent } from './events.js';
-import { createGroupRunner, type ContractEngineInput, type GroupSteps } from './group-runner.js';
+import type { OwnerReplyOutcome } from './escalation.js';
+import { createGroupRunner, takeBaseline, type ContractEngineInput } from './group-runner.js';
 import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
+import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } from './plan-sync.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
+import { createContractSteps, type ContractSteps } from './steps.js';
 import type { ContractStore } from './store.js';
 import {
   CURRENT_CONTRACT_SCHEMA_VERSION,
@@ -52,9 +62,6 @@ import {
 import { createUnitFailureHandling } from './unit-failures.js';
 import { contractAgentIds, ownerRecordUsage, rollUpContractUsage, type PriceUsageFn } from './usage.js';
 import { createUnitWatchdog, type WatchedAgent } from './watchdog.js';
-
-/** The correction and completion steps (R.6): what the runner hands a unit, group or contract to when a nudge is not the answer. */
-export interface ContractSteps extends UnitCheckEscalations, GroupSteps {}
 
 export interface ContractRunnerDeps {
   readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'wakeWithSteer'>;
@@ -73,7 +80,16 @@ export interface ContractRunnerDeps {
   readonly priceUsage: PriceUsageFn;
   readonly priceProvenance: PriceProvenanceFn;
   readonly store: ContractStore;
-  readonly steps: ContractSteps;
+  /**
+   * Individual correction and completion steps a host takes over (a surface
+   * that answers attempt selections itself, a test); every other step is the
+   * runner's own (steps.ts).
+   */
+  readonly steps?: Partial<ContractSteps> | undefined;
+  /** The project work plan: each contract and unit as a task (design 6.5). Absent where the host has no project planning. */
+  readonly workPlanService?: WorkPlanService | undefined;
+  /** The execution plan: items a unit's agents worked on complete when the unit passes (design 6.5). */
+  readonly planManager?: ExecutionPlans | undefined;
   /** The repository summary the planner starts from; defaults to the repo_map tool. */
   readonly repositoryMap?: ((projectRoot: string) => Promise<string>) | undefined;
   readonly now?: (() => number) | undefined;
@@ -92,10 +108,12 @@ export interface ContractRunner {
   list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
   cancel(contractId: string, reason: string): boolean;
+  /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
+  reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
   importContract(snapshotJson: string, force?: boolean): boolean;
   serializeContract(contractId: string): string | null;
   /** Installed into AgentOrchestrator's tool dependencies and the core turn loop. */
-  hooks(): ContractAgentHooks;
+  hooks(): ContractSessionHooks;
   on(listener: (event: ContractEvent) => void): () => void;
   dispose(): void;
 }
@@ -154,6 +172,12 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
 
   deps.messageBus.registerAgent({ agentId: CONTRACT_RUNNER_AGENT_ID, role: 'orchestrator' });
   const detachStore = deps.store.attach(on);
+  const planSync = createContractPlanSync({
+    workPlanService: deps.workPlanService,
+    planManager: deps.planManager,
+    getContract: (contractId) => runs.get(contractId)?.contract ?? deps.store.get(contractId),
+  });
+  const detachPlanSync = on(planSync.onEvent);
 
   const settlement: ContractUnitSettlement = {
     settle(item, agentId, signal) {
@@ -201,6 +225,21 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     now,
   });
 
+  const ownSteps = createContractSteps({
+    agentManager: deps.agentManager,
+    configManager: deps.configManager,
+    runtimeBus: deps.runtimeBus,
+    routeSelector: deps.routeSelector,
+    decompositionRunner: deps.decompositionRunner,
+    plannerDeps: (run) => plannerDeps(run),
+    getStatus,
+    groups: () => groups,
+    checks: () => checks,
+    continuePlanning: (run, outcome) => continuePlanning(run, outcome),
+    ownerProgress: (run) => updateOwnerProgress(run),
+  });
+  const steps = { ...ownSteps, ...deps.steps };
+
   const checks = createUnitCheckLoop({
     findRun: (contractId) => runs.get(contractId),
     agentManager: deps.agentManager,
@@ -208,10 +247,11 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     configManager: deps.configManager,
     runtimeBus: deps.runtimeBus,
     watchdog,
-    escalations: deps.steps,
+    escalations: steps,
     failContract: (run, kind, reason) => fail(run, kind, reason),
-    unitPassed: (run, unit) => groups.unitPassed(run, unit),
+    unitPassed: (run, unit) => (run.contract.sessionMode === true ? sessionUnitPassed(run, unit) : groups.unitPassed(run, unit)),
     respawnUnit: (run, unit, reason, firstTurn) => groups.requeueUnit(run, unit, reason, 'resume', firstTurn),
+    sessionUnit,
   });
 
   const groups = createGroupRunner({
@@ -221,7 +261,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     getStatus,
     watchdog,
     settlement,
-    steps: deps.steps,
+    steps,
     pricing,
     failContract: (run, kind, reason) => fail(run, kind, reason),
     failUnit: (run, unit, kind, reason) => failures.failUnit(run, unit, kind, reason),
@@ -338,21 +378,32 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   async function activate(run: ContractRun): Promise<void> {
     const { contract } = run;
     try {
-      if (contract.isolation === 'worktree' && contract.worktreePath !== undefined && contract.branch !== undefined) {
-        await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').create();
-      }
-      if (run.terminal) return;
       const shaped = await shapeContract(contract, plannerDeps(run), { signal: run.abort.signal });
+      if (contract.shape !== undefined) settleSessionMode(run);
       if (!proceed(run, shaped)) return;
       const planned = await planContract(contract, plannerDeps(run), { proposedUnits: run.proposedUnits, signal: run.abort.signal });
-      if (!proceed(run, planned)) return;
-      groups.startRun(run);
-      updateOwnerProgress(run);
+      await continuePlanning(run, planned);
     } catch (error) {
       if (run.terminal) return;
       const failure = failureFromError(error);
       fail(run, failure.kind, `contract ${contract.id} could not start: ${failure.reason}`);
     }
+  }
+
+  /**
+   * The user forbade delegation (6.6): the session's own turns do the one
+   * unit in the project's own tree, so the contract runs in shared mode with
+   * no contract branch.
+   */
+  function settleSessionMode(run: ContractRun): void {
+    const { contract } = run;
+    if (contract.shape === undefined || !delegationForbidden(contract.shape) || contract.sessionMode === true) return;
+    contract.sessionMode = true;
+    contract.isolation = 'shared';
+    contract.branch = undefined;
+    contract.worktreePath = undefined;
+    contract.baseBranch = undefined;
+    run.decide('shaped', contract.id, 'session mode: the user does not allow delegating, so the session does the work and no sub-agent is spawned');
   }
 
   /** Whether planning goes on after a shaping or planning outcome; settles the contract when it ended there. */
@@ -361,6 +412,60 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     if (outcome.kind === 'failed') settleEnded(run);
     if (outcome.kind === 'awaiting-owner') updateOwnerProgress(run);
     return false;
+  }
+
+  /** After planning, or an owner reply that settled the shape or the plan: plan on, or start the accepted plan. */
+  async function continuePlanning(run: ContractRun, outcome: ShapeOutcome | PlanningOutcome): Promise<void> {
+    const { contract } = run;
+    if (outcome.kind === 'shaped') {
+      settleSessionMode(run);
+      const planned = await planContract(contract, plannerDeps(run), { proposedUnits: run.proposedUnits, signal: run.abort.signal });
+      await continuePlanning(run, planned);
+      return;
+    }
+    if (!proceed(run, outcome)) return;
+    if (contract.sessionMode === true) {
+      startSession(run);
+      updateOwnerProgress(run);
+      return;
+    }
+    if (contract.isolation === 'worktree' && contract.worktreePath !== undefined && contract.branch !== undefined) {
+      await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').create();
+      if (run.terminal) return;
+    }
+    groups.startRun(run);
+    updateOwnerProgress(run);
+  }
+
+  // ── Session mode (design 6.6) ───────────────────────────────────────────────
+
+  /** A session-mode contract runs: its one unit waits for the session's next turn. */
+  function startSession(run: ContractRun): void {
+    const { contract } = run;
+    contract.baseline ??= takeBaseline(contract.projectRoot);
+    run.moveContract('running');
+    for (const group of contract.groups) run.moveGroup(group, 'running');
+    for (const unit of contract.units) run.moveUnit(unit, 'running');
+    run.decide('spawned', contract.id, 'session mode: the session\'s next turn takes the work; no sub-agent is spawned');
+  }
+
+  /** The session-mode unit waiting for work in a session. */
+  function sessionUnit(sessionId: string): { readonly run: ContractRun; readonly unit: ContractRun['contract']['units'][number] } | null {
+    for (const run of runs.values()) {
+      if (run.terminal || run.contract.sessionMode !== true || run.contract.sessionId !== sessionId) continue;
+      const unit = run.contract.units.find((candidate) => candidate.status === 'running' || candidate.status === 'nudged');
+      if (unit !== undefined) return { run, unit };
+    }
+    return null;
+  }
+
+  /** A session-mode unit passed: its group is judged, as a group whose units all passed. */
+  function sessionUnitPassed(run: ContractRun, unit: ContractRun['contract']['units'][number]): void {
+    const group = run.group(unit.groupId);
+    if (group === undefined || group.status !== 'running' || run.settledGroups.has(group.id)) return;
+    if (!run.contract.units.filter((candidate) => candidate.groupId === group.id).every((candidate) => candidate.status === 'passed')) return;
+    run.settledGroups.add(group.id);
+    void steps.groupUnitsPassed(run, group.id);
   }
 
   function updateOwnerProgress(run: ContractRun): void {
@@ -488,6 +593,11 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       const run = runs.get(contractId);
       return run === undefined ? false : cancelRun(run, reason);
     },
+    reply: async (contractId, escalationId, text) => {
+      const run = runs.get(contractId);
+      if (run === undefined || run.terminal) throw new Error(`contract ${contractId} is not running`);
+      return steps.reply(run, escalationId, text);
+    },
     importContract: (snapshotJson, force = false) => deps.store.importContract(snapshotJson, force),
     serializeContract: (contractId) => deps.store.serialize(contractId),
     hooks: () => checks.hooks,
@@ -504,6 +614,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
         for (const release of run.sharedTreeReleases.values()) release();
       }
       detachStore();
+      detachPlanSync();
       listeners.clear();
     },
   };
