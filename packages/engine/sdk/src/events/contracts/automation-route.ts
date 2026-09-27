@@ -21,10 +21,12 @@ export function validatePluginLoaded(v: unknown): ContractResult {
   ]);
 }
 
-export function validatePluginFailed(v: unknown): ContractResult {
-  return validateEventFields('PLUGIN_FAILED', v, [
-    { key: 'pluginName', kind: 'string' },
+/** PLUGIN_ERROR, the event the plugin manager emits (events/plugins.ts); no PLUGIN_FAILED type exists. */
+export function validatePluginError(v: unknown): ContractResult {
+  return validateEventFields('PLUGIN_ERROR', v, [
+    { key: 'pluginId', kind: 'string' },
     { key: 'error', kind: 'string' },
+    { key: 'fatal', kind: 'boolean' },
   ]);
 }
 

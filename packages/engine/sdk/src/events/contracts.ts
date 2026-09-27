@@ -43,7 +43,7 @@ export {
 
 export {
   validatePluginLoaded,
-  validatePluginFailed,
+  validatePluginError,
   validateAutomationJobCreated,
   validateAutomationJobUpdated,
   validateAutomationJobEnabled,
@@ -97,7 +97,7 @@ import {
 import { validateAgentSpawning, validateAgentCompleted, validateAgentFailed, validateMcpConnected, validateMcpDisconnected, validateMcpReconnecting } from './contracts/agent-mcp.js';
 import {
   validatePluginLoaded,
-  validatePluginFailed,
+  validatePluginError,
   validateAutomationJobCreated,
   validateAutomationJobUpdated,
   validateAutomationJobEnabled,
@@ -165,7 +165,7 @@ const EVENT_VALIDATORS: Record<string, (v: unknown) => import('./contracts/share
   MCP_DISCONNECTED: validateMcpDisconnected,
   MCP_RECONNECTING: validateMcpReconnecting,
   // plugin domain
-  PLUGIN_FAILED: validatePluginFailed,
+  PLUGIN_ERROR: validatePluginError,
   PLUGIN_LOADED: validatePluginLoaded,
   // automation domain
   AUTOMATION_JOB_AUTO_DISABLED: validateAutomationJobAutoDisabled,
