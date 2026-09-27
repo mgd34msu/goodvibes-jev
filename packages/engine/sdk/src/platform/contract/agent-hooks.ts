@@ -370,7 +370,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     run.decide('nudged', unit.id, `check ${check.id}: ${found.kinds.join(', ')} (${nudge.delivery})`, check.decisionIds);
     run.emit({ type: 'CONTRACT_NUDGED', contractId: run.id, unitId: unit.id, nudgeId: nudge.id, checkId: check.id, kinds: nudge.kinds, criterionIds: nudge.criterionIds, delivery: nudge.delivery, agentId });
     outcome.recordAction(`nudged (${nudge.delivery})`);
-    if (runtime.session !== null) {
+    if (runtime.session !== null && state === 'running') {
       // A live session turn: the turn loop adds the nudge before its next model call.
       runtime.session.queued.push({ message: nudge.text, nudgeId: nudge.id });
     } else if (state === 'gone') {

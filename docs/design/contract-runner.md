@@ -42,9 +42,12 @@ A new platform module, `contract/`, exported at the engine subpath `@goodvibes-j
 | `contract/check.ts` | One check: evidence in, Jev readings, outcome out (section 4.4 to 4.6) |
 | `contract/progress.ts` | Regression and stall detection over the readings history, in code |
 | `contract/nudge.ts` | `buildNudge(...)`: the nudge text built in code, and delivery |
+| `contract/steps.ts` | `createContractSteps`: the correction, completion and escalation steps put together for the runner |
 | `contract/correction.ts` | Stall routing, planned-fix groups, fresh-agent retries; replaces `orchestration/fix-workstream-runner.ts` and the fix paths of the controller |
+| `contract/fix-plan.ts` | The fix planner's prompts, the code checks on a fix plan, and building the fix group into the tree |
 | `contract/completion.ts` | Group and deliverable judging, integration, scoped commit, answer and status, cancel |
 | `contract/escalation.ts` | Owner escalations and reading the owner's reply |
+| `contract/amendment.ts` | An owner's amendment: the planner rewrites a target's criteria as instructed |
 | `contract/best-of-n.ts` | Candidate selection over attempt siblings; replaces `orchestration/judge.ts` |
 | `contract/usage.ts` | Usage roll-up: unit, group, contract, and judgment usage |
 | `contract/plan-sync.ts` | Execution-plan items and project work-plan tasks follow units; replaces `agents/wrfc-plan-sync.ts` and `upsertWrfcWorkPlanTask` |
@@ -117,7 +120,7 @@ export interface StartedContract {
 | `routeSelector` | `ContractRouteSelector` (required) | the model for each unit and the planner (section 6.1) |
 | `createEngine` | `(input: ContractEngineInput) => OrchestrationEngine`, the input being `{ projectRoot, stateRoot, stateNamespace, contractUnitSettlement, fleetCapacity, judgeAttempts }` | one orchestration engine per contract (section 7.4); the runner hands the engine its settlement of unit items (section 7.5), the fleet ceiling, and its best-of-N judge (section 6.2) |
 | `decompositionRunner` | `DecompositionRunner` (`core/plan-decomposition.ts`) | the planner agent (section 3.2) |
-| `steps` | `ContractSteps` (`contract/runner.ts`) | the correction and completion steps of R.6: stall routing, owner escalation (including `attemptsUndecided`, section 6.2), merge conflicts, group and deliverable judging, commit; they act through `ContractRun` and its `RunControl` |
+| `steps?` | `Partial<ContractSteps>` (`contract/steps.ts`) | individual correction and completion steps a host takes over; every other step is the runner's own, built by `createContractSteps` from the runner's dependencies: stall routing, owner escalation (including `attemptsUndecided`, section 6.2), merge conflicts, group and deliverable judging, commit; they act through `ContractRun` and its `RunControl` |
 | `fleetCapacity` | `FleetCapacityFn` (`orchestration/elastic-pool.ts`) | the global unit ceiling |
 | `priceUsage`, `priceProvenance` | from `buildPricingSeams` (`runtime/cost/pricing-seams.ts`) | cost roll-up |
 | `workPlanService?` | `Pick<ProjectPlanningService, 'createWorkPlanTask' \| 'updateWorkPlanTask'>` | work-plan sync (added with R.6) |
@@ -622,6 +625,14 @@ A planned-fix group is ordinary contract structure: the planner receives the tar
 
 The group runs as its own workstream through the same engine, with the elastic pool (`releasePolicy: 'reviewed-and-merged'`), so edges release only on merge. Its units run the same nudge loop. When the group passes its group check, the target is checked again (trigger `fix-passed`) against its own criteria. If that check passes, the target passes; if not, the stall rules apply again with `fixRounds` incremented. This replaces `startPlannedFix`, `startCompoundSubtaskFix`, `planFixWorkstream`, `parseReviewIntoTasks` and `createFixWorkstreamRunner`. `planTaskGraph`, `clusterOf` and `ELASTIC_PHASE_CAPACITY` stay in the orchestration module (moved from `review-task-source.ts` to `orchestration/task-graph.ts`) and are used to add shared-file serialization edges between fix units.
 
+Points resolved when this was built (R.6):
+
+- **The stall-route state** also carries `lastOutput`, the head and tail of the agent's last report, since that is where an agent says what blocks it (a missing credential, criteria that conflict). The battery's fixtures cover each route.
+- **A unit's fix in worktree mode.** The fix units work on the contract branch, so before its fix group starts, the unit's own item settles as completed: its work is committed on its branch and merged into the contract branch. The fix group then builds on it, and the unit's re-check reads the contract branch, limited to the files the unit and its fixes touched (`UnitRuntime.evidencePaths`), with the unit's report followed by the fix units' answers as its output. Once a unit's item has closed this way no agent of its own can take a nudge, so a re-check that does not pass goes to correction again; a `fresh` route for such a unit is a one-unit fix group built in code from the unit's own brief and criteria (`buildFreshGroup`). In shared mode the unit's item stays in its phase and its agent is woken as 4.2 says.
+- **A fix group for a unit** runs inside the unit's group, which in shared mode already holds the shared-tree lock, so it does not take the lock again. Fix units that change the same file are serialized most severe first (`orchestration/task-graph.ts`).
+- **Groups and the deliverable** have no agent of their own: their first failed check becomes a planned fix; when their checks stop making progress (the same rules as 4.8, over their checks) `contract.stall-route` is read, and a `fresh` reading is a new planned fix. A merge conflict routes to a planned fix without a reading, and the conflicting branch and files go to the fix planner.
+- **Session mode** cannot delegate, so a planned fix or a fresh agent is not possible: stalls and failed group or deliverable checks go to the owner, with a line saying why.
+
 ## 6. Groups, the deliverable, and finishing
 
 ### 6.1 Running units
@@ -710,6 +721,16 @@ A commit or apply failure is a warning on a passing contract, never a failure: t
 ### 6.6 Session mode (delegation forbidden)
 
 When the request shape says the user forbids delegation, the contract has one group with one unit whose executor is the session's own conversation loop instead of a sub-agent. The core turn loop gets the same completion hold: at the two `emitTurnCompleted` sites in `core/orchestrator-turn-helpers.ts` (lines 239 and 284), when the turn belongs to a session-mode contract, the loop awaits `contractHooks.holdCompletion` for the session's pseudo-record (`contractUnitId` set, `id` = the turn id) and on `continue` appends the nudge as a user message and runs another model call in the same turn. Evidence, checks, nudges and all rules are identical. No sub-agent is spawned at any point.
+
+Points resolved when this was built (R.6):
+
+- **Steps.** The runner builds its correction and completion steps itself (`createContractSteps`), so every host gets working steps; `ContractRunnerDeps.steps` only lets a host take over individual steps.
+- **Group and deliverable checks** are recorded as `UnitCheck`s with no quality items (`UnitCheck.quality` is partial) and result `stall` when the check is handed to correction. Their diff is measured from a baseline taken when the group started (`ContractGroup.baseline`) or when the contract's groups started (`Contract.baseline`), limited to the files their units and fixes touched, since groups that do not depend on each other run side by side.
+- **The commit** in worktree mode removes the contract worktree after a commit or apply and keeps the `contract/<short>` branch as the record of the work; a failed merge is aborted and the branch and worktree stay. A shared-mode commit excludes files that were dirty at launch and were not touched (`Contract.baseline.dirty`).
+- **The answer** is the deliverable unit's recorded answer (`ContractUnit.answer`, set when the unit passes), so it survives the agent record.
+- **Owner replies.** The contract returns to the status it left for the owner once its last open escalation is answered. An amendment is planned by the planning model as a JSON answer (`contract/amendment.ts`); reworded or added criteria get ids `<target>.o<n>` (`o<n>` for the deliverable) and origin `owner`, and the target's fix rounds and fresh agents start again from zero, since what is required changed. A `writing-unclear` amend is read with the request-shape battery's `forbids_writing` question over the reply (R.4's `withOwnerWritingDecision` records it). An `attempts-undecided` amend takes the attempt the reply names by its id, a fixed format; a reply that names none is asked for the id. A reply to an escalation that is no longer open is refused.
+- **Work-plan sync** writes the contract id in the work plan's existing correlation field (`chainId`), which the wire rename to `contractId` in 11.3 takes over with the regenerated schemas.
+- **Session mode.** A session-mode contract settles to shared isolation with no contract branch once shaped. The runner binds a session's turn to the unit through `ContractSessionHooks.sessionTurn` (a stand-in record whose id is the turn id), the core turn loop reports each tool round, drains mid-run nudges before its next model call (`takeSessionNudge`), and holds at both completion points; `OrchestratorCoreServices.contractHooks` carries the hooks to the Orchestrator.
 
 ## 7. Persistence, resume and execution machinery
 

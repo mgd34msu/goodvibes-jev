@@ -18,6 +18,7 @@ import {
   finishes,
   fixPlan,
   fixedOutputsMeet,
+  git,
   judgeOf,
   keepsFailing,
   routeAnswer,
@@ -159,6 +160,57 @@ describe('routing a stalled unit (5.1)', () => {
     expect(fixes[1]!.userPrompt).toContain('[serves-unknown');
     expect(fixes[1]!.userPrompt).toContain('[uncovered-criterion u1.c1]');
   }, 20_000);
+});
+
+describe('a merge conflict (7.4)', () => {
+  /** Two independent units in one group that both write src/shared.ts, then an integration unit. */
+  function conflictingPlan(): DraftPlan {
+    const unit = (id: string) => ({
+      id, title: `Writer ${id}`, goal: `Write ${id}'s part`, role: 'implement', brief: 'Write src/shared.ts.',
+      dependsOn: [], files: ['src/shared.ts'], attempts: undefined,
+      criteria: [{ id: `${id}.c1`, text: `${id}'s part is written`, serves: ['c1'] }],
+    });
+    return {
+      goal: 'A shared module',
+      criteria: [{ id: 'c1', text: 'A CSV parser module exists', quote: 'Add a CSV parser module' }],
+      groups: [
+        { id: 'g1', title: 'Writers', goal: 'Both parts', kind: 'work', dependsOn: [], criteria: [], units: [unit('u1'), unit('u2')] },
+        {
+          id: 'g2', title: 'Integration', goal: 'Join the parts', kind: 'integration', dependsOn: ['g1'], criteria: [],
+          units: [{ ...unit('u3'), role: 'integration', files: [], criteria: [{ id: 'u3.c1', text: 'the parts are joined', serves: ['c1'] }] }],
+        },
+      ],
+    };
+  }
+
+  test('a unit whose branch conflicts goes to a planned fix without a route reading, and passes on its re-check', async () => {
+    const asked: Record<string, unknown>[] = [];
+    const planner = stepPlanner(conflictingPlan(), { fix: (prompt) => plannerOutput(fixPlan([{ serves: [/unit (u\d)\)/.exec(prompt)![1]! + '.c1'], files: ['src/shared.ts'] }])) });
+    const h = use(makeHarness({
+      plan: conflictingPlan(),
+      contract: { isolation: 'auto' },
+      planner: planner.runner,
+      scripts: scriptsWith(
+        { u1: finishes('u1 wrote its part', 'src/shared.ts'), u2: finishes('u2 wrote its part', 'src/shared.ts'), u3: finishes('joined the parts', 'src/index.ts') },
+        (unitId) => (unitId.endsWith('.f1.u1') ? finishes('resolved both parts', 'src/shared.ts') : undefined),
+      ),
+      port: answers(fixedOutputsMeet, routeAnswer('owner', asked)),
+    }));
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'the contract to end', 20_000);
+    const done = contractOf(h, contract.id);
+    expect(done.status).toBe('passed');
+    const conflicts = eventsOf(h, 'CONTRACT_MERGE_CONFLICT');
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]!.files).toEqual(['src/shared.ts']);
+    const conflicted = conflicts[0]!.unitId;
+    expect(asked).toHaveLength(0);
+    expect(eventsOf(h, 'CONTRACT_STALLED').map((event) => [event.targetId, event.route])).toEqual([[conflicted, 'split']]);
+    expect(eventsOf(h, 'CONTRACT_FIX_PLANNED').map((event) => event.groupId)).toEqual([`${conflicted}.f1`]);
+    expect(planner.of('fix')[0]!.userPrompt).toContain('## Merge conflict');
+    expect(done.units.find((unit) => unit.id === conflicted)!.checks.at(-1)).toMatchObject({ trigger: 'fix-passed', result: 'pass' });
+    expect(git(h.root, 'show', 'HEAD:src/shared.ts')).toBe('resolved both parts\n');
+  }, 30_000);
 });
 
 /** A one-unit plan whose group has a criterion of its own. */
