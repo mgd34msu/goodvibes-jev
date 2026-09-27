@@ -34,6 +34,7 @@ import type { ConnectorsConfigKey, ConnectorsConfigValue } from './schema-types-
 // ConfigValue that used to live in schema-types.ts, and move here with it.
 import type { PaymentsConfigValueMap } from './schema-types-payments.js';
 import type { ContractConfigValueMap } from './schema-types-contract.js';
+import type { JudgmentConfigValueMap } from './schema-types-judgment.js';
 import type { DaemonProcessConfigValueMap } from './schema-types-daemon.js';
 import type {
   InboundEmailCapabilityPolicy,
@@ -142,6 +143,7 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'tools.contractVerification' ? boolean :
   K extends 'tools.outputSchemaFingerprints' ? boolean :
   K extends keyof ContractConfigValueMap ? ContractConfigValueMap[K] :
+  K extends keyof JudgmentConfigValueMap ? JudgmentConfigValueMap[K] :
   K extends 'cache.enabled' ? boolean :
   K extends 'cache.stableTtl' ? '5m' | '1h' :
   K extends 'cache.monitorHitRate' ? boolean :

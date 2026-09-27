@@ -73,6 +73,7 @@ import { ServiceRegistry } from '../config/service-registry.js';
 import { SubscriptionManager, sharedSubscriptionsPath } from '../config/subscriptions.js';
 import type { ToolLLM } from '../config/tool-llm.js';
 import { createRuntimeSecretsManager } from './secrets-composition.js';
+import { composeJudgment, type JudgmentServices } from './judgment-services.js';
 import { ArtifactStore } from '../artifacts/index.js';
 import { SessionLiveTurnControlsHolder } from '../control-plane/index.js';
 import type { SharedSessionContinuationRunner } from '../control-plane/session-intents.js';
@@ -263,6 +264,8 @@ export interface ClientRuntimeServices {
   // and the project index read this machine's tree).
   readonly fileCache: FileStateCache;
   readonly projectIndex: ProjectIndex;
+  /** The installed judgment port and the state root's decision log. */
+  readonly judgment: JudgmentServices;
 
   /** Stop every poller and bridge this composition started. Idempotent. */
   dispose(): void;
@@ -427,6 +430,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   // pre-shared-tier per-surface store this surface used to own; the manager
   // folds any newer records it finds there into the shared store once, at
   // construction, and never writes to or deletes it.
+  const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(surfaceRoot), disposal: disposalScope.registry });
   const subscriptionManager = new SubscriptionManager(sharedSubscriptionsPath(shellPaths), {
     legacyPath: shellPaths.resolveUserPath(surfaceRoot, 'subscriptions.json'),
   });
@@ -630,6 +634,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     memoryAccess,
     fileCache,
     projectIndex,
+    judgment,
     dispose: (): void => disposalScope.dispose(),
   };
 }

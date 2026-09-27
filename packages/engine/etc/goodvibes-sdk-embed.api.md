@@ -4,7 +4,9 @@
 
 ```ts
 
+import { JudgmentPort } from '@goodvibes-jev/judgment';
 import type { SimpleGit } from 'simple-git';
+import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import type { StoreApi } from 'zustand';
 
 // Warning: (ae-forgotten-export) The symbol "SessionEvent" needs to be exported by the entry point embed.d.ts

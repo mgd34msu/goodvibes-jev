@@ -185,6 +185,9 @@ export const CREDENTIAL_SCOPE_DECLARATIONS: readonly CredentialScopeDeclaration[
   // Model-provider credentials are DERIVED from the provider catalog below
   // rather than listed here, so a new provider brings its key names along.
 
+  // ── Judgment ─────────────────────────────────────────────────────────────
+  { key: 'TYPESAFE_API_KEY', match: 'exact', scope: 'daemon-needed', why: 'The daemon asks Jev for every engine judgment with it when judgment.keySource is secret; with no key no judgment site can decide.' },
+
   // ── Cluster ──────────────────────────────────────────────────────────────
   { key: daemonSecretKeyFor('cluster.groupMaterial'), match: 'exact', scope: 'daemon-needed', why: 'Daemons authenticate to each other with it; it is meaningless to a client.' },
 

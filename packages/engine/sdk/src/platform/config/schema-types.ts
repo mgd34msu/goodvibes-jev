@@ -34,6 +34,7 @@ import type { BackgroundAgentsMode, LineNumberMode, PermissionAction, Permission
 export * from "./schema-types-payments.js";
 import type { PaymentsConfig, PaymentsConfigKey, PaymentsConfigValueMap } from "./schema-types-payments.js";
 import type { ContractConfigKey, ContractSettings } from "./schema-types-contract.js";
+import type { JudgmentConfigKey, JudgmentSettings } from "./schema-types-judgment.js";
 
 export * from "./schema-types-daemon.js";
 import type {
@@ -162,6 +163,7 @@ export interface GoodVibesConfig {
   daemon: { enabled: boolean; timezone: string; connectedHost: { enabled: boolean } };
   payments: PaymentsConfig;
   contract: ContractSettings;
+  judgment: JudgmentSettings;
     // default: enabled true, run the local session daemon (loopback only); timezone '', IANA name the daemon reckons calendar days in, empty means UTC
   danger: {
     httpListener: boolean;          // default: false. Enable HTTP webhook listener
@@ -334,6 +336,7 @@ export type ConfigKey =
   | 'tools.contractVerification'
   | 'tools.outputSchemaFingerprints'
   | ContractConfigKey
+  | JudgmentConfigKey
   | 'cache.enabled'
   | 'cache.stableTtl'
   | 'cache.monitorHitRate'

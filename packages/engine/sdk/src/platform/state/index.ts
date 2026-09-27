@@ -188,3 +188,4 @@ export type {
 } from './code-index-reindex.js';
 
 export { formatConsolidationReceipt } from './consolidation-receipt.js';
+export { DECISION_LOG_FILE, decisionLogPath, openStateDecisionLog } from './decision-log.js';

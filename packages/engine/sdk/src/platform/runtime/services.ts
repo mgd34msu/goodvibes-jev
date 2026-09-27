@@ -56,6 +56,7 @@ import { PowerManager, wireRuntimePower, createUnavailablePowerSeam, type PowerP
 import { emitProviderVoiceUsage } from './emitters/providers.js';
 import { AppendOnlyRetentionScheduler, runStartupAppendOnlySweep } from './retention/append-only-registry.js';
 import { createDisposalScope, registerRuntimePollers } from './disposal.js';
+import { composeJudgment, type JudgmentServices } from './judgment-services.js';
 import { resolveMemoryVectorDbPath } from '../state/memory-vector-store.js';
 import type { RuntimeEventBus } from './events/index.js';
 import { createDomainDispatch } from './store/index.js';
@@ -236,6 +237,8 @@ export interface RuntimeServices {
   readonly projectPlanningService: ProjectPlanningService;
   readonly memoryStore: MemoryStore;
   readonly memoryRegistry: MemoryRegistry;
+  /** The installed judgment port and the state root's decision log. */
+  readonly judgment: JudgmentServices;
   /** Repo code index (Stage A): schema-initialized eagerly; the build is never auto-triggered here (would walk arbitrary workingDirectories incl. test fixtures). */
   readonly codeIndexStore: CodeIndexStore;
   /** Stage B tool-site incremental reindex scheduler (bound to codeIndexStore). */
@@ -505,6 +508,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     embeddingRegistry: memoryEmbeddingRegistry,
   });
   const memoryRegistry = new MemoryRegistry(memoryStore);
+  const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(surfaceRoot), disposal: disposalScope.registry });
   // Repo source-tree code index (Stage A), shares memoryEmbeddingRegistry so
   // code + memory embeddings use one provider and one dimensionality. Schema
   // init only; build is not auto-triggered here (see codeIndexStore doc).
@@ -1089,6 +1093,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     projectPlanningService,
     memoryStore,
     memoryRegistry,
+    judgment,
     codeIndexStore,
     codeIndexReindexScheduler,
     storeSnapshotScheduler,

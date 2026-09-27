@@ -47,6 +47,7 @@ import { coreConfigDefaults, coreHeadConfigSettings, coreTailConfigSettings } fr
 import { runtimeConfigDefaults, runtimePrimaryConfigSettings, runtimeSecondaryConfigSettings } from './schema-domain-runtime.js';
 import { conversationGateConfigDefaults, conversationGateConfigSettings } from './schema-domain-conversation-gate.js';
 import { contractConfigDefaults, contractConfigSettings } from './schema-domain-contract.js';
+import { judgmentConfigDefaults, judgmentConfigSettings } from './schema-domain-judgment.js';
 import { hostedSessionsConfigDefaults, hostedSessionsConfigSettings } from './schema-domain-hosted-sessions.js';
 import { atRestConfigDefaults, atRestConfigSettings } from './schema-domain-at-rest.js';
 import { learningConfigDefaults, learningConfigSettings } from './schema-domain-learning.js';
@@ -119,6 +120,7 @@ export const DEFAULT_CONFIG = {
   danger: coreConfigDefaults.danger,
   tools: coreConfigDefaults.tools,
   contract: contractConfigDefaults.contract,
+  judgment: judgmentConfigDefaults.judgment,
   cache: coreConfigDefaults.cache,
   helper: coreConfigDefaults.helper,
   notifications: coreConfigDefaults.notifications,
@@ -159,6 +161,7 @@ export const CONFIG_SCHEMA: ConfigSetting[] = [
   ...updateConfigSettings,
   ...coreTailConfigSettings,
   ...contractConfigSettings,
+  ...judgmentConfigSettings,
   ...featureConfigSettings,
   ...featureControlSettings,
   ...pricingConfigSettings,
