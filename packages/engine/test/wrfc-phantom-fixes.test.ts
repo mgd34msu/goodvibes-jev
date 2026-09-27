@@ -823,6 +823,8 @@ describe('Item 4a: silent-agent watchdog', () => {
     const chainRecord = controller.getChain(chain.id);
     expect(chainRecord?.state).toBe('failed');
     expect(chainRecord?.error).toContain('went silent');
+    // The owner carries the watchdog as a stamped reason, read as code by a parent's failure envelope.
+    expect(agentStore.get('owner-wd-fail')?.failureReason).toBe('watchdog_timeout');
 
     controller.dispose();
   }, WAIT_TEST_TIMEOUT_MS);

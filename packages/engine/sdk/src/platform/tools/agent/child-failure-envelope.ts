@@ -8,6 +8,7 @@
 // envelope is assembled ENTIRELY from what the child's own record + transcript
 // actually hold; partialOutputs is whatever the child genuinely produced (its
 // last committed output and a transcript-tail summary), never fabricated.
+import { readFailure } from '@goodvibes-jev/engine/errors';
 import type { AgentRecord } from './manager.js';
 import type { ConversationMessageSnapshot } from '../../core/conversation.js';
 
@@ -49,21 +50,38 @@ export function isChildFailureTerminal(record: Pick<AgentRecord, 'status'>): boo
   return record.status === 'failed' || record.status === 'cancelled';
 }
 
-/** Classify the structured reason from the record's own fields (status/terminationKind/error). */
-export function classifyChildFailureReason(
-  record: Pick<AgentRecord, 'status' | 'terminationKind' | 'error'>,
-): ChildFailureReasonCode {
+/**
+ * The reason codes code stamps on `record.failureReason` where it produces the
+ * failure itself (the turn budget, the circuit breaker, a silence watchdog, a
+ * budget ceiling, a claims check): a fixed format, read as code.
+ */
+const STAMPED_REASON_CODES: ReadonlySet<string> = new Set<ChildFailureReasonCode>([
+  'max_turns',
+  'circuit_breaker',
+  'watchdog_timeout',
+  'budget_exhausted',
+  'claim_unverified',
+]);
+
+/**
+ * Classify why a child terminated. Cancellation and a stamped
+ * `failureReason` are structure and decide in code; only a free-text error
+ * (a provider, transport or tool failure) is read, with the engine's failure
+ * reading, and any failure it can place in a category is an API error.
+ */
+export async function classifyChildFailureReason(
+  record: Pick<AgentRecord, 'status' | 'terminationKind' | 'error' | 'failureReason'>,
+): Promise<ChildFailureReasonCode> {
   if (record.status === 'cancelled') {
     return record.terminationKind === 'interrupt' ? 'interrupted' : 'killed';
   }
-  const error = record.error ?? '';
-  if (/maximum turn limit|max[_ ]?turns/i.test(error)) return 'max_turns';
-  if (/circuit breaker/i.test(error)) return 'circuit_breaker';
-  if (/went silent|watchdog|timed out|timeout/i.test(error)) return 'watchdog_timeout';
-  if (/budget|quota exhaust|exhausted/i.test(error)) return 'budget_exhausted';
-  if (/claim|phantom|unverified/i.test(error)) return 'claim_unverified';
-  if (/rate limit|network|transport|API error|status \d{3}|ECONN/i.test(error)) return 'api_error';
-  return 'error';
+  if (record.failureReason && STAMPED_REASON_CODES.has(record.failureReason)) {
+    return record.failureReason as ChildFailureReasonCode;
+  }
+  const error = record.error?.trim() ?? '';
+  if (error.length === 0) return 'error';
+  const reading = await readFailure({ message: error }, 'tools.agent.child-failure-reason');
+  return reading.category === 'unknown' ? 'error' : 'api_error';
 }
 
 /** Best-effort, honest lifecycle phase label from what the record records. */
@@ -98,11 +116,11 @@ function summarizeTranscriptTail(
  * transcript-tail snapshot the caller fetched from the AgentManager. Everything
  * here is drawn from real recorded state, nothing is fabricated.
  */
-export function buildChildFailureEnvelope(
+export async function buildChildFailureEnvelope(
   record: AgentRecord,
   opts?: { readonly transcriptTail?: readonly ConversationMessageSnapshot[] | undefined },
-): ChildFailureEnvelope {
-  const reasonCode = classifyChildFailureReason(record);
+): Promise<ChildFailureEnvelope> {
+  const reasonCode = await classifyChildFailureReason(record);
   // A failed WRFC owner's fullOutput is set to the failure message itself
   // (completeOwnerAgent), which would merely echo reason.message, treat that as
   // "no genuine output" so partialOutputs stays honest rather than redundant.

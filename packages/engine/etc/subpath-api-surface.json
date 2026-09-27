@@ -20492,6 +20492,11 @@
       "text": "export interface BlockMeta { type: 'tool' | 'code' | 'diff' | 'thinking'; rawContent: string; filePath?: string | undefined; diffOriginal?: string | undefined; diffUpdated?: string | undefined; }"
     },
     {
+      "name": "CIRCUIT_BREAKER_TRIPPED",
+      "kind": "const",
+      "text": "CIRCUIT_BREAKER_TRIPPED: \"circuit_breaker\""
+    },
+    {
       "name": "COMPACTION_BUFFER_TOKENS",
       "kind": "const",
       "text": "COMPACTION_BUFFER_TOKENS = 15000"

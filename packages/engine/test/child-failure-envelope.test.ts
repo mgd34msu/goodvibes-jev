@@ -6,6 +6,14 @@ import {
   isChildFailureTerminal,
 } from '../sdk/src/platform/tools/agent/child-failure-envelope.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
+import { useFailureReadings } from './_helpers/failure-readings.ts';
+
+// Free-text errors are read by the engine's failure reading; these fakes
+// stand in for Jev. Wording no entry names reads as category unknown.
+const failureReadings = useFailureReadings([
+  ['rate limit exceeded', { category: 'rate_limit', rateLimited: true }],
+  ['API error: status 500', { category: 'service' }],
+]);
 
 function makeRecord(over: Partial<AgentRecord>): AgentRecord {
   return {
@@ -25,15 +33,23 @@ function makeRecord(over: Partial<AgentRecord>): AgentRecord {
 }
 
 describe('child-failure reason classification', () => {
-  test('maps the record fields to a structured reason code', () => {
-    expect(classifyChildFailureReason(makeRecord({ error: 'Exceeded maximum turn limit (50)' }))).toBe('max_turns');
-    expect(classifyChildFailureReason(makeRecord({ error: 'Circuit breaker tripped' }))).toBe('circuit_breaker');
-    expect(classifyChildFailureReason(makeRecord({ error: 'Agent went silent for 120s (timeout: 60s)' }))).toBe('watchdog_timeout');
-    expect(classifyChildFailureReason(makeRecord({ error: 'workstream budget exhausted' }))).toBe('budget_exhausted');
-    expect(classifyChildFailureReason(makeRecord({ error: 'rate limit exceeded' }))).toBe('api_error');
-    expect(classifyChildFailureReason(makeRecord({ error: 'something odd' }))).toBe('error');
-    expect(classifyChildFailureReason(makeRecord({ status: 'cancelled', terminationKind: 'kill' }))).toBe('killed');
-    expect(classifyChildFailureReason(makeRecord({ status: 'cancelled', terminationKind: 'interrupt' }))).toBe('interrupted');
+  test('a reason code stamped at the source decides in code, without a reading', async () => {
+    expect(await classifyChildFailureReason(makeRecord({ error: 'Exceeded maximum turn limit (50)', failureReason: 'max_turns' }))).toBe('max_turns');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'Circuit breaker tripped after 10 consecutive all-error turns', failureReason: 'circuit_breaker' }))).toBe('circuit_breaker');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'Agent went silent for 120s (timeout: 60s)', failureReason: 'watchdog_timeout' }))).toBe('watchdog_timeout');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'workstream budget exhausted', failureReason: 'budget_exhausted' }))).toBe('budget_exhausted');
+    expect(await classifyChildFailureReason(makeRecord({ status: 'cancelled', terminationKind: 'kill' }))).toBe('killed');
+    expect(await classifyChildFailureReason(makeRecord({ status: 'cancelled', terminationKind: 'interrupt' }))).toBe('interrupted');
+    expect(await classifyChildFailureReason(makeRecord({}))).toBe('error');
+    expect(failureReadings.requests).toHaveLength(0);
+  });
+
+  test('a free-text error is read: a failure Jev places in a category is an API error, anything else an error', async () => {
+    expect(await classifyChildFailureReason(makeRecord({ error: 'rate limit exceeded' }))).toBe('api_error');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'something odd' }))).toBe('error');
+    // An unrecognised failureReason is not a stamped code, so the text is read.
+    expect(await classifyChildFailureReason(makeRecord({ error: 'rate limit exceeded', failureReason: 'other' }))).toBe('api_error');
+    expect(failureReadings.requests.length).toBeGreaterThan(0);
   });
 });
 
@@ -55,11 +71,12 @@ describe('describeChildPhase', () => {
 });
 
 describe('buildChildFailureEnvelope', () => {
-  test('carries agentId, phase, reason, and genuine partial outputs', () => {
+  test('carries agentId, phase, reason, and genuine partial outputs', async () => {
     const record = makeRecord({
       id: 'agent-42',
       status: 'failed',
       error: 'Agent went silent for 120s (timeout: 60s)',
+      failureReason: 'watchdog_timeout',
       progress: 'Turn 4 · Running tests',
       fullOutput: 'I edited three files and started the test run.',
       usage: {
@@ -67,7 +84,7 @@ describe('buildChildFailureEnvelope', () => {
         llmCallCount: 4, turnCount: 4, reasoningSummaryCount: 0,
       },
     });
-    const envelope = buildChildFailureEnvelope(record, {
+    const envelope = await buildChildFailureEnvelope(record, {
       transcriptTail: [
         { role: 'user', content: 'run the tests' },
         { role: 'assistant', content: 'running now' },
@@ -88,18 +105,18 @@ describe('buildChildFailureEnvelope', () => {
     expect(envelope.partialOutputs.note).toBeUndefined();
   });
 
-  test('does not fabricate output when the child produced nothing', () => {
+  test('does not fabricate output when the child produced nothing', async () => {
     const record = makeRecord({ status: 'failed', error: 'API error: status 500' });
-    const envelope = buildChildFailureEnvelope(record);
+    const envelope = await buildChildFailureEnvelope(record);
     expect(envelope.reason.code).toBe('api_error');
     expect(envelope.partialOutputs.lastOutput).toBeUndefined();
     expect(envelope.partialOutputs.transcriptTail).toBeUndefined();
     expect(envelope.partialOutputs.note).toContain('no committed output');
   });
 
-  test('does not echo the failure message as if it were genuine output', () => {
+  test('does not echo the failure message as if it were genuine output', async () => {
     const record = makeRecord({ status: 'failed', error: 'chain failed: X', fullOutput: 'chain failed: X' });
-    const envelope = buildChildFailureEnvelope(record);
+    const envelope = await buildChildFailureEnvelope(record);
     expect(envelope.partialOutputs.lastOutput).toBeUndefined();
     expect(envelope.partialOutputs.note).toContain('no committed output');
   });

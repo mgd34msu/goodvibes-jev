@@ -87,7 +87,7 @@ function agentExecutionContract(record: AgentRecord) {
  * cleanly-completed agents. The transcript tail is pulled from the manager's
  * live-or-frozen snapshot (honest partial output, never fabricated).
  */
-function childFailureFor(manager: AgentManager, record: AgentRecord): ChildFailureEnvelope | null {
+async function childFailureFor(manager: AgentManager, record: AgentRecord): Promise<ChildFailureEnvelope | null> {
   if (!isChildFailureTerminal(record)) return null;
   const transcriptTail = manager.getConversationSnapshot(record.id);
   return buildChildFailureEnvelope(record, { transcriptTail });
@@ -233,7 +233,7 @@ export function createAgentTool(config: {
             ? record.completedAt - record.startedAt
             : Date.now() - record.startedAt;
 
-        const statusFailure = childFailureFor(manager, record);
+        const statusFailure = await childFailureFor(manager, record);
         return {
           success: true,
           output: JSON.stringify({
@@ -351,7 +351,7 @@ export function createAgentTool(config: {
           })),
         };
 
-        const getFailure = childFailureFor(manager, record);
+        const getFailure = await childFailureFor(manager, record);
         const failureField = getFailure ? { failure: getFailure } : {};
         return {
           success: true,
@@ -443,7 +443,7 @@ export function createAgentTool(config: {
         const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 
         if (terminalStatuses.has(record.status)) {
-          const waitFailure = childFailureFor(manager, record);
+          const waitFailure = await childFailureFor(manager, record);
           return {
             success: true,
             output: JSON.stringify({
@@ -480,7 +480,7 @@ export function createAgentTool(config: {
           return { success: true, output: JSON.stringify({ agentId: input.agentId, status: 'deleted', error: 'Agent was removed during wait' }) };
         }
         const finalStatus = finalRecord.status;
-        const finalFailure = childFailureFor(manager, finalRecord);
+        const finalFailure = await childFailureFor(manager, finalRecord);
         return {
           success: true,
           output: JSON.stringify({

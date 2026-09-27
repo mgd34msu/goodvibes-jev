@@ -706,6 +706,9 @@ export class WrfcController {
           silentMs,
           timeoutMs,
         });
+        // Stamped at the source, so a parent's failure envelope reads it as code.
+        const owner = this.agentManager.getStatus(chain.ownerAgentId);
+        if (owner) owner.failureReason = 'watchdog_timeout';
         this.failChain(
           chain,
           `Agent ${activeAgentId} went silent for ${Math.round(silentMs / 1000)}s (timeout: ${Math.round(timeoutMs / 1000)}s)`,
@@ -2723,6 +2726,7 @@ export class WrfcController {
       });
     } else {
       owner.error = message;
+      if (chain.failureKind === 'max_turns') owner.failureReason = 'max_turns';
       emitAgentFailed(this.runtimeBus, context, {
         agentId: owner.id,
         durationMs: Math.max(0, owner.completedAt - owner.startedAt),

@@ -9,7 +9,7 @@
  * (contract/claims.ts) for the phantom-work guard, runWrfcGateChecks
  * (wrfc-gate-runtime.ts) for quality gates, AgentWorktree.commitWorkingTree
  * for scoped commits, and the transport-retry / WrfcChainFailureKind pattern
- * (isTransportFailureMessage + getContractTransportRetryLimit/DelayMs) for
+ * (readFailure + getContractTransportRetryLimit/DelayMs) for
  * bounded respawn-on-transport-blip.
  *
  * REALITY-WINS DIVERGENCE from the brief's design (c): WrfcController itself
@@ -60,7 +60,7 @@ import { verifyUnitClaims } from '../contract/claims.js';
 import { contractUnitSpawn } from './contract-binding.js';
 import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
 import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
-import { isTransportFailureMessage } from '../types/errors.js';
+import { readFailure } from '@goodvibes-jev/engine/errors';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { CancellationRegistry } from './cancellation.js';
@@ -149,6 +149,16 @@ function buildPhaseTask(item: WorkItem, phase: Phase, priorReports: readonly Pha
 
 function genericReport(summary: string): CompletionReport {
   return { version: 1, archetype: 'generic', summary, result: summary };
+}
+
+/**
+ * A spawn-time failure worth one bounded respawn: Jev reads the error as a
+ * transient network fault or as failing before any response came back.
+ */
+async function isTransportFailure(error: string): Promise<boolean> {
+  if (error.trim().length === 0) return false;
+  const reading = await readFailure({ message: error }, 'orchestration.phase-runner.transport-retry');
+  return reading.transientNetwork || reading.beforeResponse;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -466,10 +476,7 @@ export async function runPhase(
 
   if (outcome.status === 'failed') {
     const retryLimit = getContractTransportRetryLimit(deps.configManager);
-    if (
-      item.transportRetryCount < retryLimit &&
-      await isTransportFailureMessage(outcome.record?.error ?? '', 'orchestration.phase-runner.transport-retry')
-    ) {
+    if (item.transportRetryCount < retryLimit && await isTransportFailure(outcome.record?.error ?? '')) {
       item.transportRetryCount += 1;
       await worktree.cleanup(record.id).catch(() => undefined);
       await sleep(getContractTransportRetryDelayMs(deps.configManager));

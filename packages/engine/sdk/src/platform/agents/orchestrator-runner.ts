@@ -7,7 +7,7 @@
 import { ConversationManager } from '../core/conversation.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
-import { ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
+import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
 import { isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
 import { AgentSession } from './session.js';
 import {
@@ -749,7 +749,7 @@ export async function runAgentTask(
             );
             record.status = 'failed';
             record.error = `Circuit breaker tripped after ${circuitBreaker.consecutiveErrors} consecutive all-error turns`;
-            record.completedAt = Date.now();
+            record.failureReason = CIRCUIT_BREAKER_TRIPPED;
             continueLoop = false;
           } else if (cbResult === 'warn') {
             conversation.addSystemMessage(

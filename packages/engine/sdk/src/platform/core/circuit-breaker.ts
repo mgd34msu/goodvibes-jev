@@ -9,6 +9,9 @@
 export const CONSECUTIVE_ERROR_WARN = 5;
 export const CONSECUTIVE_ERROR_BREAK = 10;
 
+/** The failureReason an agent record carries when this breaker stopped its loop (a fixed code, read without judgment). */
+export const CIRCUIT_BREAKER_TRIPPED = 'circuit_breaker' as const;
+
 export class ConsecutiveErrorBreaker {
   private count = 0;
 

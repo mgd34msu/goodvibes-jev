@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { runAgentTask, type AgentOrchestratorRunContext } from '../sdk/src/platform/agents/orchestrator-runner.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import { TURN_BUDGET_EXHAUSTED } from '../sdk/src/platform/agents/turn-budget.js';
+import { CIRCUIT_BREAKER_TRIPPED, CONSECUTIVE_ERROR_BREAK } from '../sdk/src/platform/core/circuit-breaker.js';
 import type { ContractAgentHooks, ContractHoldOutcome } from '../sdk/src/platform/contract/agent-hooks.js';
 import type { ContractTurnRecord } from '../sdk/src/platform/contract/evidence.js';
 import { CONTRACT_RUNNER_AGENT_ID, dispatchNudge } from '../sdk/src/platform/contract/nudge.js';
@@ -387,6 +388,22 @@ describe('waking a stopped unit agent', () => {
     expect(record.failureReason).toBeUndefined();
     expect(record.fullOutput).toBe('fixed attempt');
     expect(taps.completed).toEqual([record.id]);
+  });
+
+  test('a circuit-breaker stop fails the unit agent with the structured reason the runner wakes on, never holding it', async () => {
+    const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };
+    const failingTurn = () => reply('', [{ id: 'call-x', name: 'nonexistent_tool', arguments: {} }]);
+    const provider = scriptedProvider(Array.from({ length: CONSECUTIVE_ERROR_BREAK }, () => failingTurn));
+    const hooks = scriptedHooks([]);
+    const record = makeRecord({ id: 'agent-breaker', contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u1' });
+
+    await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks, taps }), record);
+
+    expect(record.status).toBe('failed');
+    expect(record.failureReason).toBe(CIRCUIT_BREAKER_TRIPPED);
+    expect(hooks.holdCalls).toHaveLength(0);
+    expect(hooks.turns).toHaveLength(CONSECUTIVE_ERROR_BREAK);
+    expect(taps.failed).toEqual([record.id]);
   });
 
   test('a completed contract unit is woken only with allowCompleted, and reruns with the nudge', async () => {
