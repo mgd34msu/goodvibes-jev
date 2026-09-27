@@ -2,14 +2,15 @@
 
 /**
  * OrchestrationEngine (see CHANGELOG 0.38.0), owns Workstream state and
- * drives the pipeline; the ONE engine review-derived fix graphs also feed. The
- * tick loop is reactive (every phase completion re-ticks); items are marked
- * 'in-phase' synchronously before any await, so re-entrant ticks never race
- * a concurrent claim.
+ * drives the pipeline. The contract runner runs one engine per contract, one
+ * workstream per group and one item per unit (docs/design/contract-runner.md
+ * section 6.1). The tick loop is reactive (every phase completion re-ticks);
+ * items are marked 'in-phase' synchronously before any await, so re-entrant
+ * ticks never race a concurrent claim.
  */
 import { checkBudget } from './budget.js';
 import { createCancellationRegistry, type CancellationRegistry } from './cancellation.js';
-import type { PhaseRunnerAgentManagerLike, WrfcWorktreeOps } from './phase-runner.js';
+import type { ContractUnitSettlement, PhaseRunnerAgentManagerLike, WrfcWorktreeOps } from './phase-runner.js';
 import { runPhase } from './phase-runner.js';
 import { snapshotDirtyTree, type DirtyLaunchSnapshot } from './dirty-guard.js';
 import { createWorktreeIsolationManager, type WorktreeIsolationManager } from './worktree-isolation.js';
@@ -22,8 +23,9 @@ import {
   listSnapshotWorkstreamIds,
   loadWorkstreamSnapshot,
   serializeWorkstreamSnapshot,
+  type SnapshotRoot,
 } from './persistence.js';
-import { computeClaims, firstPhase, nextPhaseAfter, reviewPhaseBefore, sortedPhases } from './scheduler.js';
+import { computeClaims, firstPhase, nextPhaseAfter, sortedPhases } from './scheduler.js';
 import { applyDependencyGates } from './dependency-gate.js';
 import { addConflictSerializationEdges, addDependencyEdge, buildGraphSnapshot, detectOrphans, type EdgeAddResult, type WorkstreamGraphSnapshot } from './graph-dynamics.js';
 import { gateClaimAgainstFleet, isElastic, isHardFailed, poolState, retirementEvent, shouldAutoRetry, type FleetCapacityFn } from './elastic-pool.js';
@@ -62,14 +64,28 @@ export interface OrchestrationEngineDeps {
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
   readonly runtimeBus: RuntimeEventBus;
   readonly projectRoot: string;
+  /**
+   * Where workstream snapshots are written and resumed from:
+   * `<stateRoot>/.goodvibes/orchestration/`. Defaults to `projectRoot`. The
+   * contract runner points `projectRoot` at a contract's worktree and keeps
+   * `stateRoot` at the real project, so snapshots stay in the project.
+   */
+  readonly stateRoot?: string | undefined;
+  /** A subdirectory of the snapshot directory for this engine alone (the contract runner passes the contract id). */
+  readonly stateNamespace?: string | undefined;
   readonly sessionId?: string | undefined;
   readonly createWorktree?: (() => WrfcWorktreeOps) | undefined;
   readonly priceUsage?: ((model: string | undefined, usage: WorkItemUsage) => number | null) | undefined;
   /** Provenance for the same resolution priceUsage prices with, stamped onto committed usage records at pricing time. */
   readonly priceProvenance?: PriceProvenanceFn | undefined;
   readonly skipClaimVerification?: boolean | undefined;
-  /** Bounds re-review cycles through a dynamically-inserted fix phase. Default 5. */
-  readonly maxPhaseVisits?: number | undefined;
+  /**
+   * The contract runner's settlement of a contract unit's item: a contract
+   * item's phase waits on it instead of on its agent's terminal event, since
+   * the runner decides what a unit agent's failure means (wake, requeue or
+   * fail). Required for a workstream with contract items.
+   */
+  readonly contractUnitSettlement?: ContractUnitSettlement | undefined;
   readonly now?: (() => number) | undefined;
   /** Set false to skip wiring the debounced disk writer (tests that don't want filesystem side effects). Default true. */
   readonly persist?: boolean | undefined;
@@ -132,8 +148,13 @@ export interface OrchestrationEngine {
   retryItemIntegration(itemId: string): Promise<'merged' | 'conflict' | 'not-conflicted'>;
   /** Add a dependency edge LIVE (a discovered missed dependency / manual serialization). Cycles are refused with a structured graph-cycle outcome. */
   addDependency(itemId: string, dependsOnId: string, reason: string): EdgeAddResult | null;
-  /** Re-queue a non-terminal item to its first phase (the discovering task's "may re-queue"); cancels its in-flight agent. */
-  requeueItem(itemId: string, reason: string): boolean;
+  /**
+   * Re-queue a non-terminal item to its first phase (the discovering task's
+   * "may re-queue"); cancels its in-flight agent. `task`, when given, replaces
+   * the item's task for the next agent (the contract runner adds a unit's
+   * "Previous checks" to its brief).
+   */
+  requeueItem(itemId: string, reason: string, task?: string): boolean;
   /** The surface-facing task graph: nodes, edges, states, elastic-pool state, stalled tells. */
   getGraphSnapshot(workstreamId: string): WorkstreamGraphSnapshot | null;
   serializeWorkstream(workstreamId: string): string | null;
@@ -154,7 +175,8 @@ function generateId(prefix: string): string {
 export function createOrchestrationEngine(deps: OrchestrationEngineDeps): OrchestrationEngine {
   const now = deps.now ?? ((): number => Date.now());
   const sessionId = deps.sessionId ?? crypto.randomUUID().slice(0, 8);
-  const maxPhaseVisits = deps.maxPhaseVisits ?? 5;
+  const stateRoot = deps.stateRoot ?? deps.projectRoot;
+  const snapshotRoot: SnapshotRoot = deps.stateNamespace === undefined ? stateRoot : { root: stateRoot, namespace: deps.stateNamespace };
   const maxItemRetries = deps.maxItemRetries ?? 0;
   const stallAfterMs = deps.stallAfterMs ?? 10 * 60 * 1000;
   /** Workstreams currently in the announced at-cap state (event fires once per transition). */
@@ -247,7 +269,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   const unsubscribeWriter = deps.persist === false
     ? (): void => undefined
-    : attachDebouncedWriter(deps.projectRoot, getWorkstream, getPhaseResults, on);
+    : attachDebouncedWriter(snapshotRoot, getWorkstream, getPhaseResults, on);
 
   function buildPhase(spec: PhaseSpec, ordinal: number, insertedAt?: number): Phase {
     return {
@@ -317,25 +339,8 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     return phase;
   }
 
-  function findOrInsertFixPhase(workstream: Workstream, reviewPhase: Phase): Phase {
-    const existing = workstream.phases.find(
-      (p) => p.kind === 'fix' && reviewPhaseBefore(workstream, p)?.id === reviewPhase.id,
-    );
-    if (existing) return existing;
-    return insertPhase(workstream.id, reviewPhase.ordinal, {
-      role: 'fixer',
-      capacity: reviewPhase.capacity,
-      gate: reviewPhase.gate,
-      kind: 'fix',
-    })!;
-  }
-
-  function visitsFor(item: WorkItem, phaseId: string): number {
-    return item.visits.get(phaseId) ?? 0;
-  }
-
   function recordVisit(item: WorkItem, phaseId: string): void {
-    item.visits.set(phaseId, visitsFor(item, phaseId) + 1);
+    item.visits.set(phaseId, (item.visits.get(phaseId) ?? 0) + 1);
   }
 
   function routeItem(workstream: Workstream, item: WorkItem, toPhase: Phase | null, fromPhaseId: string): void {
@@ -435,6 +440,8 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       priceUsage: deps.priceUsage,
       priceProvenance: deps.priceProvenance,
       skipClaimVerification: deps.skipClaimVerification,
+      contractUnitSettlement: deps.contractUnitSettlement,
+      onAgentSpawned: (agentId) => emit({ type: 'item-agent-spawned', workstreamId: workstream.id, itemId: item.id, agentId }),
       launchDirtySnapshot,
       itemWorktree,
     });
@@ -493,11 +500,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
         warnItem(item, `scoped commit did not complete (non-fatal): ${commit.reason ?? 'commit failed'}`);
       }
 
-      // A fix phase's PASSING gate routes BACK to its review phase (never
-      // forward past it); every other kind advances by ordinal.
-      const forwardTarget = phase.kind === 'fix'
-        ? (reviewPhaseBefore(workstream, phase) ?? nextPhaseAfter(workstream, phase.ordinal) ?? null)
-        : (nextPhaseAfter(workstream, phase.ordinal) ?? null);
+      const forwardTarget = nextPhaseAfter(workstream, phase.ordinal) ?? null;
       routeItem(workstream, item, forwardTarget, phase.id);
       // Terminal pass in worktree mode: the branch enters the sequential
       // integration lane (fire-and-forget; the lane orders itself).
@@ -507,18 +510,6 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
         // decides which and routes accordingly.
         attempts.onItemPassedTerminal(workstream, item);
       }
-      return;
-    }
-
-    // A review's FAILING gate with unsatisfied constraints gets one more
-    // cycle through a (found-or-inserted) fix phase, bounded by visits. A
-    // fix phase's own FAILING gate (the fixer didn't actually fix anything,
-    // phantom guard or quality gates caught it) is a genuine terminal
-    // failure, not something to retry-loop.
-    const unsatisfied = outcome.result.gate.unsatisfiedConstraintIds ?? [];
-    if (phase.kind === 'review' && unsatisfied.length > 0 && visitsFor(item, phase.id) < maxPhaseVisits) {
-      const fixPhase = findOrInsertFixPhase(workstream, phase);
-      routeItem(workstream, item, fixPhase, phase.id);
       return;
     }
 
@@ -653,11 +644,12 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     return result;
   }
 
-  function requeueItem(itemId: string, reason: string): boolean {
+  function requeueItem(itemId: string, reason: string, task?: string): boolean {
     const found = findItemAndWorkstream(itemId);
     if (!found) return false;
     const { workstream, item } = found;
     if (item.state === 'passed' || item.state === 'failed') return false;
+    if (task !== undefined && task.trim().length > 0) item.task = task;
     if (item.state === 'in-phase') requeuedInFlight.add(itemId);
     cancellation.abort(itemId);
     if (item.agentId) deps.agentManager.cancel(item.agentId, 'interrupt');
@@ -737,7 +729,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   function resumeWorkstream(workstreamId: string): boolean {
     if (!workstreams.has(workstreamId)) {
-      const snapshot = loadWorkstreamSnapshot(deps.projectRoot, workstreamId);
+      const snapshot = loadWorkstreamSnapshot(snapshotRoot, workstreamId);
       if (!snapshot) return false;
       if (!importWorkstream(JSON.stringify(snapshot))) return false;
     }
@@ -747,7 +739,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   function resumeAllFromDisk(): number {
     let count = 0;
-    for (const workstreamId of listSnapshotWorkstreamIds(deps.projectRoot)) {
+    for (const workstreamId of listSnapshotWorkstreamIds(snapshotRoot)) {
       if (resumeWorkstream(workstreamId)) count += 1;
     }
     return count;

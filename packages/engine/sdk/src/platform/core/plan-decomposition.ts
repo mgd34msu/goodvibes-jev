@@ -107,6 +107,8 @@ export interface DecompositionRunnerRequest {
    * configured model applies.
    */
   route?: DecompositionRoute | undefined;
+  /** Aborting stops the planning agent (the contract runner aborts it when its contract is cancelled). */
+  signal?: AbortSignal | undefined;
 }
 
 /** A chosen model for the planning agent. */

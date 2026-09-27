@@ -11,12 +11,10 @@
  * The mapping, one honest step at a time:
  *  - ONE work item per proposal work item. The proposal item's `title` becomes
  *    the work item's title and its `brief` becomes the work item's `task`, the
- *    prompt/context the phase agents actually run against (the phase-runner
- *    prepends "Work item: <title>" to review/fix prompts, so both survive into
- *    the agent's context). The proposal item's id is preserved so provenance,
- *    dependencies, and fleet nodes all line up 1:1.
- *  - Every item runs the SAME standard role-phase pipeline, engineer→review,
- *    the exact `engineerReviewPhases` template `fromChainSpec` uses
+ *    prompt/context the phase agent runs against. The proposal item's id is
+ *    preserved so provenance, dependencies, and fleet nodes all line up 1:1.
+ *  - Every item runs the SAME standard pipeline, one engineer phase, the
+ *    exact `engineerPhases` template `fromChainSpec` uses
  *    (controller-compat.ts). The only per-assembly parameter is phase
  *    `capacity`: it defaults to the item count so independent items run
  *    concurrently (bounded only by their dependencies), where a single compat
@@ -48,13 +46,13 @@
 import type { ConfigManager } from '../config/manager.js';
 import { getContractCommitScope } from '../contract/config.js';
 import type { PlanProposal } from '../core/plan-proposal.js';
-import { engineerReviewPhases } from './controller-compat.js';
+import { engineerPhases } from './controller-compat.js';
 import type { CreateWorkstreamInput } from './engine.js';
 import type { WorkItemSpec, WorkstreamProvenance } from './types.js';
 
 export interface FromPlanProposalOptions {
   /**
-   * Per-phase capacity for the engineer/review phases. Defaults to the number
+   * Capacity of the engineer phase. Defaults to the number
    * of work items, so all independent items can run concurrently (dependencies
    * still gate the rest). Set a lower value to cap concurrency; clamped to at
    * least 1.
@@ -147,8 +145,7 @@ export function fromPlanProposal(
     id: wi.id,
     title: wi.title,
     // The brief IS the actionable prompt context; the engineer phase runs it
-    // verbatim as the item's task, and review/fix phases see it alongside the
-    // title (buildPhaseTask, phase-runner.ts).
+    // verbatim as the item's task (buildPhaseTask, phase-runner.ts).
     task: wi.brief,
     ...(wi.dependsOn.length > 0 ? { dependsOn: [...wi.dependsOn] } : {}),
     // Best-of-N carries through to the engine, which expands an attempts:N item
@@ -169,7 +166,7 @@ export function fromPlanProposal(
 
   return {
     title: proposal.task,
-    phases: engineerReviewPhases(commitScope, capacity),
+    phases: engineerPhases(commitScope, capacity),
     items,
     provenance,
   };

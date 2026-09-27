@@ -1,61 +1,36 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * Phase-runner (see CHANGELOG 0.38.0), runs one WorkItem through one Phase: spawn
- * agent, await completion, verify claims, run gates, commit, cleanup.
+ * Phase-runner (see CHANGELOG 0.38.0), runs one WorkItem through one Phase:
+ * spawn the agent, await its outcome, run gates and the claim check, commit,
+ * clean up.
  *
- * REUSES the hardened WRFC primitives verbatim (same functions WrfcController
- * itself calls, so behavior can't fork): verifyUnitClaims
- * (contract/claims.ts) for the phantom-work guard, runWrfcGateChecks
- * (wrfc-gate-runtime.ts) for quality gates, AgentWorktree.commitWorkingTree
- * for scoped commits, and the transport-retry / WrfcChainFailureKind pattern
- * (readFailure + getContractTransportRetryLimit/DelayMs) for
- * bounded respawn-on-transport-blip.
+ * A contract unit's item (docs/design/contract-runner.md sections 6.1 and
+ * 7.5) differs in three ways:
+ * - its agent is spawned bound to the unit, with the unit brief verbatim and
+ *   the route, tool contract and template the item carries;
+ * - its outcome is the contract runner's settlement, not the agent's terminal
+ *   event: the runner holds the agent at completion until every criterion
+ *   reads met, and decides what a failure means (a turn-budget stop is woken,
+ *   a transport failure is requeued, anything else fails the unit), so the
+ *   phase runner neither retries it nor reads its error;
+ * - gates and claim verification do not run here: the runner's completion
+ *   check already ran both, and a unit cannot pass without them.
  *
- * REALITY-WINS DIVERGENCE from the brief's design (c): WrfcController itself
- * (wrfc-controller.ts, verified) never calls AgentWorktree.create() for its
- * role agents, engineer/reviewer/fixer/integrator all run in the SAME
- * shared `projectRoot` working directory; AgentWorktree is used ONLY for its
- * commitWorkingTree/merge/cleanup surface (merge/cleanup are safe no-ops
- * when no isolated worktree dir exists, which is always, today). There is no
- * per-agent `workingDirectory` override anywhere in AgentInput /
- * AgentOrchestratorRunContext.createRunContext() (verified: the latter is
- * fixed per AgentOrchestrator instance, not per-spawn), so a spawned agent
- * cannot actually be pointed at an isolated worktree directory without new
- * cross-cutting plumbing through AgentManager/AgentOrchestrator construction
- *, well beyond this module's boundary, and not something WrfcController
- * itself has either. This module therefore mirrors WrfcController's ACTUAL
- * (shared-directory) behavior rather than the brief's aspirational
- * per-item-isolated-worktree fan-out; true fan-out isolation is a valuable,
- * separately-scoped follow-up.
+ * Every other item runs as before: gates, the phantom-work claim check, and
+ * one bounded respawn when Jev reads a spawn-time failure as transient.
  *
- * SECOND REALITY-WINS DIVERGENCE: AgentManager.spawn()'s root-spawn
- * normalization (tools/agent/wrfc-batch-policy.ts) rewrites a PARENTLESS spawn
- * that reads as root review/test work into an 'engineer'-templated WRFC-owner
- * chain. Phase-runner spawns are always parentless (a workstream has no owning
- * AgentRecord), so both halves of that rule reach this module:
- *
- * - A DECLARED role template (reviewer/tester/verifier/qa/review/test) still
- *   triggers the rewrite whatever this module passes in, so review-kind phases
- *   must never be templated as one of those strings, use 'general' instead
- *   (see templateForPhase). That part is still load-bearing.
- * - The task-WORDING match (ROLE_ACTION_RE/ROLE_PREFIX_RE, e.g. "review the
- *   diff") no longer overrides the `outsideContract: true` this module
- *   passes on every phase spawn. The "assess/evaluate" phrasing in
- *   buildPhaseTask is therefore no longer a dodge; it is kept because it reads
- *   better in the prompt.
+ * Shared-tree note: without worktree isolation every agent runs in the ONE
+ * shared `projectRoot`; AgentWorktree is used only for its
+ * commitWorkingTree/merge/cleanup surface. In worktree mode the engine hands
+ * the item's own worktree in `itemWorktree`, the agent runs there, and the
+ * engine's integration lane owns merge-back and cleanup.
  */
 import type { AgentManager, AgentRecord } from '../tools/agent/manager.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { AgentWorktree, type CommitWorkingTreeResult } from '../agents/worktree.js';
-import {
-  parseCompletionReport,
-  type CompletionReport,
-  type ConstraintFinding,
-  type EngineerReport,
-  type ReviewerReport,
-} from '../agents/completion-report.js';
+import { parseCompletionReport, type CompletionReport, type EngineerReport } from '../agents/completion-report.js';
 import { verifyUnitClaims } from '../contract/claims.js';
 import { contractUnitSpawn } from './contract-binding.js';
 import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
@@ -97,6 +72,18 @@ export interface PhaseItemWorktree {
   commit(message: string, paths?: string[]): Promise<CommitWorkingTreeResult>;
 }
 
+/** What a contract unit's phase settled as, as the contract runner decides it. */
+export type ContractUnitOutcome = 'completed' | 'failed' | 'cancelled';
+
+/**
+ * The contract runner's side of a contract unit's phase: resolves once the
+ * runner has settled the unit's current agent. `signal` aborts when the engine
+ * kills or requeues the item, and the settlement then resolves `cancelled`.
+ */
+export interface ContractUnitSettlement {
+  settle(item: WorkItem, agentId: string, signal: AbortSignal): Promise<ContractUnitOutcome>;
+}
+
 export interface PhaseRunnerDeps {
   readonly agentManager: PhaseRunnerAgentManagerLike;
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
@@ -109,6 +96,10 @@ export interface PhaseRunnerDeps {
   /** Provenance for the same resolution priceUsage prices with, stamped onto the committed usage record at pricing time. */
   readonly priceProvenance?: PriceProvenanceFn | undefined;
   readonly skipClaimVerification?: boolean | undefined;
+  /** Settles contract unit items; a contract item cannot run without it. */
+  readonly contractUnitSettlement?: ContractUnitSettlement | undefined;
+  /** Called synchronously right after the agent is spawned, before any await. */
+  readonly onAgentSpawned?: ((agentId: string) => void) | undefined;
   /**
    * The dirty-tree snapshot taken synchronously at engine launch (see
    * CHANGELOG 0.38.0 and dirty-guard.ts). Absent (undefined) degrades to
@@ -131,18 +122,15 @@ export interface PhaseRunOutcome {
 }
 
 function templateForPhase(phase: Phase): 'engineer' | 'general' {
-  return phase.kind === 'review' || phase.kind === 'gate' ? 'general' : 'engineer';
+  return phase.kind === 'gate' ? 'general' : 'engineer';
 }
 
 function buildPhaseTask(item: WorkItem, phase: Phase, priorReports: readonly PhaseResult[]): string {
   const priorContext = priorReports.length > 0
     ? `\n\nPrior phase reports for this work item:\n${priorReports.map((r) => `- ${r.phaseId}: ${r.report.summary}`).join('\n')}`
     : '';
-  if (phase.kind === 'review' || phase.kind === 'gate') {
+  if (phase.kind === 'gate') {
     return `Assess the following work item's changes against its constraints and report findings. Do not modify files.\n\nWork item: ${item.title}\n${item.task}${priorContext}`;
-  }
-  if (phase.kind === 'fix') {
-    return `Address the following findings for this work item.\n\nWork item: ${item.title}\n${item.task}${priorContext}`;
   }
   return `${item.task}${priorContext}`;
 }
@@ -185,7 +173,11 @@ function awaitAgentTermination(
   });
 }
 
-function usageFromRecord(
+/**
+ * One agent's usage as a work item usage record, priced when a pricer is
+ * given (a throwing pricer leaves it unpriced, never a made-up cost).
+ */
+export function usageFromRecord(
   record: AgentRecord | null,
   priceUsage: PhaseRunnerDeps['priceUsage'],
   priceProvenance: PhaseRunnerDeps['priceProvenance'],
@@ -235,7 +227,7 @@ export function mergeUsage(a: WorkItemUsage, b: WorkItemUsage): WorkItemUsage {
   return mergeWorkItemUsage(a, b);
 }
 
-/** Quality gates (global-config-driven, reused VERBATIM) + phase-required-gate assertion + phantom guard + reviewer constraint findings. */
+/** Quality gates (global-config-driven) + phase-required-gate assertion + phantom guard, for an item that is not a contract unit. */
 async function evaluateGate(
   workstream: Workstream,
   phase: Phase,
@@ -274,31 +266,7 @@ async function evaluateGate(
     }
   }
 
-  let constraintFindings: ConstraintFinding[] | undefined;
-  let unsatisfiedConstraintIds: string[] | undefined;
-  if (report.archetype === 'reviewer') {
-    const reviewer = report as ReviewerReport;
-    constraintFindings = reviewer.constraintFindings ?? [];
-    const unsatisfied = constraintFindings.filter((f) => !f.satisfied);
-    unsatisfiedConstraintIds = unsatisfied.map((f) => f.constraintId);
-    if (!reviewer.passed || unsatisfied.length > 0) {
-      results.push({
-        gate: 'reviewer-verdict',
-        passed: false,
-        output: unsatisfied.length > 0
-          ? `${unsatisfied.length} unsatisfied constraint(s): ${unsatisfied.map((f) => f.constraintId).join(', ')}`
-          : 'reviewer did not pass',
-        durationMs: 0,
-      });
-    }
-  }
-
-  return {
-    passed: results.every((r) => r.passed),
-    results,
-    constraintFindings,
-    unsatisfiedConstraintIds,
-  };
+  return { passed: results.every((r) => r.passed), results };
 }
 
 /** Post-gate scoped-commit result: the residue exclusion (if any) plus an honest commit outcome. */
@@ -446,10 +414,17 @@ export async function runPhase(
 
   const signal = deps.cancellation.start(item.id);
   deps.agentManager.registerCancellationSignal(record.id, signal);
+  deps.onAgentSpawned?.(record.id);
 
   let outcome: { status: 'completed' | 'failed' | 'cancelled'; record: AgentRecord | null };
   try {
-    outcome = await awaitAgentTermination(deps.runtimeBus, deps.agentManager, record.id);
+    if (unitSpawn) {
+      if (!deps.contractUnitSettlement) throw new Error(`work item ${item.id} is a contract unit, but the engine has no contract unit settlement`);
+      const status = await deps.contractUnitSettlement.settle(item, record.id, signal);
+      outcome = { status, record: deps.agentManager.getStatus(record.id) };
+    } else {
+      outcome = await awaitAgentTermination(deps.runtimeBus, deps.agentManager, record.id);
+    }
   } finally {
     deps.agentManager.releaseCancellationSignal(record.id);
     deps.cancellation.release(item.id);
@@ -475,7 +450,8 @@ export async function runPhase(
   }
 
   if (outcome.status === 'failed') {
-    const retryLimit = getContractTransportRetryLimit(deps.configManager);
+    // A contract unit's failures are the runner's to read and retry (design 4.9).
+    const retryLimit = unitSpawn ? 0 : getContractTransportRetryLimit(deps.configManager);
     if (item.transportRetryCount < retryLimit && await isTransportFailure(outcome.record?.error ?? '')) {
       item.transportRetryCount += 1;
       await worktree.cleanup(record.id).catch(() => undefined);
@@ -507,7 +483,9 @@ export async function runPhase(
     }
   }
 
-  const gate = await evaluateGate(workstream, phase, report, deps);
+  // A contract unit only settles completed after its completion check passed,
+  // which ran the gates and verified the claims; they are not run twice.
+  const gate: GateOutcome = unitSpawn ? { passed: true, results: [] } : await evaluateGate(workstream, phase, report, deps);
 
   let commitExclusion: CommitExclusion | undefined;
   let commit: PhaseCommitOutcome | undefined;

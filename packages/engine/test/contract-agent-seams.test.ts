@@ -473,6 +473,7 @@ describe('phase runner contract binding', () => {
   test('a contract work item spawns its agent bound to the unit, with the brief verbatim and the route and tool contract', async () => {
     const runtimeBus = new RuntimeEventBus();
     const spawns: Array<{ input: AgentInput; binding: ContractUnitBinding | undefined; record: AgentRecord }> = [];
+    const settlements = new Map<string, (outcome: 'completed' | 'failed' | 'cancelled') => void>();
     const agentManager: PhaseRunnerAgentManagerLike = {
       spawn(input: AgentInput, binding?: ContractUnitBinding): AgentRecord {
         const record = makeRecord({ id: `agent-${spawns.length + 1}`, task: input.task ?? '', status: 'running' });
@@ -500,6 +501,8 @@ describe('phase runner contract binding', () => {
       }),
       persist: false,
       skipClaimVerification: true,
+      // A contract item's phase waits on the runner's settlement, not on its agent's terminal event.
+      contractUnitSettlement: { settle: (_item, agentId) => new Promise((resolve) => { settlements.set(agentId, resolve); }) },
     });
     const route = { model: 'fake:fake-model', provider: 'fake', fallbackModels: ['fake:other-model'], reasoningEffort: 'high', reason: 'tier: implementation' };
     const ws = engine.createWorkstream({
@@ -545,6 +548,9 @@ describe('phase runner contract binding', () => {
       spawn.record.status = 'completed';
       emitAgentCompleted(runtimeBus, { sessionId: 'test', traceId: 'test', source: 'test' }, { agentId: spawn.record.id, durationMs: 1 });
     }
+    // The plain item settles on its agent's completion; the unit only once the runner settles it.
+    expect(settlements.has(unit.record.id)).toBe(true);
+    settlements.get(unit.record.id)!('completed');
     for (let i = 0; i < 20 && engine.getWorkstream(ws.id)!.items.some((candidate) => candidate.state !== 'passed'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }

@@ -21,7 +21,6 @@ import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/plat
 import {
   createOrchestrationHarness,
   engineerReportOutput,
-  reviewerReportOutput,
   flushMicrotasks,
   makeFakeConfigManager,
   type OrchestrationTestHarness,
@@ -65,11 +64,9 @@ function runningAgentFor(h: OrchestrationTestHarness, itemId: string): string {
   throw new Error(`no running agent for item ${itemId}`);
 }
 
-/** Drive an item through engineer→review to 'passed'. */
+/** Drive an item through its engineer phase to 'passed'. */
 async function passItem(h: OrchestrationTestHarness, itemId: string): Promise<void> {
   h.completeAgent(runningAgentFor(h, itemId), engineerReportOutput({ summary: `did ${itemId}` }));
-  await flushMicrotasks(20);
-  h.completeAgent(runningAgentFor(h, itemId), reviewerReportOutput({ passed: true }));
   await flushMicrotasks(20);
 }
 

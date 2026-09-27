@@ -60,27 +60,6 @@ function engineerReportOutput(
   ].join('\n');
 }
 
-function reviewerReportOutput(
-  score: number,
-  passed: boolean,
-  constraintFindings: Array<{ constraintId: string; satisfied: boolean; evidence: string; severity?: 'critical' | 'major' | 'minor' }> = [],
-): string {
-  return [
-    '```json',
-    JSON.stringify({
-      version: 1,
-      archetype: 'reviewer',
-      summary: passed ? 'looks good' : 'needs fixes',
-      score,
-      passed,
-      dimensions: [],
-      issues: [],
-      constraintFindings,
-    }),
-    '```',
-  ].join('\n');
-}
-
 interface Harness {
   readonly bus: RuntimeEventBus;
   readonly agentManager: PhaseRunnerAgentManagerLike;
@@ -189,7 +168,6 @@ function makeHarness(projectRoot: string): Harness {
       projectRoot,
       createWorktree,
       persist: false,
-      maxPhaseVisits: 3,
       // Scheduling/budget/cancellation tests use bare fixture reports with no
       // real files and no git repo in `projectRoot`, verifyEngineerClaims
       // would honestly flag those as phantom work (no claims, no git diff).
@@ -243,8 +221,9 @@ function makeHarness(projectRoot: string): Harness {
 function enginePhase(): PhaseSpec {
   return { role: 'engineer', capacity: 1, kind: 'engineer', gate: { scope: 'scoped', gates: [] } };
 }
-function reviewPhase(capacity = 1): PhaseSpec {
-  return { role: 'reviewer', capacity, kind: 'review', gate: { scope: 'off', gates: [] } };
+/** A second pipeline phase: a read-only gate agent. */
+function gatePhase(capacity = 1, gates: readonly string[] = []): PhaseSpec {
+  return { role: 'general', capacity, kind: 'gate', gate: { scope: 'off', gates } };
 }
 
 let projectRoot: string;
@@ -260,10 +239,10 @@ afterEach(() => {
 });
 
 describe('scheduler: pipeline flow, no pairwise binding', () => {
-  test('two engineers share a single reviewer slot; whichever finishes first claims it', async () => {
+  test('two engineers share a single second-phase slot; whichever finishes first claims it', async () => {
     const engine = h.makeEngine();
     const items: WorkItemSpec[] = [{ id: 'item-a', title: 'A', task: 'do A' }, { id: 'item-b', title: 'B', task: 'do B' }];
-    const ws = engine.createWorkstream({ title: 'ws', phases: [enginePhase(), reviewPhase(1)], items });
+    const ws = engine.createWorkstream({ title: 'ws', phases: [enginePhase(), gatePhase(1)], items });
     engine.start(ws.id);
     await flushMicrotasks();
 
@@ -274,7 +253,7 @@ describe('scheduler: pipeline flow, no pairwise binding', () => {
     const engine2 = h.makeEngine();
     const ws2 = engine2.createWorkstream({
       title: 'ws2',
-      phases: [{ ...enginePhase(), capacity: 2 }, reviewPhase(1)],
+      phases: [{ ...enginePhase(), capacity: 2 }, gatePhase(1)],
       items,
     });
     engine2.start(ws2.id);
@@ -288,8 +267,8 @@ describe('scheduler: pipeline flow, no pairwise binding', () => {
     expect(itemB.agentId).toBeDefined();
 
     // Complete B FIRST even though A was listed first, B must claim the
-    // single reviewer slot without waiting on A (the hard departure from
-    // WrfcController's pairwise engineer<->reviewer binding).
+    // single second-phase slot without waiting on A (no pairwise binding of
+    // one phase's agent to another's).
     h.completeAgent(itemB.agentId!, engineerReportOutput('did B'));
     await flushMicrotasks();
 
@@ -299,97 +278,18 @@ describe('scheduler: pipeline flow, no pairwise binding', () => {
     expect(itemA.state).toBe('in-phase');
     expect(itemA.currentPhaseId).toBe(ws2.phases[0]!.id);
 
-    // A finishes next, the reviewer slot is occupied by B, so A must wait
+    // A finishes next, the second-phase slot is occupied by B, so A must wait
     // (proves capacity is enforced, not bypassed).
     h.completeAgent(itemA.agentId!, engineerReportOutput('did A'));
     await flushMicrotasks();
     expect(itemA.state).toBe('awaiting-capacity');
     expect(itemA.currentPhaseId).toBe(ws2.phases[1]!.id);
 
-    // B's review passes, freeing the slot for A.
-    const bReviewerId = itemB.agentId!;
-    h.completeAgent(bReviewerId, reviewerReportOutput(10, true));
+    // B's gate phase passes, freeing the slot for A.
+    h.completeAgent(itemB.agentId!, engineerReportOutput('checked B'));
     await flushMicrotasks();
     expect(itemB.state).toBe('passed');
     expect(itemA.state).toBe('in-phase');
-  });
-});
-
-describe('dynamic phase insertion', () => {
-  test('an unsatisfied constraint finding inserts a fix phase and re-routes only that item; visits bound the cycle', async () => {
-    const engine = h.makeEngine();
-    const ws = engine.createWorkstream({
-      title: 'ws',
-      phases: [enginePhase(), reviewPhase(1)],
-      items: [{ id: 'item-a', title: 'A', task: 'do A' }],
-    });
-    const [engPhase, revPhase] = ws.phases;
-    engine.start(ws.id);
-    await flushMicrotasks();
-
-    const item = ws.items[0]!;
-    h.completeAgent(item.agentId!, engineerReportOutput('did A', { filesCreated: ['nonexistent.ts'] }));
-    await flushMicrotasks();
-    expect(item.currentPhaseId).toBe(revPhase!.id);
-
-    h.completeAgent(item.agentId!, reviewerReportOutput(5, false, [
-      { constraintId: 'c1', satisfied: false, evidence: 'missing handling' },
-    ]));
-    await flushMicrotasks();
-
-    // A fix phase was inserted AFTER review (design (b): "inserts a fix
-    // phase after review and re-routes that item back"), and the item was
-    // re-routed into it, a float ordinal strictly after review's, existing
-    // phase ids (engineer, review) untouched.
-    expect(ws.phases.length).toBe(3);
-    const fixPhase = ws.phases.find((p) => p.kind === 'fix')!;
-    expect(fixPhase).toBeDefined();
-    expect(fixPhase.ordinal).toBeGreaterThan(revPhase!.ordinal);
-    expect(engPhase!.ordinal).toBeLessThan(revPhase!.ordinal); // existing phases' relative order is untouched
-    expect(item.currentPhaseId).toBe(fixPhase.id);
-    expect(item.visits.get(revPhase!.id)).toBe(1);
-
-    // Fix completes cleanly -> routes back to the SAME review phase (not
-    // forward past it), and since review's single capacity slot is free
-    // again, the reactive scheduler reclaims it immediately (the same
-    // "instant advancement" semantics as the main pipeline-flow test), so a
-    // second review agent is already spawned by the time this settles.
-    h.completeAgent(item.agentId!, engineerReportOutput('fixed', { filesCreated: ['nonexistent.ts'] }));
-    await flushMicrotasks();
-    expect(item.currentPhaseId).toBe(revPhase!.id);
-    expect(item.state).toBe('in-phase');
-    expect(item.visits.get(revPhase!.id)).toBe(2);
-
-    // Re-review passes this time.
-    h.completeAgent(item.agentId!, reviewerReportOutput(10, true));
-    await flushMicrotasks();
-    expect(item.state).toBe('passed');
-  });
-
-  test('visits bound the re-review cycle: repeated failures eventually fail the item, not loop forever', async () => {
-    const engine = h.makeEngine({ maxPhaseVisits: 2 });
-    const ws = engine.createWorkstream({
-      title: 'ws',
-      phases: [enginePhase(), reviewPhase(1)],
-      items: [{ id: 'item-a', title: 'A', task: 'do A' }],
-    });
-    engine.start(ws.id);
-    await flushMicrotasks();
-    const item = ws.items[0]!;
-
-    h.completeAgent(item.agentId!, engineerReportOutput('v1'));
-    await flushMicrotasks();
-
-    // Fail review repeatedly, each cycle: review fails -> fix -> review again.
-    for (let cycle = 0; cycle < 3; cycle++) {
-      h.completeAgent(item.agentId!, reviewerReportOutput(3, false, [{ constraintId: 'c1', satisfied: false, evidence: 'still broken' }]));
-      await flushMicrotasks();
-      if (item.state === 'failed') break;
-      h.completeAgent(item.agentId!, engineerReportOutput('fix attempt'));
-      await flushMicrotasks();
-    }
-
-    expect(item.state).toBe('failed');
   });
 });
 
@@ -684,7 +584,7 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
     const engine = h.makeEngine();
     const ws = engine.createWorkstream({
       title: 'ws',
-      phases: [enginePhase(), reviewPhase(1)],
+      phases: [enginePhase(), gatePhase(1, ['required-gate'])],
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
     engine.start(ws.id);
@@ -692,8 +592,8 @@ describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase',
     const item = ws.items[0]!;
     h.completeAgent(item.agentId!, engineerReportOutput('did work', { filesCreated: ['f.ts'] }));
     await flushMicrotasks();
-    // Reviewer does NOT pass and reports no unsatisfied constraint findings -> terminal gate failure.
-    h.completeAgent(item.agentId!, reviewerReportOutput(2, false));
+    // The second phase requires a gate that is not configured -> terminal gate failure.
+    h.completeAgent(item.agentId!, engineerReportOutput('checked'));
     await flushMicrotasks();
 
     expect(item.state).toBe('failed');
@@ -730,14 +630,14 @@ describe('resume prefix replay', () => {
     const engine = h.makeEngine();
     const seed = engine.createWorkstream({
       title: 'ws',
-      phases: [enginePhase(), reviewPhase(1)],
+      phases: [enginePhase(), gatePhase(1)],
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
-    const [engPhase, revPhase] = seed.phases;
+    const [engPhase, gatePhaseSpec] = seed.phases;
     const item = seed.items[0]!;
     // Simulate phase 1 already completed before a crash: item is already
     // routed to phase 2, and a PhaseResult for phase 1 exists.
-    item.currentPhaseId = revPhase!.id;
+    item.currentPhaseId = gatePhaseSpec!.id;
     item.state = 'awaiting-capacity';
     item.visits.set(engPhase!.id, 1);
     item.usage = { inputTokens: 5, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 1, turnCount: 1, toolCallCount: 0, costUsd: null, costState: 'unpriced' };
@@ -754,11 +654,11 @@ describe('resume prefix replay', () => {
     freshEngine.start(seed.id);
     await flushMicrotasks();
 
-    // Only ONE spawn, for phase 2 (review). Phase 1 is never re-spawned.
+    // Only ONE spawn, for phase 2. Phase 1 is never re-spawned.
     expect(freshHarness.spawnedTasks.length).toBe(1);
     const resumed = freshEngine.getWorkstream(seed.id)!;
     const resumedItem = resumed.items[0]!;
-    expect(resumedItem.currentPhaseId).toBe(revPhase!.id);
+    expect(resumedItem.currentPhaseId).toBe(gatePhaseSpec!.id);
     expect(resumedItem.state).toBe('in-phase');
   });
 
@@ -853,7 +753,7 @@ describe('resume reconciliation: the exact restart-mid-phase blocker', () => {
     expect(freshHarness.agentStore.get(resumedA.agentId!)?.status).toBe('running');
     expect(resumedB.state).toBe('pending'); // unstarved: still eligible, just waiting its turn
 
-    // Complete the re-spawned A -> passes (single phase, no review) -> frees
+    // Complete the re-spawned A -> passes (single phase) -> frees
     // the slot for B, which claims it immediately (same reactive scheduler
     // as every other test in this file).
     freshHarness.completeAgent(resumedA.agentId!, engineerReportOutput('did A (resumed)'));
@@ -874,12 +774,12 @@ describe('resume reconciliation: the exact restart-mid-phase blocker', () => {
     const engine = h.makeEngine();
     const ws = engine.createWorkstream({
       title: 'ws',
-      phases: [enginePhase(), reviewPhase(1)],
+      phases: [enginePhase(), gatePhase(1)],
       items: [{ id: 'item-a', title: 'A', task: 'do A' }],
     });
-    const [engPhase, revPhase] = ws.phases;
+    const [engPhase, gatePhaseSpec] = ws.phases;
     const item = ws.items[0]!;
-    item.currentPhaseId = revPhase!.id;
+    item.currentPhaseId = gatePhaseSpec!.id;
     item.state = 'awaiting-capacity';
     item.visits.set(engPhase!.id, 1);
 
@@ -894,7 +794,7 @@ describe('resume reconciliation: the exact restart-mid-phase blocker', () => {
 });
 
 describe('controller-compat', () => {
-  test('fromChainSpec produces a canned engineer -> review two-phase workstream', () => {
+  test('fromChainSpec produces a canned single engineer-phase workstream', () => {
     const configManager = {
       get: () => undefined,
       getCategory: () => ({ commitScope: 'scoped' }),
@@ -902,13 +802,11 @@ describe('controller-compat', () => {
     const spec = fromChainSpec({ id: 'owner-1', task: 'implement the thing' }, configManager);
     expect(spec.items).toHaveLength(1);
     expect(spec.items[0]!.task).toBe('implement the thing');
-    expect(spec.phases).toHaveLength(2);
+    expect(spec.phases).toHaveLength(1);
     expect(spec.phases[0]!.kind).toBe('engineer');
-    expect(spec.phases[1]!.kind).toBe('review');
 
     const engine = h.makeEngine();
     const ws = engine.createWorkstream(spec);
-    expect(ws.phases[0]!.ordinal).toBeLessThan(ws.phases[1]!.ordinal);
     expect(ws.items[0]!.currentPhaseId).toBe(ws.phases[0]!.id);
   });
 });

@@ -3,7 +3,7 @@
 //
 // Integration test against a REAL OrchestrationEngine (not a fake) on a
 // scratch workspace: create -> approve -> launch drives the engine through
-// its actual engineer -> review pipeline (fromChainSpec's canned two-phase
+// its actual engineer pipeline (fromChainSpec's canned single-phase
 // shape) with a stub agent executor, mirroring the SDK's own
 // orchestration-engine.test.ts harness (bus.emit + createEventEnvelope over
 // a fake PhaseRunnerAgentManagerLike) via the public npm surface this TUI
@@ -71,23 +71,6 @@ function engineerReportOutput(summary: string, filesModified: string[] = []): st
       decisions: [],
       issues: [],
       uncertainties: [],
-    }),
-    '```',
-  ].join('\n');
-}
-
-function reviewerReportOutput(score: number, passed: boolean): string {
-  return [
-    '```json',
-    JSON.stringify({
-      version: 1,
-      archetype: 'reviewer',
-      summary: passed ? 'looks good' : 'needs fixes',
-      score,
-      passed,
-      dimensions: [],
-      issues: [],
-      constraintFindings: [],
     }),
     '```',
   ].join('\n');
@@ -204,7 +187,7 @@ describe('createWorkstreamServices: real engine wiring', () => {
     return dir;
   }
 
-  test('create -> approve -> launch drives a real OrchestrationEngine through engineer -> review to "passed"', async () => {
+  test('create -> approve -> launch drives a real OrchestrationEngine through its engineer phase to "passed"', async () => {
     const projectRoot = makeScratchProjectRoot();
     const bus = new RuntimeEventBus();
     const { agentManager, completeAgent } = makeAgentManagerHarness(bus);
@@ -218,9 +201,9 @@ describe('createWorkstreamServices: real engine wiring', () => {
 
     // create, the rendered proposal IS the real launchable spec (see
     // workstream-services.ts's buildSpec doc): the canned fromChainSpec
-    // engineer -> review pipeline, not a fictional decomposition.
+    // engineer pipeline, not a fictional decomposition.
     const draft = await workstreamCommands.proposeDraft('ship the demo feature');
-    expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer', 'reviewer']);
+    expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer']);
     expect(draft.provenance.kind).toBe('heuristic-configured');
     expect(draft.approved).toBe(false);
 
@@ -244,11 +227,6 @@ describe('createWorkstreamServices: real engine wiring', () => {
     expect(item.agentId).toBeDefined();
 
     completeAgent(item.agentId!, engineerReportOutput('implemented the demo feature', ['src/demo.ts']));
-    await flushEngine();
-    expect(item.state).toBe('in-phase');
-    expect(item.currentPhaseId).toBe(ws.phases[1]!.id); // advanced to review phase
-
-    completeAgent(item.agentId!, reviewerReportOutput(10, true));
     await flushEngine();
     expect(item.state).toBe('passed');
 
@@ -374,9 +352,9 @@ describe('createWorkstreamServices: real engine wiring', () => {
 
     // BIG-3: a genuine MULTI-item proposal maps to the REAL multi-item
     // workstream (fromPlanProposal), NOT a flattened single compat chain. The
-    // phase template is still engineer→review, but there are now two items and
-    // the inter-item dependency is preserved.
-    expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer', 'reviewer']);
+    // phase template is still the single engineer phase, but there are now two
+    // items and the inter-item dependency is preserved.
+    expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer']);
     expect(draft.spec.items).toHaveLength(2);
     expect(draft.spec.items.map((i) => i.title)).toEqual(['First item', 'Second item']);
     expect(draft.spec.items.map((i) => i.task)).toEqual(['do the first thing', 'do the second thing']);

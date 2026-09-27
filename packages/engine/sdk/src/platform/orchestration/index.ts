@@ -75,7 +75,7 @@ export {
   writeWorkstreamSnapshot,
 } from './persistence.js';
 
-export { engineerReviewPhases, fromChainSpec } from './controller-compat.js';
+export { engineerPhases, fromChainSpec } from './controller-compat.js';
 
 export { fromPlanProposal, approveAndLaunchProposal } from './proposal-workstream.js';
 export type { FromPlanProposalOptions } from './proposal-workstream.js';
@@ -92,7 +92,6 @@ export {
   firstPhase,
   nextPhaseAfter,
   phaseById,
-  reviewPhaseBefore,
   sortedPhases,
 } from './scheduler.js';
 export type { DependencyStatus, PhaseClaim } from './scheduler.js';

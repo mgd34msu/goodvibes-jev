@@ -25,6 +25,7 @@ import { splitModelRegistryKey } from '../../providers/registry-helpers.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import { requireProviderQualifiedModel, normalizeProviderQualifiedModelList } from './model-routing.js';
 import type { AgentRecord } from './record.js';
+import { splitContractBinding, startContractOwner, type ContractOwnerBinding, type ContractUnitBinding } from './contract-binding.js';
 import {
   resolveAuthoritativeWrfcScope,
   resolveImplementationToolContract,
@@ -54,14 +55,7 @@ export interface AgentManagerDependencies {
   readonly providerRegistry?: Pick<ProviderRegistry, 'listModels'> | undefined;
 }
 
-/** Binds a spawn to a contract unit (see AgentManager.spawn). Never model-supplied: it is not part of AgentInput. */
-export interface ContractUnitBinding {
-  readonly contractId: string;
-  readonly contractUnitId: string;
-  /** The route selector's reason for the unit's model, copied to AgentRecord.routeReason. */
-  readonly routeReason?: string | undefined;
-}
-
+export type { ContractOwnerBinding, ContractUnitBinding } from './contract-binding.js';
 /**
  * Conversation-snapshot tab attach point (Part C6): default bound on how many recently
  * finished agents' final conversation snapshot AgentManager keeps around
@@ -219,7 +213,8 @@ export class AgentManager {
    * contract, unit and route reason, the turn loop calls the contract hooks for
    * it, and the spawn never starts a chain of its own.
    */
-  spawn(input: AgentInput, binding?: ContractUnitBinding): AgentRecord {
+  spawn(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding): AgentRecord {
+    const { unit: binding, owner: ownerBinding } = splitContractBinding(spawnBinding);
     let task = input.task;
     if (!task || typeof task !== 'string' || task.trim() === '') {
       throw new Error('spawn() requires a non-empty task string');
@@ -432,6 +427,7 @@ export class AgentManager {
       ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
       ...(parentNodeId ? { parentNodeId } : {}),
       ...(binding ? { contractId: binding.contractId, contractRole: 'unit' as const, contractUnitId: binding.contractUnitId } : {}),
+      ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
       ...(binding?.routeReason ?? routeReason ? { routeReason: binding?.routeReason ?? routeReason } : {}),
       ...(toolResolution.capabilityCeilingTools ? { capabilityCeilingTools: toolResolution.capabilityCeilingTools } : {}),
       ...(input.successCriteria ? { successCriteria: [...input.successCriteria] } : {}),
@@ -456,6 +452,7 @@ export class AgentManager {
         task,
         ...(record.parentAgentId ? { parentAgentId: record.parentAgentId } : {}),
         ...(record.contractUnitId ? { contractId: record.contractId, contractRole: record.contractRole, contractUnitId: record.contractUnitId } : {}),
+        ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
         ...(record.orchestrationGraphId ? { orchestrationGraphId: record.orchestrationGraphId } : {}),
         ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
       });
@@ -522,6 +519,8 @@ export class AgentManager {
     if (record.task === 'Stuck task') {
       return record;
     }
+
+    if (ownerBinding) return startContractOwner(record, ownerBinding, this.runtimeBus);
 
     if (!input.outsideContract && !binding) {
       try {

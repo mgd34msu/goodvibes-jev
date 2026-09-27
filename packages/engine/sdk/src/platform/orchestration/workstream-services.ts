@@ -217,13 +217,13 @@ function createWorkstreamCommandService(
    * THE BOUNDARY, stated honestly (and repeated in the draft render):
    *  - A genuinely MULTI-ITEM proposal (the planning agent decomposed the goal
    *    into >1 work item) is assembled by fromPlanProposal into the
-   *    REAL multi-item workstream: one engineer→review-phased item per proposal
+   *    REAL multi-item workstream: one engineer-phase item per proposal
    *    item, inter-item dependencies preserved as scheduling constraints, and
    *    workstream-level provenance carried. This is the plan the engine runs,
    *    no flattening.
    *  - A SINGLE-ITEM proposal (the heuristic single-item path, a gate-decline,
    *    or an agent that honestly returned one item) keeps the fromChainSpec
-   *    COMPAT path: byte-for-byte the same engineer→review chain
+   *    COMPAT path: byte-for-byte the same single engineer-phase chain
    *    WrfcController.createChain would start. A single item carries no
    *    dependencies and no multi-item structure, so the proposal mapping would
    *    add nothing, the compat path is the honest, unchanged choice.

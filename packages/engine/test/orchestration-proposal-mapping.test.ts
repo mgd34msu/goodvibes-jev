@@ -2,13 +2,13 @@
  * BIG-3 item 1, PlanProposal → CreateWorkstreamInput assembly
  * (proposal-workstream.ts fromPlanProposal). Proves the honest mapping: one
  * work item per proposal item (title + brief → title/task), the SAME
- * engineer→review phase template fromChainSpec uses (parameterized by
+ * single engineer-phase template fromChainSpec uses (parameterized by
  * capacity), dependencies carried through as item ids, workstream-level
  * provenance, and the assemble-time cycle/dangling assertions.
  */
 import { describe, expect, test } from 'bun:test';
 import { fromPlanProposal } from '../sdk/src/platform/orchestration/proposal-workstream.js';
-import { fromChainSpec, engineerReviewPhases } from '../sdk/src/platform/orchestration/controller-compat.js';
+import { fromChainSpec, engineerPhases } from '../sdk/src/platform/orchestration/controller-compat.js';
 import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/platform/core/plan-proposal.js';
 import { makeFakeConfigManager } from './_helpers/orchestration-harness.js';
 
@@ -49,7 +49,7 @@ describe('fromPlanProposal: item mapping', () => {
     expect(spec.title).toBe('Build the thing');
   });
 
-  test('uses the SAME engineer→review phase template as fromChainSpec, parameterized only by capacity', () => {
+  test('uses the SAME single engineer-phase template as fromChainSpec, parameterized only by capacity', () => {
     const proposal = makeProposal([
       proposalItem({ id: 'a', title: 'A', brief: 'a' }),
       proposalItem({ id: 'b', title: 'B', brief: 'b' }),
@@ -57,10 +57,10 @@ describe('fromPlanProposal: item mapping', () => {
     ]);
     const spec = fromPlanProposal(proposal, cfg);
     // Default capacity = item count (3), so independent items run concurrently.
-    expect(spec.phases).toEqual(engineerReviewPhases('scoped', 3));
+    expect(spec.phases).toEqual(engineerPhases('scoped', 3));
     // fromChainSpec is the same template at capacity 1, the only difference.
     const chain = fromChainSpec({ id: 'x', task: 't' }, cfg);
-    expect(chain.phases).toEqual(engineerReviewPhases('scoped', 1));
+    expect(chain.phases).toEqual(engineerPhases('scoped', 1));
     expect(spec.phases.map((p) => p.kind)).toEqual(chain.phases.map((p) => p.kind));
     expect(spec.phases.map((p) => p.role)).toEqual(chain.phases.map((p) => p.role));
   });

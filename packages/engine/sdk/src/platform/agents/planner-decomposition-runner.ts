@@ -143,6 +143,11 @@ export function createAgentManagerDecompositionRunner(
           deps.agentManager.cancel(agentId, 'kill');
           break;
         }
+        if (request.signal?.aborted === true) {
+          stopDetail = 'stopped by its caller';
+          deps.agentManager.cancel(agentId, 'kill');
+          break;
+        }
         await sleep(pollIntervalMs);
       }
 

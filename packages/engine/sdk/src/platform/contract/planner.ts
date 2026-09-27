@@ -491,6 +491,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
         bounds,
         attempt: repair === 0 ? 'initial' : 'repair',
         route,
+        ...(signal === undefined ? {} : { signal }),
       });
       if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);
       if (signal?.aborted) return { kind: 'cancelled' };

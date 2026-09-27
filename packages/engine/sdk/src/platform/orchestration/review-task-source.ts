@@ -17,7 +17,7 @@
  * concurrent is emergent from the edges, never a mode.
  */
 import type { ReviewerReport } from '../agents/completion-report.js';
-import { engineerReviewPhases } from './controller-compat.js';
+import { engineerPhases } from './controller-compat.js';
 import type { WrfcCommitScope } from '../agents/wrfc-config.js';
 import type { CreateWorkstreamInput } from './engine.js';
 import type { WorkItemSpec } from './types.js';
@@ -184,7 +184,7 @@ export function planFixWorkstream(input: {
     tasks,
     workstream: {
       title: `Planned fix (cycle ${input.attempt}): ${input.originalTask.slice(0, 60)}`,
-      phases: engineerReviewPhases(input.commitScope, ELASTIC_PHASE_CAPACITY),
+      phases: engineerPhases(input.commitScope, ELASTIC_PHASE_CAPACITY),
       items: specs,
       isolation: 'worktree',
       releasePolicy: 'reviewed-and-merged',

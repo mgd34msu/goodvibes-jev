@@ -2,11 +2,9 @@
 
 /**
  * Scheduler (see CHANGELOG 0.38.0), pure capacity-matching helpers, no side
- * effects. The hard departure from WrfcController's pairwise
- * engineer<->reviewer binding (startReview / the startPlannedFix planned
- * workstream): each tick, for every phase in ordinal order, free capacity
- * slots (capacity minus in-flight) are filled from whichever waiting items
- * are queued for that phase, an item advances the instant ITS gate passes,
+ * effects. Each tick, for every phase in ordinal order, free capacity slots
+ * (capacity minus in-flight) are filled from whichever waiting items are
+ * queued for that phase; an item advances the instant ITS gate passes,
  * claimed by whatever slot happens to be free, never bound to a specific
  * sibling item.
  */
@@ -17,9 +15,10 @@ import { remainingDepths } from './graph-dynamics.js';
 export function dependencySatisfied(workstream: Workstream, dep: WorkItem): boolean {
   if (dep.state !== 'passed') return false;
   if (workstream.releasePolicy !== 'reviewed-and-merged') return true;
-  // Reviewed-and-merged: passed means every phase (incl. the adversarial slice
-  // review) passed; the merge must ALSO have landed. Claimed-done, an agent
-  // report, an in-flight phase, or passed-but-unmerged, releases nothing.
+  // Reviewed-and-merged: passed means every phase passed (a contract unit only
+  // passes when every criterion reads met); the merge must ALSO have landed.
+  // Claimed-done, an agent report, an in-flight phase, or passed-but-unmerged,
+  // releases nothing.
   if (workstream.isolation !== 'worktree') return true;
   return dep.mergeState === 'merged';
 }
@@ -32,25 +31,13 @@ export function firstPhase(workstream: Workstream): Phase | undefined {
   return sortedPhases(workstream)[0];
 }
 
-/**
- * The next phase in ORDINARY forward progression. Deliberately skips
- * 'fix'-kind phases: a dynamically-inserted fix phase sits at an ordinal
- * after its review (see engine.ts findOrInsertFixPhase) but is reachable
- * ONLY via the explicit review-failure re-route, never as "what comes next"
- * for an item whose review already passed, otherwise a later item that
- * never needed fixing would wrongly detour through it.
- */
+/** The phase after `ordinal` in ordinal order; undefined after the last phase. */
 export function nextPhaseAfter(workstream: Workstream, ordinal: number): Phase | undefined {
-  return sortedPhases(workstream).find((p) => p.ordinal > ordinal && p.kind !== 'fix');
+  return sortedPhases(workstream).find((p) => p.ordinal > ordinal);
 }
 
 export function phaseById(workstream: Workstream, phaseId: string): Phase | undefined {
   return workstream.phases.find((p) => p.id === phaseId);
-}
-
-/** The nearest preceding review-kind phase, the return target after a dynamically-inserted fix phase's gate passes. Purely structural (survives serialization with zero extra bookkeeping). */
-export function reviewPhaseBefore(workstream: Workstream, phase: Phase): Phase | undefined {
-  return sortedPhases(workstream).filter((p) => p.ordinal < phase.ordinal && p.kind === 'review').pop();
 }
 
 export interface PhaseClaim {

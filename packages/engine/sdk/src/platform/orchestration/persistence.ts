@@ -145,16 +145,33 @@ export function deserializeWorkstreamSnapshot(json: string): WorkstreamSnapshot 
   return candidate as WorkstreamSnapshot;
 }
 
-function orchestrationDir(projectRoot: string): string {
-  return join(projectRoot, '.goodvibes', 'orchestration');
+/**
+ * Where an engine's snapshots live: a state root (its snapshots go under
+ * `<root>/.goodvibes/orchestration/`), or a state root plus a namespace
+ * (`<root>/.goodvibes/orchestration/<namespace>/`). The contract runner runs
+ * one engine per contract and names its workstreams after the contract's
+ * groups (`g1`, `g2`, ...), so each contract's engine takes its contract id as
+ * the namespace and two contracts' `g1` never share a file.
+ */
+export type SnapshotRoot = string | { readonly root: string; readonly namespace: string };
+
+const SAFE_NAMESPACE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** The snapshot directory for a state root. A namespace must be one plain path segment. */
+export function orchestrationDir(location: SnapshotRoot): string {
+  if (typeof location === 'string') return join(location, '.goodvibes', 'orchestration');
+  if (!SAFE_NAMESPACE.test(location.namespace) || location.namespace.includes('..')) {
+    throw new RangeError(`orchestration snapshot namespace must be one plain path segment: ${JSON.stringify(location.namespace)}`);
+  }
+  return join(location.root, '.goodvibes', 'orchestration', location.namespace);
 }
 
-function snapshotPath(projectRoot: string, workstreamId: string): string {
+function snapshotPath(projectRoot: SnapshotRoot, workstreamId: string): string {
   return join(orchestrationDir(projectRoot), `${workstreamId}.json`);
 }
 
 /** Read + quarantine-on-corrupt (never throws, never crashes the caller on a bad file). */
-export function loadWorkstreamSnapshot(projectRoot: string, workstreamId: string): WorkstreamSnapshot | null {
+export function loadWorkstreamSnapshot(projectRoot: SnapshotRoot, workstreamId: string): WorkstreamSnapshot | null {
   const path = snapshotPath(projectRoot, workstreamId);
   if (!existsSync(path)) return null;
   let text: string;
@@ -186,7 +203,7 @@ export function loadWorkstreamSnapshot(projectRoot: string, workstreamId: string
  * housekeeping pass runs FIRST, so ids reclaimed by the reap are never handed
  * back to a caller that would then fail to load them.
  */
-export function listSnapshotWorkstreamIds(projectRoot: string, options?: SnapshotReapOptions): string[] {
+export function listSnapshotWorkstreamIds(projectRoot: SnapshotRoot, options?: SnapshotReapOptions): string[] {
   reapOrchestrationSnapshots(projectRoot, options);
   const dir = orchestrationDir(projectRoot);
   if (!existsSync(dir)) return [];
@@ -200,7 +217,7 @@ export function listSnapshotWorkstreamIds(projectRoot: string, options?: Snapsho
   }
 }
 
-export function writeWorkstreamSnapshot(projectRoot: string, workstream: Workstream, completedResults: readonly PhaseResult[]): void {
+export function writeWorkstreamSnapshot(projectRoot: SnapshotRoot, workstream: Workstream, completedResults: readonly PhaseResult[]): void {
   const json = serializeWorkstreamSnapshot(workstream, completedResults);
   if (json === null) return;
   const path = snapshotPath(projectRoot, workstream.id);
@@ -305,7 +322,7 @@ interface DatedFile {
  * safe to run from two processes at once: every removal tolerates ENOENT, so
  * losing a race is a no-op rather than an error.
  */
-export function reapOrchestrationSnapshots(projectRoot: string, options?: SnapshotReapOptions): OrchestrationSnapshotReapSummary {
+export function reapOrchestrationSnapshots(projectRoot: SnapshotRoot, options?: SnapshotReapOptions): OrchestrationSnapshotReapSummary {
   const dir = orchestrationDir(projectRoot);
   if (!existsSync(dir)) return EMPTY_REAP_SUMMARY;
   const now = options?.now ?? Date.now();
@@ -456,7 +473,7 @@ export function reapOrchestrationSnapshots(projectRoot: string, options?: Snapsh
  * @param sweepIntervalMs - Housekeeping interval; `0` disables the timer (tests, short-lived hosts).
  */
 export function attachDebouncedWriter(
-  projectRoot: string,
+  projectRoot: SnapshotRoot,
   getWorkstream: (workstreamId: string) => Workstream | null,
   getCompletedResults: (workstreamId: string) => readonly PhaseResult[],
   subscribe: (listener: (event: OrchestrationEvent) => void) => () => void,

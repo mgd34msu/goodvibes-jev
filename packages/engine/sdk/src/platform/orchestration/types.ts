@@ -3,14 +3,11 @@
 /**
  * Orchestration engine, the model (see CHANGELOG 0.38.0).
  *
- * A phase/work-item pipeline layered OVER (not replacing) WrfcController. The
- * hard departure from WrfcController is pipeline semantics: an item advances
- * to its next phase the instant its gate passes, claimed by WHATEVER capacity
- * slot is free, there is no pairwise binding of one reviewer to one
- * engineer's history (WrfcController binds chain.reviewerAgentId to a single
- * chain in startReview). The controller's fix phase runs THROUGH this engine:
- * startPlannedFix plans a task graph from reviewer findings
- * (review-task-source.ts) and executes it as a workstream here.
+ * A phase/work-item pipeline: an item advances to its next phase the instant
+ * its gate passes, claimed by whatever capacity slot is free. The contract
+ * runner (docs/design/contract-runner.md) runs one engine per contract, one
+ * workstream per contract group and one work item per unit; Jev judges a
+ * unit while its agent works, so no phase reviews another phase's work.
  *
  * Float ordinals on Phase are load-bearing: inserting a phase mid-run assigns
  * an ordinal strictly between its neighbors, so existing phase ids, and
@@ -18,16 +15,15 @@
  * shift or invalidate.
  */
 
-import type { WrfcAgentRole } from '../agents/wrfc-types.js';
 import type { QualityGateResult } from '../contract/gates.js';
 import type { ContractCommitScope } from '../contract/config.js';
 import type { UnitRoute } from '../contract/types.js';
-import type { CompletionReport, ConstraintFinding } from '../agents/completion-report.js';
+import type { CompletionReport } from '../agents/completion-report.js';
 
-/** A named agent role, OR an archetype name loaded via ArchetypeLoader. */
-export type PhaseRole = WrfcAgentRole | (string & {});
+/** The agent role a phase runs, or an archetype name loaded via ArchetypeLoader. */
+export type PhaseRole = 'engineer' | 'integrator' | 'researcher' | 'general' | (string & {});
 
-export type PhaseKind = 'plan' | 'engineer' | 'review' | 'fix' | 'gate' | 'integrate' | 'custom';
+export type PhaseKind = 'plan' | 'engineer' | 'gate' | 'integrate' | 'custom';
 
 /** The gate policy a phase enforces before an item may advance past it. */
 export interface PhaseGateSpec {
@@ -224,15 +220,15 @@ export interface PricingProvenance {
 export type PriceProvenanceFn = (model: string | undefined) => PricingProvenance | null;
 
 /**
- * One unit of pipeline work. `visits` bounds re-review cycles the same way
- * WrfcController.retryTransportFailure/evaluateConstraints cap fix attempts,
- * keyed by phaseId so a dynamically-inserted 'fix' phase gets its own counter.
- * It carries its spec's contract binding unchanged ({@link WorkItemContractFields}).
+ * One unit of pipeline work. `visits` counts the runs of each phase, keyed by
+ * phaseId. It carries its spec's contract binding unchanged
+ * ({@link WorkItemContractFields}).
  */
 export interface WorkItem extends WorkItemContractFields {
   readonly id: string;
   title: string;
-  readonly task: string;
+  /** The agent's task. Mutable only through `engine.requeueItem`, which may hand the next agent a revised brief. */
+  task: string;
   /**
    * IDs of the sibling work items this item depends on (BIG-3 item 2). The
    * item is not claimable until EVERY id here refers to an item that has
@@ -430,9 +426,10 @@ export interface WorkItemContractFields {
 /**
  * When an edge RELEASES its dependent:
  * - 'passed' (default, legacy): the blocker reached 'passed'.
- * - 'reviewed-and-merged': the blocker passed its adversarial slice review AND
- *   its merge landed in the integration lane (worktree mode). Claimed-done,
- *   or even passed-but-unmerged, releases NOTHING.
+ * - 'reviewed-and-merged': the blocker passed (for a contract unit, every
+ *   criterion read met) AND its merge landed in the integration lane
+ *   (worktree mode). Claimed-done, or even passed-but-unmerged, releases
+ *   NOTHING.
  */
 export type ReleasePolicy = 'passed' | 'reviewed-and-merged';
 
@@ -528,8 +525,6 @@ export interface Workstream {
 export interface GateOutcome {
   readonly passed: boolean;
   readonly results: readonly QualityGateResult[];
-  readonly constraintFindings?: readonly ConstraintFinding[] | undefined;
-  readonly unsatisfiedConstraintIds?: readonly string[] | undefined;
 }
 
 /**
@@ -723,6 +718,8 @@ export type OrchestrationEvent =
   | { readonly type: 'item-retried'; readonly workstreamId: string; readonly itemId: string; readonly reason: string }
   /** Emitted once per item on `importWorkstream` for every item reconciled from a crash-artifact 'in-phase' snapshot back to 'pending', see the 'in-phase' state doc. */
   | { readonly type: 'item-requeued'; readonly workstreamId: string; readonly itemId: string; readonly reason: string }
+  /** An item's phase spawned its agent: dispatched synchronously after spawn, before any await (the contract runner takes a unit's baseline here). */
+  | { readonly type: 'item-agent-spawned'; readonly workstreamId: string; readonly itemId: string; readonly agentId: string }
   | { readonly type: 'workstream-persisted'; readonly workstreamId: string }
   /**
    * Worktree-isolation lifecycle events (worktree mode only). Each names the

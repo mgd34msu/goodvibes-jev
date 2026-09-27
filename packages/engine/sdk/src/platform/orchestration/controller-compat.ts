@@ -4,7 +4,7 @@
  * Controller-compat (see CHANGELOG 0.38.0), stage 1 of the 3-stage WrfcController
  * migration.
  *
- * `fromChainSpec()` produces the canned two-phase engineer->review
+ * `fromChainSpec()` produces the canned single-phase engineer
  * WORKSTREAM SPEC that a `WrfcController.createChain(ownerRecord)` call
  * would otherwise start, a NEW opt-in surface for callers that want the
  * engine-backed pipeline. It returns a `CreateWorkstreamInput` (a spec), not
@@ -33,21 +33,17 @@ import type { CreateWorkstreamInput } from './engine.js';
 import type { PhaseSpec } from './types.js';
 
 /**
- * The canonical engineer→review phase template (BIG-3 item 1). This is the ONE
- * definition of the standard two-phase pipeline; both the compat single-chain
- * bridge (`fromChainSpec`, capacity 1) and the multi-item proposal assembly
- * (`fromPlanProposal`, proposal-workstream.ts, capacity = item count) build
- * their phases from it, "the same phase template fromChainSpec uses",
- * parameterized only by the per-phase `capacity` knob so N proposal items can
- * run the engineer phase concurrently (dependency-gated) while a single chain
- * stays at capacity 1. Both phases carry the same commit scope; nothing else
- * varies per caller.
+ * The canonical phase template: one engineer phase. Both the compat
+ * single-chain bridge (`fromChainSpec`, capacity 1) and the multi-item
+ * proposal assembly (`fromPlanProposal`, proposal-workstream.ts, capacity =
+ * item count) build their phases from it, parameterized only by the capacity
+ * knob so N proposal items can run concurrently (dependency-gated) while a
+ * single chain stays at capacity 1. The review phase this template once had
+ * is gone: the engine no longer reads a reviewer's verdict, since Jev judges a
+ * contract unit while its agent works (docs/design/contract-runner.md 7.5).
  */
-export function engineerReviewPhases(commitScope: WrfcCommitScope, capacity = 1): PhaseSpec[] {
-  return [
-    { role: 'engineer', capacity, kind: 'engineer', gate: { scope: commitScope, gates: [] } },
-    { role: 'reviewer', capacity, kind: 'review', gate: { scope: commitScope, gates: [] } },
-  ];
+export function engineerPhases(commitScope: WrfcCommitScope, capacity = 1): PhaseSpec[] {
+  return [{ role: 'engineer', capacity, kind: 'engineer', gate: { scope: commitScope, gates: [] } }];
 }
 
 export function fromChainSpec(
@@ -58,6 +54,6 @@ export function fromChainSpec(
   return {
     title: ownerRecord.task,
     items: [{ id: ownerRecord.id, title: ownerRecord.task, task: ownerRecord.task }],
-    phases: engineerReviewPhases(commitScope, 1),
+    phases: engineerPhases(commitScope, 1),
   };
 }

@@ -26,7 +26,7 @@ import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestrat
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/platform/core/plan-proposal.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
-import { engineerReportOutput, makeRecord, reviewerReportOutput } from './_helpers/orchestration-harness.js';
+import { engineerReportOutput, makeRecord } from './_helpers/orchestration-harness.js';
 
 const ctx = { sessionId: 'test', traceId: 'test', source: 'test' } as const;
 
@@ -150,14 +150,12 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
     expect(item('b').state).toBe('blocked-dependency');
     expect(item('b').worktreePath).toBeUndefined();
 
-    // Drive an item engineer→review inside its worktree, writing a real file so
-    // the scoped commit produces a mergeable branch.
+    // Drive an item's engineer phase inside its worktree, writing a real file
+    // so the scoped commit produces a mergeable branch.
     const pass = async (id: string): Promise<void> => {
       await waitUntil(() => !!item(id).worktreePath && hasRunningAgentFor(h, id));
       writeFileSync(join(item(id).worktreePath!, `${id}.txt`), `content ${id}\n`);
       h.completeAgent(runningAgentFor(h, id), engineerReportOutput({ filesCreated: [`${id}.txt`] }));
-      await waitUntil(() => hasRunningAgentFor(h, id));
-      h.completeAgent(runningAgentFor(h, id), reviewerReportOutput({ passed: true }));
     };
 
     await pass('a');
