@@ -74,6 +74,7 @@ using log = new SqliteDecisionLog(logPath);
 const port = withDecisionLog(createSystemOnePort(config), log);
 const report = await calibrate(port, registry.list(), {
   endpoint: { kind: config.endpoint.kind, baseURL: config.endpoint.baseURL },
+  log,
   ...(values.only === undefined ? {} : { only: values.only.split(',') }),
 });
 await Bun.write(outPath, `${JSON.stringify(report, null, 2)}\n`);

@@ -51,10 +51,14 @@ function validatePolicySpec<H extends string, A extends string>(spec: PolicySpec
   return header;
 }
 
-function actionCheck(fixture: { readonly name: string; readonly expect: string }, got: PolicyResult<string, string>): FixtureCheck {
+function actionCheck(
+  fixture: { readonly name: string; readonly expect: string },
+  got: PolicyResult<string, string>,
+  actions: ReadonlySet<string>,
+): FixtureCheck {
   const strongest = Math.max(...Object.values<number>(got.hazards));
   const signal = got.action === 'pass' ? 1 - strongest : strongest;
-  return fixtureCheck(fixture.name, 'action', fixture.expect, got.action, signal, got.action === 'review' ? 'escalate' : 'act');
+  return fixtureCheck(fixture.name, 'action', fixture.expect, got.action, signal, got.action === 'review' ? 'escalate' : 'act', { answers: [...actions] });
 }
 
 export function definePolicyChecklist<const H extends string, const A extends string>(
@@ -66,6 +70,7 @@ export function definePolicyChecklist<const H extends string, const A extends st
   const questions = policyQuestions(spec, hazards);
   const topLevel = spec.severity.levels.length - 1;
   const route = makeRouter(routing);
+  const actions = validateRouting(routing);
 
   const checklist: PolicyChecklist<H, A> = {
     ...header,
@@ -81,7 +86,7 @@ export function definePolicyChecklist<const H extends string, const A extends st
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => {
         const policyOption = fixture.policy === undefined ? {} : { policy: fixture.policy };
-        return actionCheck(fixture, (await checklist.screen(port, fixture.state, { ...run, ...policyOption })) as PolicyResult<string, string>);
+        return actionCheck(fixture, (await checklist.screen(port, fixture.state, { ...run, ...policyOption })) as PolicyResult<string, string>, actions);
       }),
   };
   return checklist;

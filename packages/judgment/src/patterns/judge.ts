@@ -112,13 +112,21 @@ function verdictSignal(judgment: Judgment): number {
   return SETTLED[judgment.verdict === 'fail' ? 'fail' : 'pass'].signal(strongestUnmet);
 }
 
+/** The verdicts a settled judgment concludes; uncertain is the absence of one. */
+const SETTLED_VERDICTS = { answers: ['pass', 'fail'] } as const;
+
 function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[] {
-  const checks = [fixtureCheck(fixture.name, 'verdict', fixture.expect.verdict, judgment.verdict, verdictSignal(judgment), judgment.outcome)];
+  const checks = [fixtureCheck(fixture.name, 'verdict', fixture.expect.verdict, judgment.verdict, verdictSignal(judgment), judgment.outcome, SETTLED_VERDICTS)];
   if (fixture.expect.unmet === undefined) return checks;
   const expectedUnmet = new Set(fixture.expect.unmet);
   judgment.criteria.forEach((reading, index) => {
     const expected: Verdict = expectedUnmet.has(index) ? 'fail' : 'pass';
-    checks.push(fixtureCheck(fixture.name, criterionKey(index), expected, verdictOf(concludedAnswer(reading)), readingSignal(reading), reading.outcome));
+    checks.push(
+      fixtureCheck(fixture.name, criterionKey(index), expected, verdictOf(concludedAnswer(reading)), readingSignal(reading), reading.outcome, {
+        ...SETTLED_VERDICTS,
+        question: 'criterion',
+      }),
+    );
   });
   return checks;
 }

@@ -1,6 +1,6 @@
 import type { Database, Statement } from 'bun:sqlite';
 import type { JsonValue } from '../port/types.ts';
-import type { DecisionEntry, DecisionId, DecisionLog, DecisionNote, DecisionQuery, NewDecisionEntry } from './types.ts';
+import type { DecisionEntry, DecisionId, DecisionLog, DecisionNote, DecisionQuery, DecisionTruth, NewDecisionEntry } from './types.ts';
 import { COLUMNS, TABLE, openLog, rowsOf, type Params } from './sqlite-schema.ts';
 
 /** What reading an entry back needs from its row. */
@@ -9,6 +9,7 @@ interface Row {
   readonly entry: string;
   readonly readings: string | null;
   readonly action: string | null;
+  readonly truth: string | null;
 }
 
 /** Each note kind is stored, as text, in the column of the same name. */
@@ -21,6 +22,7 @@ interface NoteCodec<N extends DecisionNote> {
 const NOTE_CODECS: { readonly [K in NoteColumn]: NoteCodec<Extract<DecisionNote, { kind: K }>> } = {
   readings: { write: (note) => JSON.stringify(note.readings), read: (text) => ({ kind: 'readings', readings: JSON.parse(text) as JsonValue }) },
   action: { write: (note) => note.action, read: (text) => ({ kind: 'action', action: text }) },
+  truth: { write: (note) => JSON.stringify(note.truth), read: (text) => ({ kind: 'truth', truth: JSON.parse(text) as DecisionTruth }) },
 };
 const NOTE_COLUMNS = Object.keys(NOTE_CODECS) as NoteColumn[];
 /** A new row stores its id and the entry; SQLite derives the rest, and notes attach later. */

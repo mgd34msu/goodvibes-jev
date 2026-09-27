@@ -158,7 +158,7 @@ export function defineCollapseKeep(spec: {
         const entries = fixture.messages.map((text, index) => ({ number: index + 1, text }));
         const readings = await decision.select(port, entries, run);
         return Object.entries(fixture.expect).map(([number, expected]) =>
-          checkReading(fixture.name, `#${number}`, expected, readings.get(Number(number))!));
+          checkReading(fixture.name, `#${number}`, expected, readings.get(Number(number))!, 'keep'));
       }),
   };
   return decision;

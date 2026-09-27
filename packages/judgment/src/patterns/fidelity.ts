@@ -87,7 +87,9 @@ export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => {
         const got = await checker.check(port, fixture.claim, fixture.source, fixture.quote, run);
-        return fixtureCheck(fixture.name, 'fidelity', fixture.expect, got.fidelity, got.reading?.confidence ?? 1, got.outcome);
+        return fixtureCheck(fixture.name, 'fidelity', fixture.expect, got.fidelity, got.reading?.confidence ?? 1, got.outcome, {
+          answers: Object.values(TO_FIDELITY),
+        });
       }),
   };
   return checker;

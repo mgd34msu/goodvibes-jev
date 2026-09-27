@@ -39,6 +39,8 @@ export interface DecisionContext {
   readonly pattern?: string;
   /** The decision site in the product or engine. */
   readonly site?: string;
+  /** The calibration fixture a calibration call runs. */
+  readonly fixture?: string;
 }
 
 /** One call: a state and the named questions to ask about it. */

@@ -159,8 +159,18 @@ export function readingSignal(reading: AnyReading): number {
  * the model concluded; the outcome says whether the band would have let
  * code act on it.
  */
-export function checkReading(fixture: string, aspect: string, expected: string, reading: AnyReading): FixtureCheck {
-  return fixtureCheck(fixture, aspect, expected, concludedAnswer(reading), readingSignal(reading), reading.outcome);
+export function checkReading(fixture: string, aspect: string, expected: string, reading: AnyReading, question?: string): FixtureCheck {
+  return fixtureCheck(fixture, aspect, expected, concludedAnswer(reading), readingSignal(reading), reading.outcome, {
+    answers: readingAnswers(reading),
+    ...(question === undefined ? {} : { question }),
+  });
+}
+
+/** Every answer a reading of this kind could settle on: yes and no, the options, or the rubric's levels. */
+export function readingAnswers(reading: AnyReading): readonly string[] {
+  if (reading.kind === 'yes-no') return ['yes', 'no'];
+  if (reading.kind === 'choice') return Object.keys(reading.probabilities);
+  return reading.probabilities.map((_, level) => String(level));
 }
 
 function assertItemBands(battery: string, itemName: string, item: BatteryItem): void {

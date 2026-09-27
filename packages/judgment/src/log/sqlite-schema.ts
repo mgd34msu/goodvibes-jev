@@ -21,8 +21,12 @@ function bunDatabase(): typeof Database {
 /** The one table the log keeps. */
 export const TABLE = 'decisions';
 
-/** Bumped whenever the table shape changes; an older file is refused rather than misread. */
-const SCHEMA_VERSION = 2;
+/**
+ * Bumped whenever the table shape changes. A file at a version listed in
+ * MIGRATIONS is brought forward in place; any other version is refused rather
+ * than misread.
+ */
+const SCHEMA_VERSION = 3;
 
 /**
  * What a column holds. Every column is text: the row's key, a value the log
@@ -55,7 +59,16 @@ export const COLUMNS = {
   site: derived('context', 'site'),
   readings: written(false),
   action: written(false),
+  truth: written(false),
 } as const satisfies Readonly<Record<string, ColumnRole>>;
+
+/**
+ * Additive steps from an older version to the next: version 2 had no truth
+ * column, and every existing row simply has no truth recorded yet.
+ */
+const MIGRATIONS: Readonly<Record<number, string>> = {
+  2: `ALTER TABLE ${TABLE} ADD COLUMN truth ${declaration(COLUMNS.truth)};`,
+};
 
 const SCHEMA = `
 CREATE TABLE ${TABLE} (
@@ -84,7 +97,14 @@ export function openLog(path: string): Database {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`);
     return db;
   }
-  const [{ user_version: version }] = rowsOf<{ user_version: number }>(db, 'PRAGMA user_version') as [{ user_version: number }];
+  let [{ user_version: version }] = rowsOf<{ user_version: number }>(db, 'PRAGMA user_version') as [{ user_version: number }];
+  while (version !== SCHEMA_VERSION && MIGRATIONS[version] !== undefined) {
+    db.transaction(() => {
+      db.exec(MIGRATIONS[version]!);
+      db.exec(`PRAGMA user_version = ${version + 1};`);
+    })();
+    version += 1;
+  }
   if (version === SCHEMA_VERSION) return db;
   db.close();
   throw new RangeError(`decision log ${path} has schema version ${version}; this build writes version ${SCHEMA_VERSION}`);

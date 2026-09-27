@@ -24,6 +24,8 @@ export interface DecisionReport {
   readonly bins: readonly ConfidenceBin[];
   /** Set when the decision could not be run at all. */
   readonly error?: string;
+  /** Fixtures whose checks reached the decision log as ground truth, when calibration was given the log. */
+  readonly truthRecorded?: number;
 }
 
 export interface CalibrationReport {
@@ -34,7 +36,7 @@ export interface CalibrationReport {
 }
 
 /** Lower edges of the confidence bins: everything under 0.5 together, then finer steps toward certainty. */
-const BIN_FLOORS = [0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95] as const;
+export const CONFIDENCE_BIN_FLOORS = [0, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95] as const;
 
 /** A signal falls in a bin when it is at or above the bin's floor and below the next floor; the last bin includes 1. */
 function inBin(signal: number, from: number, to: number, isLast: boolean): boolean {
@@ -42,9 +44,9 @@ function inBin(signal: number, from: number, to: number, isLast: boolean): boole
 }
 
 export function confidenceBins(checks: readonly FixtureCheck[]): ConfidenceBin[] {
-  return BIN_FLOORS.map((from, index) => {
-    const isLast = index === BIN_FLOORS.length - 1;
-    const to = isLast ? 1 : BIN_FLOORS[index + 1]!;
+  return CONFIDENCE_BIN_FLOORS.map((from, index) => {
+    const isLast = index === CONFIDENCE_BIN_FLOORS.length - 1;
+    const to = isLast ? 1 : CONFIDENCE_BIN_FLOORS[index + 1]!;
     const binned = checks.filter((check) => inBin(check.signal, from, to, isLast));
     const correct = binned.filter((check) => check.correct).length;
     return { from, to, checks: binned.length, correct, accuracy: binned.length === 0 ? null : correct / binned.length };

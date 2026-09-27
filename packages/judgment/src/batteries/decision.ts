@@ -19,6 +19,23 @@ export interface FixtureCheck {
    */
   readonly signal: number;
   readonly outcome: Outcome;
+  /**
+   * Every answer the checked question could conclude, when that set is closed
+   * (yes or no, a fixed set of options, the levels of a rubric). Absent when
+   * the answers depend on the fixture's own data, such as candidate ids.
+   */
+  readonly answers?: readonly string[];
+  /**
+   * The question this check reads, when several aspects read the same one
+   * (one check per listed item, say); absent when the aspect is the question.
+   */
+  readonly question?: string;
+}
+
+/** The answer set and question identity a check can declare. */
+export interface CheckVocabulary {
+  readonly answers?: readonly string[];
+  readonly question?: string;
 }
 
 /** What a fixture expects, and a check reports, when a decision finds nothing to pick. */
@@ -32,8 +49,20 @@ export function fixtureCheck(
   got: string,
   signal: number,
   outcome: Outcome,
+  vocabulary: CheckVocabulary = {},
 ): FixtureCheck {
-  return { fixture, aspect, expected, got, correct: got === expected, signal, outcome };
+  const { answers, question } = vocabulary;
+  return {
+    fixture,
+    aspect,
+    expected,
+    got,
+    correct: got === expected,
+    signal,
+    outcome,
+    ...(answers === undefined ? {} : { answers: [...answers].sort() }),
+    ...(question === undefined ? {} : { question }),
+  };
 }
 
 /**
@@ -95,20 +124,30 @@ export function decisionHeader(spec: PatternHeader & { readonly fixtures: readon
   return header;
 }
 
-/** How a fixture runs live: with the caller's signal, its calls marked as calibration in the decision log. */
+/** The decision log site every calibration call is recorded under. */
+export const CALIBRATION_SITE = 'calibration';
+
+/**
+ * How a fixture runs live: with the caller's signal, its calls marked as
+ * calibration in the decision log and named for the fixture, so the log can
+ * take the fixture's expectations as ground truth for them.
+ */
 export interface CalibrationRun {
   readonly signal?: AbortSignal;
-  readonly site: 'calibration';
+  readonly site: typeof CALIBRATION_SITE;
+  readonly fixture: string;
 }
 
 /** Runs every fixture live, one at a time, and gathers the checks each one produces. */
-export async function checkEachFixture<F>(
+export async function checkEachFixture<F extends { readonly name: string }>(
   fixtures: readonly F[],
   options: { readonly signal?: AbortSignal },
   check: (fixture: F, run: CalibrationRun) => Promise<FixtureCheck | readonly FixtureCheck[]>,
 ): Promise<FixtureCheck[]> {
-  const run: CalibrationRun = { ...options, site: 'calibration' };
   const checks: FixtureCheck[] = [];
-  for (const fixture of fixtures) checks.push(...[await check(fixture, run)].flat());
+  for (const fixture of fixtures) {
+    const run: CalibrationRun = { ...options, site: CALIBRATION_SITE, fixture: fixture.name };
+    checks.push(...[await check(fixture, run)].flat());
+  }
   return checks;
 }

@@ -60,7 +60,7 @@ export function defineCoarseningClassifier<const F extends string>(spec: Coarsen
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => {
         const got = await classifier.classify(port, fixture.state, run);
-        return fixtureCheck(fixture.name, 'label', fixture.expect, got.label, got.reading.confidence, got.reading.outcome);
+        return fixtureCheck(fixture.name, 'label', fixture.expect, got.label, got.reading.confidence, got.reading.outcome, { answers: [...known] });
       }),
   };
   return classifier;

@@ -1,5 +1,6 @@
 import type { DecisionContext, EntryType, JsonValue } from '../port/types.ts';
 import type { JudgmentErrorKind } from '../port/errors.ts';
+import type { FixtureCheck } from '../batteries/decision.ts';
 
 /** A decision log entry's id. */
 export type DecisionId = string & { readonly __decisionId: true };
@@ -30,10 +31,30 @@ export interface CallRecord {
   readonly requestId: string | undefined;
 }
 
-/** Something recorded about a call after it answered: what the decision concluded, or what code did with it. */
+/** Where a decision's ground truth came from. */
+export type TruthSource =
+  /** A calibration fixture's labelled expectation. */
+  | 'fixture'
+  /** The owner said what the right answer was, confirming or correcting the decision. */
+  | 'owner'
+  /** What happened afterwards showed whether the decision was right. */
+  | 'outcome';
+
+/**
+ * What the right answer turned out to be for a decision, checked against what
+ * the decision concluded: one check per aspect, with the reading's signal and
+ * band outcome, so accuracy can be read against confidence from the log.
+ */
+export interface DecisionTruth {
+  readonly source: TruthSource;
+  readonly checks: readonly FixtureCheck[];
+}
+
+/** Something recorded about a call after it answered: what the decision concluded, what code did with it, or what was right. */
 export type DecisionNote =
   | { readonly kind: 'readings'; readonly readings: JsonValue }
-  | { readonly kind: 'action'; readonly action: string };
+  | { readonly kind: 'action'; readonly action: string }
+  | { readonly kind: 'truth'; readonly truth: DecisionTruth };
 
 /** A call the endpoint answered. */
 export interface AnsweredEntry extends CallRecord {
@@ -59,6 +80,13 @@ export function actionOf(entry: DecisionEntry): string | undefined {
   if (entry.status !== 'answered') return undefined;
   const note = entry.notes.find((candidate) => candidate.kind === 'action');
   return note?.kind === 'action' ? note.action : undefined;
+}
+
+/** What was right for an entry's decision, when an owner, an outcome or a fixture has said. */
+export function truthOf(entry: DecisionEntry): DecisionTruth | undefined {
+  if (entry.status !== 'answered') return undefined;
+  const note = entry.notes.find((candidate) => candidate.kind === 'truth');
+  return note?.kind === 'truth' ? note.truth : undefined;
 }
 
 /** A call that failed; nothing was read from it. */

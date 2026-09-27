@@ -138,7 +138,7 @@ export function defineExtractionVerifier(spec: ExtractionVerifierSpec): Extracti
         const got = await verifier.verify(port, fixture, run);
         const strongest = Math.max(...got.checks.map(({ p }) => p));
         const signal = got.escalate ? strongest : 1 - strongest;
-        return fixtureCheck(fixture.name, 'escalate', String(fixture.expect.escalate), String(got.escalate), signal, 'act');
+        return fixtureCheck(fixture.name, 'escalate', String(fixture.expect.escalate), String(got.escalate), signal, 'act', { answers: ['true', 'false'] });
       }),
   };
   return verifier;

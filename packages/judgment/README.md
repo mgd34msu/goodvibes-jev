@@ -40,6 +40,8 @@ const run = await battery.run(port, 'Question: ...\nReply: ...', { site: 'exampl
 
 Arithmetic, dates, counting, security checks and fixed formats stay in code; only meaning is asked of the model. Every battery keeps its questions and thresholds in one place, and `bun run calibrate --registry <module>` runs its fixtures live against the pinned model and fails when a battery falls below its floor.
 
+The decision log keeps every call with what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note). Calibration records each fixture's expectations as truth on that fixture's call; an owner correction or an observed outcome is attached the same way. The engine's observe subsystem reads accuracy against confidence, threshold sweeps, drift and questions stuck in confirm or escalate from the log alone.
+
 ## License
 
 MIT

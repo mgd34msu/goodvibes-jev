@@ -76,7 +76,9 @@ export function defineEntityAligner(spec: AlignmentSpec): EntityAligner {
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => {
         const aligned = await aligner.align(port, fixture.a, fixture.b, run);
-        return fixtureCheck(fixture.name, 'alignment', fixture.expect, aligned.alignment, aligned.reading.confidence, aligned.reading.outcome);
+        return fixtureCheck(fixture.name, 'alignment', fixture.expect, aligned.alignment, aligned.reading.confidence, aligned.reading.outcome, {
+          answers: ALIGNMENTS,
+        });
       }),
   };
   return aligner;

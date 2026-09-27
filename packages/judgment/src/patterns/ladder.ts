@@ -57,6 +57,8 @@ export function defineRuleLadder<const Q extends string, const R extends string>
     }),
   );
 
+  const routes = { answers: [...new Set([...spec.rungs.map((rung) => rung.route), spec.otherwise])] };
+
   const climb = (probabilities: Readonly<Record<Q, number>>) => {
     const index = spec.rungs.findIndex((rung) => matches(probabilities[rung.ask], rung));
     return index < 0 ? { route: spec.otherwise, rung: undefined } : { route: spec.rungs[index]!.route, rung: index };
@@ -78,7 +80,7 @@ export function defineRuleLadder<const Q extends string, const R extends string>
         const got = await ladder.route(port, fixture.state, run);
         const deciding = got.rung === undefined ? undefined : spec.rungs[got.rung]!;
         const p = deciding === undefined ? 1 : got.probabilities[deciding.ask];
-        return fixtureCheck(fixture.name, 'route', fixture.expect, got.route, deciding?.when === 'below' ? 1 - p : p, 'act');
+        return fixtureCheck(fixture.name, 'route', fixture.expect, got.route, deciding?.when === 'below' ? 1 - p : p, 'act', routes);
       }),
   };
   return ladder;

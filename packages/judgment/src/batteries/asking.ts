@@ -35,6 +35,8 @@ export interface CallOptions {
   readonly signal?: AbortSignal;
   /** The decision site, recorded in the decision log. */
   readonly site?: string;
+  /** The calibration fixture the call runs, recorded in the decision log. */
+  readonly fixture?: string;
 }
 
 
@@ -42,8 +44,15 @@ export interface CallOptions {
 type DecisionIdOf = JudgmentResult<Questions>['decisionId'];
 
 /** The attribution a call carries into the decision log. */
-export function contextFor(header: PatternHeader, pattern: PatternName, site: string | undefined): DecisionContext {
-  return { battery: header.name, batteryVersion: header.version, pattern, ...(site === undefined ? {} : { site }) };
+export function contextFor(header: PatternHeader, pattern: PatternName, options: Pick<CallOptions, 'site' | 'fixture'> = {}): DecisionContext {
+  const { site, fixture } = options;
+  return {
+    battery: header.name,
+    batteryVersion: header.version,
+    pattern,
+    ...(site === undefined ? {} : { site }),
+    ...(fixture === undefined ? {} : { fixture }),
+  };
 }
 
 /** Asks on behalf of a named decision, attributing the call in the decision log. */
@@ -60,7 +69,7 @@ export function askAs<const Q extends Questions>(
     questions,
     ...(header.model === undefined ? {} : { model: header.model }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-    context: contextFor(header, pattern, options.site),
+    context: contextFor(header, pattern, options),
   });
 }
 
