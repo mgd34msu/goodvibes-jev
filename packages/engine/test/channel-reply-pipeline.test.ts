@@ -5,10 +5,34 @@ import { DaemonSurfaceDeliveryHelper } from '../sdk/src/platform/daemon/surface-
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted, emitAgentSpawning } from '../sdk/src/platform/runtime/emitters/agents.js';
 import {
-  emitWorkflowChainCreated,
-  emitWorkflowChainPassed,
-  emitWorkflowReviewCompleted,
-} from '../sdk/src/platform/runtime/emitters/workflows.js';
+  emitContractChecked,
+  emitContractCreated,
+  emitContractPassed,
+} from '../sdk/src/platform/runtime/emitters/contract.js';
+
+/** A deliverable check over two criteria, passed or not. */
+function deliverableCheck(contractId: string, passed: boolean) {
+  return {
+    contractId,
+    scope: 'deliverable' as const,
+    targetId: contractId,
+    checkId: `${contractId}.k1`,
+    trigger: 'completion' as const,
+    result: passed ? 'pass' as const : 'nudge' as const,
+    criteria: [
+      { criterionId: 'c1', verdict: 'met' as const, probabilityUnmet: 0.04, outcome: 'act' as const },
+      { criterionId: 'c2', verdict: passed ? 'met' as const : 'unmet' as const, probabilityUnmet: passed ? 0.06 : 0.88, outcome: 'act' as const },
+    ],
+    goal: { verdict: passed ? 'met' as const : 'unmet' as const, outcome: 'act' as const },
+    quality: [],
+    gates: [],
+    decisionIds: [],
+  };
+}
+
+function passedPayload(contractId: string) {
+  return { contractId, criteriaMet: 2, criteriaJudged: 2, excluded: 0, nudges: 1 };
+}
 import { waitFor } from './_helpers/test-timeout.js';
 
 describe('ChannelReplyPipeline', () => {
@@ -74,7 +98,7 @@ describe('ChannelReplyPipeline', () => {
     }
   });
 
-  test('keeps ntfy WRFC replies active for workflow progress after the root agent completes', async () => {
+  test('keeps ntfy contract replies active for contract progress after the root agent completes', async () => {
     const runtimeBus = new RuntimeEventBus();
     const channelPlugins = new ChannelPluginRegistry();
     const delivered: Array<{ kind: 'reply' | 'progress'; message: string }> = [];
@@ -103,9 +127,9 @@ describe('ChannelReplyPipeline', () => {
         agentId: 'agent-root',
         surfaceKind: 'ntfy',
         task: 'phone task',
-        agentTask: 'expanded WRFC task',
-        workflowChainId: 'chain-1',
-        // A minute in: old enough that the chain's later legs may notify.
+        agentTask: 'expanded contract task',
+        contractId: 'ctr-1',
+        // A minute in: old enough that the contract's later legs may notify.
         createdAt: Date.now() - 60_000,
         routeId: 'route-1',
       });
@@ -125,37 +149,31 @@ describe('ChannelReplyPipeline', () => {
       expect(delivered[0]?.message).not.toContain('Agent completed in');
       expect(pipeline.has('agent-root')).toBe(true);
 
-      emitWorkflowReviewCompleted(runtimeBus, {
-        sessionId: 'wrfc',
+      emitContractChecked(runtimeBus, {
+        sessionId: 's1',
         traceId: 'test:review',
         source: 'test',
-      }, {
-        chainId: 'chain-1',
-        score: 6,
-        passed: false,
-      });
+      }, deliverableCheck('ctr-1', false));
 
-      // Plain words, and no chain id: the line names the outcome, not the machinery.
+      // Plain words, and no contract id: the line names the outcome, not the machinery.
       await waitFor(() => delivered.some((entry) => entry.kind === 'progress' && entry.message.includes('found things to fix')));
 
-      emitWorkflowChainPassed(runtimeBus, {
-        sessionId: 'wrfc',
+      emitContractPassed(runtimeBus, {
+        sessionId: 's1',
         traceId: 'test:passed',
         source: 'test',
-      }, {
-        chainId: 'chain-1',
-      });
+      }, passedPayload('ctr-1'));
 
       await waitFor(() => delivered.some((entry) => entry.kind === 'reply' && entry.message.includes('is done')));
       // The id this run correlated on never reaches the reader.
-      expect(delivered.every((entry) => !entry.message.includes('chain-1'))).toBe(true);
+      expect(delivered.every((entry) => !entry.message.includes('ctr-1'))).toBe(true);
       expect(pipeline.has('agent-root')).toBe(false);
     } finally {
       pipeline.dispose();
     }
   });
 
-  test('associates WRFC workflow replies by agent task when the chain-created event is observed after tracking', async () => {
+  test('associates contract replies by agent task when CONTRACT_CREATED is observed after tracking', async () => {
     const runtimeBus = new RuntimeEventBus();
     const channelPlugins = new ChannelPluginRegistry();
     const delivered: string[] = [];
@@ -181,32 +199,83 @@ describe('ChannelReplyPipeline', () => {
         agentId: 'agent-root',
         surfaceKind: 'ntfy',
         task: 'phone task',
-        agentTask: 'expanded WRFC task',
+        agentTask: 'expanded contract task',
         // A minute in. Progress notifications are withheld below the
-        // MIN_PROGRESS_NOTIFICATION_AGE_MS floor, and a WRFC chain opening on a
+        // MIN_PROGRESS_NOTIFICATION_AGE_MS floor, and a contract opening on a
         // run this old is exactly the case the floor is meant to let through.
         createdAt: Date.now() - 60_000,
         routeId: 'route-1',
       });
 
-      emitWorkflowChainCreated(runtimeBus, {
-        sessionId: 'wrfc',
+      emitContractCreated(runtimeBus, {
+        sessionId: 's1',
         traceId: 'test:created',
         source: 'test',
       }, {
-        chainId: 'chain-2',
-        task: 'expanded WRFC task',
+        contractId: 'ctr-2',
+        sessionId: 's1',
+        origin: 'agent-tool',
+        ask: 'expanded contract task',
+        ownerAgentId: 'owner-2',
       });
 
-      await waitFor(() => delivered.some((message) => message.includes('Started work on: expanded WRFC task')));
-      expect(delivered.every((message) => !message.includes('chain-2'))).toBe(true);
-      expect(pipeline.getPending('agent-root')?.workflowChainId).toBe('chain-2');
+      await waitFor(() => delivered.some((message) => message.includes('Started work on: expanded contract task')));
+      expect(delivered.every((message) => !message.includes('ctr-2'))).toBe(true);
+      expect(pipeline.getPending('agent-root')?.contractId).toBe('ctr-2');
     } finally {
       pipeline.dispose();
     }
   });
 
-  test('daemon ntfy polling keeps WRFC reply tracking alive after the root agent completes', async () => {
+  test('associates a contract with the reply tracking its owner agent, whatever the ask says', async () => {
+    const runtimeBus = new RuntimeEventBus();
+    const channelPlugins = new ChannelPluginRegistry();
+    const delivered: string[] = [];
+    channelPlugins.register({
+      id: 'ntfy-test',
+      surface: 'ntfy',
+      displayName: 'ntfy',
+      capabilities: ['egress'],
+      deliverProgress: async (_pending, message) => {
+        delivered.push(message);
+      },
+    });
+    const pipeline = new ChannelReplyPipeline({
+      channelPlugins,
+      routeBindings: { captureReplyTarget: async () => {} } as never,
+      runtimeBus,
+    });
+    try {
+      pipeline.trackPending({
+        agentId: 'owner-3',
+        surfaceKind: 'ntfy',
+        task: 'phone task',
+        createdAt: Date.now() - 60_000,
+        routeId: 'route-1',
+      });
+      pipeline.trackPending({
+        agentId: 'agent-other',
+        surfaceKind: 'ntfy',
+        task: 'the ask, word for word',
+        createdAt: Date.now() - 60_000,
+        routeId: 'route-2',
+      });
+      emitContractCreated(runtimeBus, { sessionId: 's1', traceId: 'test:created-owner', source: 'test' }, {
+        contractId: 'ctr-3',
+        sessionId: 's1',
+        origin: 'turn',
+        ask: 'the ask, word for word',
+        ownerAgentId: 'owner-3',
+      });
+      await waitFor(() => pipeline.getPending('owner-3')?.contractId === 'ctr-3');
+      // The owner's own reply wins over a reply that merely shares the ask's words.
+      expect(pipeline.getPending('agent-other')?.contractId).toBeUndefined();
+    } finally {
+      pipeline.dispose();
+    }
+  });
+
+  test('daemon ntfy polling keeps contract reply tracking alive after the root agent completes', async () => {
     const runtimeBus = new RuntimeEventBus();
     const channelPlugins = new ChannelPluginRegistry();
     const delivered: Array<{ kind: 'reply' | 'progress'; message: string }> = [];
@@ -229,7 +298,7 @@ describe('ChannelReplyPipeline', () => {
       } as never,
       runtimeBus,
       // The helper stamps `createdAt` itself, so the clock is what moves: the
-      // chain's review lands a minute into the run, past the floor below which
+      // contract's check lands a minute into the run, past the floor below which
       // no progress notification is warranted.
       now: () => Date.now() + 60_000,
     });
@@ -243,11 +312,11 @@ describe('ChannelReplyPipeline', () => {
         getStatus: () => ({
           id: 'agent-root',
           status: 'completed',
-          task: 'expanded WRFC task',
+          task: 'expanded contract task',
           fullOutput: 'The duplicate header read is gone and the parser tests pass.',
           tools: [],
           startedAt: Date.now(),
-          contractId: 'chain-1',
+          contractId: 'ctr-1',
         }),
       },
       sessionBroker: { completeAgent: async () => null },
@@ -268,8 +337,8 @@ describe('ChannelReplyPipeline', () => {
       } as never, {
         agentId: 'agent-root',
         task: 'phone task',
-        agentTask: 'expanded WRFC task',
-        workflowChainId: 'chain-1',
+        agentTask: 'expanded contract task',
+        contractId: 'ctr-1',
         sessionId: 'session-1',
       });
 
@@ -279,34 +348,28 @@ describe('ChannelReplyPipeline', () => {
       // This used to assert the opposite, that the output was withheld and a
       // canned "Agent <id> finished initial work" line went out in its place,
       // which is how the owner's primary surface came to deliver everything
-      // except the reply. Tracking still stays alive for the chain's later legs.
+      // except the reply. Tracking still stays alive for the contract's later legs.
       expect(delivered[0]?.message).toContain('The duplicate header read is gone');
       expect(delivered[0]?.message).not.toContain('finished initial work');
       expect(pipeline.has('agent-root')).toBe(true);
 
-      emitWorkflowReviewCompleted(runtimeBus, {
-        sessionId: 'wrfc',
+      emitContractChecked(runtimeBus, {
+        sessionId: 's1',
         traceId: 'test:review-after-poll',
         source: 'test',
-      }, {
-        chainId: 'chain-1',
-        score: 9,
-        passed: true,
-      });
+      }, deliverableCheck('ctr-1', true));
 
-      await waitFor(() => delivered.some((entry) => entry.kind === 'progress' && entry.message.includes('Review of') && entry.message.includes('passed')));
+      await waitFor(() => delivered.some((entry) => entry.kind === 'progress' && entry.message.includes('The check of') && entry.message.includes('passed')));
       expect(pipeline.has('agent-root')).toBe(true);
 
-      emitWorkflowChainPassed(runtimeBus, {
-        sessionId: 'wrfc',
+      emitContractPassed(runtimeBus, {
+        sessionId: 's1',
         traceId: 'test:passed-after-poll',
         source: 'test',
-      }, {
-        chainId: 'chain-1',
-      });
+      }, passedPayload('ctr-1'));
 
       await waitFor(() => delivered.some((entry) => entry.kind === 'reply' && entry.message.includes('is done')));
-      expect(delivered.every((entry) => !entry.message.includes('chain-1'))).toBe(true);
+      expect(delivered.every((entry) => !entry.message.includes('ctr-1'))).toBe(true);
       expect(pipeline.has('agent-root')).toBe(false);
     } finally {
       pipeline.dispose();

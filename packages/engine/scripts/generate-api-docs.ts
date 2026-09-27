@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CONTRACT_EVENT_FIELD_SPECS, CONTRACT_EVENT_TYPES } from '../sdk/src/events/index.ts';
+import type { FieldSpec } from '../sdk/src/events/contracts/shared.ts';
 import type {
   OperatorContractManifest,
   OperatorEventContract,
@@ -23,6 +25,17 @@ const operatorContract = JSON.parse(
 const peerContract = JSON.parse(
   readFileSync(resolve(SDK_ROOT, 'contracts/artifacts/peer-contract.json'), 'utf8'),
 ) as PeerContractManifest;
+
+/** One table row per field, nested object fields under their parent's path. */
+function fieldRows(fields: readonly FieldSpec[], prefix: string): string[] {
+  const rows: string[] = [];
+  for (const field of fields) {
+    const type = field.values ? `${field.kind}: ${field.values.map((value) => `\`${value}\``).join(', ')}` : field.kind;
+    rows.push(`| \`${prefix}${field.key}\` | ${type} | ${field.optional === true ? 'optional' : 'yes'} |`);
+    if (field.fields) rows.push(...fieldRows(field.fields, `${prefix}${field.key}${field.kind === 'object[]' ? '[]' : ''}.`));
+  }
+  return rows;
+}
 
 function ensureDir(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -260,72 +273,20 @@ function renderRuntimeEventReference(): string {
       lines.push('');
     }
   }
-  // Append handwritten named-events section for the `workflows` domain.
-  // These events are not in the contract artifact schema but are emitted by the
-  // WRFC controller and must be documented alongside the generated domain schemas.
-  lines.push('## Named WRFC workflow events');
+  // The contract runner's named events, from the same field specs the runtime
+  // validators check, so this section cannot drift from what is accepted.
+  lines.push('## Named contract events');
   lines.push('');
-  lines.push('The following named events are emitted on the `workflows` domain by the WRFC controller. They are not currently in the operator contract artifact. They are documented here as the authoritative reference.');
+  lines.push('The `contracts` domain carries one named event per step of a contract (docs/design/contract-runner.md section 8.1). Each field below is required unless marked optional.');
   lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push('### `WORKFLOW_CONSTRAINTS_ENUMERATED`');
-  lines.push('');
-  lines.push('Emitted exactly once per WRFC chain immediately after the initial engineer agent completes and the controller has captured the constraint list from the engineer\'s report. Fixer re-runs do not re-emit this event.');
-  lines.push('');
-  lines.push('| Field | Type | Description |');
-  lines.push('|-------|------|-------------|');
-  lines.push('| `chainId` | `string` | The WRFC chain that produced the constraints |');
-  lines.push('| `constraints` | `Constraint[]` | List of user-declared constraints extracted from the task prompt. Empty array when the task was non-build or unconstrained. |');
-  lines.push('');
-  lines.push('`Constraint` shape:');
-  lines.push('');
-  lines.push('```ts');
-  lines.push('interface Constraint {');
-  lines.push('  id: string;                      // "c1", "c2", …');
-  lines.push('  text: string;                    // quoted/near-quoted user phrasing');
-  lines.push('  source: \'prompt\' | \'inherited\'; // \'prompt\' = engineer enumerated from this prompt');
-  lines.push('                                   // \'inherited\' = from parent chain / gate-retry');
-  lines.push('}');
-  lines.push('```');
-  lines.push('');
-  lines.push('**Trigger:** `WrfcController.handleEngineerCompletion`. Fires when `!chain.constraintsEnumerated` (guards against duplicate emission on fixer re-runs).');
-  lines.push('');
-  lines.push('**Semantics:** Signals the authoritative constraint list for the chain. An empty `constraints` array signals the zero-constraint (unconstrained) path. No constraint enforcement follows.');
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push('### `WORKFLOW_REVIEW_COMPLETED`');
-  lines.push('');
-  lines.push('Emitted at the end of each reviewer cycle.');
-  lines.push('');
-  lines.push('| Field | Type | Description |');
-  lines.push('|-------|------|-------------|');
-  lines.push('| `chainId` | `string` | The WRFC chain |');
-  lines.push('| `score` | `number` | Reviewer rubric score (0–10) |');
-  lines.push('| `passed` | `boolean` | `true` when `score >= threshold && !constraintFailure` |');
-  lines.push('| `constraintsSatisfied` | `number \\| undefined` | Count of satisfied constraint findings. Present only when `chain.constraints.length > 0`. |');
-  lines.push('| `constraintsTotal` | `number \\| undefined` | Total constraint findings evaluated. Present only when `chain.constraints.length > 0`. |');
-  lines.push('| `unsatisfiedConstraintIds` | `string[] \\| undefined` | IDs of constraints that were not satisfied. Present only when `chain.constraints.length > 0`. |');
-  lines.push('');
-  lines.push('When the chain has no constraints, `constraintsSatisfied`, `constraintsTotal`, and `unsatisfiedConstraintIds` are absent entirely.');
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push('### `WORKFLOW_FIX_ATTEMPTED`');
-  lines.push('');
-  lines.push('Emitted at the start of each fixer cycle.');
-  lines.push('');
-  lines.push('| Field | Type | Description |');
-  lines.push('|-------|------|-------------|');
-  lines.push('| `chainId` | `string` | The WRFC chain |');
-  lines.push('| `attempt` | `number` | Current fix attempt number (1-indexed) |');
-  lines.push('| `maxAttempts` | `number` | Maximum fix attempts configured for the chain |');
-  lines.push('| `targetConstraintIds` | `string[] \\| undefined` | IDs of unsatisfied constraints this fix iteration is addressing. Present only when `chain.constraints.length > 0`. |');
-  lines.push('');
-  lines.push('When the chain has no constraints, `targetConstraintIds` is absent.');
-  lines.push('');
-  lines.push('For the full constraint propagation lifecycle, see [WRFC Constraint Propagation](./wrfc-constraint-propagation.md).');
+  for (const type of CONTRACT_EVENT_TYPES) {
+    lines.push(`### \`${type}\``);
+    lines.push('');
+    lines.push('| Field | Type | Required |');
+    lines.push('|-------|------|----------|');
+    for (const row of fieldRows(CONTRACT_EVENT_FIELD_SPECS[type], '')) lines.push(row);
+    lines.push('');
+  }
   return `${lines.join('\n')}\n`;
 }
 

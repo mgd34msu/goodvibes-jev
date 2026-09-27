@@ -1,6 +1,8 @@
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-import type { RuntimeEventBus, AgentEvent, WorkflowEvent } from '../runtime/events/index.js';
+import type { RuntimeEventBus, AgentEvent } from '../runtime/events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
+import { workstreamLabel } from '../channels/workstream-labels.js';
 import { SlackIntegration } from './slack.js';
 import { DiscordIntegration } from './discord.js';
 import { DeliveryQueue } from './delivery.js';
@@ -158,24 +160,38 @@ export class Notifier {
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_PASSED' }>>('WORKFLOW_CHAIN_PASSED', ({ payload }) => {
-        void this.notify('WORKFLOW_CHAIN_PASSED', {
-          event: 'WORKFLOW_CHAIN_PASSED',
-          chainId: payload.chainId,
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
+        void this.notify('CONTRACT_PASSED', {
+          event: 'CONTRACT_PASSED',
+          contractId: payload.contractId,
+          criteriaMet: payload.criteriaMet,
+          criteriaJudged: payload.criteriaJudged,
         }).catch((error: unknown) => {
-          logger.warn('[notifier] WORKFLOW_CHAIN_PASSED notification failed', { error: summarizeError(error) });
+          logger.warn('[notifier] CONTRACT_PASSED notification failed', { error: summarizeError(error) });
         });
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_FAILED' }>>('WORKFLOW_CHAIN_FAILED', ({ payload }) => {
-        void this.notify('WORKFLOW_CHAIN_FAILED', {
-          event: 'WORKFLOW_CHAIN_FAILED',
-          chainId: payload.chainId,
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
+        void this.notify('CONTRACT_FAILED', {
+          event: 'CONTRACT_FAILED',
+          contractId: payload.contractId,
           reason: payload.reason,
         }).catch((error: unknown) => {
-          logger.warn('[notifier] WORKFLOW_CHAIN_FAILED notification failed', { error: summarizeError(error) });
+          logger.warn('[notifier] CONTRACT_FAILED notification failed', { error: summarizeError(error) });
+        });
+      }),
+    );
+
+    this.unsubscribers.push(
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', ({ payload }) => {
+        void this.notify('CONTRACT_CANCELLED', {
+          event: 'CONTRACT_CANCELLED',
+          contractId: payload.contractId,
+          reason: payload.reason,
+        }).catch((error: unknown) => {
+          logger.warn('[notifier] CONTRACT_CANCELLED notification failed', { error: summarizeError(error) });
         });
       }),
     );
@@ -201,13 +217,21 @@ export class Notifier {
         const task = typeof data.task === 'string' ? data.task : String(data.agentId ?? '');
         return `Agent completed: ${task}`;
       }
-      case 'WORKFLOW_CHAIN_PASSED': {
-        const score = typeof data.score === 'number' ? `${data.score}/10` : 'passed';
-        return `Review passed: ${score}`;
+      // Named in plain words, never by the contract id: a notification is outward-facing text.
+      case 'CONTRACT_PASSED': {
+        const label = workstreamLabel(String(data.contractId ?? ''));
+        const met = typeof data.criteriaMet === 'number' && typeof data.criteriaJudged === 'number'
+          ? `: ${data.criteriaMet} of ${data.criteriaJudged} requirements met`
+          : '';
+        return `${label} is done${met}`;
       }
-      case 'WORKFLOW_CHAIN_FAILED': {
+      case 'CONTRACT_FAILED': {
         const reason = typeof data.reason === 'string' ? data.reason : 'unknown reason';
-        return `Review chain failed: ${reason}`;
+        return `${workstreamLabel(String(data.contractId ?? ''))} could not be finished: ${reason}`;
+      }
+      case 'CONTRACT_CANCELLED': {
+        const reason = typeof data.reason === 'string' ? data.reason : 'no reason given';
+        return `${workstreamLabel(String(data.contractId ?? ''))} was cancelled: ${reason}`;
       }
       default: {
         const extras = Object.entries(data)

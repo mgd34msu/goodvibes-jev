@@ -85,7 +85,6 @@ async function executeToolCalls(
     setAgentProgress(record, `Turn ${turn} · ${call.name}${argsSummary}`, 'operator');
     record.toolCallCount++;
     context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
-    context.emitOrchestrationProgress(record, record.progress ?? '');
 
     if (call.name === 'exec' || call.name === 'precision_exec') {
       call.arguments = structuredClone(call.arguments);
@@ -164,17 +163,14 @@ async function finalizeAgentRun(
 
   if (context.runtimeBus && record.status !== 'failed' && statusAfterLoop !== 'cancelled') {
     context.emitAgentCompletedEvent(record.id, (record.completedAt ?? Date.now()) - record.startedAt, record.fullOutput ?? '', record.toolCallCount, record.usage);
-    context.emitOrchestrationCompleted(record, record.fullOutput ?? '');
   }
 
   if (record.status === 'failed') {
     context.emitAgentFailedEvent(record.id, record.error ?? 'Circuit breaker tripped', Date.now() - record.startedAt);
-    context.emitOrchestrationFailed(record, record.error ?? 'Circuit breaker tripped');
     logger.error(`Agent ${record.id} circuit-breaker terminated`, { error: record.error, toolCallCount: record.toolCallCount });
     session?.appendMessage({ type: 'session_end', status: 'failed', error: record.error, toolCallCount: record.toolCallCount, durationMs: Date.now() - record.startedAt, timestamp: new Date().toISOString() });
   } else if (statusAfterLoop === 'cancelled') {
     context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
-    context.emitOrchestrationCancelled(record, 'Agent cancelled');
     logger.info(`Agent ${record.id} cancelled (detected post-loop)`, { toolCallCount: record.toolCallCount });
     session?.appendMessage({ type: 'session_end', status: 'cancelled', toolCallCount: record.toolCallCount, durationMs: Date.now() - record.startedAt, timestamp: new Date().toISOString() });
   } else {
@@ -218,7 +214,6 @@ async function handleAgentRunFailure(
   record.completedAt = Date.now();
   cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
   context.emitAgentFailedEvent(record.id, message, Date.now() - record.startedAt);
-  context.emitOrchestrationFailed(record, message);
   logger.error(`Agent ${record.id} failed`, { error: message });
   if (session) {
     session.appendMessage({
@@ -251,7 +246,6 @@ export async function runAgentTask(
   };
   context.emitAgentStarted(record.id);
   context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
-  context.emitOrchestrationProgress(record, record.progress ?? '');
 
   let session: AgentSession | null = null;
   let conversation: ConversationManager | null = null;
@@ -327,7 +321,6 @@ export async function runAgentTask(
     const turnBudget = resolveRunTurnBudget(context, record);
     setAgentProgress(record, 'Turn 1 · Thinking…', 'operator');
     context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
-    context.emitOrchestrationProgress(record, record.progress ?? '');
 
     const callHistory: string[] = [];
     const LOOP_SYSTEM_THRESHOLD = 3;
@@ -573,7 +566,6 @@ export async function runAgentTask(
               );
               setAgentProgress(record, `Turn ${turn} · Context exceeded, compacting…`, 'operator');
               context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
-              context.emitOrchestrationProgress(record, record.progress ?? '');
               const currentMessages = conversation.getMessagesForLLM();
               const compacted = compactSmallWindow(
                 currentMessages,
@@ -598,7 +590,6 @@ export async function runAgentTask(
               record.provider = activeRoute.provider.name;
               setAgentProgress(record, `Model fallback → ${activeRouteId}`, 'owner'); // their reply, not the machine
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
-              context.emitOrchestrationProgress(record, record.progress ?? '');
             } else if (networkAttempt < NETWORK_RETRY_DELAYS_MS.length && await isNetworkTransportError(chatErr, 'agents.orchestrator-runner.network-retry')) {
               const delayMs = NETWORK_RETRY_DELAYS_MS[networkAttempt]!;
               const delaySec = Math.round(delayMs / 1000);
@@ -608,7 +599,6 @@ export async function runAgentTask(
               );
               setAgentProgress(record, `Network error, retrying in ${delaySec}s…`, 'owner'); // owed the reason it is late
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
-              context.emitOrchestrationProgress(record, record.progress ?? '');
               networkAttempt++;
               await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, delayMs);
@@ -632,7 +622,6 @@ export async function runAgentTask(
               );
               setAgentProgress(record, `Rate limited, retrying in ${delaySec}s…`, 'owner'); // as the network retry
               context.emitAgentProgress(record.id, record.progress ?? '', 'owner');
-              context.emitOrchestrationProgress(record, record.progress ?? '');
               rateLimitAttempt++;
               await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, RATE_LIMIT_RETRY_DELAY_MS);
@@ -689,7 +678,6 @@ export async function runAgentTask(
         contextWindowAwarenessEnabled: context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true,
         emitProgress: (progress) => {
           context.emitAgentProgress(record.id, progress, 'operator');
-          context.emitOrchestrationProgress(record, progress);
         },
       });
 

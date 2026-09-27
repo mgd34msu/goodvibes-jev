@@ -34469,16 +34469,14 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "type": "string",
                     "enum": [
                       "agent",
-                      "wrfc-chain",
-                      "wrfc-subtask",
+                      "contract",
+                      "contract-group",
+                      "contract-unit",
                       "workflow",
                       "trigger",
                       "schedule",
                       "watcher",
                       "background-process",
-                      "workstream",
-                      "phase",
-                      "work-item",
                       "acp-agent",
                       "observed-external",
                       "code-index"
@@ -34684,50 +34682,72 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     },
                     "additionalProperties": false
                   },
-                  "review": {
+                  "check": {
                     "type": "object",
                     "properties": {
-                      "score": {
-                        "type": "number"
-                      },
-                      "passed": {
-                        "type": "boolean"
-                      },
-                      "cycles": {
-                        "type": "number"
-                      },
-                      "checklist": {
+                      "criteria": {
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
-                            "item": {
+                            "id": {
                               "type": "string"
                             },
-                            "verified": {
-                              "type": "boolean"
-                            },
-                            "evidence": {
+                            "text": {
                               "type": "string"
                             },
-                            "howExercised": {
-                              "type": "string"
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "unread",
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "severity": {
+                              "type": "string",
+                              "enum": [
+                                "critical",
+                                "major",
+                                "minor"
+                              ]
                             }
                           },
                           "required": [
-                            "item",
-                            "verified",
-                            "evidence"
+                            "id",
+                            "text",
+                            "verdict"
                           ],
                           "additionalProperties": false
                         }
+                      },
+                      "met": {
+                        "type": "number"
+                      },
+                      "judged": {
+                        "type": "number"
+                      },
+                      "nudges": {
+                        "type": "number"
+                      },
+                      "lastCheckAt": {
+                        "type": "number"
                       }
                     },
                     "required": [
-                      "score",
-                      "passed",
-                      "cycles",
-                      "checklist"
+                      "criteria",
+                      "met",
+                      "judged",
+                      "nudges"
                     ],
                     "additionalProperties": false
                   },
@@ -35876,16 +35896,14 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "type": "string",
                     "enum": [
                       "agent",
-                      "wrfc-chain",
-                      "wrfc-subtask",
+                      "contract",
+                      "contract-group",
+                      "contract-unit",
                       "workflow",
                       "trigger",
                       "schedule",
                       "watcher",
                       "background-process",
-                      "workstream",
-                      "phase",
-                      "work-item",
                       "acp-agent",
                       "observed-external",
                       "code-index"
@@ -36091,50 +36109,72 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     },
                     "additionalProperties": false
                   },
-                  "review": {
+                  "check": {
                     "type": "object",
                     "properties": {
-                      "score": {
-                        "type": "number"
-                      },
-                      "passed": {
-                        "type": "boolean"
-                      },
-                      "cycles": {
-                        "type": "number"
-                      },
-                      "checklist": {
+                      "criteria": {
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
-                            "item": {
+                            "id": {
                               "type": "string"
                             },
-                            "verified": {
-                              "type": "boolean"
-                            },
-                            "evidence": {
+                            "text": {
                               "type": "string"
                             },
-                            "howExercised": {
-                              "type": "string"
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "unread",
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "severity": {
+                              "type": "string",
+                              "enum": [
+                                "critical",
+                                "major",
+                                "minor"
+                              ]
                             }
                           },
                           "required": [
-                            "item",
-                            "verified",
-                            "evidence"
+                            "id",
+                            "text",
+                            "verdict"
                           ],
                           "additionalProperties": false
                         }
+                      },
+                      "met": {
+                        "type": "number"
+                      },
+                      "judged": {
+                        "type": "number"
+                      },
+                      "nudges": {
+                        "type": "number"
+                      },
+                      "lastCheckAt": {
+                        "type": "number"
                       }
                     },
                     "required": [
-                      "score",
-                      "passed",
-                      "cycles",
-                      "checklist"
+                      "criteria",
+                      "met",
+                      "judged",
+                      "nudges"
                     ],
                     "additionalProperties": false
                   },
@@ -36335,16 +36375,14 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "type": "string",
                     "enum": [
                       "agent",
-                      "wrfc-chain",
-                      "wrfc-subtask",
+                      "contract",
+                      "contract-group",
+                      "contract-unit",
                       "workflow",
                       "trigger",
                       "schedule",
                       "watcher",
                       "background-process",
-                      "workstream",
-                      "phase",
-                      "work-item",
                       "acp-agent",
                       "observed-external",
                       "code-index"
@@ -36550,50 +36588,72 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     },
                     "additionalProperties": false
                   },
-                  "review": {
+                  "check": {
                     "type": "object",
                     "properties": {
-                      "score": {
-                        "type": "number"
-                      },
-                      "passed": {
-                        "type": "boolean"
-                      },
-                      "cycles": {
-                        "type": "number"
-                      },
-                      "checklist": {
+                      "criteria": {
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
-                            "item": {
+                            "id": {
                               "type": "string"
                             },
-                            "verified": {
-                              "type": "boolean"
-                            },
-                            "evidence": {
+                            "text": {
                               "type": "string"
                             },
-                            "howExercised": {
-                              "type": "string"
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "unread",
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "severity": {
+                              "type": "string",
+                              "enum": [
+                                "critical",
+                                "major",
+                                "minor"
+                              ]
                             }
                           },
                           "required": [
-                            "item",
-                            "verified",
-                            "evidence"
+                            "id",
+                            "text",
+                            "verdict"
                           ],
                           "additionalProperties": false
                         }
+                      },
+                      "met": {
+                        "type": "number"
+                      },
+                      "judged": {
+                        "type": "number"
+                      },
+                      "nudges": {
+                        "type": "number"
+                      },
+                      "lastCheckAt": {
+                        "type": "number"
                       }
                     },
                     "required": [
-                      "score",
-                      "passed",
-                      "cycles",
-                      "checklist"
+                      "criteria",
+                      "met",
+                      "judged",
+                      "nudges"
                     ],
                     "additionalProperties": false
                   },
@@ -60743,7 +60803,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -60877,7 +60937,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -61011,7 +61071,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -61168,7 +61228,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -61360,7 +61420,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "parentTaskId": {
               "type": "string"
             },
-            "chainId": {
+            "contractId": {
               "type": "string"
             },
             "owner": {
@@ -61431,7 +61491,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "parentTaskId": {
                     "type": "string"
                   },
-                  "chainId": {
+                  "contractId": {
                     "type": "string"
                   },
                   "phaseId": {
@@ -61643,7 +61703,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -61754,7 +61814,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -61888,7 +61948,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -62022,7 +62082,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -62179,7 +62239,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -62431,7 +62491,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -62565,7 +62625,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -62699,7 +62759,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -62856,7 +62916,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -63110,7 +63170,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "parentTaskId": {
                       "type": "string"
                     },
-                    "chainId": {
+                    "contractId": {
                       "type": "string"
                     },
                     "phaseId": {
@@ -63266,7 +63326,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -63529,7 +63589,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -63663,7 +63723,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -63797,7 +63857,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -63954,7 +64014,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -64234,7 +64294,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -64368,7 +64428,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -64502,7 +64562,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "parentTaskId": {
                   "type": "string"
                 },
-                "chainId": {
+                "contractId": {
                   "type": "string"
                 },
                 "phaseId": {
@@ -64659,7 +64719,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -64818,7 +64878,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "projectPlanning.workPlan.tasks.list",
         "title": "List Project Work Plan Tasks",
-        "description": "List durable project-scoped work-plan tasks with optional status, owner, parent, or WRFC-chain filters.",
+        "description": "List durable project-scoped work-plan tasks with optional status, owner, parent, or contract filters.",
         "category": "knowledge",
         "source": "builtin",
         "access": "authenticated",
@@ -64851,7 +64911,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "parentTaskId": {
               "type": "string"
             },
-            "chainId": {
+            "contractId": {
               "type": "string"
             },
             "owner": {
@@ -64922,7 +64982,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "parentTaskId": {
                     "type": "string"
                   },
-                  "chainId": {
+                  "contractId": {
                     "type": "string"
                   },
                   "phaseId": {
@@ -65169,7 +65229,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "parentTaskId": {
                     "type": "string"
                   },
-                  "chainId": {
+                  "contractId": {
                     "type": "string"
                   },
                   "phaseId": {
@@ -103935,50 +103995,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         }
       },
       {
-        "id": "runtime.orchestration",
-        "title": "orchestration Domain Events",
-        "description": "Higher-level orchestration and planner coordination events.",
-        "category": "runtime-domain",
-        "source": "builtin",
-        "transport": [
-          "sse",
-          "ws"
-        ],
-        "scopes": [
-          "read:events"
-        ],
-        "domains": [
-          "orchestration"
-        ],
-        "wireEvents": [
-          "orchestration"
-        ],
-        "outputSchema": {
-          "type": "object",
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {},
-              {
-                "type": "array",
-                "items": {}
-              }
-            ]
-          }
-        }
-      },
-      {
         "id": "runtime.planner",
         "title": "planner Domain Events",
         "description": "Planner updates and plan mutation events.",
@@ -104524,50 +104540,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         ],
         "wireEvents": [
           "watchers"
-        ],
-        "outputSchema": {
-          "type": "object",
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {},
-              {
-                "type": "array",
-                "items": {}
-              }
-            ]
-          }
-        }
-      },
-      {
-        "id": "runtime.workflows",
-        "title": "workflows Domain Events",
-        "description": "Workflow orchestration events.",
-        "category": "runtime-domain",
-        "source": "builtin",
-        "transport": [
-          "sse",
-          "ws"
-        ],
-        "scopes": [
-          "read:events"
-        ],
-        "domains": [
-          "workflows"
-        ],
-        "wireEvents": [
-          "workflows"
         ],
         "outputSchema": {
           "type": "object",
@@ -105592,9 +105564,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "genericOutputs": 0
     },
     "eventCoverage": {
-      "events": 36,
-      "withDomains": 33,
-      "withWireEvents": 36
+      "events": 34,
+      "withDomains": 31,
+      "withWireEvents": 34
     },
     "validationCoverage": {
       "methods": 507,

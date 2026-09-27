@@ -40,7 +40,6 @@ import {
 } from '../sdk/src/platform/runtime/orchestration/fleet-count.js';
 import { createFleetObservedSteerHandler } from '../sdk/src/platform/control-plane/routes/fleet.js';
 import type { AgentManager, AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import type { WrfcController } from '../sdk/src/platform/agents/wrfc-controller.js';
 import type { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import type { WatcherRegistry } from '../sdk/src/platform/watchers/registry.js';
 import type {
@@ -285,7 +284,6 @@ function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistry
   const timers: RegistryTimers = { setInterval: () => 0, clearInterval: () => {} };
   return {
     agentManager: { list: (): AgentRecord[] => [], cancel: () => false } as unknown as Pick<AgentManager, 'list' | 'cancel'>,
-    wrfcController: { listChains: () => [] } as unknown as Pick<WrfcController, 'listChains'>,
     processManager: { list: () => [], stop: () => false, getStatus: () => null } as unknown as Pick<ProcessManager, 'list' | 'stop' | 'getStatus'>,
     watcherRegistry: { list: () => [], stopWatcher: () => null } as unknown as Pick<WatcherRegistry, 'list' | 'stopWatcher'>,
     workflow: {

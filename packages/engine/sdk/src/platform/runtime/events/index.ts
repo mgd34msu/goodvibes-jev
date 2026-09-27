@@ -21,9 +21,7 @@ export type { TurnEvent, TurnEventType, TurnInputOrigin } from '../../../events/
 export type { ProviderEvent, ProviderEventType } from '../../../events/providers.js';
 export type { ToolEvent, ToolEventType } from '../../../events/tools.js';
 export type { TaskEvent, TaskEventType } from '../../../events/tasks.js';
-export type { AgentEvent, AgentEventType } from '../../../events/agents.js';
-export type { WorkflowEvent, WorkflowEventType } from '../../../events/workflows.js';
-export type { OrchestrationEvent, OrchestrationEventType, OrchestrationTaskContract } from '../../../events/orchestration.js';
+export type { AgentEvent, AgentEventType, AgentTaskContract } from '../../../events/agents.js';
 export type { CommunicationEvent, CommunicationEventType, CommunicationKind, CommunicationScope } from '../../../events/communication.js';
 export type {
   PlannerEvent,
@@ -168,7 +166,7 @@ function extractErrorMessage(err: unknown): string {
  * that a subscriber observes the half-applied state: by the time a listener
  * runs, the mutating call has already completed and the state has settled. This
  * asynchronous-dispatch ordering is load-bearing for event-ordering safety
- * across the runtime (e.g. the orchestration zombie-reap path relies on
+ * across the runtime (e.g. the contract zombie-reap path relies on
  * listeners never seeing a mutation mid-flight), do NOT replace queueMicrotask
  * with synchronous invocation.
  */

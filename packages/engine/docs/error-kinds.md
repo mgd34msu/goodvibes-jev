@@ -271,7 +271,7 @@ Synthetic critical issues surface under the reviewer's `issues[]` array with `se
 Fixer regressed constraint continuity: missing=[c2] extra=[c3]
 ```
 
-They do not propagate as thrown errors and are not reachable via the error handler or `SDKObserver.onError`. To observe them, subscribe to reviewer `issues` in the `WORKFLOW_REVIEW_COMPLETED` event payload or read the reviewer's `ReviewerReport` from the chain.
+They do not propagate as thrown errors and are not reachable via the error handler or `SDKObserver.onError`. To observe them, follow the `CONTRACT_CHECKED` event for the review (its criteria and `result`) or read the reviewer's `ReviewerReport` from the chain.
 
 ---
 

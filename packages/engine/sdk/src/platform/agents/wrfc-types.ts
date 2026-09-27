@@ -185,7 +185,7 @@ export interface WrfcChain {
   ownerTerminalEmitted: boolean;
   /** Constraints propagated for this chain. Initialized to [] on construction. */
   constraints: Constraint[];
-  /** True once constraints have been captured and WORKFLOW_CONSTRAINTS_ENUMERATED has been emitted. */
+  /** True once constraints have been captured and reported as the contract's planned criteria. */
   constraintsEnumerated: boolean;
   /**
    * Set when this chain was created by collapsing a requested multi-agent fan-out

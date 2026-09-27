@@ -68,7 +68,7 @@ describe('project planning routes', () => {
         title: 'Ship shared task model',
         owner: 'sdk',
         status: 'pending',
-        chainId: 'chain-1',
+        contractId: 'ctr-1',
         originSurface: 'tui',
       },
     }));

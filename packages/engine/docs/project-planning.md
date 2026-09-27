@@ -67,7 +67,7 @@ WRFC children and planning decisions never appear as unrelated work.
 
 | Correlation field | What it links the task to |
 | --- | --- |
-| `chainId` | The WRFC owner chain the task belongs to |
+| `contractId` | The contract the task belongs to |
 | `phaseId` | The specific phase within that chain |
 | `agentId` | The agent currently or last working the task |
 | `turnId` | The conversation turn that produced the task |

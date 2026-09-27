@@ -6,10 +6,7 @@ import type { PermissionManager } from '../permissions/manager.js';
 import { buildToolDenial, buildDenialErrorMessage } from '../permissions/denial.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import {
-  emitOrchestrationGraphCreated,
-  emitOrchestrationNodeAdded,
-  emitOrchestrationNodeStarted,
-  emitOrchestrationRecursionGuardTriggered,
+  emitContractSpawnGuardTriggered,
   emitToolExecuting,
   emitToolFailed,
   emitToolPermissioned,
@@ -475,21 +472,12 @@ export function autoSpawnPendingItems(
   planManager: Pick<ExecutionPlanManager, 'updateItem'> | null = null,
 ): string[] {
   const currentModel = providerRegistry.getCurrentModel();
-  const graphId = `plan:${plan.id}`;
   const ctx = runtimeBus && emitterContext
     ? {
         ...emitterContext,
-        traceId: `${emitterContext.traceId}:${graphId}`,
+        traceId: `${emitterContext.traceId}:plan:${plan.id}`,
       }
     : null;
-
-  if (runtimeBus && ctx) {
-    emitOrchestrationGraphCreated(runtimeBus, ctx, {
-      graphId,
-      title: plan.title,
-      mode: 'graph-execute',
-    });
-  }
 
   let running = agentManager.list().filter(a => isActiveAgent(a)).length;
   const spawnDecision = evaluateOrchestrationSpawn({
@@ -501,8 +489,8 @@ export function autoSpawnPendingItems(
 
   if (!spawnDecision.allowed) {
     if (runtimeBus && ctx) {
-      emitOrchestrationRecursionGuardTriggered(runtimeBus, ctx, {
-        graphId,
+      emitContractSpawnGuardTriggered(runtimeBus, ctx, {
+        agentId: 'conversation',
         depth: 1,
         activeAgents: running,
         reason: spawnDecision.reason ?? 'plan auto-spawn is currently blocked',
@@ -514,17 +502,6 @@ export function autoSpawnPendingItems(
   const spawned: string[] = [];
 
   for (const item of items) {
-    if (runtimeBus && ctx) {
-      emitOrchestrationNodeAdded(runtimeBus, ctx, {
-        graphId,
-        nodeId: item.id,
-        title: item.description,
-        role: 'engineer',
-        dependsOn: item.dependencies ?? [],
-        taskId: item.id,
-      });
-    }
-
     const decision = evaluateOrchestrationSpawn({
       configManager,
       mode: 'plan-auto',
@@ -533,9 +510,8 @@ export function autoSpawnPendingItems(
     });
     if (!decision.allowed) {
       if (runtimeBus && ctx) {
-        emitOrchestrationRecursionGuardTriggered(runtimeBus, ctx, {
-          graphId,
-          nodeId: item.id,
+        emitContractSpawnGuardTriggered(runtimeBus, ctx, {
+          agentId: 'conversation',
           depth: 1,
           activeAgents: running,
           reason: decision.reason ?? 'plan auto-spawn is currently blocked',
@@ -556,14 +532,6 @@ export function autoSpawnPendingItems(
         provider: currentModel.provider,
       };
       const agentRecord = agentManager.spawn(spawnInput);
-      if (runtimeBus && ctx) {
-        emitOrchestrationNodeStarted(runtimeBus, ctx, {
-          graphId,
-          nodeId: item.id,
-          taskId: item.id,
-          agentId: agentRecord.id,
-        });
-      }
       planManager?.updateItem(plan.id, item.id, 'in_progress', agentRecord.id);
       spawned.push(item.description);
       running++;

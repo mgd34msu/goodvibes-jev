@@ -48,7 +48,6 @@ export async function finishCancelledRun(
 ): Promise<void> {
   record.completedAt = Date.now();
   context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
-  context.emitOrchestrationCancelled(record, 'Agent cancelled');
   cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
   if (!session) return;
   session.appendMessage({

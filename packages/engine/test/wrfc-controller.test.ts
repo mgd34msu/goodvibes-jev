@@ -2,9 +2,9 @@
  * QA-08: WrfcController, happy-path, gate-failure, and escalation coverage
  *
  * Tests:
- * - Happy path: engineer completes → reviewer fires → score passes → WORKFLOW_CHAIN_PASSED
- * - Gate failure: score passes, gate fails → WORKFLOW_FIX_ATTEMPTED in the same owner-owned chain
- * - Escalation: score repeatedly below threshold → WORKFLOW_CHAIN_FAILED after maxFixAttempts
+ * - Happy path: engineer completes → reviewer fires → score passes → CONTRACT_PASSED
+ * - Gate failure: score passes, gate fails → CONTRACT_FIX_PLANNED in the same owner-owned chain
+ * - Escalation: score repeatedly below threshold → CONTRACT_FAILED after maxFixAttempts
  */
 import { describe, expect, test, beforeEach } from 'bun:test';
 import { WrfcController } from '../sdk/src/platform/agents/wrfc-controller.js';
@@ -14,7 +14,7 @@ import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import type { AgentManagerLike } from '../sdk/src/platform/agents/wrfc-config.js';
 import type { WrfcChain } from '../sdk/src/platform/agents/wrfc-types.js';
-import type { WorkflowEvent } from '../sdk/src/events/workflows.js';
+import type { ContractEvent } from '../sdk/src/events/contract.js';
 import type { CommitWorkingTreeResult } from '../sdk/src/platform/agents/worktree.js';
 import type { ConfigManager } from '../sdk/src/platform/config/index.js';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -216,7 +216,7 @@ function createHarness(overrides?: {
   let currentHeadCalls = 0;
 
   // Capture workflow events
-  bus.onDomain('workflows', (envelope) => {
+  bus.onDomain('contracts', (envelope) => {
     workflowEvents.push({
       type: envelope.type,
       payload: envelope as unknown as Record<string, unknown>,
@@ -377,8 +377,8 @@ describe('WrfcController: happy path', () => {
     expect(updateStatuses).toContain('in_progress');
     expect(updateStatuses).toContain('done');
     expect(h.workPlanCalls.some((call) => {
-      const task = (call.input as { task?: { phaseId?: string; chainId?: string; parentTaskId?: string } }).task;
-      return task?.phaseId === 'reviewer' && task.chainId === chain.id && !!task.parentTaskId;
+      const task = (call.input as { task?: { phaseId?: string; contractId?: string; parentTaskId?: string } }).task;
+      return task?.phaseId === 'reviewer' && task.contractId === chain.id && !!task.parentTaskId;
     })).toBe(true);
   });
 
@@ -414,11 +414,11 @@ describe('WrfcController: happy path', () => {
 
     // Rejected: the chain did NOT pass despite the 10/10 self-report.
     expect(chain.state).not.toBe('passed');
-    expect(h.workflowEvents.map((e) => e.type)).not.toContain('WORKFLOW_CHAIN_PASSED');
+    expect(h.workflowEvents.map((e) => e.type)).not.toContain('CONTRACT_PASSED');
     h.controller.dispose();
   });
 
-  test('engineer completes → reviewer spawned → passing score → WORKFLOW_CHAIN_PASSED emitted', async () => {
+  test('engineer completes → reviewer spawned → passing score → CONTRACT_PASSED emitted', async () => {
     const h = createHarness();
 
     const ownerRecord = h.addAgent('owner-1', 'implement feature X');
@@ -447,11 +447,11 @@ describe('WrfcController: happy path', () => {
     expect(chain.state).toBe('passed');
     expect(chain.reviewScores).toContain(10);
 
-    // Verify workflow events: state changes + WORKFLOW_CHAIN_PASSED
+    // Verify workflow events: state changes + CONTRACT_PASSED
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CHAIN_CREATED');
-    expect(types).toContain('WORKFLOW_REVIEW_COMPLETED');
-    expect(types).toContain('WORKFLOW_CHAIN_PASSED');
+    expect(types).toContain('CONTRACT_CREATED');
+    expect(types).toContain('CONTRACT_CHECKED');
+    expect(types).toContain('CONTRACT_PASSED');
 
     h.controller.dispose();
   });
@@ -577,7 +577,7 @@ describe('WrfcController: happy path', () => {
     expect(h.mergedAgentIds).toEqual([chain.engineerAgentId!]);
     expect(h.mergedAgentIds).not.toContain(reviewerRecord.id);
     expect(h.cleanedAgentIds).toEqual(expect.arrayContaining(chain.allAgentIds));
-    expect(h.workflowEvents.map((e) => e.type)).toContain('WORKFLOW_AUTO_COMMITTED');
+    expect(h.workflowEvents.map((e) => e.type)).toContain('CONTRACT_COMMITTED');
 
     h.controller.dispose();
   });
@@ -720,7 +720,7 @@ describe('WrfcController: happy path', () => {
     for (const reviewer of h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer')) {
       expect(h.mergedAgentIds).not.toContain(reviewer.id);
     }
-    expect(h.workflowEvents.map((e) => e.type)).toContain('WORKFLOW_AUTO_COMMITTED');
+    expect(h.workflowEvents.map((e) => e.type)).toContain('CONTRACT_COMMITTED');
 
     h.controller.dispose();
   });
@@ -871,8 +871,8 @@ describe('WrfcController: contract.commitScope', () => {
 
     expect(chain.state).toBe('passed');
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CHAIN_PASSED');
-    expect(types).not.toContain('WORKFLOW_CHAIN_FAILED');
+    expect(types).toContain('CONTRACT_PASSED');
+    expect(types).not.toContain('CONTRACT_FAILED');
 
     const owner = h.agentStore.get('owner-ignored-1')!;
     expect(owner.status).toBe('completed');
@@ -913,8 +913,8 @@ describe('WrfcController: contract.commitScope', () => {
 
     expect(chain.state).toBe('passed');
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CHAIN_PASSED');
-    expect(types).not.toContain('WORKFLOW_CHAIN_FAILED');
+    expect(types).toContain('CONTRACT_PASSED');
+    expect(types).not.toContain('CONTRACT_FAILED');
 
     const owner = h.agentStore.get('owner-commitfail-1')!;
     expect(owner.status).toBe('completed');
@@ -1015,13 +1015,13 @@ describe('WrfcController: gate failure', () => {
     const busWithGate = new RuntimeEventBus();
     const agentStore = new Map<string, AgentRecord>();
     const spawnedRecords: AgentRecord[] = [];
-    const workflowEvents: Array<{ type: string; chainId?: string }> = [];
+    const workflowEvents: Array<{ type: string; contractId?: string }> = [];
 
-    busWithGate.onDomain('workflows', (envelope) => {
-      const chainId = (envelope as unknown as Record<string, unknown>).chainId as string | undefined;
+    busWithGate.onDomain('contracts', (envelope) => {
+      const contractId = (envelope.payload as { contractId?: string }).contractId;
       workflowEvents.push({
         type: envelope.type,
-        ...(chainId !== undefined ? { chainId } : {}),
+        ...(contractId !== undefined ? { contractId } : {}),
       });
     });
 
@@ -1092,9 +1092,9 @@ describe('WrfcController: gate failure', () => {
     // Reviewer passes with score 10
     reviewer.fullOutput = PASSING_REVIEW_OUTPUT;
     const fixAttempted = new Promise<void>((resolve) => {
-      const unsubscribe = busWithGate.onDomain('workflows', (envelope) => {
-        if (envelope.type === 'WORKFLOW_FIX_ATTEMPTED') {
-          const chainId = (envelope.payload as { chainId?: string }).chainId;
+      const unsubscribe = busWithGate.onDomain('contracts', (envelope) => {
+        if (envelope.type === 'CONTRACT_FIX_PLANNED') {
+          const chainId = (envelope.payload as { contractId?: string }).contractId;
           if (chainId === chain.id) {
             unsubscribe();
             resolve();
@@ -1113,8 +1113,8 @@ describe('WrfcController: gate failure', () => {
     expect(fixer.parentAgentId).toBe(chain.ownerAgentId);
 
     const types = workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_FIX_ATTEMPTED');
-    expect(types).not.toContain('WORKFLOW_CHAIN_PASSED');
+    expect(types).toContain('CONTRACT_FIX_PLANNED');
+    expect(types).not.toContain('CONTRACT_PASSED');
 
     controller.dispose();
   });
@@ -1201,10 +1201,10 @@ describe('WrfcController: gate failure', () => {
     reviewer1!.fullOutput = PASSING_REVIEW_OUTPUT;
     reviewer2!.fullOutput = PASSING_REVIEW_OUTPUT;
 
-    // Wait for the gate-fixer to be spawned (WORKFLOW_FIX_ATTEMPTED)
+    // Wait for the gate-fixer to be spawned (CONTRACT_FIX_PLANNED)
     const fixAttempted = new Promise<void>((resolve) => {
-      const unsubscribe = busWithGate.onDomain('workflows', (envelope) => {
-        if (envelope.type === 'WORKFLOW_FIX_ATTEMPTED') {
+      const unsubscribe = busWithGate.onDomain('contracts', (envelope) => {
+        if (envelope.type === 'CONTRACT_FIX_PLANNED') {
           unsubscribe();
           resolve();
         }
@@ -1233,7 +1233,7 @@ describe('WrfcController: gate failure', () => {
 });
 
 describe('WrfcController: escalation', () => {
-  test('score below threshold after maxFixAttempts → WORKFLOW_CHAIN_FAILED emitted', async () => {
+  test('score below threshold after maxFixAttempts → CONTRACT_FAILED emitted', async () => {
     const h = createHarness({ scoreThreshold: 9.9, maxFixAttempts: 1 });
     const fixRuns = installStubFixRunner(h.controller, 'merged');
 
@@ -1270,12 +1270,12 @@ describe('WrfcController: escalation', () => {
     expect(chain.error).toMatch(/below threshold/i);
 
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_FIX_ATTEMPTED');
-    expect(types).toContain('WORKFLOW_REVIEW_COMPLETED');
-    expect(types).toContain('WORKFLOW_CHAIN_FAILED');
+    expect(types).toContain('CONTRACT_FIX_PLANNED');
+    expect(types).toContain('CONTRACT_CHECKED');
+    expect(types).toContain('CONTRACT_FAILED');
 
-    const failedEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
-    expect(failedEvent?.type).toBe('WORKFLOW_CHAIN_FAILED');
+    const failedEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_FAILED');
+    expect(failedEvent?.type).toBe('CONTRACT_FAILED');
 
     h.controller.dispose();
   });
@@ -1298,8 +1298,8 @@ describe('WrfcController: escalation', () => {
     expect(chain.transportRetryCount ?? 0).toBe(0);
 
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CHAIN_FAILED');
-    const failedEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
+    expect(types).toContain('CONTRACT_FAILED');
+    const failedEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_FAILED');
     expect((failedEvent?.payload as { payload?: { failureKind?: string } }).payload?.failureKind).toBe('other');
 
     h.controller.dispose();
@@ -1331,7 +1331,7 @@ describe('WrfcController: escalation', () => {
     // Typed, machine-readable outcome, not an infrastructure error.
     expect(chain.failureKind).toBe('max_turns');
 
-    const failedEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
+    const failedEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_FAILED');
     const payload = (failedEvent?.payload as { payload?: Record<string, unknown> }).payload ?? {};
     expect(payload.failureKind).toBe('max_turns');
     expect(payload.turnLimit).toBe(120);
@@ -1363,7 +1363,7 @@ describe('WrfcController: escalation', () => {
     // Chain must NOT be failed yet, it gets one bounded automatic retry.
     expect(chain.state).toBe('engineering');
     expect(chain.transportRetryCount).toBe(1);
-    expect(h.workflowEvents.map((e) => e.type)).not.toContain('WORKFLOW_CHAIN_FAILED');
+    expect(h.workflowEvents.map((e) => e.type)).not.toContain('CONTRACT_FAILED');
     const retryDecision = chain.ownerDecisions.find((d) => d.action === 'transport_retry');
     expect(retryDecision).not.toBeUndefined();
     expect(retryDecision?.reason).toMatch(/closed unexpectedly/i);
@@ -1388,7 +1388,7 @@ describe('WrfcController: escalation', () => {
     expect(chain.transportRetryCount).toBe(1); // did not retry again past the limit
     expect(chain.failureKind).toBe('transport');
 
-    const failedEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
+    const failedEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_FAILED');
     expect(failedEvent).not.toBeUndefined();
     expect((failedEvent?.payload as { payload?: { failureKind?: string } }).payload?.failureKind).toBe('transport');
 
@@ -1490,12 +1490,17 @@ describe('WrfcController: constraint integration', () => {
     expect(chain.state).toBe('passed');
 
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CONSTRAINTS_ENUMERATED');
-    expect(types).toContain('WORKFLOW_REVIEW_COMPLETED');
-    expect(types).toContain('WORKFLOW_CHAIN_PASSED');
+    expect(types).toContain('CONTRACT_PLANNED');
+    expect(types).toContain('CONTRACT_CHECKED');
+    expect(types).toContain('CONTRACT_PASSED');
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(p5EventData(reviewEvent!)['passed']).toBe(true);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(p5EventData(reviewEvent!)['result']).toBe('pass');
+    // Each constraint is reported as a criterion reading.
+    expect(p5EventData(reviewEvent!)['criteria']).toEqual([
+      { criterionId: 'c1', verdict: 'met', probabilityUnmet: 0, outcome: 'act' },
+      { criterionId: 'c2', verdict: 'met', probabilityUnmet: 0, outcome: 'act' },
+    ]);
 
     h.controller.dispose();
   });
@@ -1521,18 +1526,16 @@ describe('WrfcController: constraint integration', () => {
     expect(chain.state).toBe('passed');
 
     const types = h.workflowEvents.map((e) => e.type);
-    expect(types).toContain('WORKFLOW_CHAIN_CREATED');
-    expect(types).toContain('WORKFLOW_REVIEW_COMPLETED');
-    expect(types).toContain('WORKFLOW_CHAIN_PASSED');
+    expect(types).toContain('CONTRACT_CREATED');
+    expect(types).toContain('CONTRACT_CHECKED');
+    expect(types).toContain('CONTRACT_PASSED');
 
-    // Review event must NOT have constraint fields (no-op path)
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
+    // A chain with no constraints reports a check with no criteria (no-op path).
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
     const reviewPayload = p5EventData(reviewEvent!);
-    expect(reviewPayload['passed']).toBe(true);
-    expect(reviewPayload['constraintsSatisfied']).toBeUndefined();
-    expect(reviewPayload['constraintsTotal']).toBeUndefined();
-    expect(reviewPayload['unsatisfiedConstraintIds']).toBeUndefined();
+    expect(reviewPayload['result']).toBe('pass');
+    expect(reviewPayload['criteria']).toEqual([]);
 
     h.controller.dispose();
   });
@@ -1576,17 +1579,19 @@ describe('WrfcController: constraint integration', () => {
     expect(chain.state).toBe('passed');
 
     const stateChanges = h.workflowEvents
-      .filter((e) => e.type === 'WORKFLOW_STATE_CHANGED')
+      .filter((e) => e.type === 'CONTRACT_STATUS_CHANGED')
       .map((e) => p5EventData(e)['to'] as string);
 
-    expect(stateChanges).toContain('engineering');
-    expect(stateChanges).toContain('reviewing');
+    // Review-loop states report as contract statuses: engineering is running;
+    // reviewing, awaiting_gates and gating are judging.
+    expect(stateChanges).toContain('running');
+    expect(stateChanges).toContain('judging');
     expect(stateChanges).toContain('fixing');
-    expect(stateChanges).toContain('awaiting_gates');
     expect(stateChanges).toContain('passed');
 
-    const reviewingTransitions = stateChanges.filter((s) => s === 'reviewing');
-    expect(reviewingTransitions.length).toBeGreaterThanOrEqual(2);
+    // Reviewed before the fix and again after it.
+    const judgingTransitions = stateChanges.filter((s) => s === 'judging');
+    expect(judgingTransitions.length).toBeGreaterThanOrEqual(2);
 
     h.controller.dispose();
   });
@@ -1624,12 +1629,12 @@ describe('WrfcController: state machine', () => {
     h.controller.dispose();
   });
 
-  test('complete chain sequence emits WORKFLOW_STATE_CHANGED transitions', async () => {
+  test('complete chain sequence emits CONTRACT_STATUS_CHANGED transitions', async () => {
     const h = createHarness();
     const stateChanges: Array<{ from: string; to: string }> = [];
 
-    h.bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_STATE_CHANGED' }>>(
-      'WORKFLOW_STATE_CHANGED',
+    h.bus.on<Extract<ContractEvent, { type: 'CONTRACT_STATUS_CHANGED' }>>(
+      'CONTRACT_STATUS_CHANGED',
       (envelope) => {
         const { from, to } = envelope.payload;
         stateChanges.push({ from, to });
@@ -1648,13 +1653,14 @@ describe('WrfcController: state machine', () => {
     emitAgentCompleted(h.bus, reviewer.id);
     await flushMicrotasks();
 
-    // Should have transitioned: pending→engineering, engineering→reviewing,
-    // reviewing→awaiting_gates, awaiting_gates→gating, gating→passed
-    const toStates = stateChanges.map((c) => c.to);
-    expect(toStates).toContain('engineering');
-    expect(toStates).toContain('reviewing');
-    expect(toStates).toContain('awaiting_gates');
-    expect(toStates).toContain('passed');
+    // pending->engineering reports queued->running, engineering->reviewing
+    // reports running->judging; awaiting_gates and gating stay judging, so no
+    // event; gating->passed reports judging->passed.
+    expect(stateChanges).toEqual([
+      { from: 'queued', to: 'running' },
+      { from: 'running', to: 'judging' },
+      { from: 'judging', to: 'passed' },
+    ]);
 
     h.controller.dispose();
   });
@@ -1704,13 +1710,13 @@ describe('WrfcController: importChain zombie reap (d5)', () => {
     expect(stored.failureKind).toBe('other');
     expect(stored.completedAt).toBeDefined();
 
-    const stateChanged = h.workflowEvents.find((e) => e.type === 'WORKFLOW_STATE_CHANGED');
+    const stateChanged = h.workflowEvents.find((e) => e.type === 'CONTRACT_STATUS_CHANGED');
     expect(stateChanged).toBeDefined();
     expect(p5EventData(stateChanged!)['to']).toBe('failed');
-    expect(p5EventData(stateChanged!)['from']).toBe('reviewing');
-    const chainFailed = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
+    expect(p5EventData(stateChanged!)['from']).toBe('judging');
+    const chainFailed = h.workflowEvents.find((e) => e.type === 'CONTRACT_FAILED');
     expect(chainFailed).toBeDefined();
-    expect(p5EventData(chainFailed!)['chainId']).toBe('wrfc-zombie-1');
+    expect(p5EventData(chainFailed!)['contractId']).toBe('wrfc-zombie-1');
 
     h.controller.dispose();
   });
@@ -1730,8 +1736,8 @@ describe('WrfcController: importChain zombie reap (d5)', () => {
     // with every other terminal transition, all of which fire while the chain
     // is already present in this.chains.
     let resolvedDuringEvent: WrfcChain | null | undefined;
-    const unsub = h.bus.onDomain('workflows', (envelope) => {
-      if (envelope.type === 'WORKFLOW_CHAIN_FAILED') {
+    const unsub = h.bus.onDomain('contracts', (envelope) => {
+      if (envelope.type === 'CONTRACT_FAILED') {
         resolvedDuringEvent = h.controller.getChain('wrfc-zombie-lookup');
       }
     });
@@ -1933,7 +1939,7 @@ describe('WrfcController: acceptance-checklist gate (deterministic, both review 
   });
 });
 
-describe('WrfcController: the review record rides the wire (checklist + verdict)', () => {
+describe('WrfcController: the review verdict rides the chain and its check event', () => {
   function reviewJsonWire(report: Record<string, unknown>): string {
     return ['```json', JSON.stringify({
       version: 1, archetype: 'reviewer', summary: 'review', dimensions: [], issues: [], constraintFindings: [],
@@ -1962,27 +1968,28 @@ describe('WrfcController: the review record rides the wire (checklist + verdict)
     emitAgentCompleted(h.bus, reviewer.id);
     await flushMicrotasks(20);
 
-    const { adaptChain } = await import('../sdk/src/platform/runtime/fleet/adapters/wrfc.js');
-    const node = adaptChain(chain, [], Date.now());
-    expect(node.review).toBeDefined();
     // The CONTROLLER verdict, not the reviewer's passed:true claim.
-    expect(node.review!.passed).toBe(false);
-    expect(node.review!.score).toBe(10);
-    expect(node.review!.cycles).toBe(1);
-    expect(node.review!.checklist).toEqual([
+    expect(chain.lastReviewVerdict?.passed).toBe(false);
+    expect(chain.lastReviewVerdict?.score).toBe(10);
+    expect(chain.reviewCycles).toBe(1);
+    expect(chain.reviewerReport?.acceptanceChecklist).toEqual([
       { item: 'exports CSV', verified: true, evidence: 'exported a real file', howExercised: 'ran the CLI directly' },
       { item: 'handles empty input', verified: false, evidence: 'crashed on an empty list' },
     ]);
+    // The check event carries the same verdict: not a pass.
+    const checked = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(p5EventData(checked!)['result']).toBe('nudge');
+    expect(p5EventData(checked!)['goal']).toEqual({ verdict: 'unmet', outcome: 'act' });
     h.controller.dispose();
   });
 
-  test('pre-review, the node serves NO review field (absent, never an empty shell)', async () => {
+  test('pre-review, no verdict is recorded and no check is reported', async () => {
     const h = createHarness();
     const engRecord = h.addAgent('eng-wire-2', 'Build the widget.');
     const chain = h.controller.createChain(engRecord);
-    const { adaptChain } = await import('../sdk/src/platform/runtime/fleet/adapters/wrfc.js');
-    const node = adaptChain(chain, [], Date.now());
-    expect('review' in node).toBe(false);
+    await flushMicrotasks();
+    expect(chain.lastReviewVerdict).toBeUndefined();
+    expect(h.workflowEvents.some((e) => e.type === 'CONTRACT_CHECKED')).toBe(false);
     h.controller.dispose();
   });
 
@@ -2000,15 +2007,22 @@ describe('WrfcController: the review record rides the wire (checklist + verdict)
     }));
     emitAgentCompleted(h.bus, reviewer.id);
     await flushMicrotasks(20);
-    const { adaptChain } = await import('../sdk/src/platform/runtime/fleet/adapters/wrfc.js');
-    const node = adaptChain(chain, [], Date.now());
     // Exactly what a REST/ws consumer receives after serialization.
-    const overWire = JSON.parse(JSON.stringify({ ...node, raw: undefined })) as typeof node;
-    expect(overWire.review).toEqual({
-      score: 10,
-      passed: true,
-      cycles: 1,
-      checklist: [{ item: 'meets the ask', verified: true, evidence: 'exercised directly' }],
+    const checked = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    const overWire = JSON.parse(JSON.stringify(p5EventData(checked!))) as Record<string, unknown>;
+    expect(overWire).toEqual({
+      type: 'CONTRACT_CHECKED',
+      contractId: chain.id,
+      scope: 'deliverable',
+      targetId: chain.id,
+      checkId: `${chain.id}.k1`,
+      trigger: 'completion',
+      result: 'pass',
+      criteria: [],
+      goal: { verdict: 'met', outcome: 'act' },
+      quality: [],
+      gates: [],
+      decisionIds: [],
     });
     h.controller.dispose();
   });

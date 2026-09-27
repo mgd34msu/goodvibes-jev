@@ -10,9 +10,8 @@ import { readSystemMessagePriority } from './batteries/system-message-priority.j
 
 export type SystemMessagePriorityLevel = 'high' | 'low';
 /**
- * 'contract' is the review workflow's status stream: the contract runner's
- * `[Contract]` messages, and the `[WRFC]` messages the contract runner
- * replaces (contract-runner.md section 8.2).
+ * 'contract' is the contract runner's status stream: its `[Contract]`
+ * messages (contract-runner.md section 8.2).
  */
 export type SystemMessageKind = 'system' | 'operational' | 'contract';
 export type SystemMessageTarget = 'conversation' | 'panel' | 'both';
@@ -37,7 +36,6 @@ export function defaultSystemMessageTarget(kind: SystemMessageKind): SystemMessa
  */
 export const SYSTEM_MESSAGE_TAG_KINDS: Readonly<Record<string, Exclude<SystemMessageKind, 'system'>>> = {
   contract: 'contract',
-  wrfc: 'contract',
   scan: 'operational',
   local: 'operational',
   agents: 'operational',

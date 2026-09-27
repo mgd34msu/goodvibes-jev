@@ -13,7 +13,7 @@ import type { OverlayDomainState } from './domains/overlays.js';
 import type { PermissionDomainState } from './domains/permissions.js';
 import type { TaskDomainState } from './domains/tasks.js';
 import type { AgentDomainState } from './domains/agents.js';
-import type { OrchestrationDomainState } from './domains/orchestration.js';
+import type { ContractDomainState } from './domains/contracts.js';
 import type { CommunicationDomainState } from './domains/communication.js';
 import type { ProviderHealthDomainState } from './domains/provider-health.js';
 import type { McpDomainState } from './domains/mcp.js';
@@ -40,7 +40,7 @@ import { createInitialOverlaysState } from './domains/overlays.js';
 import { createInitialPermissionsState } from './domains/permissions.js';
 import { createInitialTasksState } from './domains/tasks.js';
 import { createInitialAgentsState } from './domains/agents.js';
-import { createInitialOrchestrationState } from './domains/orchestration.js';
+import { createInitialContractsState } from './domains/contracts.js';
 import { createInitialCommunicationState } from './domains/communication.js';
 import { createInitialProviderHealthState } from './domains/provider-health.js';
 import { createInitialMcpState } from './domains/mcp.js';
@@ -75,7 +75,7 @@ export interface RuntimeState {
   permissions: PermissionDomainState;
   tasks: TaskDomainState;
   agents: AgentDomainState;
-  orchestration: OrchestrationDomainState;
+  contracts: ContractDomainState;
   communication: CommunicationDomainState;
   providerHealth: ProviderHealthDomainState;
   mcp: McpDomainState;
@@ -112,7 +112,7 @@ export function createInitialRuntimeState(): RuntimeState {
     permissions: createInitialPermissionsState(),
     tasks: createInitialTasksState(),
     agents: createInitialAgentsState(),
-    orchestration: createInitialOrchestrationState(),
+    contracts: createInitialContractsState(),
     communication: createInitialCommunicationState(),
     providerHealth: createInitialProviderHealthState(),
     mcp: createInitialMcpState(),

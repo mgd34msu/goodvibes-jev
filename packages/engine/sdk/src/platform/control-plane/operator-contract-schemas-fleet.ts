@@ -22,16 +22,14 @@ import { SHARED_SESSION_KIND_READ_SCHEMA, SHARED_SESSION_RECORD_SCHEMA } from '.
 
 const PROCESS_KIND_SCHEMA = enumSchema([
   'agent',
-  'wrfc-chain',
-  'wrfc-subtask',
+  'contract',
+  'contract-group',
+  'contract-unit',
   'workflow',
   'trigger',
   'schedule',
   'watcher',
   'background-process',
-  'workstream',
-  'phase',
-  'work-item',
   'acp-agent',
   'observed-external',
   'code-index',
@@ -122,22 +120,25 @@ const PROCESS_OBSERVED_SCHEMA = objectSchema({
   steerDrillInOnly: BOOLEAN_SCHEMA,
 }, ['externalKind', 'pid', 'liveness', 'steer', 'steerDrillInOnly']);
 
-// The latest review on a wrfc-chain / wrfc-subtask node: the CONTROLLER
-// verdict (gate-inclusive), the score, the cycle count, and the acceptance
-// checklist so a consumer renders what was ACTUALLY verified. Present only
-// once a review has completed, absent before (never an empty shell).
-const PROCESS_REVIEW_CHECKLIST_ITEM_SCHEMA = objectSchema({
-  item: STRING_SCHEMA,
-  verified: BOOLEAN_SCHEMA,
-  evidence: STRING_SCHEMA,
-  howExercised: STRING_SCHEMA,
-}, ['item', 'verified', 'evidence']);
-const PROCESS_REVIEW_SUMMARY_SCHEMA = objectSchema({
-  score: NUMBER_SCHEMA,
-  passed: BOOLEAN_SCHEMA,
-  cycles: NUMBER_SCHEMA,
-  checklist: arraySchema(PROCESS_REVIEW_CHECKLIST_ITEM_SCHEMA),
-}, ['score', 'passed', 'cycles', 'checklist']);
+// Where a contract, contract-group or contract-unit node stands against its
+// criteria: each judged criterion's latest reading (verdict, and the outcome
+// and severity of the reading behind it), how many are met, the corrections
+// sent, and when it was last checked. Present only on a node with judged
+// criteria.
+const PROCESS_CHECK_CRITERION_SCHEMA = objectSchema({
+  id: STRING_SCHEMA,
+  text: STRING_SCHEMA,
+  verdict: enumSchema(['unread', 'met', 'unmet', 'unshown']),
+  outcome: enumSchema(['act', 'confirm', 'escalate']),
+  severity: enumSchema(['critical', 'major', 'minor']),
+}, ['id', 'text', 'verdict']);
+const PROCESS_CHECK_SUMMARY_SCHEMA = objectSchema({
+  criteria: arraySchema(PROCESS_CHECK_CRITERION_SCHEMA),
+  met: NUMBER_SCHEMA,
+  judged: NUMBER_SCHEMA,
+  nudges: NUMBER_SCHEMA,
+  lastCheckAt: NUMBER_SCHEMA,
+}, ['criteria', 'met', 'judged', 'nudges']);
 
 export const PROCESS_NODE_SCHEMA = objectSchema({
   id: STRING_SCHEMA,
@@ -160,7 +161,7 @@ export const PROCESS_NODE_SCHEMA = objectSchema({
   capabilities: PROCESS_CAPABILITIES_SCHEMA,
   needsAttention: PROCESS_ATTENTION_SCHEMA,
   sessionRef: PROCESS_SESSION_REF_SCHEMA,
-  review: PROCESS_REVIEW_SUMMARY_SCHEMA,
+  check: PROCESS_CHECK_SUMMARY_SCHEMA,
   observed: PROCESS_OBSERVED_SCHEMA,
 }, ['id', 'kind', 'label', 'state', 'elapsedMs', 'costState', 'capabilities'], { additionalProperties: true });
 

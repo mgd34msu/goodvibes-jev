@@ -33,7 +33,7 @@ export interface QueueSurfaceReplyInput {
   readonly agentId: string;
   readonly task: string;
   readonly agentTask?: string | undefined;
-  readonly workflowChainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly sessionId?: string | undefined;
 }
 

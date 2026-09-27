@@ -8514,18 +8514,20 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -8820,18 +8822,20 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -8920,18 +8924,20 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -13437,7 +13443,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13473,7 +13479,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13509,7 +13515,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13554,7 +13560,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -13596,7 +13602,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "workPlanId": "sample",
       "status": "sample",
       "parentTaskId": "sample",
-      "chainId": "sample",
+      "contractId": "sample",
       "owner": "sample",
       "limit": 0
     },
@@ -13621,7 +13627,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",
@@ -13673,7 +13679,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13712,7 +13718,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13748,7 +13754,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13784,7 +13790,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13829,7 +13835,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -13891,7 +13897,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13927,7 +13933,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -13963,7 +13969,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14008,7 +14014,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -14070,7 +14076,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14112,7 +14118,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -14177,7 +14183,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14213,7 +14219,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14249,7 +14255,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14294,7 +14300,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -14357,7 +14363,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14393,7 +14399,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14429,7 +14435,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -14474,7 +14480,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -14516,7 +14522,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "workPlanId": "sample",
       "status": "sample",
       "parentTaskId": "sample",
-      "chainId": "sample",
+      "contractId": "sample",
       "owner": "sample",
       "limit": 0
     },
@@ -14541,7 +14547,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",
@@ -14605,7 +14611,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",

@@ -15,7 +15,6 @@ import { describe, expect, test } from 'bun:test';
 import { createWrfcControllerForTest } from '../sdk/src/platform/agents/wrfc-controller-test-support.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.js';
-import { adaptChain } from '../sdk/src/platform/runtime/fleet/adapters/wrfc.js';
 import type { WrfcChain } from '../sdk/src/platform/agents/wrfc-types.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import type { AgentManagerLike } from '../sdk/src/platform/agents/wrfc-config.js';
@@ -39,7 +38,7 @@ function createHarness() {
   const agentStore = new Map<string, AgentRecord>();
   const spawned: AgentRecord[] = [];
   const workflowEvents: Array<{ type: string; data: Record<string, unknown> }> = [];
-  bus.onDomain('workflows', (envelope) => {
+  bus.onDomain('contracts', (envelope) => {
     workflowEvents.push({ type: envelope.type, data: (envelope as unknown as { payload: Record<string, unknown> }).payload });
   });
   // ConfigManager.get/getCategory are generic over `ConfigKey`/`keyof GoodVibesConfig`
@@ -111,26 +110,47 @@ describe('operator cancel: cancelled, not failed', () => {
     // Completion narration summarises the landed work from the ledger.
     expect(chain.error).toContain('2 files already modified on disk');
 
-    // The workflow event carries failureKind='cancelled' so the host narrates a
-    // cancellation, not a failure.
-    const failedEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CHAIN_FAILED');
-    expect(failedEvent).toBeDefined();
-    const payload = failedEvent!.data;
-    expect(payload['failureKind']).toBe('cancelled');
+    // The contract event is a cancellation, never a failure, so every host
+    // narrates a cancellation; it carries the landed-file count and narration.
+    expect(h.workflowEvents.some((e) => e.type === 'CONTRACT_FAILED')).toBe(false);
+    const cancelledEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CANCELLED');
+    expect(cancelledEvent).toBeDefined();
+    const payload = cancelledEvent!.data;
+    expect(payload['contractId']).toBe(chain.id);
+    expect(payload['filesModified']).toBe(2);
     expect(String(payload['reason'])).toContain('already modified on disk');
+    // The status change says cancelled too, not failed.
+    const statusChange = h.workflowEvents.filter((e) => e.type === 'CONTRACT_STATUS_CHANGED').at(-1);
+    expect(statusChange!.data['to']).toBe('cancelled');
 
     h.controller.dispose();
   });
 
-  test('fleet chain node: a cancelled chain renders as killed (⊘), a genuine failure stays failed (✗)', () => {
-    const base: WrfcChain = {
-      id: 'ch-x', state: 'failed', task: 't', ownerAgentId: 'o', allAgentIds: ['o'],
-      fixAttempts: 0, reviewCycles: 0, reviewScores: [], ownerDecisions: [], ownerTerminalEmitted: true,
+  test('a cancelled chain reports cancelled; a genuine failure reports failed', async () => {
+    const h = createHarness();
+    const owner = h.addAgent('owner-2', 'implement the feature');
+    const cancelledChain = h.controller.createChain(owner);
+    emitAgentCancelled(h.bus, cancelledChain.engineerAgentId!, 'operator cancellation');
+    await flush();
+
+    // A reimported chain whose whole roster is gone is reaped as a genuine failure.
+    const failedChain: WrfcChain = {
+      id: 'ch-failed', state: 'reviewing', task: 't', ownerAgentId: 'gone-owner', allAgentIds: ['gone-owner', 'gone-engineer'],
+      fixAttempts: 0, reviewCycles: 0, reviewScores: [], ownerDecisions: [], ownerTerminalEmitted: false,
       constraints: [], constraintsEnumerated: false, touchedPaths: [], createdAt: Date.now(),
     };
-    const cancelled = adaptChain({ ...base, failureKind: 'cancelled' }, [], Date.now());
-    expect(cancelled.state).toBe('killed');
-    const genuinelyFailed = adaptChain({ ...base, failureKind: 'other' }, [], Date.now());
-    expect(genuinelyFailed.state).toBe('failed');
+    h.controller.importChain(failedChain);
+    await flush();
+
+    const finalStatus = (contractId: string): unknown => h.workflowEvents
+      .filter((e) => e.type === 'CONTRACT_STATUS_CHANGED' && e.data['contractId'] === contractId)
+      .at(-1)?.data['to'];
+    expect(finalStatus(cancelledChain.id)).toBe('cancelled');
+    expect(finalStatus('ch-failed')).toBe('failed');
+    expect(h.workflowEvents.some((e) => e.type === 'CONTRACT_CANCELLED' && e.data['contractId'] === cancelledChain.id)).toBe(true);
+    expect(h.workflowEvents.some((e) => e.type === 'CONTRACT_FAILED' && e.data['contractId'] === 'ch-failed')).toBe(true);
+    expect(h.workflowEvents.some((e) => e.type === 'CONTRACT_FAILED' && e.data['contractId'] === cancelledChain.id)).toBe(false);
+
+    h.controller.dispose();
   });
 });

@@ -155,7 +155,6 @@ describe('fleet integration: the hosted row is a first-class fleet row', () => {
   function makeDeps(host: AcpHostService): ProcessRegistryDeps {
     return {
       agentManager: { list: () => [], cancel: () => false },
-      wrfcController: { listChains: () => [] },
       processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
       watcherRegistry: { list: () => [], stopWatcher: () => null },
       workflow: {

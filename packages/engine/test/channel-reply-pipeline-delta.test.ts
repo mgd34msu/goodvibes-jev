@@ -15,7 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import { ChannelReplyPipeline } from '../sdk/src/platform/channels/reply-pipeline.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted, emitAgentProgress } from '../sdk/src/platform/runtime/emitters/agents.js';
-import { emitWorkflowChainPassed } from '../sdk/src/platform/runtime/emitters/workflows.js';
+import { emitContractPassed } from '../sdk/src/platform/runtime/emitters/contract.js';
 import { waitFor } from './_helpers/test-timeout.js';
 
 interface Published {
@@ -83,13 +83,13 @@ function harness(surfaceKind: string) {
         agentId,
       }, { agentId, durationMs, output });
     },
-    async chainPassed(chainId: string) {
+    async contractPassed(contractId: string) {
       sequence += 1;
-      emitWorkflowChainPassed(bus, {
-        sessionId: 'wrfc',
-        traceId: `chain-${sequence}`,
+      emitContractPassed(bus, {
+        sessionId: 's1',
+        traceId: `contract-${sequence}`,
         source: 'test',
-      }, { chainId });
+      }, { contractId, criteriaMet: 1, criteriaJudged: 1, excluded: 0, nudges: 0 });
     },
   };
 }
@@ -115,25 +115,25 @@ describe('ntfy delivers the answer, not just the duration', () => {
     expect(h.published[0]?.phase).toBe('final');
   });
 
-  test('an ntfy workflow chain still delivers every leg', async () => {
+  test('an ntfy reply that follows a contract still delivers every leg', async () => {
     const h = harness('ntfy');
-    h.track('agent-chain', { workflowChainId: 'chain-9' });
-    await h.complete('agent-chain', 'first leg answer');
+    h.track('agent-contract', { contractId: 'ctr-9' });
+    await h.complete('agent-contract', 'first leg answer');
     await waitFor(() => h.published.length === 1);
     expect(h.published[0]?.text).toContain('first leg answer');
-    // keepTracking: the chain is still live after the root agent completes.
-    expect(h.pipeline.has('agent-chain')).toBe(true);
+    // keepTracking: the contract is still live after the root agent completes.
+    expect(h.pipeline.has('agent-contract')).toBe(true);
 
     h.advance(30_000);
-    await h.chainPassed('chain-9');
+    await h.contractPassed('ctr-9');
     await waitFor(() => h.published.length === 2);
-    // The leg still arrives; it no longer quotes the chain id. This harness
+    // The leg still arrives; it does not quote the contract id. This harness
     // never emits the opening event that carries the task, so the workstream
     // has no name to be known by, and it says so in words rather than falling
     // back to the identifier. See channel-workstream-labels.test.ts.
     expect(h.published[1]?.text).toBe('The workstream is done');
-    expect(h.published[1]?.text).not.toContain('chain-9');
-    expect(h.pipeline.has('agent-chain')).toBe(false);
+    expect(h.published[1]?.text).not.toContain('ctr-9');
+    expect(h.pipeline.has('agent-contract')).toBe(false);
   });
 });
 

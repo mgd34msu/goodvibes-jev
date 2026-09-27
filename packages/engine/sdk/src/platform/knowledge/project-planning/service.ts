@@ -1,8 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  knowledgeSpaceMetadata,
-  normalizeProjectId,
-} from '../spaces.js';
+import { knowledgeSpaceMetadata, normalizeProjectId } from '../spaces.js';
 import type { KnowledgeSourceRecord } from '../types.js';
 import { KnowledgeStore } from '../store.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
@@ -23,6 +20,7 @@ import {
   readPlanningMetadataObject,
   resolveProjectPlanningSpace,
   stablePlanningId,
+  withStoredContractId,
 } from './helpers.js';
 import { evaluateProjectPlanningReadiness } from './readiness.js';
 import type {
@@ -339,7 +337,7 @@ export class ProjectPlanningService {
     return snapshotFromWorkPlan(space, workPlan, {
       status: input.status,
       parentTaskId: input.parentTaskId,
-      chainId: input.chainId,
+      contractId: input.contractId,
       owner: input.owner,
       limit: input.limit,
     });
@@ -773,7 +771,7 @@ function normalizeWorkPlanArtifact(
   const now = Date.now();
   const createdAt = typeof input.createdAt === 'number' ? input.createdAt : now;
   const tasks = Array.isArray(input.tasks)
-    ? input.tasks.map((task, index) => normalizeWorkPlanTask(task, {
+    ? input.tasks.map((task, index) => normalizeWorkPlanTask(withStoredContractId(task), {
       projectId: space.projectId,
       knowledgeSpaceId: space.knowledgeSpaceId,
       now,
@@ -817,7 +815,7 @@ function normalizeWorkPlanTask(
     ...(typeof input.source === 'string' && input.source.trim() ? { source: input.source.trim() } : {}),
     tags: stringList(input.tags),
     ...(typeof input.parentTaskId === 'string' && input.parentTaskId.trim() ? { parentTaskId: normalizeWorkPlanTaskId(input.parentTaskId) } : {}),
-    ...(typeof input.chainId === 'string' && input.chainId.trim() ? { chainId: input.chainId.trim() } : {}),
+    ...(typeof input.contractId === 'string' && input.contractId.trim() ? { contractId: input.contractId.trim() } : {}),
     ...(typeof input.phaseId === 'string' && input.phaseId.trim() ? { phaseId: input.phaseId.trim() } : {}),
     ...(typeof input.agentId === 'string' && input.agentId.trim() ? { agentId: input.agentId.trim() } : {}),
     ...(typeof input.turnId === 'string' && input.turnId.trim() ? { turnId: input.turnId.trim() } : {}),
@@ -891,7 +889,7 @@ function snapshotFromWorkPlan(
   filter: {
     readonly status?: ProjectWorkPlanTaskStatus | undefined;
     readonly parentTaskId?: string | undefined;
-    readonly chainId?: string | undefined;
+    readonly contractId?: string | undefined;
     readonly owner?: string | undefined;
     readonly limit?: number | undefined;
   } = {},
@@ -899,7 +897,7 @@ function snapshotFromWorkPlan(
   const tasks = sortWorkPlanTasks(workPlan.tasks).filter((task) => {
     if (filter.status && task.status !== filter.status) return false;
     if (filter.parentTaskId && task.parentTaskId !== filter.parentTaskId) return false;
-    if (filter.chainId && task.chainId !== filter.chainId) return false;
+    if (filter.contractId && task.contractId !== filter.contractId) return false;
     if (filter.owner && task.owner !== filter.owner) return false;
     return true;
   });

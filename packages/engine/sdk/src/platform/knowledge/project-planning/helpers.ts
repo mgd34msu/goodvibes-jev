@@ -107,3 +107,14 @@ export function readPlanningMetadataObject(value: unknown): Record<string, unkno
     ? value as Record<string, unknown>
     : {};
 }
+
+/**
+ * A stored task written before the work plan's correlation field was named
+ * `contractId` carries it as `chainId`; reading the artifact carries it
+ * forward so the link survives. Only stored artifacts are read this way,
+ * never API input.
+ */
+export function withStoredContractId<T extends { readonly contractId?: string | undefined }>(task: T): T {
+  const stored = (task as { readonly chainId?: unknown }).chainId;
+  return task.contractId === undefined && typeof stored === 'string' ? { ...task, contractId: stored } : task;
+}

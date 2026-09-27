@@ -45,7 +45,7 @@ export interface ProjectWorkPlanTask {
   readonly source?: ProjectWorkPlanTaskMutationSource | undefined;
   readonly tags: readonly string[];
   readonly parentTaskId?: string | undefined;
-  readonly chainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly phaseId?: string | undefined;
   readonly agentId?: string | undefined;
   readonly turnId?: string | undefined;
@@ -104,7 +104,7 @@ export interface ProjectWorkPlanTaskCreateInput extends ProjectPlanningSpaceInpu
     readonly source?: ProjectWorkPlanTaskMutationSource | undefined;
     readonly tags?: readonly string[] | undefined;
     readonly parentTaskId?: string | undefined;
-    readonly chainId?: string | undefined;
+    readonly contractId?: string | undefined;
     readonly phaseId?: string | undefined;
     readonly agentId?: string | undefined;
     readonly turnId?: string | undefined;
@@ -151,7 +151,7 @@ export interface ProjectWorkPlanTaskListInput extends ProjectPlanningSpaceInput 
   readonly workPlanId?: string | undefined;
   readonly status?: ProjectWorkPlanTaskStatus | undefined;
   readonly parentTaskId?: string | undefined;
-  readonly chainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly owner?: string | undefined;
   readonly limit?: number | undefined;
 }

@@ -2,7 +2,7 @@
 
 Work-Review-Fix-Commit (WRFC) chains extract user-declared constraints from the task prompt, carry them through every state transition, and enforce them as independent pass/fail criteria. This document covers what constraints are, how they move through the chain, and how they interact with the review cycle.
 
-See also: [Runtime events reference](./reference-runtime-events.md) for the `WORKFLOW_CONSTRAINTS_ENUMERATED` event, [Observability](./observability.md) for event subscription patterns.
+See also: [Runtime events reference](./reference-runtime-events.md#named-contract-events) for the contract events the loop emits, [Observability](./observability.md) for event subscription patterns.
 
 ---
 
@@ -69,14 +69,18 @@ Constraints become the chain's self-declared acceptance criteria. If the enginee
 
 ## Constraint enumeration event
 
-Immediately after the initial engineer completes, the controller captures `report.constraints` and emits exactly one `WORKFLOW_CONSTRAINTS_ENUMERATED` event per chain:
+Immediately after the initial engineer completes, the controller captures `report.constraints` and emits exactly one `CONTRACT_PLANNED` event per chain on the `contracts` domain, the constraints as the contract's criteria:
 
 ```ts
-// Domain: 'workflows'
-// Event type: 'WORKFLOW_CONSTRAINTS_ENUMERATED'
+// Domain: 'contracts'
+// Event type: 'CONTRACT_PLANNED'
 {
-  chainId: string;
-  constraints: Constraint[];
+  contractId: string;       // the chain id
+  goal: string;             // the chain's task
+  criteria: { id: string; text: string; origin: 'stated'; serves: []; disposition: 'judged' }[];
+  groups: [];
+  units: [];
+  repair: 0;
 }
 ```
 
@@ -142,18 +146,20 @@ evaluated by the identical formula against its own `subtask.claimsVerified`.
 
 Any unsatisfied constraint forces chain failure regardless of rubric score. Score-below-threshold still fails independently. Constraint satisfaction never overrides a low score. All five gates must hold for the review to pass: the score is at or above threshold, all constraints are satisfied, the acceptance checklist is present with nothing marked unmet, and the engineer/fixer work claims were verified on disk (`claimsVerified !== false`).
 
-When constraints are present, `WORKFLOW_REVIEW_COMPLETED` carries the constraint summary:
+Each review is reported as a `CONTRACT_CHECKED` event with one reading per constraint:
 
 ```ts
-// Additional fields on WORKFLOW_REVIEW_COMPLETED when chain.constraints.length > 0
+// Domain: 'contracts'
+// Event type: 'CONTRACT_CHECKED'
 {
-  constraintsSatisfied: number;           // count of satisfied findings
-  constraintsTotal: number;               // total evaluated
-  unsatisfiedConstraintIds: string[];     // IDs of failed constraints
+  contractId: string;                      // the chain id
+  scope: 'deliverable' | 'unit';           // 'unit' for a compound sub-deliverable, targetId its id
+  result: 'pass' | 'nudge';
+  criteria: { criterionId: string; verdict: 'met' | 'unmet'; probabilityUnmet: 0 | 1; outcome: 'act' }[];
 }
 ```
 
-When there are no constraints, these fields are omitted entirely.
+When there are no constraints, `criteria` is empty.
 
 ---
 
@@ -183,20 +189,9 @@ The authoritative constraint list on `chain.constraints` is never overwritten by
 
 Fixer prompts also include the original WRFC ask. A fixer is expected to address reviewer issues while preserving the full original scope, then perform a short self-check before final reporting. Known remaining gaps go into `issues[]` or `uncertainties[]`; hiding them is treated as poor WRFC hygiene and should be caught by the full-scope reviewer.
 
-### `WORKFLOW_FIX_ATTEMPTED` extended field
+### Fix rounds
 
-When `targetConstraintIds` is present on `WORKFLOW_FIX_ATTEMPTED`, it lists the IDs of constraints the fixer was tasked with resolving in this iteration:
-
-```ts
-// Domain: 'workflows'
-// Event type: 'WORKFLOW_FIX_ATTEMPTED'
-{
-  chainId: string;
-  attempt: number;
-  maxAttempts: number;
-  targetConstraintIds?: string[];   // populated when chain has constraints
-}
-```
+Each fix round is reported as a `CONTRACT_FIX_PLANNED` event (`round` is the attempt number). The constraints the round targets are the ones the preceding `CONTRACT_CHECKED` reported unmet.
 
 ---
 
@@ -215,7 +210,7 @@ The original `constraints[]` list remains authoritative for the chain. Fixer rep
 | Field | Type | Description |
 |-------|------|-------------|
 | `constraints` | `Constraint[]` | Authoritative constraint list; set once on initial engineer completion, never overwritten |
-| `constraintsEnumerated` | `boolean` | `true` once `WORKFLOW_CONSTRAINTS_ENUMERATED` has been emitted for this chain; prevents duplicate emission on fixer re-runs |
+| `constraintsEnumerated` | `boolean` | `true` once the constraints have been reported (`CONTRACT_PLANNED`) for this chain; prevents duplicate emission on fixer re-runs |
 | `syntheticIssues` | `Array<{ severity: 'critical'; description: string }> \| undefined` | Controller-injected critical issues (e.g. continuity violations); prepended to the next review task, then cleared |
 | `ownerDecisions` | `WrfcOwnerDecision[]` | Durable audit of the owner's chain-keeping decisions: child spawns, review pass/fail decisions, gate decisions, resume decisions, and terminal decisions |
 | `subtasks` | `WrfcSubtask[] \| undefined` | Present on compound chains; each subtask carries its own `constraints[]`, `constraintsEnumerated`, and `claimsVerified`, and runs its own engineer/reviewer/fixer cycle |
@@ -268,8 +263,8 @@ Two roles extend the engineer/reviewer/fixer set (`WrfcAgentRole`):
 
 Owner orchestration choices for compound chains, `compound_started`,
 `spawn_integrator`, `subtask_review_passed`, and `subtask_review_failed`, are
-recorded in `ownerDecisions`. The complete `WORKFLOW_*` event enumeration lives
-in the [Runtime events reference](./reference-runtime-events.md).
+recorded in `ownerDecisions`. Every contract event the loop emits is listed in
+the [Runtime events reference](./reference-runtime-events.md#named-contract-events).
 
 ## Owner role and external adapters
 
@@ -283,10 +278,9 @@ TUI implements WRFC directly against the SDK-native controller. Limited surfaces
 
 When the engineer emits `constraints: []` (non-build or unconstrained prompt):
 
-- `WORKFLOW_CONSTRAINTS_ENUMERATED` fires with `constraints: []`.
+- `CONTRACT_PLANNED` fires with `criteria: []`.
 - The reviewer emits `constraintFindings: []`.
-- `WORKFLOW_REVIEW_COMPLETED` omits the constraint fields entirely.
-- `WORKFLOW_FIX_ATTEMPTED` omits `targetConstraintIds`.
+- `CONTRACT_CHECKED` carries `criteria: []`.
 - Fixer receives no constraint addendum.
 - Gate-fix tasks in the same chain omit the constraint section.
 - `passed` is computed as `review.score >= threshold` only, no constraint axis.
@@ -297,5 +291,5 @@ This path does not add constraint fields to events or constraint blocks to agent
 
 ## Next reads
 
-- [Runtime events reference](./reference-runtime-events.md): `WORKFLOW_CONSTRAINTS_ENUMERATED`, `WORKFLOW_REVIEW_COMPLETED`, `WORKFLOW_FIX_ATTEMPTED` event shapes
+- [Runtime events reference](./reference-runtime-events.md#named-contract-events): `CONTRACT_PLANNED`, `CONTRACT_CHECKED`, `CONTRACT_FIX_PLANNED` event shapes
 - [Observability](./observability.md): event domain subscription

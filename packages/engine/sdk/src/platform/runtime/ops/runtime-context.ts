@@ -30,7 +30,7 @@ const OBSERVED_DOMAINS = [
   'tools',
   'tasks',
   'agents',
-  'workflows',
+  'contracts',
   'providers',
   'gate',
   'planner',

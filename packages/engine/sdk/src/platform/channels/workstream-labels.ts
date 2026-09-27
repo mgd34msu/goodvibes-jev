@@ -2,17 +2,17 @@
  * workstream-labels.ts, naming a workstream by what it is doing, not by its id.
  *
  * The workstream progress lines are the owner's: someone who asked for a long
- * piece of work is owed its legs, which phase it reached, whether review
- * passed, whether a gate failed. Suppressing them would be the "suppress the
+ * piece of work (a contract) is owed its legs, which stage it reached, whether
+ * a check passed, whether a gate failed. Suppressing them would be the "suppress the
  * message that should have been there" failure.
  *
  * But they used to read:
  *
- *     WRFC chain 7f3a91c02b4e started: rewrite the retry backoff
- *     WRFC chain 7f3a91c02b4e moved from reviewing to fixing
+ *     Contract ctr-7f3a91c0 started: rewrite the retry backoff
+ *     Contract ctr-7f3a91c0 moved from judging to fixing
  *
- * Both halves of that are internal. `WRFC` is a name for the machinery, and
- * `7f3a91c02b4e` is a register id, and the standing rule is that neither
+ * Both halves of that are internal. `Contract` is a name for the machinery, and
+ * `ctr-7f3a91c0` is a register id, and the standing rule is that neither
  * appears in outward-facing text. Plain language only; provenance travels as a
  * decision-record path or a version, not as an identifier a person cannot use.
  *
@@ -22,7 +22,7 @@
  * with a short form of those same words:
  *
  *     Started work on: rewrite the retry backoff
- *     "rewrite the retry backoff" is now in review
+ *     "rewrite the retry backoff" is now being checked
  *
  * ── Two workstreams that would read the same ────────────────────────────────
  *
@@ -34,7 +34,7 @@
  *
  *     Started work on: rewrite the retry backoff
  *     Started work on: rewrite the retry backoff (the second one)
- *     "rewrite the retry backoff" (the first one) is now in review
+ *     "rewrite the retry backoff" (the first one) is now being checked
  *
  * The first one is unqualified until a second appears, there is nothing to
  * distinguish it from, and a bare "(the first one)" on a lone workstream reads
@@ -56,7 +56,7 @@
  * which is honest, it does not invent an identifier to fill the gap.
  */
 
-import type { WrfcState } from '../../events/workflows.js';
+import type { ContractStatus, ContractUnitStatus } from '../../events/contract.js';
 
 /** Longest label a line will carry. A phrase, not a paragraph. */
 const MAX_LABEL_CHARS = 48;
@@ -159,28 +159,28 @@ function assignPlaces(base: string): void {
  */
 function evictToBound(): void {
   if (labels.size <= MAX_REMEMBERED) return;
-  for (const [chainId, entry] of labels) {
+  for (const [contractId, entry] of labels) {
     if (labels.size <= MAX_REMEMBERED) return;
-    if (entry.finished) labels.delete(chainId);
+    if (entry.finished) labels.delete(contractId);
   }
-  for (const chainId of [...labels.keys()]) {
+  for (const contractId of [...labels.keys()]) {
     if (labels.size <= MAX_REMEMBERED) return;
-    labels.delete(chainId);
+    labels.delete(contractId);
   }
 }
 
 /** Remember what a workstream is doing, so later lines can say so. */
-export function rememberWorkstreamLabel(chainId: string, task: string): void {
+export function rememberWorkstreamLabel(contractId: string, task: string): void {
   const base = toLabel(task);
   if (base.length === 0) return;
   // Re-announcing moves it to the newest position rather than duplicating it,
   // and drops any place it held, the collision pass below re-derives it.
-  labels.delete(chainId);
+  labels.delete(contractId);
   // Only a LIVE namesake forces a place. A workstream that already finished is
   // not something the reader has to tell this one apart from, and numbering
   // against it would qualify a workstream that stands alone.
   const collides = [...labels.values()].some((entry) => entry.base === base && !entry.finished);
-  labels.set(chainId, { base, place: null, finished: false });
+  labels.set(contractId, { base, place: null, finished: false });
   if (collides) assignPlaces(base);
   evictToBound();
 }
@@ -192,8 +192,8 @@ export function rememberWorkstreamLabel(chainId: string, task: string): void {
  * keep the place they were given; a name that changes under the reader is worse
  * than one that stays specific.
  */
-export function finishWorkstreamLabel(chainId: string): void {
-  const entry = labels.get(chainId);
+export function finishWorkstreamLabel(contractId: string): void {
+  const entry = labels.get(contractId);
   if (entry !== undefined) entry.finished = true;
 }
 
@@ -203,15 +203,15 @@ export function finishWorkstreamLabel(chainId: string): void {
  * Quoted when known, so the task words read as a name rather than as part of
  * the sentence around them. `The workstream` when not, never the id.
  */
-export function workstreamLabel(chainId: string): string {
-  const entry = labels.get(chainId);
+export function workstreamLabel(contractId: string): string {
+  const entry = labels.get(contractId);
   if (entry === undefined) return 'The workstream';
   return `"${entry.base}"${placeSuffix(entry)}`;
 }
 
 /** Same, lowercased for mid-sentence use. */
-export function workstreamLabelInline(chainId: string): string {
-  const entry = labels.get(chainId);
+export function workstreamLabelInline(contractId: string): string {
+  const entry = labels.get(contractId);
   if (entry === undefined) return 'the workstream';
   return `"${entry.base}"${placeSuffix(entry)}`;
 }
@@ -220,8 +220,8 @@ export function workstreamLabelInline(chainId: string): string {
  * The place suffix alone, for the opening line, which already carries the
  * task in full and would otherwise repeat it.
  */
-export function workstreamPlaceSuffix(chainId: string): string {
-  return placeSuffix(labels.get(chainId));
+export function workstreamPlaceSuffix(contractId: string): string {
+  return placeSuffix(labels.get(contractId));
 }
 
 /** Test seam. The map is process-lifetime state; a test needs a clean one. */
@@ -230,34 +230,57 @@ export function resetWorkstreamLabelsForTests(): void {
 }
 
 /**
- * Workstream states, in the words someone outside the machine would use.
+ * Contract statuses, in the words someone outside the machine would use.
  *
- * `awaiting_gates` is a field name. "waiting for its checks" is what is
- * happening. Keyed by the shared `WrfcState` union rather than by a local list
- * of strings, so a state added upstream is a compile error here rather than a
- * raw field name quietly reaching a channel.
+ * `awaiting-owner` is a field value. "waiting for your decision" is what is
+ * happening. Keyed by the shared `ContractStatus` union rather than by a local
+ * list of strings, so a status added upstream is a compile error here rather
+ * than a raw field value quietly reaching a channel.
  */
-const STATE_WORDS: Record<WrfcState, string> = {
-  pending: 'not started yet',
-  engineering: 'being built',
-  integrating: 'being merged together',
-  reviewing: 'in review',
-  fixing: 'having review findings fixed',
-  awaiting_gates: 'waiting for its checks',
-  gating: 'running its checks',
+const STATUS_WORDS: Record<ContractStatus, string> = {
+  queued: 'waiting to start',
+  shaping: 'being read',
+  planning: 'being planned',
+  'checking-plan': 'having its plan checked',
+  running: 'being built',
+  judging: 'being checked',
+  fixing: 'having problems fixed',
+  committing: 'being committed',
+  'awaiting-owner': 'waiting for your decision',
   passed: 'finished',
   failed: 'stopped',
-  committing: 'being committed',
+  cancelled: 'cancelled',
+};
+
+/** Unit statuses, the same way. */
+const UNIT_STATUS_WORDS: Record<ContractUnitStatus, string> = {
+  pending: 'not started yet',
+  blocked: 'waiting on other work',
+  running: 'being built',
+  checking: 'being checked',
+  held: 'being checked before it finishes',
+  nudged: 'fixing what a check found',
+  fixing: 'having problems fixed',
+  'awaiting-owner': 'waiting for your decision',
+  'held-merge': 'waiting to be merged',
+  passed: 'finished',
+  failed: 'stopped',
+  cancelled: 'cancelled',
 };
 
 /**
- * Plain words for a workstream state.
+ * Plain words for a contract status.
  *
  * The parameter is the shared union, so the map above covers every case a
  * caller inside this package can pass. The runtime fallback is for an envelope
- * that arrived over transport from a peer running a newer build: underscores
- * become spaces, which reads as words rather than as a field name.
+ * that arrived over transport from a peer running a newer build: hyphens
+ * become spaces, which reads as words rather than as a field value.
  */
-export function describeWorkstreamState(state: WrfcState): string {
-  return STATE_WORDS[state] ?? String(state).replace(/_/g, ' ');
+export function describeContractStatus(status: ContractStatus): string {
+  return STATUS_WORDS[status] ?? String(status).replace(/[-_]/g, ' ');
+}
+
+/** Plain words for a unit status, with the same fallback. */
+export function describeUnitStatus(status: ContractUnitStatus): string {
+  return UNIT_STATUS_WORDS[status] ?? String(status).replace(/[-_]/g, ' ');
 }

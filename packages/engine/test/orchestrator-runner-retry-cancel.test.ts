@@ -41,9 +41,7 @@ const FAKE_MODEL: ModelDefinition = {
 
 interface Emitted {
   readonly cancelled: string[];
-  readonly orchestrationCancelled: string[];
   readonly failed: string[];
-  readonly orchestrationFailed: string[];
   readonly completed: string[];
 }
 
@@ -55,14 +53,10 @@ function makeContext(workingDirectory: string, provider: LLMProvider, emitted: E
     featureFlagManager: null,
     emitterContext: () => ({ sessionId: 'test-session', traceId: 'test-trace', source: 'test' }),
     emitAgentProgress: () => {},
-    emitOrchestrationProgress: () => {},
     emitAgentStarted: () => {},
     emitAgentCancelledEvent: (id) => { emitted.cancelled.push(id); },
-    emitOrchestrationCancelled: (record) => { emitted.orchestrationCancelled.push(record.id); },
     emitAgentFailedEvent: (id) => { emitted.failed.push(id); },
-    emitOrchestrationFailed: (record) => { emitted.orchestrationFailed.push(record.id); },
     emitAgentCompletedEvent: (id) => { emitted.completed.push(id); },
-    emitOrchestrationCompleted: () => {},
     emitStreamDelta: () => {},
     processManager: undefined,
     messageBus: new AgentMessageBus(),
@@ -139,7 +133,7 @@ describe('a cancel during a retry wait', () => {
   ])('during the %s ends the run cancelled, with no failure event', async (_label, wording) => {
     const record = makeRecord(`ag-${wording.length}`);
     const { provider, calls } = cancellingProvider(record, wording);
-    const emitted: Emitted = { cancelled: [], orchestrationCancelled: [], failed: [], orchestrationFailed: [], completed: [] };
+    const emitted: Emitted = { cancelled: [], failed: [], completed: [] };
 
     await runAgentTask(makeContext(dir, provider, emitted), record);
 
@@ -147,9 +141,7 @@ describe('a cancel during a retry wait', () => {
     expect(record.status).toBe('cancelled');
     expect(record.completedAt).toBeNumber();
     expect(emitted.cancelled).toEqual([record.id]);
-    expect(emitted.orchestrationCancelled).toEqual([record.id]);
     expect(emitted.failed).toEqual([]);
-    expect(emitted.orchestrationFailed).toEqual([]);
     expect(emitted.completed).toEqual([]);
   });
 });

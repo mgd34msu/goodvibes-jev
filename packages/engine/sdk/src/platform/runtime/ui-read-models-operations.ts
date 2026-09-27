@@ -4,7 +4,7 @@ import type { AutomationJob } from '../automation/jobs.js';
 import type { AutomationRun } from '../automation/runs.js';
 import type { AutomationRouteBinding } from '../automation/routes.js';
 import type { WatcherRecord } from './store/domains/watchers.js';
-import type { OrchestrationGraphRecord } from './store/domains/orchestration.js';
+import type { ContractRecord } from './store/domains/contracts.js';
 import type { RuntimeCommunicationRecord } from './store/domains/communication.js';
 import type { ControlPlaneClientRecord } from './store/domains/control-plane.js';
 import type { AcpConnection } from './store/domains/acp.js';
@@ -43,13 +43,15 @@ export interface UiWatchersSnapshot {
   readonly totalLagged: number;
 }
 
-export interface UiOrchestrationSnapshot {
-  readonly graphs: readonly OrchestrationGraphRecord[];
-  readonly totalGraphs: number;
-  readonly activeGraphIds: readonly string[];
-  readonly totalCompletedGraphs: number;
-  readonly totalFailedGraphs: number;
-  readonly recursionGuardTrips: number;
+export interface UiContractsSnapshot {
+  /** Newest first. */
+  readonly contracts: readonly ContractRecord[];
+  readonly totalContracts: number;
+  readonly activeContractIds: readonly string[];
+  readonly totalPassed: number;
+  readonly totalFailed: number;
+  readonly totalCancelled: number;
+  readonly spawnGuardTrips: number;
 }
 
 export interface UiCommunicationSnapshot {
@@ -76,7 +78,7 @@ export interface UiOperationsReadModels {
   readonly automation: UiReadModel<UiAutomationSnapshot>;
   readonly routes: UiReadModel<UiRoutesSnapshot>;
   readonly watchers: UiReadModel<UiWatchersSnapshot>;
-  readonly orchestration: UiReadModel<UiOrchestrationSnapshot>;
+  readonly contracts: UiReadModel<UiContractsSnapshot>;
   readonly communication: UiReadModel<UiCommunicationSnapshot>;
   readonly controlPlane: UiReadModel<UiControlPlaneSnapshot>;
 }
@@ -134,16 +136,17 @@ export function createOperationsReadModels(
         totalLagged: state.totalLagged,
       };
     }),
-    orchestration: createStoreBackedReadModel(runtimeServices, () => {
-      const state = runtimeStore.getState().orchestration;
-      const graphs = projectValues(state.graphs, (a, b) => b.createdAt - a.createdAt);
+    contracts: createStoreBackedReadModel(runtimeServices, () => {
+      const state = runtimeStore.getState().contracts;
+      const contracts = projectValues(state.contracts, (a, b) => b.createdAt - a.createdAt);
       return {
-        graphs,
-        totalGraphs: state.totalGraphs,
-        activeGraphIds: state.activeGraphIds,
-        totalCompletedGraphs: state.totalCompletedGraphs,
-        totalFailedGraphs: state.totalFailedGraphs,
-        recursionGuardTrips: state.recursionGuardTrips,
+        contracts,
+        totalContracts: state.totalContracts,
+        activeContractIds: state.activeContractIds,
+        totalPassed: state.totalPassed,
+        totalFailed: state.totalFailed,
+        totalCancelled: state.totalCancelled,
+        spawnGuardTrips: state.spawnGuardTrips,
       };
     }),
     communication: createStoreBackedReadModel(runtimeServices, () => {

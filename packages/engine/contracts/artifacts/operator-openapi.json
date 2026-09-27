@@ -58986,7 +58986,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -59120,7 +59120,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -59254,7 +59254,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -59411,7 +59411,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -59683,7 +59683,7 @@
                           "parentTaskId": {
                             "type": "string"
                           },
-                          "chainId": {
+                          "contractId": {
                             "type": "string"
                           },
                           "phaseId": {
@@ -59885,7 +59885,7 @@
             }
           },
           {
-            "name": "chainId",
+            "name": "contractId",
             "in": "query",
             "required": false,
             "schema": {
@@ -59981,7 +59981,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -60115,7 +60115,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -60249,7 +60249,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -60406,7 +60406,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -60628,7 +60628,7 @@
                       "parentTaskId": {
                         "type": "string"
                       },
-                      "chainId": {
+                      "contractId": {
                         "type": "string"
                       },
                       "phaseId": {
@@ -60689,7 +60689,7 @@
       "get": {
         "operationId": "projectPlanning.workPlan.tasks.list",
         "summary": "List Project Work Plan Tasks",
-        "description": "List durable project-scoped work-plan tasks with optional status, owner, parent, or WRFC-chain filters.",
+        "description": "List durable project-scoped work-plan tasks with optional status, owner, parent, or contract filters.",
         "tags": [
           "knowledge"
         ],
@@ -60757,7 +60757,7 @@
                           "parentTaskId": {
                             "type": "string"
                           },
-                          "chainId": {
+                          "contractId": {
                             "type": "string"
                           },
                           "phaseId": {
@@ -60959,7 +60959,7 @@
             }
           },
           {
-            "name": "chainId",
+            "name": "contractId",
             "in": "query",
             "required": false,
             "schema": {
@@ -61055,7 +61055,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -61189,7 +61189,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -61323,7 +61323,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -61480,7 +61480,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -61756,7 +61756,7 @@
                             "parentTaskId": {
                               "type": "string"
                             },
-                            "chainId": {
+                            "contractId": {
                               "type": "string"
                             },
                             "phaseId": {
@@ -61912,7 +61912,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -62187,7 +62187,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -62321,7 +62321,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -62455,7 +62455,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -62612,7 +62612,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -62920,7 +62920,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -63054,7 +63054,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -63188,7 +63188,7 @@
                         "parentTaskId": {
                           "type": "string"
                         },
-                        "chainId": {
+                        "contractId": {
                           "type": "string"
                         },
                         "phaseId": {
@@ -63345,7 +63345,7 @@
                               "parentTaskId": {
                                 "type": "string"
                               },
-                              "chainId": {
+                              "contractId": {
                                 "type": "string"
                               },
                               "phaseId": {
@@ -63637,7 +63637,7 @@
                           "parentTaskId": {
                             "type": "string"
                           },
-                          "chainId": {
+                          "contractId": {
                             "type": "string"
                           },
                           "phaseId": {

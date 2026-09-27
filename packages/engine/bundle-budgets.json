@@ -68,7 +68,6 @@
       "mcp",
       "mcp-types",
       "ops",
-      "orchestration",
       "permissions",
       "planner",
       "plugins",
@@ -83,7 +82,6 @@
       "turn",
       "ui",
       "watchers",
-      "workflows",
       "workspace"
     ]
   },
@@ -124,10 +122,6 @@
     "rationale": "new public package export budget; measured 31 B gzip @ v0.33.0 release verification; headroom max(ceil(31*1.2)=38, 31+50=81) -> 81 (+50 B floor dominates)"
   },
   "./events/ops": {
-    "gzip_bytes": 161,
-    "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
-  },
-  "./events/orchestration": {
     "gzip_bytes": 161,
     "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
   },
@@ -186,10 +180,6 @@
   "./events/watchers": {
     "gzip_bytes": 289,
     "rationale": "new public package export budget; measured 239 B gzip @ v0.33.0 release verification; headroom max(ceil(239*1.2)=287, 239+50=289) -> 289 (+50 B floor dominates)"
-  },
-  "./events/workflows": {
-    "gzip_bytes": 159,
-    "rationale": "new public package export budget; measured 109 B gzip @ v0.33.0 release verification; headroom max(ceil(109*1.2)=131, 109+50=159) -> 159 (+50 B floor dominates)"
   },
   "./events/workspace": {
     "gzip_bytes": 161,

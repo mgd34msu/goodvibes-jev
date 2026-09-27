@@ -10,8 +10,6 @@ import type { ProviderEvent } from './providers.js';
 import type { ToolEvent } from './tools.js';
 import type { TaskEvent } from './tasks.js';
 import type { AgentEvent } from './agents.js';
-import type { WorkflowEvent } from './workflows.js';
-import type { OrchestrationEvent } from './orchestration.js';
 import type { ContractEvent } from './contract.js';
 import type { CommunicationEvent } from './communication.js';
 import type { PlannerEvent } from './planner.js';
@@ -43,8 +41,6 @@ export type AnyRuntimeEvent =
   | ToolEvent
   | TaskEvent
   | AgentEvent
-  | WorkflowEvent
-  | OrchestrationEvent
   | ContractEvent
   | CommunicationEvent
   | PlannerEvent
@@ -99,8 +95,6 @@ export type DomainEventMap = {
   tools: ToolEvent;
   tasks: TaskEvent;
   agents: AgentEvent;
-  workflows: WorkflowEvent;
-  orchestration: OrchestrationEvent;
   contracts: ContractEvent;
   communication: CommunicationEvent;
   planner: PlannerEvent;

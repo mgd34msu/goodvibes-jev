@@ -43,8 +43,8 @@ export interface UiCockpitSnapshot {
   readonly runningTasks: number;
   readonly blockedTasks: number;
   readonly failedTasks: number;
-  readonly activeGraphs: number;
-  readonly guardTrips: number;
+  readonly activeContracts: number;
+  readonly spawnGuardTrips: number;
   readonly blockedMessages: number;
   readonly pendingPermissions: number;
   readonly deniedPermissions: number;
@@ -63,7 +63,7 @@ export interface UiCockpitSnapshot {
   readonly failingIntegrations: number;
   readonly taskCount: number;
   readonly agentCount: number;
-  readonly totalGraphs: number;
+  readonly totalContracts: number;
   readonly communicationCount: number;
   readonly mcpServerCount: number;
   readonly pluginCount: number;
@@ -208,8 +208,8 @@ export function createSystemObservabilityReadModels(
           runningTasks,
           blockedTasks,
           failedTasks,
-          activeGraphs: state.orchestration.activeGraphIds.length,
-          guardTrips: state.orchestration.recursionGuardTrips,
+          activeContracts: state.contracts.activeContractIds.length,
+          spawnGuardTrips: state.contracts.spawnGuardTrips,
           blockedMessages: state.communication.totalBlocked,
           pendingPermissions: state.permissions.awaitingDecision ? 1 : 0,
           deniedPermissions: state.permissions.denialCount,
@@ -228,7 +228,7 @@ export function createSystemObservabilityReadModels(
           failingIntegrations,
           taskCount: state.tasks.tasks.size,
           agentCount: state.agents.agents.size,
-          totalGraphs: state.orchestration.totalGraphs,
+          totalContracts: state.contracts.totalContracts,
           communicationCount: state.communication.records.size,
           mcpServerCount: state.mcp.servers.size,
           pluginCount: plugins.length,

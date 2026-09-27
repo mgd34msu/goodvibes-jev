@@ -1,25 +1,22 @@
 /**
  * waiting-on-human-classification.test.ts
  *
- * ONE waiting-on-human state class: an approval ask, a READY best-of-N pick,
- * and a merge conflict all classify as first-class attention in the fleet
- * snapshot, all fan out as FLEET_NODE_BLOCKED_ON_USER on the wire (via the
- * emit-bridge), and all push through the same needs-input source, so every
- * surface inherits glyph, count, jump key, and push from the classification.
+ * ONE waiting-on-human state class: an approval ask, a best-of-N pick the
+ * owner is asked to make, and any other decision a contract waits on its owner
+ * for classify as first-class attention in the fleet snapshot; every reason
+ * fans out as FLEET_NODE_BLOCKED_ON_USER on the wire (via the emit-bridge) and
+ * pushes through the same needs-input source, so every surface inherits glyph,
+ * count, jump key, and push from the classification.
  */
 import { describe, expect, test } from 'bun:test';
-import {
-  adaptWorkItem,
-  adaptWorkstream,
-  readyAttemptGroupIds,
-} from '../sdk/src/platform/runtime/fleet/adapters/orchestration.ts';
+import { adaptContract, adaptContractUnit } from '../sdk/src/platform/runtime/fleet/adapters/contract.ts';
 import { deriveNeedsAttention } from '../sdk/src/platform/runtime/fleet/adapters/agent.ts';
 import { attachFleetEmitBridge } from '../sdk/src/platform/runtime/fleet/emit-bridge.ts';
 import type { FleetSnapshot, ProcessNode } from '../sdk/src/platform/runtime/fleet/types.ts';
 import { PushService } from '../sdk/src/platform/push/index.ts';
 import type { FleetNotice, PushMessage, PushSubscriptionStore, VapidManager } from '../sdk/src/platform/push/index.ts';
-import type { Phase, WorkItem, Workstream } from '../sdk/src/platform/orchestration/types.ts';
-import { emptyWorkItemUsage } from '../sdk/src/platform/orchestration/types.ts';
+import type { Contract, ContractView, Escalation } from '../sdk/src/platform/contract/types.ts';
+import { makeContract, makeUnit } from './contract/fixtures.ts';
 import type { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { EventEmitter } from 'node:events';
 import { trackDisposables } from './_helpers/disposables.ts';
@@ -29,68 +26,72 @@ const disposables = trackDisposables();
 
 const T0 = 1_750_000_000_000;
 
-function makeItem(overrides: Partial<WorkItem> & { id: string }): WorkItem {
-  return {
-    title: 'item', task: 'do work', dependsOn: [], currentPhaseId: null, state: 'pending',
-    allAgentIds: [], visits: new Map(), touchedPaths: [], usage: emptyWorkItemUsage(),
-    transportRetryCount: 0, createdAt: T0, ...overrides,
-  };
+function escalation(overrides: Partial<Escalation> & Pick<Escalation, 'id' | 'scope' | 'targetId' | 'reason'>): Escalation {
+  return { at: T0, question: 'Contract ctr-1 needs your decision.\nMore detail.', unmetCriterionIds: [], ...overrides };
 }
 
-function makeWorkstream(overrides: Partial<Workstream> & { id: string }): Workstream {
-  return { title: 'ws', schemaVersion: 1, phases: [] as Phase[], items: [], createdAt: T0, ...overrides };
+function unitNode(contract: Contract, unitId: string) {
+  const unit = [...contract.units, ...contract.units.flatMap((candidate) => candidate.attemptUnits ?? [])].find((candidate) => candidate.id === unitId)!;
+  return adaptContractUnit(unit, contract as ContractView, { memberNodes: [], messageBusPresent: false, now: T0 });
 }
 
-describe('snapshot classification: all three reasons are first-class', () => {
+describe('snapshot classification: every reason a contract waits on its owner is first-class', () => {
   test('approval: awaiting-approval derives the approval attention (unchanged)', () => {
     expect(deriveNeedsAttention('awaiting-approval')).toEqual({ reason: 'approval' });
   });
 
-  test('a READY best-of-N group flags the workstream with reason "pick" and marks members ready', () => {
-    const held1 = makeItem({ id: 'a#a0', state: 'held-merge', attemptGroupId: 'g1', attemptIndex: 0, attemptTotal: 2 });
-    const failed = makeItem({ id: 'a#a1', state: 'failed', attemptGroupId: 'g1', attemptIndex: 1, attemptTotal: 2 });
-    const ws = makeWorkstream({ id: 'ws1', items: [held1, failed] });
-
-    const ready = readyAttemptGroupIds(ws);
-    expect([...ready]).toEqual(['g1']);
-
-    const wsNode = adaptWorkstream(ws, T0);
-    expect(wsNode.needsAttention).toMatchObject({ reason: 'pick' });
-    // Not 'done': the pick is parked on a human.
-    expect(wsNode.state).toBe('paused');
-
-    const memberNode = adaptWorkItem(held1, 'ws1', 'workstream:ws1', { steerable: false, readyGroups: ready });
-    expect(memberNode.attemptGroup).toMatchObject({ groupId: 'g1', held: true, ready: true });
-  });
-
-  test('a group with an attempt still running is NOT ready and does not flag', () => {
-    const held = makeItem({ id: 'b#a0', state: 'held-merge', attemptGroupId: 'g2', attemptIndex: 0, attemptTotal: 2 });
-    const running = makeItem({ id: 'b#a1', state: 'in-phase', attemptGroupId: 'g2', attemptIndex: 1, attemptTotal: 2 });
-    const ws = makeWorkstream({ id: 'ws2', items: [held, running] });
-    expect(readyAttemptGroupIds(ws).size).toBe(0);
-    expect(adaptWorkstream(ws, T0).needsAttention).toBeUndefined();
-  });
-
-  test('a merge conflict flags the item with reason "conflict" and an honest non-done state', () => {
-    const conflicted = makeItem({
-      id: 'c1', state: 'passed', mergeState: 'conflict', worktreeKept: true,
-      worktreePath: '/tmp/kept', conflictFiles: ['src/a.ts', 'src/b.ts'],
-      blockedReason: 'merge-conflict: src/a.ts, src/b.ts',
+  test('an undecided best-of-N selection flags the plan unit with reason "pick" and marks its attempts ready', () => {
+    const attempt0 = makeUnit({ id: 'u1#a0', status: 'held-merge', attemptOf: 'u1', attemptIndex: 0 });
+    const attempt1 = makeUnit({ id: 'u1#a1', status: 'failed', attemptOf: 'u1', attemptIndex: 1 });
+    const contract = makeContract({
+      id: 'ctr-1', status: 'awaiting-owner', createdAt: T0,
+      units: [makeUnit({ id: 'u1', attempts: 2, status: 'awaiting-owner', attemptUnits: [attempt0, attempt1] })],
+      escalations: [escalation({ id: 'e1', scope: 'unit', targetId: 'u1', reason: 'attempts-undecided' })],
     });
-    const node = adaptWorkItem(conflicted, 'ws1', 'workstream:ws1', { steerable: false });
-    expect(node.needsAttention).toMatchObject({ reason: 'conflict' });
-    expect(node.needsAttention?.detail).toContain('src/a.ts');
-    expect(node.state).toBe('stalled'); // NOT 'done', the work has not landed.
+    const plan = unitNode(contract, 'u1');
+    expect(plan.needsAttention).toEqual({ reason: 'pick', detail: 'Contract ctr-1 needs your decision.' });
+    expect(plan.state).toBe('idle'); // parked on the owner, not done
+    const held = unitNode(contract, 'u1#a0');
+    expect(held.parentId).toBe('unit:ctr-1:u1');
+    expect(held.attemptGroup).toEqual({ groupId: 'u1', index: 0, total: 2, held: true, ready: true });
+    // One decision over the attempts: the flag rides the plan unit only.
+    expect(held.needsAttention).toBeUndefined();
+    expect(unitNode(contract, 'u1#a1').attemptGroup).toMatchObject({ held: false, ready: true });
+  });
 
-    const ws = makeWorkstream({ id: 'ws3', items: [conflicted] });
-    expect(adaptWorkstream(ws, T0).state).toBe('stalled');
+  test('attempts with no open selection escalation are not ready and do not flag', () => {
+    const contract = makeContract({
+      id: 'ctr-2', createdAt: T0,
+      units: [makeUnit({ id: 'u1', attempts: 2, status: 'running', attemptUnits: [
+        makeUnit({ id: 'u1#a0', status: 'held-merge', attemptOf: 'u1', attemptIndex: 0 }),
+        makeUnit({ id: 'u1#a1', status: 'running', attemptOf: 'u1', attemptIndex: 1 }),
+      ] })],
+    });
+    expect(unitNode(contract, 'u1').needsAttention).toBeUndefined();
+    expect(unitNode(contract, 'u1#a0').attemptGroup?.ready).toBe(false);
+  });
+
+  test('a plan, deliverable or unit escalation flags its own node with reason "input"; a resolved one does not', () => {
+    const contract = makeContract({
+      id: 'ctr-3', status: 'awaiting-owner', createdAt: T0,
+      units: [makeUnit({ id: 'u1', status: 'awaiting-owner' })],
+      escalations: [
+        escalation({ id: 'e1', scope: 'deliverable', targetId: 'ctr-3', reason: 'stalled' }),
+        escalation({ id: 'e2', scope: 'unit', targetId: 'u1', reason: 'unsettled' }),
+      ],
+    });
+    expect(adaptContract(contract as ContractView, [], T0).needsAttention).toMatchObject({ reason: 'input' });
+    expect(unitNode(contract, 'u1').needsAttention).toMatchObject({ reason: 'input' });
+    contract.escalations = contract.escalations.map((open) => ({ ...open, resolvedAt: T0 + 1 }));
+    expect(adaptContract(contract as ContractView, [], T0).needsAttention).toBeUndefined();
+    expect(unitNode(contract, 'u1').needsAttention).toBeUndefined();
   });
 });
 
 describe('wire events: all three reasons emit FLEET_NODE_BLOCKED_ON_USER', () => {
   function nodeWith(id: string, reason: 'approval' | 'input' | 'pick' | 'conflict' | undefined, state: ProcessNode['state']): ProcessNode {
     return {
-      id, kind: 'work-item', label: id, state, elapsedMs: 0, costState: 'unpriced',
+      id, kind: 'contract-unit', label: id, state, elapsedMs: 0, costState: 'unpriced',
       capabilities: { interruptible: false, killable: false, pausable: false, resumable: false, steerable: false },
       ...(reason ? { needsAttention: { reason } } : {}),
     } as ProcessNode;

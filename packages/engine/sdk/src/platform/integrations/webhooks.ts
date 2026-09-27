@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
-import type { RuntimeEventBus, AgentEvent, WorkflowEvent } from '../runtime/events/index.js';
+import type { RuntimeEventBus, AgentEvent } from '../runtime/events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import { classifyHostTrustTier, extractHostname, emitSsrfDeny } from '../tools/fetch/trust-tiers.js';
 import { instrumentedFetch, createTimeoutController } from '../utils/fetch-with-timeout.js';
 import { isNotifySuppressed } from '../utils/notify.js';
@@ -168,16 +169,22 @@ export class WebhookNotifier {
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_PASSED' }>>('WORKFLOW_CHAIN_PASSED', ({ payload }) => {
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
         // Named in plain words: a webhook body is read by whatever the operator
         // pointed it at, which makes it outward-facing text.
-        this.sendRuntimeNotification(`${workstreamLabel(payload.chainId)} passed all its checks.`);
+        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} passed all its checks.`);
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_FAILED' }>>('WORKFLOW_CHAIN_FAILED', ({ payload }) => {
-        this.sendRuntimeNotification(`${workstreamLabel(payload.chainId)} could not be finished: ${payload.reason}`);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
+        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason}`);
+      }),
+    );
+
+    this.unsubscribers.push(
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', ({ payload }) => {
+        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason}`);
       }),
     );
 

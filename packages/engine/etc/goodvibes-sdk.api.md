@@ -97,7 +97,7 @@ export const AccountsSnapshotResponseSchema: z.ZodObject<{
     issueCount: z.ZodNumber;
 }, z.core.$strict>;
 
-// @public
+// @public (undocumented)
 export type AgentEvent =
 /** Agent is being initialised and configured. */
     {
@@ -111,6 +111,7 @@ export type AgentEvent =
     contractUnitId?: string | undefined;
     orchestrationGraphId?: string | undefined;
     parentNodeId?: string | undefined;
+    taskContract?: AgentTaskContract | undefined;
 }
 /** Agent is actively running and processing. */
 | {
@@ -192,6 +193,28 @@ export type AgentEvent =
 export type AgentEventType = AgentEvent['type'];
 
 // @public
+export interface AgentTaskContract {
+    // (undocumented)
+    allowedTools?: string[] | undefined;
+    // (undocumented)
+    capabilityCeiling?: string[] | undefined;
+    // (undocumented)
+    communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
+    // (undocumented)
+    executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
+    // (undocumented)
+    inheritsParentConstraints?: boolean | undefined;
+    // (undocumented)
+    requiredEvidence?: string[] | undefined;
+    // (undocumented)
+    reviewMode?: 'none' | 'contract' | undefined;
+    // (undocumented)
+    successCriteria?: string[] | undefined;
+    // (undocumented)
+    writeScope?: string[] | undefined;
+}
+
+// @public
 export type AgentUsage = {
     inputTokens: number;
     outputTokens: number;
@@ -203,7 +226,7 @@ export type AgentUsage = {
 // Warning: (ae-forgotten-export) The symbol "ConfigEvent" needs to be exported by the entry point index.d.ts
 //
 // @public
-export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | ContractEvent | CommunicationEvent | PlannerEvent | GateEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
+export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | ContractEvent | CommunicationEvent | PlannerEvent | GateEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
 
 // @public
 export function applyPerMethodPolicy(base: ResolvedHttpRetryPolicy, methodId: string): ResolvedHttpRetryPolicy;
@@ -720,16 +743,6 @@ export type ConnectorTransportEvent = {
 // @public (undocumented)
 export interface ConsoleObserverOptions {
     readonly level?: 'debug' | 'info' | undefined;
-}
-
-// @public
-export interface Constraint {
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly source: 'prompt';
-    // (undocumented)
-    readonly text: string;
 }
 
 // @public
@@ -1569,8 +1582,6 @@ export type DomainEventMap = {
     tools: ToolEvent;
     tasks: TaskEvent;
     agents: AgentEvent;
-    workflows: WorkflowEvent;
-    orchestration: OrchestrationEvent;
     contracts: ContractEvent;
     communication: CommunicationEvent;
     planner: PlannerEvent;
@@ -1806,7 +1817,7 @@ export const FOUNDATION_METADATA: {
     readonly productId: "goodvibes";
     readonly productVersion: "2.0.23";
     readonly operatorMethodCount: 507;
-    readonly operatorEventCount: 36;
+    readonly operatorEventCount: 34;
     readonly peerEndpointCount: 6;
 };
 
@@ -6457,7 +6468,7 @@ export interface OperatorMethodInputMap {
         workPlanId?: string;
         status?: string;
         parentTaskId?: string;
-        chainId?: string;
+        contractId?: string;
         owner?: string;
         limit?: number;
     };
@@ -6477,7 +6488,7 @@ export interface OperatorMethodInputMap {
             source?: string;
             tags?: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -6541,7 +6552,7 @@ export interface OperatorMethodInputMap {
         workPlanId?: string;
         status?: string;
         parentTaskId?: string;
-        chainId?: string;
+        contractId?: string;
         owner?: string;
         limit?: number;
     };
@@ -13020,7 +13031,7 @@ export interface OperatorMethodOutputMap {
         capturedAt: number;
         nodes: readonly (({
             id: string;
-            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "observed-external" | "phase" | "schedule" | "trigger" | "watcher" | "work-item" | "workflow" | "workstream" | "wrfc-chain" | "wrfc-subtask";
+            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "contract" | "contract-group" | "contract-unit" | "observed-external" | "schedule" | "trigger" | "watcher" | "workflow";
             parentId?: string;
             label: string;
             task?: string;
@@ -13065,16 +13076,18 @@ export interface OperatorMethodOutputMap {
                 sessionId?: string;
                 agentId?: string;
             };
-            review?: {
-                score: number;
-                passed: boolean;
-                cycles: number;
-                checklist: readonly ({
-                    item: string;
-                    verified: boolean;
-                    evidence: string;
-                    howExercised?: string;
+            check?: {
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    verdict: "met" | "unmet" | "unread" | "unshown";
+                    outcome?: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
                 })[];
+                met: number;
+                judged: number;
+                nudges: number;
+                lastCheckAt?: number;
             };
             observed?: {
                 externalKind: "claude-code" | "codex" | "opencode" | "unknown";
@@ -13255,7 +13268,7 @@ export interface OperatorMethodOutputMap {
     "fleet.list": {
         items: readonly (({
             id: string;
-            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "observed-external" | "phase" | "schedule" | "trigger" | "watcher" | "work-item" | "workflow" | "workstream" | "wrfc-chain" | "wrfc-subtask";
+            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "contract" | "contract-group" | "contract-unit" | "observed-external" | "schedule" | "trigger" | "watcher" | "workflow";
             parentId?: string;
             label: string;
             task?: string;
@@ -13300,16 +13313,18 @@ export interface OperatorMethodOutputMap {
                 sessionId?: string;
                 agentId?: string;
             };
-            review?: {
-                score: number;
-                passed: boolean;
-                cycles: number;
-                checklist: readonly ({
-                    item: string;
-                    verified: boolean;
-                    evidence: string;
-                    howExercised?: string;
+            check?: {
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    verdict: "met" | "unmet" | "unread" | "unshown";
+                    outcome?: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
                 })[];
+                met: number;
+                judged: number;
+                nudges: number;
+                lastCheckAt?: number;
             };
             observed?: {
                 externalKind: "claude-code" | "codex" | "opencode" | "unknown";
@@ -13346,7 +13361,7 @@ export interface OperatorMethodOutputMap {
         capturedAt: number;
         nodes: readonly (({
             id: string;
-            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "observed-external" | "phase" | "schedule" | "trigger" | "watcher" | "work-item" | "workflow" | "workstream" | "wrfc-chain" | "wrfc-subtask";
+            kind: "acp-agent" | "agent" | "background-process" | "code-index" | "contract" | "contract-group" | "contract-unit" | "observed-external" | "schedule" | "trigger" | "watcher" | "workflow";
             parentId?: string;
             label: string;
             task?: string;
@@ -13391,16 +13406,18 @@ export interface OperatorMethodOutputMap {
                 sessionId?: string;
                 agentId?: string;
             };
-            review?: {
-                score: number;
-                passed: boolean;
-                cycles: number;
-                checklist: readonly ({
-                    item: string;
-                    verified: boolean;
-                    evidence: string;
-                    howExercised?: string;
+            check?: {
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    verdict: "met" | "unmet" | "unread" | "unshown";
+                    outcome?: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
                 })[];
+                met: number;
+                judged: number;
+                nudges: number;
+                lastCheckAt?: number;
             };
             observed?: {
                 externalKind: "claude-code" | "codex" | "opencode" | "unknown";
@@ -19497,7 +19514,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19531,7 +19548,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19565,7 +19582,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19605,7 +19622,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -19661,7 +19678,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19714,7 +19731,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19748,7 +19765,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19782,7 +19799,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19822,7 +19839,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -19878,7 +19895,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19912,7 +19929,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19946,7 +19963,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -19986,7 +20003,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -20042,7 +20059,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20081,7 +20098,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -20137,7 +20154,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20171,7 +20188,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20205,7 +20222,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20245,7 +20262,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -20301,7 +20318,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20335,7 +20352,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20369,7 +20386,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20409,7 +20426,7 @@ export interface OperatorMethodOutputMap {
                 source?: string;
                 tags: readonly string[];
                 parentTaskId?: string;
-                chainId?: string;
+                contractId?: string;
                 phaseId?: string;
                 agentId?: string;
                 turnId?: string;
@@ -20465,7 +20482,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -20518,7 +20535,7 @@ export interface OperatorMethodOutputMap {
             source?: string;
             tags: readonly string[];
             parentTaskId?: string;
-            chainId?: string;
+            contractId?: string;
             phaseId?: string;
             agentId?: string;
             turnId?: string;
@@ -25177,92 +25194,6 @@ export type OpsEventType = OpsEvent['type'];
 export type OpsInterventionReason = 'user_requested' | 'ops_cancel' | 'ops_pause' | 'ops_resume' | 'ops_retry' | 'ops_agent_cancel';
 
 // @public (undocumented)
-export type OrchestrationEvent = {
-    type: 'ORCHESTRATION_GRAPH_CREATED';
-    graphId: string;
-    title: string;
-    mode: 'single-worker' | 'parallel-workers' | 'review-loop' | 'graph-execute';
-} | {
-    type: 'ORCHESTRATION_NODE_ADDED';
-    graphId: string;
-    nodeId: string;
-    title: string;
-    role: 'planner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'verifier' | 'researcher' | 'integrator';
-    parentNodeId?: string;
-    dependsOn?: string[];
-    taskId?: string;
-    agentId?: string;
-    contract?: OrchestrationTaskContract;
-} | {
-    type: 'ORCHESTRATION_NODE_READY';
-    graphId: string;
-    nodeId: string;
-} | {
-    type: 'ORCHESTRATION_NODE_STARTED';
-    graphId: string;
-    nodeId: string;
-    taskId?: string;
-    agentId?: string;
-} | {
-    type: 'ORCHESTRATION_NODE_PROGRESS';
-    graphId: string;
-    nodeId: string;
-    message: string;
-} | {
-    type: 'ORCHESTRATION_NODE_BLOCKED';
-    graphId: string;
-    nodeId: string;
-    reason: string;
-} | {
-    type: 'ORCHESTRATION_NODE_COMPLETED';
-    graphId: string;
-    nodeId: string;
-    summary?: string;
-} | {
-    type: 'ORCHESTRATION_NODE_FAILED';
-    graphId: string;
-    nodeId: string;
-    error: string;
-} | {
-    type: 'ORCHESTRATION_NODE_CANCELLED';
-    graphId: string;
-    nodeId: string;
-    reason?: string;
-} | {
-    type: 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED';
-    graphId: string;
-    nodeId?: string | undefined;
-    depth: number;
-    activeAgents: number;
-    reason: string;
-};
-
-// @public (undocumented)
-export type OrchestrationEventType = OrchestrationEvent['type'];
-
-// @public
-export interface OrchestrationTaskContract {
-    // (undocumented)
-    allowedTools?: string[] | undefined;
-    // (undocumented)
-    capabilityCeiling?: string[] | undefined;
-    // (undocumented)
-    communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
-    // (undocumented)
-    executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-    // (undocumented)
-    inheritsParentConstraints?: boolean | undefined;
-    // (undocumented)
-    requiredEvidence?: string[] | undefined;
-    // (undocumented)
-    reviewMode?: 'none' | 'contract' | undefined;
-    // (undocumented)
-    successCriteria?: string[] | undefined;
-    // (undocumented)
-    writeScope?: string[] | undefined;
-}
-
-// @public (undocumented)
 export interface OtelCounter {
     // (undocumented)
     add(value: number, attributes?: Record<string, string | number | boolean>): void;
@@ -26612,7 +26543,7 @@ export type RouteSurfaceKind = (typeof ROUTE_SURFACE_KINDS)[number];
 export type RouteTargetKind = (typeof ROUTE_TARGET_KINDS)[number];
 
 // @public (undocumented)
-export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "workflows", "orchestration", "contracts", "communication", "planner", "gate", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
+export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "contracts", "communication", "planner", "gate", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
 
 // @public (undocumented)
 export type RuntimeDomainEventPayload<TDomain extends RuntimeEventTypedDomain, TEventType extends RuntimeDomainEventType<TDomain>> = RuntimeDomainEventPayloadMap[TDomain][TEventType];
@@ -28037,67 +27968,6 @@ TInput
 ] extends [undefined] ? undefined : TInput extends object ? OmitNamed<TInput, TKeys> : TInput;
 
 // @public (undocumented)
-export type WorkflowEvent = {
-    type: 'WORKFLOW_CHAIN_CREATED';
-    chainId: string;
-    task: string;
-} | {
-    type: 'WORKFLOW_STATE_CHANGED';
-    chainId: string;
-    from: WrfcState;
-    to: WrfcState;
-} | {
-    type: 'WORKFLOW_REVIEW_COMPLETED';
-    chainId: string;
-    score: number;
-    passed: boolean;
-    constraintsSatisfied?: number | undefined;
-    constraintsTotal?: number | undefined;
-    unsatisfiedConstraintIds?: string[] | undefined;
-} | {
-    type: 'WORKFLOW_FIX_ATTEMPTED';
-    chainId: string;
-    attempt: number;
-    maxAttempts: number;
-    targetConstraintIds?: string[] | undefined;
-} | {
-    type: 'WORKFLOW_GATE_RESULT';
-    chainId: string;
-    gate: string;
-    passed: boolean;
-} | {
-    type: 'WORKFLOW_CHAIN_PASSED';
-    chainId: string;
-} | {
-    type: 'WORKFLOW_CHAIN_FAILED';
-    chainId: string;
-    reason: string;
-    failureKind?: 'transport' | 'other' | 'cancelled' | 'max_turns' | undefined;
-    turnLimit?: number | undefined;
-    turnLimitSource?: 'default' | 'spawn-override' | 'policy-bound' | undefined;
-    membersSettled?: boolean | undefined;
-} | {
-    type: 'WORKFLOW_AUTO_COMMITTED';
-    chainId: string;
-    commitHash?: string | undefined;
-} | {
-    type: 'WORKFLOW_CASCADE_ABORTED';
-    chainId: string;
-    reason: string;
-} | {
-    type: 'WORKFLOW_CONSTRAINTS_ENUMERATED';
-    chainId: string;
-    constraints: Constraint[];
-} | {
-    type: 'WORKFLOW_SCORE_REGRESSION';
-    chainId: string;
-    reason: string;
-};
-
-// @public (undocumented)
-export type WorkflowEventType = WorkflowEvent['type'];
-
-// @public (undocumented)
 export interface WorkPlanEventBase {
     // (undocumented)
     readonly knowledgeSpaceId: string;
@@ -28130,9 +28000,9 @@ export interface WorkPlanTaskEventRecord {
     // (undocumented)
     readonly agentId?: string | undefined;
     // (undocumented)
-    readonly chainId?: string | undefined;
-    // (undocumented)
     readonly completedAt?: number | undefined;
+    // (undocumented)
+    readonly contractId?: string | undefined;
     // (undocumented)
     readonly createdAt: number;
     // (undocumented)
@@ -28262,9 +28132,6 @@ export type WorkspaceEvent =
 
 // @public (undocumented)
 export type WorkspaceEventType = WorkspaceEvent['type'];
-
-// @public (undocumented)
-export type WrfcState = 'pending' | 'engineering' | 'integrating' | 'reviewing' | 'fixing' | 'awaiting_gates' | 'gating' | 'passed' | 'failed' | 'committing';
 
 // @public
 export const YES_NO_VERDICTS: readonly ["yes", "no", "uncertain"];

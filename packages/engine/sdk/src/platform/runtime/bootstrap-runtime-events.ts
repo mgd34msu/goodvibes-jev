@@ -1,9 +1,8 @@
-import type { ConfigManager } from '../config/manager.js';
 import type { ConversationFollowUpItem } from '../core/conversation-follow-ups.js';
-import type { AgentEvent, ProviderEvent, RuntimeEventBus, WorkflowEvent } from './events/index.js';
+import type { AgentEvent, ProviderEvent, RuntimeEventBus } from './events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import type { createDomainDispatch } from './store/index.js';
-import type { WrfcController } from '../agents/wrfc-controller.js';
-import { getWrfcScoreThreshold } from '../agents/wrfc-config.js';
+import type { ContractRunner } from '../contract/runner.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { finishWorkstreamLabel, rememberWorkstreamLabel, workstreamLabel } from '../channels/workstream-labels.js';
 
@@ -12,7 +11,8 @@ const AGENT_STATUS_INTERVAL_MS = 30_000;
 export interface HostRuntimeMessageRouter {
   low(message: string): void;
   high(message: string): void;
-  wrfc(message: string): void;
+  /** Contract lifecycle lines for the operator feed (`ui.contractMessages` decides where they show). */
+  contract(message: string): void;
 }
 
 export interface HostRuntimeEventBridgeOptions {
@@ -21,9 +21,8 @@ export interface HostRuntimeEventBridgeOptions {
   readonly getSystemMessageRouter: () => HostRuntimeMessageRouter | null;
   readonly queueConversationFollowUp?: ((item: ConversationFollowUpItem) => void) | undefined;
   readonly requestRender: () => void;
-  readonly configManager: ConfigManager;
   readonly agentManager: AgentManager;
-  readonly wrfcController: WrfcController;
+  readonly contractRunner: Pick<ContractRunner, 'get' | 'list'>;
 }
 
 function withRouter(
@@ -65,7 +64,7 @@ function buildCohortFollowUp(agentManager: AgentManager, cohort: string): Conver
 
 function checkCohortCompletion(
   agentManager: AgentManager,
-  wrfcController: WrfcController,
+  contractRunner: Pick<ContractRunner, 'list'>,
   record: { cohort?: string | undefined } | null,
   getSystemMessageRouter: () => HostRuntimeMessageRouter | null,
   queueConversationFollowUp?: (item: ConversationFollowUpItem) => void,
@@ -75,16 +74,13 @@ function checkCohortCompletion(
   const allAgentsDone = cohortAgents.every((agent) => agent.status !== 'running' && agent.status !== 'pending');
   if (!allAgentsDone) return;
 
-  const allChains = wrfcController.listChains();
+  // A cohort is done only when every contract one of its agents worked a unit of has ended too.
   const cohortAgentIds = new Set(cohortAgents.map((agent) => agent.id));
-  const cohortChains = allChains.filter((chain) =>
-    (chain.engineerAgentId && cohortAgentIds.has(chain.engineerAgentId))
-      || (chain.reviewerAgentId && cohortAgentIds.has(chain.reviewerAgentId))
-      || (chain.fixerAgentId && cohortAgentIds.has(chain.fixerAgentId)),
+  const cohortContracts = contractRunner.list({ includeTerminal: true }).filter((contract) =>
+    contract.units.some((unit) => unit.agentIds.some((agentId) => cohortAgentIds.has(agentId))),
   );
-  const terminalStates = new Set(['passed', 'failed']);
-  const allChainsDone = cohortChains.every((chain) => terminalStates.has(chain.state));
-  if (!allChainsDone) return;
+  const terminalStatuses = new Set(['passed', 'failed', 'cancelled']);
+  if (!cohortContracts.every((contract) => terminalStatuses.has(contract.status))) return;
 
   withRouter(getSystemMessageRouter, (router) => {
     router.low(buildCohortReport(agentManager, record.cohort!));
@@ -101,9 +97,8 @@ export function registerHostRuntimeEvents(
     getSystemMessageRouter,
     queueConversationFollowUp,
     requestRender,
-    configManager,
     agentManager,
-    wrfcController,
+    contractRunner,
   } = options;
   const unsubs: Array<() => void> = [];
 
@@ -113,8 +108,8 @@ export function registerHostRuntimeEvents(
   unsubs.push(runtimeBus.onDomain('agents', (env) => {
     domainDispatch.dispatchAgentEvent(env.payload);
   }));
-  unsubs.push(runtimeBus.onDomain('orchestration', (env) => {
-    domainDispatch.dispatchOrchestrationEvent(env.payload);
+  unsubs.push(runtimeBus.onDomain('contracts', (env) => {
+    domainDispatch.dispatchContractEvent(env.payload);
   }));
   unsubs.push(runtimeBus.onDomain('communication', (env) => {
     domainDispatch.dispatchCommunicationEvent(env.payload);
@@ -126,20 +121,6 @@ export function registerHostRuntimeEvents(
     domainDispatch.dispatchTransportEvent(env.payload);
   }));
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_SCORE_REGRESSION' }>>('WORKFLOW_SCORE_REGRESSION', ({ payload }) => {
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] Score regression warning: ${payload.reason} (chain ${payload.chainId})`);
-    });
-    requestRender();
-  }));
-
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CASCADE_ABORTED' }>>('WORKFLOW_CASCADE_ABORTED', ({ payload }) => {
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] Cascade abort: ${payload.reason} (chain ${payload.chainId})`);
-    });
-    requestRender();
-  }));
-
   unsubs.push(runtimeBus.on<Extract<ProviderEvent, { type: 'MODEL_FALLBACK' }>>('MODEL_FALLBACK', ({ payload }) => {
     withRouter(getSystemMessageRouter, (router) => {
       router.high(`[Model] ${payload.from} exhausted across all providers. Automatically falling back to ${payload.to} via ${payload.provider}.`);
@@ -147,80 +128,105 @@ export function registerHostRuntimeEvents(
     requestRender();
   }));
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_CREATED' }>>('WORKFLOW_CHAIN_CREATED', ({ payload }) => {
+  const onContract = <T extends ContractEvent['type']>(type: T, handler: (payload: Extract<ContractEvent, { type: T }>) => void): void => {
+    // The bus delivers only events of `type`, so the payload is that member of the union.
+    unsubs.push(runtimeBus.on<ContractEvent>(type, ({ payload }) => {
+      handler(payload as Extract<ContractEvent, { type: T }>);
+      requestRender();
+    }));
+  };
+  const contractLine = (message: string): void => {
+    withRouter(getSystemMessageRouter, (router) => router.contract(`[Contract] ${message}`));
+  };
+  /** The cohort check for a contract that ended: any cohort one of its unit agents belongs to. */
+  const checkContractCohorts = (contractId: string): void => {
+    const contract = contractRunner.get(contractId);
+    if (!contract) return;
+    const agentId = contract.units.flatMap((unit) => unit.agentIds).find((id) => agentManager.getStatus(id)?.cohort !== undefined);
+    if (agentId === undefined) return;
+    checkCohortCompletion(agentManager, contractRunner, agentManager.getStatus(agentId), getSystemMessageRouter, queueConversationFollowUp);
+  };
+
+  onContract('CONTRACT_CREATED', (payload) => {
     // Registered here as well as in the channel renderer, because the
-    // conversation follow-ups below need a name for this workstream and a
+    // conversation follow-ups below need a name for this contract and a
     // TUI-only run never goes through a channel. Remembering twice is a no-op.
-    rememberWorkstreamLabel(payload.chainId, payload.task);
-    withRouter(getSystemMessageRouter, (router) => {
-      // Operator feed: the id belongs here, where it is used for correlation.
-      router.wrfc(`[WRFC] Chain ${payload.chainId} started: ${payload.task}`);
-    });
-    requestRender();
-  }));
+    rememberWorkstreamLabel(payload.contractId, payload.ask);
+    // Operator feed: the id belongs here, where it is used for correlation.
+    contractLine(`${payload.contractId} started: ${payload.ask}`);
+  });
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_REVIEW_COMPLETED' }>>('WORKFLOW_REVIEW_COMPLETED', ({ payload }) => {
+  onContract('CONTRACT_STATUS_CHANGED', (payload) => {
+    contractLine(`${payload.contractId} ${payload.from} -> ${payload.to}`);
+  });
+
+  onContract('CONTRACT_CHECKED', (payload) => {
+    // A turn-end check that only records history is not worth a line.
+    if (payload.result === 'recorded') return;
+    const met = payload.criteria.filter((criterion) => criterion.verdict === 'met').length;
+    const icon = payload.result === 'pass' ? '\u2713' : '\u2717';
+    contractLine(`${icon} Check ${payload.checkId} of ${payload.scope} ${payload.targetId}: ${met}/${payload.criteria.length} criteria met, ${payload.result}`);
+  });
+
+  onContract('CONTRACT_NUDGED', (payload) => {
+    const criteria = payload.criterionIds.length > 0 ? ` on ${payload.criterionIds.join(', ')}` : '';
+    contractLine(`Nudged unit ${payload.unitId} (${payload.kinds.join(', ')})${criteria}`);
+  });
+
+  onContract('CONTRACT_CRITERION_REGRESSED', (payload) => {
+    contractLine(`Criterion ${payload.criterionId} of unit ${payload.unitId} regressed (met at ${payload.metAtCheckId})`);
+  });
+
+  onContract('CONTRACT_STALLED', (payload) => {
+    contractLine(`${payload.scope} ${payload.targetId} stalled, routed to ${payload.route}: ${payload.reason}`);
+  });
+
+  onContract('CONTRACT_ESCALATED', (payload) => {
+    contractLine(`${payload.contractId} needs the owner: ${payload.question}`);
+  });
+
+  onContract('CONTRACT_GATE_RESULT', (payload) => {
     const icon = payload.passed ? '\u2713' : '\u2717';
-    const threshold = getWrfcScoreThreshold(configManager);
-    const suffix = payload.passed ? '' : ` - Minimum score is ${threshold}/10, spawning a fix agent ...`;
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] ${icon} Review ${payload.chainId.slice(0, 12)}: ${payload.score}/10${suffix}`);
-    });
-    requestRender();
-  }));
+    contractLine(`  ${icon} Gate: ${payload.gate} ${payload.skipped ? 'skipped' : payload.passed ? 'passed' : 'FAILED'}`);
+  });
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_PASSED' }>>('WORKFLOW_CHAIN_PASSED', ({ payload }) => {
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] \u2713 Chain ${payload.chainId.slice(0, 12)} PASSED \u2014 all gates clear`);
-    });
+  onContract('CONTRACT_COMMITTED', (payload) => {
+    const hash = payload.hash ? ` (${payload.hash.slice(0, 7)})` : '';
+    contractLine(`Commit ${payload.status} for ${payload.contractId}${hash}: ${payload.note}`);
+  });
+
+  onContract('CONTRACT_PASSED', (payload) => {
+    contractLine(`\u2713 ${payload.contractId} PASSED: ${payload.criteriaMet} of ${payload.criteriaJudged} criteria met, ${payload.nudges} corrections`);
     // A conversation follow-up is read by the person, not the operator, so it
     // is named in plain words. The `key` keeps the id: it is a dedupe key
     // nobody reads. See channels/workstream-labels.ts.
     queueConversationFollowUp?.({
-      key: `wrfc:${payload.chainId}:passed`,
-      summary: `${workstreamLabel(payload.chainId)} passed all its checks.`,
+      key: `contract:${payload.contractId}:passed`,
+      summary: `${workstreamLabel(payload.contractId)} passed all its checks.`,
     });
-    finishWorkstreamLabel(payload.chainId);
-    const chain = wrfcController.getChain(payload.chainId);
-    if (chain?.engineerAgentId) {
-      const record = agentManager.getStatus(chain.engineerAgentId);
-      checkCohortCompletion(agentManager, wrfcController, record! ?? null, getSystemMessageRouter, queueConversationFollowUp);
-    }
-    requestRender();
-  }));
+    finishWorkstreamLabel(payload.contractId);
+    checkContractCohorts(payload.contractId);
+  });
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_FAILED' }>>('WORKFLOW_CHAIN_FAILED', ({ payload }) => {
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] \u2717 Chain ${payload.chainId.slice(0, 12)} FAILED: ${payload.reason.slice(0, 80)}`);
-    });
+  onContract('CONTRACT_FAILED', (payload) => {
+    contractLine(`\u2717 ${payload.contractId} FAILED: ${payload.reason.slice(0, 80)}`);
     queueConversationFollowUp?.({
-      key: `wrfc:${payload.chainId}:failed`,
-      summary: `${workstreamLabel(payload.chainId)} could not be finished: ${payload.reason.slice(0, 120)}`,
+      key: `contract:${payload.contractId}:failed`,
+      summary: `${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason.slice(0, 120)}`,
     });
-    finishWorkstreamLabel(payload.chainId);
-    const chain = wrfcController.getChain(payload.chainId);
-    if (chain?.engineerAgentId) {
-      const record = agentManager.getStatus(chain.engineerAgentId);
-      checkCohortCompletion(agentManager, wrfcController, record! ?? null, getSystemMessageRouter, queueConversationFollowUp);
-    }
-    requestRender();
-  }));
+    finishWorkstreamLabel(payload.contractId);
+    checkContractCohorts(payload.contractId);
+  });
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_AUTO_COMMITTED' }>>('WORKFLOW_AUTO_COMMITTED', ({ payload }) => {
-    const suffix = payload.commitHash ? ` (${payload.commitHash.slice(0, 7)})` : '';
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC] Auto-committed chain ${payload.chainId.slice(0, 12)}${suffix}`);
+  onContract('CONTRACT_CANCELLED', (payload) => {
+    contractLine(`${payload.contractId} cancelled: ${payload.reason.slice(0, 80)} (${payload.filesModified} files modified)`);
+    queueConversationFollowUp?.({
+      key: `contract:${payload.contractId}:cancelled`,
+      summary: `${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason.slice(0, 120)}`,
     });
-    requestRender();
-  }));
-
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_GATE_RESULT' }>>('WORKFLOW_GATE_RESULT', ({ payload }) => {
-    const icon = payload.passed ? '\u2713' : '\u2717';
-    withRouter(getSystemMessageRouter, (router) => {
-      router.wrfc(`[WRFC]   ${icon} Gate: ${payload.gate} ${payload.passed ? 'passed' : 'FAILED'}`);
-    });
-    requestRender();
-  }));
+    finishWorkstreamLabel(payload.contractId);
+    checkContractCohorts(payload.contractId);
+  });
 
   unsubs.push(runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_STREAM_DELTA' }>>('AGENT_STREAM_DELTA', () => {
     requestRender();
@@ -242,7 +248,7 @@ export function registerHostRuntimeEvents(
         summary: `${record.template} agent ${payload.agentId.slice(-8)} completed "${taskSnippet}" in ${durationSeconds}s after ${record.toolCallCount} tool calls.`,
       });
     }
-    checkCohortCompletion(agentManager, wrfcController, record! ?? null, getSystemMessageRouter, queueConversationFollowUp);
+    checkCohortCompletion(agentManager, contractRunner, record ?? null, getSystemMessageRouter, queueConversationFollowUp);
     requestRender();
   }));
 
@@ -259,7 +265,7 @@ export function registerHostRuntimeEvents(
         summary: `${record.template} agent ${payload.agentId.slice(-8)} failed after ${durationSeconds}s while working on "${taskSnippet}": ${payload.error.slice(0, 120)}`,
       });
     }
-    checkCohortCompletion(agentManager, wrfcController, record! ?? null, getSystemMessageRouter, queueConversationFollowUp);
+    checkCohortCompletion(agentManager, contractRunner, record ?? null, getSystemMessageRouter, queueConversationFollowUp);
     requestRender();
   }));
 

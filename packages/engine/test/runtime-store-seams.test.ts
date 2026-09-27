@@ -74,11 +74,11 @@ describe('runtime store lifecycle seams', () => {
     expect(store.getState().agents.agents.get('agent-no-usage')?.usage).toBeUndefined();
   });
 
-  test('WRFC owner running/progress events can revive a prematurely terminal owner record', () => {
+  test('contract owner running/progress events can revive a prematurely terminal owner record', () => {
     const store = createRuntimeStore();
     const dispatch = createDomainDispatch(store);
 
-    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'owner-1', task: 'Run WRFC chain' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'owner-1', task: 'Run the contract' });
     dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'owner-1', durationMs: 10, output: 'premature' });
     expect(store.getState().agents.agents.get('owner-1')?.status).toBe('completed');
     expect(store.getState().agents.totalCompleted).toBe(1);
@@ -92,7 +92,7 @@ describe('runtime store lifecycle seams', () => {
     dispatch.dispatchAgentEvent({
       type: 'AGENT_PROGRESS',
       agentId: 'owner-1',
-      progress: 'WRFC owner supervising child agents',
+      progress: 'Contract owner waiting on its units',
       contractId: 'ctr-00000001',
       contractRole: 'owner',
     });
@@ -104,6 +104,22 @@ describe('runtime store lifecycle seams', () => {
     expect(agent?.contractRef).toEqual({ contractId: 'ctr-00000001', contractRole: 'owner', contractUnitId: undefined });
     expect(store.getState().agents.activeAgentIds).toContain('owner-1');
     expect(store.getState().agents.totalCompleted).toBe(0);
+  });
+
+  test('only the contract owner is revived: a finished unit agent stays finished', () => {
+    const store = createRuntimeStore();
+    const dispatch = createDomainDispatch(store);
+
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'unit-1', task: 'Write the parser' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'unit-1', durationMs: 10, output: 'done' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_RUNNING', agentId: 'unit-1', contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u1' });
+    expect(store.getState().agents.agents.get('unit-1')?.status).toBe('completed');
+
+    // An owner event without a contract id is not a contract owner's and revives nothing either.
+    dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'owner-2', task: 'Run the contract' });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_COMPLETED', agentId: 'owner-2', durationMs: 10 });
+    dispatch.dispatchAgentEvent({ type: 'AGENT_RUNNING', agentId: 'owner-2', contractRole: 'owner' });
+    expect(store.getState().agents.agents.get('owner-2')?.status).toBe('completed');
   });
 
   test('scheduler adapter preserves failed run status when wrapping history', () => {

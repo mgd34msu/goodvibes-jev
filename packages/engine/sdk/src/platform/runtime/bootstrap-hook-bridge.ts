@@ -1,7 +1,8 @@
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
 import type { MutableRuntimeState } from './mutable-runtime-state.js';
-import type { AgentEvent, OpsEvent, RuntimeEventBus, WorkflowEvent } from './events/index.js';
+import type { AgentEvent, OpsEvent, RuntimeEventBus } from './events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -68,74 +69,90 @@ export function registerBootstrapHookBridge(
     fireHook(fireOptions, 'Lifecycle:agent:cancelled', 'Lifecycle', 'agent', 'cancelled', { agentId: payload.agentId, error: payload.reason ?? 'Agent cancelled' });
   }));
 
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_CREATED' }>>('WORKFLOW_CHAIN_CREATED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:started', 'Lifecycle', 'workflow', 'started', { chainId: payload.chainId, task: payload.task });
-  }));
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_PASSED' }>>('WORKFLOW_CHAIN_PASSED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:completed', 'Lifecycle', 'workflow', 'completed', { chainId: payload.chainId });
-  }));
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_FAILED' }>>('WORKFLOW_CHAIN_FAILED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:failed', 'Lifecycle', 'workflow', 'failed', { chainId: payload.chainId, reason: payload.reason });
-  }));
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_REVIEW_COMPLETED' }>>('WORKFLOW_REVIEW_COMPLETED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:reviewed', 'Lifecycle', 'workflow', 'reviewed', {
-      chainId: payload.chainId,
-      score: payload.score,
-      passed: payload.passed,
+  const onContract = <T extends ContractEvent['type']>(type: T, handler: (payload: Extract<ContractEvent, { type: T }>) => void): void => {
+    // The bus delivers only events of `type`, so the payload is that member of the union.
+    unsubs.push(runtimeBus.on<ContractEvent>(type, ({ payload }) => handler(payload as Extract<ContractEvent, { type: T }>)));
+  };
+  onContract('CONTRACT_CREATED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:created', 'Lifecycle', 'contract', 'created', {
+      contractId: payload.contractId,
+      origin: payload.origin,
+      ask: payload.ask,
+      ownerAgentId: payload.ownerAgentId,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_FIX_ATTEMPTED' }>>('WORKFLOW_FIX_ATTEMPTED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:fix-attempted', 'Lifecycle', 'workflow', 'fix-attempted', {
-      chainId: payload.chainId,
-      attempt: payload.attempt,
-      maxAttempts: payload.maxAttempts,
+  });
+  onContract('CONTRACT_PLANNED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:planned', 'Lifecycle', 'contract', 'planned', {
+      contractId: payload.contractId,
+      goal: payload.goal,
+      criteria: payload.criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, disposition: criterion.disposition })),
+      groupIds: payload.groups.map((group) => group.id),
+      unitIds: payload.units.map((unit) => unit.id),
+      repair: payload.repair,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_GATE_RESULT' }>>('WORKFLOW_GATE_RESULT', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:workflow:gate-result', 'Lifecycle', 'workflow', 'gate-result', {
-      chainId: payload.chainId,
-      gate: payload.gate,
-      passed: payload.passed,
+  });
+  onContract('CONTRACT_CHECKED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:checked', 'Lifecycle', 'contract', 'checked', {
+      contractId: payload.contractId,
+      scope: payload.scope,
+      targetId: payload.targetId,
+      checkId: payload.checkId,
+      trigger: payload.trigger,
+      result: payload.result,
+      criteria: payload.criteria.map((criterion) => ({ criterionId: criterion.criterionId, verdict: criterion.verdict })),
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<import('../../events/orchestration.js').OrchestrationEvent, { type: 'ORCHESTRATION_GRAPH_CREATED' }>>('ORCHESTRATION_GRAPH_CREATED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:orchestration:graph-created', 'Lifecycle', 'orchestration', 'graph-created', {
-      graphId: payload.graphId,
-      title: payload.title,
-      mode: payload.mode,
+  });
+  onContract('CONTRACT_NUDGED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:nudged', 'Lifecycle', 'contract', 'nudged', {
+      contractId: payload.contractId,
+      unitId: payload.unitId,
+      nudgeId: payload.nudgeId,
+      kinds: [...payload.kinds],
+      criterionIds: [...payload.criterionIds],
+      agentId: payload.agentId,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<import('../../events/orchestration.js').OrchestrationEvent, { type: 'ORCHESTRATION_NODE_STARTED' }>>('ORCHESTRATION_NODE_STARTED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:orchestration:node-started', 'Lifecycle', 'orchestration', 'node-started', {
-      graphId: payload.graphId,
-      nodeId: payload.nodeId,
-      ...(payload.taskId !== undefined ? { taskId: payload.taskId } : {}),
-      ...(payload.agentId !== undefined ? { agentId: payload.agentId } : {}),
+  });
+  onContract('CONTRACT_ESCALATED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:escalated', 'Lifecycle', 'contract', 'escalated', {
+      contractId: payload.contractId,
+      escalationId: payload.escalationId,
+      scope: payload.scope,
+      targetId: payload.targetId,
+      reason: payload.reason,
+      question: payload.question,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<import('../../events/orchestration.js').OrchestrationEvent, { type: 'ORCHESTRATION_NODE_COMPLETED' }>>('ORCHESTRATION_NODE_COMPLETED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:orchestration:node-completed', 'Lifecycle', 'orchestration', 'node-completed', {
-      graphId: payload.graphId,
-      nodeId: payload.nodeId,
-      ...(payload.summary !== undefined ? { summary: payload.summary } : {}),
+  });
+  onContract('CONTRACT_PASSED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:passed', 'Lifecycle', 'contract', 'passed', {
+      contractId: payload.contractId,
+      criteriaMet: payload.criteriaMet,
+      criteriaJudged: payload.criteriaJudged,
+      nudges: payload.nudges,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<import('../../events/orchestration.js').OrchestrationEvent, { type: 'ORCHESTRATION_NODE_FAILED' }>>('ORCHESTRATION_NODE_FAILED', ({ payload }) => {
-    fireHook(fireOptions, 'Lifecycle:orchestration:node-failed', 'Lifecycle', 'orchestration', 'node-failed', {
-      graphId: payload.graphId,
-      nodeId: payload.nodeId,
-      error: payload.error,
+  });
+  onContract('CONTRACT_FAILED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:failed', 'Lifecycle', 'contract', 'failed', {
+      contractId: payload.contractId,
+      reason: payload.reason,
+      failureKind: payload.failureKind,
     });
-  }));
-  unsubs.push(runtimeBus.on<Extract<import('../../events/orchestration.js').OrchestrationEvent, { type: 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED' }>>('ORCHESTRATION_RECURSION_GUARD_TRIGGERED', ({ payload }) => {
-    fireHook(fireOptions, 'Change:orchestration:recursion-guard', 'Change', 'orchestration', 'recursion-guard', {
-      graphId: payload.graphId,
-      ...(payload.nodeId !== undefined ? { nodeId: payload.nodeId } : {}),
+  });
+  onContract('CONTRACT_CANCELLED', (payload) => {
+    fireHook(fireOptions, 'Lifecycle:contract:cancelled', 'Lifecycle', 'contract', 'cancelled', {
+      contractId: payload.contractId,
+      reason: payload.reason,
+      filesModified: payload.filesModified,
+    });
+  });
+  onContract('CONTRACT_SPAWN_GUARD_TRIGGERED', (payload) => {
+    fireHook(fireOptions, 'Change:contract:spawn-guard', 'Change', 'contract', 'spawn-guard', {
+      ...(payload.contractId !== undefined ? { contractId: payload.contractId } : {}),
+      agentId: payload.agentId,
       depth: payload.depth,
       activeAgents: payload.activeAgents,
       reason: payload.reason,
     });
-  }));
+  });
   unsubs.push(runtimeBus.on<Extract<import('../../events/communication.js').CommunicationEvent, { type: 'COMMUNICATION_SENT' }>>('COMMUNICATION_SENT', ({ payload }) => {
     fireHook(fireOptions, 'Lifecycle:communication:sent', 'Lifecycle', 'communication', 'sent', {
       messageId: payload.messageId,

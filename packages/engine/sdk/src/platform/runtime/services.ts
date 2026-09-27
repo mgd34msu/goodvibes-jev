@@ -972,8 +972,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
 
   const processRegistry = withFleetArchive(createProcessRegistry({
     agentManager,
-    wrfcController,
-    orchestrationEngine,
     processManager,
     watcherRegistry,
     triggerSupervisor: triggerManager,

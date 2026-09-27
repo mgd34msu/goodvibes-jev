@@ -9,7 +9,7 @@ function summarizeText(text: string, max = 96): string {
 
 function classifySystemKind(text: string): TranscriptEvent['kind'] {
   if (text.includes('[Remote]') || text.includes('[Teleport]') || text.includes('[Bridge]')) return 'remote_status';
-  if (text.includes('[WRFC]') || text.includes('[Review]')) return 'review_state';
+  if (text.includes('[Contract]')) return 'contract_state';
   if (text.includes('[Policy]') || text.includes('[Security]')) return 'policy_warning';
   if (text.includes('[Health]') || text.includes('[Local]') || text.includes('[Scan]') || text.includes('[Forensics]')) return 'diagnostic_notice';
   if (text.includes('[Session]') || text.includes('[Recovery]') || text.includes('[Resume]')) return 'session_restore';

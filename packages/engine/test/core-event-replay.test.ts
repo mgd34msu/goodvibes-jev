@@ -38,7 +38,7 @@ describe('EventReplayQueue', () => {
     test('multiple events accumulate', async () => {
       queue.enqueue('AGENT_COMPLETED', { id: 'a1' });
       queue.enqueue('AGENT_FAILED', { id: 'a2', error: new Error('boom') });
-      queue.enqueue('WORKFLOW_CHAIN_FAILED', { chainId: 'w1', reason: 'timeout' });
+      queue.enqueue('CONTRACT_FAILED', { contractId: 'ctr-w1', reason: 'timeout' });
       expect(queue.getStats().queued).toBe(3);
     });
   });
@@ -83,7 +83,7 @@ describe('EventReplayQueue', () => {
     test('acknowledges matching events and returns count', async () => {
       queue.enqueue('AGENT_COMPLETED', { id: 'agent-abc' });
       queue.enqueue('AGENT_COMPLETED', { id: 'agent-def' });
-      queue.enqueue('WORKFLOW_CHAIN_FAILED', { chainId: 'w1', reason: 'err' });
+      queue.enqueue('CONTRACT_FAILED', { contractId: 'ctr-w1', reason: 'err' });
 
       const count = queue.acknowledgeWhere((e) => {
         const payload = e.payload as Record<string, unknown>;
@@ -108,13 +108,13 @@ describe('EventReplayQueue', () => {
       expect(count).toBe(0); // already acknowledged, not counted again
     });
 
-    test('can acknowledge by chainId predicate', async () => {
-      queue.enqueue('WORKFLOW_STATE_CHANGED', { chainId: 'chain-123', from: 'engineering', to: 'reviewing' });
-      queue.enqueue('WORKFLOW_CHAIN_FAILED', { chainId: 'chain-456', reason: 'err' });
+    test('can acknowledge by contractId predicate', async () => {
+      queue.enqueue('CONTRACT_STATUS_CHANGED', { contractId: 'ctr-123', from: 'running', to: 'judging' });
+      queue.enqueue('CONTRACT_FAILED', { contractId: 'ctr-456', reason: 'err' });
 
       const count = queue.acknowledgeWhere((e) => {
         const payload = e.payload as Record<string, unknown>;
-        return payload.chainId === 'chain-123';
+        return payload.contractId === 'ctr-123';
       });
       expect(count).toBe(1);
     });
@@ -266,32 +266,28 @@ describe('EventReplayQueue', () => {
       expect(msgs[0]).toContain('failed');
     });
 
-    test('WORKFLOW_STATE_CHANGED message includes chainId, from, to', async () => {
-      queue.enqueue('WORKFLOW_STATE_CHANGED', { chainId: 'wrfc-f00ef799', from: 'engineering', to: 'reviewing' });
+    test('CONTRACT_STATUS_CHANGED message names the contract and both statuses', async () => {
+      queue.enqueue('CONTRACT_STATUS_CHANGED', { contractId: 'ctr-f00ef799', from: 'running', to: 'awaiting-owner' });
       queue.onTurnComplete();
       const replays = queue.onTurnComplete();
       const msgs = queue.formatReplays(replays);
-      expect(msgs[0]).toContain('wrfc-f00ef799');
-      expect(msgs[0]).toContain('engineering');
-      expect(msgs[0]).toContain('reviewing');
+      expect(msgs[0]).toBe('[Replay] Contract ctr-f00ef799 moved from running to awaiting-owner, waiting for action (first notified 2 turns ago)');
     });
 
-    test('WORKFLOW_CHAIN_PASSED message includes chainId', async () => {
-      queue.enqueue('WORKFLOW_CHAIN_PASSED', { chainId: 'wrfc-abc' });
+    test('CONTRACT_PASSED message names the contract', async () => {
+      queue.enqueue('CONTRACT_PASSED', { contractId: 'ctr-abc' });
       queue.onTurnComplete();
       const replays = queue.onTurnComplete();
       const msgs = queue.formatReplays(replays);
-      expect(msgs[0]).toContain('wrfc-abc');
-      expect(msgs[0]).toContain('passed');
+      expect(msgs[0]).toContain('Contract ctr-abc passed');
     });
 
-    test('WORKFLOW_CHAIN_FAILED message includes chainId and reason', async () => {
-      queue.enqueue('WORKFLOW_CHAIN_FAILED', { chainId: 'wrfc-f00ef799', reason: 'max attempts exceeded' });
+    test('CONTRACT_FAILED message names the contract and the reason', async () => {
+      queue.enqueue('CONTRACT_FAILED', { contractId: 'ctr-f00ef799', reason: 'max attempts exceeded' });
       queue.onTurnComplete();
       const replays = queue.onTurnComplete();
       const msgs = queue.formatReplays(replays);
-      expect(msgs[0]).toContain('wrfc-f00ef799');
-      expect(msgs[0]).toContain('max attempts exceeded');
+      expect(msgs[0]).toContain('Contract ctr-f00ef799 failed: max attempts exceeded');
     });
 
     test('message includes turns-ago count', async () => {
@@ -410,6 +406,26 @@ describe('EventReplayQueue', () => {
       }));
       await flushMicrotasks();
       expect(queue.getStats().queued).toBe(1);
+      detach();
+    });
+
+    test('auto-enqueues the contract status, pass and failure events from the contracts domain', async () => {
+      const detach = EventReplayQueue.attachToRuntimeBus(runtimeBus, queue);
+      const ctx = { sessionId: 'test-session', traceId: 'test-trace', source: 'event-replay.test' };
+      runtimeBus.emit('contracts', createEventEnvelope('CONTRACT_STATUS_CHANGED', { type: 'CONTRACT_STATUS_CHANGED', contractId: 'ctr-1', from: 'running', to: 'judging' }, ctx));
+      runtimeBus.emit('contracts', createEventEnvelope('CONTRACT_PASSED', { type: 'CONTRACT_PASSED', contractId: 'ctr-1', criteriaMet: 2, criteriaJudged: 2, excluded: 0, nudges: 1 }, ctx));
+      runtimeBus.emit('contracts', createEventEnvelope('CONTRACT_FAILED', { type: 'CONTRACT_FAILED', contractId: 'ctr-2', reason: 'gates failed', failureKind: 'other', membersSettled: true }, ctx));
+      // A nudge is the unit's business, not a reminder for the conversation.
+      runtimeBus.emit('contracts', createEventEnvelope('CONTRACT_NUDGED', { type: 'CONTRACT_NUDGED', contractId: 'ctr-1', unitId: 'u1', nudgeId: 'n1', checkId: 'u1.k1', kinds: ['unmet'], criterionIds: ['u1.c1'], delivery: 'bus', agentId: 'a1' }, ctx));
+      await flushMicrotasks();
+      expect(queue.getStats().queued).toBe(3);
+      queue.onTurnComplete();
+      const messages = queue.formatReplays(queue.onTurnComplete());
+      expect(messages).toEqual([
+        '[Replay] Contract ctr-1 moved from running to judging, waiting for action (first notified 2 turns ago)',
+        '[Replay] Contract ctr-1 passed, waiting for action (first notified 2 turns ago)',
+        '[Replay] Contract ctr-2 failed: gates failed, waiting for action (first notified 2 turns ago)',
+      ]);
       detach();
     });
 

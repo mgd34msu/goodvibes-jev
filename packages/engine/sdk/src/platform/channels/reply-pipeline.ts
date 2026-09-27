@@ -1,4 +1,5 @@
-import type { RuntimeEventBus, RuntimeEventEnvelope, AnyRuntimeEvent, WorkflowEvent } from '../runtime/events/index.js';
+import type { RuntimeEventBus, RuntimeEventEnvelope, AnyRuntimeEvent } from '../runtime/events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import type {
   ChannelRenderEvent,
   ChannelRenderPhase,
@@ -47,7 +48,7 @@ export interface TrackedChannelReply {
   readonly surfaceKind: ChannelSurface;
   readonly task: string;
   readonly agentTask?: string | undefined;
-  readonly workflowChainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly createdAt: number;
   readonly sessionId?: string | undefined;
   readonly routeId?: string | undefined;
@@ -115,13 +116,13 @@ function resolveEnvelopeAgentId(envelope: RuntimeEventEnvelope<AnyRuntimeEvent['
   return typeof payload.agentId === 'string' ? payload.agentId : null;
 }
 
-function isWorkflowEventPayload(payload: AnyRuntimeEvent): payload is WorkflowEvent {
-  return payload.type.startsWith('WORKFLOW_');
+function isContractEventPayload(payload: AnyRuntimeEvent): payload is ContractEvent {
+  return payload.type.startsWith('CONTRACT_');
 }
 
-function resolveEnvelopeWorkflowChainId(envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>): string | null {
-  const payload = envelope.payload as { readonly chainId?: unknown };
-  return typeof payload.chainId === 'string' && payload.chainId.length > 0 ? payload.chainId : null;
+function resolveEnvelopeContractId(envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>): string | null {
+  const payload = envelope.payload as { readonly contractId?: unknown };
+  return typeof payload.contractId === 'string' && payload.contractId.length > 0 ? payload.contractId : null;
 }
 
 function isAgentFinalEvent(type: AnyRuntimeEvent['type']): boolean {
@@ -147,7 +148,7 @@ export class ChannelReplyPipeline {
    * not.
    */
   private readonly deliveryChains = new Map<string, Promise<void>>();
-  private readonly workflowChains = new Map<string, string>();
+  private readonly contracts = new Map<string, string>();
   private readonly unsubscribers: Array<() => void> = [];
   private undeliveredReporter: UndeliveredChannelReplyReporter | null;
   private deliveredReporter: DeliveredChannelReplyReporter | null;
@@ -181,7 +182,7 @@ export class ChannelReplyPipeline {
       'gate',
       'providers',
       'compaction',
-      'workflows',
+      'contracts',
     ];
     for (const domain of domains) {
       this.unsubscribers.push(runtimeBus.onDomain(domain, (envelope) => {
@@ -199,7 +200,7 @@ export class ChannelReplyPipeline {
   dispose(): void {
     this.disposeSubscriptions();
     this.buffers.clear();
-    this.workflowChains.clear();
+    this.contracts.clear();
     this.deliveryChains.clear();
   }
 
@@ -241,16 +242,16 @@ export class ChannelReplyPipeline {
       events: [],
       deliveredEventIds: new Set<string>(),
     });
-    if (typeof pending.workflowChainId === 'string' && pending.workflowChainId.length > 0) {
-      this.workflowChains.set(pending.workflowChainId, pending.agentId);
+    if (typeof pending.contractId === 'string' && pending.contractId.length > 0) {
+      this.contracts.set(pending.contractId, pending.agentId);
     }
   }
 
   untrack(agentId: string): void {
     this.buffers.delete(agentId);
-    for (const [chainId, mappedAgentId] of this.workflowChains.entries()) {
+    for (const [contractId, mappedAgentId] of this.contracts.entries()) {
       if (mappedAgentId === agentId) {
-        this.workflowChains.delete(chainId);
+        this.contracts.delete(contractId);
       }
     }
   }
@@ -394,7 +395,7 @@ export class ChannelReplyPipeline {
       if (!options.keepTracking) this.untrack(agentId);
       return null;
     }
-    // A chain that keeps tracking (ntfy workflow chains) can reach this more
+    // A chain that keeps tracking (an ntfy reply that follows a contract) can reach this more
     // than once. An identical final body is a duplicate notification, not a
     // second outcome, publish it once.
     if (text && state.lastDeliveredText === text) {
@@ -486,8 +487,8 @@ export class ChannelReplyPipeline {
   private async handleEnvelope(
     envelope: RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>,
   ): Promise<void> {
-    if (isWorkflowEventPayload(envelope.payload)) {
-      await this.handleWorkflowEnvelope(envelope as RuntimeEventEnvelope<WorkflowEvent['type'], WorkflowEvent>);
+    if (isContractEventPayload(envelope.payload)) {
+      await this.handleContractEnvelope(envelope as RuntimeEventEnvelope<ContractEvent['type'], ContractEvent>);
       return;
     }
     if (
@@ -527,7 +528,7 @@ export class ChannelReplyPipeline {
         .trim();
       await this.deliverFinal(agentId, text, {
         keepTracking: state.pending.surfaceKind === 'ntfy'
-          && typeof state.pending.workflowChainId === 'string'
+          && typeof state.pending.contractId === 'string'
           && isAgentFinalEvent(envelope.payload.type),
       });
       return;
@@ -535,22 +536,22 @@ export class ChannelReplyPipeline {
     await this.deliverProgress(agentId);
   }
 
-  private async handleWorkflowEnvelope(
-    envelope: RuntimeEventEnvelope<WorkflowEvent['type'], WorkflowEvent>,
+  private async handleContractEnvelope(
+    envelope: RuntimeEventEnvelope<ContractEvent['type'], ContractEvent>,
   ): Promise<void> {
-    if (envelope.payload.type === 'WORKFLOW_CHAIN_CREATED') {
-      const matched = this.findPendingForWorkflowTask(envelope.payload.task);
+    if (envelope.payload.type === 'CONTRACT_CREATED') {
+      const matched = this.findPendingForAsk(envelope.payload.ask, envelope.payload.ownerAgentId);
       if (matched) {
-        this.associateWorkflowChain(matched.pending.agentId, envelope.payload.chainId);
+        this.associateContract(matched.pending.agentId, envelope.payload.contractId);
       }
     }
-    const chainId = resolveEnvelopeWorkflowChainId(envelope);
-    if (!chainId) return;
-    const agentId = this.workflowChains.get(chainId);
+    const contractId = resolveEnvelopeContractId(envelope);
+    if (!contractId) return;
+    const agentId = this.contracts.get(contractId);
     if (!agentId) return;
     const state = this.buffers.get(agentId);
     if (!state) {
-      this.workflowChains.delete(chainId);
+      this.contracts.delete(contractId);
       return;
     }
     const events = normalizeChannelRenderEventFromRuntime(envelope);
@@ -593,12 +594,18 @@ export class ChannelReplyPipeline {
     });
   }
 
-  private findPendingForWorkflowTask(task: string): ReplyBufferState | null {
-    const normalizedTask = task.trim();
+  /**
+   * The pending reply a new contract belongs to: the one tracking its owner
+   * agent when there is one, else the one whose task is the contract's ask.
+   */
+  private findPendingForAsk(ask: string, ownerAgentId: string): ReplyBufferState | null {
+    const owned = this.buffers.get(ownerAgentId);
+    if (owned && typeof owned.pending.contractId !== 'string') return owned;
+    const normalizedTask = ask.trim();
     if (!normalizedTask) return null;
     let fallback: ReplyBufferState | null = null;
     for (const state of this.buffers.values()) {
-      if (typeof state.pending.workflowChainId === 'string') continue;
+      if (typeof state.pending.contractId === 'string') continue;
       const agentTask = typeof state.pending.agentTask === 'string' ? state.pending.agentTask.trim() : '';
       const pendingTask = state.pending.task.trim();
       if (agentTask === normalizedTask) return state;
@@ -609,15 +616,15 @@ export class ChannelReplyPipeline {
     return fallback;
   }
 
-  private associateWorkflowChain(agentId: string, chainId: string): void {
+  private associateContract(agentId: string, contractId: string): void {
     const state = this.buffers.get(agentId);
     if (!state) return;
-    this.workflowChains.set(chainId, agentId);
+    this.contracts.set(contractId, agentId);
     this.buffers.set(agentId, {
       ...state,
       pending: {
         ...state.pending,
-        workflowChainId: chainId,
+        contractId,
       },
     });
   }

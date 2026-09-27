@@ -16,7 +16,7 @@ import type { OverlayDomainState, OverlayId } from '../domains/overlays.js';
 import type { PermissionDomainState, PermissionMode } from '../domains/permissions.js';
 import type { TaskDomainState, RuntimeTask, TaskKind } from '../domains/tasks.js';
 import type { AgentDomainState, RuntimeAgent } from '../domains/agents.js';
-import type { OrchestrationDomainState } from '../domains/orchestration.js';
+import type { ContractDomainState } from '../domains/contracts.js';
 import type { CommunicationDomainState } from '../domains/communication.js';
 import type { AutomationDomainState } from '../domains/automation.js';
 import type { RoutesDomainState } from '../domains/routes.js';
@@ -125,9 +125,9 @@ export function selectIntelligence(state: RuntimeState): IntelligenceDomainState
   return state.intelligence;
 }
 
-/** Select the full orchestration domain slice. */
-export function selectOrchestration(state: RuntimeState): OrchestrationDomainState {
-  return state.orchestration;
+/** Select the full contracts domain slice. */
+export function selectContracts(state: RuntimeState): ContractDomainState {
+  return state.contracts;
 }
 
 /** Select the full communication domain slice. */

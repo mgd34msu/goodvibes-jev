@@ -45,7 +45,7 @@ export type ReplayMismatchOwnerDomain =
   | 'session'
   | 'conversation'
   | 'agents'
-  | 'workflows'
+  | 'contracts'
   | 'gate'
   | 'transport'
   | 'unknown';
@@ -743,7 +743,7 @@ export class DeterministicReplayEngine {
     if (eventName.startsWith('TURN_') || eventName.startsWith('PREFLIGHT_') || eventName.startsWith('STREAM_')) return 'turn';
     if (eventName.startsWith('TASK_')) return 'tasks';
     if (eventName.startsWith('TOOL_')) return 'tools';
-    if (eventName.startsWith('WORKFLOW_')) return 'workflows';
+    if (eventName.startsWith('CONTRACT_')) return 'contracts';
     if (eventName.startsWith('AGENT_')) return 'agents';
     if ((GATE_EVENT_TYPES as readonly string[]).includes(eventName)) return 'gate';
     if (eventName.startsWith('PROVIDER_') || eventName.startsWith('MODEL_')) return 'providers';

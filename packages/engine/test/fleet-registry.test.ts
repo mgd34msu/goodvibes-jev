@@ -2,14 +2,14 @@
  * Live process registry (packages/sdk/src/platform/runtime/fleet/).
  *
  * Covers the brief's test matrix with stub managers:
- *  1. Per-kind adapter mapping (agent/chain/subtask/workflow/trigger/schedule/watcher/background-process).
+ *  1. Per-kind adapter mapping (agent/contract/group/unit/workflow/trigger/schedule/watcher/background-process).
  *  2. Fine-grained agent state via REAL runtime-bus emitters (no synthetic event shapes).
  *  3. Stalled derivation with an injected now().
  *  4. awaiting-approval cross-reference via approvalBroker.listApprovals().
  *  5. Cost honesty (unknown model → costUsd null + 'unpriced'; never throws).
- *  6. chain → subtask → agent edge/nesting integrity (no dangling parentIds).
+ *  6. contract → group → unit → agent edge/nesting integrity (no dangling parentIds).
  *  7. subscribe/tick coalescing, unref, dispose.
- *  8. Control dispatch (interrupt/kill routing incl. derived chain-kill cascade).
+ *  8. Control dispatch (interrupt/kill routing incl. contract, group and unit kills).
  * 10. Empty fleet → empty snapshot, no throw.
  */
 import { describe, expect, test } from 'bun:test';
@@ -20,7 +20,8 @@ import type {
 } from '../sdk/src/platform/runtime/fleet/index.js';
 import type { ProcessRegistryDeps, RegistryTimers } from '../sdk/src/platform/runtime/fleet/registry.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import type { WrfcChain, WrfcSubtask } from '../sdk/src/platform/agents/wrfc-types.js';
+import type { Contract, ContractView } from '../sdk/src/platform/contract/types.js';
+import { makeContract, makeGroup, makeUnit } from './contract/fixtures.js';
 import type { BackgroundProcess } from '../sdk/src/platform/tools/shared/process-manager.js';
 import type { WatcherRecord } from '../sdk/src/platform/runtime/store/domains/watchers.js';
 import type {
@@ -62,35 +63,27 @@ function makeAgent(overrides: Partial<AgentRecord> & { id: string }): AgentRecor
   };
 }
 
-function makeChain(overrides: Partial<WrfcChain> & { id: string }): WrfcChain {
-  return {
-    state: 'engineering',
-    task: 'chain task',
-    ownerAgentId: 'owner-1',
-    allAgentIds: [],
-    fixAttempts: 0,
-    reviewCycles: 0,
-    createdAt: T0,
-    reviewScores: [],
-    ownerDecisions: [],
-    ownerTerminalEmitted: false,
-    constraints: [],
-    constraintsEnumerated: false,
-    ...overrides,
-  };
+/** A running contract with one group g1 holding the given units (default: one unit u1). */
+function makeRunningContract(overrides: Partial<Contract> & { id: string }): Contract {
+  return makeContract({ createdAt: T0, ...overrides });
 }
 
-function makeSubtask(overrides: Partial<WrfcSubtask> & { id: string }): WrfcSubtask {
+/**
+ * The runner's list and cancel over the given contracts. A cancel ends the
+ * contract (its view reads cancelled afterwards, as the runner's does);
+ * `cancelled` records each accepted cancel.
+ */
+function runnerOf(contracts: readonly Contract[], cancelled: string[] = []): ProcessRegistryDeps['contractRunner'] {
   return {
-    title: 'subtask',
-    task: 'subtask work',
-    state: 'engineering',
-    fixAttempts: 0,
-    reviewCycles: 0,
-    reviewScores: [],
-    constraints: [],
-    constraintsEnumerated: false,
-    ...overrides,
+    list: () => [...contracts] as ContractView[],
+    cancel: (contractId: string) => {
+      const contract = contracts.find((candidate) => candidate.id === contractId);
+      if (!contract || cancelled.includes(contractId) || contract.status === 'cancelled') return false;
+      cancelled.push(contractId);
+      contract.status = 'cancelled';
+      contract.completedAt = T0 + 1;
+      return true;
+    },
   };
 }
 
@@ -168,7 +161,6 @@ function makeSession(overrides: Partial<SharedSessionRecord> & { id: string }): 
 function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistryDeps {
   return {
     agentManager: { list: () => [], cancel: () => false },
-    wrfcController: { listChains: () => [] },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {
@@ -291,201 +283,91 @@ describe('fleet registry: adapter mapping', () => {
   });
 
   test('parentId precedence: contractUnitId > contractId > parentNodeId(resolved) > parentAgentId', () => {
-    const chain = makeChain({
-      id: 'ch-1',
-      ownerAgentId: 'owner-1',
-      allAgentIds: ['owner-1', 'a-sub', 'a-chain'],
-      subtasks: [makeSubtask({ id: 'st-1' })],
-    });
+    const contract = makeRunningContract({ id: 'ctr-1', ownerAgentId: 'owner-1', plannerAgentIds: ['a-plan'], units: [makeUnit({ id: 'u1', agentIds: ['a-unit'], activeAgentId: 'a-unit' })] });
     const agents = [
-      makeAgent({ id: 'owner-1', contractId: 'ch-1', contractRole: 'owner' }),
-      makeAgent({ id: 'a-sub', contractUnitId: 'st-1', contractId: 'ch-1' }),
-      makeAgent({ id: 'a-chain', contractId: 'ch-1' }),
+      makeAgent({ id: 'owner-1', contractId: 'ctr-1', contractRole: 'owner' }),
+      makeAgent({ id: 'a-plan', contractId: 'ctr-1', contractRole: 'planner' }),
+      makeAgent({ id: 'a-unit', contractId: 'ctr-1', contractRole: 'unit', contractUnitId: 'u1' }),
       makeAgent({ id: 'a-orch-parent', orchestrationNodeId: 'node-9' }),
       makeAgent({ id: 'a-orch-child', parentNodeId: 'node-9' }),
       makeAgent({ id: 'a-plain-child', parentAgentId: 'a-orch-parent' }),
-      makeAgent({ id: 'a-dangling', contractId: 'missing-chain', parentAgentId: 'a-orch-parent' }),
+      makeAgent({ id: 'a-dangling', contractId: 'missing-contract', contractUnitId: 'u1', parentAgentId: 'a-orch-parent' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
     }));
-    expect(nodeById(registry, 'a-sub').parentId).toBe('subtask:st-1');
-    expect(nodeById(registry, 'a-chain').parentId).toBe('chain:ch-1');
-    expect(nodeById(registry, 'owner-1').parentId).toBe('chain:ch-1');
+    expect(nodeById(registry, 'a-unit').parentId).toBe('unit:ctr-1:u1');
+    expect(nodeById(registry, 'a-plan').parentId).toBe('contract:ctr-1');
+    expect(nodeById(registry, 'owner-1').parentId).toBe('contract:ctr-1');
     expect(nodeById(registry, 'a-orch-child').parentId).toBe('a-orch-parent');
     expect(nodeById(registry, 'a-plain-child').parentId).toBe('a-orch-parent');
-    // Dangling contractId falls through to the next resolvable edge.
+    // A contract id with no contract in the snapshot falls through to the next resolvable edge.
     expect(nodeById(registry, 'a-dangling').parentId).toBe('a-orch-parent');
     registry.dispose();
   });
-
-  test('chain node: state map, subtask children, usage/cost aggregation excludes owner', () => {
-    const chain = makeChain({
-      id: 'ch-2',
-      state: 'reviewing',
+  test('contract node: status map, group and unit children, usage/cost aggregation excludes owner', () => {
+    const contract = makeRunningContract({
+      id: 'ctr-2',
+      status: 'judging',
       ownerAgentId: 'owner-2',
-      allAgentIds: ['owner-2', 'eng-1'],
-      subtasks: [makeSubtask({ id: 'st-a', state: 'passed' }), makeSubtask({ id: 'st-b', state: 'pending' })],
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1', 'u2'], status: 'running' })],
+      units: [
+        makeUnit({ id: 'u1', status: 'passed', agentIds: ['eng-1'] }),
+        makeUnit({ id: 'u2', status: 'pending' }),
+      ],
     });
     const usage = {
       inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0,
       llmCallCount: 1, turnCount: 1,
     };
     const agents = [
-      // Owner usage mirrors children at completion, must NOT be double-counted.
-      makeAgent({ id: 'owner-2', contractId: 'ch-2', usage: { ...usage }, toolCallCount: 5 }),
-      makeAgent({ id: 'eng-1', contractId: 'ch-2', usage: { ...usage }, toolCallCount: 5, model: 'm1' }),
+      // Owner usage mirrors the units at completion, must NOT be double-counted.
+      makeAgent({ id: 'owner-2', contractId: 'ctr-2', contractRole: 'owner', usage: { ...usage }, toolCallCount: 5 }),
+      makeAgent({ id: 'eng-1', contractId: 'ctr-2', contractRole: 'unit', contractUnitId: 'u1', status: 'completed', completedAt: T0 + 1_000, usage: { ...usage }, toolCallCount: 5, model: 'm1' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
       priceUsage: () => 0.5,
     }));
-    const chainNode = nodeById(registry, 'chain:ch-2');
-    expect(chainNode.kind).toBe('wrfc-chain');
-    expect(chainNode.state).toBe('executing-tool');
-    expect(chainNode.currentActivity?.text).toBe('reviewing');
-    expect(chainNode.usage?.inputTokens).toBe(1000); // eng-1 only, owner excluded
-    expect(chainNode.costUsd).toBe(0.5);
-    expect(chainNode.costState).toBe('priced');
-    const stA = nodeById(registry, 'subtask:st-a');
-    expect(stA.kind).toBe('wrfc-subtask');
-    expect(stA.parentId).toBe('chain:ch-2');
-    expect(stA.state).toBe('done');
-    expect(nodeById(registry, 'subtask:st-b').state).toBe('queued');
+    const contractNode = nodeById(registry, 'contract:ctr-2');
+    expect(contractNode.kind).toBe('contract');
+    expect(contractNode.state).toBe('executing-tool');
+    expect(contractNode.currentActivity?.text).toBe('judging');
+    expect(contractNode.usage?.inputTokens).toBe(1000); // eng-1 only, owner excluded
+    expect(contractNode.costUsd).toBe(0.5);
+    expect(contractNode.costState).toBe('priced');
+    const group = nodeById(registry, 'group:ctr-2:g1');
+    expect(group.kind).toBe('contract-group');
+    expect(group.parentId).toBe('contract:ctr-2');
+    const u1 = nodeById(registry, 'unit:ctr-2:u1');
+    expect(u1.kind).toBe('contract-unit');
+    expect(u1.parentId).toBe('group:ctr-2:g1');
+    expect(u1.state).toBe('done');
+    expect(nodeById(registry, 'unit:ctr-2:u2').state).toBe('queued');
     registry.dispose();
   });
-
-  test('chain terminal + retrying states', () => {
-    const chains = [
-      makeChain({ id: 'ch-passed', state: 'passed', completedAt: T0 + 100 }),
-      makeChain({ id: 'ch-failed', state: 'failed' }),
-      makeChain({ id: 'ch-pending', state: 'pending' }),
-      // transport retry recorded, no live member → the respawn window.
-      makeChain({ id: 'ch-retry', state: 'engineering', transportRetryCount: 1, allAgentIds: ['gone-1'] }),
+  test('contract terminal and waiting states', () => {
+    const contracts = [
+      makeRunningContract({ id: 'ctr-passed', status: 'passed', completedAt: T0 + 100 }),
+      makeRunningContract({ id: 'ctr-failed', status: 'failed', completedAt: T0 + 100 }),
+      makeRunningContract({ id: 'ctr-cancelled', status: 'cancelled', completedAt: T0 + 100 }),
+      makeRunningContract({ id: 'ctr-queued', status: 'queued' }),
+      makeRunningContract({ id: 'ctr-owner', status: 'awaiting-owner' }),
     ];
-    const registry = createProcessRegistry(makeDeps({
-      wrfcController: { listChains: () => [...chains] },
-    }));
-    expect(nodeById(registry, 'chain:ch-passed').state).toBe('done');
-    expect(nodeById(registry, 'chain:ch-failed').state).toBe('failed');
-    expect(nodeById(registry, 'chain:ch-pending').state).toBe('queued');
-    expect(nodeById(registry, 'chain:ch-retry').state).toBe('retrying');
+    const registry = createProcessRegistry(makeDeps({ contractRunner: runnerOf(contracts) }));
+    expect(nodeById(registry, 'contract:ctr-passed').state).toBe('done');
+    expect(nodeById(registry, 'contract:ctr-passed').elapsedMs).toBe(100); // frozen at completedAt
+    expect(nodeById(registry, 'contract:ctr-failed').state).toBe('failed');
+    expect(nodeById(registry, 'contract:ctr-cancelled').state).toBe('killed');
+    expect(nodeById(registry, 'contract:ctr-queued').state).toBe('queued');
+    expect(nodeById(registry, 'contract:ctr-owner').state).toBe('idle');
+    for (const id of ['contract:ctr-passed', 'contract:ctr-failed', 'contract:ctr-cancelled']) {
+      expect(nodeById(registry, id).capabilities.killable).toBe(false);
+    }
     registry.dispose();
   });
-
-  // Chain terminal truth: WrfcController has no cancel/abort of
-  // its own, so a cascade kill (registry.ts kill('chain:<id>')) only cancels
-  // the member agents, chain.state never leaves whatever active phase it was
-  // in when killed. Before the fix this rendered 'executing-tool' forever
-  // with elapsedMs climbing on every query() (the replay-found leak).
-  // Regression: two registries at very different `now` values over the SAME
-  // killed-chain snapshot must report the identical, frozen elapsedMs.
-  test('chain killed via cascade: chain.state stuck in an active phase, every member terminal → derived killed + elapsedMs frozen at max(member.completedAt), owner excluded', () => {
-    const chain = makeChain({
-      id: 'ch-cascade-killed',
-      state: 'engineering', // WrfcController never moved this off the active phase
-      ownerAgentId: 'own-z',
-      allAgentIds: ['own-z', 'm1-z', 'm2-z'],
-      createdAt: T0,
-    });
-    const agents = [
-      // Owner's completedAt is deliberately the LATEST of the three so that,
-      // if aggregateCost's owner-exclusion rule were ever violated here too,
-      // this assertion would catch it (expected elapsedMs comes from m2-z).
-      makeAgent({ id: 'own-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 9_000 }),
-      makeAgent({ id: 'm1-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 3_000 }),
-      makeAgent({ id: 'm2-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'interrupt', startedAt: T0, completedAt: T0 + 5_000 }),
-    ];
-    const registryEarly = createProcessRegistry(makeDeps({
-      agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
-      now: () => T0 + 6_000,
-    }));
-    const registryLater = createProcessRegistry(makeDeps({
-      agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
-      now: () => T0 + 60_000, // a full minute later, elapsed must NOT have climbed
-    }));
-    const nodeEarly = nodeById(registryEarly, 'chain:ch-cascade-killed');
-    const nodeLater = nodeById(registryLater, 'chain:ch-cascade-killed');
-    expect(nodeEarly.state).toBe('killed');
-    expect(nodeLater.state).toBe('killed');
-    expect(nodeEarly.completedAt).toBe(T0 + 5_000);
-    expect(nodeEarly.elapsedMs).toBe(5_000);
-    expect(nodeLater.elapsedMs).toBe(5_000); // frozen, not climbing with `now`
-    expect(nodeEarly.capabilities.killable).toBe(false); // already terminal
-    registryEarly.dispose();
-    registryLater.dispose();
-  });
-
-  // wo/chain-state-honesty fix: 'gating' and 'committing' are run by
-  // WrfcController itself (gate checks, git commit/merge) with zero live
-  // member agents BY DESIGN, every phase-worker member already finished
-  // before the chain advanced here. Before the fix, the killed-derivation
-  // fired on this exact shape (all known members terminal) and reported a
-  // healthy chain mid-commit as 'killed' with a frozen synthetic
-  // completedAt. It must instead still read as an active phase.
-  test('chain in committing/gating with all members terminal reads as an active phase, NOT killed', () => {
-    const committing = makeChain({
-      id: 'ch-committing',
-      state: 'committing',
-      ownerAgentId: 'own-c',
-      allAgentIds: ['own-c', 'eng-c'],
-      createdAt: T0,
-    });
-    const gating = makeChain({
-      id: 'ch-gating',
-      state: 'gating',
-      ownerAgentId: 'own-g',
-      allAgentIds: ['own-g', 'eng-g'],
-      createdAt: T0,
-    });
-    const agents = [
-      makeAgent({ id: 'own-c', contractId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'eng-c', contractId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'own-g', contractId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'eng-g', contractId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
-    ];
-    const registry = createProcessRegistry(makeDeps({
-      agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [committing, gating] },
-      now: () => T0 + 60_000,
-    }));
-    const committingNode = nodeById(registry, 'chain:ch-committing');
-    const gatingNode = nodeById(registry, 'chain:ch-gating');
-    expect(committingNode.state).toBe('executing-tool');
-    expect(committingNode.currentActivity?.text).toBe('committing');
-    expect(committingNode.completedAt).toBeUndefined();
-    expect(gatingNode.state).toBe('executing-tool');
-    expect(gatingNode.currentActivity?.text).toBe('gating');
-    expect(gatingNode.completedAt).toBeUndefined();
-    registry.dispose();
-  });
-
-  test('chain retrying takes precedence over the killed-derivation during an in-flight transport respawn', () => {
-    const chain = makeChain({
-      id: 'ch-retry-real',
-      state: 'engineering',
-      ownerAgentId: 'own-r',
-      allAgentIds: ['own-r', 'm1-r'],
-      transportRetryCount: 1,
-    });
-    const agents = [
-      makeAgent({ id: 'own-r', contractId: 'ch-retry-real', status: 'running' }),
-      // The failed transport attempt is terminal, but this is the respawn
-      // window (retryCount > 0), not an operator kill.
-      makeAgent({ id: 'm1-r', contractId: 'ch-retry-real', status: 'failed', completedAt: T0 + 1_000 }),
-    ];
-    const registry = createProcessRegistry(makeDeps({
-      agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
-    }));
-    expect(nodeById(registry, 'chain:ch-retry-real').state).toBe('retrying');
-    registry.dispose();
-  });
-
   test('workflow / trigger / schedule nodes', () => {
     const workflow: WorkflowInstance = {
       id: 'wf-1', definition: 'review-cycle', currentState: 'reviewing', task: 'wf task',
@@ -574,11 +456,12 @@ describe('fleet registry: adapter mapping', () => {
         list: () => [makeAgent({ id: 'a1', status: 'completed', completedAt: T0 })],
         cancel: () => false,
       },
-      wrfcController: { listChains: () => [makeChain({ id: 'c1', state: 'engineering' })] },
+      contractRunner: runnerOf([makeRunningContract({ id: 'c1' })]),
     }));
     expect(registry.query({ kinds: ['agent'] }).nodes.map((node) => node.id)).toEqual(['a1']);
     expect(registry.query({ states: ['done'] }).nodes.map((node) => node.id)).toEqual(['a1']);
-    expect(registry.query({ kinds: ['wrfc-chain'], states: ['done'] }).nodes).toEqual([]);
+    expect(registry.query({ kinds: ['contract'] }).nodes.map((node) => node.id)).toEqual(['contract:c1']);
+    expect(registry.query({ kinds: ['contract'], states: ['done'] }).nodes).toEqual([]);
     registry.dispose();
   });
 });
@@ -854,21 +737,28 @@ describe('fleet registry: cost honesty', () => {
     registry.dispose();
   });
 
-  test('chain aggregation: mixed priced/unpriced members → estimated with priced subset only', () => {
-    const chain = makeChain({ id: 'ch-cost', ownerAgentId: 'own', allAgentIds: ['own', 'm1', 'm2'] });
+  test('contract aggregation: mixed priced/unpriced members → estimated with priced subset only', () => {
+    const contract = makeRunningContract({
+      id: 'ctr-cost', ownerAgentId: 'own',
+      units: [makeUnit({ id: 'u1', agentIds: ['m1'] }), makeUnit({ id: 'u2', agentIds: ['m2'] })],
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1', 'u2'] })],
+    });
     const agents = [
-      makeAgent({ id: 'own', contractId: 'ch-cost', usage: { ...usage } }),
-      makeAgent({ id: 'm1', contractId: 'ch-cost', model: 'priced-model', usage: { ...usage } }),
-      makeAgent({ id: 'm2', contractId: 'ch-cost', model: 'mystery-model', usage: { ...usage } }),
+      makeAgent({ id: 'own', contractId: 'ctr-cost', contractRole: 'owner', usage: { ...usage } }),
+      makeAgent({ id: 'm1', contractId: 'ctr-cost', contractUnitId: 'u1', model: 'priced-model', usage: { ...usage } }),
+      makeAgent({ id: 'm2', contractId: 'ctr-cost', contractUnitId: 'u2', model: 'mystery-model', usage: { ...usage } }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
       priceUsage: (model) => (model === 'priced-model' ? 3 : null),
     }));
-    const chainNode = nodeById(registry, 'chain:ch-cost');
-    expect(chainNode.costUsd).toBe(3);
-    expect(chainNode.costState).toBe('estimated');
+    const contractNode = nodeById(registry, 'contract:ctr-cost');
+    expect(contractNode.costUsd).toBe(3);
+    expect(contractNode.costState).toBe('estimated');
+    expect(nodeById(registry, 'group:ctr-cost:g1').costState).toBe('estimated');
+    expect(nodeById(registry, 'unit:ctr-cost:u1').costState).toBe('priced');
+    expect(nodeById(registry, 'unit:ctr-cost:u2').costState).toBe('unpriced');
     registry.dispose();
   });
 });
@@ -876,38 +766,40 @@ describe('fleet registry: cost honesty', () => {
 // ── 6. Edge/nesting integrity ─────────────────────────────────────────────────
 
 describe('fleet registry: edge integrity', () => {
-  test('chain with 2 subtasks and 3 agents forms a connected tree (no dangling parentIds)', () => {
-    const chain = makeChain({
-      id: 'ch-tree',
+  test('contract with a group, 2 units and 3 agents forms a connected tree (no dangling parentIds)', () => {
+    const contract = makeRunningContract({
+      id: 'ctr-tree',
       ownerAgentId: 'owner-t',
-      allAgentIds: ['owner-t', 'eng-a', 'rev-a'],
-      subtasks: [
-        makeSubtask({ id: 'st-1', engineerAgentId: 'eng-a' }),
-        makeSubtask({ id: 'st-2', reviewerAgentId: 'rev-a' }),
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1', 'u2'] })],
+      units: [
+        makeUnit({ id: 'u1', agentIds: ['eng-a'], activeAgentId: 'eng-a', status: 'running' }),
+        makeUnit({ id: 'u2', agentIds: ['eng-b'], activeAgentId: 'eng-b', status: 'running' }),
       ],
     });
     const agents = [
-      makeAgent({ id: 'owner-t', contractId: 'ch-tree', contractRole: 'owner' }),
-      makeAgent({ id: 'eng-a', contractId: 'ch-tree', contractUnitId: 'st-1', contractRole: 'unit' }),
-      makeAgent({ id: 'rev-a', contractId: 'ch-tree', contractUnitId: 'st-2', contractRole: 'unit' }),
+      makeAgent({ id: 'owner-t', contractId: 'ctr-tree', contractRole: 'owner' }),
+      makeAgent({ id: 'eng-a', contractId: 'ctr-tree', contractUnitId: 'u1', contractRole: 'unit' }),
+      makeAgent({ id: 'eng-b', contractId: 'ctr-tree', contractUnitId: 'u2', contractRole: 'unit' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
     }));
     const snapshot = registry.query();
     const ids = new Set(snapshot.nodes.map((node) => node.id));
-    expect(ids.size).toBe(6); // 1 chain + 2 subtasks + 3 agents
+    expect(ids.size).toBe(7); // 1 contract + 1 group + 2 units + 3 agents
     for (const node of snapshot.nodes) {
       if (node.parentId !== undefined) {
         expect(ids.has(node.parentId)).toBe(true);
       }
     }
-    // chain→subtask→agent nesting.
-    expect(nodeById(registry, 'subtask:st-1').parentId).toBe('chain:ch-tree');
-    expect(nodeById(registry, 'eng-a').parentId).toBe('subtask:st-1');
-    expect(nodeById(registry, 'rev-a').parentId).toBe('subtask:st-2');
-    expect(nodeById(registry, 'chain:ch-tree').parentId).toBeUndefined();
+    // contract → group → unit → agent nesting.
+    expect(nodeById(registry, 'group:ctr-tree:g1').parentId).toBe('contract:ctr-tree');
+    expect(nodeById(registry, 'unit:ctr-tree:u1').parentId).toBe('group:ctr-tree:g1');
+    expect(nodeById(registry, 'eng-a').parentId).toBe('unit:ctr-tree:u1');
+    expect(nodeById(registry, 'eng-b').parentId).toBe('unit:ctr-tree:u2');
+    expect(nodeById(registry, 'owner-t').parentId).toBe('contract:ctr-tree');
+    expect(nodeById(registry, 'contract:ctr-tree').parentId).toBeUndefined();
     registry.dispose();
   });
 });
@@ -1029,7 +921,7 @@ describe('fleet registry: subscribe/tick/dispose', () => {
 describe('fleet registry: control dispatch', () => {
   // Registry routing must pass the termination intent through
   // to AgentManager.cancel(id, kind), kill() always 'kill' (direct agent
-  // kill, and chain/subtask cascade via cancelAgents), interrupt() always
+  // kill, and group kills via cancelAgents), interrupt() always
   // 'interrupt'. Spy on the exact args cancel() receives.
   test('agent kill passes cancel(id, "kill"); agent interrupt passes cancel(id, "interrupt")', () => {
     const calls: Array<{ id: string; kind: 'interrupt' | 'kill' | undefined }> = [];
@@ -1052,16 +944,16 @@ describe('fleet registry: control dispatch', () => {
     registry.dispose();
   });
 
-  test('chain cascade kill always passes cancel(id, "kill") over member agents, never "interrupt"', () => {
+  test('group kill always passes cancel(id, "kill") over its working unit agents, never "interrupt"', () => {
     const calls: Array<{ id: string; kind: 'interrupt' | 'kill' | undefined }> = [];
-    const chain = makeChain({
-      id: 'ch-verb',
-      ownerAgentId: 'own-verb',
-      allAgentIds: ['own-verb', 'm1-verb'],
+    const contract = makeRunningContract({
+      id: 'ctr-verb', ownerAgentId: 'own-verb',
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1'], status: 'running' })],
+      units: [makeUnit({ id: 'u1', status: 'running', agentIds: ['m1-verb'], activeAgentId: 'm1-verb' })],
     });
     const agents = [
-      makeAgent({ id: 'own-verb', contractId: 'ch-verb' }),
-      makeAgent({ id: 'm1-verb', contractId: 'ch-verb' }),
+      makeAgent({ id: 'own-verb', contractId: 'ctr-verb', contractRole: 'owner' }),
+      makeAgent({ id: 'm1-verb', contractId: 'ctr-verb', contractUnitId: 'u1' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1071,14 +963,12 @@ describe('fleet registry: control dispatch', () => {
           return true;
         },
       },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
     }));
-    registry.kill('chain:ch-verb');
-    expect(calls.length).toBeGreaterThan(0);
-    for (const call of calls) expect(call.kind).toBe('kill');
+    expect([...registry.kill('group:ctr-verb:g1')].sort()).toEqual(['group:ctr-verb:g1', 'm1-verb']);
+    expect(calls).toEqual([{ id: 'm1-verb', kind: 'kill' }]);
     registry.dispose();
   });
-
   test('kill routes to the owning manager per kind', () => {
     const calls: string[] = [];
     const agent = makeAgent({ id: 'ag-k' });
@@ -1180,51 +1070,44 @@ describe('fleet registry: control dispatch', () => {
     registry.dispose();
   });
 
-  test('chain kill is derived: cascades AgentManager.cancel over live member agents', () => {
-    const cancelled: string[] = [];
-    const chain = makeChain({
-      id: 'ch-kill',
-      ownerAgentId: 'own-k',
-      allAgentIds: ['own-k', 'm1-k', 'm2-k'],
+  test('contract kill goes through the runner: cancel(contractId), agents are the runner\'s to stop', () => {
+    const cancelledAgents: string[] = [];
+    const cancelledContracts: string[] = [];
+    const contract = makeRunningContract({
+      id: 'ctr-kill', ownerAgentId: 'own-k',
+      units: [makeUnit({ id: 'u1', status: 'running', agentIds: ['m1-k'], activeAgentId: 'm1-k' })],
     });
     const agents = [
-      makeAgent({ id: 'own-k', contractId: 'ch-kill' }),
-      makeAgent({ id: 'm1-k', contractId: 'ch-kill' }),
-      makeAgent({ id: 'm2-k', contractId: 'ch-kill', status: 'completed', completedAt: T0 }),
+      makeAgent({ id: 'own-k', contractId: 'ctr-kill', contractRole: 'owner' }),
+      makeAgent({ id: 'm1-k', contractId: 'ctr-kill', contractUnitId: 'u1' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
         list: () => [...agents],
-        cancel: (id: string) => {
-          const record = agents.find((candidate) => candidate.id === id);
-          if (!record || record.status !== 'running') return false;
-          cancelled.push(id);
-          return true;
-        },
+        cancel: (id: string) => { cancelledAgents.push(id); return true; },
       },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract], cancelledContracts),
     }));
-    const affected = registry.kill('chain:ch-kill');
-    expect(cancelled.sort()).toEqual(['m1-k', 'own-k']); // completed member not resurrected
-    expect([...affected].sort()).toEqual(['chain:ch-kill', 'm1-k', 'own-k']);
+    expect(registry.kill('contract:ctr-kill')).toEqual(['contract:ctr-kill']);
+    expect(cancelledContracts).toEqual(['ctr-kill']);
+    expect(cancelledAgents).toEqual([]); // the runner cancels its own units
+    // A second kill finds the contract already ended: nothing acted on.
+    expect(registry.kill('contract:ctr-kill')).toEqual([]);
     registry.dispose();
   });
-
-  test('chain kill with cascade: chain id is included even though cascade already cancelled every member', () => {
-    // A real AgentManager.cancel() is NOT idempotent-true: once an agent is
-    // cancelled, a second cancel() call on it returns false. Model that here
-    // (unlike the mock above, which never actually transitions status) so the
-    // cascade path's ordering bug, descendants cancelled first, then the
-    // chain's own cancelAgents() finds them all already-cancelled, surfaces.
+  test('contract kill with cascade: the contract id is included even though the unit agents were cancelled first', () => {
+    // Under cascade the unit agents stop first, and the runner reads an
+    // operator cancel of a unit agent as a stop of the contract, so its own
+    // cancel then returns false. The contract was still the target.
     const cancelledOnce = new Set<string>();
-    const chain = makeChain({
-      id: 'ch-casc',
-      ownerAgentId: 'own-c',
-      allAgentIds: ['own-c', 'm1-c'],
+    const cancelledContracts: string[] = [];
+    const contract = makeRunningContract({
+      id: 'ctr-casc', ownerAgentId: 'own-c',
+      units: [makeUnit({ id: 'u1', status: 'running', agentIds: ['m1-c'], activeAgentId: 'm1-c' })],
     });
     const agents = [
-      makeAgent({ id: 'own-c', contractId: 'ch-casc' }),
-      makeAgent({ id: 'm1-c', contractId: 'ch-casc' }),
+      makeAgent({ id: 'own-c', contractId: 'ctr-casc', contractRole: 'owner' }),
+      makeAgent({ id: 'm1-c', contractId: 'ctr-casc', contractUnitId: 'u1' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1232,40 +1115,42 @@ describe('fleet registry: control dispatch', () => {
         cancel: (id: string) => {
           if (cancelledOnce.has(id)) return false;
           cancelledOnce.add(id);
+          // The runner reacts to the unit agent's cancel by ending the contract.
+          if (id === 'm1-c') cancelledContracts.push('ctr-casc');
           return true;
         },
       },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract], cancelledContracts),
     }));
-    const affected = registry.kill('chain:ch-casc', { cascade: true });
-    expect([...affected].sort()).toEqual(['chain:ch-casc', 'm1-c', 'own-c']);
+    const affected = registry.kill('contract:ctr-casc', { cascade: true });
+    expect(affected).toContain('contract:ctr-casc');
+    expect(affected).toContain('m1-c');
     registry.dispose();
   });
-
-  test('chain kill (non-cascade) matches cascade: chain id included both ways for the same chain', () => {
-    const cancelledOnce = new Set<string>();
-    const chain = makeChain({
-      id: 'ch-eq',
-      ownerAgentId: 'own-e',
-      allAgentIds: ['own-e', 'm1-e'],
+  test('unit kill cancels its active agent with "kill"; a unit without a working agent is not killable', () => {
+    const calls: Array<{ id: string; kind: 'interrupt' | 'kill' | undefined }> = [];
+    const contract = makeRunningContract({
+      id: 'ctr-unit', ownerAgentId: 'own-u',
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1', 'u2'] })],
+      units: [
+        makeUnit({ id: 'u1', status: 'running', agentIds: ['m1-u'], activeAgentId: 'm1-u' }),
+        makeUnit({ id: 'u2', status: 'pending' }),
+      ],
     });
-    const agents = [
-      makeAgent({ id: 'own-e', contractId: 'ch-eq' }),
-      makeAgent({ id: 'm1-e', contractId: 'ch-eq' }),
-    ];
+    const agents = [makeAgent({ id: 'm1-u', contractId: 'ctr-unit', contractUnitId: 'u1' })];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
         list: () => [...agents],
-        cancel: (id: string) => {
-          if (cancelledOnce.has(id)) return false;
-          cancelledOnce.add(id);
-          return true;
-        },
+        cancel: (id: string, kind?: 'interrupt' | 'kill') => { calls.push({ id, kind }); return true; },
       },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
     }));
-    const affected = registry.kill('chain:ch-eq');
-    expect([...affected].sort()).toEqual(['chain:ch-eq', 'm1-e', 'own-e']);
+    expect([...registry.kill('unit:ctr-unit:u1')].sort()).toEqual(['m1-u', 'unit:ctr-unit:u1']);
+    expect(registry.interrupt('unit:ctr-unit:u1')).toBe(true);
+    expect(nodeById(registry, 'unit:ctr-unit:u2').capabilities.killable).toBe(false);
+    expect(registry.kill('unit:ctr-unit:u2')).toEqual([]);
+    expect(registry.interrupt('unit:ctr-unit:u2')).toBe(false);
+    expect(calls).toEqual([{ id: 'm1-u', kind: 'kill' }, { id: 'm1-u', kind: 'interrupt' }]);
     registry.dispose();
   });
 });
@@ -1345,13 +1230,13 @@ describe('fleet registry: steer', () => {
     registry.dispose();
   });
 
-  test('steer(): honest refusal for a missing node, a terminal agent, a wrfc-chain (steer the member, not the chain), and a non-agent kind', () => {
-    const chain = makeChain({ id: 'ch-steer', ownerAgentId: 'owner-s', allAgentIds: ['owner-s'] });
+  test('steer(): honest refusal for a missing node, a terminal agent, a contract and a group (steer a unit), and a non-agent kind', () => {
+    const contract = makeRunningContract({ id: 'ctr-steer', ownerAgentId: 'owner-s' });
     const trigger: TriggerDefinition = { id: 'trg-steer', event: 'push', action: 'run tests', enabled: true };
     const doneAgent = makeAgent({ id: 'ag-done-steer', status: 'completed', completedAt: T0 });
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [doneAgent], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
       workflow: {
         workflowManager: { list: () => [], cancel: () => false },
         triggerManager: { list: () => [trigger], remove: () => false, disable: () => false, enable: () => false },
@@ -1366,9 +1251,10 @@ describe('fleet registry: steer', () => {
     const doneResult = registry.steer('ag-done-steer', 'x');
     expect(doneResult.queued).toBe(false);
 
-    const chainResult = registry.steer('chain:ch-steer', 'x');
-    expect(chainResult.queued).toBe(false);
-    if (!chainResult.queued) expect(chainResult.reason).toContain('member');
+    const contractResult = registry.steer('contract:ctr-steer', 'x');
+    expect(contractResult).toEqual({ queued: false, reason: 'steer a unit, not the contract' });
+    const groupResult = registry.steer('group:ctr-steer:g1', 'x');
+    expect(groupResult).toEqual({ queued: false, reason: 'steer a unit, not the group' });
 
     const triggerResult = registry.steer('trg-steer', 'x');
     expect(triggerResult.queued).toBe(false);
@@ -1414,70 +1300,70 @@ describe('fleet registry: steer', () => {
     registry.dispose();
   });
 
-  test('steer(): a wrfc-subtask routes to its currently-active live member agent, not the subtask node id', () => {
+  test('steer(): a contract unit routes to its live active agent, not the unit node id', () => {
     const bus = fakeMessageBus(true);
-    const chain = makeChain({
-      id: 'ch-sub-steer',
-      ownerAgentId: 'owner-sub',
-      allAgentIds: ['owner-sub', 'eng-sub'],
-      subtasks: [makeSubtask({ id: 'st-sub', state: 'engineering', engineerAgentId: 'eng-sub' })],
+    const contract = makeRunningContract({
+      id: 'ctr-unit-steer', ownerAgentId: 'owner-sub',
+      units: [makeUnit({ id: 'u1', status: 'running', agentIds: ['eng-sub'], activeAgentId: 'eng-sub' })],
     });
     const agents = [
-      makeAgent({ id: 'owner-sub', contractId: 'ch-sub-steer', contractRole: 'owner' }),
-      makeAgent({ id: 'eng-sub', contractId: 'ch-sub-steer', contractUnitId: 'st-sub', status: 'running' }),
+      makeAgent({ id: 'owner-sub', contractId: 'ctr-unit-steer', contractRole: 'owner' }),
+      makeAgent({ id: 'eng-sub', contractId: 'ctr-unit-steer', contractUnitId: 'u1', status: 'running' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
       messageBus: bus,
     }));
-    expect(nodeById(registry, 'subtask:st-sub').capabilities.steerable).toBe(true);
-    const result = registry.steer('subtask:st-sub', 'go faster');
+    expect(nodeById(registry, 'unit:ctr-unit-steer:u1').capabilities.steerable).toBe(true);
+    const result = registry.steer('unit:ctr-unit-steer:u1', 'go faster');
     expect(result.queued).toBe(true);
     expect(bus.calls).toHaveLength(1);
-    expect(bus.calls[0]?.toId).toBe('eng-sub'); // NOT 'subtask:st-sub'
+    expect(bus.calls[0]?.toId).toBe('eng-sub'); // NOT 'unit:ctr-unit-steer:u1'
+    expect(bus.calls[0]?.fromId).toBe('operator');
     registry.dispose();
   });
-
-  test('steer(): a wrfc-subtask whose resolved member agent is terminal is not steerable and refuses', () => {
-    const chain = makeChain({
-      id: 'ch-sub-term',
-      ownerAgentId: 'owner-t2',
-      allAgentIds: ['owner-t2', 'eng-t2'],
-      subtasks: [makeSubtask({ id: 'st-term', state: 'engineering', engineerAgentId: 'eng-t2' })],
+  test('steer(): a unit whose active agent is terminal is not steerable and refuses', () => {
+    const contract = makeRunningContract({
+      id: 'ctr-unit-term', ownerAgentId: 'owner-t2',
+      units: [makeUnit({ id: 'u1', status: 'running', agentIds: ['eng-t2'], activeAgentId: 'eng-t2' })],
     });
     const agents = [
-      makeAgent({ id: 'owner-t2', contractId: 'ch-sub-term' }),
-      makeAgent({ id: 'eng-t2', contractId: 'ch-sub-term', contractUnitId: 'st-term', status: 'completed', completedAt: T0 }),
+      makeAgent({ id: 'eng-t2', contractId: 'ctr-unit-term', contractUnitId: 'u1', status: 'completed', completedAt: T0 }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
-      wrfcController: { listChains: () => [chain] },
+      contractRunner: runnerOf([contract]),
       messageBus: fakeMessageBus(),
     }));
-    expect(nodeById(registry, 'subtask:st-term').capabilities.steerable).toBe(false);
-    const result = registry.steer('subtask:st-term', 'go faster');
-    expect(result.queued).toBe(false);
+    expect(nodeById(registry, 'unit:ctr-unit-term:u1').capabilities.steerable).toBe(false);
+    const result = registry.steer('unit:ctr-unit-term:u1', 'go faster');
+    expect(result).toEqual({ queued: false, reason: 'no live agent to steer for this unit' });
     registry.dispose();
   });
-
-  test('steer(): a wrfc-subtask with no phase currently in flight (pending/passed/failed) is not steerable', () => {
-    const chain = makeChain({
-      id: 'ch-sub-idle',
-      ownerAgentId: 'owner-i',
-      allAgentIds: ['owner-i'],
-      subtasks: [makeSubtask({ id: 'st-idle', state: 'pending' })],
+  test('steer(): a unit with no agent working (pending) is not steerable; no bus refuses a live unit too', () => {
+    const contract = makeRunningContract({
+      id: 'ctr-unit-idle',
+      units: [makeUnit({ id: 'u1', status: 'pending' }), makeUnit({ id: 'u2', status: 'running', agentIds: ['eng-live'], activeAgentId: 'eng-live' })],
+      groups: [makeGroup({ id: 'g1', unitIds: ['u1', 'u2'] })],
     });
-    const registry = createProcessRegistry(makeDeps({
-      wrfcController: { listChains: () => [chain] },
+    const agents = [makeAgent({ id: 'eng-live', contractId: 'ctr-unit-idle', contractUnitId: 'u2', status: 'running' })];
+    const withBus = createProcessRegistry(makeDeps({
+      agentManager: { list: () => [...agents], cancel: () => false },
+      contractRunner: runnerOf([contract]),
       messageBus: fakeMessageBus(),
     }));
-    expect(nodeById(registry, 'subtask:st-idle').capabilities.steerable).toBe(false);
-    const result = registry.steer('subtask:st-idle', 'go');
-    expect(result.queued).toBe(false);
-    registry.dispose();
+    expect(nodeById(withBus, 'unit:ctr-unit-idle:u1').capabilities.steerable).toBe(false);
+    expect(withBus.steer('unit:ctr-unit-idle:u1', 'go').queued).toBe(false);
+    withBus.dispose();
+    const noBus = createProcessRegistry(makeDeps({
+      agentManager: { list: () => [...agents], cancel: () => false },
+      contractRunner: runnerOf([contract]),
+    }));
+    expect(nodeById(noBus, 'unit:ctr-unit-idle:u2').capabilities.steerable).toBe(false);
+    expect(noBus.steer('unit:ctr-unit-idle:u2', 'go').queued).toBe(false);
+    noBus.dispose();
   });
-
   test('steer(): send() returning false (route blocked) surfaces as an honest refusal, not a false queued:true', () => {
     const agent = makeAgent({ id: 'ag-blocked', status: 'running' });
     const registry = createProcessRegistry(makeDeps({

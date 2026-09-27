@@ -69,7 +69,7 @@ export interface ConversationGateDeps {
       readonly agentId: string;
       readonly task: string;
       readonly agentTask?: string | undefined;
-      readonly workflowChainId?: string | undefined;
+      readonly contractId?: string | undefined;
       readonly sessionId?: string | undefined;
     },
   ) => void;
@@ -258,6 +258,6 @@ export async function startAgreedWork(
     agentId: spawned.id,
     task: proposal.summary,
     ...(proposal.sessionId ? { sessionId: proposal.sessionId } : {}),
-    ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { workflowChainId: spawned.contractId } : {}),
+    ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { contractId: spawned.contractId } : {}),
   });
 }

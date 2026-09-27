@@ -41,7 +41,7 @@ export interface WorkPlanTaskEventRecord {
   readonly source?: string | undefined;
   readonly tags: readonly string[];
   readonly parentTaskId?: string | undefined;
-  readonly chainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly phaseId?: string | undefined;
   readonly agentId?: string | undefined;
   readonly turnId?: string | undefined;

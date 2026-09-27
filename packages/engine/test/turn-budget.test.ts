@@ -9,14 +9,14 @@
  * consumer never has to regex the prose.
  */
 import { describe, expect, test } from 'bun:test';
-import { EventEmitter } from 'node:events';
 import {
   resolveTurnBudget,
   formatTurnLimitError,
   isTurnBudgetExhaustedMessage,
   TURN_BUDGET_EXHAUSTED,
 } from '../sdk/src/platform/agents/turn-budget.ts';
-import { emitWorkflowChainFailed } from '../sdk/src/platform/runtime/emitters/workflows.ts';
+import { emitWrfcChainFailed } from '../sdk/src/platform/agents/wrfc-contract-events.ts';
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 
 describe('resolveTurnBudget', () => {
   test('no override uses the config default, source "default"', () => {
@@ -53,24 +53,27 @@ describe('turn-budget helpers', () => {
   });
 });
 
-describe('WORKFLOW_CHAIN_FAILED carries the typed turn-budget outcome on the wire', () => {
-  test('failureKind max_turns + turnLimit + turnLimitSource ride the event, prose intact', () => {
-    const ee = new EventEmitter();
+describe('CONTRACT_FAILED carries the typed turn-budget outcome on the wire', () => {
+  test('failureKind max_turns + turnLimit + turnLimitSource ride the event, prose intact', async () => {
+    const bus = new RuntimeEventBus();
     const events: Array<{ payload: Record<string, unknown> }> = [];
-    ee.on('workflows', (e: { payload: Record<string, unknown> }) => events.push(e));
-    const bus = { emit: ee.emit.bind(ee) } as unknown as Parameters<typeof emitWorkflowChainFailed>[0];
+    bus.onDomain('contracts', (e) => events.push(e as unknown as { payload: Record<string, unknown> }));
 
-    emitWorkflowChainFailed(bus, { source: 'test', traceId: 't' } as Parameters<typeof emitWorkflowChainFailed>[1], {
+    emitWrfcChainFailed(bus, 'session-1', {
       chainId: 'chain-1',
       reason: 'Exceeded maximum turn limit (120)',
       failureKind: 'max_turns',
+      membersSettled: true,
       turnLimit: 120,
       turnLimitSource: 'spawn-override',
     });
+    // The bus dispatches each subscriber in its own microtask.
+    await Promise.resolve();
 
     expect(events).toHaveLength(1);
     const payload = events[0]!.payload as Record<string, unknown>;
-    expect(payload.type).toBe('WORKFLOW_CHAIN_FAILED');
+    expect(payload.type).toBe('CONTRACT_FAILED');
+    expect(payload.contractId).toBe('chain-1');
     expect(payload.failureKind).toBe('max_turns');
     expect(payload.turnLimit).toBe(120);
     expect(payload.turnLimitSource).toBe('spawn-override');

@@ -8,7 +8,7 @@ import {
   loadPackageScripts,
 } from '../contract/gates.js';
 import { getEnabledWrfcGates } from './wrfc-config.js';
-import { emitWrfcGateResult } from './wrfc-runtime-events.js';
+import { emitWrfcGateResult } from './wrfc-contract-events.js';
 
 export async function runWrfcGateChecks(options: {
   readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>;
@@ -55,7 +55,7 @@ export async function runWrfcGateChecks(options: {
         durationMs: 0,
       };
       results.push(result);
-      emitWrfcGateResult(options.runtimeBus, options.sessionId, options.chainId, gate.name, true);
+      emitWrfcGateResult(options.runtimeBus, options.sessionId, { chainId: options.chainId, gate: gate.name, passed: true, skipped: true, durationMs: 0 });
       options.onResult?.(results.slice(), result);
       logger.debug('Wrfc gate runner: gate skipped', {
         chainId: options.chainId,
@@ -74,7 +74,7 @@ export async function runWrfcGateChecks(options: {
       durationMs: Date.now() - startedAt,
     };
     results.push(result);
-    emitWrfcGateResult(options.runtimeBus, options.sessionId, options.chainId, gate.name, passed);
+    emitWrfcGateResult(options.runtimeBus, options.sessionId, { chainId: options.chainId, gate: gate.name, passed, skipped: false, durationMs: result.durationMs });
     options.onResult?.(results.slice(), result);
     logger.debug('Wrfc gate runner: gate result', {
       chainId: options.chainId,

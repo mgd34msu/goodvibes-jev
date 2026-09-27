@@ -9,8 +9,8 @@ import type {
   SessionEvent,
   ToolEvent,
   TurnEvent,
-  WorkflowEvent,
 } from './events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import { createRuntimeEventFeed, type RuntimeEventFeed } from './event-feeds.js';
 
 export type UiEventFeed<TEvent extends AnyRuntimeEvent> = RuntimeEventFeed<TEvent>;
@@ -21,7 +21,7 @@ export interface UiRuntimeEvents {
   readonly tools: UiEventFeed<ToolEvent>;
   readonly providers: UiEventFeed<ProviderEvent>;
   readonly agents: UiEventFeed<AgentEvent>;
-  readonly workflows: UiEventFeed<WorkflowEvent>;
+  readonly contracts: UiEventFeed<ContractEvent>;
   readonly planner: UiEventFeed<PlannerEvent>;
   readonly ops: UiEventFeed<OpsEvent>;
 }
@@ -39,7 +39,7 @@ export function createUiRuntimeEvents(runtimeBus: RuntimeEventBus): UiRuntimeEve
     tools: createUiEventFeed<ToolEvent>(runtimeBus),
     providers: createUiEventFeed<ProviderEvent>(runtimeBus),
     agents: createUiEventFeed<AgentEvent>(runtimeBus),
-    workflows: createUiEventFeed<WorkflowEvent>(runtimeBus),
+    contracts: createUiEventFeed<ContractEvent>(runtimeBus),
     planner: createUiEventFeed<PlannerEvent>(runtimeBus),
     ops: createUiEventFeed<OpsEvent>(runtimeBus),
   };

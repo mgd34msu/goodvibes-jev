@@ -20,8 +20,8 @@ import type { SessionEvent } from '../sdk/src/events/session.js';
 // TurnEvent imports PartialToolCall from providers/interface, both relative, bun handles it.
 import type { TurnEvent } from '../sdk/src/events/turn.js';
 
-// WorkflowEvent imports WrfcState from agents/wrfc-types, relative, bun handles it.
-import type { WorkflowEvent } from '../sdk/src/events/workflows.js';
+import type { ContractEvent } from '../sdk/src/events/contract.js';
+import { ALL_CONTRACT_EVENTS } from './contract/event-samples.js';
 
 // ---------------------------------------------------------------------------
 // Type-level: compile-time narrowing assertions.
@@ -63,11 +63,11 @@ type _AssertSessionHasProfileId = _SessionStarted extends { sessionId: string; p
 const _assertSession: _AssertSessionHasProfileId = true;
 void _assertSession;
 
-/** Verify WorkflowEvent narrows task on WORKFLOW_CHAIN_CREATED without cast. */
-type _WorkflowChainCreated = Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_CREATED' }>;
-type _AssertWorkflowHasTask = _WorkflowChainCreated extends { chainId: string; task: string } ? true : never;
-const _assertWorkflow: _AssertWorkflowHasTask = true;
-void _assertWorkflow;
+/** Verify ContractEvent narrows ask on CONTRACT_CREATED without cast. */
+type _ContractCreated = Extract<ContractEvent, { type: 'CONTRACT_CREATED' }>;
+type _AssertContractHasAsk = _ContractCreated extends { contractId: string; ask: string } ? true : never;
+const _assertContract: _AssertContractHasAsk = true;
+void _assertContract;
 
 // ---------------------------------------------------------------------------
 // Helper: runtime narrowing without casts
@@ -183,29 +183,58 @@ function exhaustiveTurnSwitch(event: TurnEvent): string {
   }
 }
 
-function exhaustiveWorkflowSwitch(event: WorkflowEvent): string {
+/** One field per contract event type, read after narrowing; the never check fails the build if a type is added without a case. */
+function exhaustiveContractSwitch(event: ContractEvent): string {
   switch (event.type) {
-    case 'WORKFLOW_CHAIN_CREATED':
-      return event.chainId;
-    case 'WORKFLOW_STATE_CHANGED':
+    case 'CONTRACT_CREATED':
+      return event.ask;
+    case 'CONTRACT_STATUS_CHANGED':
       return `${event.from}->${event.to}`;
-    case 'WORKFLOW_REVIEW_COMPLETED':
-      return String(event.score);
-    case 'WORKFLOW_FIX_ATTEMPTED':
-      return String(event.attempt);
-    case 'WORKFLOW_GATE_RESULT':
+    case 'CONTRACT_SHAPED':
+      return event.forbidsWriting.verdict;
+    case 'CONTRACT_PLANNED':
+      return event.goal;
+    case 'CONTRACT_PLAN_CHECKED':
+      return event.check;
+    case 'CONTRACT_GROUP_STATUS_CHANGED':
+      return event.groupId;
+    case 'CONTRACT_UNIT_STATUS_CHANGED':
+      return event.unitId;
+    case 'CONTRACT_UNIT_SPAWNED':
+      return event.route.reason;
+    case 'CONTRACT_CHECKED':
+      return event.result;
+    case 'CONTRACT_NUDGED':
+      return event.nudgeId;
+    case 'CONTRACT_NUDGE_CONSUMED':
+      return event.nudgeId;
+    case 'CONTRACT_CRITERION_REGRESSED':
+      return event.criterionId;
+    case 'CONTRACT_STALLED':
+      return event.route;
+    case 'CONTRACT_FIX_PLANNED':
+      return String(event.round);
+    case 'CONTRACT_ESCALATED':
+      return event.question;
+    case 'CONTRACT_OWNER_REPLIED':
+      return event.reading;
+    case 'CONTRACT_GATE_RESULT':
       return event.gate;
-    case 'WORKFLOW_CHAIN_PASSED':
-      return event.chainId;
-    case 'WORKFLOW_CHAIN_FAILED':
-      return event.reason;
-    case 'WORKFLOW_AUTO_COMMITTED':
-      return event.chainId;
-    case 'WORKFLOW_CASCADE_ABORTED':
-      return event.reason;
-    case 'WORKFLOW_CONSTRAINTS_ENUMERATED':
-      return event.chainId;
-    case 'WORKFLOW_SCORE_REGRESSION':
+    case 'CONTRACT_UNIT_SILENT':
+      return event.action;
+    case 'CONTRACT_MERGE_CONFLICT':
+      return event.branch;
+    case 'CONTRACT_ATTEMPTS_SELECTED':
+      return event.chosen ?? 'none';
+    case 'CONTRACT_COMMITTED':
+      return event.status;
+    case 'CONTRACT_PASSED':
+      return String(event.criteriaMet);
+    case 'CONTRACT_FAILED':
+      return event.failureKind;
+    case 'CONTRACT_CANCELLED':
+      return String(event.filesModified);
+    case 'CONTRACT_SPAWN_GUARD_TRIGGERED':
       return event.reason;
     default: {
       const _exhaustiveCheck: never = event;
@@ -330,41 +359,31 @@ describe('discriminated union: SessionEvent', () => {
   });
 });
 
-describe('discriminated union: WorkflowEvent', () => {
-  test('WORKFLOW_CHAIN_CREATED: chainId and task are accessible without cast', () => {
-    const event: WorkflowEvent = { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'chain-1', task: 'implement feature' };
-    if (event.type === 'WORKFLOW_CHAIN_CREATED') {
-      expect(event.chainId).toBe('chain-1');
-      expect(event.task).toBe('implement feature');
+describe('discriminated union: ContractEvent', () => {
+  test('CONTRACT_CREATED: contractId and ask are accessible without cast', () => {
+    const event: ContractEvent = { type: 'CONTRACT_CREATED', contractId: 'ctr-1', sessionId: 's1', origin: 'turn', ask: 'implement feature', ownerAgentId: 'a1' };
+    if (event.type === 'CONTRACT_CREATED') {
+      expect(event.contractId).toBe('ctr-1');
+      expect(event.ask).toBe('implement feature');
     }
   });
 
-  test('WORKFLOW_REVIEW_COMPLETED: score and passed are accessible without cast', () => {
-    const event: WorkflowEvent = { type: 'WORKFLOW_REVIEW_COMPLETED', chainId: 'chain-2', score: 9, passed: true };
-    if (event.type === 'WORKFLOW_REVIEW_COMPLETED') {
-      const score: number = event.score;
-      const passed: boolean = event.passed;
-      expect(score).toBe(9);
-      expect(passed).toBe(true);
+  test('CONTRACT_CHECKED: per-criterion readings are accessible without cast', () => {
+    const event: ContractEvent = {
+      type: 'CONTRACT_CHECKED', contractId: 'ctr-2', scope: 'unit', targetId: 'u1', checkId: 'u1.k1', trigger: 'completion', result: 'pass',
+      criteria: [{ criterionId: 'u1.c1', verdict: 'met', probabilityUnmet: 0.04, outcome: 'act' }],
+      goal: { verdict: 'met', outcome: 'act' }, quality: [], gates: [], decisionIds: [],
+    };
+    if (event.type === 'CONTRACT_CHECKED') {
+      const probability: number = event.criteria[0]!.probabilityUnmet;
+      expect(probability).toBe(0.04);
+      expect(event.result).toBe('pass');
     }
   });
 
   test('exhaustive switch: all variants covered (never check in default)', () => {
-    const events: WorkflowEvent[] = [
-      { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'c1', task: 'build' },
-      { type: 'WORKFLOW_STATE_CHANGED', chainId: 'c1', from: 'engineering', to: 'reviewing' },
-      { type: 'WORKFLOW_REVIEW_COMPLETED', chainId: 'c1', score: 9, passed: true },
-      { type: 'WORKFLOW_FIX_ATTEMPTED', chainId: 'c1', attempt: 1, maxAttempts: 3 },
-      { type: 'WORKFLOW_GATE_RESULT', chainId: 'c1', gate: 'typecheck', passed: true },
-      { type: 'WORKFLOW_CHAIN_PASSED', chainId: 'c1' },
-      { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'c1', reason: 'max retries' },
-      { type: 'WORKFLOW_AUTO_COMMITTED', chainId: 'c1' },
-      { type: 'WORKFLOW_CASCADE_ABORTED', chainId: 'c1', reason: 'user cancelled' },
-      { type: 'WORKFLOW_CONSTRAINTS_ENUMERATED', chainId: 'c1', constraints: [{ id: 'con-1', text: 'must pass lint', source: 'prompt' }] },
-      { type: 'WORKFLOW_SCORE_REGRESSION', chainId: 'c1', reason: 'score dropped below threshold' },
-    ];
-    for (const event of events) {
-      expect(exhaustiveWorkflowSwitch(event)).not.toBe('unknown');
+    for (const event of ALL_CONTRACT_EVENTS) {
+      expect(exhaustiveContractSwitch(event)).not.toBe('unknown');
     }
   });
 });

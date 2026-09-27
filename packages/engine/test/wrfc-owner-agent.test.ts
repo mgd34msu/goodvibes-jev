@@ -26,7 +26,7 @@ function emitAgentCompleted(bus: RuntimeEventBus, agentId: string): void {
 
 function waitForWorkflowEvent(bus: RuntimeEventBus, type: string): Promise<void> {
   return new Promise((resolve) => {
-    const unsubscribe = bus.onDomain('workflows', (envelope) => {
+    const unsubscribe = bus.onDomain('contracts', (envelope) => {
       if (envelope.type === type) {
         unsubscribe();
         resolve();
@@ -146,7 +146,7 @@ describe('WRFC owner agent orchestration', () => {
     expect(reviewer.reasoningEffort).toBe('low');
     expect(runRecords.map((record) => record.id)).toEqual([engineer.id, reviewer.id]);
 
-    const passed = waitForWorkflowEvent(bus, 'WORKFLOW_CHAIN_PASSED');
+    const passed = waitForWorkflowEvent(bus, 'CONTRACT_PASSED');
     // Structured review: the mechanical gate requires a recorded acceptance
     // checklist, a prose-only score line can no longer pass, by design.
     reviewer.fullOutput = ['```json', JSON.stringify({
@@ -383,12 +383,14 @@ describe('WRFC owner agent orchestration', () => {
     const engineer = manager.getStatus(chain.engineerAgentId!)!;
     expect(engineer.status).toBe('running');
 
-    const failed = waitForWorkflowEvent(bus, 'WORKFLOW_CHAIN_FAILED');
+    // An operator cancel of the owner is reported as a cancellation, not a failure.
+    const cancelled = waitForWorkflowEvent(bus, 'CONTRACT_CANCELLED');
     expect(manager.cancel(owner.id)).toBe(true);
-    await failed;
+    await cancelled;
     await flushMicrotasks(20);
 
     expect(chain.state).toBe('failed');
+    expect(chain.failureKind).toBe('cancelled');
     expect(chain.error).toBe('operator cancellation');
     expect(owner.status).toBe('cancelled');
     expect(engineer.status).toBe('cancelled');

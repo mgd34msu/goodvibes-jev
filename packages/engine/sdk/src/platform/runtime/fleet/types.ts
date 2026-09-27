@@ -3,9 +3,10 @@
 /**
  * Fleet types, the normalized process-tree contract for the live process
  * registry. One queryable + subscribable aggregation surface that
- * enumerates every live/completed runtime process (agents incl. WRFC roles,
- * WRFC chains + subtasks, workflow-tool FSMs/triggers/schedules, watchers,
- * background processes) as flat `ProcessNode` records with parentId edges.
+ * enumerates every live/completed runtime process (agents with their contract
+ * roles, contracts with their groups and units, workflow-tool
+ * FSMs/triggers/schedules, watchers, background processes) as flat
+ * `ProcessNode` records with parentId edges.
  *
  * Consumers (the TUI fleet tree, session tabs, orchestration
  * nesting) build the tree from the flat list, this keeps the registry cheap
@@ -15,18 +16,17 @@
 /** The source family a ProcessNode was adapted from. */
 export type ProcessKind =
   | 'agent'
-  | 'wrfc-chain'
-  | 'wrfc-subtask'
+  // The contract tree (docs/design/contract-runner.md section 8.3): a
+  // contract (root) -> its groups -> their units, a best-of-N unit's attempts
+  // under the unit, and each unit's agents under the unit.
+  | 'contract'
+  | 'contract-group'
+  | 'contract-unit'
   | 'workflow'
   | 'trigger'
   | 'schedule'
   | 'watcher'
   | 'background-process'
-  // Orchestration-engine pipeline nesting: workstream
-  // (parent) -> phase (grouping) -> work-item, mirroring wrfc-chain/subtask.
-  | 'workstream'
-  | 'phase'
-  | 'work-item'
   // A HOSTED third-party coding agent (Claude Code / Codex CLI / opencode)
   // running as a long-lived daemon session over the Agent Client Protocol,
   // see platform/acp/host.ts and adapters/acp-host.ts.
@@ -42,7 +42,7 @@ export type ProcessKind =
   // The repo source-tree code index's initial build (Stage A). Not
   // 'background-process': an index build has no pid (ProcessManager
   // is shell/OS-process-only), so it gets its own kind, mirroring the
-  // orchestrationEngine-dep precedent (optional dep, degrades to today when absent).
+  // other optional deps (degrades to today when absent).
   | 'code-index';
 
 /**
@@ -116,12 +116,12 @@ export interface ProcessCapabilities {
   readonly resumable: boolean;
   /**
    * Whether `ProcessRegistry.steer()` can queue a message for this
-   * node. True only for a live in-process agent (or a wrfc-subtask with a
-   * live member agent) AND only when the registry was constructed with a
+   * node. True only for a live in-process agent (or a contract unit with a
+   * live agent) AND only when the registry was constructed with a
    * `messageBus` dep, false everywhere when that dep is absent (graceful
    * degrade, no crash). Terminal nodes and non-conversational kinds
-   * (wrfc-chain, workflow, trigger, schedule, watcher, background-process)
-   * are never steerable.
+   * (contract, contract group, workflow, trigger, schedule, watcher,
+   * background-process) are never steerable.
    */
   readonly steerable: boolean;
 }
@@ -224,25 +224,25 @@ export interface ProcessNode {
    */
   readonly stall?: ProcessStallTell | undefined;
   /**
-   * Best-of-N grouping, present only on a work-item node that is one sibling
-   * attempt of a group (see attempts.ts). Lets the fleet surface render the N
+   * Best-of-N grouping, present only on a contract-unit node that is one
+   * attempt of a best-of-N unit (see contract/best-of-n.ts). Lets the fleet surface render the N
    * siblings as one group and know which are candidates for a winner pick.
    * Absent on every ordinary (single-attempt) node.
    */
   readonly attemptGroup?: ProcessAttemptGroup | undefined;
   /**
-   * The latest review's verdict, score, and acceptance checklist, present
-   * ONLY on a wrfc-chain / wrfc-subtask node whose review has completed.
-   * Absent before any review (never an empty shell). See {@link ProcessReviewSummary}.
+   * Each judged criterion's latest reading, present ONLY on a contract,
+   * contract-group or contract-unit node that has judged criteria. See
+   * {@link ProcessCheckSummary}.
    */
-  readonly review?: ProcessReviewSummary | undefined;
+  readonly check?: ProcessCheckSummary | undefined;
   /**
    * Observed foreign-agent facts, present ONLY on an `observed-external` node
    * (a coding-agent session goodvibes did not spawn or host). Absent on every
    * owned/hosted node. See {@link ProcessObserved}.
    */
   readonly observed?: ProcessObserved | undefined;
-  /** Opaque source record (AgentRecord, WrfcChain, …) for drill-downs. */
+  /** Opaque source record (AgentRecord, ContractView, …) for drill-downs. */
   readonly raw?: unknown;
 }
 
@@ -330,37 +330,33 @@ export interface ProcessObserved {
   readonly steerDrillInOnly: true;
 }
 
-/**
- * One acceptance-checklist item from the latest review, as served on the wire:
- * the requirement the reviewer derived from the original task, whether it was
- * independently verified, and the evidence, so a consumer renders what was
- * ACTUALLY verified, not just a score. Long evidence is summarised
- * (length-capped) at the read-model.
- */
-export interface ProcessReviewChecklistItem {
-  readonly item: string;
-  readonly verified: boolean;
-  readonly evidence: string;
-  readonly howExercised?: string | undefined;
+/** One judged criterion as the fleet shows it: its latest verdict and the reading behind it. */
+export interface ProcessCheckCriterion {
+  readonly id: string;
+  readonly text: string;
+  /** 'unread' until a check has read it. */
+  readonly verdict: 'unread' | 'met' | 'unmet' | 'unshown';
+  /** What the latest reading's band said to do: act, confirm with the owner, or escalate. */
+  readonly outcome?: 'act' | 'confirm' | 'escalate' | undefined;
+  readonly severity?: 'critical' | 'major' | 'minor' | undefined;
 }
 
 /**
- * The latest review on a WRFC chain / compound sub-deliverable, served on the
- * wire. `passed` is the CONTROLLER verdict (gate-inclusive: checklist,
- * constraints, claims verification), the reviewer's own claim cannot
- * overstate it. Present only once a review has completed; a chain that has
- * not been reviewed carries NO review field (absent, never an empty shell).
+ * Where a contract, group or unit stands against its criteria: each judged
+ * criterion's latest reading, how many are met, how many corrections (nudges)
+ * were sent, and when it was last checked. A unit passes only when every
+ * criterion reads met; nothing else, not even the owner, marks unmet work
+ * passed.
  */
-export interface ProcessReviewSummary {
-  readonly score: number;
-  readonly passed: boolean;
-  /** How many review cycles have completed (1 = first review). */
-  readonly cycles: number;
-  /** The acceptance checklist the reviewer scored against. Empty array = the reviewer emitted none (itself a gate failure). */
-  readonly checklist: readonly ProcessReviewChecklistItem[];
+export interface ProcessCheckSummary {
+  readonly criteria: readonly ProcessCheckCriterion[];
+  readonly met: number;
+  readonly judged: number;
+  readonly nudges: number;
+  readonly lastCheckAt?: number | undefined;
 }
 
-/** A work-item node's best-of-N sibling grouping, surfaced on the wire. */
+/** A contract unit's best-of-N attempt grouping, surfaced on the wire. */
 export interface ProcessAttemptGroup {
   readonly groupId: string;
   readonly index: number;
@@ -368,10 +364,9 @@ export interface ProcessAttemptGroup {
   /** True while this sibling is a held (passed, parked) candidate awaiting the winner pick. */
   readonly held: boolean;
   /**
-   * True once the WHOLE group is ready for the winner pick: every sibling
-   * settled (held or failed) with at least one held candidate. The flagged
-   * pick a panel acts on, candidates and diffs come from fleet.attempts.list
-   * with this node's groupId, and fleet.attempts.pick completes it.
+   * True while the owner is asked to pick among the attempts (the selection
+   * could not settle it at act). The reply that picks goes to the contract's
+   * escalation.
    */
   readonly ready: boolean;
 }
@@ -443,19 +438,19 @@ export interface ProcessRegistry {
   /**
    * Hard stop. Dispatches to the owning manager's control fn
    * (agent → cancel, background process → stop, watcher → stopWatcher,
-   * workflow → cancel, trigger/schedule → remove). WRFC chain kill is
-   * DERIVED, not native: it cascades AgentManager.cancel over the chain's
-   * member agents. Returns the node ids that were actually acted on.
+   * workflow → cancel, trigger/schedule → remove, contract → cancel the
+   * contract, contract group → cancel its working unit agents, contract unit →
+   * cancel its agent, which the runner treats as an operator cancel of the
+   * contract). Returns the node ids that were actually acted on.
    */
   kill(id: string, opts?: ProcessKillOptions): readonly string[];
   /**
-   * Queue a human message for a live in-process agent (or the current live
-   * member agent of a wrfc-subtask), delivered at the target's next turn
-   * boundary (next tool round / turn top), never mid-token. Honest refusal
-   * (`queued: false`) for anything that cannot take mid-run input: terminal
-   * nodes, non-agent kinds, the wrfc-chain coordinator itself (steer its
-   * member subtask instead), and any target when the registry has no
-   * `messageBus` dep configured.
+   * Queue a human message for a live in-process agent (or the live agent of a
+   * contract unit), delivered at the target's next turn boundary (next tool
+   * round / turn top), never mid-token. Honest refusal (`queued: false`) for
+   * anything that cannot take mid-run input: terminal nodes, non-agent kinds,
+   * a contract or contract group (steer a unit instead), and any target when
+   * the registry has no `messageBus` dep configured.
    */
   steer(id: string, text: string): SteerResult;
   /** Stop the tick, detach runtime-bus taps, drop all listeners. Idempotent. */

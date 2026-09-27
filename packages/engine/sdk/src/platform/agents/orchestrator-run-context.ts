@@ -27,12 +27,9 @@ export interface AgentOrchestratorRunContext {
   readonly featureFlagManager: FeatureFlagManager | null;
   readonly emitterContext: (agentId: string) => EmitterContext;
   readonly emitAgentProgress: (recordId: string, progress: string, audience: ProgressAudience) => void;
-  readonly emitOrchestrationProgress: (record: AgentRecord, progress: string) => void;
   readonly emitAgentStarted: (recordId: string) => void;
   readonly emitAgentCancelledEvent: (recordId: string, reason: string) => void;
-  readonly emitOrchestrationCancelled: (record: AgentRecord, reason: string) => void;
   readonly emitAgentFailedEvent: (recordId: string, error: string, durationMs: number) => void;
-  readonly emitOrchestrationFailed: (record: AgentRecord, error: string) => void;
   readonly emitAgentCompletedEvent: (
     recordId: string,
     durationMs: number,
@@ -40,7 +37,6 @@ export interface AgentOrchestratorRunContext {
     toolCallsMade: number,
     usage: AgentRecord['usage'] | undefined,
   ) => void;
-  readonly emitOrchestrationCompleted: (record: AgentRecord, output: string) => void;
   readonly emitStreamDelta: (recordId: string, content: string, accumulated: string) => void;
   /**
    * Conversation-snapshot bridge (Part C6): register the running

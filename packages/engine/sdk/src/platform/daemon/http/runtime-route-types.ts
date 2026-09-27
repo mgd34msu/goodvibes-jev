@@ -252,7 +252,7 @@ export interface DaemonRuntimeRouteContext extends Omit<
   }, logLabel: string, sessionId?: string) => AgentRecordLike | Response;
   readonly queueSurfaceReplyFromBinding: (
     binding: AutomationRouteBinding | undefined,
-    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly workflowChainId?: string; readonly sessionId?: string; },
+    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly contractId?: string; readonly sessionId?: string; },
   ) => void;
 
   /**

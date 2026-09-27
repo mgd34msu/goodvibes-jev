@@ -136,7 +136,7 @@ export function createContractPlanSync(deps: ContractPlanSyncDeps): ContractPlan
         status: task.status,
         source: CONTRACT_WORK_PLAN_SOURCE,
         // The work plan's correlation field; renamed to contractId with the wire schemas (design 11.3).
-        chainId: task.contractId,
+        contractId: task.contractId,
         originSurface: 'daemon',
         tags: ['contract', ...(task.parentTaskId === undefined ? [] : ['unit'])],
         ...(task.parentTaskId === undefined ? {} : { parentTaskId: task.parentTaskId }),

@@ -4,6 +4,8 @@
 
 ```ts
 
+import type { Outcome } from '@goodvibes-jev/judgment';
+import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { Socket } from 'node:net';
 import type { StoreApi } from 'zustand';
 
@@ -807,14 +809,14 @@ export interface ProcessRegistryDeps {
     readonly automationManager?: Pick<AutomationManager, 'listJobs' | 'setEnabled' | 'removeJob'> | undefined;
     // Warning: (ae-forgotten-export) The symbol "CodeIndexProcessSource" needs to be exported by the entry point index.d.ts
     readonly codeIndexService?: CodeIndexProcessSource | undefined;
+    // Warning: (ae-forgotten-export) The symbol "ContractRunner" needs to be exported by the entry point index.d.ts
+    readonly contractRunner?: Pick<ContractRunner, 'list' | 'cancel'> | undefined;
     // Warning: (ae-forgotten-export) The symbol "AgentMessageBus" needs to be exported by the entry point index.d.ts
     readonly messageBus?: Pick<AgentMessageBus, 'send'> | undefined;
     // (undocumented)
     readonly now?: (() => number) | undefined;
     // Warning: (ae-forgotten-export) The symbol "ObservedAgentSource" needs to be exported by the entry point index.d.ts
     readonly observedAgents?: Pick<ObservedAgentSource, 'list' | 'steer'> | undefined;
-    // Warning: (ae-forgotten-export) The symbol "OrchestrationEngine" needs to be exported by the entry point index.d.ts
-    readonly orchestrationEngine?: Pick<OrchestrationEngine, 'listWorkstreams' | 'kill'> | undefined;
     readonly priceProvenance?: ((model: string | undefined) => {
         readonly source: 'user' | 'provider' | 'catalog';
         readonly asOf?: string | undefined;
@@ -849,10 +851,6 @@ export interface ProcessRegistryDeps {
         readonly triggerManager: Pick<TriggerManager, 'list' | 'remove' | 'disable' | 'enable'>;
         readonly scheduleManager: Pick<ScheduleManager, 'list' | 'remove' | 'disable' | 'enable'>;
     };
-    // Warning: (ae-forgotten-export) The symbol "WrfcController" needs to be exported by the entry point index.d.ts
-    //
-    // (undocumented)
-    readonly wrfcController: Pick<WrfcController, 'listChains'>;
 }
 
 // @public (undocumented)
@@ -1317,9 +1315,9 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:273:30 - (ae-forgotten-export) The symbol "CheckinSessionView" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:340:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:341:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:120:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:122:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:123:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:104:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:107:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
 // terminal-shell/src/terminal-output-guard.ts:70:3 - (ae-forgotten-export) The symbol "WritableStreamLike" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)

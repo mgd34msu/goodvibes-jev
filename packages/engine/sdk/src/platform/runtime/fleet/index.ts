@@ -15,8 +15,8 @@ export type {
   ProcessAttentionReason,
   ProcessHeadline,
   ProcessStallTell,
-  ProcessReviewChecklistItem,
-  ProcessReviewSummary,
+  ProcessCheckCriterion,
+  ProcessCheckSummary,
   ObservedAgentKind,
   ObservedSteerChannel,
   ObservedLiveness,
@@ -46,9 +46,8 @@ export { withFleetArchive } from './archive.js';
 export { attachFleetEmitBridge } from './emit-bridge.js';
 export type { FleetEmitBridgeDeps } from './emit-bridge.js';
 export type { ArchivableProcessRegistry, FleetArchiveResult, FleetArchiveView } from './archive.js';
-export { chainNodeId, subtaskNodeId, workItemNodeId } from './adapters/agent.js';
+export { contractNodeId, contractGroupNodeId, contractUnitNodeId } from './adapters/contract.js';
 export { scheduleNodeId } from './adapters/schedule.js';
-export { workstreamNodeId, phaseNodeId } from './adapters/orchestration.js';
 export { codeIndexNodeId } from './adapters/code-index.js';
 export type { CodeIndexProcessSource } from './adapters/code-index.js';
 // Observed foreign-agent rows: the render-facing TYPES ship through the type

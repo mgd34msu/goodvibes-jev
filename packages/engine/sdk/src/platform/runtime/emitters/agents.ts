@@ -4,7 +4,7 @@
 import { createEventEnvelope } from '../events/envelope.js';
 import type { RuntimeEventBus } from '../events/index.js';
 import type { EmitterContext } from './index.js';
-import type { AgentUsage } from '../../../events/agents.js';
+import type { AgentTaskContract, AgentUsage } from '../../../events/agents.js';
 import type { ProgressAudience } from '../../agents/progress-audience.js';
 
 /** Emit AGENT_SPAWNING when an agent is being initialised. */
@@ -21,6 +21,7 @@ export function emitAgentSpawning(
     contractUnitId?: string | undefined;
     orchestrationGraphId?: string | undefined;
     parentNodeId?: string | undefined;
+    taskContract?: AgentTaskContract | undefined;
   }
 ): void {
   bus.emit('agents', createEventEnvelope('AGENT_SPAWNING', { type: 'AGENT_SPAWNING', ...data }, ctx));

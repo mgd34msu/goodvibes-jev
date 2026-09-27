@@ -918,39 +918,6 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
-### `orchestration`
-
-- `runtime.orchestration` -> `orchestration`
-
-#### `runtime.orchestration` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
 ### `planner`
 
 - `runtime.planner` -> `planner`
@@ -1581,39 +1548,6 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
-### `workflows`
-
-- `runtime.workflows` -> `workflows`
-
-#### `runtime.workflows` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
 ### `workspace`
 
 - `runtime.workspace` -> `workspace`
@@ -1647,66 +1581,322 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
-## Named WRFC workflow events
+## Named contract events
 
-The following named events are emitted on the `workflows` domain by the WRFC controller. They are not currently in the operator contract artifact. They are documented here as the authoritative reference.
+The `contracts` domain carries one named event per step of a contract (docs/design/contract-runner.md section 8.1). Each field below is required unless marked optional.
 
----
+### `CONTRACT_CREATED`
 
-### `WORKFLOW_CONSTRAINTS_ENUMERATED`
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `sessionId` | string | yes |
+| `origin` | enum: `turn`, `agent-tool`, `cli`, `hosted`, `external`, `proposal` | yes |
+| `ask` | string | yes |
+| `ownerAgentId` | string | yes |
 
-Emitted exactly once per WRFC chain immediately after the initial engineer agent completes and the controller has captured the constraint list from the engineer's report. Fixer re-runs do not re-emit this event.
+### `CONTRACT_STATUS_CHANGED`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `chainId` | `string` | The WRFC chain that produced the constraints |
-| `constraints` | `Constraint[]` | List of user-declared constraints extracted from the task prompt. Empty array when the task was non-build or unconstrained. |
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `from` | enum: `queued`, `shaping`, `planning`, `checking-plan`, `running`, `judging`, `fixing`, `committing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
+| `to` | enum: `queued`, `shaping`, `planning`, `checking-plan`, `running`, `judging`, `fixing`, `committing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
 
-`Constraint` shape:
+### `CONTRACT_SHAPED`
 
-```ts
-interface Constraint {
-  id: string;                      // "c1", "c2", …
-  text: string;                    // quoted/near-quoted user phrasing
-  source: 'prompt' | 'inherited'; // 'prompt' = engineer enumerated from this prompt
-                                   // 'inherited' = from parent chain / gate-retry
-}
-```
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `forbidsDelegation` | object | yes |
+| `forbidsDelegation.verdict` | enum: `yes`, `no`, `uncertain` | yes |
+| `forbidsDelegation.probability` | number | yes |
+| `forbidsDelegation.outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `requestsParallelAgents` | object | yes |
+| `requestsParallelAgents.verdict` | enum: `yes`, `no`, `uncertain` | yes |
+| `requestsParallelAgents.probability` | number | yes |
+| `requestsParallelAgents.outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `forbidsWriting` | object | yes |
+| `forbidsWriting.verdict` | enum: `yes`, `no`, `uncertain` | yes |
+| `forbidsWriting.probability` | number | yes |
+| `forbidsWriting.outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `asksForAttempts` | object | yes |
+| `asksForAttempts.verdict` | enum: `yes`, `no`, `uncertain` | yes |
+| `asksForAttempts.probability` | number | yes |
+| `asksForAttempts.outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `decisionIds` | string[] | yes |
 
-**Trigger:** `WrfcController.handleEngineerCompletion`. Fires when `!chain.constraintsEnumerated` (guards against duplicate emission on fixer re-runs).
+### `CONTRACT_PLANNED`
 
-**Semantics:** Signals the authoritative constraint list for the chain. An empty `constraints` array signals the zero-constraint (unconstrained) path. No constraint enforcement follows.
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `goal` | string | yes |
+| `criteria` | object[] | yes |
+| `criteria[].id` | string | yes |
+| `criteria[].text` | string | yes |
+| `criteria[].origin` | enum: `stated`, `derived`, `integration`, `fix`, `owner` | yes |
+| `criteria[].quote` | string | optional |
+| `criteria[].serves` | string[] | yes |
+| `criteria[].disposition` | enum: `judged`, `excluded`, `met-by-structure` | yes |
+| `criteria[].dispositionReason` | string | optional |
+| `groups` | object[] | yes |
+| `groups[].id` | string | yes |
+| `groups[].title` | string | yes |
+| `groups[].kind` | enum: `work`, `fix`, `integration` | yes |
+| `groups[].dependsOn` | string[] | yes |
+| `groups[].unitIds` | string[] | yes |
+| `units` | object[] | yes |
+| `units[].id` | string | yes |
+| `units[].groupId` | string | yes |
+| `units[].title` | string | yes |
+| `units[].role` | enum: `implement`, `research`, `design`, `integration` | yes |
+| `units[].dependsOn` | string[] | yes |
+| `units[].attempts` | number | yes |
+| `repair` | number | yes |
 
----
+### `CONTRACT_PLAN_CHECKED`
 
-### `WORKFLOW_REVIEW_COMPLETED`
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `check` | enum: `structure`, `criterion-trace`, `plan-coverage`, `criterion-shape`, `unit-shape` | yes |
+| `targetId` | string | optional |
+| `passed` | boolean | yes |
+| `problems` | object[] | yes |
+| `problems[].code` | string | yes |
+| `problems[].targetId` | string | optional |
+| `problems[].message` | string | yes |
+| `decisionIds` | string[] | yes |
 
-Emitted at the end of each reviewer cycle.
+### `CONTRACT_GROUP_STATUS_CHANGED`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `chainId` | `string` | The WRFC chain |
-| `score` | `number` | Reviewer rubric score (0–10) |
-| `passed` | `boolean` | `true` when `score >= threshold && !constraintFailure` |
-| `constraintsSatisfied` | `number \| undefined` | Count of satisfied constraint findings. Present only when `chain.constraints.length > 0`. |
-| `constraintsTotal` | `number \| undefined` | Total constraint findings evaluated. Present only when `chain.constraints.length > 0`. |
-| `unsatisfiedConstraintIds` | `string[] \| undefined` | IDs of constraints that were not satisfied. Present only when `chain.constraints.length > 0`. |
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `groupId` | string | yes |
+| `from` | enum: `pending`, `blocked`, `running`, `judging`, `fixing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
+| `to` | enum: `pending`, `blocked`, `running`, `judging`, `fixing`, `awaiting-owner`, `passed`, `failed`, `cancelled` | yes |
 
-When the chain has no constraints, `constraintsSatisfied`, `constraintsTotal`, and `unsatisfiedConstraintIds` are absent entirely.
+### `CONTRACT_UNIT_STATUS_CHANGED`
 
----
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `groupId` | string | yes |
+| `unitId` | string | yes |
+| `from` | enum: `pending`, `blocked`, `running`, `checking`, `held`, `nudged`, `fixing`, `awaiting-owner`, `held-merge`, `passed`, `failed`, `cancelled` | yes |
+| `to` | enum: `pending`, `blocked`, `running`, `checking`, `held`, `nudged`, `fixing`, `awaiting-owner`, `held-merge`, `passed`, `failed`, `cancelled` | yes |
+| `agentId` | string | optional |
 
-### `WORKFLOW_FIX_ATTEMPTED`
+### `CONTRACT_UNIT_SPAWNED`
 
-Emitted at the start of each fixer cycle.
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `agentId` | string | yes |
+| `route` | object | yes |
+| `route.model` | string | yes |
+| `route.provider` | string | yes |
+| `route.reasoningEffort` | string | optional |
+| `route.reason` | string | yes |
+| `purpose` | enum: `unit`, `fresh-unit`, `transport-retry`, `silence-retry`, `resume` | yes |
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `chainId` | `string` | The WRFC chain |
-| `attempt` | `number` | Current fix attempt number (1-indexed) |
-| `maxAttempts` | `number` | Maximum fix attempts configured for the chain |
-| `targetConstraintIds` | `string[] \| undefined` | IDs of unsatisfied constraints this fix iteration is addressing. Present only when `chain.constraints.length > 0`. |
+### `CONTRACT_CHECKED`
 
-When the chain has no constraints, `targetConstraintIds` is absent.
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `scope` | enum: `unit`, `group`, `deliverable` | yes |
+| `targetId` | string | yes |
+| `checkId` | string | yes |
+| `trigger` | enum: `turn-end`, `completion`, `agent-failed`, `fix-passed`, `resume`, `owner-amend` | yes |
+| `result` | enum: `pass`, `nudge`, `await-owner`, `stall`, `recorded` | yes |
+| `criteria` | object[] | yes |
+| `criteria[].criterionId` | string | yes |
+| `criteria[].verdict` | enum: `met`, `unmet`, `unshown` | yes |
+| `criteria[].probabilityUnmet` | number | yes |
+| `criteria[].outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `goal` | object | yes |
+| `goal.verdict` | enum: `met`, `unmet`, `unshown` | yes |
+| `goal.outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `quality` | object[] | yes |
+| `quality[].item` | enum: `placeholder`, `tests_weakened`, `breaks_existing`, `out_of_scope`, `hidden_failure`, `unsupported_claims` | yes |
+| `quality[].verdict` | enum: `yes`, `no`, `uncertain` | yes |
+| `quality[].outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `gates` | object[] | yes |
+| `gates[].gate` | string | yes |
+| `gates[].passed` | boolean | yes |
+| `gates[].skipped` | boolean | yes |
+| `claims` | enum: `files_verified`, `git_corroborated`, `verified_empty`, `unverifiable_no_claims`, `unverified` | optional |
+| `decisionIds` | string[] | yes |
 
-For the full constraint propagation lifecycle, see [WRFC Constraint Propagation](./wrfc-constraint-propagation.md).
+### `CONTRACT_NUDGED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `nudgeId` | string | yes |
+| `checkId` | string | yes |
+| `kinds` | enum[]: `unmet`, `unshown`, `regression`, `quality`, `gate`, `claims` | yes |
+| `criterionIds` | string[] | yes |
+| `delivery` | enum: `hold`, `bus`, `wake` | yes |
+| `agentId` | string | yes |
+
+### `CONTRACT_NUDGE_CONSUMED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `nudgeId` | string | yes |
+| `agentId` | string | yes |
+| `turn` | number | optional |
+
+### `CONTRACT_CRITERION_REGRESSED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `criterionId` | string | yes |
+| `metAtCheckId` | string | yes |
+| `checkId` | string | yes |
+
+### `CONTRACT_STALLED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `scope` | enum: `unit`, `group`, `deliverable` | yes |
+| `targetId` | string | yes |
+| `route` | enum: `split`, `fresh`, `owner` | yes |
+| `unmetCriterionIds` | string[] | yes |
+| `reason` | string | yes |
+| `decisionId` | string | optional |
+
+### `CONTRACT_FIX_PLANNED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `scope` | enum: `unit`, `group`, `deliverable` | yes |
+| `targetId` | string | yes |
+| `groupId` | string | yes |
+| `unitIds` | string[] | yes |
+| `round` | number | yes |
+
+### `CONTRACT_ESCALATED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `escalationId` | string | yes |
+| `scope` | enum: `plan`, `unit`, `group`, `deliverable`, `shape` | yes |
+| `targetId` | string | yes |
+| `reason` | enum: `plan-unresolved`, `stalled`, `unsettled`, `fix-rounds-exhausted`, `writing-unclear`, `attempts-undecided`, `owner-decision-needed` | yes |
+| `question` | string | yes |
+| `unmetCriterionIds` | string[] | yes |
+
+### `CONTRACT_OWNER_REPLIED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `escalationId` | string | yes |
+| `reading` | enum: `approve`, `reject`, `amend`, `unclear` | yes |
+| `outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `action` | string | yes |
+
+### `CONTRACT_GATE_RESULT`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `targetId` | string | yes |
+| `gate` | string | yes |
+| `passed` | boolean | yes |
+| `skipped` | boolean | yes |
+| `durationMs` | number | yes |
+
+### `CONTRACT_UNIT_SILENT`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `agentId` | string | yes |
+| `silentMs` | number | yes |
+| `action` | enum: `retried`, `failed` | yes |
+
+### `CONTRACT_MERGE_CONFLICT`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `branch` | string | yes |
+| `path` | string | yes |
+| `files` | string[] | yes |
+
+### `CONTRACT_ATTEMPTS_SELECTED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `unitId` | string | yes |
+| `candidateIds` | string[] | yes |
+| `chosen` | string|null | yes |
+| `outcome` | enum: `act`, `confirm`, `escalate` | yes |
+| `decisionId` | string | optional |
+
+### `CONTRACT_COMMITTED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `status` | enum: `committed`, `applied`, `skipped`, `failed` | yes |
+| `hash` | string | optional |
+| `note` | string | yes |
+
+### `CONTRACT_PASSED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `criteriaMet` | number | yes |
+| `criteriaJudged` | number | yes |
+| `excluded` | number | yes |
+| `nudges` | number | yes |
+
+### `CONTRACT_FAILED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `reason` | string | yes |
+| `failureKind` | enum: `transport`, `max_turns`, `planning`, `budget`, `owner-rejected`, `judgment-unavailable`, `zombie`, `other` | yes |
+| `membersSettled` | boolean | yes |
+| `turnLimit` | number | optional |
+| `turnLimitSource` | enum: `default`, `spawn-override`, `policy-bound` | optional |
+
+### `CONTRACT_CANCELLED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | yes |
+| `reason` | string | yes |
+| `filesModified` | number | yes |
+
+### `CONTRACT_SPAWN_GUARD_TRIGGERED`
+
+| Field | Type | Required |
+|-------|------|----------|
+| `contractId` | string | optional |
+| `agentId` | string | yes |
+| `depth` | number | yes |
+| `activeAgents` | number | yes |
+| `reason` | string | yes |
+

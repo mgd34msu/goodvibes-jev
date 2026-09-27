@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { RuntimeEventBus, AgentEvent, WorkflowEvent } from '../runtime/events/index.js';
+import type { RuntimeEventBus, AgentEvent } from '../runtime/events/index.js';
+import type { ContractEvent } from '../../events/contract.js';
 import { logger } from '../utils/logger.js';
 
 export type ReplayTrackedEventName =
   | 'AGENT_COMPLETED'
   | 'AGENT_FAILED'
-  | 'WORKFLOW_STATE_CHANGED'
-  | 'WORKFLOW_CHAIN_PASSED'
-  | 'WORKFLOW_CHAIN_FAILED';
+  | 'CONTRACT_STATUS_CHANGED'
+  | 'CONTRACT_PASSED'
+  | 'CONTRACT_FAILED';
 
 export interface QueuedEvent {
   id: string;
@@ -23,9 +24,9 @@ export interface QueuedEvent {
 export const TRACKED_EVENTS = [
   'AGENT_COMPLETED',
   'AGENT_FAILED',
-  'WORKFLOW_STATE_CHANGED',
-  'WORKFLOW_CHAIN_PASSED',
-  'WORKFLOW_CHAIN_FAILED',
+  'CONTRACT_STATUS_CHANGED',
+  'CONTRACT_PASSED',
+  'CONTRACT_FAILED',
 ] as const;
 
 function generateId(): string {
@@ -62,7 +63,7 @@ export class EventReplayQueue {
 
   /**
    * Enqueue an event for tracking.
-   * Called when significant events fire (agent complete, WRFC state change, etc.)
+   * Called when significant events fire (agent complete, contract status change, etc.)
    * Returns the assigned event ID.
    */
   enqueue(eventName: ReplayTrackedEventName, payload: unknown): string {
@@ -212,20 +213,20 @@ export class EventReplayQueue {
         const errStr = err?.message ? `: ${err.message}` : '';
         return `Agent ${id} failed${errStr} (first notified ${turnsAgo} ${turnWord} ago)`;
       }
-      case 'WORKFLOW_STATE_CHANGED': {
-        const chainId = (payload?.chainId as string) ?? 'unknown';
+      case 'CONTRACT_STATUS_CHANGED': {
+        const contractId = (payload?.contractId as string) ?? 'unknown';
         const from = (payload?.from as string) ?? '?';
         const to = (payload?.to as string) ?? '?';
-        return `WRFC chain ${chainId} transitioned ${from} \u2192 ${to}, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
+        return `Contract ${contractId} moved from ${from} to ${to}, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
       }
-      case 'WORKFLOW_CHAIN_PASSED': {
-        const chainId = (payload?.chainId as string) ?? 'unknown';
-        return `WRFC chain ${chainId} passed, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
+      case 'CONTRACT_PASSED': {
+        const contractId = (payload?.contractId as string) ?? 'unknown';
+        return `Contract ${contractId} passed, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
       }
-      case 'WORKFLOW_CHAIN_FAILED': {
-        const chainId = (payload?.chainId as string) ?? 'unknown';
+      case 'CONTRACT_FAILED': {
+        const contractId = (payload?.contractId as string) ?? 'unknown';
         const reason = (payload?.reason as string) ?? 'unknown reason';
-        return `WRFC chain ${chainId} failed: ${reason}, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
+        return `Contract ${contractId} failed: ${reason}, waiting for action (first notified ${turnsAgo} ${turnWord} ago)`;
       }
       default: {
         return `Event ${event.eventName} (id: ${event.id}) fired ${turnsAgo} ${turnWord} ago, waiting for acknowledgment`;
@@ -265,20 +266,20 @@ export class EventReplayQueue {
     );
 
     unsubs.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_STATE_CHANGED' }>>('WORKFLOW_STATE_CHANGED', ({ payload }) => {
-        queue.enqueue('WORKFLOW_STATE_CHANGED', payload);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_STATUS_CHANGED' }>>('CONTRACT_STATUS_CHANGED', ({ payload }) => {
+        queue.enqueue('CONTRACT_STATUS_CHANGED', payload);
       }),
     );
 
     unsubs.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_PASSED' }>>('WORKFLOW_CHAIN_PASSED', ({ payload }) => {
-        queue.enqueue('WORKFLOW_CHAIN_PASSED', payload);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
+        queue.enqueue('CONTRACT_PASSED', payload);
       }),
     );
 
     unsubs.push(
-      bus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_FAILED' }>>('WORKFLOW_CHAIN_FAILED', ({ payload }) => {
-        queue.enqueue('WORKFLOW_CHAIN_FAILED', payload);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
+        queue.enqueue('CONTRACT_FAILED', payload);
       }),
     );
 

@@ -6275,18 +6275,20 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -6577,18 +6579,20 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -6678,18 +6682,20 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sessionId": "sample",
             "agentId": "sample"
           },
-          "review": {
-            "score": 0,
-            "passed": false,
-            "cycles": 0,
-            "checklist": [
+          "check": {
+            "criteria": [
               {
-                "item": "sample",
-                "verified": false,
-                "evidence": "sample",
-                "howExercised": "sample"
+                "id": "sample",
+                "text": "sample",
+                "verdict": "unread",
+                "outcome": "act",
+                "severity": "critical"
               }
-            ]
+            ],
+            "met": 0,
+            "judged": 0,
+            "nudges": 0,
+            "lastCheckAt": 0
           },
           "observed": {
             "externalKind": "claude-code",
@@ -11073,7 +11079,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11109,7 +11115,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11145,7 +11151,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11190,7 +11196,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -11253,7 +11259,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",
@@ -11314,7 +11320,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11350,7 +11356,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11386,7 +11392,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11431,7 +11437,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -11493,7 +11499,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11529,7 +11535,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11565,7 +11571,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11610,7 +11616,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -11672,7 +11678,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11714,7 +11720,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -11776,7 +11782,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11812,7 +11818,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11848,7 +11854,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11893,7 +11899,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -11955,7 +11961,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -11991,7 +11997,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -12027,7 +12033,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "sample"
         ],
         "parentTaskId": "sample",
-        "chainId": "sample",
+        "contractId": "sample",
         "phaseId": "sample",
         "agentId": "sample",
         "turnId": "sample",
@@ -12072,7 +12078,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "sample"
             ],
             "parentTaskId": "sample",
-            "chainId": "sample",
+            "contractId": "sample",
             "phaseId": "sample",
             "agentId": "sample",
             "turnId": "sample",
@@ -12135,7 +12141,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",
@@ -12197,7 +12203,7 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "sample"
           ],
           "parentTaskId": "sample",
-          "chainId": "sample",
+          "contractId": "sample",
           "phaseId": "sample",
           "agentId": "sample",
           "turnId": "sample",

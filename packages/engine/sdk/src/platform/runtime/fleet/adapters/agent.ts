@@ -8,21 +8,7 @@ import type {
   ProcessState,
   ProcessUsage,
 } from '../types.js';
-
-/** Chain node ids are namespaced to avoid colliding with agent/process ids. */
-export function chainNodeId(chainId: string): string {
-  return `chain:${chainId}`;
-}
-
-/** Subtask node ids are namespaced to avoid colliding with agent/process ids. */
-export function subtaskNodeId(subtaskId: string): string {
-  return `subtask:${subtaskId}`;
-}
-
-/** Work-item node ids are namespaced to avoid colliding with agent/process ids. */
-export function workItemNodeId(workItemId: string): string {
-  return `work-item:${workItemId}`;
-}
+import { contractNodeId, contractUnitNodeId } from './contract.js';
 
 /**
  * One activity side-table entry. Registry-owned; populated from the EXISTING
@@ -49,12 +35,10 @@ export interface AgentAdapterContext {
   readonly pendingApprovalSessionIds: ReadonlySet<string>;
   /** agentId → bound sessionId (from the session broker, when available). */
   readonly sessionIdByAgentId: ReadonlyMap<string, string>;
-  /** Raw WrfcChain ids present in this snapshot. */
-  readonly chainIds: ReadonlySet<string>;
-  /** Raw WrfcSubtask ids present in this snapshot. */
-  readonly subtaskIds: ReadonlySet<string>;
-  /** Raw orchestration-engine WorkItem ids present in this snapshot. */
-  readonly workItemIds: ReadonlySet<string>;
+  /** Contract ids present in this snapshot. */
+  readonly contractIds: ReadonlySet<string>;
+  /** Unit node ids (`contractUnitNodeId`) present in this snapshot, attempt units included. */
+  readonly unitNodeIds: ReadonlySet<string>;
   /** orchestrationNodeId → owning agentId, for parentNodeId edge resolution. */
   readonly agentIdByOrchestrationNodeId: ReadonlyMap<string, string>;
   /** All agent ids present in this snapshot. */
@@ -86,24 +70,20 @@ export function usageFromAgentRecord(record: AgentRecord): ProcessUsage | undefi
 }
 
 /**
- * parentId precedence (brief-mandated, stable):
- * contractUnitId → `subtask:<id>` else contractId → `chain:<id>` else
- * workItemId → `work-item:<id>` (orchestration-engine phase
- * agents, a separate track from WRFC so the two systems' agents are never
- * conflated) else orchestrationNodeId/parentNodeId (resolved to the owning
- * agent) else parentAgentId. Every step falls through when the referenced
- * node is not present in this snapshot, so edges always resolve or the node
- * is a root.
+ * parentId precedence (stable): a unit's agent (contractUnitId) under its
+ * `unit:<contractId>:<unitId>` node, else a contract's owner or planner
+ * (contractId) under `contract:<contractId>`, else
+ * orchestrationNodeId/parentNodeId (resolved to the owning agent), else
+ * parentAgentId. Every step falls through when the referenced node is not
+ * present in this snapshot, so edges always resolve or the node is a root.
  */
 function resolveParentId(record: AgentRecord, ctx: AgentAdapterContext): string | undefined {
-  if (record.contractUnitId && ctx.subtaskIds.has(record.contractUnitId)) {
-    return subtaskNodeId(record.contractUnitId);
+  if (record.contractId && record.contractUnitId) {
+    const unitNodeId = contractUnitNodeId(record.contractId, record.contractUnitId);
+    if (ctx.unitNodeIds.has(unitNodeId)) return unitNodeId;
   }
-  if (record.contractId && ctx.chainIds.has(record.contractId)) {
-    return chainNodeId(record.contractId);
-  }
-  if (record.workItemId && ctx.workItemIds.has(record.workItemId)) {
-    return workItemNodeId(record.workItemId);
+  if (record.contractId && ctx.contractIds.has(record.contractId)) {
+    return contractNodeId(record.contractId);
   }
   if (record.parentNodeId) {
     const owner = ctx.agentIdByOrchestrationNodeId.get(record.parentNodeId);

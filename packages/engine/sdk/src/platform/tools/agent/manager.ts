@@ -10,13 +10,9 @@ import {
   emitAgentProgress,
   emitAgentRunning,
   emitAgentSpawning,
-  emitOrchestrationGraphCreated,
-  emitOrchestrationNodeAdded,
-  emitOrchestrationNodeCancelled,
-  emitOrchestrationRecursionGuardTriggered,
-  emitOrchestrationNodeStarted,
+  emitContractSpawnGuardTriggered,
 } from '../../runtime/emitters/index.js';
-import type { OrchestrationTaskContract } from '../../runtime/events/index.js';
+import type { AgentTaskContract } from '../../runtime/events/index.js';
 import { evaluateOrchestrationSpawn } from '../../runtime/orchestration/spawn-policy.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentInput } from './schema.js';
@@ -107,7 +103,6 @@ export const AGENT_TEMPLATES: Record<string, { description: string; defaultTools
 export class AgentManager {
   private agents = new Map<string, AgentRecord>();
   private runtimeBus: RuntimeEventBus | null = null;
-  private orchestrationGraphs = new Set<string>();
   private readonly archetypeLoader: Pick<ArchetypeLoader, 'loadArchetype'>;
   private readonly messageBus: Pick<AgentMessageBus, 'registerAgent'>;
   private wrfcController: Pick<WrfcController, 'createChain'> | null;
@@ -328,15 +323,16 @@ export class AgentManager {
       ...(isWrfcOwnerChild ? { overrides: { recursionEnabled: true, maxDepth: 1 } } : {}),
     });
     if (!spawnDecision.allowed) {
-      if (this.runtimeBus && (input.orchestrationGraphId ?? parentRecord?.orchestrationGraphId)) {
-        emitOrchestrationRecursionGuardTriggered(this.runtimeBus, {
+      if (this.runtimeBus) {
+        const guardContractId = parentRecord?.contractId;
+        emitContractSpawnGuardTriggered(this.runtimeBus, {
           sessionId: 'agent-manager',
-          traceId: `agent-manager:recursion-guard:${input.parentAgentId ?? 'root'}`,
+          traceId: `agent-manager:spawn-guard:${input.parentAgentId ?? 'root'}`,
           source: 'agent-manager',
           ...(input.parentAgentId ? { agentId: input.parentAgentId } : {}),
         }, {
-          graphId: input.orchestrationGraphId ?? parentRecord?.orchestrationGraphId ?? 'orchestration',
-          ...(input.parentNodeId ?? parentRecord?.orchestrationNodeId ? { nodeId: input.parentNodeId ?? parentRecord?.orchestrationNodeId } : {}),
+          ...(guardContractId ? { contractId: guardContractId } : {}),
+          agentId: input.parentAgentId ?? 'root',
           depth: orchestrationDepth,
           activeAgents,
           reason: spawnDecision.reason ?? 'spawn policy rejected the child worker',
@@ -443,6 +439,17 @@ export class AgentManager {
       cohort: input.cohort,
     });
     if (this.runtimeBus) {
+      const taskContract: AgentTaskContract = {
+        allowedTools: [...record.tools],
+        capabilityCeiling: [...(record.capabilityCeilingTools ?? record.tools)],
+        ...(record.successCriteria ? { successCriteria: [...record.successCriteria] } : {}),
+        ...(record.requiredEvidence ? { requiredEvidence: [...record.requiredEvidence] } : {}),
+        ...(record.writeScope ? { writeScope: [...record.writeScope] } : {}),
+        executionProtocol: record.executionProtocol,
+        reviewMode: record.reviewMode,
+        inheritsParentConstraints: Boolean(record.parentAgentId),
+        communicationLane: record.communicationLane,
+      };
       emitAgentSpawning(this.runtimeBus, {
         sessionId: 'agent-manager',
         traceId: `agent-manager:${id}`,
@@ -455,66 +462,8 @@ export class AgentManager {
         ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
         ...(record.orchestrationGraphId ? { orchestrationGraphId: record.orchestrationGraphId } : {}),
         ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
+        taskContract,
       });
-      const contract: OrchestrationTaskContract = {
-        allowedTools: [...record.tools],
-        capabilityCeiling: [...(record.capabilityCeilingTools ?? record.tools)],
-        ...(record.successCriteria ? { successCriteria: [...record.successCriteria] } : {}),
-        ...(record.requiredEvidence ? { requiredEvidence: [...record.requiredEvidence] } : {}),
-        ...(record.writeScope ? { writeScope: [...record.writeScope] } : {}),
-        executionProtocol: record.executionProtocol,
-        reviewMode: record.reviewMode,
-        inheritsParentConstraints: Boolean(record.parentAgentId),
-        communicationLane: record.communicationLane,
-      };
-      if (record.orchestrationGraphId && record.orchestrationNodeId) {
-        if (!this.orchestrationGraphs.has(record.orchestrationGraphId)) {
-          this.orchestrationGraphs.add(record.orchestrationGraphId);
-          emitOrchestrationGraphCreated(this.runtimeBus, {
-            sessionId: 'agent-manager',
-            traceId: `agent-manager:${record.orchestrationGraphId}`,
-            source: 'agent-manager',
-          }, {
-            graphId: record.orchestrationGraphId,
-            title: `Cohort ${record.cohort}`,
-            mode: 'parallel-workers',
-          });
-        }
-        emitOrchestrationNodeAdded(this.runtimeBus, {
-          sessionId: 'agent-manager',
-          traceId: `agent-manager:${record.orchestrationNodeId}`,
-          source: 'agent-manager',
-          agentId: id,
-        }, {
-          graphId: record.orchestrationGraphId,
-          nodeId: record.orchestrationNodeId,
-          title: task,
-          role: template === 'reviewer'
-            ? 'reviewer'
-            : template === 'researcher'
-              ? 'researcher'
-              : template === 'orchestrator'
-                ? 'orchestrator'
-                : template === 'integrator'
-                  ? 'integrator'
-              : template === 'engineer'
-                ? 'engineer'
-                : 'integrator',
-          ...(record.parentNodeId !== undefined ? { parentNodeId: record.parentNodeId } : {}),
-          agentId: id,
-          contract,
-        });
-        emitOrchestrationNodeStarted(this.runtimeBus, {
-          sessionId: 'agent-manager',
-          traceId: `agent-manager:${record.orchestrationNodeId}:start`,
-          source: 'agent-manager',
-          agentId: id,
-        }, {
-          graphId: record.orchestrationGraphId,
-          nodeId: record.orchestrationNodeId,
-          agentId: id,
-        });
-      }
     }
     if (record.task === 'Stuck task') {
       return record;
@@ -660,18 +609,6 @@ export class AgentManager {
           agentId: record.id,
         }, {
           agentId: record.id,
-          reason: 'operator cancellation',
-        });
-      }
-      if (this.runtimeBus && record.orchestrationGraphId && record.orchestrationNodeId) {
-        emitOrchestrationNodeCancelled(this.runtimeBus, {
-          sessionId: 'agent-manager',
-          traceId: `agent-manager:${record.id}:cancel`,
-          source: 'agent-manager',
-          agentId: record.id,
-        }, {
-          graphId: record.orchestrationGraphId,
-          nodeId: record.orchestrationNodeId,
           reason: 'operator cancellation',
         });
       }
@@ -829,7 +766,6 @@ export class AgentManager {
 
   clear(): void {
     this.agents.clear();
-    this.orchestrationGraphs.clear();
     this.conversationSources.clear();
     this.frozenConversationSnapshots.clear();
   }

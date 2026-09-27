@@ -152,9 +152,8 @@ describe('system message kind', () => {
     }
   });
 
-  test('contract runner and review workflow tags are the contract kind, delivered to both', () => {
+  test('the contract tag is the contract kind, delivered to both', () => {
     expect(classifySystemMessageKind('[Contract] c-12 passed: all criteria met')).toBe('contract');
-    expect(classifySystemMessageKind('[WRFC] Chain 3f9a2c1b77e0 started: add export')).toBe('contract');
     expect(defaultSystemMessageTarget('contract')).toBe('both');
   });
 

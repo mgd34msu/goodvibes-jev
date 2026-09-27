@@ -12,7 +12,7 @@ import type { ToolEvent } from '../../../events/tools.js';
 import type { GateEvent } from '../../../events/gate.js';
 import type { TaskEvent } from '../../../events/tasks.js';
 import type { AgentEvent } from '../../../events/agents.js';
-import type { OrchestrationEvent } from '../../../events/orchestration.js';
+import type { ContractEvent } from '../../../events/contract.js';
 import type { CommunicationEvent } from '../../../events/communication.js';
 import type { PluginEvent } from '../../../events/plugins.js';
 import type { McpEvent } from '../../../events/mcp.js';
@@ -29,7 +29,7 @@ import type {
   RuntimeAgent,
   PermissionDomainState,
   PermissionDecision,
-  OrchestrationDomainState,
+  ContractDomainState,
   CommunicationDomainState,
   PluginDomainState,
   McpDomainState,
@@ -71,7 +71,7 @@ import {
   updateDeliveryDomainFromAttempt,
   updateIntegrationDomainFromRecord,
   updateMcpState,
-  updateOrchestrationState,
+  updateContractsState,
   updatePermissionState,
   updatePluginState,
   updateRouteFailureState,
@@ -100,7 +100,7 @@ export interface DomainDispatch {
   dispatchGateEvent(event: GateEvent): void;
   dispatchTaskEvent(event: TaskEvent): void;
   dispatchAgentEvent(event: AgentEvent): void;
-  dispatchOrchestrationEvent(event: OrchestrationEvent): void;
+  dispatchContractEvent(event: ContractEvent): void;
   dispatchCommunicationEvent(event: CommunicationEvent): void;
   dispatchPluginEvent(event: PluginEvent): void;
   dispatchMcpEvent(event: McpEvent): void;
@@ -169,10 +169,10 @@ export function createDomainDispatch(store: RuntimeStore): DomainDispatch {
         agents: updateAgentState(state.agents, event),
       }));
     },
-    dispatchOrchestrationEvent(event) {
+    dispatchContractEvent(event) {
       mutateRuntimeStore(store, (state) => ({
         ...state,
-        orchestration: updateOrchestrationState(state.orchestration, event),
+        contracts: updateContractsState(state.contracts, event),
       }));
     },
     dispatchCommunicationEvent(event) {

@@ -478,11 +478,6 @@
       "types": "./sdk/dist/events/ops.d.ts",
       "import": "./sdk/dist/events/ops.js"
     },
-    "./sdk/events/orchestration": {
-      "bun": "./sdk/src/events/orchestration.ts",
-      "types": "./sdk/dist/events/orchestration.d.ts",
-      "import": "./sdk/dist/events/orchestration.js"
-    },
     "./sdk/events/gate": {
       "bun": "./sdk/src/events/gate.ts",
       "types": "./sdk/dist/events/gate.d.ts",
@@ -552,11 +547,6 @@
       "bun": "./sdk/src/events/watchers.ts",
       "types": "./sdk/dist/events/watchers.d.ts",
       "import": "./sdk/dist/events/watchers.js"
-    },
-    "./sdk/events/workflows": {
-      "bun": "./sdk/src/events/workflows.ts",
-      "types": "./sdk/dist/events/workflows.d.ts",
-      "import": "./sdk/dist/events/workflows.js"
     },
     "./sdk/events/workspace": {
       "bun": "./sdk/src/events/workspace.ts",

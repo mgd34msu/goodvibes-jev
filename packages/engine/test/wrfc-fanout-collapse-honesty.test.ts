@@ -127,8 +127,6 @@ function createHarness() {
   const bus = new RuntimeEventBus();
   const agentStore = new Map<string, AgentRecord>();
   const spawnedRecords: AgentRecord[] = [];
-  const workflowEvents: Array<{ type: string }> = [];
-  bus.onDomain('workflows', (envelope) => { workflowEvents.push({ type: envelope.type }); });
 
   const configManager: Pick<ConfigManager, 'get' | 'getCategory'> = {
     get: ((key: string): unknown => {
@@ -165,7 +163,7 @@ function createHarness() {
     skipClaimVerification: true,
     createWorktree: () => ({ merge: async () => true, cleanup: async () => {} }),
   });
-  return { bus, controller, agentStore, spawnedRecords, workflowEvents };
+  return { bus, controller, agentStore, spawnedRecords };
 }
 
 function emitAgentCompleted(bus: RuntimeEventBus, agentId: string): void {

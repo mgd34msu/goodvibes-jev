@@ -199,7 +199,7 @@ function createHarness(overrides?: {
   const spawnedRecords: AgentRecord[] = [];
   const workflowEvents: Array<{ type: string }> = [];
 
-  bus.onDomain('workflows', (envelope) => {
+  bus.onDomain('contracts', (envelope) => {
     workflowEvents.push({ type: envelope.type });
   });
 
@@ -788,13 +788,14 @@ describe('Item 4a: silent-agent watchdog', () => {
     // Chain should be in reviewing state (not failed)
     const chainRecord = controller.getChain(chain.id);
     expect(chainRecord?.state).not.toBe('failed');
+    expect(workflowEvents.map((e) => e.type)).not.toContain('CONTRACT_FAILED');
 
     controller.dispose();
   });
 
   test('watchdog fires and fails chain when agent goes silent', async () => {
     // Use a very short timeout and manually trigger the tick
-    const { controller, agentStore, spawnedRecords } = createHarness({
+    const { controller, agentStore, spawnedRecords, workflowEvents } = createHarness({
       agentHeartbeatTimeoutMs: 100, // 100ms timeout
     });
 
@@ -825,6 +826,8 @@ describe('Item 4a: silent-agent watchdog', () => {
     expect(chainRecord?.error).toContain('went silent');
     // The owner carries the watchdog as a stamped reason, read as code by a parent's failure envelope.
     expect(agentStore.get('owner-wd-fail')?.failureReason).toBe('watchdog_timeout');
+    // Surfaces hear it as a failed contract.
+    expect(workflowEvents.map((e) => e.type)).toContain('CONTRACT_FAILED');
 
     controller.dispose();
   }, WAIT_TEST_TIMEOUT_MS);

@@ -10,7 +10,7 @@ import { splitInlineReasoning } from '../providers/inline-reasoning.js';
 import { stripProseCompletionReport } from './completion-report-prose.js';
 import { isOwnerFacingRenderEvent, type ChannelRenderAudience } from './render-audience.js';
 import {
-  describeWorkstreamState,
+  describeContractStatus,
   finishWorkstreamLabel,
   rememberWorkstreamLabel,
   workstreamLabel,
@@ -462,87 +462,103 @@ export function normalizeChannelRenderEventFromRuntime(
       return [renderEvent(payload.type === 'COMPACTION_FAILED' ? 'error' : 'compaction', 'progress', envelope, {
         text: payload.type.replace(/^COMPACTION_/, '').toLowerCase().replace(/_/g, ' '),
       })];
-    // The workstream family is OWNER-facing, deliberately and by exception.
+    // The contract family is OWNER-facing, deliberately and by exception.
     //
     // Everything else that names the machine's internals is operator-only, but
-    // someone who asked for a long-running workstream is owed its legs: which
-    // phase it reached, whether review passed, whether a gate failed. That is
-    // progress on THEIR work, not telemetry about the process running it, and
-    // suppressing it would be the "suppress the message that should have been
-    // there" failure rather than the fix.
+    // someone who asked for a long-running piece of work is owed its legs:
+    // which stage it reached, whether a check passed, whether a gate failed.
+    // That is progress on THEIR work, not telemetry about the process running
+    // it, and suppressing it would be the "suppress the message that should
+    // have been there" failure rather than the fix.
     //
-    // These lines used to lead with `WRFC chain 7f3a91c02b4e`, a name for the
-    // machinery and a register id, neither of which belongs in outward-facing
-    // text. The id was doing one real job, telling two concurrent workstreams
-    // apart, so it is replaced rather than deleted: a workstream is named by
-    // what it is doing, and two that would read the same are counted in words.
-    // `payload.chainId` below is only ever a lookup key, see
-    // workstream-labels.ts. Nothing in this family renders it.
-    case 'WORKFLOW_CHAIN_CREATED':
-      rememberWorkstreamLabel(payload.chainId, payload.task);
-      // The task in full, since this is the line that introduces it; the place
-      // suffix only when another workstream is already running under the same
+    // A contract is named by what it is doing, never by its register id, and
+    // two that would read the same are counted in words. `payload.contractId`
+    // below is only ever a lookup key, see workstream-labels.ts. Unit checks,
+    // nudges and the other per-unit events are the operator's and render
+    // nothing here.
+    case 'CONTRACT_CREATED':
+      rememberWorkstreamLabel(payload.contractId, payload.ask);
+      // The ask in full, since this is the line that introduces it; the place
+      // suffix only when another contract is already running under the same
       // phrase, and it has to come from AFTER the remember call above.
       return [renderEvent('status', 'progress', envelope, {
         audience: 'owner',
-        text: `Started work on: ${trimText(payload.task, 180)}${workstreamPlaceSuffix(payload.chainId)}`,
+        text: `Started work on: ${trimText(payload.ask, 180)}${workstreamPlaceSuffix(payload.contractId)}`,
       })];
-    case 'WORKFLOW_STATE_CHANGED':
+    case 'CONTRACT_STATUS_CHANGED':
       return [renderEvent('status', 'progress', envelope, {
         audience: 'owner',
-        text: `${workstreamLabel(payload.chainId)} is now ${describeWorkstreamState(payload.to)}`,
+        text: `${workstreamLabel(payload.contractId)} is now ${describeContractStatus(payload.to)}`,
       })];
-    case 'WORKFLOW_REVIEW_COMPLETED': {
-      const constraintSummary = typeof payload.constraintsSatisfied === 'number' && typeof payload.constraintsTotal === 'number'
-        ? `, ${payload.constraintsSatisfied} of ${payload.constraintsTotal} requirements met`
+    case 'CONTRACT_CHECKED': {
+      if (payload.scope === 'unit') return [];
+      const passed = payload.result === 'pass';
+      const met = payload.criteria.filter((criterion) => criterion.verdict === 'met').length;
+      const requirements = payload.criteria.length > 0
+        ? `: ${met} of ${payload.criteria.length} requirement${payload.criteria.length === 1 ? '' : 's'} met`
         : '';
-      return [renderEvent(payload.passed ? 'status' : 'error', 'progress', envelope, {
+      const subject = payload.scope === 'group'
+        ? `a part of ${workstreamLabelInline(payload.contractId)}`
+        : workstreamLabelInline(payload.contractId);
+      return [renderEvent(passed ? 'status' : 'error', 'progress', envelope, {
         audience: 'owner',
-        text: `Review of ${workstreamLabelInline(payload.chainId)} ${payload.passed ? 'passed' : 'found things to fix'}: scored ${payload.score} out of 10${constraintSummary}`,
+        text: `The check of ${subject} ${passed ? 'passed' : 'found things to fix'}${requirements}`,
       })];
     }
-    case 'WORKFLOW_FIX_ATTEMPTED':
-      return [renderEvent('status', 'progress', envelope, {
-        audience: 'owner',
-        text: `Fixing review findings on ${workstreamLabelInline(payload.chainId)}, attempt ${payload.attempt} of ${payload.maxAttempts}`,
-      })];
-    case 'WORKFLOW_GATE_RESULT':
-      return [renderEvent(payload.passed ? 'status' : 'error', 'progress', envelope, {
-        audience: 'owner',
-        text: `The ${payload.gate} check on ${workstreamLabelInline(payload.chainId)} ${payload.passed ? 'passed' : 'failed'}`,
-      })];
-    case 'WORKFLOW_AUTO_COMMITTED':
+    case 'CONTRACT_ESCALATED': {
+      // The question is the owner's to answer, so it goes out as written,
+      // except that its fixed opening names the contract by id; the reader
+      // gets the contract's name in words instead.
+      const idPrefix = `Contract ${payload.contractId} `;
+      const question = payload.question.startsWith(idPrefix)
+        ? `${workstreamLabel(payload.contractId)} ${payload.question.slice(idPrefix.length)}`
+        : payload.question;
+      return [renderEvent('status', 'progress', envelope, { audience: 'owner', text: question })];
+    }
+    case 'CONTRACT_COMMITTED':
       // A commit hash is provenance a person can act on, not an internal id.
-      return [renderEvent('status', 'progress', envelope, {
-        audience: 'owner',
-        text: `Committed the changes for ${workstreamLabelInline(payload.chainId)}${payload.commitHash ? ` as ${payload.commitHash}` : ''}`,
-      })];
-    case 'WORKFLOW_SCORE_REGRESSION':
-      return [renderEvent('status', 'progress', envelope, {
-        audience: 'owner',
-        text: `Review of ${workstreamLabelInline(payload.chainId)} scored worse than the attempt before it: ${payload.reason}`,
-      })];
-    case 'WORKFLOW_CASCADE_ABORTED':
-      return [renderEvent('error', 'progress', envelope, {
-        audience: 'owner',
-        text: `Stopped retrying ${workstreamLabelInline(payload.chainId)}: ${payload.reason}`,
-      })];
-    case 'WORKFLOW_CONSTRAINTS_ENUMERATED':
-      return [renderEvent('status', 'progress', envelope, {
-        audience: 'owner',
-        text: `${workstreamLabel(payload.chainId)} has ${payload.constraints.length} requirement${payload.constraints.length === 1 ? '' : 's'} to meet`,
-      })];
-    case 'WORKFLOW_CHAIN_PASSED': {
-      const label = workstreamLabel(payload.chainId);
-      finishWorkstreamLabel(payload.chainId);
+      switch (payload.status) {
+        case 'committed':
+          return [renderEvent('status', 'progress', envelope, {
+            audience: 'owner',
+            text: `Committed the changes for ${workstreamLabelInline(payload.contractId)}${payload.hash ? ` as ${payload.hash}` : ''}`,
+          })];
+        case 'applied':
+          return [renderEvent('status', 'progress', envelope, {
+            audience: 'owner',
+            text: `Applied the changes for ${workstreamLabelInline(payload.contractId)} without committing them`,
+          })];
+        case 'skipped':
+          return [renderEvent('status', 'progress', envelope, {
+            audience: 'owner',
+            text: `Did not commit the changes for ${workstreamLabelInline(payload.contractId)}: ${payload.note}`,
+          })];
+        case 'failed':
+          return [renderEvent('error', 'progress', envelope, {
+            audience: 'owner',
+            text: `Could not commit the changes for ${workstreamLabelInline(payload.contractId)}: ${payload.note}`,
+          })];
+      }
+      return [];
+    case 'CONTRACT_PASSED': {
+      const label = workstreamLabel(payload.contractId);
+      finishWorkstreamLabel(payload.contractId);
       return [renderEvent('status', 'final', envelope, { audience: 'owner', text: `${label} is done` })];
     }
-    case 'WORKFLOW_CHAIN_FAILED': {
-      const label = workstreamLabel(payload.chainId);
-      finishWorkstreamLabel(payload.chainId);
+    case 'CONTRACT_FAILED': {
+      const label = workstreamLabel(payload.contractId);
+      finishWorkstreamLabel(payload.contractId);
       return [renderEvent('error', 'final', envelope, {
         audience: 'owner',
         text: `${label} could not be finished: ${payload.reason}`,
+      })];
+    }
+    case 'CONTRACT_CANCELLED': {
+      const label = workstreamLabel(payload.contractId);
+      finishWorkstreamLabel(payload.contractId);
+      return [renderEvent('status', 'final', envelope, {
+        audience: 'owner',
+        text: `${label} was cancelled: ${payload.reason}`,
       })];
     }
     case 'TURN_COMPLETED':

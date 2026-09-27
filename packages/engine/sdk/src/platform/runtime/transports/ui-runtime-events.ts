@@ -7,8 +7,8 @@ import type {
   SessionEvent,
   ToolEvent,
   TurnEvent,
-  WorkflowEvent,
 } from '../events/index.js';
+import type { ContractEvent } from '../../../events/contract.js';
 import type { UiEventFeed, UiRuntimeEvents } from '../ui-events.js';
 import type { DomainEventConnector } from './domain-events.js';
 import { createRemoteRuntimeEvents, type RemoteRuntimeEvents } from './runtime-events-client.js';
@@ -22,7 +22,7 @@ function asUiEvents(runtimeEvents: RemoteRuntimeEvents<RuntimeEventRecord>): UiR
     tools: runtimeEvents.tools as UiEventFeed<ToolEvent>,
     providers: runtimeEvents.providers as UiEventFeed<ProviderEvent>,
     agents: runtimeEvents.agents as UiEventFeed<AgentEvent>,
-    workflows: runtimeEvents.workflows as UiEventFeed<WorkflowEvent>,
+    contracts: runtimeEvents.contracts as UiEventFeed<ContractEvent>,
     planner: runtimeEvents.planner as UiEventFeed<PlannerEvent>,
     ops: runtimeEvents.ops as UiEventFeed<OpsEvent>,
   };

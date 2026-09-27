@@ -14,7 +14,6 @@ import type { AnyRuntimeEvent } from '../../../sdk/src/events/domain-map.js';
 import type { SessionEvent } from '../../../sdk/src/events/session.js';
 import type { TurnEvent } from '../../../sdk/src/events/turn.js';
 import type { AgentEvent } from '../../../sdk/src/events/agents.js';
-import type { WorkflowEvent } from '../../../sdk/src/events/workflows.js';
 import type { TaskEvent } from '../../../sdk/src/events/tasks.js';
 import type { ToolEvent } from '../../../sdk/src/events/tools.js';
 import type { ProviderEvent } from '../../../sdk/src/events/providers.js';
@@ -35,7 +34,8 @@ import type { SurfaceEvent } from '../../../sdk/src/events/surfaces.js';
 import type { KnowledgeEvent } from '../../../sdk/src/events/knowledge.js';
 import type { CommunicationEvent } from '../../../sdk/src/events/communication.js';
 import type { GateEvent } from '../../../sdk/src/events/gate.js';
-import type { OrchestrationEvent } from '../../../sdk/src/events/orchestration.js';
+import { CONTRACT_EVENT_FIELD_SPECS, CONTRACT_EVENT_TYPES, type ContractEventType } from '../../../sdk/src/events/index.js';
+import { ALL_CONTRACT_EVENTS } from '../../contract/event-samples.js';
 
 // ---------------------------------------------------------------------------
 // Recursive JSON-value arbitrary
@@ -94,15 +94,8 @@ export const KNOWN_EVENT_TYPES = new Set<string>([
   'AGENT_SPAWNING', 'AGENT_RUNNING', 'AGENT_PROGRESS', 'AGENT_STREAM_DELTA',
   'AGENT_AWAITING_MESSAGE', 'AGENT_AWAITING_TOOL', 'AGENT_FINALIZING',
   'AGENT_COMPLETED', 'AGENT_FAILED', 'AGENT_CANCELLED',
-  // workflows
-  'WORKFLOW_CHAIN_CREATED', 'WORKFLOW_STATE_CHANGED', 'WORKFLOW_REVIEW_COMPLETED',
-  'WORKFLOW_FIX_ATTEMPTED', 'WORKFLOW_GATE_RESULT', 'WORKFLOW_CHAIN_PASSED',
-  'WORKFLOW_CHAIN_FAILED', 'WORKFLOW_AUTO_COMMITTED', 'WORKFLOW_CASCADE_ABORTED',
-  // orchestration
-  'ORCHESTRATION_GRAPH_CREATED', 'ORCHESTRATION_NODE_ADDED', 'ORCHESTRATION_NODE_READY',
-  'ORCHESTRATION_NODE_STARTED', 'ORCHESTRATION_NODE_PROGRESS', 'ORCHESTRATION_NODE_BLOCKED',
-  'ORCHESTRATION_NODE_COMPLETED', 'ORCHESTRATION_NODE_FAILED', 'ORCHESTRATION_NODE_CANCELLED',
-  'ORCHESTRATION_RECURSION_GUARD_TRIGGERED',
+  // contracts
+  ...CONTRACT_EVENT_TYPES,
   // communication
   'COMMUNICATION_SENT', 'COMMUNICATION_DELIVERED', 'COMMUNICATION_BLOCKED',
   // planner
@@ -192,6 +185,18 @@ type EventOfType<T extends AnyRuntimeEvent['type']> = Extract<AnyRuntimeEvent, {
  * Now a key that is not a real event type, or a field name that is not a member
  * of that event, is a compile error.
  */
+/**
+ * Each contract event's required fields, read from the contract field specs the
+ * validators use. The specs are keyed by the same types and name the same
+ * fields, which `Object.fromEntries` cannot express, hence the widening.
+ */
+const CONTRACT_REQUIRED_FIELDS = Object.fromEntries(
+  (Object.keys(CONTRACT_EVENT_FIELD_SPECS) as ContractEventType[]).map((type) => [
+    type,
+    CONTRACT_EVENT_FIELD_SPECS[type].filter((field) => field.optional !== true).map((field) => field.key),
+  ]),
+) as unknown as { readonly [T in ContractEventType]: readonly (keyof EventOfType<T> & string)[] };
+
 export const REQUIRED_FIELDS_BY_TYPE: {
   [T in AnyRuntimeEvent['type']]?: readonly (keyof EventOfType<T> & string)[];
 } = {
@@ -254,25 +259,6 @@ export const REQUIRED_FIELDS_BY_TYPE: {
   AGENT_COMPLETED: ['agentId', 'durationMs'],
   AGENT_FAILED: ['agentId', 'error', 'durationMs'],
   AGENT_CANCELLED: ['agentId'],
-  WORKFLOW_CHAIN_CREATED: ['chainId', 'task'],
-  WORKFLOW_STATE_CHANGED: ['chainId', 'from', 'to'],
-  WORKFLOW_REVIEW_COMPLETED: ['chainId', 'score', 'passed'],
-  WORKFLOW_FIX_ATTEMPTED: ['chainId', 'attempt', 'maxAttempts'],
-  WORKFLOW_GATE_RESULT: ['chainId', 'gate', 'passed'],
-  WORKFLOW_CHAIN_PASSED: ['chainId'],
-  WORKFLOW_CHAIN_FAILED: ['chainId', 'reason'],
-  WORKFLOW_AUTO_COMMITTED: ['chainId'],
-  WORKFLOW_CASCADE_ABORTED: ['chainId', 'reason'],
-  ORCHESTRATION_GRAPH_CREATED: ['graphId', 'title', 'mode'],
-  ORCHESTRATION_NODE_ADDED: ['graphId', 'nodeId', 'title', 'role'],
-  ORCHESTRATION_NODE_READY: ['graphId', 'nodeId'],
-  ORCHESTRATION_NODE_STARTED: ['graphId', 'nodeId'],
-  ORCHESTRATION_NODE_PROGRESS: ['graphId', 'nodeId', 'message'],
-  ORCHESTRATION_NODE_BLOCKED: ['graphId', 'nodeId', 'reason'],
-  ORCHESTRATION_NODE_COMPLETED: ['graphId', 'nodeId'],
-  ORCHESTRATION_NODE_FAILED: ['graphId', 'nodeId', 'error'],
-  ORCHESTRATION_NODE_CANCELLED: ['graphId', 'nodeId'],
-  ORCHESTRATION_RECURSION_GUARD_TRIGGERED: ['graphId', 'depth', 'activeAgents', 'reason'],
   COMMUNICATION_SENT: ['messageId', 'fromId', 'toId', 'scope', 'kind', 'content'],
   COMMUNICATION_DELIVERED: ['messageId', 'fromId', 'toId', 'scope', 'kind'],
   COMMUNICATION_BLOCKED: ['messageId', 'fromId', 'toId', 'scope', 'kind', 'reason'],
@@ -400,6 +386,7 @@ export const REQUIRED_FIELDS_BY_TYPE: {
   KNOWLEDGE_JOB_STARTED: ['jobId', 'runId', 'mode'],
   KNOWLEDGE_JOB_COMPLETED: ['jobId', 'runId', 'durationMs'],
   KNOWLEDGE_JOB_FAILED: ['jobId', 'runId', 'error', 'durationMs'],
+  ...CONTRACT_REQUIRED_FIELDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -469,27 +456,8 @@ export const FIXTURE_EVENTS: ReadonlyArray<{ type: string } & Record<string, unk
   { type: 'AGENT_COMPLETED', agentId: 'a1', durationMs: 500 } satisfies AgentEvent,
   { type: 'AGENT_FAILED', agentId: 'a1', error: 'timeout', durationMs: 100 } satisfies AgentEvent,
   { type: 'AGENT_CANCELLED', agentId: 'a1' } satisfies AgentEvent,
-  // workflows
-  { type: 'WORKFLOW_CHAIN_CREATED', chainId: 'ch1', task: 'implement' } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_STATE_CHANGED', chainId: 'ch1', from: 'engineering', to: 'reviewing' } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_REVIEW_COMPLETED', chainId: 'ch1', score: 9, passed: true } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_FIX_ATTEMPTED', chainId: 'ch1', attempt: 1, maxAttempts: 3 } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_GATE_RESULT', chainId: 'ch1', gate: 'typecheck', passed: true } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_CHAIN_PASSED', chainId: 'ch1' } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_CHAIN_FAILED', chainId: 'ch1', reason: 'max retries' } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_AUTO_COMMITTED', chainId: 'ch1' } satisfies WorkflowEvent,
-  { type: 'WORKFLOW_CASCADE_ABORTED', chainId: 'ch1', reason: 'user cancelled' } satisfies WorkflowEvent,
-  // orchestration
-  { type: 'ORCHESTRATION_GRAPH_CREATED', graphId: 'g1', title: 'plan', mode: 'parallel-workers' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_ADDED', graphId: 'g1', nodeId: 'n1', title: 'engineer', role: 'engineer' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_READY', graphId: 'g1', nodeId: 'n1' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_STARTED', graphId: 'g1', nodeId: 'n1' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_PROGRESS', graphId: 'g1', nodeId: 'n1', message: 'halfway' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_BLOCKED', graphId: 'g1', nodeId: 'n1', reason: 'dep' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_COMPLETED', graphId: 'g1', nodeId: 'n1' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_FAILED', graphId: 'g1', nodeId: 'n1', error: 'err' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_NODE_CANCELLED', graphId: 'g1', nodeId: 'n1' } satisfies OrchestrationEvent,
-  { type: 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED', graphId: 'g1', depth: 5, activeAgents: 3, reason: 'depth exceeded' } satisfies OrchestrationEvent,
+  // contracts
+  ...ALL_CONTRACT_EVENTS,
   // communication
   { type: 'COMMUNICATION_SENT', messageId: 'm1', fromId: 'a1', toId: 'a2', scope: 'direct', kind: 'directive', content: 'do it' } satisfies CommunicationEvent,
   { type: 'COMMUNICATION_DELIVERED', messageId: 'm1', fromId: 'a1', toId: 'a2', scope: 'direct', kind: 'directive' } satisfies CommunicationEvent,

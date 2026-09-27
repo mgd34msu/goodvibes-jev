@@ -28,10 +28,6 @@ import {
   emitAgentProgress,
   emitAgentRunning,
   emitAgentStreamDelta,
-  emitOrchestrationNodeCancelled,
-  emitOrchestrationNodeCompleted,
-  emitOrchestrationNodeFailed,
-  emitOrchestrationNodeProgress,
 } from '../runtime/emitters/index.js';
 import { findModelDefinition } from '../providers/registry-models.js';
 import { resolveModelReference } from '../providers/model-id-resolution.js';
@@ -267,14 +263,6 @@ export class AgentOrchestrator {
     });
   }
 
-  private emitOrchestrationProgress(record: AgentRecord, progress: string): void {
-    if (!this.runtimeBus || !record.orchestrationGraphId || !record.orchestrationNodeId) return;
-    emitOrchestrationNodeProgress(this.runtimeBus, this.emitterContext(record.id), {
-      graphId: record.orchestrationGraphId,
-      nodeId: record.orchestrationNodeId,
-      message: progress,
-    });
-  }
 
   private emitAgentStarted(recordId: string): void {
     if (!this.runtimeBus) return;
@@ -289,14 +277,6 @@ export class AgentOrchestrator {
     });
   }
 
-  private emitOrchestrationCancelled(record: AgentRecord, reason: string): void {
-    if (!this.runtimeBus || !record.orchestrationGraphId || !record.orchestrationNodeId) return;
-    emitOrchestrationNodeCancelled(this.runtimeBus, this.emitterContext(record.id), {
-      graphId: record.orchestrationGraphId,
-      nodeId: record.orchestrationNodeId,
-      reason,
-    });
-  }
 
   private emitAgentFailedEvent(recordId: string, error: string, durationMs: number): void {
     if (!this.runtimeBus) return;
@@ -307,14 +287,6 @@ export class AgentOrchestrator {
     });
   }
 
-  private emitOrchestrationFailed(record: AgentRecord, error: string): void {
-    if (!this.runtimeBus || !record.orchestrationGraphId || !record.orchestrationNodeId) return;
-    emitOrchestrationNodeFailed(this.runtimeBus, this.emitterContext(record.id), {
-      graphId: record.orchestrationGraphId,
-      nodeId: record.orchestrationNodeId,
-      error,
-    });
-  }
 
   private emitAgentCompletedEvent(
     recordId: string,
@@ -333,14 +305,6 @@ export class AgentOrchestrator {
     });
   }
 
-  private emitOrchestrationCompleted(record: AgentRecord, output: string): void {
-    if (!this.runtimeBus || !record.orchestrationGraphId || !record.orchestrationNodeId) return;
-    emitOrchestrationNodeCompleted(this.runtimeBus, this.emitterContext(record.id), {
-      graphId: record.orchestrationGraphId,
-      nodeId: record.orchestrationNodeId,
-      summary: output.length > 120 ? `${output.slice(0, 117)}...` : output,
-    });
-  }
 
   private emitStreamDelta(recordId: string, content: string, accumulated: string): void {
     if (!this.runtimeBus || !content) return;
@@ -691,15 +655,11 @@ export class AgentOrchestrator {
       featureFlagManager: this.featureFlagManager,
       emitterContext: (agentId) => this.emitterContext(agentId),
       emitAgentProgress: (recordId, progress, audience) => this.emitAgentProgress(recordId, progress, audience),
-      emitOrchestrationProgress: (record, progress) => this.emitOrchestrationProgress(record, progress),
       emitAgentStarted: (recordId) => this.emitAgentStarted(recordId),
       emitAgentCancelledEvent: (recordId, reason) => this.emitAgentCancelledEvent(recordId, reason),
-      emitOrchestrationCancelled: (record, reason) => this.emitOrchestrationCancelled(record, reason),
       emitAgentFailedEvent: (recordId, error, durationMs) => this.emitAgentFailedEvent(recordId, error, durationMs),
-      emitOrchestrationFailed: (record, error) => this.emitOrchestrationFailed(record, error),
       emitAgentCompletedEvent: (recordId, durationMs, output, toolCallsMade, usage) =>
         this.emitAgentCompletedEvent(recordId, durationMs, output, toolCallsMade, usage),
-      emitOrchestrationCompleted: (record, output) => this.emitOrchestrationCompleted(record, output),
       emitStreamDelta: (recordId, content, accumulated) => this.emitStreamDelta(recordId, content, accumulated),
       registerConversationSource: this.conversationSink
         ? (agentId, source) => this.conversationSink!.register(agentId, source)

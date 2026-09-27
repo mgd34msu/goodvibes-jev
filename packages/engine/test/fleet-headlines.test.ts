@@ -54,7 +54,6 @@ function makeAgent(overrides: Partial<AgentRecord> & { id: string }): AgentRecor
 function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistryDeps {
   return {
     agentManager: { list: () => [], cancel: () => false },
-    wrfcController: { listChains: () => [] },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {
@@ -98,11 +97,11 @@ describe('headlineSource', () => {
 
   test('tool/output-line activity never participates for any kind', () => {
     const withTool = node({
-      id: 'w', kind: 'work-item', task: 'build feature',
+      id: 'w', kind: 'contract-unit', task: 'build feature',
       currentActivity: { kind: 'tool', text: 'exec', toolName: 'exec', at: T0 },
     });
     const withOutput = node({
-      id: 'w', kind: 'work-item', task: 'build feature',
+      id: 'w', kind: 'contract-unit', task: 'build feature',
       currentActivity: { kind: 'output-line', text: 'compiling 3 of 7…', at: T0 },
     });
     expect(headlineSource(withTool)).toBe('build feature');
@@ -111,10 +110,10 @@ describe('headlineSource', () => {
 
   test('non-agent nodes include their PHASE activity (changes exactly at phase transitions)', () => {
     const item = node({
-      id: 'w', kind: 'work-item', task: 'build feature',
-      currentActivity: { kind: 'phase', text: 'review', at: T0 },
+      id: 'w', kind: 'contract-unit', task: 'build feature',
+      currentActivity: { kind: 'phase', text: 'checking', at: T0 },
     });
-    expect(headlineSource(item)).toBe('build feature, review');
+    expect(headlineSource(item)).toBe('build feature, checking');
   });
 
   test('falls back to label; null when neither task nor label carries text', () => {

@@ -367,7 +367,7 @@ The `RuntimeStore` is a Redux-style store (using a custom reducer + dispatch pat
 | `model` | Active model selection, token usage |
 | `conversation` | Message history, turn state, compaction markers |
 | `agents` | Active agents, their status and progress |
-| `orchestration` | Orchestration chains, plan items |
+| `contracts` | Contracts: status, plan, each unit's and group's latest criterion verdicts, open owner escalations |
 | `permissions` | Permission decisions, session approvals, policy registry |
 | `communication` | Inbound/outbound channel message state |
 | `plugins` | Loaded plugins and their manifest state |

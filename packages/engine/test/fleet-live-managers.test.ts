@@ -67,7 +67,6 @@ describe('fleet registry: live managers integration', () => {
 
     const registry = createProcessRegistry({
       agentManager,
-      wrfcController: { listChains: () => [] },
       processManager,
       watcherRegistry: { list: () => [], stopWatcher: () => null },
       workflow: {
@@ -145,7 +144,6 @@ describe('fleet registry: live managers integration', () => {
     const workflow = createWorkflowServices();
     const registry = createProcessRegistry({
       agentManager,
-      wrfcController: { listChains: () => [] },
       processManager: new ProcessManager(),
       watcherRegistry: { list: () => [], stopWatcher: () => null },
       workflow: {

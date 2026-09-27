@@ -1,11 +1,11 @@
 export { updateDomainMetadata } from './reducers/shared.js';
 export { updateConversationState } from './reducers/conversation.js';
+export { updateContractsState } from './reducers/contracts.js';
 export {
   updateSessionState,
   updatePermissionState,
   updateTaskState,
   updateAgentState,
-  updateOrchestrationState,
   transitionTaskDomainRecord,
   updateTaskDomainFromRecord,
   transitionAgentDomainRecord,

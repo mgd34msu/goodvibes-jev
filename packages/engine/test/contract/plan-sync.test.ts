@@ -27,7 +27,7 @@ interface Write {
   readonly taskId: string;
   readonly status: string | undefined;
   readonly source: string | undefined;
-  readonly chainId: string | undefined;
+  readonly contractId: string | undefined;
   readonly parentTaskId: string | undefined;
 }
 
@@ -40,10 +40,10 @@ function recordingWorkPlan(): { readonly service: WorkPlanService; readonly writ
       const taskId = input.task.taskId!;
       if (created.has(taskId)) throw new Error(`Work plan task already exists: ${taskId}`);
       created.add(taskId);
-      writes.push({ kind: 'create', taskId, status: input.task.status, source: input.task.source, chainId: input.task.chainId, parentTaskId: input.task.parentTaskId });
+      writes.push({ kind: 'create', taskId, status: input.task.status, source: input.task.source, contractId: input.task.contractId, parentTaskId: input.task.parentTaskId });
     },
     updateWorkPlanTask: async (input: Parameters<WorkPlanService['updateWorkPlanTask']>[0]) => {
-      writes.push({ kind: 'update', taskId: input.taskId, status: input.patch.status, source: input.patch.source, chainId: input.patch.chainId, parentTaskId: input.patch.parentTaskId });
+      writes.push({ kind: 'update', taskId: input.taskId, status: input.patch.status, source: input.patch.source, contractId: input.patch.contractId, parentTaskId: input.patch.parentTaskId });
     },
   };
   // The fake returns nothing; the runner never reads the mutation result.
@@ -84,12 +84,12 @@ describe('plan sync (6.5)', () => {
     await waitFor(() => statusesOf(writes, unitTaskId(contract.id, 'u1')).at(-1) === 'done', 'the unit task to be done');
 
     const contractWrites = writes.filter((write) => write.taskId === contractTaskId(contract.id));
-    expect(contractWrites[0]).toMatchObject({ kind: 'create', status: 'pending', source: 'contract', chainId: contract.id, parentTaskId: undefined });
+    expect(contractWrites[0]).toMatchObject({ kind: 'create', status: 'pending', source: 'contract', contractId: contract.id, parentTaskId: undefined });
     expect(contractWrites.slice(1).every((write) => write.kind === 'update')).toBe(true);
     expect(new Set(statusesOf(writes, contractTaskId(contract.id)))).toEqual(new Set(['pending', 'in_progress', 'done']));
 
     const unitWrites = writes.filter((write) => write.taskId === unitTaskId(contract.id, 'u1'));
-    expect(unitWrites[0]).toMatchObject({ kind: 'create', source: 'contract', chainId: contract.id, parentTaskId: contractTaskId(contract.id) });
+    expect(unitWrites[0]).toMatchObject({ kind: 'create', source: 'contract', contractId: contract.id, parentTaskId: contractTaskId(contract.id) });
     expect(statusesOf(writes, unitTaskId(contract.id, 'u1'))).toEqual(['in_progress', 'in_progress', 'done']);
 
     expect(updates).toEqual([['plan-1', 'i1', 'complete', unitAgent]]);

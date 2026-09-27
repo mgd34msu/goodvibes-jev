@@ -5,7 +5,7 @@ Generated from the synced GoodVibes operator contract artifact.
 ## Summary
 
 - Methods: `507`
-- Events: `36`
+- Events: `34`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
 - Methods catalog path: `/api/control-plane/methods`
@@ -35044,16 +35044,14 @@ Return the session-archived process nodes (same node shape as fleet.snapshot; st
             "type": "string",
             "enum": [
               "agent",
-              "wrfc-chain",
-              "wrfc-subtask",
+              "contract",
+              "contract-group",
+              "contract-unit",
               "workflow",
               "trigger",
               "schedule",
               "watcher",
               "background-process",
-              "workstream",
-              "phase",
-              "work-item",
               "acp-agent",
               "observed-external",
               "code-index"
@@ -35259,50 +35257,72 @@ Return the session-archived process nodes (same node shape as fleet.snapshot; st
             },
             "additionalProperties": false
           },
-          "review": {
+          "check": {
             "type": "object",
             "properties": {
-              "score": {
-                "type": "number"
-              },
-              "passed": {
-                "type": "boolean"
-              },
-              "cycles": {
-                "type": "number"
-              },
-              "checklist": {
+              "criteria": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "item": {
+                    "id": {
                       "type": "string"
                     },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "evidence": {
+                    "text": {
                       "type": "string"
                     },
-                    "howExercised": {
-                      "type": "string"
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "unread",
+                        "met",
+                        "unmet",
+                        "unshown"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "critical",
+                        "major",
+                        "minor"
+                      ]
                     }
                   },
                   "required": [
-                    "item",
-                    "verified",
-                    "evidence"
+                    "id",
+                    "text",
+                    "verdict"
                   ],
                   "additionalProperties": false
                 }
+              },
+              "met": {
+                "type": "number"
+              },
+              "judged": {
+                "type": "number"
+              },
+              "nudges": {
+                "type": "number"
+              },
+              "lastCheckAt": {
+                "type": "number"
               }
             },
             "required": [
-              "score",
-              "passed",
-              "cycles",
-              "checklist"
+              "criteria",
+              "met",
+              "judged",
+              "nudges"
             ],
             "additionalProperties": false
           },
@@ -36517,16 +36537,14 @@ Paginated, filtered (kinds/states) query over the live process registry. Cursor 
             "type": "string",
             "enum": [
               "agent",
-              "wrfc-chain",
-              "wrfc-subtask",
+              "contract",
+              "contract-group",
+              "contract-unit",
               "workflow",
               "trigger",
               "schedule",
               "watcher",
               "background-process",
-              "workstream",
-              "phase",
-              "work-item",
               "acp-agent",
               "observed-external",
               "code-index"
@@ -36732,50 +36750,72 @@ Paginated, filtered (kinds/states) query over the live process registry. Cursor 
             },
             "additionalProperties": false
           },
-          "review": {
+          "check": {
             "type": "object",
             "properties": {
-              "score": {
-                "type": "number"
-              },
-              "passed": {
-                "type": "boolean"
-              },
-              "cycles": {
-                "type": "number"
-              },
-              "checklist": {
+              "criteria": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "item": {
+                    "id": {
                       "type": "string"
                     },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "evidence": {
+                    "text": {
                       "type": "string"
                     },
-                    "howExercised": {
-                      "type": "string"
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "unread",
+                        "met",
+                        "unmet",
+                        "unshown"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "critical",
+                        "major",
+                        "minor"
+                      ]
                     }
                   },
                   "required": [
-                    "item",
-                    "verified",
-                    "evidence"
+                    "id",
+                    "text",
+                    "verdict"
                   ],
                   "additionalProperties": false
                 }
+              },
+              "met": {
+                "type": "number"
+              },
+              "judged": {
+                "type": "number"
+              },
+              "nudges": {
+                "type": "number"
+              },
+              "lastCheckAt": {
+                "type": "number"
               }
             },
             "required": [
-              "score",
-              "passed",
-              "cycles",
-              "checklist"
+              "criteria",
+              "met",
+              "judged",
+              "nudges"
             ],
             "additionalProperties": false
           },
@@ -36994,16 +37034,14 @@ Return a point-in-time capture of every live/completed runtime process (agents, 
             "type": "string",
             "enum": [
               "agent",
-              "wrfc-chain",
-              "wrfc-subtask",
+              "contract",
+              "contract-group",
+              "contract-unit",
               "workflow",
               "trigger",
               "schedule",
               "watcher",
               "background-process",
-              "workstream",
-              "phase",
-              "work-item",
               "acp-agent",
               "observed-external",
               "code-index"
@@ -37209,50 +37247,72 @@ Return a point-in-time capture of every live/completed runtime process (agents, 
             },
             "additionalProperties": false
           },
-          "review": {
+          "check": {
             "type": "object",
             "properties": {
-              "score": {
-                "type": "number"
-              },
-              "passed": {
-                "type": "boolean"
-              },
-              "cycles": {
-                "type": "number"
-              },
-              "checklist": {
+              "criteria": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "item": {
+                    "id": {
                       "type": "string"
                     },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "evidence": {
+                    "text": {
                       "type": "string"
                     },
-                    "howExercised": {
-                      "type": "string"
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "unread",
+                        "met",
+                        "unmet",
+                        "unshown"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "critical",
+                        "major",
+                        "minor"
+                      ]
                     }
                   },
                   "required": [
-                    "item",
-                    "verified",
-                    "evidence"
+                    "id",
+                    "text",
+                    "verdict"
                   ],
                   "additionalProperties": false
                 }
+              },
+              "met": {
+                "type": "number"
+              },
+              "judged": {
+                "type": "number"
+              },
+              "nudges": {
+                "type": "number"
+              },
+              "lastCheckAt": {
+                "type": "number"
               }
             },
             "required": [
-              "score",
-              "passed",
-              "cycles",
-              "checklist"
+              "criteria",
+              "met",
+              "judged",
+              "nudges"
             ],
             "additionalProperties": false
           },
@@ -61757,7 +61817,7 @@ Remove completed project work-plan tasks. Defaults to clearing status done only.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -61891,7 +61951,7 @@ Remove completed project work-plan tasks. Defaults to clearing status done only.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -62025,7 +62085,7 @@ Remove completed project work-plan tasks. Defaults to clearing status done only.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -62182,7 +62242,7 @@ Remove completed project work-plan tasks. Defaults to clearing status done only.
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -62373,7 +62433,7 @@ Return the durable project-scoped work-plan snapshot, including tasks and status
     "parentTaskId": {
       "type": "string"
     },
-    "chainId": {
+    "contractId": {
       "type": "string"
     },
     "owner": {
@@ -62449,7 +62509,7 @@ Return the durable project-scoped work-plan snapshot, including tasks and status
           "parentTaskId": {
             "type": "string"
           },
-          "chainId": {
+          "contractId": {
             "type": "string"
           },
           "phaseId": {
@@ -62660,7 +62720,7 @@ Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon plann
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -62776,7 +62836,7 @@ Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon plann
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -62910,7 +62970,7 @@ Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon plann
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -63044,7 +63104,7 @@ Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon plann
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -63201,7 +63261,7 @@ Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon plann
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -63457,7 +63517,7 @@ Delete a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -63591,7 +63651,7 @@ Delete a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -63725,7 +63785,7 @@ Delete a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -63882,7 +63942,7 @@ Delete a durable project-scoped work-plan task.
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -64140,7 +64200,7 @@ Fetch one durable project-scoped work-plan task by id.
             "parentTaskId": {
               "type": "string"
             },
-            "chainId": {
+            "contractId": {
               "type": "string"
             },
             "phaseId": {
@@ -64296,7 +64356,7 @@ Fetch one durable project-scoped work-plan task by id.
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -64563,7 +64623,7 @@ Validate and apply a project work-plan task status transition.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -64697,7 +64757,7 @@ Validate and apply a project work-plan task status transition.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -64831,7 +64891,7 @@ Validate and apply a project work-plan task status transition.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -64988,7 +65048,7 @@ Validate and apply a project work-plan task status transition.
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -65272,7 +65332,7 @@ Patch a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -65406,7 +65466,7 @@ Patch a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -65540,7 +65600,7 @@ Patch a durable project-scoped work-plan task.
         "parentTaskId": {
           "type": "string"
         },
-        "chainId": {
+        "contractId": {
           "type": "string"
         },
         "phaseId": {
@@ -65697,7 +65757,7 @@ Patch a durable project-scoped work-plan task.
               "parentTaskId": {
                 "type": "string"
               },
-              "chainId": {
+              "contractId": {
                 "type": "string"
               },
               "phaseId": {
@@ -65855,7 +65915,7 @@ Patch a durable project-scoped work-plan task.
 
 #### `projectPlanning.workPlan.tasks.list`
 
-List durable project-scoped work-plan tasks with optional status, owner, parent, or WRFC-chain filters.
+List durable project-scoped work-plan tasks with optional status, owner, parent, or contract filters.
 
 - Title: `List Project Work Plan Tasks`
 - Source: `builtin`
@@ -65888,7 +65948,7 @@ List durable project-scoped work-plan tasks with optional status, owner, parent,
     "parentTaskId": {
       "type": "string"
     },
-    "chainId": {
+    "contractId": {
       "type": "string"
     },
     "owner": {
@@ -65964,7 +66024,7 @@ List durable project-scoped work-plan tasks with optional status, owner, parent,
           "parentTaskId": {
             "type": "string"
           },
-          "chainId": {
+          "contractId": {
             "type": "string"
           },
           "phaseId": {
@@ -66215,7 +66275,7 @@ Replace task ordering for the current project work plan.
           "parentTaskId": {
             "type": "string"
           },
-          "chainId": {
+          "contractId": {
             "type": "string"
           },
           "phaseId": {
@@ -105913,46 +105973,6 @@ Operational diagnostics and control events.
 }
 ```
 
-#### `runtime.orchestration`
-
-Higher-level orchestration and planner coordination events.
-
-- Title: `orchestration Domain Events`
-- Source: `builtin`
-- Transport: `sse`, `ws`
-- Scopes: `read:events`
-- Domains: `orchestration`
-- Wire events: `orchestration`
-
-##### Payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
 #### `runtime.planner`
 
 Planner updates and plan mutation events.
@@ -106443,46 +106463,6 @@ Watcher state and heartbeat events.
 - Scopes: `read:events`
 - Domains: `watchers`
 - Wire events: `watchers`
-
-##### Payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-#### `runtime.workflows`
-
-Workflow orchestration events.
-
-- Title: `workflows Domain Events`
-- Source: `builtin`
-- Transport: `sse`, `ws`
-- Scopes: `read:events`
-- Domains: `workflows`
-- Wire events: `workflows`
 
 ##### Payload schema
 

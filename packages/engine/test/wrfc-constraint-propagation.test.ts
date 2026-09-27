@@ -84,6 +84,16 @@ function eventData(event: { type: string; payload: Record<string, unknown> }): R
   return event.payload['payload'] as Record<string, unknown>;
 }
 
+/** A CONTRACT_CHECKED payload's criterion readings: the constraints the review met and did not. */
+function readings(payload: Record<string, unknown>): { met: string[]; unmet: string[]; total: number } {
+  const criteria = payload['criteria'] as Array<{ criterionId: string; verdict: string }>;
+  return {
+    met: criteria.filter((c) => c.verdict === 'met').map((c) => c.criterionId),
+    unmet: criteria.filter((c) => c.verdict === 'unmet').map((c) => c.criterionId),
+    total: criteria.length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Harness (same pattern as wrfc-controller.test.ts)
 // ---------------------------------------------------------------------------
@@ -136,7 +146,7 @@ function createHarness(opts?: {
   const spawnedRecords: AgentRecord[] = [];
   const workflowEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
 
-  bus.onDomain('workflows', (envelope) => {
+  bus.onDomain('contracts', (envelope) => {
     workflowEvents.push({
       type: envelope.type,
       payload: envelope as unknown as Record<string, unknown>,
@@ -278,14 +288,15 @@ describe('Engineer → review propagation', () => {
     expect(chain.constraints[1]?.id).toBe('c2');
     expect(chain.constraintsEnumerated).toBe(true);
 
-    // WORKFLOW_CONSTRAINTS_ENUMERATED should have been emitted
-    const enumerated = h.workflowEvents.find((e) => e.type === 'WORKFLOW_CONSTRAINTS_ENUMERATED');
-    expect(enumerated?.type).toBe('WORKFLOW_CONSTRAINTS_ENUMERATED');
+    // CONTRACT_PLANNED should have been emitted
+    const enumerated = h.workflowEvents.find((e) => e.type === 'CONTRACT_PLANNED');
+    expect(enumerated?.type).toBe('CONTRACT_PLANNED');
     const data = eventData(enumerated!);
-    const emittedConstraints = data['constraints'] as Constraint[];
-    expect(emittedConstraints).toHaveLength(2);
-    expect(emittedConstraints.map((c) => c.id)).toContain('c1');
-    expect(emittedConstraints.map((c) => c.id)).toContain('c2');
+    // The constraints are the contract's criteria.
+    const emittedCriteria = data['criteria'] as Array<{ id: string; text: string; origin: string }>;
+    expect(emittedCriteria).toHaveLength(2);
+    expect(emittedCriteria.map((c) => c.id)).toEqual(['c1', 'c2']);
+    expect(emittedCriteria[0]).toMatchObject({ text: 'must be pure', origin: 'stated' });
 
     // Reviewer should have been spawned (chain in reviewing)
     expect(chain.state).toBe('reviewing');
@@ -324,9 +335,9 @@ describe('Review → planned-fix propagation', () => {
     // Hard-fail on unsatisfied constraint even though score >= 9.9 threshold
     expect(chain.state).toBe('fixing');
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(false);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('nudge');
 
     // The planned-fix runner (the path that replaced the single fixer) received
     // the review; the parsed constraint task carries the finding's evidence.
@@ -355,17 +366,16 @@ describe('Review → planned-fix propagation', () => {
 
     expect(chain.state).toBe('fixing');
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
     const reviewPayload = eventData(reviewEvent!);
-    expect(reviewPayload['passed']).toBe(false);
-    expect(reviewPayload['constraintsSatisfied']).toBe(1);
-    expect(reviewPayload['constraintsTotal']).toBe(2);
-    expect(reviewPayload['unsatisfiedConstraintIds']).toEqual(['c2']);
+    expect(reviewPayload['result']).toBe('nudge');
+    // The missing finding reads unmet, not met.
+    expect(readings(reviewPayload)).toEqual({ met: ['c1'], unmet: ['c2'], total: 2 });
 
-    const fixEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_FIX_ATTEMPTED');
-    expect(fixEvent?.type).toBe('WORKFLOW_FIX_ATTEMPTED');
-    expect(eventData(fixEvent!)['targetConstraintIds']).toEqual(['c2']);
+    const fixEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_FIX_PLANNED');
+    expect(fixEvent?.type).toBe('CONTRACT_FIX_PLANNED');
+    expect(eventData(fixEvent!)).toMatchObject({ contractId: chain.id, scope: 'deliverable', targetId: chain.id, round: 1 });
 
     // The controller synthesizes an unsatisfied finding for the MISSING
     // constraint so the planned fix always covers it (unverified is unmet).
@@ -395,9 +405,10 @@ describe('Review → planned-fix propagation', () => {
       issue.description.includes('unknown constraints') && issue.description.includes('c99'),
     )).toBe(true);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(true);
-    expect(eventData(reviewEvent!)['constraintsTotal']).toBe(1);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('pass');
+    // Only the chain's own constraint is read; the unknown c99 is not a criterion.
+    expect(readings(eventData(reviewEvent!))).toEqual({ met: ['c1'], unmet: [], total: 1 });
 
     h.controller.dispose();
   });
@@ -558,7 +569,7 @@ function createGateHarness(gateName: string) {
   const spawnedRecords: AgentRecord[] = [];
   const workflowEvents: Array<{ type: string; payload: Record<string, unknown> }> = [];
 
-  bus.onDomain('workflows', (envelope) => {
+  bus.onDomain('contracts', (envelope) => {
     workflowEvents.push({ type: envelope.type, payload: envelope as unknown as Record<string, unknown> });
   });
 
@@ -615,7 +626,7 @@ function createGateHarness(gateName: string) {
 /** Wait for a specific workflow event type on the bus. */
 function waitForEvent(bus: RuntimeEventBus, eventType: string): Promise<void> {
   return new Promise<void>((resolve) => {
-    const unsub = bus.onDomain('workflows', (envelope) => {
+    const unsub = bus.onDomain('contracts', (envelope) => {
       if (envelope.type === eventType) {
         unsub();
         resolve();
@@ -648,8 +659,8 @@ describe('Gate retry: same-chain fix', () => {
       { constraintId: 'c2', satisfied: true, evidence: 'no external deps' },
     ]);
 
-    // Wait for WORKFLOW_FIX_ATTEMPTED (gate processing is async, runs real subprocess)
-    const fixPromise = waitForEvent(bus, 'WORKFLOW_FIX_ATTEMPTED');
+    // Wait for CONTRACT_FIX_PLANNED (gate processing is async, runs real subprocess)
+    const fixPromise = waitForEvent(bus, 'CONTRACT_FIX_PLANNED');
     emitAgentCompleted(bus, reviewerRecord.id);
     await fixPromise;
     await flushMicrotasks(20);
@@ -694,7 +705,7 @@ describe('Gate retry: no child chain', () => {
       { constraintId: 'c2', satisfied: true, evidence: 'no deps' },
     ]);
 
-    const fixPromise = waitForEvent(bus, 'WORKFLOW_FIX_ATTEMPTED');
+    const fixPromise = waitForEvent(bus, 'CONTRACT_FIX_PLANNED');
     emitAgentCompleted(bus, reviewerRecord.id);
     await fixPromise;
     await flushMicrotasks(20);
@@ -726,7 +737,7 @@ describe('Zero-constraint gate retry', () => {
     const reviewerRecord = latestSpawnedByWrfcRole(controller, spawnedRecords, 'reviewer');
     reviewerRecord.fullOutput = reviewerOutput(10.0, []);
 
-    const fixPromise = waitForEvent(bus, 'WORKFLOW_FIX_ATTEMPTED');
+    const fixPromise = waitForEvent(bus, 'CONTRACT_FIX_PLANNED');
     emitAgentCompleted(bus, reviewerRecord.id);
     await fixPromise;
     await flushMicrotasks(20);
@@ -754,9 +765,9 @@ describe('Score-vs-constraint conflict matrix', () => {
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(true);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('pass');
     // No gates configured → chain transitions awaiting_gates → gating → passed immediately
     expect(chain.state).toBe('passed');
     h.controller.dispose();
@@ -772,9 +783,9 @@ describe('Score-vs-constraint conflict matrix', () => {
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(false);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('nudge');
     expect(chain.state).toBe('fixing');
     h.controller.dispose();
   });
@@ -789,9 +800,9 @@ describe('Score-vs-constraint conflict matrix', () => {
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(false);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('nudge');
     expect(chain.state).toBe('fixing');
     h.controller.dispose();
   });
@@ -806,20 +817,20 @@ describe('Score-vs-constraint conflict matrix', () => {
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
-    expect(eventData(reviewEvent!)['passed']).toBe(false);
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
+    expect(eventData(reviewEvent!)['result']).toBe('nudge');
     expect(chain.state).toBe('fixing');
     h.controller.dispose();
   });
 });
 
 // ---------------------------------------------------------------------------
-// A13: WORKFLOW_REVIEW_COMPLETED event payload with / without constraints
+// A13: CONTRACT_CHECKED event payload with / without constraints
 // ---------------------------------------------------------------------------
 
-describe('WORKFLOW_REVIEW_COMPLETED event payload', () => {
-  test('with constraints → event carries constraintsSatisfied, constraintsTotal, unsatisfiedConstraintIds', async () => {
+describe('CONTRACT_CHECKED event payload', () => {
+  test('with constraints → event carries a met or unmet reading per constraint', async () => {
     const { h, reviewerAgentId } = await seedChainWithConstraints([
       { id: 'c1', text: 'must be pure', source: 'prompt' },
       { id: 'c2', text: 'no deps', source: 'prompt' },
@@ -831,38 +842,34 @@ describe('WORKFLOW_REVIEW_COMPLETED event payload', () => {
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
     const p = eventData(reviewEvent!);
-    expect(p['constraintsSatisfied']).toBe(1);
-    expect(p['constraintsTotal']).toBe(2);
-    expect(p['unsatisfiedConstraintIds']).toEqual(['c2']);
+    expect(readings(p)).toEqual({ met: ['c1'], unmet: ['c2'], total: 2 });
 
     h.controller.dispose();
   });
 
-  test('without constraints → event does NOT carry constraint fields', async () => {
+  test('without constraints → event carries no criterion readings', async () => {
     const { h, reviewerAgentId } = await seedChainWithConstraints([]);
     h.setOutput(reviewerAgentId(), reviewerOutput(10.0, []));
     emitAgentCompleted(h.bus, reviewerAgentId());
     await flushMicrotasks(20);
 
-    const reviewEvent = h.workflowEvents.find((e) => e.type === 'WORKFLOW_REVIEW_COMPLETED');
-    expect(reviewEvent?.type).toBe('WORKFLOW_REVIEW_COMPLETED');
+    const reviewEvent = h.workflowEvents.find((e) => e.type === 'CONTRACT_CHECKED');
+    expect(reviewEvent?.type).toBe('CONTRACT_CHECKED');
     const p = eventData(reviewEvent!);
-    expect(p['constraintsSatisfied']).toBeUndefined();
-    expect(p['constraintsTotal']).toBeUndefined();
-    expect(p['unsatisfiedConstraintIds']).toBeUndefined();
+    expect(p['criteria']).toEqual([]);
 
     h.controller.dispose();
   });
 });
 
 // ---------------------------------------------------------------------------
-// A14: WORKFLOW_CONSTRAINTS_ENUMERATED emitted exactly once per chain
+// A14: CONTRACT_PLANNED emitted exactly once per chain
 // ---------------------------------------------------------------------------
 
-describe('WORKFLOW_CONSTRAINTS_ENUMERATED emitted exactly once', () => {
+describe('CONTRACT_PLANNED emitted exactly once', () => {
   test('emitted on initial engineer completion, NOT re-emitted by planned-fix cycles', async () => {
     const constraints: Constraint[] = [
       { id: 'c1', text: 'must be pure', source: 'prompt' },
@@ -873,7 +880,7 @@ describe('WORKFLOW_CONSTRAINTS_ENUMERATED emitted exactly once', () => {
     });
 
     const enumeratedCount = () =>
-      h.workflowEvents.filter((e) => e.type === 'WORKFLOW_CONSTRAINTS_ENUMERATED').length;
+      h.workflowEvents.filter((e) => e.type === 'CONTRACT_PLANNED').length;
 
     // After engineer completion: exactly 1 emission
     expect(enumeratedCount()).toBe(1);

@@ -7,14 +7,14 @@
  * the only registry-owned mutable state is the agent activity side-table fed
  * by EXISTING runtime-bus 'agents' events (no new event contract).
  *
- * Pattern precedent: platform/core/orchestrator-context-runtime.ts already
- * aggregates agentManager.list() + wrfcController.listChains() into a
- * read-only context; this module generalizes that into a durable registry.
+ * The contract tree comes from the contract runner's views (contract, group
+ * and unit nodes, docs/design/contract-runner.md section 8.3); every other
+ * family from its own manager.
  */
 
 import type { AgentManager, AgentRecord } from '../../tools/agent/manager.js';
-import type { WrfcController } from '../../agents/wrfc-controller.js';
-import type { WrfcChain, WrfcSubtask } from '../../agents/wrfc-types.js';
+import type { ContractRunner } from '../../contract/runner.js';
+import type { ContractView } from '../../contract/types.js';
 import type { ProcessManager } from '../../tools/shared/process-manager.js';
 import type { WatcherRegistry } from '../../watchers/registry.js';
 import type {
@@ -40,7 +40,14 @@ import type {
 } from './types.js';
 import type { AgentActivityEntry, AgentAdapterContext } from './adapters/agent.js';
 import { adaptAgent } from './adapters/agent.js';
-import { activeSubtaskMemberAgentId, adaptChain, adaptSubtask, repriceWrfcOwnerNode } from './adapters/wrfc.js';
+import {
+  adaptContract,
+  adaptContractGroup,
+  adaptContractUnit,
+  allContractUnits,
+  contractUnitNodeId,
+  repriceContractOwnerNode,
+} from './adapters/contract.js';
 import { adaptWorkflow } from './adapters/workflow.js';
 import { adaptTrigger } from './adapters/trigger.js';
 import { adaptSchedule } from './adapters/schedule.js';
@@ -49,25 +56,12 @@ import { adaptWatcherTrigger, isWatcherTriggerRaw } from './adapters/watcher-tri
 import type { TriggerManager as WatcherTriggerManager } from '../../triggers/manager.js';
 import { adaptBackgroundProcess } from './adapters/background-process.js';
 import { adaptAutomationJob, isAutomationJobRaw } from './adapters/automation.js';
-import {
-  activeWorkItemAgentId,
-  adaptPhase,
-  adaptWorkItem,
-  adaptWorkstream,
-  collectLiveItemUsage,
-  readyAttemptGroupIds,
-  phaseNodeId,
-  workItemNodeId,
-  workstreamNodeId,
-} from './adapters/orchestration.js';
 import type { CodeIndexProcessSource } from './adapters/code-index.js';
 import { adaptCodeIndex } from './adapters/code-index.js';
 import { adaptHostedAcpAgent, killHostedAcpNode, steerHostedAcpNode } from './adapters/acp-host.js';
 import { adaptObservedAgent, steerObservedNode } from './adapters/observed.js';
 import type { ObservedAgentSource } from './observed/source.js';
 import type { AcpHostService } from '../../acp/host.js';
-import type { WorkItem, Workstream } from '../../orchestration/types.js';
-import type { OrchestrationEngine } from '../../orchestration/engine.js';
 import { DEFAULT_STALL_TELL_MS, HeadlineTable, deriveStallTell } from './headlines.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -98,22 +92,12 @@ export interface RegistryTimers {
  */
 export interface ProcessRegistryDeps {
   readonly agentManager: Pick<AgentManager, 'list' | 'cancel'> & Partial<Pick<AgentManager, 'wakeWithSteer'>>;
-  readonly wrfcController: Pick<WrfcController, 'listChains'>;
   /**
-   * Optional: folds workstream/phase/work-item nodes into
-   * the fleet, nested workstream -> phase -> work-item, mirroring the
-   * wrfc-chain/subtask nesting. Without this dep the registry degrades to
-   * exactly today's behavior, no orchestration nodes, no new capability.
-   *
-   * `kill` is used (not a raw AgentManager.cancel cascade like the wrfc-chain
-   * path) so a fleet-initiated kill goes through the SAME
-   * engine.kill(itemId) path as an engine-internal caller: it aborts the
-   * item's registered AbortController (reaching an in-flight exec/fetch
-   * tool's child process, not just the agent's next turn-boundary poll) AND
-   * updates the engine's own WorkItem.state bookkeeping. Bypassing it would
-   * silently reopen the orphaned-child-process gap for this one kill path.
+   * The contract runner: its views become contract, contract-group and
+   * contract-unit nodes, and a contract kill cancels through it. Absent in a
+   * composition that runs no contracts, which then shows no contract nodes.
    */
-  readonly orchestrationEngine?: Pick<OrchestrationEngine, 'listWorkstreams' | 'kill'> | undefined;
+  readonly contractRunner?: Pick<ContractRunner, 'list' | 'cancel'> | undefined;
   readonly processManager: Pick<ProcessManager, 'list' | 'stop' | 'getStatus'>;
   readonly watcherRegistry: Pick<WatcherRegistry, 'list' | 'stopWatcher'>;
   readonly workflow: {
@@ -338,17 +322,11 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
   function assemble(): { capturedAt: number; nodes: ProcessNode[] } {
     const capturedAt = now();
     const agents: AgentRecord[] = deps.agentManager.list();
-    const chains: WrfcChain[] = deps.wrfcController.listChains();
-
-    const chainIds = new Set<string>(chains.map((chain) => chain.id));
-    const subtaskIds = new Set<string>();
-    for (const chain of chains) {
-      for (const subtask of chain.subtasks ?? []) subtaskIds.add(subtask.id);
-    }
-    const workstreams: Workstream[] = deps.orchestrationEngine?.listWorkstreams() ?? [];
-    const workItemIds = new Set<string>();
-    for (const workstream of workstreams) {
-      for (const item of workstream.items) workItemIds.add(item.id);
+    const contracts: readonly ContractView[] = deps.contractRunner?.list({ includeTerminal: true }) ?? [];
+    const contractIds = new Set<string>(contracts.map((contract) => contract.id));
+    const unitNodeIds = new Set<string>();
+    for (const contract of contracts) {
+      for (const unit of allContractUnits(contract)) unitNodeIds.add(contractUnitNodeId(contract.id, unit.id));
     }
     const agentIds = new Set<string>(agents.map((record) => record.id));
     const agentIdByOrchestrationNodeId = new Map<string, string>();
@@ -366,9 +344,8 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
       pendingApprovalAgentIds,
       pendingApprovalSessionIds,
       sessionIdByAgentId,
-      chainIds,
-      subtaskIds,
-      workItemIds,
+      contractIds,
+      unitNodeIds,
       agentIdByOrchestrationNodeId,
       agentIds,
       priceUsage: deps.priceUsage,
@@ -384,65 +361,36 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
       nodes.push(node);
     }
 
-    // Owner agent nodes to replace with a repriced copy after the chain loop
+    // Owner agent nodes to replace with a repriced copy after the contract loop
     // (ProcessNode is readonly, collect overrides, apply in one pass at the end).
     const ownerNodeOverrides = new Map<string, ProcessNode>();
-    for (const chain of chains) {
-      // Members exclude the owner: its usage is populated FROM phase children
-      // at completion time, so including it would double-count (see wrfc.ts).
-      const memberNodes: ProcessNode[] = [];
-      for (const agentId of chain.allAgentIds) {
-        if (agentId === chain.ownerAgentId) continue;
-        const node = agentNodeById.get(agentId);
-        if (node) memberNodes.push(node);
-      }
-      const chainNode = adaptChain(chain, memberNodes, capturedAt);
-      nodes.push(chainNode);
-      // Owner cost honesty: a WRFC owner runs no LLM turn itself, so its own model
-      // is often unresolved and it prices as "unpriced" even though its children
-      // priced fine. Adopt the chain's per-child-summed cost + model descriptor for
-      // the owner ROW. Excluded from every leaf-sum, so this never double-counts.
-      const ownerNode = agentNodeById.get(chain.ownerAgentId);
+    const agentNodesOf = (agentIds: readonly string[]): ProcessNode[] => [...new Set(agentIds)]
+      .map((agentId) => agentNodeById.get(agentId))
+      .filter((node): node is ProcessNode => node !== undefined);
+    for (const contract of contracts) {
+      const units = allContractUnits(contract);
+      // Members exclude the owner: it runs no model, and its usage is filled
+      // FROM these agents when the contract ends, so counting it would double.
+      const memberNodes = agentNodesOf([...contract.plannerAgentIds, ...contract.units.flatMap((unit) => unit.agentIds)])
+        .filter((node) => node.id !== contract.ownerAgentId);
+      const contractNode = adaptContract(contract, memberNodes, capturedAt);
+      nodes.push(contractNode);
+      const ownerNode = agentNodeById.get(contract.ownerAgentId);
       if (ownerNode) {
-        const repriced = repriceWrfcOwnerNode(ownerNode, chainNode);
+        const repriced = repriceContractOwnerNode(ownerNode, contractNode);
         if (repriced !== ownerNode) ownerNodeOverrides.set(ownerNode.id, repriced);
       }
-      for (const subtask of chain.subtasks ?? []) {
-        // Steerable only when the subtask's currently-active member agent is
-        // both present in this snapshot and not terminal, AND a messageBus
-        // dep exists to actually deliver the steer.
-        const activeMemberId = activeSubtaskMemberAgentId(subtask);
-        const activeMemberNode = activeMemberId ? agentNodeById.get(activeMemberId) : undefined;
-        const memberLive = activeMemberNode !== undefined
-          && activeMemberNode.state !== 'done'
-          && activeMemberNode.state !== 'failed'
-          && activeMemberNode.state !== 'killed';
-        nodes.push(adaptSubtask(subtask, chain, { steerable: deps.messageBus !== undefined && memberLive }));
+      for (const group of contract.groups) {
+        const groupAgents = contract.units.filter((unit) => unit.groupId === group.id).flatMap((unit) => unit.agentIds);
+        nodes.push(adaptContractGroup(group, contract, agentNodesOf(groupAgents), capturedAt));
       }
-    }
-
-    for (const workstream of workstreams) {
-      // Each item's active-agent in-flight usage, resolved ONCE up front (see
-      // collectLiveItemUsage) so the workstream rollup and the per-item nodes
-      // show live mid-phase usage instead of n/a until the phase boundary.
-      const liveByItemId = collectLiveItemUsage(workstream, agentNodeById);
-      // Ready best-of-N groups, resolved once per workstream (workstream flag + member attemptGroup.ready).
-      const readyGroups = readyAttemptGroupIds(workstream);
-      nodes.push(adaptWorkstream(workstream, capturedAt, liveByItemId));
-      for (const phase of workstream.phases) {
-        nodes.push(adaptPhase(phase, workstream));
-      }
-      for (const item of workstream.items) {
-        const activeAgentId = activeWorkItemAgentId(item);
-        const activeAgentNode = activeAgentId ? agentNodeById.get(activeAgentId) : undefined;
-        const memberLive = activeAgentNode !== undefined
-          && activeAgentNode.state !== 'done'
-          && activeAgentNode.state !== 'failed'
-          && activeAgentNode.state !== 'killed';
-        const parentId = item.currentPhaseId
-          ? phaseNodeId(workstream.id, item.currentPhaseId)
-          : workstreamNodeId(workstream.id);
-        nodes.push(adaptWorkItem(item, workstream.id, parentId, { steerable: deps.messageBus !== undefined && memberLive, live: liveByItemId.get(item.id), readyGroups }));
+      for (const unit of units) {
+        nodes.push(adaptContractUnit(unit, contract, {
+          activeAgent: unit.activeAgentId !== undefined ? agentNodeById.get(unit.activeAgentId) : undefined,
+          memberNodes: agentNodesOf(unit.agentIds),
+          messageBusPresent: deps.messageBus !== undefined,
+          now: capturedAt,
+        }));
       }
     }
 
@@ -570,6 +518,13 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
 
   // ── Control dispatch (existing manager paths only) ─────────────────────────
 
+  /** A contract unit node's working agent: the one its capabilities were derived from. */
+  function activeUnitAgentId(node: ProcessNode): string | undefined {
+    if (!node.capabilities.killable) return undefined;
+    const { unit } = node.raw as { unit: { activeAgentId?: string | undefined } };
+    return unit.activeAgentId;
+  }
+
   /** Cascade kill over member agents, always a hard kill, never an interrupt. */
   function cancelAgents(agentIds: readonly (string | undefined)[]): string[] {
     const affected: string[] = [];
@@ -624,42 +579,26 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
         const entry = node.raw as ScheduleEntry;
         return deps.workflow.scheduleManager.remove(entry.name) ? [node.id] : [];
       }
-      case 'wrfc-chain': {
-        // DERIVED, not native: WrfcController exposes no public cancel/abort,
-        // so chain kill cascades AgentManager.cancel over the member agents.
-        const chain = node.raw as WrfcChain;
-        const affected = cancelAgents(chain.allAgentIds);
+      case 'contract': {
+        const contract = node.raw as ContractView;
+        return deps.contractRunner?.cancel(contract.id, 'stopped by the operator') ? [node.id] : [];
+      }
+      case 'contract-group': {
+        // The group's working unit agents. The runner reads an operator
+        // cancel of a unit agent as a stop of its contract (design 6.5).
+        const { contract, group } = node.raw as { contract: ContractView; group: { id: string } };
+        const agentIds = allContractUnits(contract)
+          .filter((unit) => unit.groupId === group.id && unit.activeAgentId !== undefined)
+          .map((unit) => unit.activeAgentId);
+        const affected = cancelAgents(agentIds);
         return affected.length > 0 ? [node.id, ...affected] : [];
       }
-      case 'wrfc-subtask': {
-        const subtask = node.raw as WrfcSubtask;
-        const affected = cancelAgents([subtask.engineerAgentId, subtask.reviewerAgentId, subtask.fixerAgentId]);
-        return affected.length > 0 ? [node.id, ...affected] : [];
-      }
-      case 'workstream': {
-        // DERIVED: no native single-call cancel, so kill cascades
-        // engine.kill(itemId) over every non-terminal item, routed through
-        // the engine (not a raw AgentManager.cancel cascade) so cooperative
-        // cancellation (AbortController -> exec/fetch signal) fires the same
-        // way it would for an engine-internal kill.
-        const workstream = node.raw as Workstream;
-        if (!deps.orchestrationEngine) return [];
-        const affected: string[] = [];
-        for (const item of workstream.items) {
-          if (deps.orchestrationEngine.kill(item.id)) affected.push(workItemNodeId(item.id));
-        }
-        return affected.length > 0 ? [node.id, ...affected] : [];
-      }
-      case 'work-item': {
-        const { item } = node.raw as { item: WorkItem };
-        if (!deps.orchestrationEngine?.kill(item.id)) return [];
-        return [node.id];
+      case 'contract-unit': {
+        const agentId = activeUnitAgentId(node);
+        return agentId !== undefined && deps.agentManager.cancel(agentId, 'kill') ? [node.id, agentId] : [];
       }
       case 'acp-agent':
         return killHostedAcpNode(deps.acpHost, node, (hostedId, error) => logger.warn('[fleet] hosted ACP agent stop failed', { id: hostedId, error: summarizeError(error) }));
-      case 'phase':
-        // Pure grouping node, not killable (see adaptPhase capabilities).
-        return [];
       default:
         return [];
     }
@@ -697,15 +636,14 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
     for (const node of targets) {
       for (const affectedId of killNode(node)) affected.add(affectedId);
     }
-    // Chain-kill consistency: under cascade, member agents are terminated by
-    // the descendant pass BEFORE the chain's own killNode runs, so its
-    // internal cancelAgents() call finds every member already cancelled
-    // (affected.length === 0 there) and omits 'chain:<id>', even though the
-    // chain itself was the kill target and a termination did occur. Make the
-    // return value consistent across both cascade and non-cascade: include
-    // the chain id whenever the chain was targeted and either a termination
-    // occurred (any node above) or the chain was still live.
-    if (target.kind === 'wrfc-chain' && (affected.size > 0 || target.capabilities.killable)) {
+    // Contract-kill consistency: under cascade, unit agents are terminated by
+    // the descendant pass BEFORE the contract's own killNode runs, and the
+    // runner reads that as a stop of the contract, so the contract's own
+    // cancel then finds it already ended and omits 'contract:<id>', even
+    // though the contract was the kill target and a termination did occur.
+    // Include the contract id whenever it was targeted and either a
+    // termination occurred or it was still live.
+    if (target.kind === 'contract' && (affected.size > 0 || target.capabilities.killable)) {
       affected.add(target.id);
     }
     return [...affected];
@@ -734,10 +672,9 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
         const entry = target.raw as ScheduleEntry;
         return deps.workflow.scheduleManager.disable(entry.name);
       }
-      case 'work-item': {
-        const { item } = target.raw as { item: WorkItem };
-        const agentId = activeWorkItemAgentId(item);
-        return agentId ? deps.agentManager.cancel(agentId, 'interrupt') : false;
+      case 'contract-unit': {
+        const agentId = activeUnitAgentId(target);
+        return agentId !== undefined ? deps.agentManager.cancel(agentId, 'interrupt') : false;
       }
       default:
         return false;
@@ -783,13 +720,13 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
 
   /**
    * Queue a human message onto a live in-process agent's inbox (or the
-   * current live member agent of a wrfc-subtask). Mirrors interrupt()/kill()
+   * live agent of a contract unit). Mirrors interrupt()/kill()
    * dispatch shape: re-assemble, find the target, switch on kind.
    *
    * Honest refusal for anything that cannot take mid-run input: no
-   * messageBus dep, a terminal/non-conversational kind, or a wrfc-chain
-   * (coordinate FSM, no conversation loop of its own, steer its member
-   * subtask instead).
+   * messageBus dep, a terminal/non-conversational kind, or a contract or
+   * contract group (no conversation loop of their own, steer a unit
+   * instead).
    */
   function steer(id: string, text: string): SteerResult {
     const { nodes } = assemble();
@@ -827,30 +764,19 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
         });
         return sent ? { queued: true, messageId } : { queued: false, reason: 'steering message was blocked' };
       }
-      case 'wrfc-subtask': {
-        const subtask = target.raw as WrfcSubtask;
-        const agentId = activeSubtaskMemberAgentId(subtask);
-        if (!agentId || !target.capabilities.steerable) {
-          return { queued: false, reason: 'no live member agent to steer for this subtask' };
+      case 'contract-unit': {
+        const agentId = activeUnitAgentId(target);
+        if (agentId === undefined || !target.capabilities.steerable) {
+          return { queued: false, reason: 'no live agent to steer for this unit' };
         }
         const messageId = crypto.randomUUID();
         const sent = deps.messageBus.send('operator', agentId, text, { kind: 'steer', ttlMs: STEER_TTL_MS, id: messageId });
         return sent ? { queued: true, messageId } : { queued: false, reason: 'steering message was blocked' };
       }
-      case 'wrfc-chain':
-        return { queued: false, reason: 'steer a member agent, not the chain' };
-      case 'work-item': {
-        const { item } = target.raw as { item: WorkItem };
-        const agentId = activeWorkItemAgentId(item);
-        if (!agentId || !target.capabilities.steerable) {
-          return { queued: false, reason: 'no live agent to steer for this work item' };
-        }
-        const messageId = crypto.randomUUID();
-        const sent = deps.messageBus.send('operator', agentId, text, { kind: 'steer', ttlMs: STEER_TTL_MS, id: messageId });
-        return sent ? { queued: true, messageId } : { queued: false, reason: 'steering message was blocked' };
-      }
-      case 'workstream':
-        return { queued: false, reason: 'steer a work item, not the workstream' };
+      case 'contract':
+        return { queued: false, reason: 'steer a unit, not the contract' };
+      case 'contract-group':
+        return { queued: false, reason: 'steer a unit, not the group' };
       default:
         return { queued: false, reason: `${target.kind} cannot take steering input` };
     }

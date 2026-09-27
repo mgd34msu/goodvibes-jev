@@ -732,7 +732,7 @@ export function configureDaemonSessionContinuation(options: {
     readonly agentId: string;
     readonly task: string;
     readonly agentTask?: string | undefined;
-    readonly workflowChainId?: string | undefined;
+    readonly contractId?: string | undefined;
     readonly sessionId?: string | undefined;
   }) => void;
   /** The live registry's model candidates, enables bare model id resolution in routing overrides. */
@@ -792,7 +792,7 @@ export function configureDaemonSessionContinuation(options: {
       agentId: spawned.id,
       task: input.body,
       agentTask: task,
-      ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { workflowChainId: spawned.contractId } : {}),
+      ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { contractId: spawned.contractId } : {}),
       sessionId,
     });
     return { agentId: spawned.id };

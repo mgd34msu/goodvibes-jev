@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { createInitialAcpState } from '../sdk/src/platform/runtime/store/domains/acp.js';
 import { createInitialAgentsState } from '../sdk/src/platform/runtime/store/domains/agents.js';
 import { createInitialAutomationState } from '../sdk/src/platform/runtime/store/domains/automation.js';
+import { createInitialContractsState } from '../sdk/src/platform/runtime/store/domains/contracts.js';
 import { createInitialConversationState } from '../sdk/src/platform/runtime/store/domains/conversation.js';
 import { createInitialDaemonState } from '../sdk/src/platform/runtime/store/domains/daemon.js';
 import { createInitialDiscoveryState } from '../sdk/src/platform/runtime/store/domains/discovery.js';
@@ -16,7 +17,6 @@ import { createInitialGitState } from '../sdk/src/platform/runtime/store/domains
 import { createInitialIntelligenceState } from '../sdk/src/platform/runtime/store/domains/intelligence.js';
 import { createInitialMcpState } from '../sdk/src/platform/runtime/store/domains/mcp.js';
 import { createInitialModelState } from '../sdk/src/platform/runtime/store/domains/model.js';
-import { createInitialOrchestrationState } from '../sdk/src/platform/runtime/store/domains/orchestration.js';
 import { createInitialPermissionsState } from '../sdk/src/platform/runtime/store/domains/permissions.js';
 import { createInitialSessionState } from '../sdk/src/platform/runtime/store/domains/session.js';
 import { createInitialTasksState } from '../sdk/src/platform/runtime/store/domains/tasks.js';
@@ -85,9 +85,13 @@ describe('platform/runtime/store/domains: behavior smoke', () => {
     assertBaseShape(state, 'model');
   });
 
-  test('createInitialOrchestrationState returns correct shape', () => {
-    const state = createInitialOrchestrationState();
-    assertBaseShape(state, 'orchestration');
+  test('createInitialContractsState returns correct shape', () => {
+    const state = createInitialContractsState();
+    assertBaseShape(state, 'contracts');
+    expect(state.contracts).toBeInstanceOf(Map);
+    expect(state.activeContractIds).toEqual([]);
+    expect(state.totalContracts).toBe(0);
+    expect(state.spawnGuardTrips).toBe(0);
   });
 
   test('createInitialPermissionsState returns correct shape', () => {

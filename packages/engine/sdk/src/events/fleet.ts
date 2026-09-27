@@ -21,16 +21,14 @@
 /** Mirrors ProcessKind. */
 export type FleetNodeKind =
   | 'agent'
-  | 'wrfc-chain'
-  | 'wrfc-subtask'
+  | 'contract'
+  | 'contract-group'
+  | 'contract-unit'
   | 'workflow'
   | 'trigger'
   | 'schedule'
   | 'watcher'
   | 'background-process'
-  | 'workstream'
-  | 'phase'
-  | 'work-item'
   | 'acp-agent'
   | 'observed-external'
   | 'code-index';

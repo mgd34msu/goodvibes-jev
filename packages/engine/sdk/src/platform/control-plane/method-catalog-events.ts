@@ -78,8 +78,6 @@ const RUNTIME_DOMAIN_DESCRIPTIONS = {
   tools: 'Tool start, result, and failure events.',
   tasks: 'Runtime task lifecycle and status events.',
   agents: 'Agent lifecycle, planning, and completion events.',
-  workflows: 'Workflow orchestration events.',
-  orchestration: 'Higher-level orchestration and planner coordination events.',
   contracts: 'Contract runner events: a contract from creation through shaping, planning and the plan checks, each unit and group status, every Jev check with its per-criterion readings, nudges and their consumption, regressions, stalls, planned fixes, owner escalations and replies, gates, commit, and the pass, failure or cancellation.',
   communication: 'Agent communication and policy events.',
   planner: 'Planner updates and plan mutation events.',

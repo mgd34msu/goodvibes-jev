@@ -455,14 +455,14 @@ export class PushService {
    * FLEET_NODE_FINISHED notice) pushes a 'completion' notification to every
    * paired target, by DEFAULT, with zero configuration; the
    * notifications.pushCompletion toggle exists only to silence the class.
-   * Scoped to run-level kinds (agent/chain/workstream/workflow/automation-job)
-   * so a chain finishing does not also fan out one push per subtask/work-item
+   * Scoped to run-level kinds (agent/contract/workflow/automation-job) so a
+   * contract finishing does not also fan out one push per group or unit
    * child; the FINISHED event itself fires only on an OBSERVED terminal
    * transition (emit-bridge honesty), so nothing is inferred. One push per
    * node id. Returns an unsubscribe handle.
    */
   attachCompletionSource(source: FleetNoticeSource): () => void {
-    const RUN_KINDS = new Set(['agent', 'chain', 'workstream', 'workflow', 'automation-job']);
+    const RUN_KINDS = new Set(['agent', 'contract', 'workflow', 'automation-job']);
     return source.subscribe((notice) => {
       if (notice.type !== 'FLEET_NODE_FINISHED') return;
       if (notice.kind !== undefined && !RUN_KINDS.has(notice.kind)) return;

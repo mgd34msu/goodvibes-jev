@@ -119,15 +119,15 @@ describe('project planning service', () => {
         title: 'Build shared work-plan primitive',
         owner: 'sdk',
         priority: 10,
-        source: 'wrfc',
-        chainId: 'chain-1',
+        source: 'contract',
+        contractId: 'ctr-1',
         phaseId: 'engineer',
         agentId: 'agent-1',
         linkedArtifactIds: ['artifact-1'],
         linkedSourceIds: ['source-1'],
         linkedNodeIds: ['node-1'],
         originSurface: 'tui',
-        tags: ['wrfc', 'planning'],
+        tags: ['contract', 'planning'],
       },
     });
     const started = await service.setWorkPlanTaskStatus({
@@ -136,7 +136,7 @@ describe('project planning service', () => {
       status: 'in_progress',
       reason: 'Engineer started',
     });
-    const listed = await service.getWorkPlanSnapshot({ projectId: 'alpha', chainId: 'chain-1' });
+    const listed = await service.getWorkPlanSnapshot({ projectId: 'alpha', contractId: 'ctr-1' });
     const beta = await service.getWorkPlanSnapshot({ projectId: 'beta' });
     const status = await service.status({ projectId: 'alpha' });
 
@@ -182,6 +182,24 @@ describe('project planning service', () => {
     expect(cleared.clearedTaskIds).toEqual([second.task!.taskId]);
     expect(cleared.snapshot.counts.total).toBe(1);
     expect(cleared.snapshot.tasks[0]?.title).toBe('First task');
+  });
+});
+
+describe('stored work plans written before the contract rename', () => {
+  test("a stored task's chainId is read as its contractId, so the link survives", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'goodvibes-project-planning-'));
+    tmpRoots.push(root);
+    const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
+    const service = new ProjectPlanningService(store, { defaultProjectId: 'default-project' });
+    await service.createWorkPlanTask({ projectId: 'alpha', task: { title: 'Older task', contractId: 'ctr-old' } });
+    // Rewrite the stored artifact the way an older build wrote it: the correlation under `chainId`.
+    const source = store.listSources(100).find((candidate) => candidate.metadata['planningArtifactKind'] === 'work-plan')!;
+    const value = source.metadata['value'] as { tasks: Array<Record<string, unknown>> };
+    const legacyTasks = value.tasks.map(({ contractId, ...rest }) => ({ ...rest, chainId: contractId }));
+    await store.upsertSource({ ...source, metadata: { ...source.metadata, value: { ...value, tasks: legacyTasks } } });
+
+    const snapshot = await service.getWorkPlanSnapshot({ projectId: 'alpha', contractId: 'ctr-old' });
+    expect(snapshot.tasks.map((task) => [task.title, task.contractId])).toEqual([['Older task', 'ctr-old']]);
   });
 });
 

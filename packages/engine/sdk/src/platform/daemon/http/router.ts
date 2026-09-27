@@ -171,7 +171,7 @@ interface DaemonHttpRouterContext {
   }) => Promise<{ status: number; ok: boolean; body: unknown }>;
   readonly queueSurfaceReplyFromBinding: (
     binding: import('../../automation/routes.js').AutomationRouteBinding | undefined,
-    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly workflowChainId?: string; readonly sessionId?: string },
+    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string; readonly contractId?: string; readonly sessionId?: string },
   ) => void;
   /** A surface that ran the turn in its own process reports the answer; see DaemonSurfaceDeliveryHelper. */
   readonly completeSurfaceReplyFromSurface: (input: { readonly agentId: string; readonly sessionId?: string | undefined; readonly body: string; readonly status?: 'completed' | 'failed' | 'cancelled' | undefined }) => Promise<boolean>;

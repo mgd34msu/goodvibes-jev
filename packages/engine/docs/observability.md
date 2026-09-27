@@ -107,6 +107,7 @@ Available runtime domains:
 | `communication` | Channel and message communication events |
 | `compaction` | Context compaction start/complete |
 | `control-plane` | Session and control events |
+| `contracts` | Contract lifecycle: created, shaped, planned and plan checks, group and unit status, every check with its per-criterion readings, nudges, regressions, stalls, planned fixes, owner escalations and replies, gates, commit, passed, failed, cancelled |
 | `config` | Key-level settings-change notices, carrying the dotted key, its ownership scope, and the new value (a secret-bearing key travels by name only, with no value field) |
 | `deliveries` | Outbound delivery tracking |
 | `fleet` | Live process-registry node lifecycle: started, state changed, finished, blocked on user, unblocked |
@@ -114,7 +115,6 @@ Available runtime domains:
 | `knowledge` | Knowledge base updates |
 | `mcp` | MCP tool call lifecycle |
 | `ops` | Operator ops plane |
-| `orchestration` | Orchestration plan changes |
 | `permissions` | Permission requests and decisions |
 | `planner` | AdaptivePlanner decisions |
 | `plugins` | Plugin state changes |
@@ -129,12 +129,11 @@ Available runtime domains:
 | `turn` | Turn lifecycle (submitted, streaming, completed, cancelled, `STREAM_DELTA` deltas) |
 | `ui` | UI interaction events |
 | `watchers` | File/resource watcher state |
-| `workflows` | WRFC workflow lifecycle: chain created/passed/failed, state transitions, review completed, fix attempted, constraints enumerated |
 | `workspace` | Workspace lifecycle events |
 
 For the complete list of event types and their payload shapes, see [Runtime events reference](./reference-runtime-events.md).
 
-WRFC owner decisions are persisted to the WRFC workmap as `owner_decision` entries. These are not high-volume runtime events; they are an audit trail for why the owner spawned a phase child, accepted or rejected a review, resumed or skipped resume, and completed/cancelled/failed a chain. Use `agent` tool modes `wrfc-chains` and `wrfc-history` to inspect this trail from native SDK/TUI surfaces.
+A contract's decisions (why a unit was nudged, a fix planned, an escalation raised, the contract passed) are recorded in the contract tree with the decision-log ids of the Jev readings behind them. They are an audit trail, not high-volume runtime events.
 
 ### Subscribing via SSE
 
@@ -747,55 +746,29 @@ Both functions are no-ops when `@opentelemetry/api` is not installed or no activ
 
 ---
 
-## WRFC workflow events
+## Contract events
 
-WRFC (Work-Review-Fix-Commit) chains emit structured events on the `workflows` domain. Constraint-related events are documented here.
-
-### `WORKFLOW_CONSTRAINTS_ENUMERATED`
-
-Emitted once per chain on initial engineer completion. Carries the authoritative constraint list extracted from the task prompt.
+A contract emits one event per step on the `contracts` domain. The events a surface usually follows:
 
 ```ts
-feed.workflows.on('WORKFLOW_CONSTRAINTS_ENUMERATED', (event) => {
-  console.log(event.chainId, event.constraints);
-  // event.constraints: Constraint[]
-  // { id: string; text: string; source: 'prompt' }[]
+feed.contracts.on('CONTRACT_CHECKED', (event) => {
+  // One check of a unit, group or the deliverable, with each criterion's reading.
+  const { scope, targetId, result, criteria } = event;
+  // criteria: { criterionId, verdict: 'met' | 'unmet' | 'unshown', probabilityUnmet, outcome }[]
+});
+
+feed.contracts.on('CONTRACT_NUDGED', (event) => {
+  // A unit's agent was told what is wrong; it fixes it and is checked again.
+  const { unitId, kinds, criterionIds } = event;
+});
+
+feed.contracts.on('CONTRACT_ESCALATED', (event) => {
+  // The owner is asked to decide; the question is plain text ready to show.
+  const { escalationId, reason, question } = event;
 });
 ```
 
-An empty `constraints` array signals the zero-constraint (unconstrained) path, no constraint enforcement follows for this chain.
-
-### `WORKFLOW_REVIEW_COMPLETED` constraint fields
-
-When the chain has user-declared constraints, three additional fields are present:
-
-```ts
-feed.workflows.on('WORKFLOW_REVIEW_COMPLETED', (event) => {
-  const { score, passed } = event;
-  // constraint fields (present only when chain has constraints):
-  const { constraintsSatisfied, constraintsTotal, unsatisfiedConstraintIds } = event;
-});
-```
-
-| Field | Type | When present |
-|-------|------|--------------|
-| `constraintsSatisfied` | `number` | chain has `constraints.length > 0` |
-| `constraintsTotal` | `number` | chain has `constraints.length > 0` |
-| `unsatisfiedConstraintIds` | `string[]` | chain has `constraints.length > 0` |
-
-When the chain has no constraints, these fields are omitted.
-
-### `WORKFLOW_FIX_ATTEMPTED` constraint fields
-
-```ts
-feed.workflows.on('WORKFLOW_FIX_ATTEMPTED', (event) => {
-  const { attempt, maxAttempts } = event;
-  // optional: IDs of constraints this fix iteration is targeting
-  const { targetConstraintIds } = event; // string[] | undefined
-});
-```
-
-For full details on the constraint propagation lifecycle, see [WRFC Constraint Propagation](./wrfc-constraint-propagation.md).
+A unit passes only when every judged criterion reads met. `CONTRACT_PASSED`, `CONTRACT_FAILED` and `CONTRACT_CANCELLED` end a contract. Every event type and field is listed in the [Runtime events reference](./reference-runtime-events.md#named-contract-events).
 
 ---
 
@@ -804,6 +777,5 @@ For full details on the constraint propagation lifecycle, see [WRFC Constraint P
 - [Performance and Tuning](./performance.md)
 - [Realtime and telemetry](./realtime-and-telemetry.md)
 - [Runtime events reference](./reference-runtime-events.md)
-- [WRFC Constraint Propagation](./wrfc-constraint-propagation.md)
 - [Error handling](./error-handling.md)
 - [Troubleshooting](./troubleshooting.md)

@@ -61,7 +61,7 @@ interface DaemonSurfaceActionContext {
   ) => AgentRecord | Response;
   readonly queueSurfaceReplyFromBinding: (
     binding: import('../automation/routes.js').AutomationRouteBinding | undefined,
-    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string | undefined; readonly workflowChainId?: string | undefined; readonly sessionId?: string | undefined },
+    input: { readonly agentId: string; readonly task: string; readonly agentTask?: string | undefined; readonly contractId?: string | undefined; readonly sessionId?: string | undefined },
   ) => void;
   readonly queueWebhookReply: (input: {
     readonly agentId: string;

@@ -138,9 +138,9 @@ docs link here.
 | `failed` | The subtask exhausted its cycle without clearing review | A separate **verifier** role checks
 engineer and fixer self-reports against the actual on-disk changes. The
 `claimsVerified` flag records whether those work claims were confirmed (`false`
-flags phantom work, claimed changes that are not present). The full `WORKFLOW_*`
-event set for these transitions lives in the
-[Runtime events reference](./reference-runtime-events.md).
+flags phantom work, claimed changes that are not present). These transitions are
+reported on the `contracts` event domain; every event type is listed in the
+[Runtime events reference](./reference-runtime-events.md#named-contract-events).
 
 Constraint propagation is documented in
 [WRFC constraint propagation](./wrfc-constraint-propagation.md).

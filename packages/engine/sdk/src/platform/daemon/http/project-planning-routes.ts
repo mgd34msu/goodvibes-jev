@@ -170,7 +170,7 @@ function readWorkPlanQuery(url: URL): ProjectWorkPlanTaskListInput {
     ...(url.searchParams.get('workPlanId') ? { workPlanId: url.searchParams.get('workPlanId')! } : {}),
     ...(url.searchParams.get('status') ? { status: url.searchParams.get('status')! as ProjectWorkPlanTaskListInput['status'] } : {}),
     ...(url.searchParams.get('parentTaskId') ? { parentTaskId: url.searchParams.get('parentTaskId')! } : {}),
-    ...(url.searchParams.get('chainId') ? { chainId: url.searchParams.get('chainId')! } : {}),
+    ...(url.searchParams.get('contractId') ? { contractId: url.searchParams.get('contractId')! } : {}),
     ...(url.searchParams.get('owner') ? { owner: url.searchParams.get('owner')! } : {}),
     ...(limit ? { limit: Number(limit) } : {}),
   };

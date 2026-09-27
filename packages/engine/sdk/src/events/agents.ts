@@ -6,6 +6,22 @@
  * Covers agent lifecycle events for the runtime event bus.
  */
 
+/**
+ * What a spawned agent was allowed and asked to do, carried on AGENT_SPAWNING
+ * (it was the task contract of the removed orchestration node events).
+ */
+export interface AgentTaskContract {
+  allowedTools?: string[] | undefined;
+  capabilityCeiling?: string[] | undefined;
+  successCriteria?: string[] | undefined;
+  requiredEvidence?: string[] | undefined;
+  writeScope?: string[] | undefined;
+  executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
+  reviewMode?: 'none' | 'contract' | undefined;
+  inheritsParentConstraints?: boolean | undefined;
+  communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
+}
+
 export type AgentEvent =
   /** Agent is being initialised and configured. */
   | {
@@ -19,6 +35,7 @@ export type AgentEvent =
       contractUnitId?: string | undefined;
       orchestrationGraphId?: string | undefined;
       parentNodeId?: string | undefined;
+      taskContract?: AgentTaskContract | undefined;
     }
   /** Agent is actively running and processing. */
   | {

@@ -1,4 +1,4 @@
-import type { CompactionEvent, GateEvent, TaskEvent, AgentEvent, OrchestrationEvent } from '../events.js';
+import type { CompactionEvent, GateEvent, TaskEvent, AgentEvent } from '../events.js';
 import type { SessionDomainState } from '../../domains/session.js';
 import type {
   PermissionDomainState,
@@ -7,13 +7,8 @@ import type {
 } from '../../domains/permissions.js';
 import type { TaskDomainState, RuntimeTask, TaskLifecycleState } from '../../domains/tasks.js';
 import type { AgentDomainState, RuntimeAgent, AgentLifecycleState } from '../../domains/agents.js';
-import type {
-  OrchestrationDomainState,
-  OrchestrationGraphRecord,
-  OrchestrationNodeRecord,
-} from '../../domains/orchestration.js';
 import type { PermissionCategory } from '../../../../permissions/manager.js';
-import { now, uniq, updateDomainMetadata, isTerminalLifecycleState, computeActiveIds } from './shared.js';
+import { now, updateDomainMetadata, isTerminalLifecycleState, computeActiveIds } from './shared.js';
 
 function permissionMachineStateForEvent(
   event: Exclude<GateEvent, { type: 'PRESET_CHANGED' }>,
@@ -409,136 +404,6 @@ function transitionAgentDomainRecord(
     ...updateDomainMetadata(domain, source),
     agents,
     ...applyAgentDomainAggregates(domain, agents, existing.status, status, 0, 0),
-  };
-}
-
-function orchestrationGraphStatus(graph: OrchestrationGraphRecord): OrchestrationGraphRecord['status'] {
-  const nodes = [...graph.nodes.values()];
-  if (nodes.length === 0) return 'planning';
-  if (nodes.some((node) => node.status === 'failed')) return 'failed';
-  if (nodes.some((node) => node.status === 'blocked')) return 'blocked';
-  if (nodes.some((node) => node.status === 'running')) return 'running';
-  if (nodes.every((node) => node.status === 'cancelled')) return 'cancelled';
-  if (nodes.every((node) => node.status === 'completed')) return 'completed';
-  if (nodes.every((node) => node.status === 'pending' || node.status === 'ready')) {
-    return nodes.some((node) => node.status === 'ready') ? 'ready' : 'planning';
-  }
-  if (nodes.every((node) => node.status === 'completed' || node.status === 'cancelled')) {
-    return nodes.some((node) => node.status === 'completed') ? 'completed' : 'cancelled';
-  }
-  return 'running';
-}
-
-export function updateOrchestrationState(
-  domain: OrchestrationDomainState,
-  event: OrchestrationEvent,
-): OrchestrationDomainState {
-  const graphs = new Map(domain.graphs);
-  const timestamp = now();
-  const existing = 'graphId' in event ? graphs.get(event.graphId) : undefined;
-
-  switch (event.type) {
-    case 'ORCHESTRATION_GRAPH_CREATED':
-      graphs.set(event.graphId, {
-        id: event.graphId,
-        title: event.title,
-        mode: event.mode,
-        status: 'planning',
-        nodeOrder: [],
-        nodes: new Map(),
-        createdAt: timestamp,
-      });
-      break;
-    case 'ORCHESTRATION_NODE_ADDED': {
-      if (!existing) return domain;
-      const nodes = new Map(existing.nodes);
-      const previousParent = event.parentNodeId ? nodes.get(event.parentNodeId) : undefined;
-      const nextNode: OrchestrationNodeRecord = {
-        id: event.nodeId,
-        title: event.title,
-        role: event.role,
-        status: 'pending',
-        parentNodeId: event.parentNodeId,
-        childNodeIds: [],
-        dependencyNodeIds: event.dependsOn ?? [],
-        ...(event.taskId !== undefined ? { taskId: event.taskId } : {}),
-        ...(event.agentId !== undefined ? { agentId: event.agentId } : {}),
-        ...(event.contract !== undefined ? { contract: event.contract } : {}),
-      };
-      nodes.set(event.nodeId, nextNode);
-      if (previousParent) {
-        nodes.set(event.parentNodeId!, { ...previousParent, childNodeIds: uniq([...previousParent.childNodeIds, event.nodeId]) });
-      }
-      const graph: OrchestrationGraphRecord = { ...existing, nodeOrder: uniq([...existing.nodeOrder, event.nodeId]), nodes };
-      graph.status = orchestrationGraphStatus(graph);
-      graphs.set(event.graphId, graph);
-      break;
-    }
-    case 'ORCHESTRATION_NODE_READY':
-    case 'ORCHESTRATION_NODE_STARTED':
-    case 'ORCHESTRATION_NODE_PROGRESS':
-    case 'ORCHESTRATION_NODE_BLOCKED':
-    case 'ORCHESTRATION_NODE_COMPLETED':
-    case 'ORCHESTRATION_NODE_FAILED':
-    case 'ORCHESTRATION_NODE_CANCELLED':
-    case 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED': {
-      if (!existing) return domain;
-      const nodes = new Map(existing.nodes);
-      const nodeId = 'nodeId' in event ? event.nodeId : undefined;
-      if (nodeId) {
-        const node = nodes.get(nodeId);
-        if (!node) return domain;
-        const updatedNode: OrchestrationNodeRecord =
-          event.type === 'ORCHESTRATION_NODE_READY'
-            ? { ...node, status: 'ready' }
-            : event.type === 'ORCHESTRATION_NODE_STARTED'
-              ? { ...node, status: 'running', startedAt: node.startedAt ?? timestamp, ...(event.taskId !== undefined ? { taskId: event.taskId } : {}), ...(event.agentId !== undefined ? { agentId: event.agentId } : {}) }
-              : event.type === 'ORCHESTRATION_NODE_PROGRESS'
-                ? { ...node, latestMessage: event.message }
-                : event.type === 'ORCHESTRATION_NODE_BLOCKED'
-                  ? { ...node, status: 'blocked', error: event.reason }
-                  : event.type === 'ORCHESTRATION_NODE_COMPLETED'
-                    ? { ...node, status: 'completed', endedAt: timestamp, latestMessage: event.summary ?? node.latestMessage }
-                    : event.type === 'ORCHESTRATION_NODE_FAILED'
-                      ? { ...node, status: 'failed', endedAt: timestamp, error: event.error }
-                      : { ...node, status: 'cancelled', endedAt: timestamp, error: event.reason };
-        nodes.set(nodeId, updatedNode);
-      }
-      const graph: OrchestrationGraphRecord = {
-        ...existing,
-        nodes,
-        ...(event.type === 'ORCHESTRATION_NODE_STARTED' ? { startedAt: existing.startedAt ?? timestamp } : {}),
-        ...(event.type === 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED'
-          ? {
-              lastRecursionGuard: {
-                depth: event.depth,
-                activeAgents: event.activeAgents,
-                reason: event.reason,
-                ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
-                triggeredAt: timestamp,
-              },
-            }
-          : {}),
-      };
-      graph.status = orchestrationGraphStatus(graph);
-      if (graph.status === 'completed' || graph.status === 'failed' || graph.status === 'cancelled') {
-        graph.endedAt = graph.endedAt ?? timestamp;
-      }
-      graphs.set(graph.id, graph);
-      break;
-    }
-  }
-
-  const activeGraphIds = computeActiveIds(graphs);
-
-  return {
-    ...updateDomainMetadata(domain, event.type),
-    graphs,
-    activeGraphIds,
-    totalGraphs: graphs.size,
-    totalCompletedGraphs: [...graphs.values()].filter((graph) => graph.status === 'completed').length,
-    totalFailedGraphs: [...graphs.values()].filter((graph) => graph.status === 'failed').length,
-    recursionGuardTrips: domain.recursionGuardTrips + (event.type === 'ORCHESTRATION_RECURSION_GUARD_TRIGGERED' ? 1 : 0),
   };
 }
 

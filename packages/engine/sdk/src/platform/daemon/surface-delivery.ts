@@ -81,7 +81,7 @@ interface SurfaceReplyInput {
   readonly agentId: string;
   readonly task: string;
   readonly agentTask?: string | undefined;
-  readonly workflowChainId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly sessionId?: string | undefined;
 }
 
@@ -432,7 +432,7 @@ export class DaemonSurfaceDeliveryHelper {
     if (!pending) return false;
     try {
       await this.context.channelReplyPipeline.deliverFinal(input.agentId, input.body, {
-        keepTracking: pending.surfaceKind === 'ntfy' && typeof pending.workflowChainId === 'string',
+        keepTracking: pending.surfaceKind === 'ntfy' && typeof pending.contractId === 'string',
       });
     } catch (error) {
       logger.error('Agent reply delivery failed, the answer did not reach its conversation', {
@@ -509,7 +509,7 @@ export class DaemonSurfaceDeliveryHelper {
       }
       try {
         await this.context.channelReplyPipeline.deliverFinal(pending.agentId, message, {
-          keepTracking: pending.surfaceKind === 'ntfy' && typeof pending.workflowChainId === 'string',
+          keepTracking: pending.surfaceKind === 'ntfy' && typeof pending.contractId === 'string',
         });
       } catch (error) {
         // The reply exists, the conversation is known, and it did not arrive.
@@ -633,7 +633,7 @@ export class DaemonSurfaceDeliveryHelper {
       agentId: input.agentId,
       task: input.task,
       ...(input.agentTask ? { agentTask: input.agentTask } : {}),
-      ...(input.workflowChainId ? { workflowChainId: input.workflowChainId } : {}),
+      ...(input.contractId ? { contractId: input.contractId } : {}),
       createdAt: Date.now(),
       sessionId: input.sessionId,
       routeId: binding.id,
