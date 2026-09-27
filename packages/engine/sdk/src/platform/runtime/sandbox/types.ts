@@ -1,24 +1,14 @@
 export type SandboxEvalIsolationMode = 'shared-vm' | 'per-runtime-vm';
 export type SandboxMcpIsolationMode = 'disabled' | 'shared-vm' | 'hybrid' | 'per-server-vm';
 export type SandboxWindowsMode = 'native-basic' | 'require-wsl';
-export type SandboxVmBackend = 'local' | 'qemu';
-export type SandboxResolvedBackend = 'local' | 'qemu';
-export type SandboxQemuSessionMode = 'attach' | 'launch-per-command';
+export type SandboxVmBackend = 'local';
+export type SandboxResolvedBackend = 'local';
 
 export interface SandboxConfigSnapshot {
   readonly replIsolation: SandboxEvalIsolationMode;
   readonly mcpIsolation: SandboxMcpIsolationMode;
   readonly windowsMode: SandboxWindowsMode;
   readonly vmBackend: SandboxVmBackend;
-  readonly qemuBinary: string;
-  readonly qemuImagePath: string;
-  readonly qemuExecWrapper: string;
-  readonly qemuGuestHost: string;
-  readonly qemuGuestPort: number;
-  readonly qemuGuestUser: string;
-  readonly qemuWorkspacePath: string;
-  readonly qemuSessionMode: SandboxQemuSessionMode;
-  readonly replJavaScriptCommand: string;
 }
 
 export interface SandboxHostStatus {
@@ -105,7 +95,6 @@ export interface SandboxLaunchPlan {
   readonly args: readonly string[];
   readonly workspaceRoot: string;
   readonly summary: string;
-  readonly imagePath?: string | undefined;
 }
 
 export interface SandboxSession {
@@ -121,9 +110,6 @@ export interface SandboxSession {
   readonly launchPlan?: SandboxLaunchPlan | undefined;
   readonly startupStatus?: 'verified' | 'planned' | 'failed' | undefined;
   readonly startupDetail?: string | undefined;
-  readonly managedGuestPid?: number | undefined;
-  readonly managedGuestHost?: string | undefined;
-  readonly managedGuestPort?: number | undefined;
   readonly lastRunAt?: number | undefined;
   readonly lastCommandSummary?: string | undefined;
   readonly lastExitStatus?: number | null | undefined;

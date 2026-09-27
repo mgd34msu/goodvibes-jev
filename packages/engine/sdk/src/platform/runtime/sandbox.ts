@@ -32,7 +32,6 @@ export type {
   SandboxPreset,
   SandboxProbe,
   SandboxProfile,
-  SandboxQemuSessionMode,
   SandboxResolvedBackend,
   SandboxReview,
   SandboxSession,

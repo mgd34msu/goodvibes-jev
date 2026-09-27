@@ -6,7 +6,6 @@ import type {
   SandboxEvalIsolationMode,
   SandboxHostStatus,
   SandboxProbe,
-  SandboxQemuSessionMode,
   SandboxMcpIsolationMode,
   SandboxPreset,
   SandboxProfile,
@@ -41,22 +40,10 @@ export function getSandboxConfigSnapshot(
     mcpIsolation: readConfigValue(manager, 'sandbox.mcpIsolation') as SandboxMcpIsolationMode,
     windowsMode: readConfigValue(manager, 'sandbox.windowsMode') as SandboxWindowsMode,
     vmBackend: readConfigValue(manager, 'sandbox.vmBackend') as SandboxVmBackend,
-    qemuBinary: readConfigValue(manager, 'sandbox.qemuBinary') as string,
-    qemuImagePath: readConfigValue(manager, 'sandbox.qemuImagePath') as string,
-    qemuExecWrapper: readConfigValue(manager, 'sandbox.qemuExecWrapper') as string,
-    qemuGuestHost: readConfigValue(manager, 'sandbox.qemuGuestHost') as string,
-    qemuGuestPort: readConfigValue(manager, 'sandbox.qemuGuestPort') as number,
-    qemuGuestUser: readConfigValue(manager, 'sandbox.qemuGuestUser') as string,
-    qemuWorkspacePath: readConfigValue(manager, 'sandbox.qemuWorkspacePath') as string,
-    qemuSessionMode: readConfigValue(manager, 'sandbox.qemuSessionMode') as SandboxQemuSessionMode,
-    replJavaScriptCommand: readConfigValue(manager, 'sandbox.replJavaScriptCommand') as string,
   });
 }
 
-export function detectSandboxHostStatus(
-  manager: ConfigManagerLike,
-): SandboxHostStatus {
-  const config = getSandboxConfigSnapshot(manager);
+export function detectSandboxHostStatus(): SandboxHostStatus {
   const runningInWsl = isRunningInWsl();
   const windows = process.platform === 'win32';
   const secureSandboxReady = !windows || runningInWsl;
@@ -64,15 +51,12 @@ export function detectSandboxHostStatus(
   if (windows && !runningInWsl) {
     warnings.push('Virtualized sandboxing on Windows requires running GoodVibes inside WSL.');
   }
-  if (config.vmBackend === 'qemu' && windows && !runningInWsl) {
-    warnings.push('QEMU backend requested on native Windows without WSL.');
-  }
   return Object.freeze({
     platform: process.platform,
     runningInWsl,
     windows,
     secureSandboxReady,
-    recommendedBackend: 'qemu',
+    recommendedBackend: 'local',
     warnings,
   });
 }
@@ -152,16 +136,7 @@ export function listSandboxPresets(): readonly SandboxPreset[] {
         replIsolation: 'per-runtime-vm',
         mcpIsolation: 'hybrid',
         windowsMode: 'require-wsl',
-        vmBackend: 'qemu',
-        qemuBinary: 'qemu-system-x86_64',
-        qemuImagePath: '',
-        qemuExecWrapper: '',
-        qemuGuestHost: '',
-        qemuGuestPort: 2222,
-        qemuGuestUser: 'goodvibes',
-        qemuWorkspacePath: '/workspace',
-        qemuSessionMode: 'attach',
-        replJavaScriptCommand: 'bun',
+        vmBackend: 'local',
       },
       notes: ['recommended default', 'strong isolation without forcing per-server MCP for every case'],
     } satisfies SandboxPreset),
@@ -173,16 +148,7 @@ export function listSandboxPresets(): readonly SandboxPreset[] {
         replIsolation: 'per-runtime-vm',
         mcpIsolation: 'per-server-vm',
         windowsMode: 'require-wsl',
-        vmBackend: 'qemu',
-        qemuBinary: 'qemu-system-x86_64',
-        qemuImagePath: '',
-        qemuExecWrapper: '',
-        qemuGuestHost: '',
-        qemuGuestPort: 2222,
-        qemuGuestUser: 'goodvibes',
-        qemuWorkspacePath: '/workspace',
-        qemuSessionMode: 'attach',
-        replJavaScriptCommand: 'bun',
+        vmBackend: 'local',
       },
       notes: ['strongest isolation', 'higher startup and memory cost'],
     } satisfies SandboxPreset),
@@ -194,16 +160,7 @@ export function listSandboxPresets(): readonly SandboxPreset[] {
         replIsolation: 'shared-vm',
         mcpIsolation: 'shared-vm',
         windowsMode: 'native-basic',
-        vmBackend: 'qemu',
-        qemuBinary: 'qemu-system-x86_64',
-        qemuImagePath: '',
-        qemuExecWrapper: '',
-        qemuGuestHost: '',
-        qemuGuestPort: 2222,
-        qemuGuestUser: 'goodvibes',
-        qemuWorkspacePath: '/workspace',
-        qemuSessionMode: 'attach',
-        replJavaScriptCommand: 'bun',
+        vmBackend: 'local',
       },
       notes: ['best latency', 'weaker cross-runtime isolation than dedicated profiles'],
     } satisfies SandboxPreset),
@@ -216,15 +173,6 @@ export function listSandboxPresets(): readonly SandboxPreset[] {
         mcpIsolation: 'disabled',
         windowsMode: 'native-basic',
         vmBackend: 'local',
-        qemuBinary: 'qemu-system-x86_64',
-        qemuImagePath: '',
-        qemuExecWrapper: '',
-        qemuGuestHost: '',
-        qemuGuestPort: 2222,
-        qemuGuestUser: 'goodvibes',
-        qemuWorkspacePath: '/workspace',
-        qemuSessionMode: 'attach',
-        replJavaScriptCommand: 'bun',
       },
       notes: ['intended for native Windows without WSL', 'core runtime only; not secure sandbox mode'],
     } satisfies SandboxPreset),
@@ -240,7 +188,7 @@ export function buildSandboxReview(
 ): SandboxReview {
   return Object.freeze({
     config: getSandboxConfigSnapshot(manager),
-    host: detectSandboxHostStatus(manager),
+    host: detectSandboxHostStatus(),
     profiles: listSandboxProfiles(manager),
     backendProbe: probeSandboxBackends(manager),
   });
@@ -256,15 +204,6 @@ export function renderSandboxReview(
     `  mcp isolation: ${review.config.mcpIsolation}`,
     `  windows mode: ${review.config.windowsMode}`,
     `  vm backend: ${review.config.vmBackend}`,
-    `  qemu binary: ${review.config.qemuBinary || '(default)'}`,
-    `  qemu image: ${review.config.qemuImagePath || '(not configured)'}`,
-    `  qemu wrapper: ${review.config.qemuExecWrapper || '(not configured)'}`,
-    `  qemu guest host: ${review.config.qemuGuestHost || '(not configured)'}`,
-    `  qemu guest port: ${review.config.qemuGuestPort}`,
-    `  qemu guest user: ${review.config.qemuGuestUser || '(not configured)'}`,
-    `  qemu workspace: ${review.config.qemuWorkspacePath || '(not configured)'}`,
-    `  qemu session mode: ${review.config.qemuSessionMode}`,
-    `  repl javascript command: ${review.config.replJavaScriptCommand || 'bun'}`,
     `  resolved backend: ${review.backendProbe?.resolvedBackend ?? 'local'}`,
     `  platform: ${review.host.platform}${review.host.runningInWsl ? ' (WSL)' : ''}`,
     `  secure sandbox mode: ${review.host.secureSandboxReady ? 'available' : 'unavailable on this host'}`,
@@ -283,8 +222,7 @@ export function renderSandboxRecommendation(
     `  current mcp isolation: ${review.config.mcpIsolation}`,
   ];
   if (review.host.windows && !review.host.runningInWsl) {
-    lines.push('  recommendation: run GoodVibes inside WSL before enabling QEMU sandboxing');
-    lines.push('  recommendation: keep backend=local until WSL is available');
+    lines.push('  recommendation: run GoodVibes inside WSL before enabling secure sandbox mode');
   } else {
     lines.push('  recommendation: keep REPLs in per-runtime-vm mode');
     lines.push('  recommendation: use hybrid or per-server-vm for MCP isolation');
@@ -345,11 +283,6 @@ export function renderSandboxSessions(sessions: readonly SandboxSession[]): stri
         const lines = [
           `  ${session.id}  ${session.profileId}  ${session.state}  ${session.shared ? 'shared' : 'dedicated'}  ${session.backend}  ${session.label}${session.startupStatus ? `  startup=${session.startupStatus}` : ''}`,
         ];
-        if (session.managedGuestPid || session.managedGuestHost || session.managedGuestPort) {
-          lines.push(
-            `    guest: ${session.managedGuestHost ?? '(unset)'}:${session.managedGuestPort ?? 0}  pid=${session.managedGuestPid ?? 'n/a'}`,
-          );
-        }
         if (session.lastCommandSummary) {
           lines.push(`    last: ${session.lastCommandSummary}`);
         }

@@ -17,6 +17,7 @@ import {
   migratePaymentsBudgetAmounts,
   migrateWrfcSettings,
 } from './migrations.js';
+import { migrateSandboxQemuRemoval } from './sandbox-qemu-migration.js';
 import { isFrozenDefaultDump, stripFrozenDefaults } from './settings-io.js';
 import {
   PAYMENTS_BUDGET_AMOUNTS_READER_FLOOR,
@@ -434,6 +435,38 @@ export function applyContractSettingsMigrationPass(
 }
 
 /**
+ * The retired QEMU sandbox settings are dropped, and `sandbox.vmBackend: "qemu"`
+ * becomes `"local"`, with one receipt naming what changed.
+ *
+ * Surface files only: the `sandbox.` keys were never daemon-owned or shared, so
+ * the daemon tier and the shared tier never hold them.
+ */
+export function applySandboxQemuMigrationPass(
+  parsed: Record<string, unknown>,
+  sourcePath: string,
+  receipt: MigrationReceiptSink,
+): Record<string, unknown> {
+  const result = migrateSandboxQemuRemoval(parsed);
+  if (!result.migrated) return parsed;
+  persistMigratedFile(sourcePath, result.config, 'QEMU sandbox settings removal');
+  const changes: string[] = [];
+  if (result.removedKeys.length > 0) changes.push(`${result.removedKeys.join(', ')} removed`);
+  if (result.rewroteVmBackend) changes.push('sandbox.vmBackend changed from "qemu" to "local"');
+  const receiptText =
+    `Settings removed: the QEMU sandbox backend is gone, so its settings are gone from ${sourcePath} `
+    + `(${changes.join('; ')}). The only sandbox backend is now local host execution, which does not `
+    + 'isolate what it runs, so REPL eval refuses instead of running code on the host. Your other sandbox '
+    + 'settings are unchanged.';
+  logger.info(receiptText);
+  try {
+    receipt(`settings-migration-sandbox-qemu:${sourcePath}`, receiptText);
+  } catch (err) {
+    logger.warn(`QEMU sandbox settings removal receipt could not be queued: ${summarizeError(err)}`);
+  }
+  return result.config;
+}
+
+/**
  * Every load-time pass over the DAEMON TIER, in order.
  *
  * A separate sequence from {@link runLoadMigrationPasses} because it is a
@@ -491,5 +524,6 @@ export function runLoadMigrationPasses(
   config = applyDaemonConnectedHostSplitMigrationPass(config, sourcePath, receipt);
   config = applyPaymentsBudgetMigrationPass(config, sourcePath, receipt);
   config = applyContractSettingsMigrationPass(config, sourcePath, receipt);
+  config = applySandboxQemuMigrationPass(config, sourcePath, receipt);
   return applyDefaultStripMigrationPass(config, sourcePath, receipt);
 }

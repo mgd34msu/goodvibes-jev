@@ -69,7 +69,7 @@ describe('SDK runtime boundaries and export map', () => {
     expect(runtimeSource).not.toContain("export * as sandbox from './sandbox.js'");
     expect(runtimeSource).not.toContain("export * as settings from './settings.js'");
     expect(nodeSource).not.toMatch(/export \* as \w+ from '\.\.\//);
-    expect(sandboxSource).not.toMatch(/export \* from '\.\/sandbox\/(backend|provisioning|qemu-wrapper-template)\.js'/);
+    expect(sandboxSource).not.toContain("export * from './sandbox/backend.js'");
   });
 
   test('keeps client capabilities free of node-only requirements', () => {

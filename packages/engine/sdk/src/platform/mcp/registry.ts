@@ -467,7 +467,7 @@ export class McpRegistry {
     sessionId?: string | undefined;
     profileId?: 'mcp-shared' | 'mcp-per-server' | undefined;
     state?: import('../runtime/sandbox/types.js').SandboxSessionState | undefined;
-    backend?: import('../runtime/sandbox/types.js').SandboxResolvedBackend | import('../runtime/sandbox/types.js').SandboxVmBackend | undefined;
+    backend?: import('../runtime/sandbox/types.js').SandboxResolvedBackend | undefined;
     startupStatus?: 'verified' | 'planned' | 'failed' | undefined;
   }> {
     return this.serverNames.map((name) => {
@@ -627,18 +627,13 @@ export class McpRegistry {
     if (!session.launchPlan) {
       throw new Error(`Sandbox session ${session.id} for MCP server '${serverConfig.name}' is missing a launch plan.`);
     }
-    const resolvedPlan = resolveSandboxCommandPlan(
-      session.launchPlan,
-      serverConfig.command,
-      serverConfig.args ?? [],
-      configManager,
-    );
+    const resolvedPlan = resolveSandboxCommandPlan(serverConfig.command, serverConfig.args ?? []);
     return {
       sessionId: session.id,
       processSpec: {
         command: resolvedPlan.command,
         args: [...resolvedPlan.args],
-        env: compactEnv({ ...(serverConfig.env ?? {}), ...(resolvedPlan.env ?? {}) }),
+        env: compactEnv(serverConfig.env ?? {}),
         cwd: session.launchPlan.workspaceRoot,
         summary: resolvedPlan.summary,
         sandboxSessionId: session.id,

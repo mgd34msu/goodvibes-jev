@@ -58,12 +58,6 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
     ceiling: 1212,
     justification: 'companion chat lifecycle manager, pre-split, shrink-only; re-justified +145 for the turn-control verbs (cancel/queue/steer + partial-in-history) after extracting their policy to companion-chat-turn-control.ts',
   },
-  // schema-domain-core.ts ~0.80k, core config defaults + per-key setting
-  // definitions; crossed 800 with the behavior.compactionStrategy key.
-  'sdk/src/platform/config/schema-domain-core.ts': {
-    ceiling: 881,
-    justification: 'core config defaults + setting definitions, pre-split, shrink-only; +7 for the sandbox.judgmentAutoApprove config key (default in coreConfigDefaults + its ConfigSettingDefinition metadata entry) opting into auto-approve for the sandbox-model-judgment tier; +9 for the behavior.compactionStrategy config key (default in coreConfigDefaults + its ConfigSettingDefinition metadata entry) selecting structured vs distiller conversation compaction; +71 for promoting five flag-gated feature knobs to live config (defaults + ConfigSettingDefinition entries): provider.optimizerMode/optimizerPinnedModel (provider-optimizer routing mode), permissions.divergenceThreshold/maxDivergenceRecords (permission-divergence-dashboard enforce gate), tools.overflowSpillBackend (overflow-spill-backends target), and notifications.burstWindowMs/burstThreshold/burstCooldownMs (adaptive-notification-suppression burst detector)',
-  },
   // schema-domain-runtime.ts ~0.83k, runtime config defaults + per-key setting
   // definitions; crossed 800 with the relay.* reachability keys.
   'sdk/src/platform/config/schema-domain-runtime.ts': {

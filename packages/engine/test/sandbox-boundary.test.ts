@@ -1,8 +1,8 @@
 /**
  * Coverage-gap smoke test, platform/runtime/sandbox
  * Verifies sandbox boundary functions return correct observable shapes
- * when called with realistic inputs.
- * Closes coverage gap: sandbox boundary / platform/runtime/sandbox
+ * when called with realistic inputs. Local host execution is the only
+ * sandbox backend.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -13,43 +13,23 @@ import {
   listSandboxPresets,
   getSandboxPreset,
   isRunningInWsl,
+  renderSandboxReview,
 } from '../sdk/src/platform/runtime/sandbox/manager.js';
 import {
   buildSandboxLaunchPlan,
   probeSandboxBackends,
 } from '../sdk/src/platform/runtime/sandbox/backend.js';
-import { resolveReplJavaScriptCommand } from '../sdk/src/platform/tools/repl/index.js';
 
 const sandboxConfig = {
   'sandbox.replIsolation': 'shared-vm',
   'sandbox.mcpIsolation': 'hybrid',
   'sandbox.windowsMode': 'require-wsl',
-  'sandbox.vmBackend': 'qemu',
-  'sandbox.qemuBinary': 'qemu-system-x86_64',
-  'sandbox.qemuImagePath': '/tmp/goodvibes-sandbox.img',
-  'sandbox.qemuExecWrapper': '/tmp/goodvibes-qemu-wrapper',
-  'sandbox.qemuGuestHost': '127.0.0.1',
-  'sandbox.qemuGuestPort': 2222,
-  'sandbox.qemuGuestUser': 'goodvibes',
-  'sandbox.qemuWorkspacePath': '/workspace',
-  'sandbox.qemuSessionMode': 'attach',
-  'sandbox.replJavaScriptCommand': 'bun',
+  'sandbox.vmBackend': 'local',
 } as const;
 
 function makeConfigManager() {
   return {
     get: (key: string) => sandboxConfig[key as keyof typeof sandboxConfig],
-  };
-}
-
-function makeConfigManagerWith(
-  overrides: Partial<Record<keyof typeof sandboxConfig, string | number>>,
-) {
-  return {
-    get: (key: string) => ({
-      ...sandboxConfig,
-      ...overrides,
-    })[key as keyof typeof sandboxConfig],
   };
 }
 
@@ -65,26 +45,17 @@ describe('platform/runtime/sandbox: behavior smoke', () => {
       replIsolation: 'shared-vm',
       mcpIsolation: 'hybrid',
       windowsMode: 'require-wsl',
-      vmBackend: 'qemu',
-      qemuBinary: 'qemu-system-x86_64',
-      qemuImagePath: '/tmp/goodvibes-sandbox.img',
-      qemuExecWrapper: '/tmp/goodvibes-qemu-wrapper',
-      qemuGuestHost: '127.0.0.1',
-      qemuGuestPort: 2222,
-      qemuGuestUser: 'goodvibes',
-      qemuWorkspacePath: '/workspace',
-      qemuSessionMode: 'attach',
-      replJavaScriptCommand: 'bun',
+      vmBackend: 'local',
     });
   });
 
   test('detectSandboxHostStatus returns frozen host readiness details', () => {
-    const status = detectSandboxHostStatus(makeConfigManager());
+    const status = detectSandboxHostStatus();
     expect(Object.isFrozen(status)).toBe(true);
     expect(status.platform).toBe(process.platform);
     expect(status.windows).toBe(process.platform === 'win32');
     expect(status.runningInWsl).toBe(isRunningInWsl());
-    expect(status.recommendedBackend).toBe('qemu');
+    expect(status.recommendedBackend).toBe('local');
     expect(Array.isArray(status.warnings)).toBe(true);
   });
 
@@ -99,63 +70,52 @@ describe('platform/runtime/sandbox: behavior smoke', () => {
     expect(typeof first.isolation).toBe('string');
   });
 
-  test('listSandboxPresets returns an array containing secure-balanced', () => {
+  test('every preset uses the local backend and carries only the four sandbox settings', () => {
     const presets = listSandboxPresets();
-    expect(presets).toBeInstanceOf(Array);
-    const ids = (presets as unknown as Array<Record<string, unknown>>).map((p) => p.id);
-    expect(ids).toContain('secure-balanced');
-    expect(presets.every((preset) => preset.config.replJavaScriptCommand === 'bun')).toBe(true);
-  });
-
-  test('QEMU JavaScript-family REPL uses guest runtime command instead of host process path', () => {
-    const command = resolveReplJavaScriptCommand({ backend: 'qemu' }, makeConfigManager());
-    expect(command).toBe('bun');
-    expect(command).not.toBe(process.execPath);
-  });
-
-  test('QEMU JavaScript-family REPL honors configured guest runtime command', () => {
-    const command = resolveReplJavaScriptCommand(
-      { backend: 'qemu' },
-      makeConfigManagerWith({ 'sandbox.replJavaScriptCommand': '/home/goodvibes/.bun/bin/bun' }),
-    );
-    expect(command).toBe('/home/goodvibes/.bun/bin/bun');
+    expect(presets.map((preset) => preset.id)).toEqual([
+      'secure-balanced',
+      'secure-isolated',
+      'shared-performance',
+      'windows-basic',
+    ]);
+    for (const preset of presets) {
+      expect(preset.config.vmBackend).toBe('local');
+      expect(Object.keys(preset.config).sort()).toEqual(['mcpIsolation', 'replIsolation', 'vmBackend', 'windowsMode']);
+    }
   });
 
   test('getSandboxPreset returns the preset for secure-balanced with id and label', () => {
     const preset = getSandboxPreset('secure-balanced');
     expect(preset).not.toBeNull();
-    const p = preset as unknown as Record<string, unknown>;
-    expect(p.id).toBe('secure-balanced');
-    expect(typeof p.label).toBe('string');
+    expect(preset?.id).toBe('secure-balanced');
+    expect(typeof preset?.label).toBe('string');
   });
 
   test('getSandboxPreset returns null for an unknown preset id', () => {
-    const preset = getSandboxPreset('non-existent-preset-xyz');
-    // Returns null, not undefined
-    expect(preset).toBeNull();
+    expect(getSandboxPreset('non-existent-preset-xyz')).toBeNull();
   });
 
-  test('probe does not resolve explicit qemu to local when qemu is unavailable', () => {
-    const manager = makeConfigManagerWith({
-      'sandbox.vmBackend': 'qemu',
-      'sandbox.qemuBinary': '__goodvibes_missing_qemu_binary__',
-    });
-    const probe = probeSandboxBackends(manager);
-
-    expect(probe.requestedBackend).toBe('qemu');
-    expect(probe.resolvedBackend).toBe('qemu');
-    expect(probe.backends.find((backend) => backend.id === 'qemu')?.available).toBe(false);
-    expect(probe.warnings.join('\n')).toContain('local process isolation will not be used');
+  test('the backend probe reports local as the one available backend with no warnings', () => {
+    const probe = probeSandboxBackends(makeConfigManager());
+    expect(probe.requestedBackend).toBe('local');
+    expect(probe.resolvedBackend).toBe('local');
+    expect(probe.backends.map((backend) => [backend.id, backend.available])).toEqual([['local', true]]);
+    expect(probe.warnings).toEqual([]);
   });
 
-  test('launch planning refuses to downgrade explicit qemu to local isolation', () => {
-    const manager = makeConfigManagerWith({
-      'sandbox.vmBackend': 'qemu',
-      'sandbox.qemuBinary': '__goodvibes_missing_qemu_binary__',
-    });
-    const profile = listSandboxProfiles(manager)[0]!;
+  test('launch planning builds a host shell plan rooted at the resolved workspace', () => {
+    const profile = listSandboxProfiles(makeConfigManager())[0]!;
+    const plan = buildSandboxLaunchPlan(profile, 'Smoke', '.');
+    expect(plan.backend).toBe('local');
+    expect(plan.workspaceRoot).toBe(process.cwd());
+    expect(plan.args).toEqual(['-lc', `echo "goodvibes sandbox ${profile.id}: Smoke"`]);
+    expect(plan.summary).toBe([plan.command, ...plan.args].join(' '));
+  });
 
-    expect(() => buildSandboxLaunchPlan(profile, 'No downgrade', manager, process.cwd()))
-      .toThrow(/refusing to downgrade to local process isolation/);
+  test('the review names the local backend and no QEMU settings', () => {
+    const review = renderSandboxReview(makeConfigManager());
+    expect(review).toContain('  vm backend: local');
+    expect(review).toContain('  resolved backend: local');
+    expect(review.toLowerCase()).not.toContain('qemu');
   });
 });

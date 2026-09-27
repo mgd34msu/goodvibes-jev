@@ -130,16 +130,7 @@ export interface GoodVibesConfig {
     replIsolation: 'shared-vm' | 'per-runtime-vm';
     mcpIsolation: 'disabled' | 'shared-vm' | 'hybrid' | 'per-server-vm';
     windowsMode: 'native-basic' | 'require-wsl';
-    vmBackend: 'local' | 'qemu';
-    qemuBinary: string;
-    qemuImagePath: string;
-    qemuExecWrapper: string;
-    qemuGuestHost: string;
-    qemuGuestPort: number;
-    qemuGuestUser: string;
-    qemuWorkspacePath: string;
-    qemuSessionMode: 'attach' | 'launch-per-command';
-    replJavaScriptCommand: string;
+    vmBackend: 'local';
   };
   ui: {
     voiceEnabled: boolean;
@@ -304,15 +295,6 @@ export type ConfigKey =
   | 'sandbox.mcpIsolation'
   | 'sandbox.windowsMode'
   | 'sandbox.vmBackend'
-  | 'sandbox.qemuBinary'
-  | 'sandbox.qemuImagePath'
-  | 'sandbox.qemuExecWrapper'
-  | 'sandbox.qemuGuestHost'
-  | 'sandbox.qemuGuestPort'
-  | 'sandbox.qemuGuestUser'
-  | 'sandbox.qemuWorkspacePath'
-  | 'sandbox.qemuSessionMode'
-  | 'sandbox.replJavaScriptCommand'
   | 'ui.voiceEnabled'
   | 'ui.systemMessages'
   | 'ui.operationalMessages'

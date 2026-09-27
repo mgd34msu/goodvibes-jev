@@ -2,7 +2,7 @@ import type { ToolDefinition } from '../../types/tools.js';
 
 export const REPL_TOOL_SCHEMA: ToolDefinition = {
   name: 'repl',
-  description: 'Evaluate bounded JavaScript, TypeScript, Python, SQL, and GraphQL snippets through controlled sandbox profiles.',
+  description: 'Evaluate bounded JavaScript, TypeScript, Python, SQL, and GraphQL snippets in an isolating sandbox profile. Eval refuses while no isolating sandbox backend is available (local host execution does not isolate code); history mode lists past eval attempts.',
   parameters: {
     type: 'object',
     properties: {

@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { writeJsonFileAtomic } from '../../utils/atomic-json-store.js';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import net from 'node:net';
-import { buildSandboxLaunchPlan, executeSandboxCommand, executeSandboxManagedCommand, resolveSandboxCommandPlan, type SandboxCommandResult } from './backend.js';
+import { buildSandboxLaunchPlan, executeSandboxCommand, resolveSandboxCommandPlan, type SandboxCommandResult } from './backend.js';
 import { getSandboxConfigSnapshot, listSandboxProfiles, renderSandboxReview, type ConfigManagerLike } from './manager.js';
 import type {
   SandboxProfile,
@@ -11,8 +9,6 @@ import type {
   SandboxSessionArtifact,
   SandboxSessionKind,
 } from './types.js';
-import { summarizeError } from '../../utils/error-display.js';
-import { logger } from '../../utils/logger.js';
 
 function createSandboxSessionId(): string {
   return `sandbox_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
@@ -24,99 +20,6 @@ function inferShared(profile: SandboxProfile): boolean {
 
 function inferKind(profile: SandboxProfile): SandboxSessionKind {
   return profile.kind;
-}
-
-function readManagerString(manager: ConfigManagerLike, key: string): string {
-  return `${manager.get(key) ?? ''}`.trim();
-}
-
-function readManagerPort(manager: ConfigManagerLike, key: string, fallback: number): number {
-  const raw = manager.get(key);
-  const parsed = typeof raw === 'number' ? raw : Number.parseInt(`${raw ?? ''}`, 10);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error && typeof error === 'object' && 'code' in error
-    ? String((error as { code?: unknown }).code)
-    : undefined;
-}
-
-function logGuestCleanupFailure(pid: number, context: string, error: unknown): void {
-  if (errorCode(error) === 'ESRCH') return;
-  logger.warn('Sandbox managed guest cleanup failed', {
-    pid,
-    context,
-    error: summarizeError(error),
-  });
-}
-
-function waitForTcp(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve) => {
-    const attempt = () => {
-      const socket = net.createConnection({ host, port });
-      const finish = (ok: boolean) => {
-        socket.removeAllListeners();
-        socket.destroy();
-        resolve(ok);
-      };
-      socket.once('connect', () => finish(true));
-      socket.once('error', () => {
-        socket.destroy();
-        if (Date.now() >= deadline) {
-          resolve(false);
-          return;
-        }
-        const timer = setTimeout(attempt, 250);
-        timer.unref?.();
-      });
-      socket.setTimeout(1000, () => {
-        socket.destroy();
-        if (Date.now() >= deadline) {
-          resolve(false);
-          return;
-        }
-        const timer = setTimeout(attempt, 250);
-        timer.unref?.();
-      });
-    };
-    attempt();
-  });
-}
-
-async function launchManagedQemuGuest(
-  launchPlan: SandboxSession['launchPlan'],
-  configManager: ConfigManagerLike,
-): Promise<{ pid: number; host: string; port: number } | null> {
-  if (!launchPlan || launchPlan.backend !== 'qemu') return null;
-  const host = readManagerString(configManager, 'sandbox.qemuGuestHost');
-  const sessionMode = readManagerString(configManager, 'sandbox.qemuSessionMode');
-  if (!host || sessionMode !== 'attach') return null;
-  const port = readManagerPort(configManager, 'sandbox.qemuGuestPort', 2222);
-  const proc = spawn(launchPlan.command, [...launchPlan.args], {
-    cwd: launchPlan.workspaceRoot,
-    detached: true,
-    // QEMU is a detached, long-running guest. Startup failures are surfaced by
-    // the TCP readiness wait and wrapper startup probe, so keeping stdio open
-    // here would tie host lifetime to the VM process.
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  proc.unref();
-  if (!proc.pid) {
-    return null;
-  }
-  const ready = await waitForTcp(host, port, 15000);
-  if (!ready) {
-    try {
-      process.kill(proc.pid, 'SIGTERM');
-    } catch (error) {
-      logGuestCleanupFailure(proc.pid, 'startup-timeout', error);
-    }
-    throw new Error(`Timed out waiting for QEMU guest SSH on ${host}:${port}.`);
-  }
-  return { pid: proc.pid, host, port };
 }
 
 export class SandboxSessionRegistry {
@@ -151,55 +54,17 @@ export class SandboxSessionRegistry {
       if (existing) return existing;
     }
     const config = getSandboxConfigSnapshot(configManager);
-    const launchPlan = buildSandboxLaunchPlan(profile, label?.trim() || profile.label, configManager, this.workspaceRoot);
+    const launchPlan = buildSandboxLaunchPlan(profile, label?.trim() || profile.label, this.workspaceRoot);
     let state: SandboxSession['state'] = 'running';
     let startupStatus: SandboxSession['startupStatus'] = 'verified';
     let startupDetail = launchPlan.summary;
-    let managedGuestPid: number | undefined;
-    let managedGuestHost: string | undefined;
-    let managedGuestPort: number | undefined;
-    if (launchPlan.backend === 'qemu') {
-      if (launchPlan.imagePath && config.qemuExecWrapper) {
-        try {
-          const managedGuest = await launchManagedQemuGuest(launchPlan, configManager);
-          managedGuestPid = managedGuest?.pid;
-          managedGuestHost = managedGuest?.host;
-          managedGuestPort = managedGuest?.port;
-          const startupProbe = executeSandboxManagedCommand(launchPlan, 'bash', ['-lc', 'printf sandbox-ready'], configManager, {
-            timeoutMs: 4000,
-          });
-          if (startupProbe.status !== 0 || !startupProbe.stdout.includes('sandbox-ready')) {
-            state = 'failed';
-            startupStatus = 'failed';
-            startupDetail = (startupProbe.stderr || startupProbe.stdout || 'QEMU sandbox wrapper startup probe failed.').trim();
-          } else {
-            state = 'running';
-            startupStatus = 'verified';
-            startupDetail = managedGuestPid
-              ? `QEMU guest launched and verified via ${config.qemuExecWrapper} on ${managedGuestHost}:${managedGuestPort} using image ${launchPlan.imagePath}.`
-              : `QEMU backend verified via ${config.qemuExecWrapper} using image ${launchPlan.imagePath}.`;
-          }
-        } catch (error) {
-          state = 'failed';
-          startupStatus = 'failed';
-          startupDetail = summarizeError(error);
-        }
-      } else {
-        state = 'planned';
-        startupStatus = 'planned';
-        startupDetail = launchPlan.imagePath
-          ? `QEMU backend resolved with image ${launchPlan.imagePath}. Guest launch planning is wired, but command execution still requires sandbox.qemuExecWrapper.`
-          : 'QEMU backend resolved. Guest launch planning is available, but full guest execution still requires sandbox.qemuImagePath and sandbox.qemuExecWrapper.';
-      }
-    } else {
-      const startupProbe = executeSandboxCommand(launchPlan, 'bash', ['-lc', 'printf sandbox-ready'], {
-        timeoutMs: 2000,
-      });
-      if (startupProbe.status !== 0 || !startupProbe.stdout.includes('sandbox-ready')) {
-        state = 'failed';
-        startupStatus = 'failed';
-        startupDetail = (startupProbe.stderr || startupProbe.stdout || 'Sandbox backend startup probe failed.').trim();
-      }
+    const startupProbe = executeSandboxCommand(launchPlan, 'bash', ['-lc', 'printf sandbox-ready'], {
+      timeoutMs: 2000,
+    });
+    if (startupProbe.status !== 0 || !startupProbe.stdout.includes('sandbox-ready')) {
+      state = 'failed';
+      startupStatus = 'failed';
+      startupDetail = (startupProbe.stderr || startupProbe.stdout || 'Sandbox backend startup probe failed.').trim();
     }
     const session: SandboxSession = Object.freeze({
       id: createSandboxSessionId(),
@@ -214,9 +79,6 @@ export class SandboxSessionRegistry {
       launchPlan,
       startupStatus,
       startupDetail,
-      managedGuestPid,
-      managedGuestHost,
-      managedGuestPort,
       notes: profile.notes,
     });
     this.sessions.set(session.id, session);
@@ -226,13 +88,6 @@ export class SandboxSessionRegistry {
   public stop(sessionId: string): SandboxSession | null {
     const existing = this.sessions.get(sessionId);
     if (!existing) return null;
-    if (existing.managedGuestPid) {
-      try {
-        process.kill(existing.managedGuestPid, 'SIGTERM');
-      } catch (error) {
-        logGuestCleanupFailure(existing.managedGuestPid, 'session-stop', error);
-      }
-    }
     return this.updateSession(sessionId, (session) => ({
       ...session,
       state: 'stopped',
@@ -247,7 +102,6 @@ export class SandboxSessionRegistry {
     sessionId: string,
     command: string,
     args: readonly string[],
-    configManager: ConfigManagerLike,
     options: {
       readonly cwd?: string | undefined;
       readonly env?: NodeJS.ProcessEnv | undefined;
@@ -264,10 +118,8 @@ export class SandboxSessionRegistry {
       throw new Error(`Sandbox session ${sessionId} does not have a launch plan.`);
     }
 
-    const resolvedPlan = resolveSandboxCommandPlan(session.launchPlan, command, args, configManager);
-    const result = session.launchPlan.backend === 'qemu'
-      ? executeSandboxManagedCommand(session.launchPlan, command, args, configManager, options)
-      : executeSandboxCommand(session.launchPlan, command, args, options);
+    const resolvedPlan = resolveSandboxCommandPlan(command, args);
+    const result = executeSandboxCommand(session.launchPlan, command, args, options);
     const stdoutPreview = (result.stdout || '').trim().slice(0, 200);
     const stderrPreview = (result.stderr || '').trim().slice(0, 200);
     const nextState: SandboxSession['state'] = result.status === 0

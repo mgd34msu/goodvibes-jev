@@ -1,4 +1,4 @@
-import { type ConfigSettingDefinition, intRange, numRange, port, reasoningEffortSetting } from './schema-shared.js';
+import { type ConfigSettingDefinition, intRange, numRange, reasoningEffortSetting } from './schema-shared.js';
 
 export const coreConfigDefaults = {
   display: {
@@ -89,15 +89,6 @@ export const coreConfigDefaults = {
     mcpIsolation: 'disabled',
     windowsMode: 'native-basic',
     vmBackend: 'local',
-    qemuBinary: 'qemu-system-x86_64',
-    qemuImagePath: '',
-    qemuExecWrapper: '',
-    qemuGuestHost: '',
-    qemuGuestPort: 2222,
-    qemuGuestUser: 'goodvibes',
-    qemuWorkspacePath: '/workspace',
-    qemuSessionMode: 'attach',
-    replJavaScriptCommand: 'bun',
   },
   ui: {
     voiceEnabled: false,
@@ -562,64 +553,8 @@ export const coreHeadConfigSettings: ConfigSettingDefinition[] = [
     key: 'sandbox.vmBackend',
     type: 'enum',
     default: 'local',
-    description: 'Sandbox backend: local host execution by default, or QEMU for virtualized isolation',
-    enumValues: ['local', 'qemu'],
-  },
-  {
-    key: 'sandbox.qemuBinary',
-    type: 'string',
-    default: 'qemu-system-x86_64',
-    description: 'QEMU system binary to use when vmBackend=qemu',
-  },
-  {
-    key: 'sandbox.qemuImagePath',
-    type: 'string',
-    default: '',
-    description: 'Disk image path for QEMU-backed sandbox sessions; when empty, QEMU sessions remain planned-only',
-  },
-  {
-    key: 'sandbox.qemuExecWrapper',
-    type: 'string',
-    default: '',
-    description: 'Host-side wrapper/bridge used to execute guest commands inside a configured QEMU sandbox',
-  },
-  {
-    key: 'sandbox.qemuGuestHost',
-    type: 'string',
-    default: '',
-    description: 'Optional guest host/IP used by the QEMU wrapper for real guest command transport',
-  },
-  {
-    key: 'sandbox.qemuGuestPort',
-    type: 'number',
-    default: 2222,
-    description: 'Optional guest SSH port used by the QEMU wrapper for real guest command transport',
-    ...port(),
-  },
-  {
-    key: 'sandbox.qemuGuestUser',
-    type: 'string',
-    default: 'goodvibes',
-    description: 'Optional guest username used by the QEMU wrapper for real guest command transport',
-  },
-  {
-    key: 'sandbox.qemuWorkspacePath',
-    type: 'string',
-    default: '/workspace',
-    description: 'Guest workspace path used by the QEMU wrapper when executing commands inside the guest',
-  },
-  {
-    key: 'sandbox.qemuSessionMode',
-    type: 'enum',
-    enumValues: ['attach', 'launch-per-command'],
-    default: 'attach',
-    description: 'Whether the QEMU wrapper attaches to an already running guest or launches a guest per command',
-  },
-  {
-    key: 'sandbox.replJavaScriptCommand',
-    type: 'string',
-    default: 'bun',
-    description: 'Guest command used for JavaScript-family REPL runtimes inside QEMU, including JavaScript, TypeScript, SQL, and GraphQL',
+    description: 'Sandbox backend: local host execution, which runs commands on the host and does not isolate them',
+    enumValues: ['local'],
   },
   {
     key: 'ui.voiceEnabled',

@@ -109,16 +109,7 @@ export type ConfigValue<K extends ConfigKey> =
   K extends 'sandbox.replIsolation' ? 'shared-vm' | 'per-runtime-vm' :
   K extends 'sandbox.mcpIsolation' ? 'disabled' | 'shared-vm' | 'hybrid' | 'per-server-vm' :
   K extends 'sandbox.windowsMode' ? 'native-basic' | 'require-wsl' :
-  K extends 'sandbox.vmBackend' ? 'local' | 'qemu' :
-  K extends 'sandbox.qemuBinary' ? string :
-  K extends 'sandbox.qemuImagePath' ? string :
-  K extends 'sandbox.qemuExecWrapper' ? string :
-  K extends 'sandbox.qemuGuestHost' ? string :
-  K extends 'sandbox.qemuGuestPort' ? number :
-  K extends 'sandbox.qemuGuestUser' ? string :
-  K extends 'sandbox.qemuWorkspacePath' ? string :
-  K extends 'sandbox.qemuSessionMode' ? 'attach' | 'launch-per-command' :
-  K extends 'sandbox.replJavaScriptCommand' ? string :
+  K extends 'sandbox.vmBackend' ? 'local' :
   K extends 'ui.voiceEnabled' ? boolean :
   K extends 'ui.systemMessages' ? 'panel' | 'conversation' | 'both' :
   K extends 'ui.operationalMessages' ? 'panel' | 'conversation' | 'both' :
