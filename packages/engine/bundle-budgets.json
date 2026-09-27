@@ -49,14 +49,15 @@
     "rationale": "error taxonomy re-export entry; measured 62 B gzip @ commit c0e5910; headroom max(ceil(62*1.2)=75, 62+50=112) \u2192 112 (+50 B floor dominates by 37 B)"
   },
   "./events": {
-    "gzip_bytes": 374,
-    "rationale": "public facade; measured 311 B gzip @ commit 4e5a5e2; headroom max(ceil(311*1.2)=374, 311+50=361) \u2192 374 (1.2x dominates by 13 B)",
+    "gzip_bytes": 656,
+    "rationale": "public facade; re-measured after the contract event domain (its check, scope and trigger constants) joined the barrel: measured 546 B gzip @ commit 804052e; headroom max(ceil(546*1.2)=656, 546+50=596) \u2192 656 (1.2x dominates by 60 B)",
     "domains": [
       "agents",
       "automation",
       "communication",
       "compaction",
       "config",
+      "contract",
       "contracts",
       "control-plane",
       "deliveries",
@@ -265,6 +266,10 @@
   "./platform/config": {
     "gzip_bytes": 3796,
     "rationale": "config facade with secrets, services, subscriptions, helper model, tool LLM, the daemon-served shared-config tier + admin-scoped credential-status read, and the config-ownership surface (scope resolution, daemon-tier paths, the daemon-owned migration and the derived control-plane base-url readers); re-anchored when the tree-root and daemon-home resolution policy (goodvibes-home.ts: the GOODVIBES_HOME / GOODVIBES_DAEMON_HOME readers, the derived tree directory, the ownership record and the relocated-process question) moved here from the two products that each carried a copy, together with the getConfiguredProviderId and isEffectiveDangerMode derivations; measured 3163 B gzip @ the config-twin hoist; headroom max(ceil(3163*1.2)=3796, 3163+50=3213) \u2192 3796 (1.2x dominates by 583 B)"
+  },
+  "./platform/contract": {
+    "gzip_bytes": 813,
+    "rationale": "new entry: the contract runner's public surface (contract data model, settings, store, events, checks and reports); measured 677 B gzip @ commit 804052e; headroom max(ceil(677*1.2)=813, 677+50=727) \u2192 813 (1.2x dominates by 86 B)"
   },
   "./platform/control-plane": {
     "gzip_bytes": 1967,

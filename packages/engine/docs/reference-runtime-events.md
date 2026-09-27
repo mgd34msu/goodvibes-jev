@@ -177,6 +177,39 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
+### `contracts`
+
+- `runtime.contracts` -> `contracts`
+
+#### `runtime.contracts` payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
 ### `control-plane`
 
 - `runtime.control-plane` -> `control-plane`

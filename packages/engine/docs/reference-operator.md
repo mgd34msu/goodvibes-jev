@@ -5,7 +5,7 @@ Generated from the synced GoodVibes operator contract artifact.
 ## Summary
 
 - Methods: `507`
-- Events: `35`
+- Events: `36`
 - Auth modes: `shared-bearer`, `session-login`
 - HTTP status path: `/status`
 - Methods catalog path: `/api/control-plane/methods`
@@ -105523,6 +105523,46 @@ Key-level settings-change notices (CONFIG_KEY_CHANGED), carrying the dotted key,
 - Scopes: `read:events`
 - Domains: `config`
 - Wire events: `config`
+
+##### Payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
+#### `runtime.contracts`
+
+Contract runner events: a contract from creation through shaping, planning and the plan checks, each unit and group status, every Jev check with its per-criterion readings, nudges and their consumption, regressions, stalls, planned fixes, owner escalations and replies, gates, commit, and the pass, failure or cancellation.
+
+- Title: `contracts Domain Events`
+- Source: `builtin`
+- Transport: `sse`, `ws`
+- Scopes: `read:events`
+- Domains: `contracts`
+- Wire events: `contracts`
 
 ##### Payload schema
 
