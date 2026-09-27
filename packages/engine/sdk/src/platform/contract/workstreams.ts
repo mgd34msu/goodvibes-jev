@@ -78,6 +78,7 @@ export function unitWorkItem(contract: Contract, group: ContractGroup, unit: Con
     template: unitTemplate(unit.role),
     files: [...unit.files],
     ...(unit.attempts > 1 ? { attempts: unit.attempts, autoAcceptWinner: false } : {}),
+    ...(unit.attemptUnits === undefined ? {} : { attemptRoutes: unit.attemptUnits.map((attempt) => attempt.route) }),
   };
 }
 

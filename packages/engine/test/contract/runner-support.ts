@@ -33,6 +33,7 @@ import {
   createContractRunner,
   type ContractHoldOutcome,
   type ContractRun,
+  type ContractRouteSelector,
   type ContractRunner,
   type ContractSteps,
   type ContractTurnRecord,
@@ -176,6 +177,8 @@ export interface HarnessOptions {
   readonly port?: (context: AnswerContext) => unknown;
   /** A planner runner; defaults to one that answers with `plan`. */
   readonly planner?: DecompositionRunner;
+  /** The route selector; defaults to one fixed route. */
+  readonly routeSelector?: ContractRouteSelector;
 }
 
 const ROUTE: UnitRoute = { model: 'provider-a:model-a', provider: 'provider-a', reason: 'test tier' };
@@ -291,7 +294,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     runtimeBus: bus,
     configManager: config,
     projectRoot: root,
-    routeSelector: async () => ROUTE,
+    routeSelector: options.routeSelector ?? (async () => ROUTE),
     decompositionRunner: planner,
     createEngine: (input) => createOrchestrationEngine({
       agentManager: manager,

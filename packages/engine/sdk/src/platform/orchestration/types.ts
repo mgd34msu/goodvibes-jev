@@ -396,6 +396,8 @@ export interface WorkItemSpec extends WorkItemContractFields {
   readonly attempts?: number | undefined;
   /** Best-of-N: allow a judge proposal for this item's group to auto-pick the winner (opt-in; default: a human picks). */
   readonly autoAcceptWinner?: boolean | undefined;
+  /** Best-of-N: attempt i's route (a contract unit's route selector picks one per attempt); an attempt without one takes `route`. */
+  readonly attemptRoutes?: readonly (UnitRoute | undefined)[] | undefined;
   /** Optional per-item budget ceiling (see WorkItem.itemBudget). Falls out naturally for best-of-N attempts; harmless on any item. */
   readonly budget?: BudgetCeiling | undefined;
   /** File-cluster label (planner pass). */

@@ -19877,7 +19877,7 @@
     {
       "name": "unitWorkItem",
       "kind": "function",
-      "text": "export declare function unitWorkItem(contract: Contract, group: ContractGroup, unit: ContractUnit): WorkItemSpec; ;; via WorkItemSpec = export interface WorkItemSpec extends WorkItemContractFields { readonly id?: string | undefined; readonly title: string; readonly task: string; readonly dependsOn?: readonly string[] | undefined; readonly attempts?: number | undefined; readonly autoAcceptWinner?: boolean | undefined; readonly budget?: BudgetCeiling | undefined; readonly cluster?: string | undefined; readonly files?: readonly string[] | undefined; }"
+      "text": "export declare function unitWorkItem(contract: Contract, group: ContractGroup, unit: ContractUnit): WorkItemSpec; ;; via WorkItemSpec = export interface WorkItemSpec extends WorkItemContractFields { readonly id?: string | undefined; readonly title: string; readonly task: string; readonly dependsOn?: readonly string[] | undefined; readonly attempts?: number | undefined; readonly autoAcceptWinner?: boolean | undefined; readonly attemptRoutes?: readonly (UnitRoute | undefined)[] | undefined; readonly budget?: BudgetCeiling | undefined; readonly cluster?: string | undefined; readonly files?: readonly string[] | undefined; }"
     },
     {
       "name": "unmetSeverity",
@@ -33737,7 +33737,7 @@
         "task",
         "title"
       ],
-      "text": "export interface WorkItemSpec extends WorkItemContractFields { readonly id?: string | undefined; readonly title: string; readonly task: string; readonly dependsOn?: readonly string[] | undefined; readonly attempts?: number | undefined; readonly autoAcceptWinner?: boolean | undefined; readonly budget?: BudgetCeiling | undefined; readonly cluster?: string | undefined; readonly files?: readonly string[] | undefined; }"
+      "text": "export interface WorkItemSpec extends WorkItemContractFields { readonly id?: string | undefined; readonly title: string; readonly task: string; readonly dependsOn?: readonly string[] | undefined; readonly attempts?: number | undefined; readonly autoAcceptWinner?: boolean | undefined; readonly attemptRoutes?: readonly (UnitRoute | undefined)[] | undefined; readonly budget?: BudgetCeiling | undefined; readonly cluster?: string | undefined; readonly files?: readonly string[] | undefined; } ;; via UnitRoute = export interface UnitRoute { readonly model: string; readonly provider: string; readonly fallbackModels?: readonly string[] | undefined; readonly routing?: AgentProviderRoutingPolicy | undefined; readonly reasoningEffort?: AgentRecord['reasoningEffort'] | undefined; readonly reason: string; }"
     },
     {
       "name": "WorkItemState",

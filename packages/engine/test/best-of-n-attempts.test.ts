@@ -22,6 +22,7 @@ import {
   type Workstream,
 } from '../sdk/src/platform/orchestration/index.js';
 import { checkBudget } from '../sdk/src/platform/orchestration/budget.js';
+import { copyContractFields } from '../sdk/src/platform/orchestration/contract-binding.js';
 
 function makeItem(spec: WorkItemSpec): WorkItem {
   return {
@@ -37,6 +38,7 @@ function makeItem(spec: WorkItemSpec): WorkItem {
     usage: emptyWorkItemUsage(),
     transportRetryCount: 0,
     createdAt: 0,
+    ...copyContractFields(spec),
   };
 }
 
@@ -77,6 +79,20 @@ describe('expandItems', () => {
     expect(items.every((i) => i.attemptTotal === 3)).toBe(true);
     const spawned = h.events.find((e) => e.type === 'item-attempts-spawned');
     expect(spawned?.type).toBe('item-attempts-spawned');
+  });
+
+  test('each sibling takes its own attempt route, and the spec route where it has none', () => {
+    const h = harness();
+    const route = (model: string) => ({ model, provider: 'p', reason: model });
+    const items = h.coordinator.expandItems('ws-1', 'worktree', [{
+      id: 'u1', title: 'T', task: 'x', attempts: 3, contractId: 'ctr-1', contractUnitId: 'u1',
+      route: route('spec'), attemptRoutes: [route('a0'), undefined, route('a2')],
+    }], makeItem);
+    expect(items.map((item) => [item.id, item.contractUnitId, item.route?.model])).toEqual([
+      ['u1#a0', 'u1#a0', 'a0'],
+      ['u1#a1', 'u1#a1', 'spec'],
+      ['u1#a2', 'u1#a2', 'a2'],
+    ]);
   });
 
   test('ignores attempts under shared isolation (single item)', () => {

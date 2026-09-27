@@ -139,7 +139,14 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
         // A contract unit's attempt is its own contract unit (the runner adds
         // one per sibling under the same id), so its agent is held and checked
         // on its own.
-        const sib = build({ ...spec, id, title: `${spec.title} (attempt ${i + 1}/${n})`, ...(spec.contractUnitId === undefined ? {} : { contractUnitId: id }) });
+        const route = spec.attemptRoutes?.[i];
+        const sib = build({
+          ...spec,
+          id,
+          title: `${spec.title} (attempt ${i + 1}/${n})`,
+          ...(spec.contractUnitId === undefined ? {} : { contractUnitId: id }),
+          ...(route === undefined ? {} : { route }),
+        });
         sib.attemptGroupId = groupId;
         sib.attemptIndex = i;
         sib.attemptTotal = n;

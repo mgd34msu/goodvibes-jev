@@ -160,6 +160,12 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
         if (run.terminal) return;
       }
       for (const unit of units) expandAttempts(run, unit);
+      // Each attempt is its own try: the route selector picks its model too.
+      for (const attempt of units.flatMap((unit) => unit.attemptUnits ?? [])) {
+        if (attempt.route !== undefined) continue;
+        attempt.route = await deps.routeSelector({ purpose: 'unit', contract: run.view(), unit: structuredClone(attempt) });
+        if (run.terminal) return;
+      }
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);
       const input: CreateWorkstreamInput = groupWorkstreamInput(contract, group, run.env.config(), contract.usage);
       const engine = run.engine;

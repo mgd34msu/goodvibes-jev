@@ -45,8 +45,8 @@ function attemptCriterionId(criterionId: string, unitId: string, attemptId: stri
 
 /**
  * One attempt unit per attempt of `unit`, with the ids the engine gives its
- * siblings: the plan unit's goal, brief, files and route, and its criteria
- * unread. Call once the unit has its route.
+ * siblings: the plan unit's goal, brief and files, and its criteria unread.
+ * Each attempt's route is the route selector's pick for that attempt.
  */
 export function attemptUnitsFor(unit: ContractUnit): ContractUnit[] {
   return Array.from({ length: unit.attempts }, (_, index): ContractUnit => {
@@ -69,7 +69,6 @@ export function attemptUnitsFor(unit: ContractUnit): ContractUnit[] {
       })),
       status: 'pending',
       agentIds: [],
-      ...(unit.route === undefined ? {} : { route: unit.route }),
       checks: [],
       nudges: [],
       fixRounds: 0,

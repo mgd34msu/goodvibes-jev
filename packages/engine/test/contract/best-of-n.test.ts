@@ -193,6 +193,31 @@ describe('best-of-N on the contract runner', () => {
     expect(offered).toEqual([]);
   });
 
+  test('the route selector picks each attempt\'s model, and each attempt\'s agent runs on its own route', async () => {
+    const asked: string[] = [];
+    const h = use(makeHarness({
+      plan: oneUnitPlan(1),
+      contract: { isolation: 'auto', defaultAttempts: 2 },
+      scripts: { 'u1#a0': writes('export const parse = 0;\n'), 'u1#a1': writes('export const parse = 1;\n') },
+      port: selectionPort({ pick: 'u1#a0', confidence: 0.95, fits: { 'u1#a0': 0.96 } }, []),
+      routeSelector: async ({ purpose, unit }) => {
+        asked.push(`${purpose}:${unit?.id ?? 'planner'}`);
+        const model = unit === undefined ? 'planner-model' : `model-${unit.id}`;
+        return { model: `provider-a:${model}`, provider: 'provider-a', reason: `picked for ${unit?.id ?? 'the planner'}` };
+      },
+    }));
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'the contract to end', 20_000);
+    expect(h.store.get(contract.id)!.status).toBe('passed');
+    expect(asked.filter((entry) => entry.startsWith('unit:'))).toEqual(['unit:u1', 'unit:u1#a0', 'unit:u1#a1']);
+    const spawned = eventsOf(h, 'CONTRACT_UNIT_SPAWNED').map((event) => [event.unitId, event.route.model, event.route.reason]);
+    expect(spawned.sort()).toEqual([
+      ['u1#a0', 'provider-a:model-u1#a0', 'picked for u1#a0'],
+      ['u1#a1', 'provider-a:model-u1#a1', 'picked for u1#a1'],
+    ]);
+    expect(h.agentsOf('u1#a1').map((agentId) => h.manager.getStatus(agentId)?.model)).toEqual(['provider-a:model-u1#a1']);
+  });
+
   test('in a shared working tree the unit runs once, and the decision says why', async () => {
     const h = use(makeHarness({
       plan: oneUnitPlan(1),
