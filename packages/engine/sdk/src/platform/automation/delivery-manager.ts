@@ -16,8 +16,9 @@ import type { AutomationDeliveryAttempt, AutomationDeliveryTarget } from './deli
 import type { AutomationJob } from './jobs.js';
 import type { AutomationRouteBinding } from './routes.js';
 import type { AutomationRun } from './runs.js';
-import { classifyDeliveryError } from '../integrations/delivery.js';
+import { readFailureTransience } from '../integrations/delivery.js';
 import { summarizeError } from '../utils/error-display.js';
+import { logger } from '../utils/logger.js';
 import type { FeatureFlagReader } from '../runtime/feature-flags/index.js';
 import { isFeatureGateEnabled, isSurfaceFeatureGateEnabled } from '../runtime/feature-flags/index.js';
 import { sleep } from '../utils/concurrency.js';
@@ -240,7 +241,16 @@ export class AutomationDeliveryManager {
           break;
         } catch (error) {
           lastError = summarizeError(error);
-          const retryable = classifyDeliveryError(error) === 'retryable';
+          const transience = await readFailureTransience(error, 'automation.delivery.attempt');
+          const retryable = transience.failureClass === 'retryable';
+          logger.debug('AutomationDeliveryManager: delivery attempt failed', {
+            jobId: job.id,
+            runId: run.id,
+            attempt: attemptIndex,
+            failureClass: transience.failureClass,
+            basis: transience.basis,
+            reason: transience.detail,
+          });
           const lastTry = attemptIndex >= Math.max(1, retryPolicy.maxAttempts);
           if (!retryable || lastTry) {
             attempt = {

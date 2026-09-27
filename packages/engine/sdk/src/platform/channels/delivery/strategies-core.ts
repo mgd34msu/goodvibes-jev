@@ -20,6 +20,7 @@ import {
   trimForSurface,
 } from './shared.js';
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 export function createWebhookDeliveryStrategy(configManager: ConfigManager, artifactStore: ArtifactStore): ChannelDeliveryStrategy {
   return {
@@ -54,7 +55,7 @@ export function createWebhookDeliveryStrategy(configManager: ConfigManager, arti
         }),
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text().catch(() => '')}`);
+        throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }
       return success(validation.url);
     },

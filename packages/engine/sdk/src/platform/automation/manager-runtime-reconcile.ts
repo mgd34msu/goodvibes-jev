@@ -6,6 +6,11 @@ import type { AutomationRun } from './runs.js';
 import { buildRunTelemetryFromAgent, getTerminalAgentState } from './manager-runtime-helpers.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
+import {
+  scheduleAutomationFailureFollowUp,
+  settleAutomationRunFailure,
+  type AutomationFailureFollowUpContext,
+} from './manager-runtime-delivery.js';
 
 interface AutomationReconcileContext {
   readonly configManager: ConfigManager;
@@ -19,10 +24,10 @@ interface AutomationReconcileContext {
   readonly syncRunToRuntime: (run: AutomationRun, source: string) => void;
   readonly syncJobToRuntime: (job: AutomationJob, source: string) => void;
   readonly emitRunCompleted: (job: AutomationJob, run: AutomationRun, outcome: 'success' | 'partial' | 'failed' | 'cancelled') => void;
-  readonly emitRunFailed: (job: AutomationJob, run: AutomationRun, error: string, retryable: boolean) => void;
+  /** Delivers failure notices, emits run-failed and applies the job's retry or cooldown policy. */
+  readonly followUp: AutomationFailureFollowUpContext;
   readonly emitJobAutoDisabled: (job: AutomationJob, reason: string) => void;
   readonly maybeDeliverRun: (job: AutomationJob, run: AutomationRun) => void;
-  readonly scheduleFailureFollowUp: (job: AutomationJob, run: AutomationRun) => void;
   readonly applyFailureToJob: (job: AutomationJob, timestamp: number, countRun?: boolean) => AutomationJob;
   readonly pruneRunHistory: () => void;
   readonly cancelTimer: (jobId: string) => void;
@@ -34,6 +39,17 @@ function reportAsyncFailure(label: string, error: unknown, metadata: Record<stri
     error: summarizeError(error),
   });
 }
+
+/**
+ * A run whose agent vanished before reporting a terminal state was lost to a
+ * restart, not failed by its work, so another attempt could succeed. Known
+ * from structure; nothing to read.
+ */
+const AGENT_STATE_LOST = {
+  failureClass: 'retryable',
+  basis: 'explicit',
+  detail: 'the agent state was lost before the run completed',
+} as const;
 
 export function reconcileAutomationActiveRuns(context: AutomationReconcileContext): void {
   let jobsChanged = false;
@@ -80,8 +96,7 @@ export function reconcileAutomationActiveRuns(context: AutomationReconcileContex
           });
         }
         context.syncJobToRuntime(updatedJob, 'automation.reconcile');
-        context.emitRunFailed(updatedJob, updatedRun, updatedRun.error ?? 'Agent state lost', false);
-        context.scheduleFailureFollowUp(updatedJob, updatedRun);
+        settleAutomationRunFailure(context.followUp, updatedJob, updatedRun, updatedRun.error ?? 'Agent state lost', { known: AGENT_STATE_LOST });
         jobsChanged = true;
       }
       runsChanged = true;
@@ -148,17 +163,18 @@ export function reconcileAutomationActiveRuns(context: AutomationReconcileContex
     context.syncJobToRuntime(updatedJob, 'automation.reconcile');
     if (terminalStatus === 'completed') {
       context.emitRunCompleted(updatedJob, updatedRun, 'success');
-    } else if (terminalStatus === 'failed') {
-      context.emitRunFailed(updatedJob, updatedRun, updatedRun.error ?? 'Agent failed', false);
-    } else {
+    } else if (terminalStatus === 'cancelled') {
       context.emitRunCompleted(updatedJob, updatedRun, 'cancelled');
     }
     context.maybeDeliverRun(updatedJob, updatedRun);
     if (terminalStatus === 'completed' && updatedJob.deleteAfterRun) {
       context.cancelTimer(updatedJob.id);
       context.jobs.delete(updatedJob.id);
-    } else if (terminalStatus !== 'completed') {
-      context.scheduleFailureFollowUp(updatedJob, updatedRun);
+    } else if (terminalStatus === 'failed') {
+      settleAutomationRunFailure(context.followUp, updatedJob, updatedRun, updatedRun.error ?? 'Agent failed', { error: agent.error ?? '' });
+    } else if (terminalStatus === 'cancelled') {
+      // A cancellation has no failure to read; the job's policy applies as configured.
+      scheduleAutomationFailureFollowUp(context.followUp, updatedJob, updatedRun, true);
     }
     if (!updatedJob.enabled && wasEnabled && terminalStatus !== 'completed') {
       context.emitJobAutoDisabled(updatedJob, updatedJob.pausedReason ?? 'failure-threshold-reached');

@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { resolveReachableBaseUrl } from '../../utils/reachable-base-url.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 export function resolveChannelDeliverySurfaceKind(
   target: ChannelDeliveryTarget,
@@ -175,7 +176,7 @@ export async function requireOkResponse(label: string, response: Response): Prom
       : payload && typeof payload === 'object'
         ? JSON.stringify(payload)
         : '';
-    throw new Error(`${label} HTTP ${response.status}${detail ? `: ${detail}` : ''}`);
+    throw new HttpStatusError(`${label} HTTP ${response.status}${detail ? `: ${detail}` : ''}`, { status: response.status });
   }
   return payload;
 }

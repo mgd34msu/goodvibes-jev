@@ -1,6 +1,14 @@
 import { logger } from '../utils/logger.js';
 import { randomInt, randomUUID } from 'node:crypto';
-import { GoodVibesSdkError, RETRYABLE_STATUS_CODES } from '@goodvibes-jev/engine/errors';
+import {
+  categoryForCode,
+  GoodVibesSdkError,
+  readFailure,
+  RETRYABLE_STATUS_CODES,
+  type FailureCategory,
+  type FailureConclusions,
+  type FailureEvidence,
+} from '@goodvibes-jev/engine/errors';
 import type { FeatureFlagManager } from '../runtime/feature-flags/index.js';
 import type { ConfigManager } from '../config/manager.js';
 
@@ -30,50 +38,142 @@ export type DeliveryOutcome = 'delivered' | 'retrying' | 'dead_letter';
 export type DeliveryFailureClass = 'retryable' | 'terminal';
 
 // ---------------------------------------------------------------------------
-// Failure classification
+// Failure transience
 // ---------------------------------------------------------------------------
 
 /** HTTP status codes that indicate a retryable transient failure. */
-const DELIVERY_RETRYABLE_STATUSES = new Set(RETRYABLE_STATUS_CODES);
+const DELIVERY_RETRYABLE_STATUSES: ReadonlySet<number> = new Set(RETRYABLE_STATUS_CODES);
+
+/** Error class names that only a timeout or an abort produces (AbortSignal.timeout, fetch aborts). */
+const TIMEOUT_ERROR_NAMES: ReadonlySet<string> = new Set(['TimeoutError', 'AbortError']);
 
 /**
- * Classify a delivery error as retryable or terminal.
- *
- * Rules (in order):
- * 1. Network errors with no HTTP status → retryable (timeout, ECONNREFUSED, etc.)
- * 2. HTTP 4xx (except 408/429) → terminal (auth failure, bad request, not found)
- * 3. HTTP 429 / 5xx → retryable
- * 4. Unknown → retryable (prefer retry over silent drop)
+ * What a transience decision rested on: an explicit classification the error
+ * carries, a structured fact (a Retry-After, an HTTP status, an errno code, a
+ * timeout error class), Jev's reading of the wording, or no wording at all.
  */
-export function classifyDeliveryError(error: unknown): DeliveryFailureClass {
+export type TransienceBasis = 'explicit' | 'retry-after' | 'status' | 'errno' | 'error-type' | 'reading' | 'no-wording';
+
+/** Whether a failure is worth another attempt, and why. */
+export interface FailureTransience {
+  readonly failureClass: DeliveryFailureClass;
+  readonly basis: TransienceBasis;
+  /** The fact or reading behind the decision, for logs and the decision trail. */
+  readonly detail: string;
+}
+
+/**
+ * The reading's categories, split by whether sending the same thing again
+ * could succeed. The rest ('unknown') leave the wording unsettled.
+ */
+const TRANSIENT_CATEGORIES: ReadonlySet<FailureCategory> = new Set(['rate_limit', 'timeout', 'network', 'service', 'protocol']);
+const PERMANENT_CATEGORIES: ReadonlySet<FailureCategory> = new Set(['authentication', 'authorization', 'billing', 'not_found', 'bad_request']);
+
+function numberField(value: object, key: string): number | undefined {
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'number' && Number.isFinite(field) ? field : undefined;
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' && field.length > 0 ? field : undefined;
+}
+
+/** The HTTP status an error carries as a field (`status`, or `statusCode` as AppError and DeliveryError name it). */
+function httpStatusOf(error: object): number | undefined {
+  for (const key of ['status', 'statusCode']) {
+    const status = numberField(error, key);
+    if (status !== undefined && status >= 100 && status <= 599) return status;
+  }
+  return undefined;
+}
+
+/**
+ * The transience a failure's structure fixes on its own, or undefined when
+ * only its wording can say. Order: an explicit DeliveryError class; an
+ * explicit Retry-After (a server naming when to come back, which also covers
+ * a 403 secondary rate limit); the HTTP status against the retryable-status
+ * table; an errno code (on the error or its cause) that names a connection
+ * fault or timeout; a timeout or abort error class.
+ */
+export function structuredTransience(error: unknown): FailureTransience | undefined {
   if (error instanceof DeliveryError) {
-    return error.failureClass;
+    return { failureClass: error.failureClass, basis: 'explicit', detail: `DeliveryError marked ${error.failureClass}` };
   }
+  if (!error || typeof error !== 'object') return undefined;
+  const retryAfterMs = numberField(error, 'retryAfterMs');
+  if (retryAfterMs !== undefined && retryAfterMs >= 0) {
+    return { failureClass: 'retryable', basis: 'retry-after', detail: `server asked for a retry after ${retryAfterMs}ms` };
+  }
+  const status = httpStatusOf(error);
+  if (status !== undefined) {
+    const failureClass = DELIVERY_RETRYABLE_STATUSES.has(status) ? 'retryable' : 'terminal';
+    return { failureClass, basis: 'status', detail: `HTTP ${status}` };
+  }
+  const cause = (error as { readonly cause?: unknown }).cause;
+  for (const code of [stringField(error, 'code'), stringField(cause, 'code')]) {
+    const category = categoryForCode(code);
+    if (category !== undefined) return { failureClass: 'retryable', basis: 'errno', detail: `${code} (${category})` };
+  }
+  const name = stringField(error, 'name');
+  if (name !== undefined && TIMEOUT_ERROR_NAMES.has(name)) {
+    return { failureClass: 'retryable', basis: 'error-type', detail: name };
+  }
+  return undefined;
+}
+
+/** The wording a reading is given: the error's message, and its cause's when it has one. */
+function failureWording(error: unknown): FailureEvidence {
   if (error instanceof Error) {
-    const msg = error.message.toLowerCase();
-    // HTTP status in message (e.g. "HTTP 400: bad request")
-    const match = /http\s+(\d{3})/.exec(msg);
-    if (match) {
-      const status = parseInt(match[1]!, 10);
-      return DELIVERY_RETRYABLE_STATUSES.has(status) ? 'retryable' : 'terminal';
-    }
-    // Network-level errors: timeout, connection refused, DNS failure
-    if (
-      msg.includes('timeout') ||
-      msg.includes('aborted') ||
-      msg.includes('econnrefused') ||
-      msg.includes('enotfound') ||
-      msg.includes('network')
-    ) {
-      return 'retryable';
-    }
-    // TypeError for invalid URL or fetch misconfiguration
-    if (error instanceof TypeError) {
-      return 'terminal';
-    }
+    const causeMessage = error.cause instanceof Error ? error.cause.message : stringField(error.cause, 'message');
+    const message = causeMessage !== undefined && causeMessage !== error.message
+      ? `${error.message}\nCaused by: ${causeMessage}`
+      : error.message;
+    return { message, code: stringField(error, 'code') ?? stringField(error.cause, 'code'), errorName: error.name };
   }
-  // Default: retryable; delivery failures remain observable.
-  return 'retryable';
+  return { message: typeof error === 'string' ? error : summarizeError(error) };
+}
+
+/**
+ * Composes the failure reading into a transience decision. A spent account is
+ * permanent even when it arrives as a rate limit; a transient network fault
+ * is worth another attempt; otherwise the category decides. A reading that
+ * settles nothing is retried: the attempt budget bounds it and the failure
+ * stays observable, where a dead-letter would drop it silently.
+ */
+export function transienceFromReading(failure: FailureConclusions): FailureTransience {
+  const basis = 'reading';
+  if (failure.billing) return { failureClass: 'terminal', basis, detail: 'the account cannot pay for the request' };
+  if (failure.transientNetwork) return { failureClass: 'retryable', basis, detail: 'a transient network fault' };
+  if (PERMANENT_CATEGORIES.has(failure.category)) return { failureClass: 'terminal', basis, detail: `read as ${failure.category}` };
+  if (TRANSIENT_CATEGORIES.has(failure.category)) return { failureClass: 'retryable', basis, detail: `read as ${failure.category}` };
+  if (failure.rateLimited) return { failureClass: 'retryable', basis, detail: 'a rate limit' };
+  return { failureClass: 'retryable', basis, detail: 'the wording does not settle it' };
+}
+
+/**
+ * Decides whether a failure is worth another attempt: structure first
+ * ({@link structuredTransience}), then one Jev reading of the wording through
+ * the engine failure battery (`readFailure`, memoized per wording). Used
+ * before every retry, cooldown or dead-letter in the integration delivery
+ * queue and in automation. A failure with no wording at all is retried, as a
+ * reading that settles nothing is. Throws when a reading is needed and none
+ * can be made; there is no pattern-list fallback.
+ */
+export async function readFailureTransience(error: unknown, site: string): Promise<FailureTransience> {
+  const structured = structuredTransience(error);
+  if (structured !== undefined) return structured;
+  const evidence = failureWording(error);
+  if (evidence.message.trim().length === 0) {
+    return { failureClass: 'retryable', basis: 'no-wording', detail: 'the failure carries no wording' };
+  }
+  return transienceFromReading(await readFailure(evidence, site));
+}
+
+/** Classifies a delivery error as retryable or terminal (see {@link readFailureTransience}). */
+export async function classifyDeliveryError(error: unknown, site = 'integrations.delivery.transience'): Promise<DeliveryFailureClass> {
+  return (await readFailureTransience(error, site)).failureClass;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +319,11 @@ interface PendingEntry {
  *
  * Wrap any integration send operation with `enqueue()`. The queue:
  *  1. Attempts delivery immediately.
- *  2. On retryable failure: schedules retry with exponential backoff + jitter.
- *  3. On terminal failure or exhausted retries: moves entry to DLQ.
- *  4. Emits `delivery:dead_letter` events to registered listeners.
+ *  2. On failure, decides whether it is transient ({@link readFailureTransience}:
+ *     structured facts first, then Jev's reading of the wording).
+ *  3. On retryable failure: schedules retry with exponential backoff + jitter.
+ *  4. On terminal failure or exhausted retries: moves entry to DLQ.
+ *  5. Emits `delivery:dead_letter` events to registered listeners.
  *
  * Dead-letter entries can be replayed via `replay()` or cleared with `clearDlq()`.
  *
@@ -389,10 +491,20 @@ export class DeliveryQueue {
       return 'delivered';
     } catch (err: unknown) {
       const errorMsg = summarizeError(err);
-      const failureClass = classifyDeliveryError(err);
+      let transience: FailureTransience;
+      try {
+        transience = await readFailureTransience(err, 'integrations.delivery.queue');
+      } catch (readError: unknown) {
+        this._pending.delete(entry.id);
+        throw new AggregateError(
+          [err, readError],
+          `DeliveryQueue: ${entry.channel} delivery failed and whether to retry it could not be read (${summarizeError(readError)})`,
+        );
+      }
+      const { failureClass } = transience;
 
       if (failureClass === 'terminal' || entry.attempts > this._config.maxRetries) {
-        return this._moveToDlq(entry, errorMsg, failureClass);
+        return this._moveToDlq(entry, errorMsg, transience);
       }
 
       // Schedule retry
@@ -408,13 +520,15 @@ export class DeliveryQueue {
         delayMs,
         error: errorMsg,
         failureClass,
+        basis: transience.basis,
+        reason: transience.detail,
       });
 
       const timer = setTimeout(() => {
         this._timers.delete(entry.id);
         this._retrying = Math.max(0, this._retrying - 1);
         void this._attempt(entry).catch((error: unknown) => {
-          logger.warn('DeliveryQueue: retry attempt failed outside delivery classifier', {
+          logger.warn('DeliveryQueue: retry attempt could not be settled', {
             channel: entry.channel,
             event: entry.event,
             error: summarizeError(error),
@@ -431,8 +545,9 @@ export class DeliveryQueue {
   private _moveToDlq(
     entry: PendingEntry,
     finalError: string,
-    failureClass: DeliveryFailureClass,
+    transience: FailureTransience,
   ): DeliveryOutcome {
+    const { failureClass } = transience;
     const dlqEntry: DeadLetterEntry = {
       id: entry.id,
       channel: entry.channel,
@@ -463,6 +578,8 @@ export class DeliveryQueue {
         attempts: dlqEntry.attempts,
         finalError: dlqEntry.finalError,
         failureClass: dlqEntry.failureClass,
+        basis: transience.basis,
+        reason: transience.detail,
       });
     } else {
       logger.warn('DeliveryQueue: dead-lettered', {
@@ -472,6 +589,8 @@ export class DeliveryQueue {
         attempts: dlqEntry.attempts,
         finalError: dlqEntry.finalError,
         failureClass: dlqEntry.failureClass,
+        basis: transience.basis,
+        reason: transience.detail,
       });
     }
 

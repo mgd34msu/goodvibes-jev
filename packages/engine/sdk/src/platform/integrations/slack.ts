@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -197,7 +198,7 @@ export class SlackIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`SlackIntegration.exchangeOAuthCode failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`SlackIntegration.exchangeOAuthCode failed (${res.status}): ${err}`, { status: res.status });
     }
     return await res.json() as SlackOAuthExchangeResult;
   }
@@ -379,7 +380,7 @@ export class SlackIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`SlackIntegration.${method} failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`SlackIntegration.${method} failed (${res.status}): ${err}`, { status: res.status });
     }
     return await res.json() as T;
   }
@@ -410,7 +411,7 @@ export class SlackIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`SlackIntegration.postMessage failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`SlackIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
     }
     const data = (await res.json()) as { ok: boolean; error?: string };
     if (!data.ok) {
@@ -438,7 +439,7 @@ export class SlackIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`SlackIntegration.postWebhook failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`SlackIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
     }
   }
 

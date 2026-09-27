@@ -50,7 +50,9 @@ import {
 import {
   maybeDeliverAutomationFailureNotice,
   maybeDeliverAutomationRun,
+  readAutomationRunTransience,
   scheduleAutomationFailureFollowUp,
+  type AutomationFailureFollowUpContext,
 } from './manager-runtime-delivery.js';
 import {
   emitAutomationManagerJobAutoDisabled,
@@ -214,9 +216,8 @@ export class AutomationManager {
       emitRunQueued: (job: AutomationJob, run: AutomationRun) => this.emitRunQueued(job, run),
       emitRunStarted: (job: AutomationJob, run: AutomationRun) => this.emitRunStarted(job, run),
       emitRunCompleted: (job: AutomationJob, run: AutomationRun, outcome: 'success' | 'partial' | 'failed' | 'cancelled') => this.emitRunCompleted(job, run, outcome),
-      emitRunFailed: (job: AutomationJob, run: AutomationRun, error: string, retryable: boolean) => this.emitRunFailed(job, run, error, retryable),
+      emitRunFailed: (job: AutomationJob, run: AutomationRun, error: string, retryable: boolean) => emitAutomationManagerRunFailed(this.runtimeBus, job, run, error, retryable),
       maybeDeliverRun: (job: AutomationJob, run: AutomationRun) => this.maybeDeliverRun(job, run),
-      scheduleFailureFollowUp: (job: AutomationJob, run: AutomationRun) => this.scheduleFailureFollowUp(job, run),
       applyFailureToJob: (job: AutomationJob, timestamp: number, countRun = true) => this.applyFailureToJob(job, timestamp, countRun),
       jobs: this.jobs,
       runs: this.runs,
@@ -530,11 +531,13 @@ export class AutomationManager {
     this.jobs.set(job.id, updatedJob);
     await this.syncExecutionRoute(updatedJob, updatedRun);
     this.syncJobToRuntime(updatedJob, 'automation.external');
+    const retryable = input.status === 'failed'
+      && (await readAutomationRunTransience({ error: input.error ?? '' }, 'automation.run.remote', { jobId: job.id, runId: run.id }))?.failureClass === 'retryable';
 
     if (input.status === 'completed') {
       this.emitRunCompleted(updatedJob, updatedRun, 'success');
     } else if (input.status === 'failed') {
-      this.emitRunFailed(updatedJob, updatedRun, updatedRun.error ?? 'Remote work failed', false);
+      emitAutomationManagerRunFailed(this.runtimeBus, updatedJob, updatedRun, updatedRun.error ?? 'Remote work failed', retryable);
     } else {
       this.emitRunCompleted(updatedJob, updatedRun, 'cancelled');
     }
@@ -543,7 +546,7 @@ export class AutomationManager {
       this.cancelTimer(updatedJob.id);
       this.jobs.delete(updatedJob.id);
     } else if (input.status === 'failed') {
-      this.scheduleFailureFollowUp(updatedJob, updatedRun);
+      scheduleAutomationFailureFollowUp(this.failureFollowUpContext(), updatedJob, updatedRun, retryable);
     }
     if (!updatedJob.enabled && wasEnabled && input.status === 'failed') {
       this.emitJobAutoDisabled(updatedJob, updatedJob.pausedReason ?? 'failure-threshold-reached');
@@ -664,10 +667,9 @@ export class AutomationManager {
       syncRunToRuntime: (run, source) => this.syncRunToRuntime(run, source),
       syncJobToRuntime: (job, source) => this.syncJobToRuntime(job, source),
       emitRunCompleted: (job, run, outcome) => this.emitRunCompleted(job, run, outcome),
-      emitRunFailed: (job, run, error, retryable) => this.emitRunFailed(job, run, error, retryable),
+      followUp: this.failureFollowUpContext(),
       emitJobAutoDisabled: (job, reason) => this.emitJobAutoDisabled(job, reason),
       maybeDeliverRun: (job, run) => this.maybeDeliverRun(job, run),
-      scheduleFailureFollowUp: (job, run) => this.scheduleFailureFollowUp(job, run),
       applyFailureToJob: (job, timestamp, countRun) => this.applyFailureToJob(job, timestamp, countRun),
       pruneRunHistory: () => this.pruneRunHistory(),
       cancelTimer: (jobId) => this.cancelTimer(jobId),
@@ -724,8 +726,8 @@ export class AutomationManager {
     }
   }
 
-  private scheduleFailureFollowUp(job: AutomationJob, run: AutomationRun): void {
-    scheduleAutomationFailureFollowUp({
+  private failureFollowUpContext(): AutomationFailureFollowUpContext {
+    return {
       jobs: this.jobs,
       retryTimers: this.retryTimers,
       deliveryManager: this.deliveryManager,
@@ -734,7 +736,9 @@ export class AutomationManager {
       executeJob: (scheduledJob, trigger, dueRun, attempt) => this.executeJob(scheduledJob, trigger, dueRun, attempt),
       saveJobs: () => this.saveJobs(),
       scheduleJob: (scheduledJob) => this.scheduleJob(scheduledJob),
-    }, (failureJob, failureRun) => this.maybeDeliverFailureNotice(failureJob, failureRun), job, run);
+      deliverFailureNotice: (failureJob, failureRun) => this.maybeDeliverFailureNotice(failureJob, failureRun),
+      emitRunFailed: (failureJob, failureRun, error, retryable) => emitAutomationManagerRunFailed(this.runtimeBus, failureJob, failureRun, error, retryable),
+    };
   }
 
   private maybeDeliverFailureNotice(job: AutomationJob, run: AutomationRun): void {
@@ -779,10 +783,6 @@ export class AutomationManager {
 
   private emitRunCompleted(job: AutomationJob, run: AutomationRun, outcome: 'success' | 'partial' | 'failed' | 'cancelled'): void {
     emitAutomationManagerRunCompleted(this.runtimeBus, job, run, outcome);
-  }
-
-  private emitRunFailed(job: AutomationJob, run: AutomationRun, error: string, retryable: boolean): void {
-    emitAutomationManagerRunFailed(this.runtimeBus, job, run, error, retryable);
   }
 
   private maybeDeliverRun(job: AutomationJob, run: AutomationRun): void {

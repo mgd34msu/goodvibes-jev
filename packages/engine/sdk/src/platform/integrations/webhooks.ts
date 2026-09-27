@@ -4,6 +4,7 @@ import { classifyHostTrustTier, extractHostname, emitSsrfDeny } from '../tools/f
 import { instrumentedFetch, createTimeoutController } from '../utils/fetch-with-timeout.js';
 import { isNotifySuppressed } from '../utils/notify.js';
 import { workstreamLabel } from '../channels/workstream-labels.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
 // WebhookNotifier
@@ -241,7 +242,7 @@ export class WebhookNotifier {
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        throw new Error(`HTTP ${res.status}: ${truncateUtf8(responseText, 4_096)}`);
+        throw new HttpStatusError(`HTTP ${res.status}: ${truncateUtf8(responseText, 4_096)}`, { status: res.status });
       }
     } finally {
       signal.dispose();

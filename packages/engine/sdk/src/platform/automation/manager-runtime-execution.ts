@@ -9,6 +9,7 @@ import type { AutomationSessionTarget } from './session-targets.js';
 import type { AutomationRunTrigger } from './types.js';
 import type { ConfigManager } from '../config/manager.js';
 import { summarizeError } from '../utils/error-display.js';
+import { readAutomationRunTransience } from './manager-runtime-delivery.js';
 import {
   buildAutomationExecutionIntent,
   buildAutomationExecutionContext,
@@ -47,7 +48,6 @@ export interface AutomationManagerExecutionContext {
   readonly emitRunCompleted: (job: AutomationJob, run: AutomationRun, outcome: 'success' | 'partial' | 'failed' | 'cancelled') => void;
   readonly emitRunFailed: (job: AutomationJob, run: AutomationRun, error: string, retryable: boolean) => void;
   readonly maybeDeliverRun: (job: AutomationJob, run: AutomationRun) => void;
-  readonly scheduleFailureFollowUp: (job: AutomationJob, run: AutomationRun) => void;
   readonly applyFailureToJob: (job: AutomationJob, timestamp: number, countRun?: boolean) => AutomationJob;
   readonly jobs: Map<string, AutomationJob>;
   readonly runs: Map<string, AutomationRun>;
@@ -234,7 +234,8 @@ export async function executeAutomationJob(
     await Promise.all([context.saveJobs(), context.saveRuns()]);
     context.syncRunToRuntime(failedRun, 'automation.execute');
     context.syncJobToRuntime(updatedJob, 'automation.execute');
-    context.emitRunFailed(updatedJob, failedRun, message, true);
+    const transience = await readAutomationRunTransience({ error }, 'automation.run.start', { jobId: updatedJob.id, runId: failedRun.id });
+    context.emitRunFailed(updatedJob, failedRun, message, transience?.failureClass === 'retryable');
     if (!updatedJob.enabled && effectiveJob.enabled) {
       // The caller is responsible for surfacing auto-disable events.
     }

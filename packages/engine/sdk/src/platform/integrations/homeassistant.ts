@@ -1,6 +1,7 @@
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 const DEFAULT_HOME_ASSISTANT_TIMEOUT_MS = 15_000;
 const DEFAULT_HOME_ASSISTANT_RESPONSE_BYTES = 2_000_000;
@@ -140,7 +141,7 @@ export class HomeAssistantIntegration {
     if (options.notFoundAsNull && response.status === 404) return null;
     const text = await readResponseTextWithinLimit(response, this.maxResponseBytes);
     if (!response.ok) {
-      throw new Error(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`);
+      throw new HttpStatusError(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`, { status: response.status });
     }
     if (!text.trim()) return null;
     try {
@@ -161,7 +162,7 @@ export class HomeAssistantIntegration {
     const response = await this.request(path, options);
     const text = await readResponseTextWithinLimit(response, this.maxResponseBytes);
     if (!response.ok) {
-      throw new Error(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`);
+      throw new HttpStatusError(`Home Assistant HTTP ${response.status}${text ? `: ${text.slice(0, 500)}` : ''}`, { status: response.status });
     }
     return text;
   }

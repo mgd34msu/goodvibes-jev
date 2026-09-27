@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -323,7 +324,7 @@ export class DiscordIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`DiscordIntegration.postWebhook failed (${res.status}): ${err}`, { status: res.status });
     }
   }
 
@@ -350,7 +351,7 @@ export class DiscordIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`DiscordIntegration.postMessage failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`DiscordIntegration.postMessage failed (${res.status}): ${err}`, { status: res.status });
     }
   }
 
@@ -379,7 +380,7 @@ export class DiscordIntegration {
     // 204 No Content is the normal success code
     if (!res.ok && res.status !== 204) {
       const err = await res.text();
-      throw new Error(`DiscordIntegration.respondToInteraction failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`DiscordIntegration.respondToInteraction failed (${res.status}): ${err}`, { status: res.status });
     }
   }
 
@@ -406,8 +407,9 @@ export class DiscordIntegration {
     );
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(
+      throw new HttpStatusError(
         `DiscordIntegration.editOriginalResponse failed (${res.status}): ${err}`,
+        { status: res.status },
       );
     }
   }
@@ -434,7 +436,7 @@ export class DiscordIntegration {
     });
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`DiscordIntegration.apiFetch ${path} failed (${res.status}): ${err}`);
+      throw new HttpStatusError(`DiscordIntegration.apiFetch ${path} failed (${res.status}): ${err}`, { status: res.status });
     }
     return await res.json() as T;
   }

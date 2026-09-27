@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '../utils/logger.js';
 import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -294,7 +295,7 @@ export class GitHubIntegration {
         status: res.status,
         body: text.slice(0, 500),
       });
-      throw new Error(`GitHub API error ${res.status}: ${text.slice(0, 200)}`);
+      throw new HttpStatusError(`GitHub API error ${res.status}: ${text.slice(0, 200)}`, { status: res.status });
     }
   }
 }
