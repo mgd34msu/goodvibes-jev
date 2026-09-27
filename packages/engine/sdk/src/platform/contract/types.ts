@@ -249,6 +249,34 @@ export interface ContractUnit {
   /** The unit's completion summary. */
   answer?: string | undefined;
   failureReason?: string | undefined;
+  /**
+   * Best-of-N (design 6.2), on a plan unit with `attempts > 1` in worktree
+   * mode: one attempt unit per sibling, each run and checked on its own. The
+   * plan unit runs no agent itself; it passes with the selected attempt's work.
+   */
+  attemptUnits?: ContractUnit[] | undefined;
+  /** On an attempt unit: the plan unit it is an attempt of. */
+  readonly attemptOf?: string | undefined;
+  /** On an attempt unit: its index among the plan unit's attempts, from 0. */
+  readonly attemptIndex?: number | undefined;
+  /** On a plan unit with attempts: the selection over its passing attempts, once read. */
+  attemptSelection?: AttemptSelectionRecord | undefined;
+}
+
+/** What `contract.best-of-n` read over a unit's passing attempts, and the attempt taken. */
+export interface AttemptSelectionRecord {
+  /** The engine's best-of-N group the attempts belong to. */
+  readonly engineGroupId: string;
+  /** The attempt units that passed their checks: the only candidates. */
+  readonly candidateIds: readonly string[];
+  /** The fitting winner the selector proposed, when there was one. */
+  readonly proposedId?: string | undefined;
+  readonly outcome: Outcome;
+  /** Built in code from the readings. */
+  readonly reasons: string;
+  readonly decisionId?: string | undefined;
+  /** The attempt accepted (by the selection at act, or by the owner); set once it is picked. */
+  pickedId?: string | undefined;
 }
 
 export interface ContractGroup {
@@ -291,7 +319,7 @@ export interface Escalation {
 export const CONTRACT_DECISION_ACTIONS = [
   'created', 'queued', 'shaped', 'planned', 'plan-repaired', 'plan-accepted', 'spawned', 'checked',
   'nudged', 'woke', 'regressed', 'stalled', 'fix-planned', 'fresh-agent', 'escalated',
-  'owner-replied', 'transport-retry', 'silence-retry', 'attempts-selected', 'group-passed',
+  'owner-replied', 'transport-retry', 'silence-retry', 'attempts-selected', 'attempts-reduced', 'group-passed',
   'committed', 'passed', 'failed', 'cancelled', 'resumed', 'reaped',
 ] as const;
 export type ContractDecisionAction = (typeof CONTRACT_DECISION_ACTIONS)[number];
@@ -407,8 +435,9 @@ export const GROUP_TRANSITIONS: Readonly<Record<GroupStatus, readonly GroupStatu
 /**
  * Legal unit status moves. `passed` is reachable only from a check (checking
  * or held), from `held-merge` (a passing unit whose branch merged, or a
- * best-of-N selection), or from the owner
- * confirming unshown readings (awaiting-owner); the runner, not this table,
+ * best-of-N selection whose chosen attempt merged), or from the owner
+ * confirming unshown readings (awaiting-owner). An owner who picks an attempt
+ * moves the unit from awaiting-owner to held-merge; the runner, not this table,
  * enforces that no criterion reads unmet at that moment. `pending` is where a
  * requeued unit (transport retry, silence retry, fresh agent) waits for its
  * next agent.
@@ -421,7 +450,7 @@ export const UNIT_TRANSITIONS: Readonly<Record<UnitStatus, readonly UnitStatus[]
   held: ['nudged', 'passed', 'held-merge', 'fixing', 'awaiting-owner', 'pending', 'failed', 'cancelled'],
   nudged: ['running', 'checking', 'held', 'pending', 'failed', 'cancelled'],
   fixing: ['checking', 'awaiting-owner', 'failed', 'cancelled'],
-  'awaiting-owner': ['checking', 'passed', 'fixing', 'pending', 'failed', 'cancelled'],
+  'awaiting-owner': ['checking', 'passed', 'held-merge', 'fixing', 'pending', 'failed', 'cancelled'],
   'held-merge': ['passed', 'fixing', 'awaiting-owner', 'failed', 'cancelled'],
   passed: [],
   failed: [],

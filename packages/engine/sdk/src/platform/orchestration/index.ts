@@ -40,9 +40,7 @@ export type {
 export { CURRENT_WORKSTREAM_SCHEMA_VERSION, MAX_ATTEMPTS, emptyWorkItemUsage } from './types.js';
 
 export type { AttemptsCoordinator, AttemptsCoordinatorDeps } from './attempts.js';
-export { AttemptError, createAttemptsCoordinator } from './attempts.js';
-export type { ProviderBackedAttemptJudgeOptions } from './judge.js';
-export { createProviderBackedAttemptJudge, parseAttemptVerdict } from './judge.js';
+export { AttemptError, attemptItemId, createAttemptsCoordinator } from './attempts.js';
 
 export type { CreateWorkstreamInput, OrchestrationEngine, OrchestrationEngineDeps } from './engine.js';
 export { createOrchestrationEngine } from './engine.js';

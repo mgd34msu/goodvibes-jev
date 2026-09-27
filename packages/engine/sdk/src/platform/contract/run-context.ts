@@ -186,8 +186,14 @@ export class ContractRun {
     });
   }
 
+  /** Every unit of the plan and every attempt unit of a best-of-N unit (design 6.2). */
+  allUnits(): ContractUnit[] {
+    return this.contract.units.flatMap((unit) => [unit, ...(unit.attemptUnits ?? [])]);
+  }
+
+  /** A plan unit or an attempt unit, by id. */
   unit(unitId: string): ContractUnit | undefined {
-    return this.contract.units.find((unit) => unit.id === unitId);
+    return this.allUnits().find((unit) => unit.id === unitId);
   }
 
   group(groupId: string): ContractGroup | undefined {
@@ -218,7 +224,7 @@ export class ContractRun {
 
   /** The unit and runtime an agent belongs to, when it is that unit's active agent. */
   activeUnitOf(agentId: string): { readonly unit: ContractUnit; readonly runtime: UnitRuntime } | null {
-    const unit = this.contract.units.find((candidate) => candidate.activeAgentId === agentId);
+    const unit = this.allUnits().find((candidate) => candidate.activeAgentId === agentId);
     if (unit === undefined) return null;
     return { unit, runtime: this.runtime(unit) };
   }
@@ -244,7 +250,7 @@ export class ContractRun {
 
   /** Ends every unit that is not terminal with `to` (holds released, checks aborted), and every open group. */
   endOpenUnits(to: 'failed' | 'cancelled', reason: string): void {
-    for (const unit of this.contract.units) {
+    for (const unit of this.allUnits()) {
       const runtime = this.unitRuntimes.get(unit.id);
       runtime?.abort.abort();
       this.releaseHold(unit);
@@ -254,7 +260,7 @@ export class ContractRun {
     }
     for (const group of this.contract.groups) {
       if (group.status === 'passed' || group.status === 'failed' || group.status === 'cancelled') continue;
-      // A group that holds a failed unit failed with it; the others stop with the contract.
+      // A group that holds a failed unit failed with it; the others stop with the contract. A failed attempt of a best-of-N unit is not the unit failing.
       const holdsFailure = this.contract.units.some((unit) => unit.groupId === group.id && unit.status === 'failed');
       this.moveGroup(group, holdsFailure ? 'failed' : to);
     }

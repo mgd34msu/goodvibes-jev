@@ -1,4 +1,5 @@
 import { BatteryRegistry } from '@goodvibes-jev/judgment';
+import { bestOfN } from './batteries/best-of-n.js';
 import { criterionShape } from './batteries/criterion-shape.js';
 import { criterionTrace } from './batteries/criterion-trace.js';
 import { planCoverage } from './batteries/plan-coverage.js';
@@ -22,3 +23,6 @@ registry.register(unitShape);
 registry.register(unitJudgeDecision);
 registry.register(unitQuality);
 registry.register(unmetSeverity);
+
+// Best-of-N (section 6.2).
+registry.register(bestOfN);

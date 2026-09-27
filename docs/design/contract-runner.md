@@ -115,9 +115,9 @@ export interface StartedContract {
 | `configManager` | `Pick<ConfigManager, 'get' \| 'getCategory'>` | settings |
 | `projectRoot`, `surfaceRoot?` | `string` | trees and state |
 | `routeSelector` | `ContractRouteSelector` (required) | the model for each unit and the planner (section 6.1) |
-| `createEngine` | `(input: ContractEngineInput) => OrchestrationEngine`, the input being `{ projectRoot, stateRoot, stateNamespace, contractUnitSettlement, fleetCapacity }` | one orchestration engine per contract (section 7.4); the runner hands the engine its settlement of unit items (section 7.5) and the fleet ceiling |
+| `createEngine` | `(input: ContractEngineInput) => OrchestrationEngine`, the input being `{ projectRoot, stateRoot, stateNamespace, contractUnitSettlement, fleetCapacity, judgeAttempts }` | one orchestration engine per contract (section 7.4); the runner hands the engine its settlement of unit items (section 7.5), the fleet ceiling, and its best-of-N judge (section 6.2) |
 | `decompositionRunner` | `DecompositionRunner` (`core/plan-decomposition.ts`) | the planner agent (section 3.2) |
-| `steps` | `ContractSteps` (`contract/runner.ts`) | the correction and completion steps of R.6: stall routing, owner escalation, merge conflicts, group and deliverable judging, commit; they act through `ContractRun` and its `RunControl` |
+| `steps` | `ContractSteps` (`contract/runner.ts`) | the correction and completion steps of R.6: stall routing, owner escalation (including `attemptsUndecided`, section 6.2), merge conflicts, group and deliverable judging, commit; they act through `ContractRun` and its `RunControl` |
 | `fleetCapacity` | `FleetCapacityFn` (`orchestration/elastic-pool.ts`) | the global unit ceiling |
 | `priceUsage`, `priceProvenance` | from `buildPricingSeams` (`runtime/cost/pricing-seams.ts`) | cost roll-up |
 | `workPlanService?` | `Pick<ProjectPlanningService, 'createWorkPlanTask' \| 'updateWorkPlanTask'>` | work-plan sync (added with R.6) |
@@ -645,7 +645,17 @@ A unit with `attempts > 1` is expanded by the engine's attempts coordinator (`or
 | none, or escalate | escalation `attempts-undecided` with every candidate |
 | failed siblings | never candidates |
 
-The engine's `judgeAttempts` dependency is `createSelectAttemptJudge(selector)`, which wraps the same selector into an `AttemptJudge` for the operator verb `fleet.attempts.judge`, returning the chosen id (or null) and reasons built in code from the readings ("chosen with confidence 0.91; fits: a yes 0.93, b no 0.40").
+The engine's `judgeAttempts` dependency is `createSelectAttemptJudge(selector)`, which wraps the same selector into an `AttemptJudge` for the operator verb `fleet.attempts.judge`, returning the chosen id (or null) and reasons built in code from the readings ("chosen u1#a1 with confidence 0.91 (act); fits: u1#a0 no 0.20, u1#a1 yes 0.93").
+
+Points resolved when this was built (R.7):
+
+- **Attempt units.** When a group starts in worktree mode, a unit with `attempts > 1` gets `attemptUnits`: one `ContractUnit` per sibling, with the engine's sibling ids (`<unitId>#a<n>`, `attemptItemId` in `orchestration/attempts.ts`), `attemptOf` and `attemptIndex`, the unit's goal, brief, files and route, and its criteria unread under ids `<unitId>#a<n>.c<k>`. The attempts coordinator gives a contract sibling's work item its own `contractUnitId`, so each attempt's agent is held, checked, nudged, retried and watched as its own unit. Attempt units live under their plan unit, not in `contract.units`, so group, deliverable, answer and plan-sync code reads plan units only; `ContractRun.allUnits()` and `ContractRun.unit(id)` include them. The plan unit runs no agent; its `agentIds` hold its attempts' agents, so group and contract usage count each once.
+- **Failures.** A failed attempt fails alone (`failUnit` does not fail the contract for an attempt unit) and is never a candidate. When every attempt failed, the plan unit fails, and the contract with it, naming each attempt's reason.
+- **Selection.** On `attempts-ready`, the plan unit moves to `checking` and the selection is read over the attempts both held by the engine and `held-merge` in the tree. Each candidate gets an equal share of `EVIDENCE_TOKEN_BUDGET`: answers head and tail at 4 000 characters (halved further when needed), then the diff filled file by file (the unit's files first), the rest listed in `omitted`. The reading is recorded on the plan unit as `attemptSelection` (candidates, proposed attempt, outcome, reasons, decision id) with `CONTRACT_ATTEMPTS_SELECTED`.
+- **Taking an attempt.** `acceptAttempt(run, unitId, attemptId, reason)` (used at act, and by the owner-reply step for approve or a named attempt) checks the attempt is a candidate, copies its criteria readings, answer and changed paths onto the plan unit, moves the plan unit to `held-merge` (a new move from `awaiting-owner` allows the owner path), marks the other passing attempts `passed` as not selected, records `attempts-selected`, and calls `engine.pickAttemptWinner`. The plan unit passes when the taken attempt merged into the contract branch; a merge conflict on it is reported for the plan unit.
+- **Undecided.** Confirm, none and escalate call the R.6 step `attemptsUndecided(run, unitId, selection)`, which opens the `attempts-undecided` escalation (6.3).
+- **The operator's judge.** A contract's engine gets `createContractAttemptJudge(run)` (context = the attempts' plan unit, answers from the attempt units, usage into the contract's judgment usage); other engines get `createSelectAttemptJudge()` with the item's task as the goal. The judge proposes a winner only at act, so an engine item that opted into `autoAcceptWinner` never takes a winner Jev did not act on.
+- **Shared mode.** The engine runs siblings only in worktrees, so in a shared working tree the unit runs once and the runner records the decision `attempts-reduced` saying so.
 
 ### 6.3 Owner escalation (`contract/escalation.ts`)
 

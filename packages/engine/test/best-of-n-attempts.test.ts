@@ -3,10 +3,15 @@
  *
  * Covers expansion into N siblings (worktree only), the held-merge park instead
  * of auto-merge, group readiness, the winner pick (winner merges, losers are
- * cleaned), the model judge proposal + auto-accept, and the per-item budget
- * ceiling. Drives the coordinator directly with fakes, no git, no agents.
+ * cleaned), the judge proposal + auto-accept, the contract.best-of-n selector
+ * as the judge (createSelectAttemptJudge), and the per-item budget ceiling.
+ * Drives the coordinator directly with fakes, no git, no agents.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { Question } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { createSelectAttemptJudge } from '../sdk/src/platform/contract/best-of-n.js';
 import {
   createAttemptsCoordinator,
   AttemptError,
@@ -17,7 +22,6 @@ import {
   type Workstream,
 } from '../sdk/src/platform/orchestration/index.js';
 import { checkBudget } from '../sdk/src/platform/orchestration/budget.js';
-import { parseAttemptVerdict } from '../sdk/src/platform/orchestration/judge.js';
 
 function makeItem(spec: WorkItemSpec): WorkItem {
   return {
@@ -227,17 +231,86 @@ describe('per-item budget', () => {
   });
 });
 
-describe('parseAttemptVerdict', () => {
-  const input = { task: 't', candidates: [{ itemId: 'a', attemptIndex: 0, state: 'held-merge' as const, diff: null, usage: emptyWorkItemUsage() }] };
-  test('keeps only a winnerItemId that is a real candidate', () => {
-    const ok = parseAttemptVerdict('{"winnerItemId":"a","reasons":["r"]}', input, 'm');
-    expect(ok.winnerItemId).toBe('a');
-    const bogus = parseAttemptVerdict('{"winnerItemId":"zzz","reasons":[]}', input, 'm');
-    expect(bogus.winnerItemId).toBeNull();
+describe('the contract.best-of-n selector as the judge', () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => {
+    restore?.();
+    restore = undefined;
   });
-  test('malformed output proposes no winner with an honest reason', () => {
-    const v = parseAttemptVerdict('not json', input, null);
-    expect(v.winnerItemId).toBeNull();
-    expect(v.reasons[0]).toContain('could not be parsed');
+
+  /** A port that picks `pick` with `confidence` and reads each candidate's fit from `fits`; it records the ids offered. */
+  function selectPort(pick: string, confidence: number, fits: Readonly<Record<string, number>>) {
+    const offered: string[][] = [];
+    const fake = fakePort((name: string, question: Question, state: unknown) => {
+      const candidates = (state as { candidates: { id: string }[] }).candidates;
+      if (name === 'pick') {
+        offered.push(candidates.map((candidate) => candidate.id));
+        return choiceAnswer(question, pick, confidence);
+      }
+      const fit = /^fits_(\d+)$/.exec(name);
+      if (fit !== null) return noulAnswer(fits[candidates[Number(fit[1])]!.id] ?? 0.05);
+      throw new Error(`unexpected question ${name}`);
+    });
+    const previous = installJudgmentPort(fake.port);
+    restore = () => installJudgmentPort(previous);
+    return offered;
+  }
+
+  async function readyGroup(judge: ReturnType<typeof createSelectAttemptJudge>, failFirst = false, autoAcceptWinner = false) {
+    let ws!: Workstream;
+    const h = harness(judge, () => ws);
+    const siblings = h.coordinator.expandItems('ws-1', 'worktree', [{ id: 'feat', title: 'T', task: 'Add formatBytes', attempts: 3, ...(autoAcceptWinner ? { autoAcceptWinner } : {}) }], makeItem);
+    ws = makeWorkstream(siblings);
+    siblings.forEach((sibling, index) => {
+      if (failFirst && index === 0) {
+        sibling.state = 'failed';
+        h.coordinator.onItemFailedTerminal(ws, sibling);
+      } else {
+        h.coordinator.onItemPassedTerminal(ws, sibling);
+      }
+    });
+    return { h, siblings, groupId: siblings[0]!.attemptGroupId! };
+  }
+
+  test('a winner at act is proposed, with reasons built from the readings', async () => {
+    selectPort('feat#a1', 0.95, { 'feat#a1': 0.96, 'feat#a0': 0.2 });
+    const { h, groupId } = await readyGroup(createSelectAttemptJudge());
+    const judgment = await h.coordinator.proposeWinner(groupId);
+    expect(judgment.proposedWinnerItemId).toBe('feat#a1');
+    expect(judgment.scoredBy).toBe('model');
+    expect(judgment.reasons[0]).toBe('chosen feat#a1 with confidence 0.95 (act); fits: feat#a0 no 0.20, feat#a1 yes 0.96, feat#a2 no 0.05');
+  });
+
+  test('a winner short of act proposes none and says what was read', async () => {
+    selectPort('feat#a2', 0.75, { 'feat#a2': 0.95 });
+    const { h, groupId } = await readyGroup(createSelectAttemptJudge());
+    const judgment = await h.coordinator.proposeWinner(groupId);
+    expect(judgment.proposedWinnerItemId).toBeNull();
+    expect(judgment.reasons[0]).toStartWith('chosen feat#a2 with confidence 0.75 (confirm)');
+  });
+
+  test('a failed sibling is never offered as a candidate', async () => {
+    const offered = selectPort('feat#a1', 0.95, { 'feat#a1': 0.96 });
+    const { h, groupId } = await readyGroup(createSelectAttemptJudge(), true);
+    const judgment = await h.coordinator.proposeWinner(groupId);
+    expect(offered).toEqual([['feat#a1', 'feat#a2']]);
+    expect(judgment.proposedWinnerItemId).toBe('feat#a1');
+  });
+
+  test('auto-accept picks the selected winner once the group is ready', async () => {
+    selectPort('feat#a2', 0.95, { 'feat#a2': 0.96 });
+    const { h } = await readyGroup(createSelectAttemptJudge(), false, true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const picked = h.events.find((event) => event.type === 'attempt-winner-picked');
+    expect(picked?.type === 'attempt-winner-picked' && picked.auto && picked.winnerItemId).toBe('feat#a2');
+    expect(h.enqueued).toEqual(['feat#a2']);
+  });
+
+  test('with no passing sibling there is nothing to select and Jev is not asked', async () => {
+    const offered = selectPort('feat#a0', 0.95, {});
+    const judge = createSelectAttemptJudge();
+    const verdict = await judge({ task: 't', candidates: [{ itemId: 'a', attemptIndex: 0, state: 'failed', diff: null, usage: emptyWorkItemUsage() }] });
+    expect(verdict).toEqual({ winnerItemId: null, reasons: ['no attempt passed; there is nothing to select'] });
+    expect(offered).toEqual([]);
   });
 });

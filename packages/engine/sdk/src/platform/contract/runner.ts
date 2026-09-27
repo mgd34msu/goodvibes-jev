@@ -183,7 +183,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     const agents: WatchedAgent[] = [];
     for (const run of runs.values()) {
       if (run.terminal) continue;
-      for (const unit of run.contract.units) {
+      for (const unit of run.allUnits()) {
         if (unit.activeAgentId === undefined || (unit.status !== 'running' && unit.status !== 'checking' && unit.status !== 'nudged')) continue;
         const status = getStatus(unit.activeAgentId)?.status;
         if (status !== 'running' && status !== 'pending') continue;
@@ -467,7 +467,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       criteriaMet: judged.filter((criterion) => criterion.status === 'met').length,
       criteriaJudged: judged.length,
       excluded: contract.criteria.filter((criterion) => criterion.disposition === 'excluded').length,
-      nudges: contract.units.reduce((total, unit) => total + unit.nudges.length, 0),
+      nudges: run.allUnits().reduce((total, unit) => total + unit.nudges.length, 0),
     });
     settleEnded(run);
   }

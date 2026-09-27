@@ -9,7 +9,7 @@
  * 'held-merge' state (worktree kept, diff inspectable) and, once EVERY sibling in
  * the group is terminal, exposes the group's candidates for a winner pick. A
  * winner is accepted explicitly (fleet.attempts.pick), or PROPOSED by an
- * optional judge model (fleet.attempts.judge), which only auto-picks when the
+ * judge (fleet.attempts.judge, the contract.best-of-n selector), which only auto-picks when the
  * source item opted into `autoAcceptWinner`. Picking merges the winner's branch
  * through the existing sequential integration lane and cleans the losers'
  * worktrees.
@@ -52,7 +52,7 @@ export interface AttemptsCoordinatorDeps {
   readonly cleanupWorktree: (workstream: Workstream, item: WorkItem) => Promise<void>;
   /** The diff a candidate's worktree branch introduced over base, or null if it has no live worktree. */
   readonly diffItem: (item: WorkItem) => Promise<{ files: string[]; unifiedDiff: string; stat: string } | null>;
-  /** Optional model judge. Absent → fleet.attempts.judge honestly reports no judge is configured. */
+  /** Optional judge (the contract.best-of-n selector). Absent → fleet.attempts.judge honestly reports no judge is configured. */
   readonly judge?: AttemptJudge | undefined;
 }
 
@@ -93,8 +93,13 @@ function clampAttempts(n: number | undefined): number {
   return Math.min(Math.floor(n), MAX_ATTEMPTS);
 }
 
+/** The item id of attempt `index` of the item `sourceId`: the contract runner names its attempt units the same way. */
+export function attemptItemId(sourceId: string, index: number): string {
+  return `${sourceId}#a${index}`;
+}
+
 function siblingId(spec: WorkItemSpec, index: number): string {
-  return spec.id ? `${spec.id}#a${index}` : `item-${crypto.randomUUID().slice(0, 8)}`;
+  return spec.id ? attemptItemId(spec.id, index) : `item-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): AttemptsCoordinator {
@@ -130,7 +135,11 @@ export function createAttemptsCoordinator(deps: AttemptsCoordinatorDeps): Attemp
       const groupId = `boN-${crypto.randomUUID().slice(0, 8)}`;
       const siblingIds: string[] = [];
       for (let i = 0; i < n; i++) {
-        const sib = build({ ...spec, id: siblingId(spec, i), title: `${spec.title} (attempt ${i + 1}/${n})` });
+        const id = siblingId(spec, i);
+        // A contract unit's attempt is its own contract unit (the runner adds
+        // one per sibling under the same id), so its agent is held and checked
+        // on its own.
+        const sib = build({ ...spec, id, title: `${spec.title} (attempt ${i + 1}/${n})`, ...(spec.contractUnitId === undefined ? {} : { contractUnitId: id }) });
         sib.attemptGroupId = groupId;
         sib.attemptIndex = i;
         sib.attemptTotal = n;

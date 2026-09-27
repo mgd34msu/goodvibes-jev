@@ -17,6 +17,9 @@
  * - Silent past `contract.heartbeatTimeoutMs`: the agent is killed and the unit
  *   retried once; the second time the contract fails.
  *
+ * An attempt of a best-of-N unit that fails ends alone: its siblings go on,
+ * and the selection reads the ones that passed (best-of-n.ts).
+ *
  * A retry is not a stall and not a fix round: the unit keeps its checks, and
  * the fresh agent's brief carries a "Previous checks" section.
  */
@@ -53,7 +56,7 @@ export interface UnitFailureDeps {
 export interface UnitFailureHandling {
   /** The watchdog found an agent silent past the timeout. */
   onSilent(agent: WatchedAgent, silentMs: number): void;
-  /** Fails one unit and, with it, the contract. */
+  /** Fails one unit and, with it, the contract; a failed attempt of a best-of-N unit fails alone and is never a candidate. */
   failUnit(run: ContractRun, unit: ContractUnit, kind: ContractFailureKind, reason: string): void;
   dispose(): void;
 }
@@ -94,6 +97,8 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
       run.decide('failed', unit.id, reason);
     }
     run.settle(unit, 'failed');
+    // The selection reads the unit's attempts once all of them ended (design 6.2).
+    if (unit.attemptOf !== undefined) return;
     deps.failContract(run, kind, reason);
   }
 
@@ -191,7 +196,7 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
   function onConsumed(messageId: string, agentId: string, turn: number): void {
     for (const run of deps.runs()) {
       if (run.terminal) continue;
-      for (const unit of run.contract.units) {
+      for (const unit of run.allUnits()) {
         const nudge = unit.nudges.find((candidate) => candidate.id === messageId);
         if (nudge === undefined) continue;
         if (nudge.consumedAt !== undefined) return;

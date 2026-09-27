@@ -29,6 +29,7 @@ export {
 } from './types.js';
 export type {
   AgentManagerLike,
+  AttemptSelectionRecord,
   CheckResult,
   CheckTrigger,
   Contract,
@@ -127,6 +128,21 @@ export { ContractRun, failureFromError, isAbortError } from './run-context.js';
 export type { InFlightCheck, RunControl, RunEnv, SpawnPurpose, UnitRuntime } from './run-context.js';
 export { createGroupRunner, takeBaseline } from './group-runner.js';
 export type { ContractEngineInput, GroupRunner, GroupRunnerDeps, GroupSteps } from './group-runner.js';
+export {
+  ATTEMPT_ANSWER_CAP_CHARS,
+  BEST_OF_N_SITE,
+  acceptAttempt,
+  attemptUnitsFor,
+  createContractAttemptJudge,
+  createSelectAttemptJudge,
+  describeSelection,
+  readBestOfN,
+  selectAttempts,
+  selectionCandidates,
+  taskContext,
+  unitSelectionContext,
+} from './best-of-n.js';
+export type { AttemptCandidateSource, AttemptJudgeContext, AttemptSelectionDeps, AttemptSteps } from './best-of-n.js';
 export { acquireSharedTree, groupWorkstreamInput, phaseCapacity, remainingBudget, sharedTreeWaiters, unitPhases, unitTemplate, unitWorkItem } from './workstreams.js';
 export { BRIEF_CHECKED_PARAGRAPH, briefWithPreviousChecks, buildUnitBrief } from './brief.js';
 export { addJudgmentUsage, agentsUsage, contractAgentIds, mergeAll, ownerRecordUsage, rollUpContractUsage } from './usage.js';
@@ -197,6 +213,7 @@ export type { NudgeDispatch, NudgeFindings, NudgeTargetState, NudgeTransport } f
 export { UNIT_JUDGES, UNIT_JUDGE_BANDS, unitJudgeDecision } from './batteries/unit-judge.js';
 export { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, unitQuality } from './batteries/unit-quality.js';
 export { unmetSeverity } from './batteries/unmet-severity.js';
+export { BEST_OF_N_FIT_INSTRUCTIONS, BEST_OF_N_INSTRUCTIONS, bestOfN } from './batteries/best-of-n.js';
 // Planning (section 3).
 export {
   delegationForbidden,

@@ -633,9 +633,10 @@ export interface AttemptCandidate {
 }
 
 /**
- * A model judge's verdict over a group's candidates. CLEARLY a model judgment,
- * not ground truth: `scoredBy` is always 'model', and the engine PROPOSES this
- * winner, it only auto-picks when the group's item opted into autoAcceptWinner.
+ * The judge's verdict over a group's candidates (the contract.best-of-n
+ * selector read by Jev). A model judgment, not ground truth: `scoredBy` is
+ * always 'model', and the engine PROPOSES this winner; it only auto-picks
+ * when the group's item opted into autoAcceptWinner.
  */
 export interface AttemptJudgment {
   readonly proposedWinnerItemId: string | null;
@@ -667,9 +668,9 @@ export interface AttemptPickResult {
   readonly auto: boolean;
 }
 
-// ── The injectable judge (a model call) ─────────────────────────────────────
+// ── The injectable judge (the contract.best-of-n selector) ──────────────────
 
-/** One candidate as handed to the judge model. */
+/** One candidate as handed to the judge. Failed candidates are passed along and never selected. */
 export interface AttemptJudgeCandidate {
   readonly itemId: string;
   readonly attemptIndex: number;
@@ -683,7 +684,7 @@ export interface AttemptJudgeInput {
   readonly candidates: readonly AttemptJudgeCandidate[];
 }
 
-/** The judge's raw verdict; the engine wraps it into an AttemptJudgment (stamping scoredBy:'model'). */
+/** The judge's verdict; the engine wraps it into an AttemptJudgment (stamping scoredBy:'model'). `reasons` are built in code from the readings. */
 export interface AttemptJudgeVerdict {
   /** The chosen candidate's item id, or null when the judge declines to choose. */
   readonly winnerItemId: string | null;
@@ -691,7 +692,7 @@ export interface AttemptJudgeVerdict {
   readonly model?: string | undefined;
 }
 
-/** The injectable judge: a model call that scores candidates. Kept out of the engine so it stays provider-agnostic and testable. */
+/** The injectable judge: `createSelectAttemptJudge` (contract/best-of-n.ts). Kept out of the engine so it stays testable with a fake. */
 export type AttemptJudge = (input: AttemptJudgeInput) => Promise<AttemptJudgeVerdict>;
 
 /** Discriminated events the engine emits over its own lifecycle (persistence, budget, fleet). */

@@ -137,7 +137,8 @@ import {
 import { createProcessRegistry, withFleetArchive, attachFleetEmitBridge, type ArchivableProcessRegistry } from './fleet/index.js';
 import { attachConfigEmitBridge } from './config/index.js';
 import { ObservedAgentSource } from './fleet/observed/source.js';
-import { createOrchestrationEngine, createProviderBackedAttemptJudge, type OrchestrationEngine } from '../orchestration/index.js';
+import { createOrchestrationEngine, type OrchestrationEngine } from '../orchestration/index.js';
+import { createSelectAttemptJudge } from '../contract/best-of-n.js';
 import { createFixWorkstreamRunner } from '../orchestration/fix-workstream-runner.js';
 import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import {
@@ -900,7 +901,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     configManager,
     runtimeBus: options.runtimeBus,
     projectRoot: workingDirectory,
-    priceUsage, priceProvenance, judgeAttempts: createProviderBackedAttemptJudge(providerRegistry), // best-of-N judge (fleet.attempts.judge); never auto-picks unless opted in
+    priceUsage, priceProvenance, judgeAttempts: createSelectAttemptJudge(), // best-of-N: the contract.best-of-n selector (fleet.attempts.judge); never auto-picks unless opted in
     fleetCapacity: () => fleetCapacityProbe(),
     maxItemRetries: 2,
   });

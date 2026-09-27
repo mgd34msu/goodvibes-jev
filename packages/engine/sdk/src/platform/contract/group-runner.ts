@@ -15,15 +15,21 @@
  * - When every unit of a group passed (and, in worktree mode, merged into the
  *   contract branch), the group goes to the group step (R.6), which passes
  *   it through `RunControl.passGroup` or repairs it.
+ * - A best-of-N unit (worktree mode) runs as attempt units, one per sibling
+ *   the engine expands it into; when the siblings are all terminal the
+ *   selection (best-of-n.ts) takes one, and the unit passes once that attempt
+ *   merged. In shared mode the engine cannot run siblings apart, so the unit
+ *   runs once and the decision says so.
  */
 import { spawnSync } from 'node:child_process';
 import type { CreateWorkstreamInput, OrchestrationEngine } from '../orchestration/engine.js';
 import type { FleetCapacityFn } from '../orchestration/elastic-pool.js';
 import type { ContractUnitSettlement } from '../orchestration/phase-runner.js';
 import { snapshotDirtyTree } from '../orchestration/dirty-guard.js';
-import type { OrchestrationEvent, WorkItem } from '../orchestration/types.js';
+import type { AttemptJudge, OrchestrationEvent, WorkItem } from '../orchestration/types.js';
 import { GitService } from '../git/service.js';
 import type { AgentRecord } from '../tools/agent/index.js';
+import { attemptUnitsFor, createContractAttemptJudge, selectAttempts, type AttemptSteps } from './best-of-n.js';
 import { briefWithPreviousChecks, buildUnitBrief } from './brief.js';
 import { failureFromError, isAbortError, type ContractRun, type SpawnPurpose } from './run-context.js';
 import { isTerminalUnitStatus, type ContractFailureKind, type ContractGroup, type ContractRouteSelector, type ContractUnit } from './types.js';
@@ -41,10 +47,12 @@ export interface ContractEngineInput {
   readonly stateNamespace: string;
   readonly contractUnitSettlement: ContractUnitSettlement;
   readonly fleetCapacity: FleetCapacityFn;
+  /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge` (design 6.2). */
+  readonly judgeAttempts: AttemptJudge;
 }
 
 /** The group and deliverable steps (R.6) the runner hands work to. */
-export interface GroupSteps {
+export interface GroupSteps extends AttemptSteps {
   /** Every unit of the group passed and merged: judge the group (6.4), then `run.control.passGroup` or repair it. */
   groupUnitsPassed(run: ContractRun, groupId: string): Promise<void>;
   /** Every group passed: judge the deliverable, commit and answer (6.4, 6.5), ending in `run.control.finishPassed`. */
@@ -88,6 +96,11 @@ export function takeBaseline(cwd: string): ContractUnit['baseline'] {
   };
 }
 
+/** The engine item whose state is the unit's: its own, or for a best-of-N unit the attempt it took. */
+function unitItemId(unit: ContractUnit): string | undefined {
+  return unit.attemptUnits === undefined ? unit.id : unit.attemptSelection?.pickedId;
+}
+
 function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
   for (const workstream of run.engine?.listWorkstreams() ?? []) {
     const item = workstream.items.find((candidate) => candidate.id === itemId);
@@ -110,6 +123,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       stateNamespace: contract.id,
       contractUnitSettlement: deps.settlement,
       fleetCapacity: deps.fleetCapacity,
+      judgeAttempts: createContractAttemptJudge(run),
     });
     run.engine = engine;
     run.unsubscribeEngine = engine.on((event) => onEngineEvent(run, event));
@@ -132,13 +146,6 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     run.startingGroups.add(group.id);
     try {
       const units = contract.units.filter((unit) => unit.groupId === group.id);
-      const multiAttempt = units.find((unit) => unit.attempts > 1);
-      if (multiAttempt !== undefined) {
-        // Best-of-N siblings need the candidate selector (task R.7); until it
-        // exists a sibling would pass without its own checks, so none run.
-        deps.failContract(run, 'other', `unit ${multiAttempt.id} asks for ${multiAttempt.attempts} attempts, and attempt selection is not available yet`);
-        return;
-      }
       if (contract.isolation === 'shared') {
         const release = await acquireSharedTree(contract.projectRoot, run.abort.signal);
         if (run.terminal) {
@@ -152,6 +159,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
         unit.route = await deps.routeSelector({ purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) });
         if (run.terminal) return;
       }
+      for (const unit of units) expandAttempts(run, unit);
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);
       const input: CreateWorkstreamInput = groupWorkstreamInput(contract, group, run.env.config(), contract.usage);
       const engine = run.engine;
@@ -168,12 +176,33 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     }
   }
 
+  /** A best-of-N unit gets its attempt units (worktree mode), or runs once in a shared tree. */
+  function expandAttempts(run: ContractRun, unit: ContractUnit): void {
+    if (unit.attempts <= 1 || unit.attemptUnits !== undefined) return;
+    if (run.contract.isolation === 'worktree') {
+      unit.attemptUnits = attemptUnitsFor(unit);
+      return;
+    }
+    run.decide('attempts-reduced', unit.id, `unit ${unit.id} asks for ${unit.attempts} attempts, but attempts need worktree isolation to run apart; in the shared working tree it runs once`);
+  }
+
+  /** The plan unit an attempt unit belongs to. */
+  function planUnitOf(run: ContractRun, unit: ContractUnit): ContractUnit | undefined {
+    return unit.attemptOf === undefined ? undefined : run.unit(unit.attemptOf);
+  }
+
   function unitSpawned(run: ContractRun, itemId: string, agentId: string): void {
     const item = engineItem(run, itemId);
     const unit = run.unit(item?.contractUnitId ?? itemId);
     if (unit === undefined || run.terminal) return;
     const runtime = run.runtime(unit);
     unit.agentIds.push(agentId);
+    const planUnit = planUnitOf(run, unit);
+    if (planUnit !== undefined) {
+      // The plan unit's agents are its attempts' agents: its usage and the contract's count them once each.
+      planUnit.agentIds.push(agentId);
+      if (planUnit.status === 'pending' || planUnit.status === 'blocked') run.moveUnit(planUnit, 'running');
+    }
     unit.activeAgentId = agentId;
     runtime.agentStartedAt = run.env.now();
     runtime.cwd = item?.worktreePath ?? run.contract.worktreePath ?? run.contract.projectRoot;
@@ -200,6 +229,29 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     if (unit === undefined || unit.status !== 'held-merge') return;
     run.moveUnit(unit, 'passed');
     unitPassed(run, unit);
+    // The attempt a best-of-N unit took merged: the unit passes with it.
+    const planUnit = planUnitOf(run, unit);
+    if (planUnit?.attemptSelection?.pickedId === unit.id && planUnit.status === 'held-merge') {
+      run.moveUnit(planUnit, 'passed');
+      unitPassed(run, planUnit);
+    }
+  }
+
+  /** A plan unit waiting on its attempts mirrors whether they are blocked. */
+  function mirrorBlocked(run: ContractRun, unit: ContractUnit): void {
+    const planUnit = planUnitOf(run, unit);
+    if (planUnit === undefined) return;
+    const attempts = planUnit.attemptUnits ?? [];
+    if (planUnit.status === 'pending' && attempts.every((attempt) => attempt.status === 'blocked')) run.moveUnit(planUnit, 'blocked');
+    else if (planUnit.status === 'blocked' && attempts.some((attempt) => attempt.status !== 'blocked')) run.moveUnit(planUnit, 'pending');
+  }
+
+  function attemptsReady(run: ContractRun, event: Extract<OrchestrationEvent, { type: 'attempts-ready' }>): void {
+    void selectAttempts(run, event.groupId, {
+      steps: deps.steps,
+      failUnit: deps.failUnit,
+      failContract: deps.failContract,
+    }).catch((error: unknown) => stepFailed(run, `the attempts of group ${event.groupId} could not be selected`, error));
   }
 
   function onEngineEvent(run: ContractRun, event: OrchestrationEvent): void {
@@ -212,13 +264,18 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       case 'item-blocked-budget': {
         const unit = unitOfItem(run, event.itemId);
         if (unit?.status === 'pending') run.moveUnit(unit, 'blocked');
+        if (unit !== undefined) mirrorBlocked(run, unit);
         return;
       }
       case 'item-dependency-cleared': {
         const unit = unitOfItem(run, event.itemId);
         if (unit?.status === 'blocked') run.moveUnit(unit, 'pending');
+        if (unit !== undefined) mirrorBlocked(run, unit);
         return;
       }
+      case 'attempts-ready':
+        attemptsReady(run, event);
+        return;
       case 'item-passed': {
         const unit = unitOfItem(run, event.itemId);
         if (unit !== undefined) unitPassed(run, unit);
@@ -232,7 +289,9 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
         if (engineItem(run, event.itemId)?.mergeState === 'merged') markMerged(run, event.itemId);
         return;
       case 'item-merge-conflict': {
-        const unit = unitOfItem(run, event.itemId);
+        // The attempt a best-of-N unit took conflicted: the unit is what conflicts.
+        const attempt = unitOfItem(run, event.itemId);
+        const unit = attempt === undefined ? undefined : (planUnitOf(run, attempt) ?? attempt);
         if (unit === undefined) return;
         run.emit({ type: 'CONTRACT_MERGE_CONFLICT', contractId: run.id, unitId: unit.id, branch: event.branch, path: event.path, files: event.files });
         void deps.steps.unitMergeConflict(run, unit.id, event.files).catch((error: unknown) => stepFailed(run, `unit ${unit.id}'s merge conflict could not be routed`, error));
@@ -261,7 +320,10 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     if (group === undefined || group.status !== 'running' || run.settledGroups.has(group.id)) return;
     const units = run.contract.units.filter((candidate) => candidate.groupId === group.id);
     if (!units.every((candidate) => candidate.status === 'passed')) return;
-    if (!units.every((candidate) => engineItem(run, candidate.id)?.state === 'passed')) return;
+    if (!units.every((candidate) => {
+      const itemId = unitItemId(candidate);
+      return itemId !== undefined && engineItem(run, itemId)?.state === 'passed';
+    })) return;
     run.settledGroups.add(group.id);
     run.sharedTreeReleases.get(group.id)?.();
     run.sharedTreeReleases.delete(group.id);
@@ -317,7 +379,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       run.unsubscribeEngine = null;
       engine.dispose();
     }
-    for (const unit of run.contract.units) {
+    for (const unit of run.allUnits()) {
       run.settle(unit, 'cancelled');
       if (unit.activeAgentId !== undefined) deps.watchdog.forget(unit.activeAgentId);
     }

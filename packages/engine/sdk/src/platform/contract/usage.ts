@@ -59,7 +59,11 @@ export function contractAgentIds(contract: Pick<Contract, 'plannerAgentIds' | 'u
  * recorded before.
  */
 export function rollUpContractUsage(contract: Contract, getStatus: AgentLookup, pricing: UsagePricing): void {
-  for (const unit of contract.units) unit.usage = agentsUsage(unit.agentIds, getStatus, pricing);
+  for (const unit of contract.units) {
+    // A best-of-N unit's agents are its attempts' agents (group-runner records both), so each counts once.
+    unit.usage = agentsUsage(unit.agentIds, getStatus, pricing);
+    for (const attempt of unit.attemptUnits ?? []) attempt.usage = agentsUsage(attempt.agentIds, getStatus, pricing);
+  }
   for (const group of contract.groups) {
     group.usage = agentsUsage(contract.units.filter((unit) => unit.groupId === group.id).flatMap((unit) => unit.agentIds), getStatus, pricing);
   }

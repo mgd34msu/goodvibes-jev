@@ -186,6 +186,7 @@ export function passingSteps(): ContractSteps {
     unitStalled: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} stalled`),
     unitAwaitsOwner: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} awaits the owner`),
     unitMergeConflict: async (run, unitId) => run.control.fail('other', `test: unit ${unitId} conflicted`),
+    attemptsUndecided: async (run, unitId) => run.control.fail('other', `test: unit ${unitId}'s attempts are undecided`),
     groupUnitsPassed: async (run, groupId) => run.control.passGroup(groupId),
     groupsPassed: async (run: ContractRun) => {
       run.moveContract('judging');
@@ -301,6 +302,7 @@ export function makeHarness(options: HarnessOptions): Harness {
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,
       fleetCapacity: input.fleetCapacity,
+      judgeAttempts: input.judgeAttempts,
       runWorktreeSetup: () => undefined,
     }),
     fleetCapacity: () => ({ active: 0, maxSize: 64, capKey: 'fleet.maxSize' }),
