@@ -14,11 +14,117 @@
       "node",
       "bun"
     ],
-    // The examples consume the published declarations: with the source
-    // condition turned off, every @goodvibes-jev import resolves the "types"
-    // condition of the package's exports, the dist declarations a consumer
-    // install sees.
-    "customConditions": []
+    // The examples consume the published declarations. The old packages were
+    // installed under node_modules; in the engine they are subpaths of one
+    // package, so each subpath is named here at its dist declaration, and the
+    // judgment package the engine depends on at its built declarations.
+    "paths": {
+      "@goodvibes-jev/engine/package.json": [
+        "../package.json"
+      ],
+      "@goodvibes-jev/judgment": [
+        "../../judgment/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/judgment/*": [
+        "../../judgment/dist/*.d.ts",
+        "../../judgment/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/browser/agent": [
+        "../sdk/dist/browser-agent.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/browser/homeassistant": [
+        "../sdk/dist/browser-homeassistant.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/browser/knowledge": [
+        "../sdk/dist/browser-knowledge.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/contracts/node": [
+        "../sdk/dist/contracts-node.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/platform/runtime/fleet/observed": [
+        "../sdk/dist/platform/runtime/fleet/observed/source.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/sql-js": [
+        "../sdk/dist/platform/types/sql-js.d.ts"
+      ],
+      "@goodvibes-jev/engine/contracts": [
+        "../contracts/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/contracts/*": [
+        "../contracts/dist/*.d.ts",
+        "../contracts/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/daemon-sdk": [
+        "../daemon-sdk/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/daemon-sdk/*": [
+        "../daemon-sdk/dist/*.d.ts",
+        "../daemon-sdk/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/errors": [
+        "../errors/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/errors/*": [
+        "../errors/dist/*.d.ts",
+        "../errors/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/operator-sdk": [
+        "../operator-sdk/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/operator-sdk/*": [
+        "../operator-sdk/dist/*.d.ts",
+        "../operator-sdk/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/peer-sdk": [
+        "../peer-sdk/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/peer-sdk/*": [
+        "../peer-sdk/dist/*.d.ts",
+        "../peer-sdk/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk": [
+        "../sdk/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/sdk/*": [
+        "../sdk/dist/*.d.ts",
+        "../sdk/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/terminal-shell": [
+        "../terminal-shell/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/terminal-shell/*": [
+        "../terminal-shell/dist/*.d.ts",
+        "../terminal-shell/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/toolchain": [
+        "../toolchain/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/toolchain/*": [
+        "../toolchain/dist/*.d.ts",
+        "../toolchain/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-core": [
+        "../transport-core/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-core/*": [
+        "../transport-core/dist/*.d.ts",
+        "../transport-core/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-http": [
+        "../transport-http/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-http/*": [
+        "../transport-http/dist/*.d.ts",
+        "../transport-http/dist/*/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-realtime": [
+        "../transport-realtime/dist/index.d.ts"
+      ],
+      "@goodvibes-jev/engine/transport-realtime/*": [
+        "../transport-realtime/dist/*.d.ts",
+        "../transport-realtime/dist/*/index.d.ts"
+      ]
+    }
   },
   "include": [
     // Examples intentionally cover JavaScript, TypeScript, and ESM entry
