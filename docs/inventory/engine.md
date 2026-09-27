@@ -2,7 +2,7 @@
 
 Every source file of goodvibes-sdk (`packages/*/src`, tests excluded) with its disposition, grouped by the intent's engine subsystems. Nothing is dropped unless it is specific to WRFC or QEMU; everything else uses Jev where judgment applies or is ported exactly. Jev is in place of WRFC: WRFC code is JEV in the contract runner, and docs/inventory/wrfc-to-jev.md maps each WRFC function to its Jev form. A JEV file lists each place it decides something by guesswork today and the battery or pattern from `packages/judgment` that replaces it. A PORT file with decision points keeps its code but its guesswork moves to the JEV subsystem the intent names (for providers, the new routing subsystem). HOIST applies to product modules moving into the engine and is recorded in the product inventories.
 
-Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
+Files: 2371. PORT 1841, JEV 528, DROP 2. Decision points: 183.
 
 | Subsystem | Files | PORT | JEV | DROP | Decision points |
 |---|---|---|---|---|---|
@@ -18,7 +18,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | cluster | 31 | 31 | 0 | 0 | 0 |
 | companion, push, pairing, relay, remote access | 48 | 48 | 0 | 0 | 0 |
 | config | 88 | 88 | 0 | 0 | 0 |
-| contract runner (Jev in place of WRFC) | 19 | 1 | 18 | 0 | 13 |
+| contract runner (Jev in place of WRFC) | 19 | 0 | 19 | 0 | 13 |
 | contracts | 25 | 25 | 0 | 0 | 0 |
 | control plane | 163 | 0 | 163 | 0 | 2 |
 | core | 38 | 0 | 38 | 0 | 5 |
@@ -28,7 +28,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | email, google | 102 | 102 | 0 | 0 | 9 |
 | embed | 1 | 1 | 0 | 0 | 0 |
 | error contract | 4 | 4 | 0 | 0 | 2 |
-| events | 37 | 37 | 0 | 0 | 0 |
+| events | 37 | 35 | 2 | 0 | 0 |
 | gate (replaces permissions) | 58 | 0 | 58 | 0 | 8 |
 | hooks, workflow, triggers, watchers | 36 | 36 | 0 | 0 | 0 |
 | hosted sessions | 11 | 0 | 11 | 0 | 0 |
@@ -45,7 +45,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | principals | 4 | 0 | 4 | 0 | 1 |
 | profiles, templates | 5 | 5 | 0 | 0 | 0 |
 | providers | 89 | 89 | 0 | 0 | 19 |
-| runtime | 484 | 476 | 8 | 0 | 13 |
+| runtime | 484 | 472 | 12 | 0 | 13 |
 | runtime sandbox (QEMU removed, intent lines 49 and 215) | 6 | 4 | 0 | 2 | 0 |
 | sdk published entry points | 24 | 24 | 0 | 0 | 0 |
 | security | 21 | 21 | 0 | 0 | 0 |
@@ -553,13 +553,13 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/agents/wrfc-plan-sync.ts` | JEV | Marks execution-plan items complete when an agent finishes. |
 | `sdk/src/platform/agents/wrfc-prompt-addenda.ts` | JEV | Constraint enumeration, verification and preservation instructions for agents. |
 | `sdk/src/platform/agents/wrfc-reporting.ts` | JEV | Claim verification on disk and git, completion report parsing and review briefs; the review prompt content informs the criteria Jev judges. |
-| `sdk/src/platform/agents/wrfc-runtime-events.ts` | JEV | Workflow and orchestration event wrappers; become contract events. |
+| `sdk/src/platform/agents/wrfc-runtime-events.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): the workflow and orchestration event wrappers are replaced by `sdk/src/platform/contract/events.ts` over `sdk/src/platform/runtime/emitters/contract.ts`; the review loop, live until R.10, reports on the contracts domain through `sdk/src/platform/agents/wrfc-contract-events.ts`, which goes with it. |
 | `sdk/src/platform/agents/wrfc-types.ts` | JEV | Chain, subtask, owner decision and quality gate types; become contract-tree types. |
 | `sdk/src/platform/agents/wrfc-workmap.ts` | JEV | Append-only JSONL journal of chain events per session. |
 | `sdk/src/platform/core/wrfc-routing.ts` | JEV | Suggests starting a chain for work requests, honours an explicit no-delegation instruction, and detects when an authoritative chain was started. |
 | `sdk/src/platform/orchestration/controller-compat.ts` | JEV | engineerReviewPhases (the standard phase template) and fromChainSpec (one task to a workstream spec). |
 | `sdk/src/platform/orchestration/fix-workstream-runner.ts` | JEV | Runs a workstream cycle and reports a structured outcome (merged, cycle, orphaned, tasks-failed, timeout). |
-| `sdk/src/platform/runtime/fleet/adapters/wrfc.ts` | PORT | Turns chains and subtasks into fleet view nodes (derived kill detection, cost roll-up with provenance, model descriptor, owner repricing, review summary with the acceptance checklist); becomes the contract-tree view. |
+| `sdk/src/platform/runtime/fleet/adapters/wrfc.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): chain and subtask nodes are replaced by the contract tree in `sdk/src/platform/runtime/fleet/adapters/contract.ts` (contract, group and unit nodes, cost summed from member agents with provenance, a model descriptor, each criterion's latest reading in place of the review summary, and `repriceContractOwnerNode` for the owner row). |
 | `sdk/src/platform/tools/agent/wrfc-batch-policy.ts` | JEV | Sub-agent batch-spawn policy: keeps review/test/verify roles from becoming separate root agents, preserves the authoritative user ask against narrowing, restores write and exec tools for implementation work, and decides independent fan-out or one owner. |
 
 ### Decision points
@@ -1173,7 +1173,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/events/mcp.ts` | PORT | Typed MCP lifecycle event union; type definitions only. |
 | `sdk/src/events/mcp-types.ts` | PORT | Fixed literal sets for MCP server role, trust mode and quarantine reason; type definitions only. |
 | `sdk/src/events/ops.ts` | PORT | Typed ops-intervention event union and fixed intervention-reason literal set; type definitions only. |
-| `sdk/src/events/orchestration.ts` | PORT | Typed orchestration task-contract and event union; type definitions only. Per the intent, this domain is renamed to the contract runner's contract domain but the file itself carries no decision logic. |
+| `sdk/src/events/orchestration.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): the orchestration domain is replaced by the contracts domain in `sdk/src/events/contract.ts` (validators in `sdk/src/events/contracts/contract-runner.ts`); the task contract moved to `AgentTaskContract` on AGENT_SPAWNING in `sdk/src/events/agents.ts`. |
 | `sdk/src/events/permissions.ts` | PORT | Typed permission-evaluation event union; type definitions only. Per the intent, this domain is renamed to the judgment domain but the file itself carries no decision logic. |
 | `sdk/src/events/planner.ts` | PORT | Typed planner-decision and work-plan-task event shapes (StrategyCandidate scores, reasonCode strings); type definitions only, no scoring logic. Per the intent, this domain is renamed to the gate domain. |
 | `sdk/src/events/plugins.ts` | PORT | Typed plugin discovery/lifecycle event union; type definitions only. |
@@ -1188,7 +1188,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/events/turn.ts` | PORT | Typed turn lifecycle event union and fixed stop-reason literal set; type definitions only. |
 | `sdk/src/events/ui.ts` | PORT | Typed UI render event union; type definitions only. |
 | `sdk/src/events/watchers.ts` | PORT | Typed watcher event union and fixed watcher-source-kind literal set; type definitions only. |
-| `sdk/src/events/workflows.ts` | PORT | Typed WRFC workflow event union and fixed workflow-state literal set; type definitions only. Superseded conceptually by the contract runner per the intent, but the file itself is only event types. |
+| `sdk/src/events/workflows.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): the workflows domain is replaced by the contracts domain in `sdk/src/events/contract.ts` (validators in `sdk/src/events/contracts/contract-runner.ts`). |
 | `sdk/src/events/workspace.ts` | PORT | Typed workspace swap/checkpoint event union; type definitions only. |
 
 ## gate (replaces permissions)
@@ -1995,7 +1995,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/emitters/knowledge.ts` | PORT | Knowledge emitters, typed wrappers for KnowledgeEvent domain. |
 | `sdk/src/platform/runtime/emitters/mcp.ts` | PORT | MCP emitters, typed emission wrappers for McpEvent domain. |
 | `sdk/src/platform/runtime/emitters/ops.ts` | PORT | Ops emitters, typed emission wrappers for the OpsEvent domain. |
-| `sdk/src/platform/runtime/emitters/orchestration.ts` | PORT | Orchestration emitters, typed emission wrappers for OrchestrationEvent domain. |
+| `sdk/src/platform/runtime/emitters/orchestration.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): replaced by the contract emitters in `sdk/src/platform/runtime/emitters/contract.ts`; the recursion guard is CONTRACT_SPAWN_GUARD_TRIGGERED. |
 | `sdk/src/platform/runtime/emitters/permissions.ts` | PORT | Permission emitters, typed emission wrappers for PermissionEvent domain. |
 | `sdk/src/platform/runtime/emitters/planner.ts` | PORT | Planner emitters, typed emission wrappers for adaptive planner events. |
 | `sdk/src/platform/runtime/emitters/plugins.ts` | PORT | Plugin emitters, typed emission wrappers for PluginEvent domain. |
@@ -2010,7 +2010,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/emitters/turn.ts` | PORT | Turn emitters, typed emission wrappers for TurnEvent domain. |
 | `sdk/src/platform/runtime/emitters/ui.ts` | PORT | UI emitters, typed wrappers for UIEvent domain. |
 | `sdk/src/platform/runtime/emitters/watchers.ts` | PORT | Watcher emitters, typed wrappers for WatcherEvent domain. |
-| `sdk/src/platform/runtime/emitters/workflows.ts` | PORT | Workflow emitters, typed emission wrappers for WRFC workflow events. |
+| `sdk/src/platform/runtime/emitters/workflows.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): replaced by the contract emitters in `sdk/src/platform/runtime/emitters/contract.ts`, called through `sdk/src/platform/contract/events.ts`. |
 | `sdk/src/platform/runtime/event-envelope.ts` | PORT | Re-export of the shared event-envelope type and constructor from transport-core. |
 | `sdk/src/platform/runtime/event-feeds.ts` | PORT | Re-export of the shared runtime event feed types and constructors from transport-core. |
 | `sdk/src/platform/runtime/events/envelope.ts` | PORT | Re-exports ../event-envelope.js. |
@@ -2034,7 +2034,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/fleet/adapters/background-process.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/runtime/fleet/adapters/code-index.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/runtime/fleet/adapters/observed.ts` | PORT | SDK-owned platform module. |
-| `sdk/src/platform/runtime/fleet/adapters/orchestration.ts` | PORT | SDK-owned platform module. |
+| `sdk/src/platform/runtime/fleet/adapters/orchestration.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): every workstream is a contract group, so workstream, phase and work-item nodes are replaced by the contract, group and unit nodes of `sdk/src/platform/runtime/fleet/adapters/contract.ts`. |
 | `sdk/src/platform/runtime/fleet/adapters/schedule.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/runtime/fleet/adapters/trigger.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/runtime/fleet/adapters/watcher-trigger.ts` | PORT | SDK-owned platform module. |
@@ -2240,7 +2240,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/store/domains/intelligence.ts` | PORT | SDK-owned platform module. |
 | `sdk/src/platform/runtime/store/domains/mcp.ts` | PORT | MCP domain state, tracks all MCP server connections, their lifecycle state, and available tools per server. |
 | `sdk/src/platform/runtime/store/domains/model.ts` | PORT | SDK-owned platform module. |
-| `sdk/src/platform/runtime/store/domains/orchestration.ts` | PORT | Orchestration domain state, task graphs, node lifecycles, and bounded recursive execution telemetry for higher-level worker coordination. |
+| `sdk/src/platform/runtime/store/domains/orchestration.ts` | JEV | Removed in contract runner part R.8 (WRFC and orchestration events replaced by the contract runner): replaced by the contracts store domain `sdk/src/platform/runtime/store/domains/contracts.ts` (contract records with each unit's and group's latest verdicts) and its reducer `sdk/src/platform/runtime/store/helpers/reducers/contracts.ts`. |
 | `sdk/src/platform/runtime/store/domains/overlays.ts` | PORT | Overlays domain state, tracks which full-screen or floating overlays are currently visible and their configuration. |
 | `sdk/src/platform/runtime/store/domains/panels.ts` | PORT | Panels domain state, tracks the panel-first operator UX surfaces: which panels are open, their layout, and focus state. |
 | `sdk/src/platform/runtime/store/domains/permissions.ts` | PORT | Permissions domain state, tracks the permission mode, session approvals, and the most recent permission decision with full audit trail. |
@@ -2257,7 +2257,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/store/helpers/events.ts` | PORT | Module events.ts. |
 | `sdk/src/platform/runtime/store/helpers/index.ts` | PORT | Re-exports ./reducers.js, ./reducers/conversation.js, ./reducers/lifecycle.js, ./reducers/shared.js, ./reducers/sync.js. |
 | `sdk/src/platform/runtime/store/helpers/reducers/conversation.ts` | PORT | Exports updateConversationState. |
-| `sdk/src/platform/runtime/store/helpers/reducers/lifecycle.ts` | PORT | Exports updateSessionState, updatePermissionState, updateTaskState, updateAgentState, updateOrchestrationState. |
+| `sdk/src/platform/runtime/store/helpers/reducers/lifecycle.ts` | PORT | Exports updateSessionState, updatePermissionState, updateTaskState, updateAgentState. Its orchestration reducer went with the orchestration domain in contract runner part R.8; contract events fold in `sdk/src/platform/runtime/store/helpers/reducers/contracts.ts`. |
 | `sdk/src/platform/runtime/store/helpers/reducers/shared.ts` | PORT | formatPartialToolPreview - The name of the tool call now in flight, or undefined when no tool call has been named yet. |
 | `sdk/src/platform/runtime/store/helpers/reducers/sync.ts` | PORT | Returns the transport state for lifecycle events that directly change state, or null for observability-only events. |
 | `sdk/src/platform/runtime/store/helpers/reducers.ts` | PORT | Re-exports ./reducers/conversation.js, ./reducers/lifecycle.js, ./reducers/shared.js, ./reducers/sync.js. |
@@ -2267,7 +2267,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/store/state.ts` | PORT | RuntimeState, the canonical top-level state shape for the GoodVibes runtime store. |
 | `sdk/src/platform/runtime/surface-feature-flags.ts` | PORT | Maps surface ids to their feature-gate flags and settings keys, and enables a set of capability flags by writing their real domain settings keys. Deterministic id-mapping and set logic, camelCase-to-kebab-case conversion is a fixed string transform, not meaning guesswork. |
 | `sdk/src/platform/runtime/surface-root.ts` | PORT | Path helpers for a surface's scoped/shared storage directories, and sanitizing a session id into a safe filename segment (character replacement plus a collision-resistant digest suffix). Deterministic path and string sanitization. |
-| `sdk/src/platform/runtime/system-message-policy.ts` | JEV | Host-neutral routing policy for system messages. Priority is `engine.runtime.system-message-priority` (high or low over the message text) instead of a keyword regex. Kind reads the program-emitted leading bracket tag through an explicit lookup table (owner ruling: a fixed format, not Jev); the retired wrfc kind is now contract, with [WRFC] and [Contract] both mapping to it. |
+| `sdk/src/platform/runtime/system-message-policy.ts` | JEV | Host-neutral routing policy for system messages. Priority is `engine.runtime.system-message-priority` (high or low over the message text) instead of a keyword regex. Kind reads the program-emitted leading bracket tag through an explicit lookup table (owner ruling: a fixed format, not Jev); the retired wrfc kind is now contract, which [Contract] maps to (the [WRFC] tag went with the WRFC system messages in contract runner part R.8). |
 | `sdk/src/platform/runtime/tasks/adapters/acp-adapter.ts` | PORT | Bridges ACP remote subagent tasks into the unified RuntimeTask registry, mapping SubagentStatus to task lifecycle states. |
 | `sdk/src/platform/runtime/tasks/adapters/agent-adapter.ts` | PORT | Bridges agent sessions into the unified RuntimeTask registry, wiring runtime bus events and mapping agent lifecycle states to task states. |
 | `sdk/src/platform/runtime/tasks/adapters/index.ts` | PORT | Barrel file re-exporting the process, agent, acp and scheduler task adapters. |
@@ -2354,7 +2354,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/transports/transport-paths.ts` | PORT | Re-exports @pellux/goodvibes-transport-http. |
 | `sdk/src/platform/runtime/transports/ui-runtime-events.ts` | PORT | Exports createRemoteUiRuntimeEvents. |
 | `sdk/src/platform/runtime/transport.ts` | PORT | Barrel re-export of the transports module (direct, http, realtime, contract routes, SSE, operator/peer remote clients, network helpers). |
-| `sdk/src/platform/runtime/ui-events.ts` | PORT | Builds the UI-facing runtime event feed bundle (sessions, turns, tools, providers, agents, workflows, planner, ops) as thin wrappers over the runtime event bus. |
+| `sdk/src/platform/runtime/ui-events.ts` | PORT | Builds the UI-facing runtime event feed bundle (sessions, turns, tools, providers, agents, contracts, planner, ops) as thin wrappers over the runtime event bus. |
 | `sdk/src/platform/runtime/ui/index.ts` | PORT | Runtime UI data surface barrel. |
 | `sdk/src/platform/runtime/ui/model-picker/data-provider.ts` | PORT | ModelPickerDataProvider, enriched model picker data surface. |
 | `sdk/src/platform/runtime/ui/model-picker/health-enrichment.ts` | PORT | Health enrichment for model picker entries. |
@@ -2373,7 +2373,7 @@ Files: 2371. PORT 1848, JEV 521, DROP 2. Decision points: 183.
 | `sdk/src/platform/runtime/ui-read-models-observability-security.ts` | PORT | UI read models for security/mcp/local-auth observability: token audit, mcp server security snapshots, attack-path review, plugin quarantine/trust filters. Direct deterministic projection from the token auditor, mcp registry and plugin manager, no judged classification performed here (the deterministic security boundary stays code). |
 | `sdk/src/platform/runtime/ui-read-models-observability-system.ts` | PORT | UI read models for intelligence, marketplace, cockpit and health observability: counts and status strings filtered from structured enum fields on runtime store state (mcp server status, provider health status, transport state). Deterministic filtering and counting, no text guesswork; recommendations come from ecosystem/recommendations.ts, ranked asynchronously and carried in the marketplace snapshot until the live needs or entries change. |
 | `sdk/src/platform/runtime/ui-read-models-observability.ts` | PORT | Combines the remote/system/security/maintenance observability read models into one UiObservabilityReadModels object. Barrel plus a small composition function. |
-| `sdk/src/platform/runtime/ui-read-models-operations.ts` | PORT | UI read models for automation, routes, watchers, orchestration, communication and control-plane, projected from runtime store state with deterministic sort comparators. |
+| `sdk/src/platform/runtime/ui-read-models-operations.ts` | PORT | UI read models for automation, routes, watchers, contracts, communication and control-plane, projected from runtime store state with deterministic sort comparators. |
 | `sdk/src/platform/runtime/ui-read-models.ts` | PORT | Top-level barrel and composition combining core, operations and observability read models into UiReadModels. |
 | `sdk/src/platform/runtime/ui-service-queries.ts` | PORT | Surface-agnostic query type contracts (environment variables, service inspection, subscriptions, local auth, sessions, tools, provider models/runtime, plan dashboard, ops strategy) plus two factory functions. Deterministic pass-through queries. |
 | `sdk/src/platform/runtime/ui-services.ts` | PORT | Groups runtime services into UI-facing service buckets (environment, shell, agents, providers, sessions, platform, planning, coordination, runtime) plus events and read models. Pure composition/regrouping. |
