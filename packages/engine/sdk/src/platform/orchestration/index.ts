@@ -54,6 +54,7 @@ export type { ReviewTask, ReviewTaskSource, SemanticEdgePlanner } from './review
 export { createFixWorkstreamRunner } from './fix-workstream-runner.js';
 export type { FixWorkstreamRunner, FixWorkstreamOutcome, FixWorkstreamRunnerDeps } from './fix-workstream-runner.js';
 export { addDependencyEdge, addConflictSerializationEdges, buildGraphSnapshot, detectOrphans, remainingDepths, wouldCreateCycle } from './graph-dynamics.js';
+export type { DependencyGraph, GraphNode } from './graph-dynamics.js';
 export type { EdgeAddResult, WorkstreamGraphSnapshot, GraphNodeSnapshot, GraphEdgeSnapshot, PoolStateSnapshot } from './graph-dynamics.js';
 export { gateClaimAgainstFleet, isElastic, poolState, retirementEvent } from './elastic-pool.js';
 export type { FleetCapacityProbe, FleetCapacityFn } from './elastic-pool.js';

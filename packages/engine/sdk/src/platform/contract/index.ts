@@ -119,3 +119,59 @@ export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, 
 export { CONTRACT_EVENT_SOURCE, contractEmitterContext, contractTraceId, emitContractEvent } from './events.js';
 export type { QualityGate, QualityGateResult } from './gates.js';
 export type { ClaimVerificationKind, ClaimVerificationResult } from './claims.js';
+// Planning (section 3).
+export {
+  delegationForbidden,
+  readRequestShape,
+  requestShape,
+  saysNoAtAct,
+  saysYesAtAct,
+  writingUnclear,
+} from './batteries/request-shape.js';
+export { criterionTrace, traceClaim } from './batteries/criterion-trace.js';
+export { planCoverage } from './batteries/plan-coverage.js';
+export { criterionShape } from './batteries/criterion-shape.js';
+export { UNIT_SHAPE_ROLES, VERIFICATION_ROLES, unitShape } from './batteries/unit-shape.js';
+export type { UnitShapeRole } from './batteries/unit-shape.js';
+export {
+  PLAN_PROBLEM_CODES,
+  UNRUNNABLE_PLAN_PROBLEMS,
+  effectiveAttempts,
+  findParallelGroup,
+  isUnitRole,
+  lastFencedBlock,
+  parseContractPlan,
+  planUnits,
+  renderContractPlan,
+  unitToolContract,
+  validateContractPlan,
+} from './plan-schema.js';
+export type {
+  ContractPlan,
+  ParsedContractPlan,
+  PlanLimits,
+  PlanProblem,
+  PlanProblemCode,
+  PlannedDerivedCriterion,
+  PlannedGroup,
+  PlannedStatedCriterion,
+  PlannedUnit,
+  UnitToolContract,
+} from './plan-schema.js';
+export { EXCLUDED_TOPOLOGY_REASON, PLAN_CHECK_SITES, readCriterionDispositions, runPlanChecks, unitShapeState } from './plan-checks.js';
+export type { CriterionDispositionRuling, JevPlanCheck, PlanCheckOptions, PlanCheckReport, PlanCheckUsage, PlanVerdict } from './plan-checks.js';
+export {
+  acceptEscalatedPlan,
+  buildContractPlannerPrompt,
+  buildContractPlannerRequest,
+  buildPlanEscalationQuestion,
+  buildPlanTree,
+  buildWritingEscalationQuestion,
+  defaultRepositoryMap,
+  planContract,
+  readPlannerBounds,
+  shapeContract,
+  withOwnerWritingDecision,
+} from './planner.js';
+export type { ContractPlannerDeps, EscalatedPlanOutcome, PlanContractInput, PlannerRequestInput, PlanningOutcome, ShapeOutcome } from './planner.js';
+export { registry as contractJudgmentRegistry } from './judgment-registry.js';

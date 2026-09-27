@@ -25,6 +25,8 @@
  */
 
 import { AdaptivePlanner } from './adaptive-planner.js';
+// Type only: the routing policy shape a route carries. No agent machinery is loaded.
+import type { AgentProviderRoutingPolicy } from '../tools/agent/schema.js';
 import type { PlannerInputs, DecompositionGate } from './adaptive-planner.js';
 import {
   assemblePlanProposal,
@@ -99,6 +101,21 @@ export interface DecompositionRunnerRequest {
   bounds: DecompositionBounds;
   /** Which attempt this is; `'repair'` prompts include prior validation errors. */
   attempt: 'initial' | 'repair';
+  /**
+   * The model the planning agent runs on, when the caller picked one (the
+   * contract runner asks its route selector). Absent, the runner's own
+   * configured model applies.
+   */
+  route?: DecompositionRoute | undefined;
+}
+
+/** A chosen model for the planning agent. */
+export interface DecompositionRoute {
+  readonly model: string;
+  readonly provider: string;
+  readonly fallbackModels?: readonly string[] | undefined;
+  readonly routing?: AgentProviderRoutingPolicy | undefined;
+  readonly reasoningEffort?: string | undefined;
 }
 
 /**

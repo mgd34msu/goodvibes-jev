@@ -68,6 +68,21 @@ function mapUsage(usage: {
   };
 }
 
+/** The spawn's model fields: the request's route when it carries one, else the runner's configured model. */
+function routeFields(request: DecompositionRunnerRequest, deps: AgentManagerDecompositionRunnerDeps): Partial<AgentInput> {
+  const route = request.route;
+  if (route === undefined) {
+    return { ...(deps.model ? { model: deps.model } : {}), ...(deps.provider ? { provider: deps.provider } : {}) };
+  }
+  return {
+    model: route.model,
+    provider: route.provider,
+    ...(route.fallbackModels ? { fallbackModels: [...route.fallbackModels] } : {}),
+    ...(route.routing ? { routing: route.routing } : {}),
+    ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
+  };
+}
+
 export function createAgentManagerDecompositionRunner(
   deps: AgentManagerDecompositionRunnerDeps,
 ): DecompositionRunner {
@@ -89,8 +104,7 @@ export function createAgentManagerDecompositionRunner(
         reviewMode: 'none',
         dangerously_disable_wrfc: true,
         systemPromptAddendum: request.systemPrompt,
-        ...(deps.model ? { model: deps.model } : {}),
-        ...(deps.provider ? { provider: deps.provider } : {}),
+        ...routeFields(request, deps),
       };
 
       let agentId: string;

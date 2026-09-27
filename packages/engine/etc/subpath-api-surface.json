@@ -17831,6 +17831,27 @@
       "text": "export type ContractOrigin = (typeof CONTRACT_ORIGINS)[number];"
     },
     {
+      "name": "ContractPlan",
+      "kind": "interface",
+      "required": [
+        "criteria",
+        "goal",
+        "groups"
+      ],
+      "text": "export interface ContractPlan { readonly goal: string; readonly criteria: readonly PlannedStatedCriterion[]; readonly groups: readonly PlannedGroup[]; }"
+    },
+    {
+      "name": "ContractPlannerDeps",
+      "kind": "interface",
+      "required": [
+        "configManager",
+        "decompositionRunner",
+        "emit",
+        "routeSelector"
+      ],
+      "text": "export interface ContractPlannerDeps { readonly decompositionRunner: DecompositionRunner; readonly routeSelector: ContractRouteSelector; readonly configManager: ContractConfigReader; readonly emit: (event: ContractEvent) => void; readonly repositoryMap?: ((projectRoot: string) => Promise<string>) | undefined; readonly now?: (() => number) | undefined; } ;; via ContractEvent = export type ContractEvent = { type: 'CONTRACT_CREATED'; contractId: string; sessionId: string; origin: ContractOrigin; ask: string; ownerAgentId: string; } | { type: 'CONTRACT_STATUS_CHANGED'; contractId: string; from: ContractStatus; to: ContractStatus; } | { type: 'CONTRACT_SHAPED'; contractId: string; forbidsDelegation: ContractShapeReading; requestsParallelAgents: ContractShapeReading; forbidsWriting: ContractShapeReading; asksForAttempts: ContractShapeReading; decisionIds: readonly string[]; } | { type: 'CONTRACT_PLANNED'; contractId: string; goal: string; criteria: readonly ContractPlannedCriterion[]; groups: readonly ContractPlannedGroup[]; units: readonly ContractPlannedUnit[]; repair: number; } | { type: 'CONTRACT_PLAN_CHECKED'; contractId: string; check: PlanCheck; targetId?: string | undefined; passed: boolean; problems: readonly ContractPlanProblem[]; decisionIds: readonly string[]; } | { type: 'CONTRACT_GROUP_STATUS_CHANGED'; contractId: string; groupId: string; from: ContractGroupStatus; to: ContractGroupStatus; } | { type: 'CONTRACT_UNIT_STATUS_CHANGED'; contractId: string; groupId: string; unitId: string; from: ContractUnitStatus; to: ContractUnitStatus; agentId?: string | undefined; } | { type: 'CONTRACT_UNIT_SPAWNED'; contractId: string; unitId: string; agentId: string; route: ContractUnitRouteSummary; purpose: UnitSpawnPurpose; } | { type: 'CONTRACT_CHECKED'; contractId: string; scope: CheckScope; targetId: string; checkId: string; trigger: CheckTrigger; result: CheckResult; criteria: readonly ContractCheckedCriterion[]; goal: { readonly verdict: CriterionVerdict; readonly outcome: ContractOutcome; }; quality: readonly ContractCheckedQuality[]; gates: readonly ContractCheckedGate[]; claims?: ClaimVerificationKind | undefined; decisionIds: readonly string[]; } | { type: 'CONTRACT_NUDGED'; contractId: string; unitId: string; nudgeId: string; checkId: string; kinds: readonly NudgeKind[]; criterionIds: readonly string[]; delivery: NudgeDelivery; agentId: string; } | { type: 'CONTRACT_NUDGE_CONSUMED'; contractId: string; unitId: string; nudgeId: string; agentId: string; turn?: number | undefined; } | { type: 'CONTRACT_CRITERION_REGRESSED'; contractId: string; unitId: string; criterionId: string; metAtCheckId: string; checkId: string; } | { type: 'CONTRACT_STALLED'; contractId: string; scope: CheckScope; targetId: string; route: StallRoute; unmetCriterionIds: readonly string[]; reason: string; decisionId?: string | undefined; } | { type: 'CONTRACT_FIX_PLANNED'; contractId: string; scope: CheckScope; targetId: string; groupId: string; unitIds: readonly string[]; round: number; } | { type: 'CONTRACT_ESCALATED'; contractId: string; escalationId: string; scope: EscalationScope; targetId: string; reason: EscalationReason; question: string; unmetCriterionIds: readonly string[]; } | { type: 'CONTRACT_OWNER_REPLIED'; contractId: string; escalationId: string; reading: OwnerReplyReading; outcome: ContractOutcome; action: string; } | { type: 'CONTRACT_GATE_RESULT'; contractId: string; targetId: string; gate: string; passed: boolean; skipped: boolean; durationMs: number; } | { type: 'CONTRACT_UNIT_SILENT'; contractId: string; unitId: string; agentId: string; silentMs: number; action: UnitSilenceAction; } | { type: 'CONTRACT_MERGE_CONFLICT'; contractId: string; unitId: string; branch: string; path: string; files: readonly string[]; } | { type: 'CONTRACT_ATTEMPTS_SELECTED'; contractId: string; unitId: string; candidateIds: readonly string[]; chosen: string | null; outcome: ContractOutcome; decisionId?: string | undefined; } | { type: 'CONTRACT_COMMITTED'; contractId: string; status: ContractCommitStatus; hash?: string | undefined; note: string; } | { type: 'CONTRACT_PASSED'; contractId: string; criteriaMet: number; criteriaJudged: number; excluded: number; nudges: number; } | { type: 'CONTRACT_FAILED'; contractId: string; reason: string; failureKind: ContractFailureKind; membersSettled: boolean; turnLimit?: number | undefined; turnLimitSource?: TurnLimitSource | undefined; } | { type: 'CONTRACT_CANCELLED'; contractId: string; reason: string; filesModified: number; } | { type: 'CONTRACT_SPAWN_GUARD_TRIGGERED'; contractId?: string | undefined; agentId: string; depth: number; activeAgents: number; reason: string; }; ;; DecompositionRunner = export interface DecompositionRunner { run(request: DecompositionRunnerRequest): Promise<DecompositionRunResult>; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "ContractReapSummary",
       "kind": "interface",
       "required": [
@@ -17956,6 +17977,15 @@
       "text": "export type CriterionDisposition = (typeof CRITERION_DISPOSITIONS)[number];"
     },
     {
+      "name": "CriterionDispositionRuling",
+      "kind": "interface",
+      "required": [
+        "disposition",
+        "reason"
+      ],
+      "text": "export interface CriterionDispositionRuling { readonly disposition: Exclude<CriterionDisposition, 'judged'>; readonly reason: string; } ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
+    },
+    {
       "name": "CriterionOrigin",
       "kind": "type",
       "text": "export type CriterionOrigin = (typeof CRITERION_ORIGINS)[number];"
@@ -17997,6 +18027,16 @@
       "name": "DeepReadonly",
       "kind": "type",
       "text": "export type DeepReadonly<T> = T extends readonly (infer E)[] ? readonly DeepReadonly<E>[] : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]>; } : T;"
+    },
+    {
+      "name": "EXCLUDED_TOPOLOGY_REASON",
+      "kind": "const",
+      "text": "EXCLUDED_TOPOLOGY_REASON = \"requires an agent arrangement this plan does not use\""
+    },
+    {
+      "name": "EscalatedPlanOutcome",
+      "kind": "type",
+      "text": "export type EscalatedPlanOutcome = { readonly kind: 'accepted'; readonly plan: ContractPlan; readonly decisionIds: readonly string[]; } | { readonly kind: 'unrunnable'; readonly problems: readonly PlanProblem[]; } | { readonly kind: 'failed'; readonly failureKind: ContractFailureKind; readonly reason: string; } | { readonly kind: 'cancelled'; };"
     },
     {
       "name": "Escalation",
@@ -18050,6 +18090,11 @@
       "text": "export declare class IllegalContractTransitionError extends Error { readonly subject: 'contract' | 'group' | 'unit'; readonly subjectId: string; readonly from: string; readonly to: string; constructor(subject: 'contract' | 'group' | 'unit', subjectId: string, from: string, to: string); }"
     },
     {
+      "name": "JevPlanCheck",
+      "kind": "type",
+      "text": "export type JevPlanCheck = keyof typeof PLAN_CHECK_SITES;"
+    },
+    {
       "name": "JudgmentUsage",
       "kind": "interface",
       "required": [
@@ -18095,6 +18140,149 @@
       "text": "export type NudgeKind = (typeof NUDGE_KINDS)[number];"
     },
     {
+      "name": "PLAN_CHECK_SITES",
+      "kind": "const",
+      "text": "PLAN_CHECK_SITES: { readonly 'criterion-trace': \"contract.plan-checks.criterion-trace\"; readonly 'plan-coverage': \"contract.plan-checks.plan-coverage\"; readonly 'criterion-shape': \"contract.plan-checks.criterion-shape\"; readonly 'unit-shape': \"contract.plan-checks.unit-shape\"; }"
+    },
+    {
+      "name": "PLAN_PROBLEM_CODES",
+      "kind": "const",
+      "text": "PLAN_PROBLEM_CODES: readonly [\"unparseable\", \"bad-id\", \"duplicate-id\", \"unknown-dependency\", \"cycle\", \"no-criteria\", \"no-units\", \"empty-group\", \"unit-without-criteria\", \"serves-missing\", \"serves-unknown\", \"unknown-role\", \"group-kind\", \"uncovered-criterion\", \"quote-not-found\", \"integration-missing\", \"integration-shape\", \"integration-unexpected\", \"parallel-missing\", \"attempts\", \"too-many-units\", \"untraced\", \"uncovered-requirement\", \"not-checkable\", \"verification-unit\", \"role-mismatch\", \"narrows\"]"
+    },
+    {
+      "name": "ParsedContractPlan",
+      "kind": "type",
+      "text": "export type ParsedContractPlan = { readonly ok: true; readonly plan: ContractPlan; readonly json: string; } | { readonly ok: false; readonly problems: readonly PlanProblem[]; };"
+    },
+    {
+      "name": "PlanCheckOptions",
+      "kind": "interface",
+      "text": "export interface PlanCheckOptions { readonly signal?: AbortSignal | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
+      "name": "PlanCheckReport",
+      "kind": "interface",
+      "required": [
+        "check",
+        "decisionIds",
+        "passed",
+        "problems"
+      ],
+      "text": "export interface PlanCheckReport { readonly check: JevPlanCheck; readonly passed: boolean; readonly problems: readonly PlanProblem[]; readonly decisionIds: readonly string[]; }"
+    },
+    {
+      "name": "PlanCheckUsage",
+      "kind": "interface",
+      "required": [
+        "calls",
+        "inputTokens",
+        "outputTokens"
+      ],
+      "text": "export interface PlanCheckUsage { readonly calls: number; readonly inputTokens: number; readonly outputTokens: number; }"
+    },
+    {
+      "name": "PlanContractInput",
+      "kind": "interface",
+      "text": "export interface PlanContractInput { readonly proposedUnits?: StartContractInput['proposedUnits']; readonly ownerInstruction?: string | undefined; readonly previousPlan?: string | undefined; readonly signal?: AbortSignal | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
+      "name": "PlanLimits",
+      "kind": "interface",
+      "required": [
+        "defaultAttempts",
+        "maxUnits"
+      ],
+      "text": "export interface PlanLimits { readonly maxUnits: number; readonly defaultAttempts: number; }"
+    },
+    {
+      "name": "PlanProblem",
+      "kind": "type",
+      "text": "export type PlanProblem = ContractPlanProblem & { readonly code: PlanProblemCode; }; ;; via ContractPlanProblem = export interface ContractPlanProblem { readonly code: string; readonly targetId?: string | undefined; readonly message: string; }"
+    },
+    {
+      "name": "PlanProblemCode",
+      "kind": "type",
+      "text": "export type PlanProblemCode = (typeof PLAN_PROBLEM_CODES)[number];"
+    },
+    {
+      "name": "PlanVerdict",
+      "kind": "interface",
+      "required": [
+        "decisionIds",
+        "dispositions",
+        "problems",
+        "reports",
+        "usage"
+      ],
+      "text": "export interface PlanVerdict { readonly problems: readonly PlanProblem[]; readonly dispositions: ReadonlyMap<string, CriterionDispositionRuling>; readonly reports: readonly PlanCheckReport[]; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage; } ;; via ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "PlannedDerivedCriterion",
+      "kind": "interface",
+      "required": [
+        "id",
+        "serves",
+        "text"
+      ],
+      "text": "export interface PlannedDerivedCriterion { readonly id: string; readonly text: string; readonly serves: readonly string[]; }"
+    },
+    {
+      "name": "PlannedGroup",
+      "kind": "interface",
+      "required": [
+        "criteria",
+        "dependsOn",
+        "goal",
+        "id",
+        "kind",
+        "title",
+        "units"
+      ],
+      "text": "export interface PlannedGroup { readonly id: string; readonly title: string; readonly goal: string; readonly kind: GroupKind; readonly dependsOn: readonly string[]; readonly criteria: readonly PlannedDerivedCriterion[]; readonly units: readonly PlannedUnit[]; }"
+    },
+    {
+      "name": "PlannedStatedCriterion",
+      "kind": "interface",
+      "required": [
+        "id",
+        "quote",
+        "text"
+      ],
+      "text": "export interface PlannedStatedCriterion { readonly id: string; readonly text: string; readonly quote: string | undefined; }"
+    },
+    {
+      "name": "PlannedUnit",
+      "kind": "interface",
+      "required": [
+        "attempts",
+        "brief",
+        "criteria",
+        "dependsOn",
+        "files",
+        "goal",
+        "id",
+        "role",
+        "title"
+      ],
+      "text": "export interface PlannedUnit { readonly id: string; readonly title: string; readonly goal: string; readonly role: string; readonly brief: string; readonly dependsOn: readonly string[]; readonly files: readonly string[]; readonly attempts: number | undefined; readonly criteria: readonly PlannedDerivedCriterion[]; }"
+    },
+    {
+      "name": "PlannerRequestInput",
+      "kind": "interface",
+      "required": [
+        "ask",
+        "config",
+        "repositoryMap",
+        "shape"
+      ],
+      "text": "export interface PlannerRequestInput { readonly ask: string; readonly shape: RequestShape; readonly config: Pick<ContractConfig, 'defaultAttempts' | 'maxUnits'>; readonly proposedUnits?: StartContractInput['proposedUnits']; readonly repositoryMap: string; readonly ownerInstruction?: string | undefined; readonly repair?: { readonly problems: readonly PlanProblem[]; readonly previousPlan: string; } | undefined; readonly previousPlan?: string | undefined; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
+      "name": "PlanningOutcome",
+      "kind": "type",
+      "text": "export type PlanningOutcome = { readonly kind: 'accepted'; readonly plan: ContractPlan; readonly decisionIds: readonly string[]; } | { readonly kind: 'awaiting-owner'; readonly plan: ContractPlan; readonly problems: readonly PlanProblem[]; readonly escalation: Escalation; } | { readonly kind: 'failed'; readonly failureKind: ContractFailureKind; readonly reason: string; } | { readonly kind: 'cancelled'; };"
+    },
+    {
       "name": "QUALITY_ITEMS",
       "kind": "const",
       "text": "QUALITY_ITEMS: readonly [\"placeholder\", \"tests_weakened\", \"breaks_existing\", \"out_of_scope\", \"hidden_failure\", \"unsupported_claims\"]"
@@ -18138,6 +18326,11 @@
       "text": "export interface RequestShape { readonly forbids_delegation: ShapeReading; readonly requests_parallel_agents: ShapeReading; readonly forbids_writing: ShapeReading; readonly asks_for_attempts: ShapeReading; readonly decisionIds: readonly string[]; }"
     },
     {
+      "name": "ShapeOutcome",
+      "kind": "type",
+      "text": "export type ShapeOutcome = { readonly kind: 'shaped'; readonly shape: RequestShape; } | { readonly kind: 'awaiting-owner'; readonly shape: RequestShape; readonly escalation: Escalation; } | { readonly kind: 'failed'; readonly failureKind: ContractFailureKind; readonly reason: string; } | { readonly kind: 'cancelled'; };"
+    },
+    {
       "name": "ShapeReading",
       "kind": "type",
       "text": "export type ShapeReading = ContractShapeReading; ;; via ContractShapeReading = export interface ContractShapeReading { readonly verdict: YesNoVerdict; readonly probability: number; readonly outcome: ContractOutcome; }"
@@ -18168,9 +18361,19 @@
       "text": "TERMINAL_CONTRACT_MAX_AGE_MS: number"
     },
     {
+      "name": "UNIT_SHAPE_ROLES",
+      "kind": "const",
+      "text": "UNIT_SHAPE_ROLES: { readonly implement: \"Changes files or produces the deliverable itself\"; readonly research: \"Reads code, documents or data and reports what it found, changing nothing\"; readonly design: \"Produces a plan or design as its answer, changing nothing\"; readonly review: \"Examines other units' finished work and reports findings or opinions about it\"; readonly test: \"Only runs tests or checks against other units' work and reports the results, writing nothing\"; readonly verify: \"Only confirms or signs off that other units' work is correct or complete\"; }"
+    },
+    {
       "name": "UNIT_TRANSITIONS",
       "kind": "const",
       "text": "UNIT_TRANSITIONS: Readonly<Record<UnitStatus, readonly UnitStatus[]>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "UNRUNNABLE_PLAN_PROBLEMS",
+      "kind": "const",
+      "text": "UNRUNNABLE_PLAN_PROBLEMS: ReadonlySet<PlanProblemCode> ;; via ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; }"
     },
     {
       "name": "UnitCheck",
@@ -18203,9 +18406,28 @@
       "text": "export interface UnitRoute { readonly model: string; readonly provider: string; readonly fallbackModels?: readonly string[] | undefined; readonly routing?: AgentProviderRoutingPolicy | undefined; readonly reasoningEffort?: AgentRecord['reasoningEffort'] | undefined; readonly reason: string; } ;; via AgentProviderRoutingPolicy = export interface AgentProviderRoutingPolicy { providerSelection?: 'inherit-current' | 'concrete' | 'synthetic' | undefined; providerFailurePolicy?: 'ordered-fallbacks' | 'fail' | undefined; fallbackModels?: readonly string[] | undefined; } ;; AgentRecord = export interface AgentRecord extends ProgressBearingRecord { id: string; task: string; template: string; model?: string | undefined; provider?: string | undefined; fallbackModels?: string[] | undefined; routing?: AgentInput['routing'] | undefined; executionIntent?: ExecutionIntent | undefined; reasoningEffort?: string | undefined; context?: string | undefined; tools: string[]; captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; terminationKind?: 'interrupt' | 'kill' | undefined; startedAt: number; completedAt?: number | undefined; toolCallCount: number; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens?: number | undefined; llmCallCount: number; turnCount: number; reasoningSummaryCount?: number | undefined; }; error?: string | undefined; maxTurns?: number | undefined; turnBudget?: { limit: number; source: 'default' | 'spawn-override' | 'policy-bound'; } | undefined; failureReason?: string | undefined; fullOutput?: string | undefined; streamingContent?: string | undefined; wrfcId?: string | undefined; wrfcRole?: WrfcAgentRole | undefined; wrfcPhaseOrder?: number | undefined; wrfcSubtaskId?: string | undefined; wrfcRouteReason?: string | undefined; wrfcSubtasks?: AgentInput['wrfcSubtasks'] | undefined; fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined; dangerously_disable_wrfc?: boolean | undefined; replyStyle?: 'report' | 'conversational' | undefined; workItemId?: string | undefined; workingDirectory?: string | undefined; cohort?: string | undefined; orchestrationGraphId?: string | undefined; orchestrationNodeId?: string | undefined; orchestrationDepth: number; parentAgentId?: string | undefined; parentNodeId?: string | undefined; capabilityCeilingTools?: string[] | undefined; successCriteria?: string[] | undefined; requiredEvidence?: string[] | undefined; writeScope?: string[] | undefined; executionProtocol: 'direct' | 'gather-plan-apply'; reviewMode: 'none' | 'wrfc'; communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct'; systemPromptAddendum?: string | undefined; knowledgeInjections?: Array<{ id: string; cls: string; summary: string; reason: string; confidence: number; reviewState: 'fresh' | 'reviewed' | 'stale' | 'contradicted'; }>; turnInjections?: TurnInjectionRecord[] | undefined; resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined; } | undefined; }"
     },
     {
+      "name": "UnitShapeRole",
+      "kind": "type",
+      "text": "export type UnitShapeRole = keyof typeof UNIT_SHAPE_ROLES;"
+    },
+    {
       "name": "UnitStatus",
       "kind": "type",
       "text": "export type UnitStatus = ContractUnitStatus; ;; via ContractUnitStatus = export type ContractUnitStatus = (typeof CONTRACT_UNIT_STATUSES)[number];"
+    },
+    {
+      "name": "UnitToolContract",
+      "kind": "interface",
+      "required": [
+        "readOnly",
+        "restrictTools"
+      ],
+      "text": "export interface UnitToolContract { readonly readOnly: boolean; readonly tools?: readonly string[] | undefined; readonly restrictTools: boolean; }"
+    },
+    {
+      "name": "VERIFICATION_ROLES",
+      "kind": "const",
+      "text": "VERIFICATION_ROLES: readonly UnitShapeRole[]"
     },
     {
       "name": "YesNoVerdict",
@@ -18213,9 +18435,44 @@
       "text": "export type YesNoVerdict = (typeof YES_NO_VERDICTS)[number];"
     },
     {
+      "name": "acceptEscalatedPlan",
+      "kind": "function",
+      "text": "export declare function acceptEscalatedPlan(contract: Contract, escalation: Escalation, deps: ContractPlannerDeps, options?: { readonly signal?: AbortSignal | undefined; }): Promise<EscalatedPlanOutcome>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "buildContractPlannerPrompt",
+      "kind": "function",
+      "text": "export declare function buildContractPlannerPrompt(): string;"
+    },
+    {
+      "name": "buildContractPlannerRequest",
+      "kind": "function",
+      "text": "export declare function buildContractPlannerRequest(input: PlannerRequestInput): string;"
+    },
+    {
+      "name": "buildPlanEscalationQuestion",
+      "kind": "function",
+      "text": "export declare function buildPlanEscalationQuestion(contractId: string, goal: string, problems: readonly PlanProblem[], planJson: string): string;"
+    },
+    {
+      "name": "buildPlanTree",
+      "kind": "function",
+      "text": "export declare function buildPlanTree(plan: ContractPlan, dispositions: ReadonlyMap<string, CriterionDispositionRuling>, defaultAttempts: number): { readonly goal: string; readonly criteria: Criterion[]; readonly groups: ContractGroup[]; readonly units: ContractUnit[]; }; ;; via ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "buildWritingEscalationQuestion",
+      "kind": "function",
+      "text": "export declare function buildWritingEscalationQuestion(contractId: string, ask: string): string;"
+    },
+    {
       "name": "contractEmitterContext",
       "kind": "function",
       "text": "export declare function contractEmitterContext(sessionId: string, contractId?: string): EmitterContext; ;; via EmitterContext = export interface EmitterContext extends EnvelopeContext { readonly traceId: string; }"
+    },
+    {
+      "name": "contractJudgmentRegistry",
+      "kind": "const",
+      "text": "registry: BatteryRegistry"
     },
     {
       "name": "contractPath",
@@ -18233,14 +18490,44 @@
       "text": "export declare function contractsDir(projectRoot: string): string;"
     },
     {
+      "name": "criterionShape",
+      "kind": "const",
+      "text": "criterionShape: import(\"@goodvibes-jev/judgment\").Battery<{ readonly checkable: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly topology_only: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "criterionTrace",
+      "kind": "const",
+      "text": "criterionTrace: import(\"@goodvibes-jev/judgment\").FidelityChecker"
+    },
+    {
+      "name": "defaultRepositoryMap",
+      "kind": "function",
+      "text": "export declare function defaultRepositoryMap(projectRoot: string): Promise<string>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "delegationForbidden",
+      "kind": "function",
+      "text": "export declare function delegationForbidden(shape: RequestShape): boolean;"
+    },
+    {
       "name": "deserializeContract",
       "kind": "function",
       "text": "export declare function deserializeContract(json: string): Contract | null;"
     },
     {
+      "name": "effectiveAttempts",
+      "kind": "function",
+      "text": "export declare function effectiveAttempts(unit: PlannedUnit, defaultAttempts: number): number;"
+    },
+    {
       "name": "emitContractEvent",
       "kind": "function",
       "text": "export declare function emitContractEvent(bus: RuntimeEventBus, sessionId: string, event: ContractEvent): void; ;; via ContractEvent = export type ContractEvent = { type: 'CONTRACT_CREATED'; contractId: string; sessionId: string; origin: ContractOrigin; ask: string; ownerAgentId: string; } | { type: 'CONTRACT_STATUS_CHANGED'; contractId: string; from: ContractStatus; to: ContractStatus; } | { type: 'CONTRACT_SHAPED'; contractId: string; forbidsDelegation: ContractShapeReading; requestsParallelAgents: ContractShapeReading; forbidsWriting: ContractShapeReading; asksForAttempts: ContractShapeReading; decisionIds: readonly string[]; } | { type: 'CONTRACT_PLANNED'; contractId: string; goal: string; criteria: readonly ContractPlannedCriterion[]; groups: readonly ContractPlannedGroup[]; units: readonly ContractPlannedUnit[]; repair: number; } | { type: 'CONTRACT_PLAN_CHECKED'; contractId: string; check: PlanCheck; targetId?: string | undefined; passed: boolean; problems: readonly ContractPlanProblem[]; decisionIds: readonly string[]; } | { type: 'CONTRACT_GROUP_STATUS_CHANGED'; contractId: string; groupId: string; from: ContractGroupStatus; to: ContractGroupStatus; } | { type: 'CONTRACT_UNIT_STATUS_CHANGED'; contractId: string; groupId: string; unitId: string; from: ContractUnitStatus; to: ContractUnitStatus; agentId?: string | undefined; } | { type: 'CONTRACT_UNIT_SPAWNED'; contractId: string; unitId: string; agentId: string; route: ContractUnitRouteSummary; purpose: UnitSpawnPurpose; } | { type: 'CONTRACT_CHECKED'; contractId: string; scope: CheckScope; targetId: string; checkId: string; trigger: CheckTrigger; result: CheckResult; criteria: readonly ContractCheckedCriterion[]; goal: { readonly verdict: CriterionVerdict; readonly outcome: ContractOutcome; }; quality: readonly ContractCheckedQuality[]; gates: readonly ContractCheckedGate[]; claims?: ClaimVerificationKind | undefined; decisionIds: readonly string[]; } | { type: 'CONTRACT_NUDGED'; contractId: string; unitId: string; nudgeId: string; checkId: string; kinds: readonly NudgeKind[]; criterionIds: readonly string[]; delivery: NudgeDelivery; agentId: string; } | { type: 'CONTRACT_NUDGE_CONSUMED'; contractId: string; unitId: string; nudgeId: string; agentId: string; turn?: number | undefined; } | { type: 'CONTRACT_CRITERION_REGRESSED'; contractId: string; unitId: string; criterionId: string; metAtCheckId: string; checkId: string; } | { type: 'CONTRACT_STALLED'; contractId: string; scope: CheckScope; targetId: string; route: StallRoute; unmetCriterionIds: readonly string[]; reason: string; decisionId?: string | undefined; } | { type: 'CONTRACT_FIX_PLANNED'; contractId: string; scope: CheckScope; targetId: string; groupId: string; unitIds: readonly string[]; round: number; } | { type: 'CONTRACT_ESCALATED'; contractId: string; escalationId: string; scope: EscalationScope; targetId: string; reason: EscalationReason; question: string; unmetCriterionIds: readonly string[]; } | { type: 'CONTRACT_OWNER_REPLIED'; contractId: string; escalationId: string; reading: OwnerReplyReading; outcome: ContractOutcome; action: string; } | { type: 'CONTRACT_GATE_RESULT'; contractId: string; targetId: string; gate: string; passed: boolean; skipped: boolean; durationMs: number; } | { type: 'CONTRACT_UNIT_SILENT'; contractId: string; unitId: string; agentId: string; silentMs: number; action: UnitSilenceAction; } | { type: 'CONTRACT_MERGE_CONFLICT'; contractId: string; unitId: string; branch: string; path: string; files: readonly string[]; } | { type: 'CONTRACT_ATTEMPTS_SELECTED'; contractId: string; unitId: string; candidateIds: readonly string[]; chosen: string | null; outcome: ContractOutcome; decisionId?: string | undefined; } | { type: 'CONTRACT_COMMITTED'; contractId: string; status: ContractCommitStatus; hash?: string | undefined; note: string; } | { type: 'CONTRACT_PASSED'; contractId: string; criteriaMet: number; criteriaJudged: number; excluded: number; nudges: number; } | { type: 'CONTRACT_FAILED'; contractId: string; reason: string; failureKind: ContractFailureKind; membersSettled: boolean; turnLimit?: number | undefined; turnLimitSource?: TurnLimitSource | undefined; } | { type: 'CONTRACT_CANCELLED'; contractId: string; reason: string; filesModified: number; } | { type: 'CONTRACT_SPAWN_GUARD_TRIGGERED'; contractId?: string | undefined; agentId: string; depth: number; activeAgents: number; reason: string; };"
+    },
+    {
+      "name": "findParallelGroup",
+      "kind": "function",
+      "text": "export declare function findParallelGroup(plan: ContractPlan): PlannedGroup | undefined;"
     },
     {
       "name": "getContractAcceptanceStakes",
@@ -18368,9 +18655,39 @@
       "text": "export declare function isTerminalUnitStatus(status: UnitStatus): boolean;"
     },
     {
+      "name": "isUnitRole",
+      "kind": "function",
+      "text": "export declare function isUnitRole(role: string): role is UnitRole;"
+    },
+    {
+      "name": "lastFencedBlock",
+      "kind": "function",
+      "text": "export declare function lastFencedBlock(text: string): string | undefined;"
+    },
+    {
       "name": "newContractId",
       "kind": "function",
       "text": "export declare function newContractId(): string;"
+    },
+    {
+      "name": "parseContractPlan",
+      "kind": "function",
+      "text": "export declare function parseContractPlan(text: string): ParsedContractPlan;"
+    },
+    {
+      "name": "planContract",
+      "kind": "function",
+      "text": "export declare function planContract(contract: Contract, deps: ContractPlannerDeps, input?: PlanContractInput): Promise<PlanningOutcome>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "planCoverage",
+      "kind": "const",
+      "text": "planCoverage: import(\"@goodvibes-jev/judgment\").Battery<{ readonly uncovered_requirement: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "planUnits",
+      "kind": "function",
+      "text": "export declare function planUnits(plan: ContractPlan): readonly PlannedUnit[];"
     },
     {
       "name": "readContractConfig",
@@ -18383,9 +18700,59 @@
       "text": "export declare function readContractSnapshot(json: string): { readonly snapshot: ContractSnapshot; } | { readonly rejected: ContractSnapshotRejection; };"
     },
     {
+      "name": "readCriterionDispositions",
+      "kind": "function",
+      "text": "export declare function readCriterionDispositions(plan: ContractPlan, ask: string, shape: RequestShape, options?: PlanCheckOptions): Promise<{ readonly dispositions: ReadonlyMap<string, CriterionDispositionRuling>; readonly decisionIds: readonly string[]; readonly usage: PlanCheckUsage; }>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "readPlannerBounds",
+      "kind": "function",
+      "text": "export declare function readPlannerBounds(configManager: ContractConfigReader): DecompositionBounds; ;; via DecompositionBounds = export interface DecompositionBounds { maxTurns: number; tokenCeiling: number; wallTimeoutMs: number; }"
+    },
+    {
+      "name": "readRequestShape",
+      "kind": "function",
+      "text": "export declare function readRequestShape(port: JudgmentPort, ask: string, options?: { readonly signal?: AbortSignal | undefined; }): Promise<{ readonly shape: RequestShape; readonly usage: { readonly inputTokens: number; readonly outputTokens: number; }; }>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "renderContractPlan",
+      "kind": "function",
+      "text": "export declare function renderContractPlan(plan: ContractPlan): string;"
+    },
+    {
+      "name": "requestShape",
+      "kind": "const",
+      "text": "requestShape: import(\"@goodvibes-jev/judgment\").Battery<{ readonly forbids_delegation: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly requests_parallel_agents: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly forbids_writing: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly asks_for_attempts: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "runPlanChecks",
+      "kind": "function",
+      "text": "export declare function runPlanChecks(plan: ContractPlan, ask: string, shape: RequestShape, options?: PlanCheckOptions): Promise<PlanVerdict>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "saysNoAtAct",
+      "kind": "function",
+      "text": "export declare function saysNoAtAct(reading: ShapeReading): boolean;"
+    },
+    {
+      "name": "saysYesAtAct",
+      "kind": "function",
+      "text": "export declare function saysYesAtAct(reading: ShapeReading): boolean;"
+    },
+    {
       "name": "serializeContract",
       "kind": "function",
       "text": "export declare function serializeContract(contract: Contract, writtenAt: number): string | null;"
+    },
+    {
+      "name": "shapeContract",
+      "kind": "function",
+      "text": "export declare function shapeContract(contract: Contract, deps: ContractPlannerDeps, options?: { readonly signal?: AbortSignal | undefined; }): Promise<ShapeOutcome>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "traceClaim",
+      "kind": "function",
+      "text": "export declare function traceClaim(criterionText: string): string;"
     },
     {
       "name": "transitionContract",
@@ -18401,6 +18768,36 @@
       "name": "transitionUnit",
       "kind": "function",
       "text": "export declare function transitionUnit(unit: ContractUnit, to: UnitStatus): StatusChange<UnitStatus>;"
+    },
+    {
+      "name": "unitShape",
+      "kind": "const",
+      "text": "unitShape: import(\"@goodvibes-jev/judgment\").Battery<{ readonly role: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly implement: \"Changes files or produces the deliverable itself\"; readonly research: \"Reads code, documents or data and reports what it found, changing nothing\"; readonly design: \"Produces a plan or design as its answer, changing nothing\"; readonly review: \"Examines other units' finished work and reports findings or opinions about it\"; readonly test: \"Only runs tests or checks against other units' work and reports the results, writing nothing\"; readonly verify: \"Only confirms or signs off that other units' work is correct or complete\"; }>; readonly narrows: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "unitShapeState",
+      "kind": "function",
+      "text": "export declare function unitShapeState(plan: ContractPlan, unit: PlannedUnit): EntryType; ;; via EntryType = type EntryType = string | { [key: string]: JsonValue; } | JsonValue[] | null;"
+    },
+    {
+      "name": "unitToolContract",
+      "kind": "function",
+      "text": "export declare function unitToolContract(role: UnitRole, shape: RequestShape): UnitToolContract;"
+    },
+    {
+      "name": "validateContractPlan",
+      "kind": "function",
+      "text": "export declare function validateContractPlan(plan: ContractPlan, ask: string, shape: RequestShape, limits: PlanLimits): PlanProblem[];"
+    },
+    {
+      "name": "withOwnerWritingDecision",
+      "kind": "function",
+      "text": "export declare function withOwnerWritingDecision(shape: RequestShape, forbidsWriting: boolean): RequestShape;"
+    },
+    {
+      "name": "writingUnclear",
+      "kind": "function",
+      "text": "export declare function writingUnclear(shape: RequestShape): boolean;"
     }
   ],
   "./platform/control-plane": [
@@ -19884,6 +20281,15 @@
       "text": "export type DecompositionOutcome = { kind: 'agent'; itemCount: number; repaired: boolean; usage?: DecompositionAgentUsage | undefined; costUsd?: number | undefined; elapsedMs: number; } | { kind: 'heuristic-configured'; } | { kind: 'gate-declined'; reasonCode: DecompositionGate['reasonCode']; } | { kind: 'fallback'; reason: string; usage?: DecompositionAgentUsage | undefined; elapsedMs?: number | undefined; };"
     },
     {
+      "name": "DecompositionRoute",
+      "kind": "interface",
+      "required": [
+        "model",
+        "provider"
+      ],
+      "text": "export interface DecompositionRoute { readonly model: string; readonly provider: string; readonly fallbackModels?: readonly string[] | undefined; readonly routing?: AgentProviderRoutingPolicy | undefined; readonly reasoningEffort?: string | undefined; } ;; via AgentProviderRoutingPolicy = export interface AgentProviderRoutingPolicy { providerSelection?: 'inherit-current' | 'concrete' | 'synthetic' | undefined; providerFailurePolicy?: 'ordered-fallbacks' | 'fail' | undefined; fallbackModels?: readonly string[] | undefined; }"
+    },
+    {
       "name": "DecompositionRunResult",
       "kind": "interface",
       "required": [
@@ -19917,7 +20323,7 @@
         "userPrompt",
         "workingDir"
       ],
-      "text": "export interface DecompositionRunnerRequest { goal: string; workingDir: string; systemPrompt: string; userPrompt: string; bounds: DecompositionBounds; attempt: 'initial' | 'repair'; }"
+      "text": "export interface DecompositionRunnerRequest { goal: string; workingDir: string; systemPrompt: string; userPrompt: string; bounds: DecompositionBounds; attempt: 'initial' | 'repair'; route?: DecompositionRoute | undefined; }"
     },
     {
       "name": "DecompositionServiceConfig",
@@ -31818,6 +32224,14 @@
       "text": "export interface CreateWorkstreamInput { readonly id?: string | undefined; readonly title: string; readonly phases: readonly PhaseSpec[]; readonly items: readonly WorkItemSpec[]; readonly budget?: BudgetCeiling | undefined; readonly isolation?: WorkstreamIsolation | undefined; readonly provenance?: WorkstreamProvenance | undefined; readonly releasePolicy?: ReleasePolicy | undefined; } ;; via ReleasePolicy = export type ReleasePolicy = 'passed' | 'reviewed-and-merged';"
     },
     {
+      "name": "DependencyGraph",
+      "kind": "interface",
+      "required": [
+        "items"
+      ],
+      "text": "export interface DependencyGraph<N extends GraphNode = GraphNode> { readonly items: readonly N[]; }"
+    },
+    {
       "name": "DependencyStatus",
       "kind": "interface",
       "required": [
@@ -31908,6 +32322,16 @@
         "to"
       ],
       "text": "export interface GraphEdgeSnapshot { readonly from: string; readonly to: string; }"
+    },
+    {
+      "name": "GraphNode",
+      "kind": "interface",
+      "required": [
+        "dependsOn",
+        "id",
+        "title"
+      ],
+      "text": "export interface GraphNode { readonly id: string; readonly title: string; readonly dependsOn: readonly string[]; readonly attemptSourceId?: string | undefined; }"
     },
     {
       "name": "GraphNodeSnapshot",
@@ -32621,7 +33045,7 @@
     {
       "name": "wouldCreateCycle",
       "kind": "function",
-      "text": "export declare function wouldCreateCycle(workstream: Workstream, fromItemId: string, toItemId: string): readonly string[] | null;"
+      "text": "export declare function wouldCreateCycle(workstream: DependencyGraph, fromItemId: string, toItemId: string): readonly string[] | null;"
     },
     {
       "name": "writeWorkstreamSnapshot",

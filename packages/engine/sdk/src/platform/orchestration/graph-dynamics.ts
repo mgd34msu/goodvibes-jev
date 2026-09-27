@@ -26,8 +26,25 @@ export interface EdgeAddResult {
   readonly reason?: string | undefined;
 }
 
-function edgeTargets(workstream: Workstream, item: WorkItem): WorkItem[] {
-  const out: WorkItem[] = [];
+/**
+ * The part of a work item the dependency walk reads. A Workstream satisfies
+ * it, and so does a contract plan's unit or group list, so the plan validator
+ * tests its graphs with the same cycle check the engine uses.
+ */
+export interface GraphNode {
+  readonly id: string;
+  readonly title: string;
+  readonly dependsOn: readonly string[];
+  readonly attemptSourceId?: string | undefined;
+}
+
+/** A dependency graph: anything with a list of nodes. */
+export interface DependencyGraph<N extends GraphNode = GraphNode> {
+  readonly items: readonly N[];
+}
+
+function edgeTargets<N extends GraphNode>(workstream: DependencyGraph<N>, item: N): N[] {
+  const out: N[] = [];
   for (const depId of item.dependsOn) {
     const dep = workstream.items.find((i) => i.id === depId);
     if (dep) out.push(dep);
@@ -37,12 +54,12 @@ function edgeTargets(workstream: Workstream, item: WorkItem): WorkItem[] {
 }
 
 /** DFS: would adding `from -> dependsOn -> to` close a cycle? Returns the path when yes. */
-export function wouldCreateCycle(workstream: Workstream, fromItemId: string, toItemId: string): readonly string[] | null {
+export function wouldCreateCycle(workstream: DependencyGraph, fromItemId: string, toItemId: string): readonly string[] | null {
   // A cycle exists if `to` (the new blocker) can already reach `from` through dependsOn edges.
   const start = workstream.items.find((i) => i.id === toItemId);
   const target = fromItemId;
   if (!start) return null;
-  const stack: Array<{ item: WorkItem; path: string[] }> = [{ item: start, path: [start.title] }];
+  const stack: Array<{ item: GraphNode; path: string[] }> = [{ item: start, path: [start.title] }];
   const seen = new Set<string>();
   while (stack.length > 0) {
     const { item, path } = stack.pop()!;

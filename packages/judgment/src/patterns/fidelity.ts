@@ -1,5 +1,5 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { choice, type JudgmentPort } from '../port/types.ts';
+import { choice, type JudgmentPort, type JudgmentResult, type Questions } from '../port/types.ts';
 import { assertBand, type ChoiceBand, type Outcome } from '../readings/bands.ts';
 import { readChoice, type ChoiceReading } from '../readings/readings.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
@@ -42,6 +42,8 @@ export interface FidelityResult {
   readonly reading: ChoiceReading<Relation> | undefined;
   readonly outcome: Outcome;
   readonly decisionId: string | undefined;
+  /** The call's token usage; absent when a missing quote settled the case without asking. */
+  readonly usage: JudgmentResult<Questions>['usage'] | undefined;
   recordAction(action: string): void;
 }
 
@@ -67,7 +69,7 @@ export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
     ...header,
     async check(port, claim, source, quote, options = {}) {
       if (quote !== undefined && !normalizeForMatch(source).includes(normalizeForMatch(quote))) {
-        return { fidelity: 'fabricated', reading: undefined, outcome: 'act', decisionId: undefined, recordAction: () => {} };
+        return { fidelity: 'fabricated', reading: undefined, outcome: 'act', decisionId: undefined, usage: undefined, recordAction: () => {} };
       }
       const result = await askAs(port, spec, 'fidelity', { claim, source }, { relation: question }, options);
       const reading = readChoice(result.answers.relation, spec.band as ChoiceBand) as ChoiceReading<Relation>;
@@ -78,6 +80,7 @@ export function defineFidelityChecker(spec: FidelitySpec): FidelityChecker {
         reading,
         outcome: reading.outcome,
         decisionId: result.decisionId,
+        usage: result.usage,
         recordAction: (action) => recordAction(port, result.decisionId, action),
       };
     },
