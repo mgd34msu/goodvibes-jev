@@ -1,0 +1,9 @@
+Contract check 4 on "Date parser": the work does not pass yet. Fix what is listed, then finish your turn; it will be checked again.
+
+Regressed (these were met at check 3 and are not met now; restore them without undoing other fixes):
+- [u1.c2] parseDate accepts RFC 2822 dates
+
+Already met (binding: do not break these):
+- [u1.c1] parseDate accepts ISO 8601 dates
+- [u1.c3] parseDate throws a RangeError naming the input on anything else
+- [u1.c5] parseDate is exported from src/index.ts

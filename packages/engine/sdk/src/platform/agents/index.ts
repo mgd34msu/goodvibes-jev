@@ -25,7 +25,6 @@ export * from './wrfc-config.js';
 export * from './wrfc-controller.js';
 export * from './wrfc-external-adapter.js';
 export * from './wrfc-gate-runtime.js';
-export * from './wrfc-gates.js';
 export * from './wrfc-plan-sync.js';
 export * from './wrfc-reporting.js';
 export * from './wrfc-runtime-events.js';

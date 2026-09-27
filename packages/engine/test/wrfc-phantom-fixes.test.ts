@@ -3,12 +3,12 @@
  *
  * Items covered:
  * - Item 1: extractPassedFromText, score < threshold always returns false
- * - Item 2: verifyEngineerClaims, disk verification, git fallback
+ * - Item 2: claim verification moved to contract/claims.ts (test/contract/claims.test.ts)
  * - Item 3: serializeChain/deserializeChain/importChain + resumeChain for interrupts
  * - Item 4a: watchdog timer, silent agent causes chain failure
  * - Item 4b: extractScoreFromText, null/malformed → null; null score → fail verdict
  */
-import { describe, expect, test, beforeEach } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,17 +16,13 @@ import {
   extractScoreFromText,
   extractPassedFromText,
 } from '../sdk/src/platform/agents/wrfc-controller.js';
-import {
-  verifyEngineerClaims,
-  parseReviewerCompletionReport,
-} from '../sdk/src/platform/agents/wrfc-reporting.js';
+import { parseReviewerCompletionReport } from '../sdk/src/platform/agents/wrfc-reporting.js';
 import { WrfcController, CURRENT_WRFC_CHAIN_SCHEMA_VERSION } from '../sdk/src/platform/agents/wrfc-controller.js';
 import { installStubFixRunner } from '../sdk/src/platform/agents/wrfc-controller-test-support.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import type { AgentManagerLike } from '../sdk/src/platform/agents/wrfc-config.js';
-import type { EngineerReport } from '../sdk/src/platform/agents/completion-report.js';
 import type { WrfcChain } from '../sdk/src/platform/agents/wrfc-types.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 
@@ -129,26 +125,6 @@ function makeRecord(overrides: Partial<AgentRecord> & { id: string; task: string
     reviewMode: 'none',
     communicationLane: 'parent-only',
     ...overrides,
-  };
-}
-
-function makeEngineerReport(overrides: {
-  filesCreated?: string[];
-  filesModified?: string[];
-}): EngineerReport {
-  return {
-    version: 1,
-    archetype: 'engineer',
-    summary: 'Done',
-    gatheredContext: [],
-    plannedActions: [],
-    appliedChanges: ['Did the work'],
-    filesCreated: overrides.filesCreated ?? [],
-    filesModified: overrides.filesModified ?? [],
-    filesDeleted: [],
-    decisions: [],
-    issues: [],
-    uncertainties: [],
   };
 }
 
@@ -394,137 +370,6 @@ describe('Item 4b: extractScoreFromText: fail-closed', () => {
     );
     // No valid score → passes false
     expect(report.passed).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Item 2: verifyEngineerClaims, disk verification
-// ---------------------------------------------------------------------------
-
-describe('Item 2: verifyEngineerClaims: disk verification', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'wrfc-claims-'));
-  });
-
-  test('empty claims in non-git dir → kind=unverifiable_no_claims, verified=false (MAJ-1 loophole closed)', () => {
-    // tmpDir is not a git repo so gitDiffDetected=false or null
-    const report = makeEngineerReport({});
-    const result = verifyEngineerClaims(report, tmpDir);
-    // MAJ-1: zero claims + no git diff → suspicious, not a clean pass
-    expect(result.kind).toBe('unverifiable_no_claims');
-    expect(result.verified).toBe(false);
-    expect(result.claimedPaths).toHaveLength(0);
-  });
-
-  test('all claimed files exist → verified=true', () => {
-    const existingFile = join(tmpDir, 'src', 'app.ts');
-    mkdirSync(join(tmpDir, 'src'), { recursive: true });
-    writeFileSync(existingFile, 'export {}');
-
-    const report = makeEngineerReport({ filesCreated: ['src/app.ts'] });
-    const result = verifyEngineerClaims(report, tmpDir);
-    expect(result.verified).toBe(true);
-    expect(result.foundPaths).toContain('src/app.ts');
-    expect(result.missingPaths).toHaveLength(0);
-  });
-
-  test('claimed file missing and no git repo → verified=false', () => {
-    // tmpDir is not a git repo, so git diff will fail → gitDiffDetected=null
-    const report = makeEngineerReport({ filesCreated: ['src/nonexistent.ts'] });
-    const result = verifyEngineerClaims(report, tmpDir);
-    // missingPaths has entries, git returns null → not verified
-    expect(result.verified).toBe(false);
-    expect(result.missingPaths).toContain('src/nonexistent.ts');
-    expect(result.gitDiffDetected).toBeNull();
-  });
-
-  test('filesModified are checked for existence', () => {
-    const existingFile = join(tmpDir, 'index.ts');
-    writeFileSync(existingFile, '// existing');
-
-    const report = makeEngineerReport({
-      filesModified: ['index.ts', 'missing.ts'],
-    });
-    const result = verifyEngineerClaims(report, tmpDir);
-    expect(result.foundPaths).toContain('index.ts');
-    expect(result.missingPaths).toContain('missing.ts');
-    // missing.ts not found; git not a repo → unverified
-    expect(result.verified).toBe(false);
-  });
-
-  test('non-engineer report → verified=true (verification is skipped)', () => {
-    const genericReport = {
-      version: 1 as const,
-      archetype: 'generic' as const,
-      summary: 'Done',
-    };
-    // Cast to CompletionReport to satisfy the type
-    const result = verifyEngineerClaims(genericReport as Parameters<typeof verifyEngineerClaims>[0], tmpDir);
-    expect(result.verified).toBe(true);
-  });
-
-  test('absolute paths in filesCreated are checked correctly', () => {
-    const absFile = join(tmpDir, 'abs.ts');
-    writeFileSync(absFile, '// abs');
-
-    const report = makeEngineerReport({ filesCreated: [absFile] });
-    const result = verifyEngineerClaims(report, tmpDir);
-    expect(result.foundPaths).toContain(absFile);
-    expect(result.verified).toBe(true);
-    expect(result.kind).toBe('files_verified');
-  });
-
-  // --- MAJ-1 tri-state tests ---
-
-  test('MAJ-1: all claimed files exist → kind=files_verified', () => {
-    const f = join(tmpDir, 'a.ts');
-    writeFileSync(f, '// a');
-    const result = verifyEngineerClaims(makeEngineerReport({ filesCreated: ['a.ts'] }), tmpDir);
-    expect(result.kind).toBe('files_verified');
-    expect(result.verified).toBe(true);
-  });
-
-  test('MAJ-1: claims missing but git shows changes → kind=git_corroborated, verified=true', () => {
-    // We cannot easily create a real git diff in a temp dir, but we can unit-test
-    // the kind derivation by directly inspecting a scenario where gitDiffDetected=true
-    // but the claimed file is missing. We do this by passing an absolute path that
-    // exists in the actual project root (which is a git repo).
-    // This test verifies the LOGIC path; we observe kind when files missing + git shows changes.
-    // Since tmpDir is NOT a git repo, gitDiffDetected=null. So we test via project root.
-    const projectRoot = process.cwd();
-    // Claim a file we know doesn't exist but the project IS a git repo with changes.
-    // With a clean repo, gitDiffDetected may be false; the important thing is the kind logic.
-    const result = verifyEngineerClaims(
-      makeEngineerReport({ filesCreated: ['__this_file_does_not_exist__.ts'] }),
-      projectRoot,
-    );
-    // kind is either 'git_corroborated' (if there are staged/unstaged changes) or 'unverified'
-    expect(['git_corroborated', 'unverified']).toContain(result.kind);
-    // verified iff git corroborated
-    expect(result.verified).toBe(result.kind === 'git_corroborated');
-  });
-
-  test('MAJ-1: no claims, git unavailable/no repo → kind=unverifiable_no_claims, verified=false', () => {
-    const result = verifyEngineerClaims(makeEngineerReport({}), tmpDir);
-    expect(result.kind).toBe('unverifiable_no_claims');
-    expect(result.verified).toBe(false);
-  });
-
-  test('MAJ-1: claims present, missing, git unavailable → kind=unverified, verified=false', () => {
-    const result = verifyEngineerClaims(
-      makeEngineerReport({ filesCreated: ['does-not-exist.ts'] }),
-      tmpDir,
-    );
-    expect(result.kind).toBe('unverified');
-    expect(result.verified).toBe(false);
-  });
-
-  test('MAJ-1: result always carries kind field', () => {
-    const result = verifyEngineerClaims(makeEngineerReport({}), tmpDir);
-    expect(result.kind).toBeDefined();
-    expect(['files_verified', 'git_corroborated', 'verified_empty', 'unverifiable_no_claims', 'unverified']).toContain(result.kind);
   });
 });
 

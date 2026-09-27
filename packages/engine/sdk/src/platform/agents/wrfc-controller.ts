@@ -8,8 +8,8 @@ import {
   buildReviewTask,
   parseEngineerCompletionReport,
   parseReviewerCompletionReport,
-  verifyEngineerClaims,
 } from './wrfc-reporting.js';
+import { verifyUnitClaims } from '../contract/claims.js';
 import type {
   QualityGateResult,
   QueuedChain,
@@ -727,7 +727,7 @@ export class WrfcController {
   }
 
   /**
-   * True when verifyEngineerClaims should be skipped: the explicit test-only
+   * True when verifyUnitClaims should be skipped: the explicit test-only
    * flag (createWrfcControllerForTest), or projectRoot not existing at
    * construction (cached, the workmap mkdirs it later). Both are false in
    * any real session, so claim verification always runs in production.
@@ -1610,7 +1610,7 @@ export class WrfcController {
    * last-stored report slots (chain.engineerReport / chain.integratorReport /
    * subtask.engineerReport) for chains serialized before touchedPaths existed.
    *
-   * Self-reported, not ground truth, same accuracy ceiling as verifyEngineerClaims. Per-agent
+   * Self-reported, not ground truth, same accuracy ceiling as verifyUnitClaims. Per-agent
    * worktree isolation (AgentWorktree.create) is not wired up in this controller today, so
    * there is no git-branch-diff signal to corroborate against.
    */
@@ -2164,7 +2164,7 @@ export class WrfcController {
     //                               advisory contract for consistency; the reviewer sees the synthetic issue.
     //   'unverified'              → claimsVerified=false,    inject synthetic issue; MIN-4 gate will block pass.
     if (!this.shouldSkipClaimVerification()) {
-      const claimVerification = verifyEngineerClaims(reportForReview, this.projectRoot);
+      const claimVerification = verifyUnitClaims(reportForReview, this.projectRoot);
       if (claimVerification.kind === 'unverifiable_no_claims') {
         // Leave chain.claimsVerified as undefined, not a confirmed false, but suspicious.
         const agentClass = chain.state === 'fixing' ? 'fixer' : 'engineer';
@@ -2352,7 +2352,7 @@ export class WrfcController {
     //   'verified_empty'          → claimsVerified=true,     no synthetic issue.
     //   'unverifiable_no_claims'  → claimsVerified=undefined, inject advisory synthetic issue only (no MIN-4 mechanical block).
     //   'unverified'              → claimsVerified=false,    inject synthetic issue; MIN-4 gate blocks pass.
-    const subtaskClaimVerification = verifyEngineerClaims(reportForReview, this.projectRoot);
+    const subtaskClaimVerification = verifyUnitClaims(reportForReview, this.projectRoot);
     if (subtaskClaimVerification.kind === 'unverifiable_no_claims') {
       // Leave subtask.claimsVerified as undefined, suspicious but not a confirmed false.
       logger.warn('WrfcController: compound subtask engineer sent success prose with no claims and no git diff, suspected phantom work', {

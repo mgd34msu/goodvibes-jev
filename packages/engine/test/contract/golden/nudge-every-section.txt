@@ -1,0 +1,23 @@
+Contract check 3 on "Date parser": the work does not pass yet. Fix what is listed, then finish your turn; it will be checked again.
+
+Not met:
+- [u1.c1] parseDate accepts ISO 8601 dates
+- [u1.c2] parseDate accepts RFC 2822 dates (major)
+Regressed (these were met at check 2 and are not met now; restore them without undoing other fixes):
+- [u1.c3] parseDate throws a RangeError naming the input on anything else
+Not shown (show evidence that these are met: run the command that proves it, or cite the file and line):
+- [u1.c4] The parser tests pass
+- [quality] Show that no existing test or check was deleted, skipped or loosened.
+Goal: The work as a whole does not yet do what the unit is for: parseDate reads every documented date form
+Quality problems:
+- Placeholder or stub code remains where working behaviour is required.
+- Errors are swallowed or failures hidden instead of reported.
+Gate failures:
+- typecheck:
+  src/date.ts(4,3): error TS2322: Type string is not assignable to type Date.
+  Found 1 error.
+Claims not found on disk:
+- src/date-rfc.ts (claimed as created or modified; not present)
+
+Already met (binding: do not break these):
+- [u1.c5] parseDate is exported from src/index.ts

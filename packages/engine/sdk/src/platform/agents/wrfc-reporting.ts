@@ -1,11 +1,8 @@
-import { existsSync } from 'node:fs';
-import { execSync } from 'node:child_process';
-import { isAbsolute, resolve } from 'node:path';
 import type { CompletionReport, Constraint, ConstraintFinding, EngineerReport, ReviewerReport } from './completion-report.js';
 import { parseCompletionReport } from './completion-report.js';
 import { buildFixerConstraintAddendum, buildReviewerConstraintAddendum } from './wrfc-prompt-addenda.js';
 import type { QualityGateResult } from './wrfc-types.js';
-import type { ClaimVerificationKind, ClaimVerificationResult } from '../contract/claims.js';
+import { parseUnitCompletionReport } from '../contract/claims.js';
 import { logger } from '../utils/logger.js';
 
 const REVIEW_BRIEF_ITEM_LIMIT = 6;
@@ -83,143 +80,16 @@ export function extractIssuesFromText(text: string): ReviewerReport['issues'] {
   return issues;
 }
 
+/**
+ * WRFC's view of the moved parser (`parseUnitCompletionReport`, contract/claims.ts):
+ * the same report, with the raw output also under the name the review task
+ * reads. Goes with the rest of WRFC in ledger task R.10.
+ */
 export function parseEngineerCompletionReport(rawOutput: string, _template?: string): ReviewableCompletionReport {
-  const report = parseCompletionReport(rawOutput);
-  if (report) return { ...report, reviewableOutput: rawOutput };
-  return {
-    version: 1,
-    archetype: 'engineer',
-    summary: rawOutput.slice(0, 500) || '(no output)',
-    reviewableOutput: rawOutput,
-    gatheredContext: [],
-    plannedActions: [],
-    appliedChanges: [],
-    filesCreated: [],
-    filesModified: [],
-    filesDeleted: [],
-    decisions: [],
-    issues: [],
-    uncertainties: [],
-  } as EngineerReport;
+  return { ...parseUnitCompletionReport(rawOutput), reviewableOutput: rawOutput };
 }
 
 export type { ClaimVerificationKind, ClaimVerificationResult } from '../contract/claims.js';
-
-/**
- * Verifies that an engineer's self-reported work actually materialised on disk.
- *
- * Strategy:
- * 1. Stat every path claimed in filesCreated/filesModified.
- * 2. If any claimed paths are missing, check git diff/status as a fallback
- *    (the engineer may have written to a path not literally listed).
- * 3. If no paths were claimed at all, fall through to git as the sole signal.
- *
- * This is intentionally lenient about the git check, a non-empty diff is
- * treated as corroborating evidence even when individual file stats fail.
- */
-export function verifyEngineerClaims(
-  report: CompletionReport,
-  projectRoot: string,
-): ClaimVerificationResult {
-  const isEngineerShape = (r: CompletionReport): r is EngineerReport => r.archetype === 'engineer';
-  if (!isEngineerShape(report)) {
-    return {
-      claimedPaths: [],
-      foundPaths: [],
-      missingPaths: [],
-      gitDiffDetected: null,
-      kind: 'verified_empty',
-      verified: true,
-      summary: 'Non-engineer report; claim verification skipped.',
-    };
-  }
-
-  const claimedPaths = [
-    ...report.filesCreated,
-    ...report.filesModified,
-    // Note: filesDeleted are intentionally excluded, we expect them to be gone.
-  ];
-
-  const foundPaths: string[] = [];
-  const missingPaths: string[] = [];
-
-  for (const p of claimedPaths) {
-    const absolute = isAbsolute(p) ? p : resolve(projectRoot, p);
-    if (existsSync(absolute)) {
-      foundPaths.push(p);
-    } else {
-      missingPaths.push(p);
-    }
-  }
-
-  // Fall through to git when paths are missing or none were claimed.
-  let gitDiffDetected: boolean | null = null;
-  if (missingPaths.length > 0 || claimedPaths.length === 0) {
-    try {
-      const result = execSync('git diff --stat HEAD', {
-        cwd: projectRoot,
-        timeout: 10_000,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-      gitDiffDetected = result.length > 0;
-    } catch {
-      // git not available or not a git repo, treat as inconclusive
-      gitDiffDetected = null;
-    }
-  }
-
-  const allClaimedFound = claimedPaths.length > 0 && missingPaths.length === 0;
-  const gitCorroborates = gitDiffDetected === true;
-
-  // Determine the tri-state kind:
-  // - files_verified: had claims and all found on disk.
-  // - git_corroborated: had claims but some missing; git diff shows work happened.
-  // - verified_empty: no claims at all but git diff shows changes (legit no-list work).
-  // - unverifiable_no_claims: no claims AND no git diff, suspicious phantom work.
-  // - unverified: had claims, some missing, and git shows nothing.
-  let kind: ClaimVerificationKind;
-  if (allClaimedFound) {
-    kind = 'files_verified';
-  } else if (claimedPaths.length > 0 && gitCorroborates) {
-    kind = 'git_corroborated';
-  } else if (claimedPaths.length === 0 && gitCorroborates) {
-    kind = 'verified_empty';
-  } else if (claimedPaths.length === 0 && !gitCorroborates) {
-    // Either git showed no changes (gitDiffDetected === false) or git was unavailable (null).
-    // Both cases are treated as unverifiable, we cannot confirm any work was done.
-    kind = 'unverifiable_no_claims';
-  } else {
-    // claimedPaths.length > 0 && missingPaths.length > 0 && !gitCorroborates
-    kind = 'unverified';
-  }
-
-  const verified = kind === 'files_verified' || kind === 'git_corroborated' || kind === 'verified_empty';
-
-  const summaryParts: string[] = [];
-  if (claimedPaths.length > 0) {
-    summaryParts.push(`${foundPaths.length}/${claimedPaths.length} claimed paths found on disk`);
-    if (missingPaths.length > 0) {
-      summaryParts.push(`missing: ${missingPaths.slice(0, 5).join(', ')}${missingPaths.length > 5 ? ` (+${missingPaths.length - 5} more)` : ''}`);
-    }
-  } else {
-    summaryParts.push('no file paths claimed');
-  }
-  if (gitDiffDetected !== null) {
-    summaryParts.push(`git diff: ${gitDiffDetected ? 'changes detected' : 'no changes detected'}`);
-  }
-  summaryParts.push(`kind: ${kind}`);
-
-  return {
-    claimedPaths,
-    foundPaths,
-    missingPaths,
-    gitDiffDetected,
-    kind,
-    verified,
-    summary: summaryParts.join('; '),
-  };
-}
 
 export function parseReviewerCompletionReport(
   chainId: string,

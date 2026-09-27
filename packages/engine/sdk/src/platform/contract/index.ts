@@ -117,8 +117,67 @@ export {
 } from './store.js';
 export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, ContractStoreOptions } from './store.js';
 export { CONTRACT_EVENT_SOURCE, contractEmitterContext, contractTraceId, emitContractEvent } from './events.js';
-export type { QualityGate, QualityGateResult } from './gates.js';
-export type { ClaimVerificationKind, ClaimVerificationResult } from './claims.js';
+export { executeGateCommand, failedGates, getSkippedGateReason, loadPackageScripts, runContractGates } from './gates.js';
+export type { QualityGate, QualityGateResult, RunContractGatesOptions } from './gates.js';
+export { parseUnitCompletionReport, verifyUnitClaims } from './claims.js';
+export type { ClaimVerificationKind, ClaimVerificationResult, UnitCompletionReport } from './claims.js';
+export {
+  COMMAND_HEAD_LINES,
+  DIFF_FILE_CAP_CHARS,
+  EVIDENCE_TOKEN_BUDGET,
+  GATE_OUTPUT_CAP_CHARS,
+  MAX_COMMANDS,
+  OUTPUT_CAP_CHARS,
+  collectChanges,
+  collectUnitEvidence,
+  commandsFromTurns,
+  evidenceTokens,
+  judgeEvidence,
+  judgeState,
+  qualityState,
+  trimEvidence,
+  writtenPaths,
+} from './evidence.js';
+export type { CheckState, ContractTurnRecord, EvidenceCommand, FileChange, RawUnitEvidence, UnitEvidence, UnitEvidenceSources } from './evidence.js';
+export {
+  CHECK_SITES,
+  applySeverities,
+  applyUnitCheck,
+  checkSettings,
+  criterionVerdict,
+  meteredPort,
+  qualityVerdict,
+  readUnmetSeverities,
+  runUnitCheck,
+  unitMustWrite,
+} from './check.js';
+export type { CheckNudge, CheckSettings, DecidedCheck, DiscardedCheck, QualityVerdict, SeverityReading, UnitCheckInput, UnitCheckOutcome } from './check.js';
+export {
+  consecutiveUnsettledChecks,
+  describeStall,
+  detectStall,
+  findRegressions,
+  madeProgress,
+  regressionCounts,
+  standingOf,
+} from './progress.js';
+export type { CheckStanding, Regression, StallLimits, StallReason } from './progress.js';
+export {
+  CONTRACT_RUNNER_AGENT_ID,
+  QUALITY_EVIDENCE_SENTENCES,
+  QUALITY_PROBLEM_SENTENCES,
+  buildNudge,
+  buildPreviousChecks,
+  checkNumberOf,
+  createNudge,
+  dispatchNudge,
+  latestSeverity,
+  nudgeDeliveryFor,
+} from './nudge.js';
+export type { NudgeDispatch, NudgeFindings, NudgeTargetState, NudgeTransport } from './nudge.js';
+export { UNIT_JUDGES, UNIT_JUDGE_BANDS, unitJudgeDecision } from './batteries/unit-judge.js';
+export { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, unitQuality } from './batteries/unit-quality.js';
+export { unmetSeverity } from './batteries/unmet-severity.js';
 // Planning (section 3).
 export {
   delegationForbidden,

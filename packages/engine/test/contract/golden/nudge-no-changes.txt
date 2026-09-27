@@ -1,0 +1,11 @@
+Contract check 1 on "Date parser": the work does not pass yet. Fix what is listed, then finish your turn; it will be checked again.
+
+Not met:
+- [u1.c1] parseDate accepts ISO 8601 dates
+- [u1.c2] parseDate accepts RFC 2822 dates
+- [u1.c3] parseDate throws a RangeError naming the input on anything else
+- [u1.c4] The parser tests pass
+- [u1.c5] parseDate is exported from src/index.ts
+Goal: The work as a whole does not yet do what the unit is for: parseDate reads every documented date form
+Claims not found on disk:
+- No changed files were found and your report names none; this unit must change files to meet its criteria.

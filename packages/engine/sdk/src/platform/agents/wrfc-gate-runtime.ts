@@ -6,7 +6,7 @@ import {
   executeGateCommand,
   getSkippedGateReason,
   loadPackageScripts,
-} from './wrfc-gates.js';
+} from '../contract/gates.js';
 import { getEnabledWrfcGates } from './wrfc-config.js';
 import { emitWrfcGateResult } from './wrfc-runtime-events.js';
 

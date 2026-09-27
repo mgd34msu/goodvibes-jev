@@ -1,0 +1,6 @@
+Previous checks (the latest verdict on each criterion; keep what is met, fix the rest):
+- [u1.c1] parseDate accepts ISO 8601 dates: met at check 1
+- [u1.c2] parseDate accepts RFC 2822 dates: not met (critical) at check 2
+- [u1.c3] parseDate throws a RangeError naming the input on anything else: not shown at check 2
+- [u1.c4] The parser tests pass: met at check 2
+- [u1.c5] parseDate is exported from src/index.ts: not yet read

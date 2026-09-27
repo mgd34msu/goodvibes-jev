@@ -186,6 +186,14 @@ export interface UnitCheck {
   readonly goal: { readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome };
   readonly quality: Readonly<Record<QualityItem, { readonly verdict: YesNoVerdict; readonly outcome: Outcome }>>;
   readonly result: CheckResult;
+  /**
+   * Every problem kind the check found, whatever its result (a turn-end check
+   * records problems it does not nudge on). Progress, stall and the unsettled
+   * count read this history.
+   */
+  readonly problems?: readonly NudgeKind[] | undefined;
+  /** The quality items read as problems. */
+  readonly qualityProblems?: readonly QualityItem[] | undefined;
   readonly decisionIds: readonly string[];
   /** hashState of the evidence (the judgment foundation's decision log). */
   readonly evidenceDigest: string;

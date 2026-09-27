@@ -2,7 +2,7 @@
  * wrfc-controller-test-support.ts
  *
  * Test-only construction seam for WrfcController. `skipClaimVerification`
- * disables the phantom-work guard (verifyEngineerClaims) and must NEVER be set
+ * disables the phantom-work guard (verifyUnitClaims) and must NEVER be set
  * by production code, so it is not a public constructor option. This factory is
  * the sole sanctioned path that injects it, named `…ForTest` per the repo's
  * test-seam idiom (cf. `buildFromFilesForTest`, `resolveSpecifierForTest`).

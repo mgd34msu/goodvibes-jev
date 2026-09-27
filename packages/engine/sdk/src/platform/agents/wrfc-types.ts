@@ -221,7 +221,7 @@ export interface WrfcChain {
    * "latest report" field) so it still reflects fixer/re-fix passes after resume, and so a
    * pre-interruption pass is never lost. Consumed by collectChainTouchedPaths() to scope
    * the auto-commit `git add` when wrfc.commitScope is 'scoped'. Self-reported, not ground
-   * truth, see verifyEngineerClaims for the same accuracy caveat.
+   * truth, see verifyUnitClaims for the same accuracy caveat.
    */
   touchedPaths?: string[] | undefined;
 }

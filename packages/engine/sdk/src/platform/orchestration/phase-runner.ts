@@ -5,8 +5,8 @@
  * agent, await completion, verify claims, run gates, commit, cleanup.
  *
  * REUSES the hardened WRFC primitives verbatim (same functions WrfcController
- * itself calls, so behavior can't fork): verifyEngineerClaims
- * (wrfc-reporting.ts) for the phantom-work guard, runWrfcGateChecks
+ * itself calls, so behavior can't fork): verifyUnitClaims
+ * (contract/claims.ts) for the phantom-work guard, runWrfcGateChecks
  * (wrfc-gate-runtime.ts) for quality gates, AgentWorktree.commitWorkingTree
  * for scoped commits, and the transport-retry / WrfcChainFailureKind pattern
  * (isTransportFailureMessage + getContractTransportRetryLimit/DelayMs) for
@@ -56,7 +56,7 @@ import {
   type EngineerReport,
   type ReviewerReport,
 } from '../agents/completion-report.js';
-import { verifyEngineerClaims } from '../agents/wrfc-reporting.js';
+import { verifyUnitClaims } from '../contract/claims.js';
 import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
 import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
 import { isTransportFailureMessage } from '../types/errors.js';
@@ -257,7 +257,7 @@ async function evaluateGate(
     // the shared projectRoot, verify claims (existence + `git diff`) against
     // that worktree path, or every real change would be falsely flagged as
     // phantom work (nothing to find at projectRoot).
-    const verification = verifyEngineerClaims(report, deps.itemWorktree?.path ?? deps.projectRoot);
+    const verification = verifyUnitClaims(report, deps.itemWorktree?.path ?? deps.projectRoot);
     if (verification.kind === 'unverified' || verification.kind === 'unverifiable_no_claims') {
       results.push({ gate: 'phantom-work-guard', passed: false, output: verification.summary, durationMs: 0 });
     }
