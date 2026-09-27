@@ -1,0 +1,123 @@
+/**
+ * Shapes shared by the task route catalog, the planner and the route tool.
+ * The candidate and plan shapes match the agent's planAgentTaskRoute output.
+ */
+
+export interface TaskRouteArgs {
+  readonly query?: unknown;
+  readonly target?: unknown;
+  readonly includeParameters?: unknown;
+  readonly limit?: unknown;
+}
+
+/** One route as the catalog builds it for a request, before its reading is attached. */
+export interface TaskRouteDraft {
+  readonly id: string;
+  readonly label: string;
+  readonly userSurface: string;
+  readonly userOutcome: string;
+  readonly why: string;
+  readonly modelRoute: string;
+  readonly inspectRoute: string;
+  readonly userRoute?: string;
+  readonly requiresConfirmation: boolean;
+  readonly missingFields?: readonly string[] | undefined;
+  readonly nextQuestion?: string;
+  readonly supportingRoutes?: readonly string[];
+  readonly policy?: string;
+}
+
+export type TaskRouteConfidence = 'high' | 'medium' | 'low';
+
+/** One route in a plan. `score` (only with includeParameters) is the route's fit probability. */
+export interface TaskRouteCandidate {
+  readonly id: string;
+  readonly label: string;
+  readonly confidence: TaskRouteConfidence;
+  readonly userSurface: string;
+  readonly userOutcome: string;
+  readonly why: string;
+  readonly modelRoute: string;
+  readonly inspectRoute: string;
+  readonly userRoute?: string;
+  readonly requiresConfirmation: boolean;
+  readonly missingFields?: readonly string[];
+  readonly nextQuestion?: string;
+  readonly supportingRoutes?: readonly string[];
+  readonly policy?: string;
+  readonly score?: number;
+}
+
+export type PersonalOpsLaneId = 'inbox' | 'calendar' | 'notes' | 'tasks' | 'reminders' | 'routines' | 'delivery';
+
+export type ChannelTask = 'receipts' | 'triage' | 'setup' | 'send' | 'status';
+
+/**
+ * What the slot readings settled about one request (slots.ts says how each
+ * flag is read). The effect flags decide confirmation and missing fields; the
+ * rest pick labels and route strings. Named ids are null when no known id was
+ * named, or the reading was too weak to put into a route string.
+ */
+export interface TaskRouteSlots {
+  readonly changes: boolean;
+  readonly starts: boolean;
+  readonly opensUi: boolean;
+  readonly controls: boolean;
+  readonly existing: boolean;
+  readonly freshRead: boolean;
+  readonly reminder: boolean;
+  readonly delegated: boolean;
+  readonly device: boolean;
+  readonly evidence: boolean;
+  readonly instructionFiles: boolean;
+  readonly lane: PersonalOpsLaneId | null;
+  readonly channelTask: ChannelTask;
+  readonly policyTarget: string | null;
+  readonly modelProvider: string | null;
+  readonly memoryProvider: string | null;
+  readonly channelTarget: string | null;
+}
+
+/**
+ * One catalog entry: the candidate id offered to the route selector, the
+ * sentence that separates it from its neighbours, and how it becomes a route
+ * for a request. Entries whose old code emitted one of several ids (a family)
+ * build the variant the slots name.
+ */
+export interface TaskRouteEntry {
+  readonly id: string;
+  readonly description: string;
+  build(request: string, slots: TaskRouteSlots): TaskRouteDraft;
+}
+
+/**
+ * Injected product catalogs; each returns the matching records, best first.
+ * The agent passes its workspace action and harness mode catalogs; a host
+ * without them gets empty match lists.
+ */
+export interface TaskRouteDeps {
+  workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
+  modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
+}
+
+export interface MissingRequestPlan {
+  readonly status: 'missing_request';
+  readonly usage: string;
+  readonly examples: readonly string[];
+  readonly policy: string;
+}
+
+export interface ReadyPlan {
+  readonly status: 'ready';
+  readonly request: string;
+  readonly preferred: TaskRouteCandidate;
+  readonly alternatives: readonly TaskRouteCandidate[];
+  readonly routesConsidered: number;
+  readonly note?: string;
+  readonly nextAction: string;
+  readonly workspaceMatches: readonly Record<string, unknown>[];
+  readonly harnessModeMatches: readonly Record<string, unknown>[];
+  readonly policy: string;
+}
+
+export type TaskRoutePlan = MissingRequestPlan | ReadyPlan;
