@@ -64,7 +64,7 @@ Published as `@goodvibes-jev/judgment`, it provides:
 - **Calibration.** Runs every battery's fixtures live and reports accuracy against confidence. It fails when a battery falls below its floor.
 
 Rules every decision site follows:
-- **The port is required.** No site keeps the old heuristic as a fallback; when Jev is unavailable, the model provider failover chain handles it.
+- **No old heuristics.** No site keeps the old keyword or regex decision as a backup. Today the port sends each request to one System One endpoint, retries within the TypeSafe SDK, times out after 10 seconds, and then raises a typed `JudgmentError` to the caller. What each decision site does when Jev cannot answer is not designed yet.
 - **No vendor names in routing.** Routing and tier rules describe the work, never a vendor or model.
 - **Deterministic checks stay code.** Security checks, money arithmetic and fixed formats are never judged.
 
