@@ -118,7 +118,23 @@ export {
   serializeContract,
 } from './store.js';
 export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, ContractStoreOptions } from './store.js';
-export type { ContractAgentHooks, ContractHoldOutcome } from './agent-hooks.js';
+export { CHANGING_TOOLS, createUnitCheckLoop } from './agent-hooks.js';
+export type { ContractAgentHooks, ContractHoldOutcome, UnitCheckEscalations, UnitCheckLoop, UnitCheckLoopDeps } from './agent-hooks.js';
+// Running contracts (sections 2.2, 4, 6.1, 7.3 and 7.4).
+export { createContractRunner, filesModified, resolveIsolation } from './runner.js';
+export type { ContractRunner, ContractRunnerDeps, ContractSteps, StartedContract } from './runner.js';
+export { ContractRun, failureFromError, isAbortError } from './run-context.js';
+export type { InFlightCheck, RunControl, RunEnv, SpawnPurpose, UnitRuntime } from './run-context.js';
+export { createGroupRunner, takeBaseline } from './group-runner.js';
+export type { ContractEngineInput, GroupRunner, GroupRunnerDeps, GroupSteps } from './group-runner.js';
+export { acquireSharedTree, groupWorkstreamInput, phaseCapacity, remainingBudget, sharedTreeWaiters, unitPhases, unitTemplate, unitWorkItem } from './workstreams.js';
+export { BRIEF_CHECKED_PARAGRAPH, briefWithPreviousChecks, buildUnitBrief } from './brief.js';
+export { addJudgmentUsage, agentsUsage, contractAgentIds, mergeAll, ownerRecordUsage, rollUpContractUsage } from './usage.js';
+export type { AgentLookup, PriceUsageFn, UsagePricing } from './usage.js';
+export { createUnitWatchdog, watchdogIntervalMs } from './watchdog.js';
+export type { UnitWatchdog, UnitWatchdogDeps, WatchedAgent } from './watchdog.js';
+export { TRANSPORT_RETRY_SITE, createUnitFailureHandling } from './unit-failures.js';
+export type { UnitFailureDeps, UnitFailureHandling } from './unit-failures.js';
 export { CONTRACT_EVENT_SOURCE, contractEmitterContext, contractTraceId, emitContractEvent } from './events.js';
 export { executeGateCommand, failedGates, getSkippedGateReason, loadPackageScripts, runContractGates } from './gates.js';
 export type { QualityGate, QualityGateResult, RunContractGatesOptions } from './gates.js';

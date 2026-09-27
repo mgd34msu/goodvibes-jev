@@ -239,7 +239,11 @@ export interface ContractUnit {
   freshAgents: number;
   transportRetries: number;
   touchedPaths: string[];
-  /** Shared mode only: the tree the unit's diff is measured against. */
+  /**
+   * The working tree the unit's diff is measured against, taken when its
+   * first agent is spawned: in the shared project root, or in the unit's
+   * item worktree in worktree mode (where it is the item branch's base).
+   */
   baseline?: { readonly head: string | null; readonly dirty: Readonly<Record<string, string | null>> } | undefined;
   usage: WorkItemUsage;
   /** The unit's completion summary. */
@@ -324,6 +328,8 @@ export interface Contract {
   readonly branch?: string | undefined;
   readonly worktreePath?: string | undefined;
   readonly baseBranch?: string | undefined;
+  /** The whole contract's token and cost ceiling; each group's workstream gets what remains of it when the group starts. */
+  readonly budget?: BudgetCeiling | undefined;
   goal: string;
   /** Contract-level criteria; every one has origin 'stated' or 'owner'. */
   criteria: Criterion[];
@@ -400,7 +406,8 @@ export const GROUP_TRANSITIONS: Readonly<Record<GroupStatus, readonly GroupStatu
 
 /**
  * Legal unit status moves. `passed` is reachable only from a check (checking
- * or held), from a best-of-N selection (held-merge), or from the owner
+ * or held), from `held-merge` (a passing unit whose branch merged, or a
+ * best-of-N selection), or from the owner
  * confirming unshown readings (awaiting-owner); the runner, not this table,
  * enforces that no criterion reads unmet at that moment. `pending` is where a
  * requeued unit (transport retry, silence retry, fresh agent) waits for its
@@ -410,7 +417,7 @@ export const UNIT_TRANSITIONS: Readonly<Record<UnitStatus, readonly UnitStatus[]
   pending: ['blocked', 'running', 'failed', 'cancelled'],
   blocked: ['pending', 'running', 'failed', 'cancelled'],
   running: ['checking', 'held', 'pending', 'failed', 'cancelled'],
-  checking: ['running', 'held', 'nudged', 'passed', 'fixing', 'awaiting-owner', 'pending', 'failed', 'cancelled'],
+  checking: ['running', 'held', 'nudged', 'passed', 'held-merge', 'fixing', 'awaiting-owner', 'pending', 'failed', 'cancelled'],
   held: ['nudged', 'passed', 'held-merge', 'fixing', 'awaiting-owner', 'pending', 'failed', 'cancelled'],
   nudged: ['running', 'checking', 'held', 'pending', 'failed', 'cancelled'],
   fixing: ['checking', 'awaiting-owner', 'failed', 'cancelled'],
