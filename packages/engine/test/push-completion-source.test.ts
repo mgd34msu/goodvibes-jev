@@ -111,15 +111,15 @@ describe('PushService.attachCompletionSource', () => {
     expect(delivered).toHaveLength(1);
   });
 
-  test('scoped to run-level kinds: subtask/work-item/phase children do not double-notify', async () => {
+  test('scoped to run-level kinds: contract group and unit children do not double-notify', async () => {
     const { service, delivered } = makeService();
     const { source, push } = fakeSource();
     service.attachCompletionSource(source);
 
-    push(finished('child-1', { kind: 'subtask' }));
-    push(finished('child-2', { kind: 'work-item' }));
+    push(finished('child-1', { kind: 'contract-group' }));
+    push(finished('child-2', { kind: 'contract-unit' }));
     push(finished('infra-1', { kind: 'watcher' }));
-    push(finished('run-1', { kind: 'chain' }));
+    push(finished('run-1', { kind: 'contract' }));
     await Promise.resolve();
 
     expect(delivered).toHaveLength(1);
