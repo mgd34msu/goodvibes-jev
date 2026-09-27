@@ -42,7 +42,7 @@ export * from './orchestration.js';
 export * from './contract.js';
 export * from './communication.js';
 export * from './planner.js';
-export * from './permissions.js';
+export * from './gate.js';
 export * from './plugins.js';
 export * from './mcp.js';
 export * from './transport.js';

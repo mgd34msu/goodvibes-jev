@@ -5,6 +5,7 @@
 
 import type { PermissionCategory } from '../../../permissions/manager.js';
 import type { PermissionRiskLevel } from '../../../permissions/types.js';
+import type { GatePresetName } from '../../../gate/presets.js';
 
 /** Permission evaluation modes (maps to PermissionsToolConfig). */
 export type PermissionMode =
@@ -17,12 +18,14 @@ export type PermissionMode =
 
 /** States for the permission decision machine. */
 export type PermissionDecisionMachineState =
+  | 'check_boundary'
   | 'collect_rules'
   | 'normalize_input'
   | 'evaluate_policy'
-  | 'evaluate_runtime_mode'
   | 'evaluate_session_override'
-  | 'final_safety_checks'
+  | 'read_stakes'
+  | 'evaluate_preset'
+  | 'awaiting_owner'
   | 'decision_emitted';
 
 /** The outcome of a permission decision. */
@@ -96,8 +99,10 @@ export interface PermissionDomainState {
   source: string;
 
   // ── Mode ───────────────────────────────────────────────────────────────────
-  /** Current global permission mode. */
+  /** Current `permissions.mode` setting value. */
   mode: PermissionMode;
+  /** The gate preset that setting selects (normal, accept-edits, plan, auto, custom). */
+  preset: GatePresetName;
   /** Whether the user is currently being prompted for a permission decision. */
   awaitingDecision: boolean;
   /** Current state of the decision state machine (while a decision is in flight). */
@@ -134,6 +139,7 @@ export function createInitialPermissionsState(): PermissionDomainState {
     lastUpdatedAt: 0,
     source: 'init',
     mode: 'default',
+    preset: 'normal',
     awaitingDecision: false,
     decisionMachineState: undefined,
     sessionApprovals: new Map(),

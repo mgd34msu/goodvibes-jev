@@ -64,7 +64,7 @@ describe('clientMayReceiveEventDomain: the migration-safe default', () => {
 
   test('EVENT_DOMAIN tags session-update→session and approval-update→permissions', () => {
     expect(EVENT_DOMAIN['session-update']).toBe('session');
-    expect(EVENT_DOMAIN['approval-update']).toBe('permissions');
+    expect(EVENT_DOMAIN['approval-update']).toBe('gate');
   });
 
   test('EVENT_DOMAIN tags session-detached→session (W3-S3 detach discriminant, defense-in-depth)', () => {
@@ -105,7 +105,7 @@ describe('publishEvent: domain-scoped delivery', () => {
     const gateway = makeGateway();
     const webui = connect(gateway, {
       clientKind: 'web',
-      domains: ['tasks', 'permissions', 'providers', 'knowledge', 'control-plane'],
+      domains: ['tasks', 'gate', 'providers', 'knowledge', 'control-plane'],
     });
 
     expect(() => {
@@ -159,12 +159,12 @@ describe('publishEvent: domain-scoped delivery', () => {
 // approval-update it would have received live. Before the fix, both replay
 // callers (WS + SSE) handed replayRecentTraffic the already-normalized
 // `selectedDomains` (which falls back to DEFAULT_DOMAINS, excluding
-// 'permissions'), so a default consumer's replay silently dropped
+// 'gate'), so a default consumer's replay silently dropped
 // approval-update even though the live path (null=deliver-all) would have
 // delivered it. These tests reconnect DURING a pending approval (the event is
 // recorded to the ring while no live client is connected/subscribed) and
 // assert the replayed frame reaches a default consumer and a
-// domains=permissions consumer, but not a domains=tasks consumer, on both
+// domains=gate consumer, but not a domains=tasks consumer, on both
 // transports.
 // ---------------------------------------------------------------------------
 
@@ -225,12 +225,12 @@ describe('replay parity: reconnect must mirror live delivery (Finding 1)', () =>
     expect(replayed).toContain('approval-update');
   });
 
-  test('(WS) a domains=permissions consumer also receives the replayed approval-update', () => {
+  test('(WS) a domains=gate consumer also receives the replayed approval-update', () => {
     const gateway = makeGateway();
     gateway.publishEvent('approval-update', { id: 'a1' });
 
     const replayed: string[] = [];
-    gateway.openWebSocketClient({ clientKind: 'web', domains: ['permissions'] }, (event) => replayed.push(event));
+    gateway.openWebSocketClient({ clientKind: 'web', domains: ['gate'] }, (event) => replayed.push(event));
 
     expect(replayed).toContain('approval-update');
   });
@@ -255,13 +255,13 @@ describe('replay parity: reconnect must mirror live delivery (Finding 1)', () =>
     expect(frames.map((frame) => frame.event)).toContain('approval-update');
   });
 
-  test('(SSE) a domains=permissions consumer also receives the replayed approval-update', async () => {
+  test('(SSE) a domains=gate consumer also receives the replayed approval-update', async () => {
     const gateway = makeGateway();
     gateway.publishEvent('approval-update', { id: 'a1' });
 
     const res = gateway.createEventStream(new Request('http://localhost/stream'), {
       clientKind: 'web',
-      domains: ['permissions'],
+      domains: ['gate'],
     });
     const frames = await readSseFrames(res, 2);
 

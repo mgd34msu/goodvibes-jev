@@ -32,7 +32,7 @@ const OBSERVED_DOMAINS = [
   'agents',
   'workflows',
   'providers',
-  'permissions',
+  'gate',
   'planner',
   'plugins',
   'mcp',

@@ -202,7 +202,7 @@ describe('approval-update: the push that replaces polling', () => {
     const gateway = new ControlPlaneGateway({ runtimeBus: new RuntimeEventBus() });
     try {
       broker.setPublisher(gateway);
-      const permissionsSub = connect(gateway, ['permissions']);
+      const permissionsSub = connect(gateway, ['gate']);
       const sessionOnlySub = connect(gateway, ['session']);
 
       await createApprovalRaiseHandler(broker)(invocation({ request: ask('call-8') }));
@@ -228,7 +228,7 @@ describe('approval-update: the push that replaces polling', () => {
       const result = await createApprovalRaiseHandler(broker)(invocation({ request: ask('call-9') })) as {
         approval: { id: string };
       };
-      const sub = connect(gateway, ['permissions']);
+      const sub = connect(gateway, ['gate']);
       await broker.resolveApproval(result.approval.id, { approved: false, actor: 'operator', actorSurface: 'web' });
 
       const pushed = approvalFrames(sub);
@@ -244,10 +244,10 @@ describe('approval-update: the push that replaces polling', () => {
     const descriptor = builtinGatewayEventDescriptors.find((entry) => entry.id === 'control.approval_update');
     expect(descriptor).toBeDefined();
     expect(descriptor?.wireEvents).toEqual(['approval-update']);
-    expect(descriptor?.domains).toEqual(['permissions']);
+    expect(descriptor?.domains).toEqual(['gate']);
     expect(descriptor?.transport).toEqual(['sse', 'ws']);
     // The descriptor's domain must be the one the fan-out actually enforces.
-    expect(EVENT_DOMAIN['approval-update']).toBe('permissions');
+    expect(EVENT_DOMAIN['approval-update']).toBe('gate');
   });
 });
 

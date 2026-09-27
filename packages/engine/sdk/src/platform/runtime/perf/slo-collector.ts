@@ -5,7 +5,7 @@
  * - turn_start_ms: TURN_SUBMITTED → first STREAM_DELTA
  * - cancel_ms: TURN_CANCEL → TURN_COMPLETED or TURN_ERROR
  * - reconnect_recovery_ms: TRANSPORT_RECONNECTING → TRANSPORT_CONNECTED
- * - permission_decision_ms: PERMISSION_REQUESTED → DECISION_EMITTED
+ * - permission_decision_ms: GATE_REQUESTED → DECISION_EMITTED
  *
  * Maintains a capped rolling window of measurements per SLO and exposes
  * p95 values for PerfMonitor integration via `getMetrics()`.
@@ -104,7 +104,7 @@ export class SloCollector {
   private readonly _cancelSamples: number[] = [];
   /** Rolling window of reconnect_recovery_ms samples (TRANSPORT_RECONNECTING → TRANSPORT_CONNECTED). */
   private readonly _reconnectSamples: number[] = [];
-  /** Rolling window of permission_decision_ms samples (PERMISSION_REQUESTED → DECISION_EMITTED). */
+  /** Rolling window of permission_decision_ms samples (GATE_REQUESTED → DECISION_EMITTED). */
   private readonly _permissionSamples: number[] = [];
 
   /** Pending turn start timestamps keyed by turnId. */
@@ -251,7 +251,7 @@ export class SloCollector {
 
     // ── permission_decision_ms ──────────────────────────────────────────────
     this._unsubs.push(
-      bus.on('PERMISSION_REQUESTED', (env) => {
+      bus.on('GATE_REQUESTED', (env) => {
         const e = toRaw(env);
         const callId = getField<string>(e, 'callId');
         if (callId !== undefined) {

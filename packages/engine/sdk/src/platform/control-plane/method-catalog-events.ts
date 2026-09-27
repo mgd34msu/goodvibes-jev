@@ -83,7 +83,7 @@ const RUNTIME_DOMAIN_DESCRIPTIONS = {
   contracts: 'Contract runner events: a contract from creation through shaping, planning and the plan checks, each unit and group status, every Jev check with its per-criterion readings, nudges and their consumption, regressions, stalls, planned fixes, owner escalations and replies, gates, commit, and the pass, failure or cancellation.',
   communication: 'Agent communication and policy events.',
   planner: 'Planner updates and plan mutation events.',
-  permissions: 'Approval and permission prompt events.',
+  gate: 'Gate events: each call through the deterministic boundary, its Jev stakes reading, the preset decision, approvals and preset changes.',
   plugins: 'Plugin registration and lifecycle events.',
   mcp: 'MCP server, tool, and connection events.',
   transport: 'Transport connect, disconnect, and lifecycle events.',
@@ -165,7 +165,7 @@ export const builtinGatewayEventDescriptors: readonly GatewayEventDescriptor[] =
     transport: ['sse', 'ws'],
     scopes: ['read:events'],
     wireEvents: ['approval-update'],
-    domains: ['permissions'],
+    domains: ['gate'],
     outputSchema: objectSchema({
       approval: SHARED_APPROVAL_RECORD_SCHEMA,
       createdAt: NUMBER_SCHEMA,

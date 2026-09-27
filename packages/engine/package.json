@@ -483,10 +483,10 @@
       "types": "./sdk/dist/events/orchestration.d.ts",
       "import": "./sdk/dist/events/orchestration.js"
     },
-    "./sdk/events/permissions": {
-      "bun": "./sdk/src/events/permissions.ts",
-      "types": "./sdk/dist/events/permissions.d.ts",
-      "import": "./sdk/dist/events/permissions.js"
+    "./sdk/events/gate": {
+      "bun": "./sdk/src/events/gate.ts",
+      "types": "./sdk/dist/events/gate.d.ts",
+      "import": "./sdk/dist/events/gate.js"
     },
     "./sdk/events/planner": {
       "bun": "./sdk/src/events/planner.ts",

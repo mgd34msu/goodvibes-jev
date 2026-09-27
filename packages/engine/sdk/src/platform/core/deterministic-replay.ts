@@ -10,6 +10,7 @@
  * its own replay-local state tree built by folding ledger entries over the
  * initial snapshot. This isolation ensures replay never affects live state.
  */
+import { GATE_EVENT_TYPES } from '../../events/gate.js';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { normalize, relative, resolve } from 'node:path';
@@ -45,7 +46,7 @@ export type ReplayMismatchOwnerDomain =
   | 'conversation'
   | 'agents'
   | 'workflows'
-  | 'permissions'
+  | 'gate'
   | 'transport'
   | 'unknown';
 
@@ -744,7 +745,7 @@ export class DeterministicReplayEngine {
     if (eventName.startsWith('TOOL_')) return 'tools';
     if (eventName.startsWith('WORKFLOW_')) return 'workflows';
     if (eventName.startsWith('AGENT_')) return 'agents';
-    if (eventName.startsWith('PERMISSION_')) return 'permissions';
+    if ((GATE_EVENT_TYPES as readonly string[]).includes(eventName)) return 'gate';
     if (eventName.startsWith('PROVIDER_') || eventName.startsWith('MODEL_')) return 'providers';
     if (eventName.startsWith('SESSION_')) return 'session';
     if (eventName.startsWith('CONVERSATION_')) return 'conversation';

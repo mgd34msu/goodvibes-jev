@@ -203,7 +203,7 @@ export type AgentUsage = {
 // Warning: (ae-forgotten-export) The symbol "ConfigEvent" needs to be exported by the entry point index.d.ts
 //
 // @public
-export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | ContractEvent | CommunicationEvent | PlannerEvent | PermissionEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
+export type AnyRuntimeEvent = SessionEvent | TurnEvent | ProviderEvent | ToolEvent | TaskEvent | AgentEvent | WorkflowEvent | OrchestrationEvent | ContractEvent | CommunicationEvent | PlannerEvent | GateEvent | PluginEvent | McpEvent | TransportEvent | CompactionEvent | GoodVibesUIEvent | OpsEvent | ForensicsEvent | SecurityEvent | AutomationEvent | RouteEvent | ControlPlaneEvent | DeliveryEvent | WatcherEvent | SurfaceEvent | KnowledgeEvent | WorkspaceEvent | FleetEvent | ConfigEvent;
 
 // @public
 export function applyPerMethodPolicy(base: ResolvedHttpRetryPolicy, methodId: string): ResolvedHttpRetryPolicy;
@@ -1574,7 +1574,7 @@ export type DomainEventMap = {
     contracts: ContractEvent;
     communication: CommunicationEvent;
     planner: PlannerEvent;
-    permissions: PermissionEvent;
+    gate: GateEvent;
     plugins: PluginEvent;
     mcp: McpEvent;
     transport: TransportEvent;
@@ -1809,6 +1809,137 @@ export const FOUNDATION_METADATA: {
     readonly operatorEventCount: 36;
     readonly peerEndpointCount: 6;
 };
+
+// @public
+export const GATE_EVENT_FIELD_SPECS: {
+    readonly [T in GateEventType]: readonly FieldSpec[];
+};
+
+// @public
+export const GATE_EVENT_TYPES: readonly GateEventType[];
+
+// @public
+export const GATE_EVENT_VALIDATORS: {
+    readonly [T in GateEventType]: (v: unknown) => ContractResult;
+};
+
+// @public
+export interface GateBoundaryCheckRecord {
+    // (undocumented)
+    readonly check: string;
+    // (undocumented)
+    readonly result: 'pass' | 'refuse' | 'skipped';
+}
+
+// @public (undocumented)
+export type GateEvent =
+/** A tool call has reached the gate. */
+    {
+    type: 'GATE_REQUESTED';
+    callId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    category: string;
+    classification?: string | undefined;
+    riskLevel?: string | undefined;
+    summary?: string | undefined;
+    reasons?: readonly string[] | undefined;
+}
+/** Policy rules have been collected from all sources. */
+| {
+    type: 'RULES_COLLECTED';
+    callId: string;
+    tool: string;
+    ruleCount: number;
+}
+/** Tool arguments have been normalised for policy evaluation. */
+| {
+    type: 'INPUT_NORMALIZED';
+    callId: string;
+    tool: string;
+}
+/** User and managed policy rules have been evaluated. */
+| {
+    type: 'POLICY_EVALUATED';
+    callId: string;
+    tool: string;
+    result: 'allow' | 'deny' | 'unknown';
+}
+/** Remembered approvals (session and durable) have been evaluated. */
+| {
+    type: 'SESSION_OVERRIDE_EVALUATED';
+    callId: string;
+    tool: string;
+    overrideApplied: boolean;
+}
+/**
+* The deterministic boundary ran: catastrophic commands, surface authority,
+* card shapes and the outward-effect check. `refusedBy` names the check
+* that refused the call, when one did.
+*/
+| {
+    type: 'BOUNDARY_CHECKED';
+    callId: string;
+    tool: string;
+    passed: boolean;
+    refusedBy?: string | undefined;
+    checks: readonly GateBoundaryCheckRecord[];
+}
+/** Jev read the call: its risk family, the facts behind its stakes, and the stakes code composed. */
+| {
+    type: 'STAKES_READ';
+    callId: string;
+    tool: string;
+    family: string;
+    stakes: 'low' | 'medium' | 'high' | 'critical';
+    mutates: boolean;
+    outward: boolean;
+    secrets: boolean;
+    irreversible: boolean;
+    beyondProject: boolean;
+    weakensSecurity: boolean;
+    uncertain: readonly string[];
+}
+/** The active preset mapped the call's stakes to an action. */
+| {
+    type: 'PRESET_EVALUATED';
+    callId: string;
+    tool: string;
+    preset: string;
+    stakes: 'low' | 'medium' | 'high' | 'critical';
+    result: 'allow' | 'ask' | 'deny';
+}
+/**
+* The active preset changed (normal, accept-edits, plan, auto, custom).
+* Emitted whenever the `permissions.mode` setting changes so surfaces can
+* render a live preset pill without polling. `mode` and `previousMode` are
+* the setting's values ('prompt' | 'allow-all' | 'custom' | 'plan' |
+* 'accept-edits'); `preset` and `previousPreset` are the preset names.
+*/
+| {
+    type: 'PRESET_CHANGED';
+    preset: string;
+    previousPreset: string;
+    mode: string;
+    previousMode: string;
+}
+/** The gate's final decision for the call. */
+| {
+    type: 'DECISION_EMITTED';
+    callId: string;
+    tool: string;
+    approved: boolean;
+    source: string;
+    sourceLayer?: string | undefined;
+    persisted?: boolean | undefined;
+    reasonCode?: string | undefined;
+    classification?: string | undefined;
+    riskLevel?: string | undefined;
+    summary?: string | undefined;
+};
+
+// @public
+export type GateEventType = GateEvent['type'];
 
 // @public (undocumented)
 export type GatewayEventTransport = 'sse' | 'ws' | 'internal';
@@ -25960,93 +26091,6 @@ export interface PerMethodRetryPolicy {
     readonly maxDelayMs?: number | undefined;
 }
 
-// @public
-export type PermissionEvent =
-/** A tool call is requesting permission evaluation. */
-    {
-    type: 'PERMISSION_REQUESTED';
-    callId: string;
-    tool: string;
-    args: Record<string, unknown>;
-    category: string;
-    classification?: string | undefined;
-    riskLevel?: string | undefined;
-    summary?: string | undefined;
-    reasons?: readonly string[] | undefined;
-}
-/** Permission rules have been collected from all sources. */
-| {
-    type: 'RULES_COLLECTED';
-    callId: string;
-    tool: string;
-    ruleCount: number;
-}
-/** Tool arguments have been normalised for policy evaluation. */
-| {
-    type: 'INPUT_NORMALIZED';
-    callId: string;
-    tool: string;
-}
-/** Static policy rules have been evaluated. */
-| {
-    type: 'POLICY_EVALUATED';
-    callId: string;
-    tool: string;
-    result: 'allow' | 'deny' | 'unknown';
-}
-/** Trust mode (yolo/normal/restricted) has been evaluated. */
-| {
-    type: 'MODE_EVALUATED';
-    callId: string;
-    tool: string;
-    mode: string;
-    result: 'allow' | 'deny' | 'unknown';
-}
-/** Session-level overrides (always-allow list) have been evaluated. */
-| {
-    type: 'SESSION_OVERRIDE_EVALUATED';
-    callId: string;
-    tool: string;
-    overrideApplied: boolean;
-}
-/** Safety checks (path traversal, sandbox escapes, etc.) have been run. */
-| {
-    type: 'SAFETY_CHECKED';
-    callId: string;
-    tool: string;
-    safe: boolean;
-    warnings: string[];
-}
-/**
-* The session permission mode changed (e.g. normal → plan → accept-edits →
-* auto). Emitted whenever the `permissions.mode` config value changes so
-* surfaces can render a live mode pill without polling. `mode` and
-* `previousMode` are the config mode values ('prompt' | 'allow-all' |
-* 'custom' | 'plan' | 'accept-edits').
-*/
-| {
-    type: 'PERMISSION_MODE_CHANGED';
-    mode: string;
-    previousMode: string;
-}
-/** Final permission decision has been emitted. */
-| {
-    type: 'DECISION_EMITTED';
-    callId: string;
-    tool: string;
-    approved: boolean;
-    source: string;
-    sourceLayer?: string | undefined;
-    persisted?: boolean | undefined;
-    reasonCode?: string | undefined;
-    classification?: string | undefined;
-    riskLevel?: string | undefined;
-    summary?: string | undefined;
-};
-
-// @public
-export type PermissionEventType = PermissionEvent['type'];
-
 // @public (undocumented)
 export class PermissionResolver {
     constructor(snapshot: ControlPlaneAuthSnapshot);
@@ -26568,7 +26612,7 @@ export type RouteSurfaceKind = (typeof ROUTE_SURFACE_KINDS)[number];
 export type RouteTargetKind = (typeof ROUTE_TARGET_KINDS)[number];
 
 // @public (undocumented)
-export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "workflows", "orchestration", "contracts", "communication", "planner", "permissions", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
+export const RUNTIME_EVENT_DOMAINS: readonly ["session", "turn", "providers", "tools", "tasks", "agents", "workflows", "orchestration", "contracts", "communication", "planner", "gate", "plugins", "mcp", "transport", "compaction", "ui", "ops", "forensics", "security", "automation", "routes", "control-plane", "deliveries", "watchers", "surfaces", "knowledge", "workspace", "fleet", "config"];
 
 // @public (undocumented)
 export type RuntimeDomainEventPayload<TDomain extends RuntimeEventTypedDomain, TEventType extends RuntimeDomainEventType<TDomain>> = RuntimeDomainEventPayloadMap[TDomain][TEventType];

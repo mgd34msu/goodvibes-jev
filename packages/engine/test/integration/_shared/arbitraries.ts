@@ -34,7 +34,7 @@ import type { WatcherEvent } from '../../../sdk/src/events/watchers.js';
 import type { SurfaceEvent } from '../../../sdk/src/events/surfaces.js';
 import type { KnowledgeEvent } from '../../../sdk/src/events/knowledge.js';
 import type { CommunicationEvent } from '../../../sdk/src/events/communication.js';
-import type { PermissionEvent } from '../../../sdk/src/events/permissions.js';
+import type { GateEvent } from '../../../sdk/src/events/gate.js';
 import type { OrchestrationEvent } from '../../../sdk/src/events/orchestration.js';
 
 // ---------------------------------------------------------------------------
@@ -108,8 +108,9 @@ export const KNOWN_EVENT_TYPES = new Set<string>([
   // planner
   'PLAN_STRATEGY_SELECTED', 'PLAN_STRATEGY_OVERRIDDEN',
   // permissions
-  'PERMISSION_REQUESTED', 'RULES_COLLECTED', 'INPUT_NORMALIZED', 'POLICY_EVALUATED',
-  'MODE_EVALUATED', 'SESSION_OVERRIDE_EVALUATED', 'SAFETY_CHECKED', 'DECISION_EMITTED',
+  'GATE_REQUESTED', 'RULES_COLLECTED', 'INPUT_NORMALIZED', 'POLICY_EVALUATED',
+  'SESSION_OVERRIDE_EVALUATED', 'BOUNDARY_CHECKED', 'STAKES_READ', 'PRESET_EVALUATED',
+  'PRESET_CHANGED', 'DECISION_EMITTED',
   // plugins
   'PLUGIN_DISCOVERED', 'PLUGIN_LOADING', 'PLUGIN_LOADED', 'PLUGIN_ACTIVE',
   'PLUGIN_DEGRADED', 'PLUGIN_ERROR', 'PLUGIN_UNLOADING', 'PLUGIN_DISABLED',
@@ -275,13 +276,15 @@ export const REQUIRED_FIELDS_BY_TYPE: {
   COMMUNICATION_SENT: ['messageId', 'fromId', 'toId', 'scope', 'kind', 'content'],
   COMMUNICATION_DELIVERED: ['messageId', 'fromId', 'toId', 'scope', 'kind'],
   COMMUNICATION_BLOCKED: ['messageId', 'fromId', 'toId', 'scope', 'kind', 'reason'],
-  PERMISSION_REQUESTED: ['callId', 'tool', 'args', 'category'],
+  GATE_REQUESTED: ['callId', 'tool', 'args', 'category'],
   RULES_COLLECTED: ['callId', 'tool', 'ruleCount'],
   INPUT_NORMALIZED: ['callId', 'tool'],
   POLICY_EVALUATED: ['callId', 'tool', 'result'],
-  MODE_EVALUATED: ['callId', 'tool', 'mode', 'result'],
+  PRESET_EVALUATED: ['callId', 'tool', 'preset', 'stakes', 'result'],
+  PRESET_CHANGED: ['preset', 'previousPreset', 'mode', 'previousMode'],
+  STAKES_READ: ['callId', 'tool', 'family', 'stakes', 'mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'uncertain'],
   SESSION_OVERRIDE_EVALUATED: ['callId', 'tool', 'overrideApplied'],
-  SAFETY_CHECKED: ['callId', 'tool', 'safe', 'warnings'],
+  BOUNDARY_CHECKED: ['callId', 'tool', 'passed', 'checks'],
   DECISION_EMITTED: ['callId', 'tool', 'approved', 'source'],
   PLUGIN_DISCOVERED: ['pluginId', 'path', 'version'],
   PLUGIN_LOADING: ['pluginId', 'path'],
@@ -492,14 +495,16 @@ export const FIXTURE_EVENTS: ReadonlyArray<{ type: string } & Record<string, unk
   { type: 'COMMUNICATION_DELIVERED', messageId: 'm1', fromId: 'a1', toId: 'a2', scope: 'direct', kind: 'directive' } satisfies CommunicationEvent,
   { type: 'COMMUNICATION_BLOCKED', messageId: 'm1', fromId: 'a1', toId: 'a2', scope: 'direct', kind: 'directive', reason: 'policy' } satisfies CommunicationEvent,
   // permissions
-  { type: 'PERMISSION_REQUESTED', callId: 'c1', tool: 'bash', args: {}, category: 'exec' } satisfies PermissionEvent,
-  { type: 'RULES_COLLECTED', callId: 'c1', tool: 'bash', ruleCount: 3 } satisfies PermissionEvent,
-  { type: 'INPUT_NORMALIZED', callId: 'c1', tool: 'bash' } satisfies PermissionEvent,
-  { type: 'POLICY_EVALUATED', callId: 'c1', tool: 'bash', result: 'allow' } satisfies PermissionEvent,
-  { type: 'MODE_EVALUATED', callId: 'c1', tool: 'bash', mode: 'yolo', result: 'allow' } satisfies PermissionEvent,
-  { type: 'SESSION_OVERRIDE_EVALUATED', callId: 'c1', tool: 'bash', overrideApplied: true } satisfies PermissionEvent,
-  { type: 'SAFETY_CHECKED', callId: 'c1', tool: 'bash', safe: true, warnings: [] } satisfies PermissionEvent,
-  { type: 'DECISION_EMITTED', callId: 'c1', tool: 'bash', approved: true, source: 'policy' } satisfies PermissionEvent,
+  { type: 'GATE_REQUESTED', callId: 'c1', tool: 'bash', args: {}, category: 'exec' } satisfies GateEvent,
+  { type: 'RULES_COLLECTED', callId: 'c1', tool: 'bash', ruleCount: 3 } satisfies GateEvent,
+  { type: 'INPUT_NORMALIZED', callId: 'c1', tool: 'bash' } satisfies GateEvent,
+  { type: 'POLICY_EVALUATED', callId: 'c1', tool: 'bash', result: 'allow' } satisfies GateEvent,
+  { type: 'PRESET_EVALUATED', callId: 'c1', tool: 'bash', preset: 'normal', stakes: 'low', result: 'allow' } satisfies GateEvent,
+  { type: 'PRESET_CHANGED', preset: 'plan', previousPreset: 'normal', mode: 'plan', previousMode: 'prompt' } satisfies GateEvent,
+  { type: 'STAKES_READ', callId: 'c1', tool: 'bash', family: 'shell-read', stakes: 'low', mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false, uncertain: [] } satisfies GateEvent,
+  { type: 'SESSION_OVERRIDE_EVALUATED', callId: 'c1', tool: 'bash', overrideApplied: true } satisfies GateEvent,
+  { type: 'BOUNDARY_CHECKED', callId: 'c1', tool: 'bash', passed: true, checks: [{ check: 'catastrophic', result: 'pass' }] } satisfies GateEvent,
+  { type: 'DECISION_EMITTED', callId: 'c1', tool: 'bash', approved: true, source: 'policy' } satisfies GateEvent,
   // plugins
   { type: 'PLUGIN_DISCOVERED', pluginId: 'p1', path: '/plugins/p1', version: '1.0.0' } satisfies PluginEvent,
   { type: 'PLUGIN_LOADING', pluginId: 'p1', path: '/plugins/p1' } satisfies PluginEvent,

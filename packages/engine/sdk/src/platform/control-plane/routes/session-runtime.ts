@@ -17,8 +17,8 @@
  * MODE-CHANGE EVENT: `sessions.permissionMode.set` mutates `permissions.mode`
  * through the ordinary config surface, which the already-wired
  * `bindPermissionModeChangeEvent` binding (permissions/mode-change-emitter.ts,
- * attached in runtime/services.ts) turns into a runtime.permissions
- * PERMISSION_MODE_CHANGED event, so surfaces stay in sync without this verb
+ * attached in runtime/services.ts) turns into a runtime.gate
+ * PRESET_CHANGED event, so surfaces stay in sync without this verb
  * emitting its own event.
  *
  * HONESTY (context usage): the token figure is the estimator's

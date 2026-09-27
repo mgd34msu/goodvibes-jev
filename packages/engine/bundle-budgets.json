@@ -131,7 +131,7 @@
     "gzip_bytes": 161,
     "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
   },
-  "./events/permissions": {
+  "./events/gate": {
     "gzip_bytes": 161,
     "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
   },

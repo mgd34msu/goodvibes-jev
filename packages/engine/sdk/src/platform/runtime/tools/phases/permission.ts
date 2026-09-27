@@ -2,9 +2,12 @@ import type { Tool, ToolCall } from '../../../types/tools.js';
 import type { ToolRuntimeContext } from '../context.js';
 import type { PhaseResult, ToolExecutionRecord } from '../types.js';
 import {
-  emitPermissionDecision,
-  emitPermissionRequested,
-} from '../../emitters/permissions.js';
+  emitBoundaryChecked,
+  emitGateDecision,
+  emitGateRequested,
+  emitPresetEvaluated,
+  emitStakesRead,
+} from '../../emitters/gate.js';
 import type { PermissionCheckResult } from '../../../permissions/types.js';
 import { buildToolDenial, buildDenialErrorMessage } from '../../../permissions/denial.js';
 import { summarizeError } from '../../../utils/error-display.js';
@@ -86,7 +89,7 @@ export async function permissionPhase(
   try {
     if (context.runtimeBus) {
       const analysis = await resolvePermissionResult();
-      emitPermissionRequested(context.runtimeBus, {
+      emitGateRequested(context.runtimeBus, {
         sessionId: context.ids.sessionId,
         traceId: context.ids.traceId,
         source: 'permission-manager',
@@ -101,7 +104,7 @@ export async function permissionPhase(
         reasons: analysis.analysis.reasons,
       });
 
-      emitPermissionDecision(context.runtimeBus, {
+      emitGateDecision(context.runtimeBus, {
         sessionId: context.ids.sessionId,
         traceId: context.ids.traceId,
         source: 'permission-manager',

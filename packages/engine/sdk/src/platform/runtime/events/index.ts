@@ -33,7 +33,7 @@ export type {
   WorkPlanTaskEventRecord,
   WorkPlanTaskStatus,
 } from '../../../events/planner.js';
-export type { PermissionEvent, PermissionEventType } from '../../../events/permissions.js';
+export type { GateEvent, GateEventType } from '../../../events/gate.js';
 export type { PluginEvent, PluginEventType } from '../../../events/plugins.js';
 export type { McpEvent, McpEventType } from '../../../events/mcp.js';
 export type { TransportEvent, TransportEventType } from '../../../events/transport.js';

@@ -15,7 +15,7 @@ import type { OrchestrationEvent } from './orchestration.js';
 import type { ContractEvent } from './contract.js';
 import type { CommunicationEvent } from './communication.js';
 import type { PlannerEvent } from './planner.js';
-import type { PermissionEvent } from './permissions.js';
+import type { GateEvent } from './gate.js';
 import type { PluginEvent } from './plugins.js';
 import type { McpEvent } from './mcp.js';
 import type { TransportEvent } from './transport.js';
@@ -48,7 +48,7 @@ export type AnyRuntimeEvent =
   | ContractEvent
   | CommunicationEvent
   | PlannerEvent
-  | PermissionEvent
+  | GateEvent
   | PluginEvent
   | McpEvent
   | TransportEvent
@@ -104,7 +104,7 @@ export type DomainEventMap = {
   contracts: ContractEvent;
   communication: CommunicationEvent;
   planner: PlannerEvent;
-  permissions: PermissionEvent;
+  gate: GateEvent;
   plugins: PluginEvent;
   mcp: McpEvent;
   transport: TransportEvent;

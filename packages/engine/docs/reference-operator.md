@@ -95499,7 +95499,7 @@ Return the permission mode currently in effect for a session (plan/normal/accept
 
 #### `sessions.permissionMode.set`
 
-Set a session's permission mode to plan, normal, accept-edits, or auto. Emits runtime.permissions (PERMISSION_MODE_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.
+Set a session's gate preset to plan, normal, accept-edits, or auto. Emits runtime.gate (PRESET_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.
 
 - Title: `Set Session Permission Mode`
 - Source: `builtin`
@@ -95507,7 +95507,7 @@ Set a session's permission mode to plan, normal, accept-edits, or auto. Emits ru
 - Transport: `http`, `ws`
 - HTTP: `POST /api/sessions/{sessionId}/permission-mode`
 - Scopes: `write:sessions`
-- Emits events: `runtime.permissions`
+- Emits events: `runtime.gate`
 - Dangerous: `no`
 - Invokable: `yes`
 
@@ -105753,6 +105753,46 @@ Forensics and incident trail events.
 }
 ```
 
+#### `runtime.gate`
+
+Gate events: each call through the deterministic boundary, its Jev stakes reading, the preset decision, approvals and preset changes.
+
+- Title: `gate Domain Events`
+- Source: `builtin`
+- Transport: `sse`, `ws`
+- Scopes: `read:events`
+- Domains: `gate`
+- Wire events: `gate`
+
+##### Payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
 #### `runtime.knowledge`
 
 Knowledge ingest, extraction, projection, packet, and job events.
@@ -105883,46 +105923,6 @@ Higher-level orchestration and planner coordination events.
 - Scopes: `read:events`
 - Domains: `orchestration`
 - Wire events: `orchestration`
-
-##### Payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-#### `runtime.permissions`
-
-Approval and permission prompt events.
-
-- Title: `permissions Domain Events`
-- Source: `builtin`
-- Transport: `sse`, `ws`
-- Scopes: `read:events`
-- Domains: `permissions`
-- Wire events: `permissions`
 
 ##### Payload schema
 
@@ -106563,7 +106563,7 @@ Every approval record transition, pushed the moment the broker records it: an as
 - Source: `builtin`
 - Transport: `sse`, `ws`
 - Scopes: `read:events`
-- Domains: `permissions`
+- Domains: `gate`
 - Wire events: `approval-update`
 
 ##### Payload schema

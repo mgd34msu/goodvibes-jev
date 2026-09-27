@@ -11,7 +11,7 @@ import {
   createDaemonKnowledgeRouteHandlers,
   StepUpService,
 } from '../sdk/src/daemon.ts';
-import { emitPermissionModeChanged } from '../sdk/src/platform/runtime/emitters/index.ts';
+import { emitPresetChanged } from '../sdk/src/platform/runtime/emitters/index.ts';
 
 describe('sdk public facades', () => {
   test('root re-exports contracts, transport, operator, and peer clients', () => {
@@ -43,7 +43,7 @@ describe('sdk public facades', () => {
     expect(typeof service.createVerifier()).toBe('function');
   });
 
-  test('emitPermissionModeChanged (and the typed emitter barrel generally) is reachable through ./platform/runtime/emitters, not a deep import only', () => {
-    expect(typeof emitPermissionModeChanged).toBe('function');
+  test('emitPresetChanged (and the typed emitter barrel generally) is reachable through ./platform/runtime/emitters, not a deep import only', () => {
+    expect(typeof emitPresetChanged).toBe('function');
   });
 });

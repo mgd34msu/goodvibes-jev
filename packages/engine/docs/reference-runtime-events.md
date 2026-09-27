@@ -342,142 +342,10 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
-### `knowledge`
-
-- `runtime.knowledge` -> `knowledge`
-
-#### `runtime.knowledge` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-### `mcp`
-
-- `runtime.mcp` -> `mcp`
-
-#### `runtime.mcp` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-### `ops`
-
-- `runtime.ops` -> `ops`
-
-#### `runtime.ops` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-### `orchestration`
-
-- `runtime.orchestration` -> `orchestration`
-
-#### `runtime.orchestration` payload schema
-
-```json
-{
-  "type": "object",
-  "additionalProperties": {
-    "anyOf": [
-      {
-        "type": "string"
-      },
-      {
-        "type": "number"
-      },
-      {
-        "type": "boolean"
-      },
-      {
-        "type": "null"
-      },
-      {},
-      {
-        "type": "array",
-        "items": {}
-      }
-    ]
-  }
-}
-```
-
-### `permissions`
+### `gate`
 
 - `control.approval_update` -> `approval-update`
-- `runtime.permissions` -> `permissions`
+- `runtime.gate` -> `gate`
 
 #### `control.approval_update` payload schema
 
@@ -922,7 +790,139 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
 }
 ```
 
-#### `runtime.permissions` payload schema
+#### `runtime.gate` payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
+### `knowledge`
+
+- `runtime.knowledge` -> `knowledge`
+
+#### `runtime.knowledge` payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
+### `mcp`
+
+- `runtime.mcp` -> `mcp`
+
+#### `runtime.mcp` payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
+### `ops`
+
+- `runtime.ops` -> `ops`
+
+#### `runtime.ops` payload schema
+
+```json
+{
+  "type": "object",
+  "additionalProperties": {
+    "anyOf": [
+      {
+        "type": "string"
+      },
+      {
+        "type": "number"
+      },
+      {
+        "type": "boolean"
+      },
+      {
+        "type": "null"
+      },
+      {},
+      {
+        "type": "array",
+        "items": {}
+      }
+    ]
+  }
+}
+```
+
+### `orchestration`
+
+- `runtime.orchestration` -> `orchestration`
+
+#### `runtime.orchestration` payload schema
 
 ```json
 {

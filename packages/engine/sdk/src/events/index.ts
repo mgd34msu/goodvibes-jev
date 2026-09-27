@@ -103,7 +103,8 @@ export type {
   WorkPlanTaskEventRecord,
   WorkPlanTaskStatus,
 } from './planner.js';
-export type { PermissionEvent, PermissionEventType } from './permissions.js';
+export type { GateBoundaryCheckRecord, GateEvent, GateEventType } from './gate.js';
+export { GATE_EVENT_TYPES } from './gate.js';
 export type { PluginEvent, PluginEventType } from './plugins.js';
 export type { McpEvent, McpEventType, McpServerRole, McpTrustMode, QuarantineReason } from './mcp.js';
 export type { TransportEvent, TransportEventType } from './transport.js';
@@ -153,6 +154,8 @@ export type { WorkspaceEvent, WorkspaceEventType } from './workspace.js';
 export {
   CONTRACT_EVENT_FIELD_SPECS,
   CONTRACT_EVENT_VALIDATORS,
+  GATE_EVENT_FIELD_SPECS,
+  GATE_EVENT_VALIDATORS,
   isKnownEventType,
   registeredEventTypes,
   validateKnownEvent,

@@ -439,7 +439,7 @@ export const builtinGatewayControlCoreMethodDescriptors: readonly GatewayMethodD
   // Session-scoped permission mode (read + write) and context-usage exposure on
   // the operator wire. The daemon answers only for the live LOCAL runtime it
   // hosts; any other session id is an honest 404 (SESSION_NOT_LOCAL). A mode
-  // change flows to surfaces as runtime.permissions (PERMISSION_MODE_CHANGED)
+  // change flows to surfaces as runtime.gate (PRESET_CHANGED)
   // via the config-change binding, see routes/session-runtime.ts and
   // permissions/mode-change-emitter.ts. The context-usage figures derive from
   // the token ESTIMATOR (estimatedContextTokens), not a measured provider
@@ -460,11 +460,11 @@ export const builtinGatewayControlCoreMethodDescriptors: readonly GatewayMethodD
   methodDescriptor({
     id: 'sessions.permissionMode.set',
     title: 'Set Session Permission Mode',
-    description: 'Set a session\'s permission mode to plan, normal, accept-edits, or auto. Emits runtime.permissions (PERMISSION_MODE_CHANGED) so every surface stays in sync. Only the daemon\'s live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.',
+    description: 'Set a session\'s gate preset to plan, normal, accept-edits, or auto. Emits runtime.gate (PRESET_CHANGED) so every surface stays in sync. Only the daemon\'s live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.',
     category: 'sessions',
     scopes: ['write:sessions'],
     http: { method: 'POST', path: '/api/sessions/{sessionId}/permission-mode' },
-    events: [runtimeEventId('permissions')],
+    events: [runtimeEventId('gate')],
     inputSchema: objectSchema({
       sessionId: STRING_SCHEMA,
       mode: { type: 'string', enum: ['plan', 'normal', 'accept-edits', 'auto'] },

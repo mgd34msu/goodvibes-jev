@@ -9,7 +9,7 @@ import { createStore } from 'zustand/vanilla';
 import type { StoreApi } from 'zustand';
 import type { TurnEvent } from '../../../events/turn.js';
 import type { ToolEvent } from '../../../events/tools.js';
-import type { PermissionEvent } from '../../../events/permissions.js';
+import type { GateEvent } from '../../../events/gate.js';
 import type { TaskEvent } from '../../../events/tasks.js';
 import type { AgentEvent } from '../../../events/agents.js';
 import type { OrchestrationEvent } from '../../../events/orchestration.js';
@@ -97,7 +97,7 @@ function mutateRuntimeStore(store: RuntimeStore, updater: (state: RuntimeState) 
 export interface DomainDispatch {
   dispatchTurnEvent(event: TurnEvent): void;
   dispatchToolEvent(event: ToolEvent): void;
-  dispatchPermissionEvent(event: PermissionEvent): void;
+  dispatchGateEvent(event: GateEvent): void;
   dispatchTaskEvent(event: TaskEvent): void;
   dispatchAgentEvent(event: AgentEvent): void;
   dispatchOrchestrationEvent(event: OrchestrationEvent): void;
@@ -151,7 +151,7 @@ export function createDomainDispatch(store: RuntimeStore): DomainDispatch {
         conversation: updateConversationState(state.conversation, event),
       }));
     },
-    dispatchPermissionEvent(event) {
+    dispatchGateEvent(event) {
       mutateRuntimeStore(store, (state) => ({
         ...state,
         permissions: updatePermissionState(state.permissions, event),

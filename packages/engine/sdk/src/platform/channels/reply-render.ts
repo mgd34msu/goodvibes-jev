@@ -428,7 +428,7 @@ export function normalizeChannelRenderEventFromRuntime(
       return [renderEvent('plan', 'progress', envelope, {
         text: payload.strategy ? `Overridden to ${payload.strategy}` : 'Planner override cleared',
       })];
-    case 'PERMISSION_REQUESTED':
+    case 'GATE_REQUESTED':
       return [renderEvent('approval', 'progress', envelope, {
         text: payload.summary ?? `Permission requested for ${payload.tool}`,
       })];

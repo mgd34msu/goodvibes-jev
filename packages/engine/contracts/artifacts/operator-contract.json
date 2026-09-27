@@ -93661,7 +93661,7 @@
       {
         "id": "sessions.permissionMode.set",
         "title": "Set Session Permission Mode",
-        "description": "Set a session's permission mode to plan, normal, accept-edits, or auto. Emits runtime.permissions (PERMISSION_MODE_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.",
+        "description": "Set a session's gate preset to plan, normal, accept-edits, or auto. Emits runtime.gate (PRESET_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.",
         "category": "sessions",
         "source": "builtin",
         "access": "authenticated",
@@ -93677,7 +93677,7 @@
           "path": "/api/sessions/{sessionId}/permission-mode"
         },
         "events": [
-          "runtime.permissions"
+          "runtime.gate"
         ],
         "inputSchema": {
           "type": "object",
@@ -103757,6 +103757,50 @@
         }
       },
       {
+        "id": "runtime.gate",
+        "title": "gate Domain Events",
+        "description": "Gate events: each call through the deterministic boundary, its Jev stakes reading, the preset decision, approvals and preset changes.",
+        "category": "runtime-domain",
+        "source": "builtin",
+        "transport": [
+          "sse",
+          "ws"
+        ],
+        "scopes": [
+          "read:events"
+        ],
+        "domains": [
+          "gate"
+        ],
+        "wireEvents": [
+          "gate"
+        ],
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {},
+              {
+                "type": "array",
+                "items": {}
+              }
+            ]
+          }
+        }
+      },
+      {
         "id": "runtime.knowledge",
         "title": "knowledge Domain Events",
         "description": "Knowledge ingest, extraction, projection, packet, and job events.",
@@ -103906,50 +103950,6 @@
         ],
         "wireEvents": [
           "orchestration"
-        ],
-        "outputSchema": {
-          "type": "object",
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              },
-              {},
-              {
-                "type": "array",
-                "items": {}
-              }
-            ]
-          }
-        }
-      },
-      {
-        "id": "runtime.permissions",
-        "title": "permissions Domain Events",
-        "description": "Approval and permission prompt events.",
-        "category": "runtime-domain",
-        "source": "builtin",
-        "transport": [
-          "sse",
-          "ws"
-        ],
-        "scopes": [
-          "read:events"
-        ],
-        "domains": [
-          "permissions"
-        ],
-        "wireEvents": [
-          "permissions"
         ],
         "outputSchema": {
           "type": "object",
@@ -104650,7 +104650,7 @@
           "read:events"
         ],
         "domains": [
-          "permissions"
+          "gate"
         ],
         "wireEvents": [
           "approval-update"

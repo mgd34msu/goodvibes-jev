@@ -1,6 +1,6 @@
 import type { AgentEvent } from '../../../../events/agents.js';
 import type { CompactionEvent } from '../../../../events/compaction.js';
-import type { PermissionEvent } from '../../../../events/permissions.js';
+import type { GateEvent } from '../../../../events/gate.js';
 import type { SessionEvent } from '../../../../events/session.js';
 import { endAgentSpan, recordAgentPhase, startAgentSpan } from '../spans/agent.js';
 import { endCompactionSpan, recordCompactionPhase, startCompactionSpan } from '../spans/compaction.js';
@@ -116,7 +116,7 @@ export function attachPermissionDomain(
   const unsubs: Array<() => void> = [];
 
   unsubs.push(
-    bus.on('PERMISSION_REQUESTED', (env: Env<Extract<PermissionEvent, { type: 'PERMISSION_REQUESTED' }>>) => {
+    bus.on('GATE_REQUESTED', (env: Env<Extract<GateEvent, { type: 'GATE_REQUESTED' }>>) => {
       helpers.safe(() => {
         const span = startPermissionSpan(helpers.tracer, {
           callId: env.payload.callId,
@@ -130,7 +130,7 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('RULES_COLLECTED', (env: Env<Extract<PermissionEvent, { type: 'RULES_COLLECTED' }>>) => {
+    bus.on('RULES_COLLECTED', (env: Env<Extract<GateEvent, { type: 'RULES_COLLECTED' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
           recordPermissionPhase(span, 'rules_collected', {
@@ -142,7 +142,7 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('INPUT_NORMALIZED', (env: Env<Extract<PermissionEvent, { type: 'INPUT_NORMALIZED' }>>) => {
+    bus.on('INPUT_NORMALIZED', (env: Env<Extract<GateEvent, { type: 'INPUT_NORMALIZED' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => recordPermissionPhase(span, 'input_normalized'));
       });
@@ -150,7 +150,7 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('POLICY_EVALUATED', (env: Env<Extract<PermissionEvent, { type: 'POLICY_EVALUATED' }>>) => {
+    bus.on('POLICY_EVALUATED', (env: Env<Extract<GateEvent, { type: 'POLICY_EVALUATED' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
           recordPermissionPhase(span, 'policy_evaluated', {
@@ -162,12 +162,12 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('MODE_EVALUATED', (env: Env<Extract<PermissionEvent, { type: 'MODE_EVALUATED' }>>) => {
+    bus.on('STAKES_READ', (env: Env<Extract<GateEvent, { type: 'STAKES_READ' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
-          recordPermissionPhase(span, 'mode_evaluated', {
-            'permission.mode': env.payload.mode,
-            'permission.mode_result': env.payload.result,
+          recordPermissionPhase(span, 'stakes_read', {
+            'gate.family': env.payload.family,
+            'gate.stakes': env.payload.stakes,
           });
         });
       });
@@ -175,7 +175,20 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('SESSION_OVERRIDE_EVALUATED', (env: Env<Extract<PermissionEvent, { type: 'SESSION_OVERRIDE_EVALUATED' }>>) => {
+    bus.on('PRESET_EVALUATED', (env: Env<Extract<GateEvent, { type: 'PRESET_EVALUATED' }>>) => {
+      helpers.safe(() => {
+        helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
+          recordPermissionPhase(span, 'preset_evaluated', {
+            'gate.preset': env.payload.preset,
+            'gate.preset_result': env.payload.result,
+          });
+        });
+      });
+    }),
+  );
+
+  unsubs.push(
+    bus.on('SESSION_OVERRIDE_EVALUATED', (env: Env<Extract<GateEvent, { type: 'SESSION_OVERRIDE_EVALUATED' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
           recordPermissionPhase(span, 'session_override_evaluated', {
@@ -187,12 +200,12 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('SAFETY_CHECKED', (env: Env<Extract<PermissionEvent, { type: 'SAFETY_CHECKED' }>>) => {
+    bus.on('BOUNDARY_CHECKED', (env: Env<Extract<GateEvent, { type: 'BOUNDARY_CHECKED' }>>) => {
       helpers.safe(() => {
         helpers.withSpan(permissionSpans, env.payload.callId, (span) => {
-          recordPermissionPhase(span, 'safety_checked', {
-            'permission.safe': env.payload.safe,
-            'permission.warning_count': env.payload.warnings.length,
+          recordPermissionPhase(span, 'boundary_checked', {
+            'gate.boundary_passed': env.payload.passed,
+            'gate.boundary_refused_by': env.payload.refusedBy ?? '',
           });
         });
       });
@@ -200,7 +213,7 @@ export function attachPermissionDomain(
   );
 
   unsubs.push(
-    bus.on('DECISION_EMITTED', (env: Env<Extract<PermissionEvent, { type: 'DECISION_EMITTED' }>>) => {
+    bus.on('DECISION_EMITTED', (env: Env<Extract<GateEvent, { type: 'DECISION_EMITTED' }>>) => {
       helpers.safe(() => {
         helpers.closeSpan(permissionSpans, env.payload.callId, (span) => {
           endPermissionSpan(span, {

@@ -168,7 +168,7 @@ describe('structured plan-mode denial', () => {
 // ── mode-change runtime event ────────────────────────────────────────────────
 
 describe('permission mode-change event', () => {
-  test('bindPermissionModeChangeEvent emits PERMISSION_MODE_CHANGED on real transitions', () => {
+  test('bindPermissionModeChangeEvent emits the gate PRESET_CHANGED event on real transitions', () => {
     let listener: ConfigChangeCallback<'permissions.mode'> | null = null;
     const configManager: Pick<ConfigManager, 'subscribe'> = {
       subscribe: (_key, cb) => {
@@ -186,8 +186,8 @@ describe('permission mode-change event', () => {
     listener!('plan', 'plan'); // no-op transition, must not emit
 
     expect(emitted).toHaveLength(1);
-    expect(emitted[0]!.channel).toBe('permissions');
-    expect(emitted[0]!.payload).toMatchObject({ type: 'PERMISSION_MODE_CHANGED', mode: 'plan', previousMode: 'prompt' });
+    expect(emitted[0]!.channel).toBe('gate');
+    expect(emitted[0]!.payload).toMatchObject({ type: 'PRESET_CHANGED', mode: 'plan', previousMode: 'prompt', preset: 'plan', previousPreset: 'normal' });
     unsub();
   });
 });

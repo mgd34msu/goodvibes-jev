@@ -10,7 +10,7 @@ export const RUNTIME_EVENT_DOMAINS = [
   "contracts",
   "communication",
   "planner",
-  "permissions",
+  "gate",
   "plugins",
   "mcp",
   "transport",

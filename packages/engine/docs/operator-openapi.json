@@ -90995,7 +90995,7 @@
       "post": {
         "operationId": "sessions.permissionMode.set",
         "summary": "Set Session Permission Mode",
-        "description": "Set a session's permission mode to plan, normal, accept-edits, or auto. Emits runtime.permissions (PERMISSION_MODE_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.",
+        "description": "Set a session's gate preset to plan, normal, accept-edits, or auto. Emits runtime.gate (PRESET_CHANGED) so every surface stays in sync. Only the daemon's live local runtime session is settable; any other session id is a 404 SESSION_NOT_LOCAL.",
         "tags": [
           "sessions"
         ],

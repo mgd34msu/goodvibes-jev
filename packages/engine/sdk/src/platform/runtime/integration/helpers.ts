@@ -137,7 +137,7 @@ const EVENT_DOMAINS: readonly RuntimeEventDomain[] = [
   'session',
   'turn',
   'tools',
-  'permissions',
+  'gate',
   'tasks',
   'agents',
   'workflows',

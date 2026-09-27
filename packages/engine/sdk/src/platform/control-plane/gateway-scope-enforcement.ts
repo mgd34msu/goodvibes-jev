@@ -64,7 +64,7 @@ export function clientMaySeeScopedChannel(client: ScopedClientView, requiredScop
  */
 export const EVENT_DOMAIN: Readonly<Record<string, RuntimeEventDomain>> = {
   'session-update': 'session',
-  'approval-update': 'permissions',
+  'approval-update': 'gate',
   // sessions.detach (see CHANGELOG 1.0.0): `session-detached` is TODAY a payload discriminant
   // inside the `session-update` channel (session-broker.ts publishUpdate wraps
   // it), so it is already domain-scoped by the entry above. This tag is

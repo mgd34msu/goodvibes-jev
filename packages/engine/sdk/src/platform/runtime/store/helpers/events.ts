@@ -1,7 +1,7 @@
 // Barrel: re-exports event types needed by store reducers.
 // Reduces the 5-level deep import path (../../../../../events/*) to a single hop.
 export type { CompactionEvent } from '../../../../events/compaction.js';
-export type { PermissionEvent } from '../../../../events/permissions.js';
+export type { GateEvent } from '../../../../events/gate.js';
 export type { TaskEvent } from '../../../../events/tasks.js';
 export type { AgentEvent } from '../../../../events/agents.js';
 export type { OrchestrationEvent } from '../../../../events/orchestration.js';

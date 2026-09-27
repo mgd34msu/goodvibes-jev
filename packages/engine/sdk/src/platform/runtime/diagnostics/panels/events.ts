@@ -27,7 +27,7 @@ const ALL_DOMAINS: readonly RuntimeEventDomain[] = [
   'tools',
   'tasks',
   'agents',
-  'permissions',
+  'gate',
   'plugins',
   'mcp',
   'transport',

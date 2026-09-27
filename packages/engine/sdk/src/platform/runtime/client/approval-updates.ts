@@ -38,7 +38,7 @@ import { summarizeError } from '../../utils/error-display.js';
 /** The wire event name the broker publishes approval transitions on. */
 export const APPROVAL_UPDATE_WIRE_EVENT = 'approval-update';
 /** The event domain a subscriber must include when it narrows with `?domains=`. */
-export const APPROVAL_UPDATE_DOMAIN = 'permissions';
+export const APPROVAL_UPDATE_DOMAIN = 'gate';
 
 /**
  * An approval record as a subscriber needs to read it. Deliberately narrow:

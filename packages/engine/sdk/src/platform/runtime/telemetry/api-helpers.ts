@@ -86,7 +86,7 @@ export const ALL_DOMAINS: readonly RuntimeEventDomain[] = [
   'orchestration',
   'communication',
   'planner',
-  'permissions',
+  'gate',
   'plugins',
   'mcp',
   'transport',
@@ -206,7 +206,7 @@ export function inferErrorSource(domain: RuntimeEventDomain): PlatformErrorSourc
       return 'tool';
     case 'transport':
       return 'transport';
-    case 'permissions':
+    case 'gate':
     case 'security':
       return 'permission';
     default:

@@ -138,8 +138,10 @@ import {
   validateSurfaceCapabilityChanged,
 } from './contracts/automation-route.js';
 import { CONTRACT_EVENT_VALIDATORS } from './contracts/contract-runner.js';
+import { GATE_EVENT_VALIDATORS } from './contracts/gate.js';
 
 export { CONTRACT_EVENT_FIELD_SPECS, CONTRACT_EVENT_VALIDATORS } from './contracts/contract-runner.js';
+export { GATE_EVENT_FIELD_SPECS, GATE_EVENT_VALIDATORS } from './contracts/gate.js';
 
 // Domain-grouping rule: entries are arranged by event domain (turn/tool, agent,
 // mcp, plugin, automation, route, control-plane, delivery, watcher, surface,
@@ -213,6 +215,8 @@ const EVENT_VALIDATORS: Record<string, (v: unknown) => import('./contracts/share
   SURFACE_ENABLED: validateSurfaceEnabled,
   // contracts domain (every CONTRACT_* type; the table is exhaustive by type)
   ...CONTRACT_EVENT_VALIDATORS,
+  // gate domain (every gate event type; the table is exhaustive by type)
+  ...GATE_EVENT_VALIDATORS,
 };
 
 /**

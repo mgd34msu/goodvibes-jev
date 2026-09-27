@@ -98,14 +98,15 @@ export const DEFAULT_BUDGETS: PerfBudget[] = [
       'Sustained violations indicate degraded transport reliability.',
   },
   {
-    name: 'SLO: Permission Decision (p95)',
+    name: 'SLO: Gate Decision (p95)',
     metric: 'slo.permission_decision.p95',
-    threshold: 100,
+    threshold: 2500,
     unit: 'ms',
     tolerance: 3,
     description:
-      'p95 duration from PERMISSION_REQUESTED to DECISION_EMITTED must be under 100ms. ' +
-      'Sustained violations indicate permission pipeline overhead regression.',
+      'p95 duration from GATE_REQUESTED to DECISION_EMITTED must be under 2500ms. ' +
+      'The span includes one Jev stakes reading for a side-effecting call (two requests in parallel); ' +
+      'sustained violations indicate gate or judgment-port latency regression.',
   },
   // ── Integration Delivery SLO ─────────────────────────────────────────────
   {

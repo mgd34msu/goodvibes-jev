@@ -241,13 +241,13 @@ describe('S2c re-point: session mutators advertise control.session_update', () =
     // The session-LIFECYCLE mutators drive the broker `session-update` broadcast and
     // must advertise control.session_update. sessions.permissionMode.set is the one
     // write:sessions mutator that drives a DIFFERENT channel: a permission-mode change
-    // flows through the runtime.permissions domain (PERMISSION_MODE_CHANGED via the
+    // flows through the runtime.gate domain (PRESET_CHANGED via the
     // config-change binding, see permissions/mode-change-emitter.ts), NOT a
     // session-update broadcast, so it honestly advertises that channel instead.
     // Forcing it to claim control.session_update would be the over-claim the read-only
     // test just below guards against.
     const RUNTIME_CHANNEL_MUTATORS: Readonly<Record<string, string>> = {
-      'sessions.permissionMode.set': 'runtime.permissions',
+      'sessions.permissionMode.set': 'runtime.gate',
       // The live-turn mutators act on the daemon's LIVE runtime, not on broker
       // session records: a per-call cancel settles as tool events on the
       // runtime.tools domain, and a queued-message edit/delete broadcasts

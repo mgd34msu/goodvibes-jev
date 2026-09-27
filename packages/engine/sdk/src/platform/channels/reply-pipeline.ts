@@ -178,7 +178,7 @@ export class ChannelReplyPipeline {
       'turn',
       'tools',
       'planner',
-      'permissions',
+      'gate',
       'providers',
       'compaction',
       'workflows',

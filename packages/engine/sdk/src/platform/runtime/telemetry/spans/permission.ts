@@ -1,12 +1,12 @@
 /**
- * Permission decision span helpers.
+ * Gate decision span helpers.
  *
- * Tracks the full permission evaluation pipeline:
- * PERMISSION_REQUESTED → RULES_COLLECTED → INPUT_NORMALIZED
- * → POLICY_EVALUATED → MODE_EVALUATED → SESSION_OVERRIDE_EVALUATED
- * → SAFETY_CHECKED → DECISION_EMITTED
+ * Tracks the gate's pipeline for one call:
+ * GATE_REQUESTED, BOUNDARY_CHECKED, RULES_COLLECTED, INPUT_NORMALIZED,
+ * POLICY_EVALUATED, SESSION_OVERRIDE_EVALUATED, STAKES_READ,
+ * PRESET_EVALUATED, DECISION_EMITTED.
  *
- * One span per permission decision. Child of the active tool span
+ * One span per gate decision. Child of the active tool span
  * when a parentSpanId is supplied.
  */
 import type { Span, SpanAttributes } from '../types.js';
@@ -35,9 +35,10 @@ export type PermissionPhase =
   | 'rules_collected'
   | 'input_normalized'
   | 'policy_evaluated'
-  | 'mode_evaluated'
   | 'session_override_evaluated'
-  | 'safety_checked';
+  | 'boundary_checked'
+  | 'stakes_read'
+  | 'preset_evaluated';
 
 /** Result context supplied when ending a permission decision span. */
 export interface PermissionSpanEndContext {
@@ -55,7 +56,7 @@ export interface PermissionSpanEndContext {
  * Start a permission decision span.
  *
  * @param tracer - RuntimeTracer instance.
- * @param ctx - Context from PERMISSION_REQUESTED event.
+ * @param ctx - Context from GATE_REQUESTED event.
  */
 export function startPermissionSpan(tracer: RuntimeTracer, ctx: PermissionSpanContext): Span {
   const attrs: SpanAttributes = {

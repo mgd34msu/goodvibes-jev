@@ -129,7 +129,7 @@ export class ForensicsCollector {
       }))
     );
     this._unsubs.push(
-      this._bus.onDomain('permissions', (env) => this._collect('permissions', env as RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>, () => {
+      this._bus.onDomain('gate', (env) => this._collect('gate', env as RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>, () => {
         this._handlePermissionEnvelope(env as RuntimeEventEnvelope<AnyRuntimeEvent['type'], AnyRuntimeEvent>);
       }))
     );
@@ -487,7 +487,7 @@ export class ForensicsCollector {
     const tracker = this._turns.get(turnId);
     if (!tracker) return;
 
-    if (payload.type === 'PERMISSION_REQUESTED') {
+    if (payload.type === 'GATE_REQUESTED') {
       tracker.permissionEvidence.push({
         callId,
         tool: payload.tool ?? 'unknown',

@@ -1,4 +1,4 @@
-import type { CompactionEvent, PermissionEvent, TaskEvent, AgentEvent, OrchestrationEvent } from '../events.js';
+import type { CompactionEvent, GateEvent, TaskEvent, AgentEvent, OrchestrationEvent } from '../events.js';
 import type { SessionDomainState } from '../../domains/session.js';
 import type {
   PermissionDomainState,
@@ -16,22 +16,25 @@ import type { PermissionCategory } from '../../../../permissions/manager.js';
 import { now, uniq, updateDomainMetadata, isTerminalLifecycleState, computeActiveIds } from './shared.js';
 
 function permissionMachineStateForEvent(
-  event: Exclude<PermissionEvent, { type: 'PERMISSION_MODE_CHANGED' }>,
+  event: Exclude<GateEvent, { type: 'PRESET_CHANGED' }>,
 ): PermissionDecisionMachineState {
   switch (event.type) {
-    case 'PERMISSION_REQUESTED':
-      return 'collect_rules';
+    case 'GATE_REQUESTED':
+      return 'check_boundary';
+    case 'BOUNDARY_CHECKED':
+      return event.passed ? 'collect_rules' : 'decision_emitted';
     case 'RULES_COLLECTED':
       return 'normalize_input';
     case 'INPUT_NORMALIZED':
       return 'evaluate_policy';
     case 'POLICY_EVALUATED':
-      return 'evaluate_runtime_mode';
-    case 'MODE_EVALUATED':
       return 'evaluate_session_override';
     case 'SESSION_OVERRIDE_EVALUATED':
-      return 'final_safety_checks';
-    case 'SAFETY_CHECKED':
+      return 'read_stakes';
+    case 'STAKES_READ':
+      return 'evaluate_preset';
+    case 'PRESET_EVALUATED':
+      return event.result === 'ask' ? 'awaiting_owner' : 'decision_emitted';
     case 'DECISION_EMITTED':
       return 'decision_emitted';
   }
@@ -83,22 +86,23 @@ export function updateSessionState(
 
 export function updatePermissionState(
   domain: PermissionDomainState,
-  event: PermissionEvent,
+  event: GateEvent,
 ): PermissionDomainState {
   const base = updateDomainMetadata(domain, event.type);
   switch (event.type) {
-    case 'PERMISSION_MODE_CHANGED':
-      // Session-level mode switch, not part of the per-call decision machine:
-      // record the new mode and leave the decision state untouched.
-      return { ...base, mode: event.mode as PermissionDomainState['mode'] };
-    case 'PERMISSION_REQUESTED':
+    case 'PRESET_CHANGED':
+      // Session-level preset switch, not part of the per-call decision
+      // machine: record the new setting and preset, leave the decision alone.
+      return { ...base, mode: event.mode as PermissionDomainState['mode'], preset: event.preset as PermissionDomainState['preset'] };
+    case 'GATE_REQUESTED':
       return { ...base, awaitingDecision: true, decisionMachineState: permissionMachineStateForEvent(event), totalChecks: domain.totalChecks + 1 };
     case 'RULES_COLLECTED':
     case 'INPUT_NORMALIZED':
     case 'POLICY_EVALUATED':
-    case 'MODE_EVALUATED':
     case 'SESSION_OVERRIDE_EVALUATED':
-    case 'SAFETY_CHECKED':
+    case 'BOUNDARY_CHECKED':
+    case 'STAKES_READ':
+    case 'PRESET_EVALUATED':
       return { ...base, awaitingDecision: true, decisionMachineState: permissionMachineStateForEvent(event) };
     case 'DECISION_EMITTED':
       return {
