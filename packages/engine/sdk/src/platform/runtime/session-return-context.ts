@@ -1,6 +1,7 @@
 import type { ConversationMessageSnapshot, ConversationTitleSource } from '../core/conversation.js';
 import type { HelperModel } from '../config/helper-model.js';
 import type { ConfigManager } from '../config/manager.js';
+import { reportsPendingApproval } from './batteries/pending-approval.js';
 
 export type ReturnContextMode = 'off' | 'local' | 'assisted';
 
@@ -44,14 +45,14 @@ export interface PersistedSessionContext {
 
 type ReturnContextConfig = Pick<ConfigManager, 'get'>;
 
-export function buildPersistedSessionContext(
+export async function buildPersistedSessionContext(
   messages: readonly ConversationMessageSnapshot[],
   titleSource?: ConversationTitleSource,
   hints?: SessionContinuityHints,
-): PersistedSessionContext {
+): Promise<PersistedSessionContext> {
   return {
     titleSource,
-    returnContext: buildLocalReturnContextSummary(messages, hints),
+    returnContext: await buildLocalReturnContextSummary(messages, hints),
   };
 }
 
@@ -73,15 +74,35 @@ export function getReturnContextMode(configManager: ReturnContextConfig): Return
   return (configManager.get('behavior.returnContextMode') as ReturnContextMode | undefined) ?? 'off';
 }
 
-export function buildLocalReturnContextSummary(
+/**
+ * How many system messages report an approval still waiting on the operator.
+ * Each message is read on its own (engine.runtime.pending-approval), all
+ * concurrently; the yes readings are counted here.
+ */
+async function countPendingApprovals(messages: readonly ConversationMessageSnapshot[]): Promise<number> {
+  const texts = messages
+    .filter((message) => message.role === 'system')
+    .map((message) => textContent(message).trim())
+    .filter((text) => text.length > 0);
+  const readings = await Promise.all(
+    texts.map((text) => reportsPendingApproval(text, 'runtime.session-return-context.pending-approvals')),
+  );
+  return readings.filter(Boolean).length;
+}
+
+/**
+ * The local resume summary. The pending approval count is the host's
+ * structured count when it supplies one; otherwise the system messages are
+ * read for approvals still waiting.
+ */
+export async function buildLocalReturnContextSummary(
   messages: readonly ConversationMessageSnapshot[],
   hints?: SessionContinuityHints,
-): SessionReturnContextSummary {
+): Promise<SessionReturnContextSummary> {
   const userMessages = messages.filter((message) => message.role === 'user');
   const assistantMessages = messages.filter((message) => message.role === 'assistant');
   const toolMessages = messages.filter((message) => message.role === 'tool');
-  const pendingApprovals = hints?.pendingApprovals
-    ?? messages.filter((message) => message.role === 'system' && typeof message.content === 'string' && /approval/i.test(message.content)).length;
+  const pendingApprovals = hints?.pendingApprovals ?? await countPendingApprovals(messages);
   const lastUser = [...messages].reverse().find((message) => message.role === 'user');
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
   const lastMessage = messages[messages.length - 1];

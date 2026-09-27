@@ -10,6 +10,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_CONFIG } from '../sdk/src/platform/config/schema.js';
 import { computeQualityScore, LOW_QUALITY_THRESHOLD } from '../sdk/src/platform/runtime/compaction/quality-score.js';
+import { useCompactionQuality } from './_helpers/compaction-quality.ts';
 import { compactConversation, type ConversationCompactionHost } from '../sdk/src/platform/core/conversation-compaction.js';
 import { CompactionQualityError } from '../sdk/src/platform/core/compaction-types.js';
 import { emitCompactionReceipt } from '../sdk/src/platform/runtime/emitters/compaction.js';
@@ -63,6 +64,10 @@ function makeHost(messages: ProviderMessage[]) {
   return { host, getReplaced: () => replaced };
 }
 
+// Every compaction below keeps all of the conversation's substance and the
+// written text agrees with it, so only compression decides the guard.
+useCompactionQuality({ substance: 3, relation: 'supports' });
+
 // ── default-on ───────────────────────────────────────────────────────────────
 
 describe('auto-compaction default-on', () => {
@@ -76,16 +81,16 @@ describe('auto-compaction default-on', () => {
 // ── quality scorer guard boundary ────────────────────────────────────────────
 
 describe('compaction quality scorer boundary', () => {
-  test('flags a no-compression result as low quality, passes a real compression', () => {
+  test('flags a no-compression result as low quality, passes a real compression', async () => {
     const msgs = [{ role: 'user' as const, content: 'x'.repeat(4000) }];
-    const noCompression = computeQualityScore(
+    const noCompression = await computeQualityScore(
       { sessionId: '', messages: msgs, tokensBefore: 1000, contextWindow: 0, strategy: 'autocompact' },
       { messages: [{ role: 'user', content: 'y' }], tokensAfter: 1000, summary: 'y', strategy: 'autocompact', durationMs: 0, warnings: [] },
     );
     expect(noCompression.isLowQuality).toBe(true);
     expect(noCompression.score).toBeLessThan(LOW_QUALITY_THRESHOLD);
 
-    const good = computeQualityScore(
+    const good = await computeQualityScore(
       { sessionId: '', messages: msgs, tokensBefore: 10_000, contextWindow: 0, strategy: 'autocompact' },
       { messages: [{ role: 'user', content: 'context window compaction summary: kept the essentials' }], tokensAfter: 2000, summary: 's', strategy: 'autocompact', durationMs: 0, warnings: [] },
     );

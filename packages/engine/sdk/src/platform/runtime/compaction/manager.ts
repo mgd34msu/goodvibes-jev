@@ -232,7 +232,8 @@ export class CompactionManager {
     }
 
     // ── Score quality and auto-switch if low ─────────────────────────────────
-    qualityScore = computeQualityScore(strategyInput, strategyOutput);
+    qualityScore = await this._score(strategyInput, strategyOutput);
+    if (qualityScore === null) return null;
 
     emitCompactionQualityScore(this._bus, this._ctx, {
       sessionId: this._sessionId,
@@ -274,12 +275,9 @@ export class CompactionManager {
         this._state = strategyToState(escalated);
 
         const escalatedInput: StrategyInput = { ...strategyInput, strategy: escalated };
+        let escalatedOutput: StrategyOutput | undefined;
         try {
-          const escalatedOutput = await this._runStrategy(escalated, escalatedInput);
-          // Re-score the escalated result
-          qualityScore = computeQualityScore(escalatedInput, escalatedOutput);
-          strategyOutput = escalatedOutput;
-          strategy = escalated;
+          escalatedOutput = await this._runStrategy(escalated, escalatedInput);
         } catch (err) {
           const error = summarizeError(err);
           logger.warn('[CompactionManager] escalated strategy also failed; using original output', {
@@ -289,6 +287,14 @@ export class CompactionManager {
           });
           // Fall back to the original output, restore to the original strategy state
           this._state = strategyToState(strategy);
+        }
+        if (escalatedOutput !== undefined) {
+          // Re-score the escalated result
+          const escalatedScore = await this._score(escalatedInput, escalatedOutput);
+          if (escalatedScore === null) return null;
+          qualityScore = escalatedScore;
+          strategyOutput = escalatedOutput;
+          strategy = escalated;
         }
       } else {
         // Already at ceiling strategy (collapse or reactive), log but continue
@@ -402,6 +408,33 @@ export class CompactionManager {
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Scores a strategy output. A scoring failure (the quality readings could
+   * not be taken) ends the run the way a strategy failure does: a
+   * COMPACTION_FAILED event, back to idle, and null so no unscored output is
+   * committed.
+   */
+  private async _score(input: StrategyInput, output: StrategyOutput): Promise<CompactionQualityScore | null> {
+    try {
+      return await computeQualityScore(input, output);
+    } catch (err) {
+      const error = summarizeError(err);
+      this._transition('failed');
+      emitCompactionFailed(this._bus, this._ctx, {
+        sessionId: this._sessionId,
+        strategy: input.strategy,
+        error,
+      });
+      this._transition('idle');
+      logger.error('[CompactionManager] quality scoring failed', {
+        sessionId: this._sessionId,
+        strategy: input.strategy,
+        error,
+      });
+      return null;
+    }
+  }
 
   /**
    * Executes the selected strategy and emits the corresponding domain event.

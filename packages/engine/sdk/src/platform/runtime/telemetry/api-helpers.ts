@@ -24,6 +24,7 @@ import type {
   TelemetrySeverity,
   TelemetryViewMode,
 } from './api.js';
+import { EVENT_SEVERITY } from './event-severity.js';
 
 export const SERVICE_NAME = 'goodvibes-sdk';
 export const DEFAULT_EVENT_LIMIT = 500;
@@ -182,11 +183,19 @@ function buildResource(): { attributes: Array<{ key: string; value: Record<strin
   };
 }
 
+/** The table entry for a type name; undefined for a name no event domain declares. */
+function severityOfType(type: string): TelemetrySeverity | undefined {
+  return Object.hasOwn(EVENT_SEVERITY, type) ? EVENT_SEVERITY[type as keyof typeof EVENT_SEVERITY] : undefined;
+}
+
+/**
+ * An event's severity: 'error' when a normalized error is attached, otherwise
+ * the event type's entry in {@link EVENT_SEVERITY}; a name no domain declares
+ * is 'info'.
+ */
 export function inferSeverity(type: string, error?: NormalizedError): TelemetrySeverity {
   if (error) return 'error';
-  if (/(^|_)(WARNING|DEGRADED|BLOCKED|DENIED|REJECTED|QUARANTINED)(_|$)/.test(type)) return 'warn';
-  if (/(^|_)(PROGRESS|DELTA|START|STARTED|RUNNING|SYNCING|CONNECTING|INITIALIZING)(_|$)/.test(type)) return 'debug';
-  return 'info';
+  return severityOfType(type) ?? 'info';
 }
 
 export function inferErrorSource(domain: RuntimeEventDomain): PlatformErrorSource {
@@ -238,8 +247,9 @@ export function extractErrorCandidate(payload: Record<string, unknown>): string 
   return undefined;
 }
 
+/** Whether the event type reports a failure; a name no domain declares is not one. */
 export function isErrorEventType(type: string): boolean {
-  return /(^|_)(ERROR|FAILED|FAIL|TERMINAL_FAILURE)(_|$)/.test(type);
+  return severityOfType(type) === 'error';
 }
 
 /**

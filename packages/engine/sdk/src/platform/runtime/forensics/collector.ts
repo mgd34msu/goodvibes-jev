@@ -556,7 +556,17 @@ export class ForensicsCollector {
     errorMessage: string | undefined,
     wasCancelled: boolean,
   ): void {
-    const classification = classifyFailure({
+    void this._reportTurn(tracker, stopReason, errorMessage, wasCancelled)
+      .catch((error: unknown) => this._logUnclassified(error, tracker, { turnId: tracker.turnId }));
+  }
+
+  private async _reportTurn(
+    tracker: TurnTracker,
+    stopReason: string | undefined,
+    errorMessage: string | undefined,
+    wasCancelled: boolean,
+  ): Promise<void> {
+    const classification = await classifyFailure({
       stopReason,
       errorMessage,
       wasCancelled,
@@ -602,7 +612,16 @@ export class ForensicsCollector {
     errorMessage: string | undefined,
     wasCancelled: boolean,
   ): void {
-    const classification = classifyFailure({
+    void this._reportTask(tracker, errorMessage, wasCancelled)
+      .catch((error: unknown) => this._logUnclassified(error, tracker, { taskId: tracker.taskId }));
+  }
+
+  private async _reportTask(
+    tracker: TaskTracker,
+    errorMessage: string | undefined,
+    wasCancelled: boolean,
+  ): Promise<void> {
+    const classification = await classifyFailure({
       errorMessage,
       wasCancelled,
       hasCascadeEvents: tracker.hasCascadeEvents,
@@ -704,6 +723,15 @@ export class ForensicsCollector {
       isRootCause,
       context,
     });
+  }
+
+  /**
+   * A failure whose error message could not be read (no judgment port, or the
+   * reading failed) gets no report: a report carries a classification, and
+   * none was read. The failure is logged with what went wrong instead.
+   */
+  private _logUnclassified(error: unknown, t: { sessionId: string; traceId: string }, context: { turnId?: string; taskId?: string }): void {
+    logger.error('Forensics collector could not classify a failure', { sessionId: t.sessionId, traceId: t.traceId, ...context, error: summarizeError(error) });
   }
 
   private _publishReport(

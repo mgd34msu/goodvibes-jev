@@ -3,9 +3,42 @@
  *
  * Maps combinations of stop reasons, error messages, event sequences,
  * and cascade presence to a FailureClass without requiring manual log
- * spelunking. Classification is heuristic and exposes the matched class.
+ * spelunking.
+ *
+ * The ladder's rungs are code except one: cancellation, stop-reason values
+ * and the cascade, tool, permission and compaction flags are exact checks.
+ * What the free-text error message says is read by Jev through the engine's
+ * shared failure reading (readFailure in @goodvibes-jev/engine/errors). That
+ * reading already asks what kind of failure an error's wording describes and
+ * remembers each wording, so the retry and display paths and this classifier
+ * read one error once instead of asking a second battery the same question.
+ * Its category is 'unknown' unless the reading is confident enough to act on,
+ * which is the coarsening this rung needs: an unsure reading falls through to
+ * the stop-reason rungs below it, as unmatched wording always did.
  */
+import { readFailure, type FailureCategory } from '@goodvibes-jev/engine/errors';
 import type { FailureClass } from './types.js';
+
+/** Decision site for the error-message rung. */
+export const FORENSICS_CLASSIFIER_SITE = 'runtime.forensics.classifier';
+
+/**
+ * The failure class each read category puts a failure in; categories not
+ * listed say nothing about the LLM call or the turn deadline and fall through.
+ * A timed-out request is a turn over its deadline; a spent account, a rate
+ * limit, credentials the provider rejected, an overloaded or failing service,
+ * a dropped connection or an unreadable response are the LLM call failing.
+ */
+const CLASS_FOR_CATEGORY: Partial<Readonly<Record<FailureCategory, FailureClass>>> = {
+  timeout: 'turn_timeout',
+  rate_limit: 'llm_error',
+  billing: 'llm_error',
+  authentication: 'llm_error',
+  authorization: 'llm_error',
+  service: 'llm_error',
+  network: 'llm_error',
+  protocol: 'llm_error',
+};
 
 /** Inputs available to the classifier at report generation time. */
 interface ClassifierInput {
@@ -31,7 +64,7 @@ interface ClassifierInput {
  *
  * @returns The classified FailureClass.
  */
-export function classifyFailure(input: ClassifierInput): FailureClass {
+export async function classifyFailure(input: ClassifierInput): Promise<FailureClass> {
   // Explicit cancellation takes precedence
   if (input.wasCancelled) {
     return 'cancelled';
@@ -65,25 +98,11 @@ export function classifyFailure(input: ClassifierInput): FailureClass {
     return 'cascade_failure';
   }
 
-  // LLM error patterns from error message
+  // What the error message says: a turn deadline or a failed LLM call
   if (input.errorMessage) {
-    const msg = input.errorMessage.toLowerCase();
-    if (msg.includes('timeout') || msg.includes('timed out')) {
-      return 'turn_timeout';
-    }
-    if (
-      msg.includes('api error') ||
-      msg.includes('overloaded') ||
-      msg.includes('rate limit') ||
-      msg.includes('quota') ||
-      msg.includes('503') ||
-      msg.includes('500') ||
-      msg.includes('network') ||
-      msg.includes('econnreset') ||
-      msg.includes('fetch failed')
-    ) {
-      return 'llm_error';
-    }
+    const { category } = await readFailure({ message: input.errorMessage }, FORENSICS_CLASSIFIER_SITE);
+    const read = CLASS_FOR_CATEGORY[category];
+    if (read !== undefined) return read;
   }
 
   // LLM stop reason hinting at an error

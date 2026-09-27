@@ -6,28 +6,62 @@
  * outside the SDK.
  */
 
+import { readSystemMessagePriority } from './batteries/system-message-priority.js';
+
 export type SystemMessagePriorityLevel = 'high' | 'low';
-export type SystemMessageKind = 'system' | 'operational' | 'wrfc';
+/**
+ * 'contract' is the review workflow's status stream: the contract runner's
+ * `[Contract]` messages, and the `[WRFC]` messages the contract runner
+ * replaces (contract-runner.md section 8.2).
+ */
+export type SystemMessageKind = 'system' | 'operational' | 'contract';
 export type SystemMessageTarget = 'conversation' | 'panel' | 'both';
 
-const HIGH_PRIORITY_RE =
-  /\bfatal\b|\bcrash\w*|\bunhandled exception\b|\[Model\]|\[Provider\].*switch|\[Session\].*(?:saved|loaded|restored)|\[Compaction\]|\[Recovery\].*Failed/i;
-
-export function classifySystemMessagePriority(message: string): SystemMessagePriorityLevel {
-  return HIGH_PRIORITY_RE.test(message) ? 'high' : 'low';
+/**
+ * Whether the operator needs to see a system message now. Read by Jev
+ * (engine.runtime.system-message-priority); a weak reading is 'low'.
+ */
+export function classifySystemMessagePriority(message: string): Promise<SystemMessagePriorityLevel> {
+  return readSystemMessagePriority(message, 'runtime.system-message-policy.priority');
 }
 
 export function defaultSystemMessageTarget(kind: SystemMessageKind): SystemMessageTarget {
-  if (kind === 'wrfc') return 'both';
+  if (kind === 'contract') return 'both';
   return 'panel';
 }
 
+/**
+ * The kind of every leading bracket tag hosts give system messages, keyed by
+ * the tag name in lower case (tags match case-insensitively). A message with
+ * no leading tag, or a tag not listed, is 'system'.
+ */
+export const SYSTEM_MESSAGE_TAG_KINDS: Readonly<Record<string, Exclude<SystemMessageKind, 'system'>>> = {
+  contract: 'contract',
+  wrfc: 'contract',
+  scan: 'operational',
+  local: 'operational',
+  agents: 'operational',
+  mcp: 'operational',
+  plugin: 'operational',
+  hook: 'operational',
+  tool: 'operational',
+  exec: 'operational',
+  remote: 'operational',
+  bridge: 'operational',
+  approval: 'operational',
+};
+
+/** The name inside a message's leading `[Tag]`, or undefined when it has none. */
+function leadingTag(message: string): string | undefined {
+  if (!message.startsWith('[')) return undefined;
+  const end = message.indexOf(']');
+  return end > 1 ? message.slice(1, end) : undefined;
+}
+
 export function classifySystemMessageKind(message: string): SystemMessageKind {
-  if (/^\[WRFC\]/i.test(message)) return 'wrfc';
-  if (/^\[(Scan|Local|Agents|MCP|Plugin|Hook|Tool|Exec|Remote|Bridge|Approval)\]/i.test(message)) {
-    return 'operational';
-  }
-  return 'system';
+  const tag = leadingTag(message)?.toLowerCase();
+  if (tag === undefined || !Object.hasOwn(SYSTEM_MESSAGE_TAG_KINDS, tag)) return 'system';
+  return SYSTEM_MESSAGE_TAG_KINDS[tag]!;
 }
 
 export function resolveSystemMessageDelivery(

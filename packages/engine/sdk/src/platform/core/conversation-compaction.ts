@@ -17,7 +17,7 @@ function scoreResult(
   llmMessages: ProviderMessage[],
   result: CompactionResult,
   contextWindow: number,
-): CompactionQualityScore {
+): Promise<CompactionQualityScore> {
   return computeQualityScore(
     {
       sessionId: '',
@@ -59,7 +59,7 @@ async function produceCompaction(
   if (requested === 'distiller') {
     try {
       const distilled = await distillConversation(compactionContext, registry);
-      const quality = scoreResult(llmMessages, distilled, compactionContext.contextWindow);
+      const quality = await scoreResult(llmMessages, distilled, compactionContext.contextWindow);
       const noReduction = distilled.tokensAfterEstimate >= distilled.tokensBeforeEstimate;
       if (!quality.isLowQuality && !noReduction) {
         return { result: distilled, strategy: 'distiller', requestedStrategy: 'distiller' };
@@ -144,7 +144,7 @@ export async function compactConversation(
     // result (e.g. no compression, or a destroyed handoff) is rejected, the
     // full conversation is kept and the failure is surfaced honestly rather
     // than silently swapping in a bad summary.
-    const quality = scoreResult(llmMessages, result, compactionContext.contextWindow);
+    const quality = await scoreResult(llmMessages, result, compactionContext.contextWindow);
 
     const strategyFellBack = produced.strategy !== produced.requestedStrategy;
     const receiptBase = {

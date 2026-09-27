@@ -10,9 +10,18 @@
  *
  * Invalid tools fail closed: a tool with contract violations is rejected at
  * registration time with actionable diagnostics surfaced to the caller.
+ *
+ * Every check is code except one: whether the description explains what the
+ * tool does and when to use it is read by Jev
+ * (`engine.tools.description-quality`, one request per distinct description,
+ * remembered). That reading can only add a warning, so registration gates on
+ * the code checks alone (verifyStructure, synchronous) and the full
+ * verification (verify, verifyAll) adds the reading.
  */
 
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { Tool, ToolDefinition } from '../../types/tools.js';
+import { descriptionQuality } from './batteries/description-quality.js';
 import type { PhasedTool } from './adapter.js';
 import type { ToolClass } from './output-policy.js';
 
@@ -162,7 +171,7 @@ function checkSchema(def: ToolDefinition): ContractViolation[] {
     });
   }
 
-  // Description must be present and non-trivial
+  // Description must be present; whether it explains the tool is read by checkDescription
   if (!def.description || typeof def.description !== 'string') {
     violations.push({
       dimension: 'schema',
@@ -170,16 +179,51 @@ function checkSchema(def: ToolDefinition): ContractViolation[] {
       message: `Tool '${def.name}': missing or non-string description.`,
       hint: 'Provide a clear description so the LLM knows when to call this tool.',
     });
-  } else if (def.description.trim().length < 10) {
-    violations.push({
-      dimension: 'schema',
-      severity: 'warn',
-      message: `Tool '${def.name}': description is very short (${def.description.trim().length} chars).`,
-      hint: 'Write a description of at least 10 characters so the LLM can use this tool correctly.',
-    });
   }
 
   return violations;
+}
+
+/** Decision site for the description reading. */
+export const TOOL_DESCRIPTION_SITE = 'runtime.tools.contract-verifier';
+
+/** Readings of each distinct description, so tools sharing a description and repeat verifications ask once. */
+const MEMO_LIMIT = 512;
+const descriptionMemo = new Map<string, Promise<boolean>>();
+
+/** Whether Jev reads `description` as explaining what the tool does and when to use it. */
+function descriptionExplains(description: string): Promise<boolean> {
+  const known = descriptionMemo.get(description);
+  if (known !== undefined) return known;
+  const reading = (async () => {
+    const run = await descriptionQuality.run(judgmentPort(TOOL_DESCRIPTION_SITE), description, { site: TOOL_DESCRIPTION_SITE });
+    return run.readings.explains.verdict === 'yes';
+  })();
+  if (descriptionMemo.size >= MEMO_LIMIT) descriptionMemo.delete(descriptionMemo.keys().next().value!);
+  descriptionMemo.set(description, reading);
+  reading.catch(() => descriptionMemo.delete(description));
+  return reading;
+}
+
+/** Forgets remembered description readings; for tests that swap the judgment port. */
+export function forgetDescriptionReadings(): void {
+  descriptionMemo.clear();
+}
+
+/**
+ * Check 1b, Description quality. A description that does not explain what the
+ * tool does and when to use it is a warning. A missing description is already
+ * a schema error, and a blank one explains nothing, so neither is read.
+ */
+async function checkDescription(def: ToolDefinition): Promise<ContractViolation[]> {
+  if (!def.description || typeof def.description !== 'string') return [];
+  if (def.description.trim().length > 0 && await descriptionExplains(def.description)) return [];
+  return [{
+    dimension: 'schema',
+    severity: 'warn',
+    message: `Tool '${def.name}': description does not clearly explain what the tool does and when to use it.`,
+    hint: 'Say what the tool does and in which situations the LLM should call it.',
+  }];
 }
 
 /**
@@ -331,7 +375,7 @@ function checkIdempotency(phased: Partial<PhasedTool> & { idempotent?: unknown }
  * Usage:
  * ```ts
  * const verifier = new ToolContractVerifier();
- * const result = verifier.verify(myTool);
+ * const result = await verifier.verify(myTool);
  * if (!result.passed) {
  *   for (const v of result.violations.filter(v => v.severity === 'error')) {
  *     throw new Error(v.message);
@@ -350,12 +394,28 @@ export class ToolContractVerifier {
   }
 
   /**
-   * Verify a single tool against all 5 contract dimensions.
+   * Verify a single tool against all 5 contract dimensions, including the
+   * description reading.
    *
    * @param tool - The tool to verify.
    * @returns A ContractVerificationResult with all violations and a pass/fail flag.
    */
-  verify(tool: Tool): ContractVerificationResult {
+  async verify(tool: Tool): Promise<ContractVerificationResult> {
+    const structure = this.verifyStructure(tool);
+    const described = await checkDescription(tool.definition);
+    if (described.length === 0) return structure;
+    return { ...structure, violations: [...structure.violations, ...described], verifiedAt: Date.now() };
+  }
+
+  /**
+   * Verify a single tool against every check that is code (all 5 dimensions,
+   * without the description reading). Every error-level violation comes from
+   * these checks, so this is what registration gates on.
+   *
+   * @param tool - The tool to verify.
+   * @returns A ContractVerificationResult with all violations and a pass/fail flag.
+   */
+  verifyStructure(tool: Tool): ContractVerificationResult {
     const phased = tool as Partial<PhasedTool>;
     const isPhasedTool = 'category' in phased && phased.category !== undefined;
 
@@ -384,12 +444,9 @@ export class ToolContractVerifier {
    * @param tools - Array of tools to verify.
    * @returns Map of tool name to verification result.
    */
-  verifyAll(tools: readonly Tool[]): Map<string, ContractVerificationResult> {
-    const results = new Map<string, ContractVerificationResult>();
-    for (const tool of tools) {
-      results.set(tool.definition.name, this.verify(tool));
-    }
-    return results;
+  async verifyAll(tools: readonly Tool[]): Promise<Map<string, ContractVerificationResult>> {
+    const verified = await Promise.all(tools.map((tool) => this.verify(tool)));
+    return new Map(verified.map((result) => [result.toolName, result]));
   }
 
   /**

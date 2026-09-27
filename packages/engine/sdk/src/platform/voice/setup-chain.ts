@@ -173,14 +173,12 @@ export function planVoiceSetupChain(intent: VoiceSetupIntent, context: VoiceSetu
 }
 
 /**
- * Does this text tell the user to type a command?
- *
- * The shapes that matter: a slash command presented as the user's next action,
- * and the imperative verbs that introduce one. Used by the test that keeps
- * setup replies free of them, the platform does the thing, then says what it
- * did.
+ * Does this setup text tell the user to type a command or edit a config key?
+ * The platform's own reading (runtime/setup-contract.ts), so voice replies are
+ * held to the same contract as every other setup: the platform does the
+ * thing, then says what it did.
  */
-export function voiceSetupStepMentionsUserCommand(text: string): boolean {
+export function voiceSetupStepMentionsUserCommand(text: string): Promise<boolean> {
   return mentionsUserTypedCommand(text);
 }
 

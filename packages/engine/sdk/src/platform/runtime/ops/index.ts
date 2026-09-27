@@ -43,7 +43,9 @@ export {
   compactionFailurePlaybook,
 } from './playbooks/index.js';
 
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { Playbook, PlaybookRegistry, PlaybookRegistryEntry } from './types.js';
+import { playbookCandidate, playbookSearch } from './batteries/playbook-search.js';
 import {
   stuckTurnPlaybook,
   reconnectFailurePlaybook,
@@ -106,17 +108,26 @@ export function findPlaybooksByTag(...tags: string[]): Playbook[] {
   return ALL_PLAYBOOKS.filter((p) => p.tags.some((t) => tagSet.has(t)));
 }
 
+/** Decision site for the symptom search. */
+export const PLAYBOOK_SEARCH_SITE = 'runtime.ops.playbook-search';
+
 /**
- * Find playbooks whose symptoms partially match the provided query string.
+ * Find the playbooks that address a symptom described in free text.
  *
- * @param query - A substring to search for in symptom descriptions.
- * @returns Matching playbooks, sorted by number of matching symptoms (desc).
+ * Each playbook is read against the query by Jev (`engine.ops.playbook-search`,
+ * the rerank pattern, one request per playbook); a playbook is returned when
+ * the reading is a confident yes.
+ *
+ * @param query - The symptom in the operator's own words.
+ * @returns Matching playbooks, best match first.
  */
-export function findPlaybooksBySymptom(query: string): Playbook[] {
-  const lower = query.toLowerCase();
-  const scored = ALL_PLAYBOOKS.map((p) => ({
-    playbook: p,
-    matches: p.symptoms.filter((s) => s.toLowerCase().includes(lower)).length,
-  })).filter(({ matches }) => matches > 0);
-  return scored.sort((a, b) => b.matches - a.matches).map(({ playbook }) => playbook);
+export async function findPlaybooksBySymptom(query: string, options: { signal?: AbortSignal } = {}): Promise<Playbook[]> {
+  const { ranked } = await playbookSearch.rerank(
+    judgmentPort(PLAYBOOK_SEARCH_SITE),
+    query,
+    ALL_PLAYBOOKS.map(playbookCandidate),
+    { site: PLAYBOOK_SEARCH_SITE, ...(options.signal ? { signal: options.signal } : {}) },
+  );
+  const byId = new Map(ALL_PLAYBOOKS.map((p) => [p.id, p]));
+  return ranked.filter((r) => r.reading.verdict === 'yes').map((r) => byId.get(r.id)!);
 }

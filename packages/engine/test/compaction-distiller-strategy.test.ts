@@ -22,6 +22,7 @@ import { REINJECT_INSTRUCTIONS_START } from '../sdk/src/platform/core/compaction
 import type { CompactionContext } from '../sdk/src/platform/core/compaction-types.js';
 import type { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
+import { useCompactionQuality } from './_helpers/compaction-quality.ts';
 
 // A registry whose provider.chat returns a fixed brief, the distiller's fresh
 // model call. `listModels` advertises the extraction model so resolution finds it.
@@ -154,6 +155,10 @@ describe('distillConversation', () => {
 // ── end-to-end via compactConversation: applied + fallback receipts ──────────
 
 describe('compactConversation with the distiller strategy', () => {
+  // Every result keeps the conversation's substance and agrees with it, so
+  // availability and token reduction decide which strategy applies.
+  useCompactionQuality({ substance: 3, relation: 'supports' });
+
   test('good distillation applies, and the receipt NAMES the distiller strategy', async () => {
     const messages = bigConversation();
     const { host, getReplaced } = makeHost(messages);

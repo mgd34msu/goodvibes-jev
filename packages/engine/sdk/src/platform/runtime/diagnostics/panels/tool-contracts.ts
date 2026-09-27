@@ -24,7 +24,7 @@ import { summarizeError } from '../../../utils/error-display.js';
  * Usage:
  * ```ts
  * const panel = new ToolContractsPanel();
- * panel.load(verifier.verifyAll(registry.list()));
+ * panel.load(await verifier.verifyAll(registry.list()));
  *
  * const entry = panel.get('exec');
  * const all = panel.getAll();

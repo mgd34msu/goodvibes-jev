@@ -42,10 +42,8 @@ import {
   voiceSetupChainStrings,
   voiceSetupStepsOfKind,
 } from '../sdk/src/platform/voice/setup-chain.js';
-import {
-  SETUP_INTENT_CONTRACT_PROMPT,
-  mentionsUserTypedCommand,
-} from '../sdk/src/platform/runtime/setup-contract.js';
+import { SETUP_INTENT_CONTRACT_PROMPT } from '../sdk/src/platform/runtime/setup-contract.js';
+import { namedCommandsAndKeys } from './_helpers/setup-vocabulary.ts';
 
 function daemonHome(): string {
   const dir = mkdtempSync(join(tmpdir(), 'gv-daemon-home-'));
@@ -483,7 +481,7 @@ describe('a setup request is completed, proposed and asked: never handed over as
     expect(voiceSetupStepsOfKind(chain, 'do').some((step) => step.subject === 'tts')).toBe(true);
   });
 
-  test('no setup reply tells the user to type a command', () => {
+  test('no setup reply names a voice command or a config key', () => {
     const chains = [
       planVoiceSetupChain('wake', base),
       planVoiceSetupChain('voice', base),
@@ -492,7 +490,7 @@ describe('a setup request is completed, proposed and asked: never handed over as
     ];
     for (const chain of chains) {
       for (const line of voiceSetupChainStrings(chain)) {
-        expect({ line, instructs: mentionsUserTypedCommand(line) }).toEqual({ line, instructs: false });
+        expect({ line, names: namedCommandsAndKeys(line, ['/voice']) }).toEqual({ line, names: [] });
       }
     }
   });
@@ -506,13 +504,5 @@ describe('a setup request is completed, proposed and asked: never handed over as
     expect(SETUP_INTENT_CONTRACT_PROMPT).toContain('interview');
     expect(SETUP_INTENT_CONTRACT_PROMPT.toLowerCase()).not.toContain('elevenlabs');
     expect(SETUP_INTENT_CONTRACT_PROMPT.toLowerCase()).not.toContain('wake word');
-  });
-
-  test('the command detector catches the shapes that actually shipped', () => {
-    expect(mentionsUserTypedCommand('Run /voice setup to provision the managed local runtime.')).toBe(true);
-    expect(mentionsUserTypedCommand('set voice.wake.surfaces.agent to true')).toBe(true);
-    expect(mentionsUserTypedCommand('/voice wake setup')).toBe(true);
-    expect(mentionsUserTypedCommand('Wake-word detection is on and this surface is listening.')).toBe(false);
-    expect(mentionsUserTypedCommand('Downloaded from https://example.com/model.onnx')).toBe(false);
   });
 });

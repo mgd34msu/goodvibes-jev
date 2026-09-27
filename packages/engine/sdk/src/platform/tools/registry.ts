@@ -30,6 +30,12 @@ export class ToolRegistry {
    * Warn-level violations are collected and returned so callers can surface them
    * without blocking registration.
    *
+   * Registration runs the code checks only (ToolContractVerifier.verifyStructure).
+   * The one check that is read by Jev, whether the description explains the
+   * tool, can only add a warning and never changes whether a tool registers,
+   * so registration does not wait on it; verifyContract and verifyAllContracts
+   * include it.
+   *
    * @param tool    - The tool to register.
    * @param opts    - Optional verifier options (strictness overrides).
    * @returns The full ContractVerificationResult so callers can inspect warnings.
@@ -40,7 +46,7 @@ export class ToolRegistry {
     opts?: ContractVerifierOptions,
   ): ContractVerificationResult {
     const verifier = new ToolContractVerifier(opts);
-    const result = verifier.verify(tool);
+    const result = verifier.verifyStructure(tool);
 
     if (!result.passed) {
       const errors = result.violations
@@ -62,10 +68,10 @@ export class ToolRegistry {
    * @param opts - Optional verifier options.
    * @returns The verification result, or undefined if the tool is not registered.
    */
-  verifyContract(
+  async verifyContract(
     name: string,
     opts?: ContractVerifierOptions,
-  ): ContractVerificationResult | undefined {
+  ): Promise<ContractVerificationResult | undefined> {
     const tool = this.tools.get(name);
     if (!tool) return undefined;
     const verifier = new ToolContractVerifier(opts);
@@ -80,7 +86,7 @@ export class ToolRegistry {
    */
   verifyAllContracts(
     opts?: ContractVerifierOptions,
-  ): Map<string, ContractVerificationResult> {
+  ): Promise<Map<string, ContractVerificationResult>> {
     const verifier = new ToolContractVerifier(opts);
     return verifier.verifyAll(this.list());
   }

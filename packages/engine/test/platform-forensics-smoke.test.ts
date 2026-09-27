@@ -20,8 +20,8 @@ describe('platform/runtime/forensics: classifier and registry behavior', () => {
     expect(reg.latest()).toBeNull();
   });
 
-  test('classifyFailure returns a classification for a normal stop', () => {
-    const result = classifyFailure({
+  test('classifyFailure reads a normal stop with no error message as unknown, without a judgment port', async () => {
+    const result = await classifyFailure({
       stopReason: 'end_turn',
       errorMessage: undefined,
       wasCancelled: false,
@@ -30,7 +30,6 @@ describe('platform/runtime/forensics: classifier and registry behavior', () => {
       hasPermissionDenial: false,
       hasCompactionError: false,
     });
-    expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
+    expect(result).toBe('unknown');
   });
 });

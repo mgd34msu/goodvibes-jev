@@ -43,9 +43,10 @@
  * AND NEVER A COMMAND. No reply tells the user to type anything. Slash commands
  * exist for self-service; they are never the platform's answer to a stated
  * want. The platform does the thing and reports what it did.
- * {@link mentionsUserTypedCommand} is asserted over the strings setup flows
- * produce.
+ * {@link mentionsUserTypedCommand} reads a drafted reply for exactly that.
  */
+
+import { replyInstructsTyping } from './batteries/setup-reply-command.js';
 
 /** The shapes a setup can take. Composed, not chosen from a menu of services. */
 export type SetupSolutionShape =
@@ -115,18 +116,12 @@ export function setupPlanStrings(plan: SetupPlan): readonly string[] {
 }
 
 /**
- * Does this text tell the user to type a command?
- *
- * The shapes that matter: a slash command presented as the user's next action,
- * a bare slash command in reply prose (which reads as an instruction with or
- * without a verb), and a config key handed over as a chore. Used by the tests
- * that keep setup replies free of them.
+ * Does this reply tell the user to type a slash command or edit a config key
+ * themselves? Read by Jev (engine.runtime.setup-reply-command), so setup
+ * replies can be held to the contract above; a weak reading is no.
  */
-export function mentionsUserTypedCommand(text: string): boolean {
-  if (/\b(?:run|type|enter|execute|invoke)\b[^.]{0,60}[`'"]?\/[a-z]/i.test(text)) return true;
-  if (/(?:^|[\s(])\/[a-z][a-z-]{2,}(?:\s+[a-z][a-z-]*)?\b/i.test(text) && !/https?:\/\//i.test(text)) return true;
-  if (/\b(?:run|set|update|change|edit)\b\s+[`'"]?[a-z]+\.[a-z]+\.[a-zA-Z]/.test(text)) return true;
-  return false;
+export function mentionsUserTypedCommand(text: string): Promise<boolean> {
+  return replyInstructsTyping(text, 'runtime.setup-contract.mentions-user-typed-command');
 }
 
 /** Render a plan as the reply a surface prints. */

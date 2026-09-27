@@ -8,7 +8,13 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { mentionsUserTypedCommand } from '../sdk/src/platform/runtime/setup-contract.ts';
+import { commandRoots, namedCommandsAndKeys } from './_helpers/setup-vocabulary.ts';
+import { GOOGLE_REFERENCED_COMMANDS } from '../sdk/src/platform/google/setup-plan.ts';
+
+/** Whether a string names a Google-flow command or a config key (see _helpers/setup-vocabulary.ts). */
+function namesCommandOrKey(text: string): boolean {
+  return namedCommandsAndKeys(text, commandRoots(GOOGLE_REFERENCED_COMMANDS)).length > 0;
+}
 import {
   adoptGmailMcpCredentials,
   gmailMcpLayout,
@@ -147,7 +153,7 @@ describe('summarising credentials for display', () => {
     // Offering, not instructing: naming a command here would hand the reader a
     // chore in the same line that tells them nothing is set up.
     expect(summary.detail).toMatch(/say the word and I will connect an account/i);
-    expect(mentionsUserTypedCommand(summary.detail)).toBe(false);
+    expect(namesCommandOrKey(summary.detail)).toBe(false);
   });
 });
 
@@ -284,7 +290,7 @@ describe('the boot-time credential check', () => {
     expect(result.usable).toBe(false);
     expect(result.needsReauthorization).toBe(false);
     expect(result.detail).toMatch(/say the word and I will connect an account/i);
-    expect(mentionsUserTypedCommand(result.detail)).toBe(false);
+    expect(namesCommandOrKey(result.detail)).toBe(false);
   });
 
   test('a revoked credential is flagged as needing re-authorization at boot', async () => {

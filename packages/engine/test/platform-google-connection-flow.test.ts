@@ -16,7 +16,7 @@ import { join } from 'node:path';
 
 import { planGoogleConnection } from '../sdk/src/platform/google/discovery.ts';
 import { diagnoseInvalidGrant } from '../sdk/src/platform/google/grant-diagnosis.ts';
-import { mentionsUserTypedCommand } from '../sdk/src/platform/runtime/setup-contract.ts';
+import { commandRoots, namedCommandsAndKeys } from './_helpers/setup-vocabulary.ts';
 import { removeGoogleCredentials } from '../sdk/src/platform/google/credential-removal.ts';
 import { adoptExistingGoogleCredentials } from '../sdk/src/platform/google/setup-actions.ts';
 import { buildAuthorizationUrl } from '../sdk/src/platform/google/oauth-loopback.ts';
@@ -36,6 +36,11 @@ import type {
   GoogleSecretPort,
 } from '../sdk/src/platform/google/types.ts';
 import type { GoogleOAuthCredentials } from '../sdk/src/platform/google/credential-adoption.ts';
+
+/** Whether a string names a Google-flow command or a config key (see _helpers/setup-vocabulary.ts). */
+function namesCommandOrKey(text: string): boolean {
+  return namedCommandsAndKeys(text, commandRoots(GOOGLE_REFERENCED_COMMANDS)).length > 0;
+}
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -488,7 +493,7 @@ describe('a dead grant is diagnosed, not retried', () => {
       // The old assertion here was that every fix NAMED a command that
       // resolved. Naming one at all is now the defect: a dead credential is
       // the platform's job to replace, not a chore to hand over.
-      expect(mentionsUserTypedCommand(diagnosis.fix)).toBe(false);
+      expect(namesCommandOrKey(diagnosis.fix)).toBe(false);
       expect(diagnosis.fix.toLowerCase()).toContain('say the word');
     }
   });
@@ -623,7 +628,7 @@ describe('a connection is proven by using it', () => {
     expect(proof.summary).toContain('Mail works; calendar does not');
     expect(proof.calendar.problem).toContain('Calendar scope');
     expect(proof.calendar.fix).toMatch(/re-authorize/i);
-    expect(mentionsUserTypedCommand(proof.calendar.fix ?? '')).toBe(false);
+    expect(namesCommandOrKey(proof.calendar.fix ?? '')).toBe(false);
   });
 
   test('a disabled API is told apart from a missing scope', async () => {
@@ -635,7 +640,7 @@ describe('a connection is proven by using it', () => {
     );
     expect(proof.mail.detail).toContain('not enabled on the Cloud project');
     expect(proof.mail.fix).toMatch(/enable both APIs/i);
-    expect(mentionsUserTypedCommand(proof.mail.fix ?? '')).toBe(false);
+    expect(namesCommandOrKey(proof.mail.fix ?? '')).toBe(false);
   });
 });
 
@@ -716,17 +721,18 @@ describe('no setup string tells the user to type anything', () => {
   //, the google tool had no action that could register pasted values, so the
   // string had no honest alternative until connect.client existed.
   //
-  // `mentionsUserTypedCommand` is the platform's own predicate, the same one
-  // the voice setup round is held to. See runtime/setup-contract.ts.
+  // Whether wording tells the user to type something is the platform's Jev
+  // reading (runtime/setup-contract.ts); these tests pin the fixed part, that
+  // no shipped string names one of the product's commands or config keys.
 
   test('no step in any path instructs a command', () => {
     const offenders: string[] = [];
     for (const step of GOOGLE_SETUP_STEPS) {
       for (const instruction of step.manualSteps) {
-        if (mentionsUserTypedCommand(instruction)) offenders.push(`${step.id}: ${instruction}`);
+        if (namesCommandOrKey(instruction)) offenders.push(`${step.id}: ${instruction}`);
       }
-      if (mentionsUserTypedCommand(step.purpose)) offenders.push(`${step.id} purpose: ${step.purpose}`);
-      if (mentionsUserTypedCommand(step.title)) offenders.push(`${step.id} title: ${step.title}`);
+      if (namesCommandOrKey(step.purpose)) offenders.push(`${step.id} purpose: ${step.purpose}`);
+      if (namesCommandOrKey(step.title)) offenders.push(`${step.id} title: ${step.title}`);
     }
     expect(offenders).toEqual([]);
   });
@@ -738,7 +744,7 @@ describe('no setup string tells the user to type anything', () => {
     // The reason the paste has to happen now rather than later, which is the
     // part a person cannot recover from if they miss it.
     expect(last).toMatch(/only in this dialog/i);
-    expect(mentionsUserTypedCommand(last)).toBe(false);
+    expect(namesCommandOrKey(last)).toBe(false);
   });
 
   test('no runner fix string instructs a command', () => {
@@ -750,7 +756,7 @@ describe('no setup string tells the user to type anything', () => {
     );
     const offenders = [...source.matchAll(/(?:problem|fix|detail):\s*(?:'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`)/g)]
       .map((match) => match[1] ?? match[2] ?? '')
-      .filter((text) => text.length > 0 && mentionsUserTypedCommand(text));
+      .filter((text) => text.length > 0 && namesCommandOrKey(text));
     expect(offenders).toEqual([]);
   });
 
@@ -772,7 +778,7 @@ describe('no setup string tells the user to type anything', () => {
         publishingStatus: status,
         credentialOrigin: 'secret-store',
       });
-      expect(mentionsUserTypedCommand(diagnosis.fix)).toBe(false);
+      expect(namesCommandOrKey(diagnosis.fix)).toBe(false);
       expect(diagnosis.fix).toMatch(/say the word/i);
     }
   });
@@ -786,7 +792,7 @@ describe('no setup string tells the user to type anything', () => {
       listEvents: async () => ({ ok: false, status: 403, problem: 'Request had insufficient authentication scopes.', fix: '' }),
     } as never);
     expect(proof.calendar.fix).toBeDefined();
-    expect(mentionsUserTypedCommand(proof.calendar.fix ?? '')).toBe(false);
+    expect(namesCommandOrKey(proof.calendar.fix ?? '')).toBe(false);
   });
 });
 
