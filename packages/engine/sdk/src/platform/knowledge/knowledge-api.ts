@@ -78,13 +78,13 @@ export interface MemoryExplainResult {
 
 export interface MemoryApi {
   add(input: MemoryAddOptions): Promise<MemoryRecord>;
-  search(filter?: MemorySearchFilter): readonly MemoryRecord[];
-  searchSemantic(filter?: MemorySearchFilter): readonly MemorySemanticSearchResult[];
+  search(filter?: MemorySearchFilter): Promise<readonly MemoryRecord[]>;
+  searchSemantic(filter?: MemorySearchFilter): Promise<readonly MemorySemanticSearchResult[]>;
   vectorStats(): MemoryVectorStats;
   rebuildVectors(): MemoryVectorStats;
   rebuildVectorsAsync(): Promise<MemoryVectorStats>;
   doctor(): Promise<MemoryDoctorReport>;
-  reviewQueue(limit?: number, scope?: MemoryScope): readonly MemoryRecord[];
+  reviewQueue(limit?: number, scope?: MemoryScope): Promise<readonly MemoryRecord[]>;
   exportBundle(filter?: MemorySearchFilter): MemoryBundle;
   importBundle(bundle: MemoryBundle): Promise<MemoryImportResult>;
   get(id: string): MemoryRecord | null;
@@ -94,7 +94,7 @@ export interface MemoryApi {
   update(id: string, patch: { scope?: MemoryScope; summary?: string; detail?: string; tags?: string[] }): MemoryRecord | null;
   review(id: string, patch: MemoryReviewPatch): MemoryRecord | null;
   delete(id: string): boolean;
-  explain(task: string, writeScope?: readonly string[], limit?: number): MemoryExplainResult;
+  explain(task: string, writeScope?: readonly string[], limit?: number): Promise<MemoryExplainResult>;
 }
 
 export type MemoryApiRegistry = Pick<
@@ -321,8 +321,8 @@ export function createMemoryApi(memoryRegistry: MemoryApiRegistry): MemoryApi {
     ),
     review: (id: string, patch: MemoryReviewPatch) => memoryRegistry.review(id, patch),
     delete: (id: string) => memoryRegistry.delete(id),
-    explain: (task: string, writeScope: readonly string[] = [], limit = 3): MemoryExplainResult => {
-      const injections = selectKnowledgeForTask(memoryRegistry, task, writeScope, limit);
+    explain: async (task: string, writeScope: readonly string[] = [], limit = 3): Promise<MemoryExplainResult> => {
+      const injections = await selectKnowledgeForTask(memoryRegistry, task, writeScope, limit);
       return {
         injections,
         prompt: buildKnowledgeInjectionPrompt(injections),

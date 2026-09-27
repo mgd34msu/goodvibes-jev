@@ -7,6 +7,19 @@ import { BatteryRegistry } from '@goodvibes-jev/judgment';
  */
 export const registry = new BatteryRegistry();
 
+// State: memory and knowledge.
+import { knowledgeRelevance } from '../state/batteries/knowledge-relevance.js';
+import { memoryAgreement, memoryAlignment } from '../state/batteries/memory-alignment.js';
+import { memoryReviewPriority } from '../state/batteries/memory-review-priority.js';
+import { memorySearchRerank } from '../state/batteries/memory-search-rerank.js';
+import { memoryUsage } from '../state/batteries/memory-usage.js';
+registry.register(knowledgeRelevance);
+registry.register(memoryAlignment);
+registry.register(memoryAgreement);
+registry.register(memoryReviewPriority);
+registry.register(memorySearchRerank);
+registry.register(memoryUsage);
+
 // Runtime: compaction, forensics, ops, tool contracts.
 // (The forensics classifier reads error messages through engine.failure-reading,
 // registered in packages/engine/errors/src/judgment-registry.ts.)

@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// The queue order is the memory-review-priority reading; the fake port answers it.
+useMemoryReadings();
 
 /**
  * Item 7, reviewQueue scope filter
@@ -42,7 +46,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
     await store.add({ scope: 'session', cls: 'fact', summary: 'session record' });
     await store.add({ scope: 'project', cls: 'fact', summary: 'project record' });
     await store.add({ scope: 'team',    cls: 'fact', summary: 'team record' });
-    const all = store.reviewQueue(100);
+    const all = await store.reviewQueue(100);
     const scopes = all.map((r) => r.scope);
     expect(scopes).toContain('session');
     expect(scopes).toContain('project');
@@ -58,7 +62,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
     await store.add({ scope: 'session', cls: 'fact', summary: 'session record B' });
     await store.add({ scope: 'project', cls: 'fact', summary: 'project record' });
     await store.add({ scope: 'team',    cls: 'fact', summary: 'team record' });
-    const result = store.reviewQueue(100, 'session');
+    const result = await store.reviewQueue(100, 'session');
     expect(result.length).toBe(2);
     expect(result.every((r) => r.scope === 'session')).toBe(true);
   });
@@ -72,7 +76,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
     await store.add({ scope: 'project', cls: 'fact', summary: 'project record A' });
     await store.add({ scope: 'project', cls: 'fact', summary: 'project record B' });
     await store.add({ scope: 'team',    cls: 'fact', summary: 'team record' });
-    const result = store.reviewQueue(100, 'project');
+    const result = await store.reviewQueue(100, 'project');
     expect(result.length).toBe(2);
     expect(result.every((r) => r.scope === 'project')).toBe(true);
   });
@@ -86,7 +90,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
     await store.add({ scope: 'project', cls: 'fact', summary: 'project record' });
     await store.add({ scope: 'team',    cls: 'fact', summary: 'team record X' });
     await store.add({ scope: 'team',    cls: 'fact', summary: 'team record Y' });
-    const result = store.reviewQueue(100, 'team');
+    const result = await store.reviewQueue(100, 'team');
     expect(result.length).toBe(2);
     expect(result.every((r) => r.scope === 'team')).toBe(true);
   });
@@ -103,7 +107,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
       await store.add({ scope: 'session', cls: 'fact', summary: `session record ${i}` });
     }
     // Request only 2 project records, should get exactly 2 project records
-    const result = store.reviewQueue(2, 'project');
+    const result = await store.reviewQueue(2, 'project');
     expect(result.length).toBe(2);
     expect(result.every((r) => r.scope === 'project')).toBe(true);
   });
@@ -114,7 +118,7 @@ describe('MemoryStore.reviewQueue scope filter (Item 7)', () => {
     const store = makeStore(root);
     await store.init();
     await store.add({ scope: 'session', cls: 'fact', summary: 'session only' });
-    const result = store.reviewQueue(10, 'team');
+    const result = await store.reviewQueue(10, 'team');
     expect(result).toEqual([]);
   });
 });
@@ -128,7 +132,7 @@ describe('MemoryRegistry.reviewQueue scope filter (Item 7)', () => {
     const registry = new MemoryRegistry(store);
     await registry.add({ scope: 'session', cls: 'fact', summary: 'session' });
     await registry.add({ scope: 'project', cls: 'fact', summary: 'project' });
-    const all = registry.reviewQueue(100);
+    const all = await registry.reviewQueue(100);
     const scopes = all.map((r) => r.scope);
     expect(scopes).toContain('session');
     expect(scopes).toContain('project');
@@ -142,7 +146,7 @@ describe('MemoryRegistry.reviewQueue scope filter (Item 7)', () => {
     const registry = new MemoryRegistry(store);
     await registry.add({ scope: 'session', cls: 'fact', summary: 'session record' });
     await registry.add({ scope: 'project', cls: 'fact', summary: 'project record' });
-    const result = registry.reviewQueue(100, 'session');
+    const result = await registry.reviewQueue(100, 'session');
     expect(result.length).toBe(1);
     expect(result[0]!.scope).toBe('session');
   });
@@ -155,7 +159,7 @@ describe('MemoryRegistry.reviewQueue scope filter (Item 7)', () => {
     const registry = new MemoryRegistry(store);
     await registry.add({ scope: 'session', cls: 'fact', summary: 'session record' });
     await registry.add({ scope: 'project', cls: 'fact', summary: 'project record' });
-    const result = registry.reviewQueue(100, 'project');
+    const result = await registry.reviewQueue(100, 'project');
     expect(result.length).toBe(1);
     expect(result[0]!.scope).toBe('project');
   });

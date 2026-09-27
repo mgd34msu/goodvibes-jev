@@ -12,6 +12,8 @@
 import { describe, expect, test } from 'bun:test';
 import { MemoryConsolidationScheduler } from '../sdk/src/platform/state/memory-consolidation-scheduler.ts';
 import { trackDisposables } from './_helpers/disposables.ts';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type {
   MemoryConsolidationRegistry,
   MemoryRecord,
@@ -26,6 +28,9 @@ const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
 const disposables = trackDisposables();
+// Duplicate and contradiction readings come from the fake port: equal
+// summaries are the same fact, and differing details conflict.
+useMemoryReadings();
 
 /**
  * A timer for the scheduler's `setTimer` seam that never fires during a test.
@@ -116,13 +121,13 @@ function makeScheduler(input: {
 }
 
 describe('memory consolidation scheduler: the daemon runs the engine', () => {
-  test('the idle trigger runs consolidation with receipts (mechanical outcomes just happen)', () => {
+  test('the idle trigger runs consolidation with receipts (mechanical outcomes just happen)', async () => {
     const dupA = rec({ id: 'surv', reviewState: 'reviewed', confidence: 80, updatedAt: NOW - 1000, summary: 'CI note', tags: ['ci'] });
     const dupB = rec({ id: 'lose', reviewState: 'fresh', confidence: 50, updatedAt: NOW - 2000, summary: 'CI note', tags: ['deploy'] });
     const registry = new FakeRegistry([dupA, dupB]);
     const { scheduler, receipts } = makeScheduler({ registry, idle: true });
 
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
 
     // One idle-triggered run, receipted.
@@ -136,7 +141,7 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
     expect(registry.records.size).toBe(2);
   });
 
-  test('judgment outcomes land as proposals: never applied', () => {
+  test('judgment outcomes land as proposals: never applied', async () => {
     // Same summary, conflicting detail, no clearly-newer verified winner:
     // the engine must propose, not resolve.
     const one = rec({ id: 'c1', reviewState: 'fresh', confidence: 60, updatedAt: NOW - 1000, summary: 'conflicting fact', detail: 'version A' });
@@ -144,7 +149,7 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
     const registry = new FakeRegistry([one, two]);
     const { scheduler } = makeScheduler({ registry, idle: true });
 
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
 
     const receipt = scheduler.listReceipts()[0]!;
@@ -156,12 +161,12 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
     expect(registry.records.get('c1')!.reviewState).not.toBe('stale');
   });
 
-  test('deletion never happens without review: stale-delete is only ever proposed', () => {
+  test('deletion never happens without review: stale-delete is only ever proposed', async () => {
     const longStale = rec({ id: 'old-stale', reviewState: 'stale', updatedAt: NOW - 120 * DAY });
     const registry = new FakeRegistry([longStale]);
     const { scheduler } = makeScheduler({ registry, idle: true });
 
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
 
     const receipt = scheduler.listReceipts()[0]!;
@@ -173,26 +178,26 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
     expect(receipt.note).toContain('never written silently');
   });
 
-  test('a busy runtime skips the idle trigger but the slow schedule fallback still runs', () => {
+  test('a busy runtime skips the idle trigger but the slow schedule fallback still runs', async () => {
     const registry = new FakeRegistry([rec()]);
     let clock = NOW;
     const { scheduler, receipts } = makeScheduler({ registry, idle: false, now: () => clock });
 
     // Never idle, but not yet past the slow-schedule window: no run.
-    scheduler.tick();
+    await scheduler.tick();
     expect(receipts.length).toBe(0);
 
     // Past SCHEDULE_FACTOR x intervalMs (4 x 6h = 24h) with no idle window:
     // the schedule trigger fires so a busy host cannot starve the pass.
     clock = NOW + 25 * HOUR;
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
     expect(receipts.length).toBe(1);
     expect(scheduler.listReceipts()[0]!.trigger).toBe('schedule');
     expect(scheduler.listReceipts()[0]!.idle).toBe(false);
   });
 
-  test('enabled:false is the off switch: nothing runs', () => {
+  test('enabled:false is the off switch: nothing runs', async () => {
     const registry = new FakeRegistry([rec()]);
     const receipts: unknown[] = [];
     const scheduler = new MemoryConsolidationScheduler({
@@ -203,13 +208,13 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
       setTimer: inertTimer,
       onReceipt: (r) => receipts.push(r),
     });
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
     expect(receipts.length).toBe(0);
     expect(scheduler.listReceipts().length).toBe(0);
   });
 
-  test('minIdleMs requires CONTINUOUS idleness before the idle trigger fires', () => {
+  test('minIdleMs requires CONTINUOUS idleness before the idle trigger fires', async () => {
     const registry = new FakeRegistry([rec()]);
     let clock = NOW;
     const { scheduler, receipts, setIdle } = makeScheduler({
@@ -220,20 +225,35 @@ describe('memory consolidation scheduler: the daemon runs the engine', () => {
     });
 
     // First idle observation starts the continuous-idle window, not enough yet.
-    scheduler.tick();
+    await scheduler.tick();
     expect(receipts.length).toBe(0);
     // Activity resets the window.
     clock += 9 * 60 * 1000;
     setIdle(false);
-    scheduler.tick();
+    await scheduler.tick();
     setIdle(true);
     clock += 5 * 60 * 1000;
-    scheduler.tick();
+    await scheduler.tick();
     expect(receipts.length).toBe(0); // only 0ms..5m of continuous idle since reset
     // Continuous idleness past minIdleMs: runs.
     clock += 11 * 60 * 1000;
-    scheduler.tick();
+    await scheduler.tick();
     scheduler.stop();
     expect(receipts.length).toBe(1);
+  });
+
+  test('with no judgment port a pass that has pairs to read fails and leaves no receipt, never a guessed merge', async () => {
+    const previous = installJudgmentPort(undefined);
+    try {
+      const registry = new FakeRegistry([rec({ id: 'a', summary: 'same' }), rec({ id: 'b', summary: 'same' })]);
+      const { scheduler, receipts } = makeScheduler({ registry, idle: true });
+      await scheduler.tick();
+      scheduler.stop();
+      expect(receipts.length).toBe(0);
+      expect(registry.records.get('a')!.reviewState).toBe('fresh');
+      expect(registry.records.get('b')!.reviewState).toBe('fresh');
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 });

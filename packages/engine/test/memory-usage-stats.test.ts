@@ -55,6 +55,6 @@ describe('MemoryUsageStatsStore', () => {
     expect(summary.everReferenced).toBe(1);
     expect(summary.neverReferenced).toBe(2);
     expect(summary.mostReferenced[0]!.id).toBe('a');
-    expect(summary.signalNote.toLowerCase()).toContain('heuristic');
+    expect(summary.signalNote).toContain('not ground truth');
   });
 });

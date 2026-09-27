@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runAgentTask, type AgentOrchestratorRunContext } from '../sdk/src/platform/agents/orchestrator-runner.js';
-import { buildOrchestratorSystemPrompt } from '../sdk/src/platform/agents/orchestrator-prompts.js';
+import { buildOrchestratorSystemPrompt, resolveSpawnKnowledgeInjections } from '../sdk/src/platform/agents/orchestrator-prompts.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createProcessRegistry } from '../sdk/src/platform/runtime/fleet/index.js';
@@ -38,6 +38,21 @@ import type { LLMProvider, ChatResponse, ProviderMessage } from '../sdk/src/plat
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import type { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import type { MemoryRecord } from '../sdk/src/platform/state/memory-store.js';
+import { DEFAULT_MEMORY_READINGS, useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Knowledge ranking reads through the judgment port. The fake reads a record as
+// relevant when it shares a word with the query (so the deployment-docs fillers
+// match the frozen task and mem_ratelimit only matches after the rate-limiting
+// steer), except mem_big, which reads as moderately relevant to anything
+// (probability 0.6, score 114): above the default relevance floor (95, probability
+// 0.5) but below the fillers (0.95), so it misses the spawn-time top 3 and only
+// its size against the per-turn budget decides whether it is injected.
+const MEM_BIG_SUMMARY = 'rate limiting uses a distributed token bucket';
+useMemoryReadings({
+  relevance: (task, writeScope, record) => (record.summary.startsWith(MEM_BIG_SUMMARY)
+    ? { relevant: 0.6 }
+    : DEFAULT_MEMORY_READINGS.relevance(task, writeScope, record)),
+});
 
 function flushMicrotasks(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -77,8 +92,8 @@ function makeMemoryRecord(overrides: Partial<MemoryRecord> & { id: string }): Me
 
 /**
  * Three high-scoring, task-matching filler records. Spawn-time injection
- * (buildOrchestratorSystemPrompt) has NO relevance floor and NO budget, it takes the
- * top-3 candidates by score>0, so a lone topically-unrelated record would otherwise be
+ * (resolveSpawnKnowledgeInjections) has NO relevance floor and NO budget, it takes the
+ * top-3 candidates the relevance reading does not rule out, so a lone record would otherwise be
  * trivially "the only candidate" and land in the spawn baseline regardless of
  * relevance. These fillers occupy that top-3 for a frozen task of
  * "update the deployment docs" so a record that does NOT match that task is reliably
@@ -94,7 +109,7 @@ function makeDeploymentDocsFillers(): MemoryRecord[] {
 
 /** getAll() call count is the cheap, reliable proxy for "did retrieval actually run",
  *  selectKnowledgeForTaskScored calls registry.getAll() exactly once per invocation,
- *  spawn-time or per-turn, with or without a searchSemantic method present. */
+ *  spawn-time or per-turn, with or without a semanticCandidates method present. */
 function makeCountingMemoryRegistry(records: MemoryRecord[]) {
   const counters = { getAllCalls: 0 };
   return {
@@ -103,7 +118,7 @@ function makeCountingMemoryRegistry(records: MemoryRecord[]) {
         counters.getAllCalls += 1;
         return records;
       },
-      searchSemantic: () => [],
+      semanticCandidates: () => [],
       vectorStats: () => ({
         backend: 'sqlite-vec' as const,
         enabled: false,
@@ -220,11 +235,10 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
     const record = makeRecord({ id: 'ag-turn-knowledge-1' });
     const registry = createProcessRegistry(makeRegistryDeps(record, messageBus));
 
-    // mem_ratelimit's baseline score against the frozen task (confidence 55 + fresh +20 =
-    // 75, no token match) sits BELOW both the 3 fillers' scores (so spawn-time's top-3
-    // excludes it) and the default relevance floor (95, so turn-1 per-turn retrieval,
-    // which does query against the still-frozen task, excludes it too). Only the
-    // steer's "rate limiting" tokens (+20 each) push its score to 115, clearing the floor.
+    // Against the frozen task mem_ratelimit reads as not relevant, so spawn-time
+    // selection and turn-1 per-turn retrieval (which queries the still-frozen task)
+    // both leave it out. Only the steer's "rate limiting" makes it read as relevant,
+    // clearing the floor.
     const { registry: memoryRegistry } = makeCountingMemoryRegistry([
       ...makeDeploymentDocsFillers(),
       makeMemoryRecord({
@@ -434,11 +448,11 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
     const messageBus = new AgentMessageBus();
     const runtimeBus = new RuntimeEventBus();
     // Reuse the "deployment docs" frozen task from the first test: the 3 fillers occupy
-    // spawn-time's top-3 (mem_big's baseline score of confidence 90 + reviewed +40 = 130
-    // loses to each filler's ~206-210), so mem_big is excluded from the SPAWN baseline,
+    // spawn-time's top-3 (mem_big reads at 0.6 against their 0.95, see the port set up
+    // at the top of this file), so mem_big is excluded from the SPAWN baseline,
     // isolating this test to the PER-TURN budget mechanism alone. mem_big still clears
-    // the default relevance floor (95) on baseline score alone, so turn-1 per-turn
-    // retrieval attempts to inject it; only its size against a tight budget is at stake.
+    // the default relevance floor (95, probability 0.5), so turn-1 per-turn retrieval
+    // attempts to inject it; only its size against a tight budget is at stake.
     const record = makeRecord({ id: 'ag-turn-knowledge-threshold', task: 'update the deployment docs' });
     const { registry: memoryRegistry } = makeCountingMemoryRegistry([
       ...makeDeploymentDocsFillers(),
@@ -473,6 +487,7 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
     // suffix in applyContextWindowAwareness's own sysTokens estimate). Folding its cost
     // into the probe measurement here makes THIS TEST's wire-level "never exceeds
     // threshold" assertion honest, without changing what the runner itself measures.
+    await resolveSpawnKnowledgeInjections(record, probeContext);
     const baseSystemPrompt = appendGoodVibesRuntimeAwarenessPrompt(buildOrchestratorSystemPrompt(record, undefined, probeContext));
     const baseTokens = estimateTokens(baseSystemPrompt);
     const initialMessageTokens = estimateConversationTokens([{ role: 'user', content: record.task } as ProviderMessage]);

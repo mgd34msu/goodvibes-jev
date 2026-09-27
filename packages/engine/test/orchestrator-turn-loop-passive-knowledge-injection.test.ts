@@ -47,6 +47,11 @@ import type { MemoryRecord } from '../sdk/src/platform/state/memory-store.js';
 import type { TurnKnowledgeRegistrySource, TurnInjectionRecord } from '../sdk/src/platform/agents/turn-knowledge-injection.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { UNKNOWN_MODEL_PRICING } from '../sdk/src/platform/providers/model-pricing.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Knowledge ranking reads through the judgment port; the fake reads a record as
+// relevant when it shares a word with the query.
+useMemoryReadings();
 
 const BASE_SYSTEM_PROMPT = 'You are the goodvibes assistant.';
 // getSystemPrompt() output is always passed through appendGoodVibesRuntimeAwarenessPrompt
@@ -275,8 +280,7 @@ describe('orchestrator-turn-loop: main-session per-turn passive knowledge inject
 
   test('honest zero-injection: no record clears the relevance floor -> a reasoned record is still produced, prompt unaffected', async () => {
     const { registry: memoryRegistry } = makeCountingMemoryRegistry([
-      // confidence 55 + fresh(+20) = 75, well under the default relevance floor (95), and
-      // shares no tokens with the query text below.
+      // Shares no word with the query text below, so the relevance reading rules it out.
       makeMemoryRecord({ id: 'mem_unrelated', summary: 'unrelated topic entirely', confidence: 55 }),
     ]);
 

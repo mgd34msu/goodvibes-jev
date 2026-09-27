@@ -137,14 +137,14 @@ export function createDaemonIntegrationRouteHandlers(
       return Response.json({ receipts, pendingProposals });
     },
     getMemoryVectorStats: () => Response.json({ vector: context.memoryRegistry.vectorStats() }),
-    getMemoryReviewQueue: (url) => {
+    getMemoryReviewQueue: async (url) => {
       const limit = readBoundedPositiveInteger(url.searchParams.get('limit'), 10, 1_000);
       const rawScope = url.searchParams.get('scope');
       if (rawScope !== null && rawScope !== 'session' && rawScope !== 'project' && rawScope !== 'team') {
         return jsonErrorResponse({ error: `Invalid scope: ${rawScope}. Allowed: session, project, team` }, { status: 400 });
       }
       const scope = rawScope ?? undefined;
-      return Response.json({ records: context.memoryRegistry.reviewQueue(limit, scope) });
+      return Response.json({ records: await context.memoryRegistry.reviewQueue(limit, scope) });
     },
     postMemoryVectorRebuild: async (req) => {
       const admin = context.requireAdmin(req);
@@ -183,7 +183,7 @@ export function createDaemonIntegrationRouteHandlers(
       const body = await context.parseJsonBody(req);
       if (body instanceof Response) return body;
       const { filter, recall } = parseMemoryRecordSearchBody(body);
-      return Response.json(context.memoryRegistry.honestSearch(filter, { recall }));
+      return Response.json(await context.memoryRegistry.honestSearch(filter, { recall }));
     },
     getMemoryRecord: (id) => {
       const record = context.memoryRegistry.get(id);
@@ -210,13 +210,13 @@ export function createDaemonIntegrationRouteHandlers(
       const body = await context.parseJsonBody(req);
       if (body instanceof Response) return body;
       const filter = parseMemoryRecordFilterBody(body);
-      return Response.json({ records: context.memoryRegistry.search(filter) });
+      return Response.json({ records: await context.memoryRegistry.search(filter) });
     },
     postMemoryRecordSearchSemantic: async (req) => {
       const body = await context.parseJsonBody(req);
       if (body instanceof Response) return body;
       const filter = parseMemoryRecordFilterBody(body);
-      return Response.json({ results: context.memoryRegistry.searchSemantic(filter) });
+      return Response.json({ results: await context.memoryRegistry.searchSemantic(filter) });
     },
     postMemoryRecordUpdate: async (id, req) => {
       const body = await context.parseJsonBody(req);

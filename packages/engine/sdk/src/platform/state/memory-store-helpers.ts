@@ -150,28 +150,17 @@ export function isReviewCandidate(record: MemoryRecord): boolean {
     || record.reviewState === 'contradicted';
 }
 
-export function reviewQueueScore(record: MemoryRecord): number {
-  let score = 0;
-  if (record.reviewState === 'fresh') score += 40;
-  if (record.reviewState === 'stale') score += 20;
-  if (record.reviewState === 'contradicted') score += 10;
-  score += Math.max(0, 100 - record.confidence);
-  score += Math.min(20, record.tags.length * 3);
-  score += Math.min(20, record.provenance.length * 4);
-  return score;
-}
-
-export function scoreRecord(record: MemoryRecord, filter: MemorySearchFilter): number {
-  let score = record.confidence;
-  if (filter.query) {
-    const query = filter.query.toLowerCase();
-    if (record.summary.toLowerCase().includes(query)) score += 30;
-    if (record.detail?.toLowerCase().includes(query)) score += 20;
-  }
-  if (filter.semantic) score += 15;
-  if (filter.tags?.length) score += Math.min(25, filter.tags.length * 5);
-  if (isReviewFlagged(record)) score -= 20;
-  return score;
+/**
+ * Retrieval order when there is no query to rank against: records not flagged
+ * for review first, then higher confidence, then most recently updated. A
+ * structural order over stored fields; relevance to a query is the
+ * `engine.state.memory-search` rerank's job (memory-store.ts).
+ */
+export function compareByTrust(a: MemoryRecord, b: MemoryRecord): number {
+  return Number(isReviewFlagged(a)) - Number(isReviewFlagged(b))
+    || b.confidence - a.confidence
+    || b.updatedAt - a.updatedAt
+    || b.createdAt - a.createdAt;
 }
 
 export function recordMatchesPostSqlFilter(record: MemoryRecord, filter: MemorySearchFilter): boolean {

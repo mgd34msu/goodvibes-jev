@@ -7,9 +7,14 @@ import {
   type KnowledgeInjectionTrustTier,
   type KnowledgeInjectionUseAs,
 } from '../knowledge/shared.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit, type YesNoReading } from '@goodvibes-jev/judgment';
+import { knowledgeRelevance } from './batteries/knowledge-relevance.js';
+import { rerankShortlistSize } from './batteries/memory-search-rerank.js';
+import { compareByTrust } from './memory-store-helpers.js';
 import type {
   MemoryRecord,
-  MemoryRegistry,
+  MemorySearchFilter,
   MemorySemanticSearchResult,
 } from './memory-store.js';
 import { isMemoryTemporallyActive } from './memory-store.js';
@@ -34,97 +39,109 @@ type KnowledgeInjectionPromptInput =
 
 type KnowledgeRegistrySource = {
   getAll(): readonly MemoryRecord[];
-  searchSemantic?(input: Parameters<MemoryRegistry['searchSemantic']>[0]): readonly MemorySemanticSearchResult[];
+  /** Vector-index candidates in similarity order, retrieval only (MemoryRegistry.semanticCandidates). */
+  semanticCandidates?(input: MemorySearchFilter): readonly MemorySemanticSearchResult[];
 };
 
-function tokenize(value: string): string[] {
-  return value
-    .toLowerCase()
-    .split(/[^a-z0-9_./-]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 3);
+/** Records under this confidence are never injected: the retrieval gate, code. */
+const MIN_INJECTION_CONFIDENCE = 55;
+
+/**
+ * A ranked candidate's `score` is its `relevant` reading's probability times
+ * this scale, to keep the old field's range. Under the old additive weights
+ * the weakest relevant record (confidence 55, fresh +20, one task token +20)
+ * scored 95, the per-turn relevance floor's default
+ * (turn-knowledge-injection.ts DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR); 95 / 190
+ * puts that floor at probability 0.5, where the reading leans yes.
+ */
+export const KNOWLEDGE_SCORE_SCALE = 190;
+
+const SITE = 'state.knowledge-injection';
+
+/** Relevance readings in flight at once for one task. */
+const RELEVANCE_CONCURRENCY = 8;
+
+function isInjectable(record: MemoryRecord, now: number): boolean {
+  // A record OUTSIDE its temporal validity window (pending or expired) is never
+  // injected, mirrors the recall contract so both injection paths agree.
+  return isMemoryTemporallyActive(record, now)
+    && record.confidence >= MIN_INJECTION_CONFIDENCE
+    && record.reviewState !== 'contradicted';
 }
 
-function determineReason(
-  record: MemoryRecord,
-  taskTokens: readonly string[],
-  scopeTokens: readonly string[],
-  semanticSimilarity?: number,
-): string {
-  const summaryText = `${record.summary} ${record.detail ?? ''}`.toLowerCase();
-  const matchingTaskToken = taskTokens.find((token) => summaryText.includes(token) || record.tags.includes(token));
-  if (matchingTaskToken) {
-    return `matched task token "${matchingTaskToken}"`;
-  }
-
-  const matchingScopeToken = scopeTokens.find((token) => (
-    summaryText.includes(token)
-    || record.tags.includes(token)
-    || record.provenance.some((link) => link.ref.toLowerCase().includes(token))
-  ));
-  if (matchingScopeToken) {
-    return `matched write scope "${matchingScopeToken}"`;
-  }
-
-  if (semanticSimilarity !== undefined) {
-    return `matched sqlite-vec semantic index (${Math.round(semanticSimilarity * 100)}%)`;
-  }
-
-  return 'ranked as high-confidence relevant knowledge';
+interface ShortlistEntry {
+  readonly record: MemoryRecord;
+  /** Present when the vector index put the record on the shortlist. */
+  readonly similarity: number | undefined;
 }
 
-function hasKeywordMatch(record: MemoryRecord, taskTokens: readonly string[], scopeTokens: readonly string[]): boolean {
-  const summaryText = `${record.summary} ${record.detail ?? ''}`.toLowerCase();
-  return taskTokens.some((token) => summaryText.includes(token) || record.tags.includes(token))
-    || scopeTokens.some((token) => (
-      summaryText.includes(token)
-      || record.tags.includes(token)
-      || record.provenance.some((link) => link.ref.toLowerCase().includes(token))
-    ));
+/**
+ * Retrieval, all code: the vector index's nearest injectable records first,
+ * topped up with the most trusted remaining injectable records (compareByTrust)
+ * until the shortlist holds rerankShortlistSize(limit). Only the shortlist is
+ * read by Jev.
+ */
+function buildShortlist(registry: KnowledgeRegistrySource, task: string, writeScope: readonly string[], limit: number): ShortlistEntry[] {
+  const size = rerankShortlistSize(limit);
+  const now = Date.now();
+  const shortlist: ShortlistEntry[] = [];
+  const seen = new Set<string>();
+  const semantic = registry.semanticCandidates?.({
+    query: [task, ...writeScope].join(' '),
+    minConfidence: MIN_INJECTION_CONFIDENCE,
+    limit: size,
+  }) ?? [];
+  for (const entry of semantic) {
+    if (shortlist.length >= size) break;
+    if (seen.has(entry.record.id) || !isInjectable(entry.record, now)) continue;
+    seen.add(entry.record.id);
+    shortlist.push({ record: entry.record, similarity: entry.similarity });
+  }
+  const rest = registry.getAll().filter((record) => !seen.has(record.id) && isInjectable(record, now)).sort(compareByTrust);
+  for (const record of rest) {
+    if (shortlist.length >= size) break;
+    shortlist.push({ record, similarity: undefined });
+  }
+  return shortlist;
 }
 
-function determineIngestMode(
-  record: MemoryRecord,
-  taskTokens: readonly string[],
-  scopeTokens: readonly string[],
-  semanticSimilarity?: number,
-): KnowledgeInjectionIngestMode {
-  const keywordMatched = hasKeywordMatch(record, taskTokens, scopeTokens);
-  if (semanticSimilarity !== undefined && keywordMatched) return 'hybrid-ranked';
-  if (semanticSimilarity !== undefined) return 'semantic-ranked';
+function relevanceState(record: MemoryRecord, task: string, writeScope: readonly string[]) {
+  return {
+    task,
+    write_scope: [...writeScope],
+    record: {
+      class: record.cls,
+      summary: record.summary,
+      ...(record.detail ? { detail: record.detail } : {}),
+      tags: record.tags,
+      files: record.provenance.filter((link) => link.kind === 'file').map((link) => link.ref),
+    },
+  };
+}
+
+/**
+ * The justification the injection line shows: which evidence put the record
+ * in the result. Task and scope matches are Jev readings; the semantic match
+ * is the vector index's similarity, which put the record on the shortlist.
+ */
+function describeReason(taskMatch: boolean, scopeMatch: boolean, similarity: number | undefined, relevant: YesNoReading): string {
+  const evidence: string[] = [];
+  if (taskMatch) evidence.push('matched task');
+  if (scopeMatch) evidence.push('matched write scope');
+  if (similarity !== undefined) evidence.push(`matched sqlite-vec semantic index (${Math.round(similarity * 100)}%)`);
+  if (evidence.length > 0) return evidence.join(', ');
+  return relevant.verdict === 'yes' ? 'judged relevant to the task' : 'possibly relevant to the task';
+}
+
+/**
+ * The ingest-mode label: hybrid when the vector index shortlisted the record
+ * and a reading matched it to the task or write scope, semantic when only the
+ * vector index put it forward, keyword when it was ranked on its text alone.
+ */
+function describeIngestMode(textMatched: boolean, similarity: number | undefined): KnowledgeInjectionIngestMode {
+  if (similarity !== undefined && textMatched) return 'hybrid-ranked';
+  if (similarity !== undefined) return 'semantic-ranked';
   return 'keyword-ranked';
-}
-
-function scoreKnowledge(record: MemoryRecord, taskTokens: readonly string[], scopeTokens: readonly string[]): number {
-  if (record.reviewState === 'contradicted') return Number.NEGATIVE_INFINITY;
-
-  const haystack = [
-    record.summary,
-    record.detail ?? '',
-    record.tags.join(' '),
-    record.provenance.map((link) => `${link.kind}:${link.ref} ${link.label ?? ''}`).join(' '),
-  ].join(' ').toLowerCase();
-
-  let score = record.confidence;
-  switch (record.reviewState) {
-    case 'reviewed':
-      score += 40;
-      break;
-    case 'fresh':
-      score += 20;
-      break;
-    case 'stale':
-      score -= 30;
-      break;
-  }
-
-  for (const token of taskTokens) {
-    if (haystack.includes(token)) score += 20;
-  }
-  for (const token of scopeTokens) {
-    if (haystack.includes(token)) score += 15;
-  }
-  return score;
 }
 
 /**
@@ -132,68 +149,52 @@ function scoreKnowledge(record: MemoryRecord, taskTokens: readonly string[], sco
  * `KnowledgeInjection` plus the numeric score that placed it, before any
  * `limit` slice is applied. Exists so callers other than the spawn-time
  * baseline (e.g. per-turn retrieval in turn-knowledge-injection.ts) can
- * apply their own relevance floor / budget trim over the SAME ranked list
- * without re-implementing scoreKnowledge/determineReason/determineIngestMode.
+ * apply their own relevance floor / budget trim over the SAME ranked list.
  */
 export interface ScoredKnowledgeInjection {
   readonly injection: KnowledgeInjection;
+  /** The `relevant` reading's probability times KNOWLEDGE_SCORE_SCALE. */
   readonly score: number;
 }
 
 /**
- * Full ranking pipeline, unsliced: scores every registry record that clears
- * the confidence>=55 gate against `task`/`writeScope`, folds in semantic
- * similarity when the registry supports it, and returns every candidate with
- * score>0 sorted best-first. `limit` only widens the semantic-search
- * candidate pool (`Math.max(limit*4,12)`, mirroring the historical
- * behavior), it does NOT slice the returned array. Callers that want the
- * spawn-time top-N behavior should slice the result themselves; see
- * `selectKnowledgeForTask` below.
+ * Full ranking pipeline, unsliced. Retrieval builds a shortlist (see
+ * buildShortlist); the `engine.state.knowledge-relevance` battery reads each
+ * shortlisted record against `task`/`writeScope` in one request per record,
+ * and the candidates come back best first by their `relevant` reading. A
+ * record the reading clearly rules out (verdict no) is dropped; an uncertain
+ * one stays for the caller's floor to judge. `limit` only sizes the shortlist
+ * (rerankShortlistSize), it does NOT slice the returned array. Callers that
+ * want the spawn-time top-N behavior use `selectKnowledgeForTask` below.
  */
-export function selectKnowledgeForTaskScored(
+export async function selectKnowledgeForTaskScored(
   registry: KnowledgeRegistrySource,
   task: string,
   writeScope: readonly string[] = [],
   limit = 3,
-): ScoredKnowledgeInjection[] {
-  const taskTokens = tokenize(task);
-  const scopeTokens = writeScope.flatMap((entry) => tokenize(entry));
-  const semanticResults: readonly MemorySemanticSearchResult[] = registry.searchSemantic?.({
-    query: [task, ...writeScope].join(' '),
-    minConfidence: 55,
-    limit: Math.max(limit * 4, 12),
-  }) ?? [];
-  const semanticById = new Map<string, MemorySemanticSearchResult>(semanticResults.map((entry) => [entry.record.id, entry]));
-  const recordsById = new Map<string, MemoryRecord>();
-  for (const record of registry.getAll()) {
-    recordsById.set(record.id, record);
-  }
-  for (const entry of semanticResults) {
-    recordsById.set(entry.record.id, entry.record);
-  }
-
-  // A record OUTSIDE its temporal validity window (pending or expired) is never
-  // injected, mirrors the recall contract so both injection paths agree.
-  const injectionNow = Date.now();
-  return [...recordsById.values()]
-    .filter((record) => isMemoryTemporallyActive(record, injectionNow))
-    .filter((record) => record.confidence >= 55)
-    .map((record) => {
-      const semantic = semanticById.get(record.id);
-      return {
-        record,
-        score: scoreKnowledge(record, taskTokens, scopeTokens) + (semantic ? semantic.similarity * 70 : 0),
-      };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || b.record.updatedAt - a.record.updatedAt)
-    .map(({ record, score }) => ({
-      score,
+): Promise<ScoredKnowledgeInjection[]> {
+  const shortlist = buildShortlist(registry, task, writeScope, limit);
+  if (shortlist.length === 0) return [];
+  const port = judgmentPort(SITE);
+  const only = writeScope.length > 0 ? undefined : (['relevant', 'task_match'] as const);
+  const read = await mapLimit(shortlist, RELEVANCE_CONCURRENCY, async ({ record, similarity }) => {
+    const run = await knowledgeRelevance.run(port, relevanceState(record, task, writeScope), { site: SITE, ...(only ? { only: [...only] } : {}) });
+    const { relevant } = run.readings;
+    const taskMatch = run.readings.task_match?.verdict === 'yes';
+    const scopeMatch = run.readings.scope_match?.verdict === 'yes';
+    run.recordAction(relevant.verdict === 'no' ? 'excluded' : 'ranked');
+    return { record, similarity, relevant, taskMatch, scopeMatch };
+  });
+  return read
+    .filter((entry) => entry.relevant.verdict !== 'no')
+    .sort((a, b) => b.relevant.probability - a.relevant.probability || b.record.updatedAt - a.record.updatedAt)
+    .map(({ record, similarity, relevant, taskMatch, scopeMatch }) => ({
+      score: relevant.probability * KNOWLEDGE_SCORE_SCALE,
       injection: {
         id: record.id,
         cls: record.cls,
         summary: record.summary,
-        reason: determineReason(record, taskTokens, scopeTokens, semanticById.get(record.id)?.similarity),
+        reason: describeReason(taskMatch, scopeMatch, similarity, relevant),
         confidence: record.confidence,
         reviewState: record.reviewState,
         trustTier: inferKnowledgeInjectionTrustTier(record.reviewState),
@@ -203,18 +204,18 @@ export function selectKnowledgeForTaskScored(
           source: 'project-memory' as const,
           links: record.provenance,
         },
-        ingestMode: determineIngestMode(record, taskTokens, scopeTokens, semanticById.get(record.id)?.similarity),
+        ingestMode: describeIngestMode(taskMatch || scopeMatch, similarity),
       },
     }));
 }
 
-export function selectKnowledgeForTask(
+export async function selectKnowledgeForTask(
   registry: KnowledgeRegistrySource,
   task: string,
   writeScope: readonly string[] = [],
   limit = 3,
-): KnowledgeInjection[] {
-  return selectKnowledgeForTaskScored(registry, task, writeScope, limit)
+): Promise<KnowledgeInjection[]> {
+  return (await selectKnowledgeForTaskScored(registry, task, writeScope, limit))
     .map((entry) => entry.injection)
     .slice(0, limit);
 }

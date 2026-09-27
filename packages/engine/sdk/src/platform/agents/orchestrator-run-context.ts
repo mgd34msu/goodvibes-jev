@@ -70,7 +70,7 @@ export interface AgentOrchestratorRunContext {
   readonly processManager?: ProcessManager | undefined;
   readonly messageBus: Pick<AgentMessageBus, 'getMessages'>;
   readonly knowledgeService?: Pick<KnowledgeService, 'buildPromptPacketSync'> | undefined;
-  readonly memoryRegistry?: Pick<import('../state/index.js').MemoryRegistry, 'getAll' | 'searchSemantic' | 'vectorStats'> | undefined;
+  readonly memoryRegistry?: Pick<import('../state/index.js').MemoryRegistry, 'getAll' | 'semanticCandidates' | 'vectorStats'> | undefined;
   /**
    * Stage B, repo code index for per-turn code injection in a spawned agent run.
    * Undefined is a hard no-op. Actual injection additionally requires the

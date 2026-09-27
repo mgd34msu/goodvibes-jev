@@ -131,7 +131,7 @@ export interface MemoryRegistryLike {
   doctor(): Promise<unknown>;
   vectorStats(): unknown;
   rebuildVectorsAsync(): Promise<unknown>;
-  reviewQueue(limit?: number, scope?: string): unknown[];
+  reviewQueue(limit?: number, scope?: string): Promise<unknown[]>;
   add(opts: MemoryRecordAddInput): Promise<unknown>;
   /**
    * Search honoring the recall-honesty contract; returns the honest envelope the
@@ -139,15 +139,15 @@ export interface MemoryRegistryLike {
    * MemoryRegistry (whose defaults make BOTH params optional) binds bivariantly,
    * exactly as `reviewQueue`'s optional params already do.
    */
-  honestSearch(filter?: MemoryRecordSearchFilterInput, options?: { readonly recall?: boolean | undefined }): unknown;
+  honestSearch(filter?: MemoryRecordSearchFilterInput, options?: { readonly recall?: boolean | undefined }): Promise<unknown>;
   get(id: string): unknown | null;
   review(id: string, patch: MemoryRecordReviewInput): unknown | null;
   delete(id: string): boolean;
   // ── Full-detach catalog (1.2.0) ─────────────────────────────────────────────
   /** Literal search / bulk read. Serves both records.list and getAll (empty filter). */
-  search(filter?: MemoryRecordSearchFilterInput): unknown[];
+  search(filter?: MemoryRecordSearchFilterInput): Promise<unknown[]>;
   /** Scored semantic search, returns MemorySemanticSearchResult[] the route wraps as { results }. */
-  searchSemantic(filter?: MemoryRecordSearchFilterInput): unknown[];
+  searchSemantic(filter?: MemoryRecordSearchFilterInput): Promise<unknown[]>;
   /** Edit scope/summary/detail/tags. Returns the updated record or null when the id is unknown. */
   update(id: string, patch: MemoryRecordUpdateInput): unknown | null;
   /** Relate two records. Returns the link or null when either id is unknown. */

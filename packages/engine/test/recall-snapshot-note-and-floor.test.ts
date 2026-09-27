@@ -79,14 +79,14 @@ describe('honest search result carries the recall floor (Fix 4)', () => {
     vectorStats: () => ({ enabled: false, available: false, indexedRecords: 0, embeddingProviderId: 'none' }),
   } as never;
 
-  test('recall:false (browse) still reports the floor it would judge against', () => {
-    const res = runHonestMemorySearch(store, {}, { recall: false });
+  test('recall:false (browse) still reports the floor it would judge against', async () => {
+    const res = await runHonestMemorySearch(store, {}, { recall: false });
     expect(res.recallFloor).toBe(MIN_PROMPT_MEMORY_CONFIDENCE);
     expect(res.recallFiltered).toBe(false);
   });
 
-  test('recall:true (injection) reports the floor it judged against', () => {
-    const res = runHonestMemorySearch(store, {}, { recall: true });
+  test('recall:true (injection) reports the floor it judged against', async () => {
+    const res = await runHonestMemorySearch(store, {}, { recall: true });
     expect(res.recallFloor).toBe(MIN_PROMPT_MEMORY_CONFIDENCE);
     expect(res.recallFiltered).toBe(true);
   });

@@ -14,6 +14,10 @@ import {
   type MemoryRecord,
 } from '../sdk/src/platform/state/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Memory search and knowledge ranking read through the judgment port; the fake answers them.
+useMemoryReadings();
 
 /**
  * Temporal validity windows (validFrom/validUntil): consulted at injection time
@@ -120,7 +124,7 @@ describe('injection paths exclude out-of-window records', () => {
     const store = await makeStore();
     await store.add({ cls: 'fact', summary: 'live one', review: { confidence: 80 } });
     await store.add({ cls: 'fact', summary: 'dead one', review: { confidence: 80 }, validUntil: Date.now() - 1000 });
-    const result = runHonestMemorySearch(store, {}, { recall: true });
+    const result = await runHonestMemorySearch(store, {}, { recall: true });
     const summaries = result.records.map((r) => r.summary);
     expect(summaries).toContain('live one');
     expect(summaries).not.toContain('dead one');
@@ -131,8 +135,8 @@ describe('injection paths exclude out-of-window records', () => {
     const store = await makeStore();
     await store.add({ cls: 'decision', summary: 'kubernetes rollout policy', review: { confidence: 80 } });
     await store.add({ cls: 'decision', summary: 'kubernetes rollout policy expired', review: { confidence: 80 }, validUntil: Date.now() - 1000 });
-    const registry = { getAll: () => store.search({}) };
-    const scored = selectKnowledgeForTaskScored(registry, 'kubernetes rollout', [], 10);
+    const registry = { getAll: () => store.retrieve({}) };
+    const scored = await selectKnowledgeForTaskScored(registry, 'kubernetes rollout', [], 10);
     const summaries = scored.map((entry) => entry.injection.summary);
     expect(summaries).toContain('kubernetes rollout policy');
     expect(summaries).not.toContain('kubernetes rollout policy expired');

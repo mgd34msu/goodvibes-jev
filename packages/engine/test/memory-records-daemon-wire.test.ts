@@ -20,6 +20,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
 import { classifyMemoryWireError } from '../sdk/src/platform/runtime/memory-spine/index.ts';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Memory search and knowledge ranking read through the judgment port; the fake answers them.
+useMemoryReadings();
 
 const TOKEN = 'memory-wire-token';
 let home: string;
@@ -84,7 +88,7 @@ describe('add over the wire is visible via wire search AND a direct canonical-st
     // Visible via a DIRECT read of the daemon's own canonical store.
     const direct = daemon.memory.get(record.id);
     expect(direct?.summary).toBe('canonical wire decision');
-    expect(daemon.memory.search({ query: 'canonical wire' }).some((r) => r.id === record.id)).toBe(true);
+    expect((await daemon.memory.search({ query: 'canonical wire' })).some((r) => r.id === record.id)).toBe(true);
   });
 
   test('missing required fields are rejected 400', async () => {
@@ -163,7 +167,7 @@ describe('full-detach catalog over the wire (list / semantic / update / links / 
     expect(Array.isArray(body.records)).toBe(true);
     expect(body.records.some((r) => r.id === record.id)).toBe(true);
     // Same set the daemon's own canonical store sees, not a detached copy.
-    expect(daemon.memory.search({}).some((r) => r.id === record.id)).toBe(true);
+    expect((await daemon.memory.search({})).some((r) => r.id === record.id)).toBe(true);
   });
 
   test('search-semantic returns scored results and degrades to a lexical ranking (never a silent empty)', async () => {

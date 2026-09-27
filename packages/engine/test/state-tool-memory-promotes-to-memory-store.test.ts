@@ -28,6 +28,10 @@ import {
   buildPerTurnKnowledgeInjection,
   DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR,
 } from '../sdk/src/platform/agents/turn-knowledge-injection.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Memory search and knowledge ranking read through the judgment port; the fake answers them.
+useMemoryReadings();
 
 const tmpRoots: string[] = [];
 
@@ -93,7 +97,7 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
     expect(rec!.provenance.some((link) => link.kind === 'file' && link.ref.includes('dashboard_prefs'))).toBe(true);
 
     // 3. The passive per-turn injection path surfaces it on a turn whose query matches.
-    const { block, record } = buildPerTurnKnowledgeInjection({
+    const { block, record } = await buildPerTurnKnowledgeInjection({
       memoryRegistry,
       task: 'Assist the user with the dashboard.',
       conversationTail: [{ role: 'user', content: 'What dashboard theme and spacing should I use?' }],

@@ -9,6 +9,10 @@ import {
   foldMemoryStores,
 } from '../sdk/src/platform/state/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Memory search and knowledge ranking read through the judgment port; the fake answers them.
+useMemoryReadings();
 
 /**
  * Memory unification, one canonical cross-surface memory store.
@@ -69,7 +73,7 @@ describe('cross-surface recall (E6 core outcome)', () => {
     const recalled = surfaceB.get(written.id);
     expect(recalled).not.toBeNull();
     expect(recalled?.summary).toBe('the deploy command is `bun run ship`');
-    const found = surfaceB.search({ query: 'deploy command' });
+    const found = await surfaceB.search({ query: 'deploy command' });
     expect(found.map((r) => r.id)).toContain(written.id);
     surfaceB.close();
   });
@@ -135,7 +139,7 @@ describe('fold/migration into the canonical store (migration honesty)', () => {
     );
     expect(report2.totalImported).toBe(0);
     expect(report2.totalSkipped).toBe(3);
-    expect(canonical.search({}).length).toBe(3);
+    expect((await canonical.search({})).length).toBe(3);
 
     // Legacy stores are never deleted by migration.
     expect(existsSync(agentPath)).toBe(true);

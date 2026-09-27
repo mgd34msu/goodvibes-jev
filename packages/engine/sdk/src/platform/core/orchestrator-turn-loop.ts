@@ -397,7 +397,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         // (default-off) code-injection flag AND the embedder's storage.codeIndexEnabled
         // setting, both folded into isPassiveCodeInjectionEnabled by the orchestrator.
         const codeInjectionEnabled = !!context.codeIndex && context.isPassiveCodeInjectionEnabled();
-        const { block, record: turnInjectionRecord } = buildPerTurnKnowledgeInjection({
+        const { block, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
           memoryRegistry: context.memoryRegistry,
           // The main session has no frozen "task" distinct from the live conversation,
           // context.text (this call's originating human message) IS this turn's task, and

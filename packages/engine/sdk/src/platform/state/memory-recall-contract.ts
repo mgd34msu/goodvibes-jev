@@ -138,8 +138,8 @@ export function describeMemoryIndexCaveat(stats: MemoryVectorStats): string | nu
  * class so it can run over any store that exposes the three read paths.
  */
 export interface HonestSearchStore {
-  search(filter: MemorySearchFilter): MemoryRecord[];
-  searchSemantic(filter: MemorySearchFilter): MemorySemanticSearchResult[];
+  search(filter: MemorySearchFilter): Promise<MemoryRecord[]>;
+  searchSemantic(filter: MemorySearchFilter): Promise<MemorySemanticSearchResult[]>;
   vectorStats(): MemoryVectorStats;
 }
 
@@ -198,11 +198,11 @@ export interface HonestMemorySearchResult {
  * This is the ONE composition every surface (daemon route, wire client, offline
  * local store) calls, so the contract is applied identically everywhere.
  */
-export function runHonestMemorySearch(
+export async function runHonestMemorySearch(
   store: HonestSearchStore,
   filter: MemorySearchFilter = {},
   options: HonestMemorySearchOptions = {},
-): HonestMemorySearchResult {
+): Promise<HonestMemorySearchResult> {
   const requestedSemantic = filter.semantic === true;
   let mode: 'literal' | 'semantic' = 'literal';
   let indexUnavailableReason: string | null = null;
@@ -215,14 +215,14 @@ export function runHonestMemorySearch(
     if (indexUnavailableReason !== null) {
       // Honest degrade: the index cannot be consulted, so fall back to a literal
       // scan and SAY SO via indexUnavailableReason.
-      baseRecords = store.search({ ...filter, semantic: false });
+      baseRecords = await store.search({ ...filter, semantic: false });
     } else {
       mode = 'semantic';
       caveat = describeMemoryIndexCaveat(stats);
-      baseRecords = store.searchSemantic(filter).map((entry) => entry.record);
+      baseRecords = (await store.searchSemantic(filter)).map((entry) => entry.record);
     }
   } else {
-    baseRecords = store.search(filter);
+    baseRecords = await store.search(filter);
   }
 
   const totalBeforeRecallFilter = baseRecords.length;

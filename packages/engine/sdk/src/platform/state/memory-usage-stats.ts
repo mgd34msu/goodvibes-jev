@@ -6,8 +6,8 @@
  *
  * The store records, per memory id, how many times it was injected into a prompt
  * and how many of those injections were plausibly referenced by the model's
- * output (see memory-usage-detection.ts, a heuristic distinctive-content
- * overlap, not ground truth). It duplicates no memory content: it keys on the id
+ * output (see memory-usage-detection.ts, a Jev reading per memory, not
+ * ground truth). It duplicates no memory content: it keys on the id
  * only. It is instrumentation data, not a second memory store, same durable JSON
  * sidecar idiom as the prompt-context and consolidation receipts.
  *
@@ -49,7 +49,7 @@ interface MutableEntry {
 const USAGE_FILE_VERSION = 1;
 
 export const MEMORY_USAGE_SIGNAL_NOTE =
-  'Reference detection is heuristic: it flags overlap between the model output and the injected memory\'s distinctive content, not ground truth that the memory changed the answer.';
+  'Reference detection is a judgment reading: it says whether the model output used the injected memory\'s specific information, not ground truth that the memory changed the answer.';
 
 function isEntry(value: unknown): value is MemoryUsageEntry {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

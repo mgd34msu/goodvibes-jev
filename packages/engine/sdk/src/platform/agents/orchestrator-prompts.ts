@@ -15,7 +15,7 @@ type PromptContextDeps = {
         buildPromptPacketSync(task: string, writeScope?: readonly string[]): string | null;
       }
     | undefined;
-  readonly memoryRegistry?: Pick<MemoryRegistry, 'getAll' | 'searchSemantic'> | undefined;
+  readonly memoryRegistry?: Pick<MemoryRegistry, 'getAll' | 'semanticCandidates'> | undefined;
   readonly archetypeLoader?:
     | {
         loadArchetype(template: string): { systemPrompt?: string | undefined } | null | undefined;
@@ -213,6 +213,19 @@ You are writing a message to a person, most likely read on a phone.
   filling in a form.`;
 
 /**
+ * Spawn-time knowledge selection: ranks project memory against the agent's
+ * task (a Jev reading per shortlisted record, so it is async) and caches the
+ * result on `record.knowledgeInjections` for every later prompt build. A
+ * non-empty cached selection is kept as is.
+ */
+export async function resolveSpawnKnowledgeInjections(record: AgentRecord, deps?: PromptContextDeps): Promise<void> {
+  if (record.knowledgeInjections && record.knowledgeInjections.length > 0) return;
+  record.knowledgeInjections = deps?.memoryRegistry
+    ? await selectKnowledgeForTask(deps.memoryRegistry, record.task, record.writeScope ?? [])
+    : [];
+}
+
+/**
  * Build a layered system prompt from base instructions, archetype, project
  * context, conventions, knowledge injections, and task text.
  */
@@ -319,12 +332,8 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
     }
   }
 
-  const knowledgeInjections =
-    record.knowledgeInjections && record.knowledgeInjections.length > 0
-      ? record.knowledgeInjections
-      : deps?.memoryRegistry
-        ? selectKnowledgeForTask(deps.memoryRegistry, record.task, record.writeScope ?? [])
-        : [];
+  // Selected once, before the first build, by resolveSpawnKnowledgeInjections.
+  const knowledgeInjections = record.knowledgeInjections ?? [];
   record.knowledgeInjections = knowledgeInjections;
   const knowledgePrompt = buildKnowledgeInjectionPrompt(knowledgeInjections);
   if (knowledgePrompt) {

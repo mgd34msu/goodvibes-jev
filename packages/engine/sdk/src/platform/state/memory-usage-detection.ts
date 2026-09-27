@@ -1,24 +1,26 @@
 /**
- * memory-usage-detection.ts, heuristic reference detection (HOISTED to the SDK).
+ * memory-usage-detection.ts, reference detection (HOISTED to the SDK).
  *
- * Did the model's output plausibly USE an injected memory, or was the memory
- * merely present in the prompt with no detectable trace? Promoted verbatim from
- * the agent surface so every consumer shares the SAME two-tier honest signal.
+ * Did the model's output USE an injected memory, or was the memory merely
+ * present in the prompt? Jev reads each injected memory against the response
+ * (the `engine.state.memory-usage` battery, one request per memory) so every
+ * consumer shares the SAME two-tier signal.
  *
  * Exactly two tiers:
- *   - 'referenced': the output overlaps this memory's DISTINCTIVE content
- *     (uncommon tokens or a distinctive two-word phrase), so the memory plausibly
- *     mattered to the answer.
- *   - 'present': the memory was injected but nothing in the output distinctively
- *     overlaps it.
+ *   - 'referenced': the reading says yes, the response uses the specific
+ *     information in this memory.
+ *   - 'present': the memory was injected but the reading does not say yes.
+ *     An uncertain reading counts as present: the tier claims use only when
+ *     the reading supports it.
  *
- * It is NOT a relevance score and NOT ground truth, distinctive-token overlap
- * can be coincidental, and a memory can influence an answer without lexical
- * overlap. Everywhere this signal is shown it must be labelled as heuristic
- * overlap (see MEMORY_USAGE_SIGNAL_NOTE). The bar requires either two distinctive
- * tokens, one long distinctive token, or a distinctive adjacent phrase, so common
- * words alone never count as a reference.
+ * It is NOT a relevance score and NOT ground truth, a memory can shape an
+ * answer without showing in it. Everywhere this signal is shown it is
+ * labelled as a reading (see MEMORY_USAGE_SIGNAL_NOTE).
  */
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { memoryUsage } from './batteries/memory-usage.js';
+
 export type MemoryReferenceTier = 'referenced' | 'present';
 
 export interface MemoryReferenceInput {
@@ -33,73 +35,32 @@ export interface MemoryReferenceResult {
   readonly perId: ReadonlyMap<string, MemoryReferenceTier>;
 }
 
-const STOPWORDS = new Set([
-  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'you', 'are', 'was', 'were',
-  'has', 'have', 'had', 'will', 'shall', 'when', 'then', 'than', 'they', 'them', 'their', 'there',
-  'here', 'what', 'which', 'who', 'whom', 'whose', 'how', 'why', 'not', 'but', 'all', 'any', 'can',
-  'use', 'used', 'using', 'via', 'per', 'about', 'over', 'under', 'also', 'only', 'each', 'some',
-  'such', 'more', 'most', 'less', 'least', 'been', 'being', 'does', 'done', 'should', 'would', 'could',
-]);
+const SITE = 'state.memory-usage-detection';
 
-function tokenize(text: string): string[] {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+/** Usage readings in flight at once for one response. */
+const USAGE_CONCURRENCY = 8;
+
+async function classify(record: MemoryReferenceInput, responseText: string): Promise<MemoryReferenceTier> {
+  const memory = { summary: record.summary, ...(record.detail ? { detail: record.detail } : {}) };
+  const run = await memoryUsage.run(judgmentPort(SITE), { memory, response: responseText }, { site: SITE });
+  const tier: MemoryReferenceTier = run.readings.used.verdict === 'yes' ? 'referenced' : 'present';
+  run.recordAction(tier);
+  return tier;
 }
 
-function distinctiveTokens(text: string): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const token of tokenize(text)) {
-    if (token.length < 4 || STOPWORDS.has(token)) continue;
-    if (seen.has(token)) continue;
-    seen.add(token);
-    out.push(token);
-  }
-  return out;
-}
-
-function distinctivePhrases(text: string): string[] {
-  const tokens = tokenize(text).filter((token) => token.length >= 4 && !STOPWORDS.has(token));
-  const phrases: string[] = [];
-  for (let i = 0; i + 1 < tokens.length; i += 1) phrases.push(`${tokens[i]} ${tokens[i + 1]}`);
-  return phrases;
-}
-
-function classify(record: MemoryReferenceInput, responseTokens: ReadonlySet<string>, normalizedResponse: string): MemoryReferenceTier {
-  const source = `${record.summary} ${record.detail ?? ''}`;
-  const tokens = distinctiveTokens(source);
-  if (tokens.length === 0) return 'present';
-
-  let overlap = 0;
-  let longOverlap = false;
-  for (const token of tokens) {
-    if (responseTokens.has(token)) {
-      overlap += 1;
-      if (token.length >= 6) longOverlap = true;
-    }
-  }
-  if (overlap >= 2) return 'referenced';
-  if (overlap === 1 && longOverlap) return 'referenced';
-
-  for (const phrase of distinctivePhrases(source)) {
-    if (normalizedResponse.includes(phrase)) return 'referenced';
-  }
-  return 'present';
-}
-
-export function detectReferencedMemoryIds(
+export async function detectReferencedMemoryIds(
   responseText: string,
   records: readonly MemoryReferenceInput[],
-): MemoryReferenceResult {
-  const responseTokens = new Set(tokenize(responseText).filter((token) => token.length >= 4));
-  const normalizedResponse = tokenize(responseText).join(' ');
+): Promise<MemoryReferenceResult> {
   const referenced: string[] = [];
   const present: string[] = [];
   const perId = new Map<string, MemoryReferenceTier>();
-  for (const record of records) {
-    const tier = classify(record, responseTokens, normalizedResponse);
+  const tiers = await mapLimit(records, USAGE_CONCURRENCY, (record) => classify(record, responseText));
+  records.forEach((record, index) => {
+    const tier = tiers[index]!;
     perId.set(record.id, tier);
     if (tier === 'referenced') referenced.push(record.id);
     else present.push(record.id);
-  }
+  });
   return { referenced, present, perId };
 }

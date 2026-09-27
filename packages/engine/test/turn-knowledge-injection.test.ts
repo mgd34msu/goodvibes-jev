@@ -28,6 +28,12 @@ import {
 import type { MemoryRecord } from '../sdk/src/platform/state/memory-store.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Knowledge ranking reads through the judgment port; the fake reads a record as
+// relevant (0.95, score 180.5) when it shares a word with the query and as not
+// relevant (0.05, dropped) otherwise.
+const readings = useMemoryReadings();
 
 function makeRecord(overrides: Partial<MemoryRecord> & { id: string }): MemoryRecord {
   return {
@@ -55,12 +61,12 @@ afterEach(() => {
 });
 
 describe('deriveTurnKnowledgeQuery', () => {
-  test('turn 1 (conversation tail === task) collapses to the task with no duplication', () => {
+  test('turn 1 (conversation tail === task) collapses to the task with no duplication', async () => {
     const tail: ProviderMessage[] = [{ role: 'user', content: 'fix the auth module' }];
     expect(deriveTurnKnowledgeQuery('fix the auth module', tail)).toBe('fix the auth module');
   });
 
-  test('a later steer message is folded into the query alongside the frozen task', () => {
+  test('a later steer message is folded into the query alongside the frozen task', async () => {
     const tail: ProviderMessage[] = [
       { role: 'user', content: 'fix the auth module' },
       { role: 'assistant', content: 'working on it' },
@@ -69,7 +75,7 @@ describe('deriveTurnKnowledgeQuery', () => {
     expect(deriveTurnKnowledgeQuery('fix the auth module', tail)).toBe('fix the auth module focus on rate limiting specifically');
   });
 
-  test('multimodal user content (ContentPart[]) extracts only the text parts', () => {
+  test('multimodal user content (ContentPart[]) extracts only the text parts', async () => {
     const tail: ProviderMessage[] = [
       { role: 'user', content: [{ type: 'text', text: 'rate limiting' }, { type: 'image', data: 'x', mediaType: 'image/png' }] },
     ];
@@ -78,11 +84,10 @@ describe('deriveTurnKnowledgeQuery', () => {
 });
 
 describe('buildPerTurnKnowledgeInjection: query derivation pulls records the frozen task alone would miss', () => {
-  test('a steer word retrieves a record with no overlap with the frozen task', () => {
-    // confidence 55 + reviewState 'fresh' (+20) = 75, BELOW the default relevance floor
-    // (95) on its own, it takes the "rate limiting" token match (+20 per matching
-    // token) from the steer to cross the floor, so this genuinely exercises query
-    // derivation rather than a high-trust record clearing the floor on confidence alone.
+  test('a steer word retrieves a record with no overlap with the frozen task', async () => {
+    // Against the frozen task alone the record reads as not relevant; only the steer's
+    // "rate limiting" makes it read as relevant, so this genuinely exercises query
+    // derivation rather than a trusted record clearing the floor on its own.
     const records = [
       makeRecord({ id: 'mem_ratelimit', summary: 'rate limiting uses a token bucket, 100 req/min', tags: ['rate-limiting'], reviewState: 'fresh', confidence: 55 }),
     ];
@@ -92,7 +97,7 @@ describe('buildPerTurnKnowledgeInjection: query derivation pulls records the fro
       { role: 'user', content: 'actually focus on rate limiting' },
     ];
 
-    const frozenTaskOnly = buildPerTurnKnowledgeInjection({
+    const frozenTaskOnly = await buildPerTurnKnowledgeInjection({
       memoryRegistry: registry,
       task: 'update the docs',
       conversationTail: [{ role: 'user', content: 'update the docs' }],
@@ -103,7 +108,7 @@ describe('buildPerTurnKnowledgeInjection: query derivation pulls records the fro
     });
     expect(frozenTaskOnly.block).toBeNull(); // the frozen task alone never mentions rate limiting
 
-    const withSteer = buildPerTurnKnowledgeInjection({
+    const withSteer = await buildPerTurnKnowledgeInjection({
       memoryRegistry: registry,
       task: 'update the docs',
       conversationTail: tail,
@@ -119,11 +124,11 @@ describe('buildPerTurnKnowledgeInjection: query derivation pulls records the fro
 });
 
 describe('buildPerTurnKnowledgeInjection: relevance floor (stage 2)', () => {
-  test('all candidates below the floor => block===null, honest reason, zero injectedIds', () => {
+  test('all candidates below the floor => block===null, honest reason, zero injectedIds', async () => {
     const records = [
       makeRecord({ id: 'mem_weak', summary: 'a barely-related note about auth', tags: ['auth'], reviewState: 'fresh', confidence: 55 }),
     ];
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -139,11 +144,11 @@ describe('buildPerTurnKnowledgeInjection: relevance floor (stage 2)', () => {
     expect(result.record.candidatesConsidered).toBeGreaterThan(0);
   });
 
-  test('a record that clears the floor is injected', () => {
+  test('a record that clears the floor is injected', async () => {
     const records = [
       makeRecord({ id: 'mem_strong', summary: 'auth module uses JWT, rotate every 15 minutes', tags: ['auth'], reviewState: 'reviewed', confidence: 90 }),
     ];
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -165,8 +170,10 @@ describe('buildPerTurnKnowledgeInjection: token budget (greedy trim)', () => {
     makeRecord({ id: 'mem_3', summary: 'auth module note three, fresh and relevant to session expiry', tags: ['auth'], reviewState: 'fresh', confidence: 60 }),
   ];
 
-  test('drops the lowest-scored entries first to fit the budget; tokenCost never exceeds it', () => {
-    const full = buildPerTurnKnowledgeInjection({
+  test('drops the lowest-scored entries first to fit the budget; tokenCost never exceeds it', async () => {
+    const relevance: Record<string, number> = { mem_1: 0.95, mem_2: 0.85, mem_3: 0.7 };
+    readings.use({ relevance: (_task, _scope, record) => ({ relevant: relevance[records.find((entry) => entry.summary === record.summary)!.id]! }) });
+    const full = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -180,7 +187,7 @@ describe('buildPerTurnKnowledgeInjection: token budget (greedy trim)', () => {
 
     // Budget one token short of what fits all three, mem_3 (the lowest-scored
     // surviving entry) is exactly what should get dropped.
-    const tight = buildPerTurnKnowledgeInjection({
+    const tight = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -195,8 +202,8 @@ describe('buildPerTurnKnowledgeInjection: token budget (greedy trim)', () => {
     expect(tight.block).not.toBeNull();
   });
 
-  test('single-entry-over-budget => nothing (block===null), not a truncated block', () => {
-    const result = buildPerTurnKnowledgeInjection({
+  test('single-entry-over-budget => nothing (block===null), not a truncated block', async () => {
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry([records[0]!]),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -212,8 +219,8 @@ describe('buildPerTurnKnowledgeInjection: token budget (greedy trim)', () => {
     expect(result.record.reason).toBe('single highest-scoring record exceeds budget');
   });
 
-  test('budgetTokens<=0 is a correct (if wasteful) all-dropped case, not a crash', () => {
-    const result = buildPerTurnKnowledgeInjection({
+  test('budgetTokens<=0 is a correct (if wasteful) all-dropped case, not a crash', async () => {
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -229,12 +236,12 @@ describe('buildPerTurnKnowledgeInjection: token budget (greedy trim)', () => {
 });
 
 describe('buildPerTurnKnowledgeInjection: dedupe against alreadyInjectedIds', () => {
-  test('ids already surfaced (e.g. the spawn-time baseline) are never re-listed', () => {
+  test('ids already surfaced (e.g. the spawn-time baseline) are never re-listed', async () => {
     const records = [
       makeRecord({ id: 'mem_1', summary: 'auth module JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 }),
       makeRecord({ id: 'mem_2', summary: 'auth module rate limiting', tags: ['auth'], reviewState: 'fresh', confidence: 70 }),
     ];
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -249,7 +256,7 @@ describe('buildPerTurnKnowledgeInjection: dedupe against alreadyInjectedIds', ()
 });
 
 describe('buildPerTurnKnowledgeInjection: embeddings backend honesty', () => {
-  test('a registry with vectorStats reporting enabled+available => embeddingBackend "available"', () => {
+  test('a registry with vectorStats reporting enabled+available => embeddingBackend "available"', async () => {
     const records = [makeRecord({ id: 'mem_1', summary: 'auth module JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 })];
     const registry = {
       getAll: () => records,
@@ -264,7 +271,7 @@ describe('buildPerTurnKnowledgeInjection: embeddings backend honesty', () => {
         embeddingProviderLabel: 'fake',
       }),
     };
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: registry,
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -276,9 +283,9 @@ describe('buildPerTurnKnowledgeInjection: embeddings backend honesty', () => {
     expect(result.record.embeddingBackend).toBe('available');
   });
 
-  test('a registry with no vectorStats method at all => embeddingBackend "fallback-lexical"', () => {
+  test('a registry with no vectorStats method at all => embeddingBackend "fallback-lexical"', async () => {
     const records = [makeRecord({ id: 'mem_1', summary: 'auth module JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 })];
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: fakeRegistry(records),
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -310,7 +317,7 @@ describe('buildPerTurnKnowledgeInjection: embeddings backend honesty', () => {
     expect(registry.vectorStats().enabled).toBe(false);
     expect(registry.vectorStats().available).toBe(false);
 
-    const result = buildPerTurnKnowledgeInjection({
+    const result = await buildPerTurnKnowledgeInjection({
       memoryRegistry: registry,
       task: 'fix the auth module',
       conversationTail: [{ role: 'user', content: 'fix the auth module' }],
@@ -326,12 +333,12 @@ describe('buildPerTurnKnowledgeInjection: embeddings backend honesty', () => {
 });
 
 describe('defaultTurnKnowledgeBudgetTokens', () => {
-  test('caps at 800 for large/unknown context windows', () => {
+  test('caps at 800 for large/unknown context windows', async () => {
     expect(defaultTurnKnowledgeBudgetTokens(0)).toBe(800);
     expect(defaultTurnKnowledgeBudgetTokens(1_000_000)).toBe(800);
   });
 
-  test('scales down to 3% for small context windows', () => {
+  test('scales down to 3% for small context windows', async () => {
     expect(defaultTurnKnowledgeBudgetTokens(10_000)).toBe(300);
   });
 });
@@ -355,14 +362,14 @@ describe('recordTurnInjection: bounded ring', () => {
     };
   }
 
-  test('grows normally under the retention cap', () => {
+  test('grows normally under the retention cap', async () => {
     let ring: TurnInjectionRecord[] | undefined;
     ring = recordTurnInjection(ring, makeTurnRecord(1), 3);
     ring = recordTurnInjection(ring, makeTurnRecord(2), 3);
     expect(ring.map((r) => r.turn)).toEqual([1, 2]);
   });
 
-  test('evicts the oldest entry once retention is exceeded', () => {
+  test('evicts the oldest entry once retention is exceeded', async () => {
     let ring: TurnInjectionRecord[] | undefined;
     for (let turn = 1; turn <= 5; turn++) {
       ring = recordTurnInjection(ring, makeTurnRecord(turn), 3);

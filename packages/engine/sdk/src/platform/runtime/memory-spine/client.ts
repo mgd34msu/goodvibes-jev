@@ -161,22 +161,22 @@ export type MemoryTransport = MemoryCoreAccess & Partial<MemoryExtendedAccess>;
 
 /**
  * The local embedded store surface. The SDK's `MemoryRegistry` satisfies this
- * structurally (its methods are mostly synchronous; the facade normalizes them to
- * promises). Kept minimal so the client stays decoupled from the concrete class.
+ * structurally (its methods are a mix of synchronous and async; the facade
+ * normalizes them to promises). Kept minimal so the client stays decoupled from the concrete class.
  */
 export interface LocalMemoryStore {
   add(opts: MemoryAddOptions): Promise<MemoryRecord> | MemoryRecord;
-  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions): HonestMemorySearchResult;
+  honestSearch(filter: MemorySearchFilter, options?: HonestMemorySearchOptions): Promise<HonestMemorySearchResult> | HonestMemorySearchResult;
   get(id: string): MemoryRecord | null;
   review(id: string, patch: MemoryReviewPatch): MemoryRecord | null;
   delete(id: string): boolean;
-  // Extended (all synchronous on the registry; the facade normalizes to promises).
-  search(filter?: MemorySearchFilter): MemoryRecord[];
-  searchSemantic(filter?: MemorySearchFilter): MemorySemanticSearchResult[];
+  // Extended (sync or async on the registry; the facade normalizes to promises).
+  search(filter?: MemorySearchFilter): Promise<MemoryRecord[]> | MemoryRecord[];
+  searchSemantic(filter?: MemorySearchFilter): Promise<MemorySemanticSearchResult[]> | MemorySemanticSearchResult[];
   update(id: string, patch: MemoryUpdatePatch): MemoryRecord | null;
   link(fromId: string, toId: string, relation: string): Promise<MemoryLink | null> | MemoryLink | null;
   linksFor(id: string): MemoryLink[];
-  reviewQueue(limit?: number, scope?: MemoryScope): MemoryRecord[];
+  reviewQueue(limit?: number, scope?: MemoryScope): Promise<MemoryRecord[]> | MemoryRecord[];
   exportBundle(filter?: MemorySearchFilter): MemoryBundle;
   importBundle(bundle: MemoryBundle): Promise<MemoryImportResult> | MemoryImportResult;
   vectorStats(): MemoryVectorStats;

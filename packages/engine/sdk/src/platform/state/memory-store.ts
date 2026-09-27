@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { rankReviewQueue, rankSemanticSearch, rerankRetrieved } from './memory-search-ranking.js';
 import { SQLiteStore } from './sqlite-store.js';
 import {
   SqliteVecMemoryIndex,
@@ -24,15 +25,14 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import {
   clampConfidence,
+  compareByTrust,
   createSchema,
   isReviewCandidate,
   isReviewFlagged,
   normalizeReviewState,
   normalizeScope,
   recordMatchesPostSqlFilter,
-  reviewQueueScore,
   rowToRecord,
-  scoreRecord,
 } from './memory-store-helpers.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ export interface MemorySearchFilter {
   scope?: MemoryScope | undefined;
   cls?: MemoryClass | undefined;
   tags?: string[] | undefined;
-  /** Full-text substring match on summary and detail. */
+  /** Full-text substring match on summary and detail; the matches are ordered by the memory-search rerank. */
   query?: string | undefined;
   /** Use the sqlite-vec semantic index for query ranking when available. */
   semantic?: boolean | undefined;
@@ -188,6 +188,7 @@ export interface MemorySemanticSearchResult {
   record: MemoryRecord;
   distance: number;
   similarity: number;
+  /** The memory-search rerank's probability on 0 to 100 (the record's confidence when there is no query). */
   score: number;
 }
 
@@ -314,12 +315,29 @@ export class MemoryStore {
     return rowToRecord(rows[0]?.columns ?? [], rows[0]?.values[0] ?? []);
   }
 
-  /** Search records with an optional filter. */
-  search(filter: MemorySearchFilter = {}): MemoryRecord[] {
+  /**
+   * Search records with an optional filter. Retrieval is code (the SQL filter,
+   * or the vector index when `semantic` is set); when the filter carries a
+   * query, the `engine.state.memory-search` rerank orders what retrieval found.
+   */
+  async search(filter: MemorySearchFilter = {}): Promise<MemoryRecord[]> {
     if (!this.ready) return [];
     if (filter.semantic) {
-      return this.searchSemantic(filter).map((entry) => entry.record);
+      return (await this.searchSemantic(filter)).map((entry) => entry.record);
     }
+    const query = filter.query?.trim();
+    if (!query) return this.retrieve(filter);
+    const ranked = await rerankRetrieved(query, this.retrieve({ ...filter, limit: undefined }), filter.limit);
+    const records = ranked.map((entry) => entry.record);
+    return filter.limit !== undefined ? records.slice(0, filter.limit) : records;
+  }
+
+  /**
+   * Retrieval only, no relevance ranking: the filter's records in
+   * compareByTrust order. Bulk reads (getAll, review queue, export) use it.
+   */
+  retrieve(filter: MemorySearchFilter = {}): MemoryRecord[] {
+    if (!this.ready) return [];
 
     const conditions: string[] = [];
     const params: (string | number)[] = [];
@@ -388,7 +406,7 @@ export class MemoryStore {
       records = records.filter((record) => isReviewFlagged(record));
     }
 
-    records = records.sort((a, b) => scoreRecord(b, filter) - scoreRecord(a, filter) || b.updatedAt - a.updatedAt || b.createdAt - a.createdAt);
+    records = records.sort(compareByTrust);
 
     if (filter.limit !== undefined) {
       records = records.slice(0, filter.limit);
@@ -397,62 +415,46 @@ export class MemoryStore {
     return records;
   }
 
-  searchSemantic(filter: MemorySearchFilter = {}): MemorySemanticSearchResult[] {
+  /**
+   * The vector index's candidates for the filter's query, in similarity order,
+   * with the filter's post-SQL conditions applied. Retrieval only: nothing here
+   * judges relevance. Empty when there is no query or the index returns
+   * nothing. `score` is the similarity on a 0 to 100 scale.
+   */
+  semanticCandidates(filter: MemorySearchFilter = {}): MemorySemanticSearchResult[] {
     if (!this.ready) return [];
     const query = filter.query?.trim();
-    if (!query) {
-      return this.search({ ...filter, semantic: false }).map((record) => ({
-        record,
-        distance: Number.POSITIVE_INFINITY,
-        similarity: 0,
-        score: scoreRecord(record, { ...filter, semantic: false }),
-      }));
-    }
-
+    if (!query) return [];
     const requestedLimit = Math.max(1, filter.limit ?? 10);
     const vectorFilter = {
       ...filter,
       limit: Math.max(requestedLimit * 8, 50),
     };
-    const candidates = this.vectorIndex?.search(query, vectorFilter) ?? [];
-    if (candidates.length === 0) {
-      return this.search({ ...filter, semantic: false }).map((record) => ({
-        record,
-        distance: Number.POSITIVE_INFINITY,
-        similarity: 0,
-        score: scoreRecord(record, { ...filter, semantic: false }),
-      }));
-    }
-
     const results: MemorySemanticSearchResult[] = [];
-    for (const candidate of candidates) {
+    for (const candidate of this.vectorIndex?.search(query, vectorFilter) ?? []) {
       const record = this.get(candidate.id);
       if (!record) continue;
       if (!recordMatchesPostSqlFilter(record, filter)) continue;
-      const lexicalScore = scoreRecord(record, { ...filter, query: undefined, semantic: false });
-      results.push({
-        record,
-        distance: candidate.distance,
-        similarity: candidate.similarity,
-        score: candidate.similarity * 100 + lexicalScore * 0.25,
-      });
+      results.push({ record, distance: candidate.distance, similarity: candidate.similarity, score: candidate.similarity * 100 });
     }
-
-    return results
-      .sort((a, b) => b.score - a.score || a.distance - b.distance || b.record.updatedAt - a.record.updatedAt)
-      .slice(0, requestedLimit);
+    return results.sort((a, b) => a.distance - b.distance || b.record.updatedAt - a.record.updatedAt);
   }
 
-  reviewQueue(limit = 10, scope?: MemoryScope): MemoryRecord[] {
-    const records = this.search({ limit: Math.max(limit * 4, 25), ...(scope ? { scope } : {}) });
-    const candidates = records.filter((record) => isReviewCandidate(record));
-    return candidates
-      .sort((a, b) => reviewQueueScore(b) - reviewQueueScore(a) || b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)
-      .slice(0, limit);
+  /** Semantic search: the vector index builds the shortlist, the rerank orders it (memory-search-ranking.ts). */
+  async searchSemantic(filter: MemorySearchFilter = {}): Promise<MemorySemanticSearchResult[]> {
+    if (!this.ready) return [];
+    return rankSemanticSearch(this, filter);
   }
 
+  /** Records to review: the least trusted records, ordered by the memory-review-priority reading. */
+  async reviewQueue(limit = 10, scope?: MemoryScope): Promise<MemoryRecord[]> {
+    const leastTrustedFirst = this.retrieve(scope ? { scope } : {}).filter((record) => isReviewCandidate(record)).reverse();
+    return rankReviewQueue(leastTrustedFirst.slice(0, Math.max(limit * 4, 25)), limit);
+  }
+
+  /** Exports the records the filter selects; a query here filters, it does not rank. */
   exportBundle(filter: MemorySearchFilter = {}): MemoryBundle {
-    const records = this.search(filter);
+    const records = this.retrieve(filter);
     const recordIds = new Set(records.map((record) => record.id));
     const links: MemoryLink[] = [];
     for (const record of records) {

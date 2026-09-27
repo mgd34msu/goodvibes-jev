@@ -81,7 +81,7 @@ describe('renderVibeProjection (records -> prompt block)', () => {
     // A non-persona constraint must NOT leak into the projection.
     await store.add({ scope: 'project', cls: 'constraint', summary: 'unrelated constraint', tags: ['policy'] });
 
-    const block = renderVibeProjection(store.search({}));
+    const block = renderVibeProjection(await store.search({}));
     expect(block).not.toBeNull();
     expect(block).toContain(VIBE_PROJECTION_HEADING);
     expect(block).toContain(VIBE_PROJECTION_CAVEAT);
@@ -105,7 +105,7 @@ describe('renderVibeProjection (records -> prompt block)', () => {
       created.push(await store.add(opts));
     }
     store.update(created[0]!.id, { summary: 'Be extremely direct about tradeoffs.' });
-    const block = renderVibeProjection(store.search({}));
+    const block = renderVibeProjection(await store.search({}));
     expect(block).toContain('- Be extremely direct about tradeoffs.');
     expect(block).not.toContain('- Be direct about tradeoffs.');
     expect(block).toContain('- Prefer visible, reversible actions.');
@@ -124,16 +124,16 @@ describe('persona records round-trip through the bundle seam', () => {
     for (const opts of vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
       await storeA.add(opts);
     }
-    const projectionA = renderVibeProjection(storeA.search({}));
+    const projectionA = renderVibeProjection(await storeA.search({}));
     const bundle = storeA.exportBundle({});
     storeA.close();
 
     const storeB = openStore(rootB);
     await storeB.init();
     await storeB.importBundle(bundle);
-    const projectionB = renderVibeProjection(storeB.search({}));
+    const projectionB = renderVibeProjection(await storeB.search({}));
     expect(projectionB).toBe(projectionA);
-    expect(selectVibeRecords(storeB.search({})).length).toBe(2);
+    expect(selectVibeRecords(await storeB.search({})).length).toBe(2);
     storeB.close();
   });
 });

@@ -1,39 +1,52 @@
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { detectReferencedMemoryIds } from '../sdk/src/platform/state/index.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
 
 /**
- * Two-tier honest reference heuristic (hoisted from the agent surface).
- * 'referenced' requires two distinctive tokens, one long (>=6) distinctive
- * token, or a distinctive adjacent phrase; otherwise 'present'. Not ground truth.
+ * Two-tier reference detection: each injected memory is read by the
+ * `engine.state.memory-usage` battery against the response. 'referenced' only
+ * when the reading says yes; an uncertain or no reading is 'present'.
  */
 describe('detectReferencedMemoryIds', () => {
-  test('distinctive token overlap marks referenced', () => {
-    const result = detectReferencedMemoryIds('I ran the kubernetes rollout as configured.', [
-      { id: 'm1', summary: 'Kubernetes rollout script' },
+  const readings = useMemoryReadings();
+
+  test('asks one usage question per memory, carrying the memory text and the response', async () => {
+    readings.use({ usage: (memory) => (memory.summary.includes('rollout') ? 0.95 : 0.05) });
+    const result = await detectReferencedMemoryIds('I ran deploy/rollout.sh as configured.', [
+      { id: 'm1', summary: 'Kubernetes rollout script', detail: 'deploy/rollout.sh' },
+      { id: 'm2', summary: 'Release checklist' },
     ]);
     expect(result.referenced).toEqual(['m1']);
+    expect(result.present).toEqual(['m2']);
     expect(result.perId.get('m1')).toBe('referenced');
+    expect(result.perId.get('m2')).toBe('present');
+    expect(readings.requests).toHaveLength(2);
+    expect(readings.requests[0]!.state).toEqual({
+      memory: { summary: 'Kubernetes rollout script', detail: 'deploy/rollout.sh' },
+      response: 'I ran deploy/rollout.sh as configured.',
+    });
   });
 
-  test('common words alone stay present', () => {
-    const result = detectReferencedMemoryIds('the and for with that this from into your', [
-      { id: 'm2', summary: 'the and for with' },
-    ]);
-    expect(result.present).toContain('m2');
+  test('an uncertain reading stays present: the tier claims use only on a yes', async () => {
+    readings.use({ usage: () => 0.5 });
+    const result = await detectReferencedMemoryIds('maybe related text', [{ id: 'u', summary: 'something' }]);
+    expect(result.perId.get('u')).toBe('present');
     expect(result.referenced).toEqual([]);
   });
 
-  test('single short (4-char) token is present; single long (>=6) token is referenced', () => {
-    const short = detectReferencedMemoryIds('here are the tags', [{ id: 's', summary: 'tags' }]);
-    expect(short.perId.get('s')).toBe('present');
-    const long = detectReferencedMemoryIds('we added authentication today', [{ id: 'l', summary: 'authentication flow' }]);
-    expect(long.perId.get('l')).toBe('referenced');
+  test('no records means no requests', async () => {
+    const result = await detectReferencedMemoryIds('anything', []);
+    expect(result.referenced).toEqual([]);
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test('distinctive adjacent phrase in output marks referenced', () => {
-    const result = detectReferencedMemoryIds('please follow the release checklist before shipping', [
-      { id: 'm5', summary: 'shipping', detail: 'follow release checklist' },
-    ]);
-    expect(result.referenced).toContain('m5');
+  test('a read with no judgment port installed throws', async () => {
+    const previous = installJudgmentPort(undefined);
+    try {
+      await expect(detectReferencedMemoryIds('text', [{ id: 'x', summary: 'y' }])).rejects.toBeInstanceOf(JudgmentPortMissingError);
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 });

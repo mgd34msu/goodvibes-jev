@@ -36,12 +36,18 @@ export class MemoryRegistry {
     return record;
   }
 
-  search(filter: MemorySearchFilter = {}): MemoryRecord[] {
+  /** Search; a query in the filter is ranked by the memory-search rerank (see MemoryStore.search). */
+  search(filter: MemorySearchFilter = {}): Promise<MemoryRecord[]> {
     return this.store.search(filter);
   }
 
-  searchSemantic(filter: MemorySearchFilter = {}): MemorySemanticSearchResult[] {
+  searchSemantic(filter: MemorySearchFilter = {}): Promise<MemorySemanticSearchResult[]> {
     return this.store.searchSemantic(filter);
+  }
+
+  /** The vector index's candidates in similarity order, retrieval only (see MemoryStore.semanticCandidates). */
+  semanticCandidates(filter: MemorySearchFilter = {}): MemorySemanticSearchResult[] {
+    return this.store.semanticCandidates(filter);
   }
 
   /**
@@ -50,7 +56,7 @@ export class MemoryRegistry {
    * flagged/confidence-floor exclusion. This is the method a wire client and an
    * offline surface both route through, so the honesty is identical either way.
    */
-  honestSearch(filter: MemorySearchFilter = {}, options: HonestMemorySearchOptions = {}): HonestMemorySearchResult {
+  honestSearch(filter: MemorySearchFilter = {}, options: HonestMemorySearchOptions = {}): Promise<HonestMemorySearchResult> {
     return runHonestMemorySearch(this.store, filter, options);
   }
 
@@ -70,7 +76,7 @@ export class MemoryRegistry {
     return this.store.doctor();
   }
 
-  reviewQueue(limit = 10, scope?: MemoryScope): MemoryRecord[] {
+  reviewQueue(limit = 10, scope?: MemoryScope): Promise<MemoryRecord[]> {
     return this.store.reviewQueue(limit, scope);
   }
 
@@ -117,6 +123,6 @@ export class MemoryRegistry {
   }
 
   getAll(): MemoryRecord[] {
-    return this.store.search({});
+    return this.store.retrieve({});
   }
 }

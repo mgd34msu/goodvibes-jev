@@ -20,7 +20,7 @@ import type { LLMProvider, StreamDelta } from '../providers/interface.js';
 import type { ToolResult } from '../types/tools.js';
 import { emitCommunicationConsumed } from '../runtime/emitters/index.js';
 import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs } from './orchestrator-utils.js';
-import { buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, withOpenTierProfileBlock } from './orchestrator-prompts.js';
+import { buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, resolveSpawnKnowledgeInjections, withOpenTierProfileBlock } from './orchestrator-prompts.js';
 import { completeOrRegenerate, recoverEmptyConversationalReply } from './conversational-reply-recovery.js';
 import {
   buildPerTurnKnowledgeInjection,
@@ -310,15 +310,15 @@ export async function runAgentTask(
     const activeConversation = conversation;
     context.registerConversationSource?.(record.id, () => activeConversation.getMessageSnapshot());
 
+    await resolveSpawnKnowledgeInjections(record, context);
     let systemPrompt = buildOrchestratorSystemPrompt(record, undefined, context);
 
-    // Per-turn passive-injection state (see CHANGELOG 0.38.0). `knowledgeIdsAlreadySurfaced`
-    // seeds from the spawn-time baseline (record.knowledgeInjections, just populated by the
-    // call above) and grows with every id a later turn injects, so no record is ever listed
-    // twice across the whole run. `priorTurnKnowledgeBlock` is the last successfully-built
-    // block, reused verbatim on turns where nothing new arrived (see newUserInputThisTurn
-    // below), it is composed onto the CURRENT `systemPrompt` fresh every turn (see
-    // composeTurnSystemPrompt), never written back into the cached `systemPrompt` let itself.
+    // Per-turn passive-injection state (see CHANGELOG 0.38.0). `knowledgeIdsAlreadySurfaced` seeds
+    // from the spawn-time baseline (record.knowledgeInjections, resolved above) and grows with
+    // every id a later turn injects, so no record is listed twice across the whole run.
+    // `priorTurnKnowledgeBlock` is the last successfully-built block, reused verbatim on turns
+    // where nothing new arrived (see newUserInputThisTurn below); it is composed onto the CURRENT
+    // `systemPrompt` fresh every turn (composeTurnSystemPrompt), never written back into it.
     const knowledgeIdsAlreadySurfaced = new Set<string>((record.knowledgeInjections ?? []).map((entry) => entry.id));
     let priorTurnKnowledgeBlock: string | null = null;
 
@@ -461,7 +461,7 @@ export async function runAgentTask(
           const codeInjectionEnabled = !!context.codeIndex
             && (context.featureFlagManager?.isEnabled('agent-passive-code-injection') ?? false)
             && (context.isCodeInjectionSettingEnabled?.() ?? true);
-          const { block, record: turnInjectionRecord } = buildPerTurnKnowledgeInjection({
+          const { block, record: turnInjectionRecord } = await buildPerTurnKnowledgeInjection({
             memoryRegistry: context.memoryRegistry,
             task: record.task,
             writeScope: record.writeScope ?? [],

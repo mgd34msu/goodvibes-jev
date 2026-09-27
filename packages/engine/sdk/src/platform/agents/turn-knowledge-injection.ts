@@ -41,13 +41,11 @@ import type {
 export const DEFAULT_TURN_KNOWLEDGE_BUDGET_TOKENS = 800;
 
 /**
- * Default relevance floor: the minimum `scoreKnowledge` score required to survive stage 2
- * filtering (stage 1 is the existing confidence>=55 gate inside selectKnowledgeForTaskScored).
- * Derived directly from the scoreKnowledge weights (knowledge-injection.ts) rather than
- * picked arbitrarily: a record sitting exactly at the confidence floor (55) with the
- * weakest positive reviewState bonus ('fresh', +20) that matches at least one task token
- * (+20) scores 55 + 20 + 20 = 95. Below that, a record is either under-confidence, has no
- * reviewState credit, or matched nothing about the current turn, filler, not relevance.
+ * Default relevance floor: the minimum score required to survive stage 2 filtering (stage 1
+ * is the confidence>=55 gate inside selectKnowledgeForTaskScored). A memory record's score is
+ * its Jev relevance reading's probability times KNOWLEDGE_SCORE_SCALE (190,
+ * knowledge-injection.ts), so 95 is probability 0.5: a record clears the floor when the
+ * reading leans yes that it helps with this turn's query.
  */
 export const DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR = 95;
 
@@ -60,10 +58,9 @@ export const DEFAULT_TURN_CODE_LIMIT = 3;
 /**
  * Similarity → floor-scale projection for code-index hits (Stage B).
  *
- * Memory records are ranked on an ADDITIVE score scale (knowledge-injection.ts
- * scoreKnowledge): confidence (>=55) + reviewState bonus + per-token match
- * bonuses, with the default relevance floor of 95 = confidence 55 + 'fresh' 20
- * + one token match 20. Code-index hits carry a cosine-derived `similarity` in
+ * Memory records are scored on a 0 to 190 scale (knowledge-injection.ts: the
+ * relevance reading's probability times KNOWLEDGE_SCORE_SCALE), with the
+ * default relevance floor of 95 at probability 0.5. Code-index hits carry a cosine-derived `similarity` in
  * [0,1] (code-index-store.ts distanceToSimilarity = clamp(1 - L2distance/2)),
  * a DIFFERENT scale entirely. To let a single shared relevance floor govern
  * BOTH sources honestly, a code hit's similarity is projected onto the memory
@@ -173,8 +170,8 @@ export interface TurnInjectionRecord {
    */
   readonly codeInjectionSkipped?: string | undefined;
   /** Honest embeddings signal: 'available' when the registry's vector index is enabled and
-   *  usable, 'fallback-lexical' when memory-store.ts's searchSemantic() degraded to keyword
-   *  ranking (no vector index, or the registry does not expose vectorStats at all). */
+   *  usable, 'fallback-lexical' when there is no vector index to build the shortlist from
+   *  (no vector index, or the registry does not expose vectorStats at all). */
   readonly embeddingBackend: 'available' | 'fallback-lexical';
   /** Present exactly when block===null: why nothing was injected. */
   readonly reason?: string | undefined;
@@ -183,14 +180,13 @@ export interface TurnInjectionRecord {
 /**
  * Structural registry surface, mirroring knowledge-injection.ts's private
  * `KnowledgeRegistrySource` plus one addition: optional `vectorStats`, the sole signal this
- * module uses to tell a real semantic search apart from memory-store.ts's silent lexical
- * fallback (searchSemantic() never throws on a missing/disabled vector index, it just
- * degrades to keyword ranking). Kept structural (not `Pick<MemoryRegistry, ...>`) so tests
+ * module uses to tell whether a vector index built the shortlist (semanticCandidates()
+ * never throws on a missing/disabled vector index, it just returns nothing). Kept structural (not `Pick<MemoryRegistry, ...>`) so tests
  * can supply a minimal fake without constructing a real MemoryStore/SQLite.
  */
 export type TurnKnowledgeRegistrySource = {
   getAll(): readonly MemoryRecord[];
-  searchSemantic?(input: Parameters<MemoryRegistry['searchSemantic']>[0]): readonly MemorySemanticSearchResult[];
+  semanticCandidates?(input: Parameters<MemoryRegistry['semanticCandidates']>[0]): readonly MemorySemanticSearchResult[];
   vectorStats?(): MemoryVectorStats;
 };
 
@@ -362,9 +358,9 @@ function buildCodeInjectionPrompt(hits: readonly CodeContextResult[]): string | 
   return lines.join('\n');
 }
 
-export function buildPerTurnKnowledgeInjection(
+export async function buildPerTurnKnowledgeInjection(
   input: BuildPerTurnKnowledgeInjectionInput,
-): BuildPerTurnKnowledgeInjectionResult {
+): Promise<BuildPerTurnKnowledgeInjectionResult> {
   const {
     memoryRegistry,
     task,
@@ -384,7 +380,7 @@ export function buildPerTurnKnowledgeInjection(
   const alreadyInjectedIdSet = new Set(alreadyInjectedIds);
   const embeddingBackend = resolveEmbeddingBackend(memoryRegistry);
 
-  const scored = selectKnowledgeForTaskScored(memoryRegistry, query, writeScope, limit)
+  const scored = (await selectKnowledgeForTaskScored(memoryRegistry, query, writeScope, limit))
     .filter((entry) => !alreadyInjectedIdSet.has(entry.injection.id));
   const candidatesConsidered = scored.length;
   const memoryCleared: MergedCandidate[] = scored

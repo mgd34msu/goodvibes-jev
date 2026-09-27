@@ -186,7 +186,7 @@ describe('WorkspaceSwapManager: real MemoryStore disk isolation', () => {
     expect(existsSync(ws1DbPath)).toBe(true);
 
     // Snapshot workspace1 records before swap
-    const ws1RecordsBefore = memoryStore.search();
+    const ws1RecordsBefore = await memoryStore.search();
     expect(ws1RecordsBefore.length).toBe(1);
     expect(ws1RecordsBefore[0]!.summary).toBe('workspace1-record');
 
@@ -218,7 +218,7 @@ describe('WorkspaceSwapManager: real MemoryStore disk isolation', () => {
     expect(existsSync(ws2DbPath)).toBe(true);
 
     // workspace2 store has exactly the post-swap record
-    const ws2Records = memoryStore.search();
+    const ws2Records = await memoryStore.search();
     expect(ws2Records.length).toBe(1);
     expect(ws2Records[0]!.summary).toBe('workspace2-record');
 
@@ -229,7 +229,7 @@ describe('WorkspaceSwapManager: real MemoryStore disk isolation', () => {
       enableVectorIndex: false,
     });
     await ws1Verify.init();
-    const ws1RecordsAfter = ws1Verify.search();
+    const ws1RecordsAfter = await ws1Verify.search();
     // workspace1 must still have exactly the pre-swap record (no post-swap write)
     expect(ws1RecordsAfter.length).toBe(1);
     expect(ws1RecordsAfter[0]!.summary).toBe('workspace1-record');

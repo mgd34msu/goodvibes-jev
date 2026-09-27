@@ -95,7 +95,7 @@ export class MemoryConsolidationScheduler {
     if (this.stopped) return;
     const setTimer = this.options.setTimer ?? setTimeout;
     this.timer = setTimer(() => {
-      this.tick();
+      void this.tick();
     }, this.checkIntervalMs);
     (this.timer as { unref?: () => void }).unref?.();
   }
@@ -103,9 +103,10 @@ export class MemoryConsolidationScheduler {
   /**
    * One wake: track continuous idleness, then run when due, the idle trigger
    * at intervalMs cadence, or the slow schedule fallback when the runtime has
-   * not offered an idle window for SCHEDULE_FACTOR x intervalMs.
+   * not offered an idle window for SCHEDULE_FACTOR x intervalMs. The next wake
+   * is scheduled only after this one settles, so runs never overlap.
    */
-  tick(): void {
+  async tick(): Promise<void> {
     if (this.stopped) return;
     try {
       const now = (this.options.now ?? Date.now)();
@@ -122,7 +123,7 @@ export class MemoryConsolidationScheduler {
       const dueForScheduleRun = now - Math.max(this.lastRunAt, this.startedAt) >= config.intervalMs * SCHEDULE_FACTOR;
       if (!dueForIdleRun && !dueForScheduleRun) return;
 
-      const receipt = runMemoryConsolidation({
+      const receipt = await runMemoryConsolidation({
         memoryRegistry: this.options.memoryRegistry,
         config,
         now,

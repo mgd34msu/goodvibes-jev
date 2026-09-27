@@ -18,6 +18,11 @@ import {
 import type { MemoryRecord } from '../sdk/src/platform/state/memory-store.js';
 import type { CodeContextResult, CodeIndexStats } from '../sdk/src/platform/state/index.js';
 import type { ProviderMessage } from '../sdk/src/platform/providers/interface.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
+
+// Knowledge ranking reads through the judgment port; the fake reads a memory record
+// as relevant (score 180.5) when it shares a word with the query.
+useMemoryReadings();
 
 function makeRecord(overrides: Partial<MemoryRecord> & { id: string }): MemoryRecord {
   return {
@@ -81,10 +86,10 @@ function baseInput(over: Partial<Parameters<typeof buildPerTurnKnowledgeInjectio
 }
 
 describe('code injection: honest source labeling within the shared budget', () => {
-  test('a code hit above the floor is injected, labeled source=code-index, ingestMode=its match label', () => {
+  test('a code hit above the floor is injected, labeled source=code-index, ingestMode=its match label', async () => {
     // similarity 0.8 → score 160, above the default floor 95
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.8, { label: 'semantic', symbol: 'verify' })]);
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
 
     expect(result.block).not.toBeNull();
     expect(result.record.injectedIds).toEqual(['src/auth.ts:10-30']);
@@ -96,11 +101,11 @@ describe('code injection: honest source labeling within the shared budget', () =
     expect(result.block).toContain('src/auth.ts:10-30');
   });
 
-  test('memory and code compete in one merged, best-first list with parallel source labels', () => {
+  test('memory and code compete in one merged, best-first list with parallel source labels', async () => {
     const memory = fakeMemory([makeRecord({ id: 'mem_auth', summary: 'auth module uses JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 })]);
     // code similarity 0.6 → score 120
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.6)]);
-    const result = buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true }));
 
     expect(result.record.injectedIds).toContain('mem_auth');
     expect(result.record.injectedIds).toContain('src/auth.ts:10-30');
@@ -115,18 +120,18 @@ describe('code injection: honest source labeling within the shared budget', () =
 });
 
 describe('code injection: similarity → floor projection (scale 200)', () => {
-  test('boundary: score exactly at the floor is admitted, just under is rejected', () => {
+  test('boundary: score exactly at the floor is admitted, just under is rejected', async () => {
     const floor = 100;
     const atFloor = 0.5; // 0.5 * 200 = 100 === floor
     const belowFloor = 0.49; // 98 < 100
-    const inRange = buildPerTurnKnowledgeInjection(baseInput({
+    const inRange = await buildPerTurnKnowledgeInjection(baseInput({
       codeIndex: fakeCodeIndex([makeCodeHit('src/at.ts', atFloor)]),
       codeInjectionEnabled: true,
       relevanceFloor: floor,
     }));
     expect(inRange.record.injectedIds).toEqual(['src/at.ts:10-30']);
 
-    const under = buildPerTurnKnowledgeInjection(baseInput({
+    const under = await buildPerTurnKnowledgeInjection(baseInput({
       codeIndex: fakeCodeIndex([makeCodeHit('src/under.ts', belowFloor)]),
       codeInjectionEnabled: true,
       relevanceFloor: floor,
@@ -136,66 +141,66 @@ describe('code injection: similarity → floor projection (scale 200)', () => {
     expect(under.record.codeInjectionSkipped).toBe('no code chunks cleared the relevance floor');
   });
 
-  test('an unrelated (orthogonal) chunk at similarity ~0.29 never clears the default floor', () => {
+  test('an unrelated (orthogonal) chunk at similarity ~0.29 never clears the default floor', async () => {
     const orthogonal = fakeCodeIndex([makeCodeHit('src/unrelated.ts', 0.29)]); // 0.29*200 = 58 < 95
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: orthogonal, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: orthogonal, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
     expect(CODE_SIMILARITY_TO_SCORE_SCALE).toBe(200);
   });
 });
 
 describe('code injection: never injects from an unhealthy index (stats gates)', () => {
-  test('empty index (indexedChunks 0) => skipped "code index empty", no search, no injection', () => {
+  test('empty index (indexedChunks 0) => skipped "code index empty", no search, no injection', async () => {
     let searched = false;
     const code: TurnCodeIndexSource = {
       search: () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
       stats: () => ({ ...HEALTHY_STATS, indexedChunks: 0 }),
     };
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
     expect(searched).toBe(false);
     expect(result.record.codeInjectionSkipped).toBe('code index empty');
     expect(result.record.codeCandidatesConsidered).toBe(0);
   });
 
-  test('provider-space mismatch => skipped with the store\'s own message, never injects', () => {
+  test('provider-space mismatch => skipped with the store\'s own message, never injects', async () => {
     const code = fakeCodeIndex([makeCodeHit('src/x.ts', 0.9)], { embeddingProviderMismatch: 'embeddings built with X, current provider Y, rebuild to re-embed' });
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
     expect(result.record.codeInjectionSkipped).toContain('rebuild to re-embed');
   });
 
-  test('no semantic provider (hashed-only) => skipped "no semantic embedding provider"', () => {
+  test('no semantic provider (hashed-only) => skipped "no semantic embedding provider"', async () => {
     const code = fakeCodeIndex([makeCodeHit('src/x.ts', 0.9)], { semanticRetrievalAvailable: false });
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
     expect(result.record.codeInjectionSkipped).toBe('no semantic embedding provider');
   });
 
-  test('unavailable store => skipped "code index unavailable"', () => {
+  test('unavailable store => skipped "code index unavailable"', async () => {
     const code = fakeCodeIndex([makeCodeHit('src/x.ts', 0.9)], { available: false });
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
     expect(result.block).toBeNull();
     expect(result.record.codeInjectionSkipped).toBe('code index unavailable');
   });
 });
 
 describe('code injection: flag/gate off is a hard no-op', () => {
-  test('codeInjectionEnabled false: index never queried, no code fields set', () => {
+  test('codeInjectionEnabled false: index never queried, no code fields set', async () => {
     let searched = false;
     const code: TurnCodeIndexSource = {
       search: () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
       stats: () => HEALTHY_STATS,
     };
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: false }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: false }));
     expect(searched).toBe(false);
     expect(result.record.codeCandidatesConsidered).toBe(0);
     expect(result.record.codeInjectionSkipped).toBeUndefined();
   });
 
-  test('no code source at all: memory-only record shape unchanged (codeCandidatesConsidered 0)', () => {
+  test('no code source at all: memory-only record shape unchanged (codeCandidatesConsidered 0)', async () => {
     const memory = fakeMemory([makeRecord({ id: 'mem_1', summary: 'auth module JWT rotation', tags: ['auth'], reviewState: 'reviewed', confidence: 90 })]);
-    const result = buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory }));
     expect(result.record.injectedIds).toEqual(['mem_1']);
     expect(result.record.injectedSources).toEqual(['memory']);
     expect(result.record.codeCandidatesConsidered).toBe(0);
@@ -204,31 +209,31 @@ describe('code injection: flag/gate off is a hard no-op', () => {
 });
 
 describe('code injection: budget competition and dedupe', () => {
-  test('a lower-scored code hit is dropped for budget before a higher-scored memory record', () => {
+  test('a lower-scored code hit is dropped for budget before a higher-scored memory record', async () => {
     const memory = fakeMemory([makeRecord({ id: 'mem_hi', summary: 'auth module JWT rotation reviewed and trusted', tags: ['auth'], reviewState: 'reviewed', confidence: 95 })]);
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.5)]); // score 100, lower than the memory record
     // First measure the full cost, then set budget one token short.
-    const full = buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true, budgetTokens: 100_000 }));
+    const full = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true, budgetTokens: 100_000 }));
     expect(full.record.injectedIds).toContain('src/auth.ts:10-30');
 
-    const tight = buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true, budgetTokens: full.record.tokenCost - 1 }));
+    const tight = await buildPerTurnKnowledgeInjection(baseInput({ memoryRegistry: memory, codeIndex: code, codeInjectionEnabled: true, budgetTokens: full.record.tokenCost - 1 }));
     expect(tight.record.injectedIds).toEqual(['mem_hi']);
     expect(tight.record.droppedForBudget).toEqual(['src/auth.ts:10-30']);
     expect(tight.record.tokenCost).toBeLessThanOrEqual(tight.record.budgetTokens);
   });
 
-  test('a code id already in alreadyInjectedIds is not re-listed (retry-fresh dedupe)', () => {
+  test('a code id already in alreadyInjectedIds is not re-listed (retry-fresh dedupe)', async () => {
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.8, { startLine: 10, endLine: 30 }), makeCodeHit('src/other.ts', 0.7, { startLine: 5, endLine: 9 })]);
-    const result = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true, alreadyInjectedIds: ['src/auth.ts:10-30'] }));
+    const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true, alreadyInjectedIds: ['src/auth.ts:10-30'] }));
     expect(result.record.injectedIds).toEqual(['src/other.ts:5-9']);
     expect(result.record.codeCandidatesConsidered).toBe(1); // the deduped one is not "considered"
   });
 
-  test('compose-fresh: two calls recompute independently against their own alreadyInjected sets', () => {
+  test('compose-fresh: two calls recompute independently against their own alreadyInjected sets', async () => {
     const code = fakeCodeIndex([makeCodeHit('src/auth.ts', 0.8)]);
-    const first = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
+    const first = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
     expect(first.record.injectedIds).toEqual(['src/auth.ts:10-30']);
-    const second = buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true, alreadyInjectedIds: first.record.injectedIds }));
+    const second = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true, alreadyInjectedIds: first.record.injectedIds }));
     expect(second.record.injectedIds).toEqual([]); // already surfaced, none fresh
     expect(second.block).toBeNull();
   });

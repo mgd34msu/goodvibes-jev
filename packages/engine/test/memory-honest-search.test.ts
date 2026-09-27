@@ -11,6 +11,7 @@ import {
   runHonestMemorySearch,
 } from '../sdk/src/platform/state/index.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { useMemoryReadings } from './_helpers/memory-readings.ts';
 
 /**
  * The recall-honesty contract applied END TO END through a search: literal /
@@ -20,6 +21,9 @@ import { ConfigManager } from '../sdk/src/platform/config/manager.js';
  */
 
 const tmpRoots: string[] = [];
+
+// A query is ranked by the memory-search rerank; the fake port answers it.
+const readings = useMemoryReadings();
 
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
@@ -51,7 +55,7 @@ async function seededStore(): Promise<{ store: MemoryStore; root: string }> {
 describe('runHonestMemorySearch: recall-injection exclusion', () => {
   test('default (no recall) returns everything, unfiltered', async () => {
     const { store } = await seededStore();
-    const result = runHonestMemorySearch(store, {}, {});
+    const result = await runHonestMemorySearch(store, {}, {});
     expect(result.records.length).toBe(3);
     expect(result.recallFiltered).toBe(false);
     expect(result.excludedFlaggedCount).toBe(0);
@@ -61,7 +65,7 @@ describe('runHonestMemorySearch: recall-injection exclusion', () => {
 
   test('recall:true excludes flagged (stale) AND sub-floor records, counting each honestly', async () => {
     const { store } = await seededStore();
-    const result = runHonestMemorySearch(store, {}, { recall: true });
+    const result = await runHonestMemorySearch(store, {}, { recall: true });
     expect(result.recallFiltered).toBe(true);
     expect(result.records.map((r) => r.summary)).toEqual(['alpha deployment plan']);
     expect(result.excludedFlaggedCount).toBe(1); // the stale record
@@ -73,7 +77,7 @@ describe('runHonestMemorySearch: recall-injection exclusion', () => {
 describe('runHonestMemorySearch: semantic fallback is honest, never a silent empty', () => {
   test('semantic requested but index unavailable → literal fallback WITH a stated reason', async () => {
     const { store } = await seededStore();
-    const result = runHonestMemorySearch(store, { query: 'alpha', semantic: true }, {});
+    const result = await runHonestMemorySearch(store, { query: 'alpha', semantic: true }, {});
     expect(result.requestedSemantic).toBe(true);
     expect(result.indexUnavailableReason).not.toBeNull();
     expect(result.indexUnavailableReason).toContain('disabled');
@@ -85,10 +89,20 @@ describe('runHonestMemorySearch: semantic fallback is honest, never a silent emp
 
   test('a plain literal search reports no requested-semantic and no unavailable reason', async () => {
     const { store } = await seededStore();
-    const result = runHonestMemorySearch(store, { query: 'beta' }, {});
+    const result = await runHonestMemorySearch(store, { query: 'beta' }, {});
     expect(result.requestedSemantic).toBe(false);
     expect(result.indexUnavailableReason).toBeNull();
     expect(result.mode).toBe('literal');
+    // The literal match is ranked by one rerank request per retrieved record.
+    expect(result.records.map((r) => r.summary)).toEqual(['beta outage postmortem']);
+    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests[0]!.state).toEqual({ query: 'beta', candidate: { class: 'incident', summary: 'beta outage postmortem', tags: [] } });
+  });
+
+  test('a search with no query ranks nothing and makes no request', async () => {
+    const { store } = await seededStore();
+    await runHonestMemorySearch(store, {}, {});
+    expect(readings.requests).toHaveLength(0);
   });
 });
 
@@ -96,7 +110,7 @@ describe('MemoryRegistry.honestSearch delegates to the same composition', () => 
   test('registry honestSearch applies the recall contract', async () => {
     const { store } = await seededStore();
     const registry = new MemoryRegistry(store);
-    const result = registry.honestSearch({}, { recall: true });
+    const result = await registry.honestSearch({}, { recall: true });
     expect(result.records.length).toBe(1);
     expect(result.excludedFlaggedCount + result.excludedBelowFloorCount).toBe(2);
   });
@@ -132,11 +146,11 @@ describe('fold interop: folded records honor the recall contract on the canonica
     expect(report.failedSources).toEqual([]);
 
     // All three folded records are present unfiltered.
-    const all = runHonestMemorySearch(canonical, {}, {});
+    const all = await runHonestMemorySearch(canonical, {}, {});
     expect(all.records.length).toBe(3);
 
     // Under the recall contract the folded contradicted record is excluded.
-    const recalled = runHonestMemorySearch(canonical, {}, { recall: true });
+    const recalled = await runHonestMemorySearch(canonical, {}, { recall: true });
     expect(recalled.records.map((r) => r.summary).sort()).toEqual(['agent good decision', 'tui useful pattern']);
     expect(recalled.excludedFlaggedCount).toBe(1);
     canonical.close();
