@@ -118,8 +118,8 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
   },
   // orchestrator-runner.ts ~0.97k, agent orchestrator runner, pre-split, shrink-only
   'sdk/src/platform/agents/orchestrator-runner.ts': {
-    ceiling: 923,
-    justification: 'agent orchestrator runner; the context-window unit (the ActiveProviderRoute '
+    ceiling: 815,
+    justification: 'agent orchestrator runner; the run context interface moved to orchestrator-run-context.ts and the contract seams (turn-end report, completion hold) live in orchestrator-runner-contract.ts, both re-exported or imported here, lowering the ceiling 923 -> 815; the context-window unit (the ActiveProviderRoute '
       + 'route-id parsing, providerQualifiedRouteLabel, resolveContextWindowModelDefinition, '
       + 'applyContextWindowAwareness, and the compaction-threshold constants + resolver) moved to '
       + 'orchestrator-runner-context-window.ts, with resolveContextWindowModelDefinition re-exported '
@@ -141,8 +141,8 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
   },
   // manager.ts (tools/agent) ~0.87k, agent tool manager, pre-split, shrink-only
   'sdk/src/platform/tools/agent/manager.ts': {
-    ceiling: 965,
-    justification: 'agent tool manager, pre-split, shrink-only; +60 for steer-wake (the resumeSteer AgentRecord field + doc, the wakeWithSteer method that re-triggers a terminally-failed agent through the executor, and the transcript-tail summary helper it uses to restore honest prior context); +37 for the mid-run abort seam: the manager-owned per-agent AbortController map + doc, cancel() creating-then-aborting the controller so an in-flight provider call is interrupted (and a cancel requested before the runner reads the signal is not dropped), getCancellationSignal falling back to the owned controller (engine-registered external signal keeps precedence), and releaseCancellationSignal cleaning it up',
+    ceiling: 862,
+    justification: 'agent tool manager, pre-split, shrink-only; AgentRecord moved to tools/agent/record.ts (re-exported here), lowering the ceiling 965 -> 862 after the contract binding and allowCompleted wake landed; +60 for steer-wake (the resumeSteer AgentRecord field + doc, the wakeWithSteer method that re-triggers a terminally-failed agent through the executor, and the transcript-tail summary helper it uses to restore honest prior context); +37 for the mid-run abort seam: the manager-owned per-agent AbortController map + doc, cancel() creating-then-aborting the controller so an in-flight provider call is interrupted (and a cancel requested before the runner reads the signal is not dropped), getCancellationSignal falling back to the owned controller (engine-registered external signal keeps precedence), and releaseCancellationSignal cleaning it up',
   },
   // projections.ts (knowledge) ~0.87k, knowledge projections, pre-split, shrink-only
   'sdk/src/platform/knowledge/projections.ts': {

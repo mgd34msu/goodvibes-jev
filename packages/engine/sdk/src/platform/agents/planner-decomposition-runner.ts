@@ -102,7 +102,7 @@ export function createAgentManagerDecompositionRunner(
         restrictTools: true,
         executionIntent: { filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' },
         reviewMode: 'none',
-        dangerously_disable_wrfc: true,
+        outsideContract: true,
         systemPromptAddendum: request.systemPrompt,
         ...routeFields(request, deps),
       };

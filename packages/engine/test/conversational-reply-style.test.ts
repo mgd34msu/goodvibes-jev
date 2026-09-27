@@ -90,7 +90,7 @@ describe('a conversational spawn is asked for a reply, not a report', () => {
 describe('the continuation half of the gate pairs the same two decisions', () => {
   test('a channel follow-up gets a conversational reply and no chain', () => {
     expect(continuationChainOptions({ surfaceKind: 'ntfy', body: 'and what about the tests?' })).toEqual({
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       replyStyle: 'conversational',
     });
   });

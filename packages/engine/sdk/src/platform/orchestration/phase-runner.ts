@@ -40,7 +40,7 @@
  *   must never be templated as one of those strings, use 'general' instead
  *   (see templateForPhase). That part is still load-bearing.
  * - The task-WORDING match (ROLE_ACTION_RE/ROLE_PREFIX_RE, e.g. "review the
- *   diff") no longer overrides the `dangerously_disable_wrfc: true` this module
+ *   diff") no longer overrides the `outsideContract: true` this module
  *   passes on every phase spawn. The "assess/evaluate" phrasing in
  *   buildPhaseTask is therefore no longer a dodge; it is kept because it reads
  *   better in the prompt.
@@ -57,6 +57,7 @@ import {
   type ReviewerReport,
 } from '../agents/completion-report.js';
 import { verifyUnitClaims } from '../contract/claims.js';
+import { contractUnitSpawn } from './contract-binding.js';
 import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
 import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
 import { isTransportFailureMessage } from '../types/errors.js';
@@ -412,17 +413,21 @@ export async function runPhase(
   const createWorktree = deps.createWorktree ?? (() => new AgentWorktree(deps.projectRoot));
   const worktree = createWorktree();
 
+  // A contract unit's item spawns its agent bound to the unit, with the unit
+  // brief (item.task) verbatim, the route's model and the item's tool contract.
+  const unitSpawn = contractUnitSpawn(item);
   const record = deps.agentManager.spawn({
     mode: 'spawn',
-    task: buildPhaseTask(item, phase, priorReports),
+    task: unitSpawn ? item.task : buildPhaseTask(item, phase, priorReports),
     template: templateForPhase(phase),
-    dangerously_disable_wrfc: true,
+    outsideContract: true,
+    ...unitSpawn?.input,
     // Worktree mode: run the agent's tools with their working directory set to
     // the item's isolated worktree, so its file edits land there instead of the
     // shared projectRoot. Omitted (undefined) in shared mode ⇒ agent uses the
     // orchestrator's default working directory exactly as before.
     ...(deps.itemWorktree ? { workingDirectory: deps.itemWorktree.path } : {}),
-  } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0]);
+  } as Parameters<PhaseRunnerAgentManagerLike['spawn']>[0], unitSpawn?.binding);
 
   record.workItemId = item.id;
   item.agentId = record.id;

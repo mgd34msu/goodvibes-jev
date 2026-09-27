@@ -32,7 +32,7 @@ describe('AgentManager cancellation abort seam', () => {
   test('getCancellationSignal returns a stable, non-aborted owned signal, tripped by cancel()', () => {
     const executor = hangingExecutor();
     const manager = makeManager(executor);
-    const record = manager.spawn({ mode: 'spawn', task: 'do work', dangerously_disable_wrfc: true });
+    const record = manager.spawn({ mode: 'spawn', task: 'do work', outsideContract: true });
 
     const signal = manager.getCancellationSignal(record.id);
     expect(signal).toBeDefined();
@@ -47,7 +47,7 @@ describe('AgentManager cancellation abort seam', () => {
   test('cancel() before the runner reads the signal still yields an aborted signal (no dropped cancel)', () => {
     const executor = hangingExecutor();
     const manager = makeManager(executor);
-    const record = manager.spawn({ mode: 'spawn', task: 'do work', dangerously_disable_wrfc: true });
+    const record = manager.spawn({ mode: 'spawn', task: 'do work', outsideContract: true });
 
     expect(manager.cancel(record.id)).toBe(true);
     const signal = manager.getCancellationSignal(record.id);
@@ -58,7 +58,7 @@ describe('AgentManager cancellation abort seam', () => {
   test('an engine-registered external signal takes precedence over the owned controller', () => {
     const executor = hangingExecutor();
     const manager = makeManager(executor);
-    const record = manager.spawn({ mode: 'spawn', task: 'do work', dangerously_disable_wrfc: true });
+    const record = manager.spawn({ mode: 'spawn', task: 'do work', outsideContract: true });
 
     const external = new AbortController();
     manager.registerCancellationSignal(record.id, external.signal);

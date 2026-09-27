@@ -59,7 +59,7 @@ export function buildWrfcWorkflowRoutingPrompt(text: string): string | null {
   // that the user's explicit instructions always win. mode=spawn/template/reviewMode are retained
   // as the how-to for when the model does choose the pipeline.
   return '[WRFC routing] This looks like work the WRFC pipeline handles well. If you choose to use it, '
-    + 'start exactly one WRFC owner chain via the agent tool (mode=spawn, template=engineer, reviewMode=wrfc) '
+    + 'start exactly one WRFC owner chain via the agent tool (mode=spawn, template=engineer, reviewMode=contract) '
     + 'rather than spawning reviewer/tester/verifier roots directly. This is a suggestion, not a command, '
     + "the user's explicit instructions always win; if they asked you to do the work yourself or not to "
     + 'delegate, do that instead.';
@@ -79,9 +79,9 @@ function parseToolOutput(output: string | undefined): Record<string, unknown> | 
 function recordIsAuthoritativeWrfcOwner(record: Record<string, unknown>): boolean {
   if (record.orchestrationStopSignal === 'wrfc_owner_chain_started') return true;
   if (record.authoritativeWrfcChain === true && record.continueRootSpawning === false) return true;
-  return record.wrfcRole === 'owner'
-    && typeof record.wrfcId === 'string'
-    && record.wrfcId.length > 0
+  return record.contractRole === 'owner'
+    && typeof record.contractId === 'string'
+    && record.contractId.length > 0
     && record.continueRootSpawning === false;
 }
 

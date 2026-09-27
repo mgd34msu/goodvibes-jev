@@ -21,7 +21,7 @@ export interface AgentMessage {
   fromRole?: string | undefined;
   toRole?: string | undefined;
   cohort?: string | undefined;
-  wrfcId?: string | undefined;
+  contractId?: string | undefined;
   parentAgentId?: string | undefined;
 }
 
@@ -39,7 +39,7 @@ type MessageOptions = {
   kind?: CommunicationKind | undefined;
   scope?: CommunicationScope | undefined;
   cohort?: string | undefined;
-  wrfcId?: string | undefined;
+  contractId?: string | undefined;
   parentAgentId?: string | undefined;
 };
 
@@ -63,14 +63,14 @@ export class AgentMessageBus {
     role?: AgentCommunicationMetadata['role'] | undefined;
     parentAgentId?: string | undefined;
     cohort?: string | undefined;
-    wrfcId?: string | undefined;
+    contractId?: string | undefined;
   }): void {
     this.identities.set(meta.agentId, {
       agentId: meta.agentId,
       role: meta.role ?? communicationRoleForTemplate(meta.template),
       ...(meta.parentAgentId !== undefined ? { parentAgentId: meta.parentAgentId } : {}),
       ...(meta.cohort !== undefined ? { cohort: meta.cohort } : {}),
-      ...(meta.wrfcId !== undefined ? { wrfcId: meta.wrfcId } : {}),
+      ...(meta.contractId !== undefined ? { contractId: meta.contractId } : {}),
     });
   }
 
@@ -83,7 +83,7 @@ export class AgentMessageBus {
       kind: ttlOrOptions?.kind ?? 'directive',
       scope: ttlOrOptions?.scope ?? 'direct',
       ...(ttlOrOptions?.cohort !== undefined ? { cohort: ttlOrOptions.cohort } : {}),
-      ...(ttlOrOptions?.wrfcId !== undefined ? { wrfcId: ttlOrOptions.wrfcId } : {}),
+      ...(ttlOrOptions?.contractId !== undefined ? { contractId: ttlOrOptions.contractId } : {}),
       ...(ttlOrOptions?.parentAgentId !== undefined ? { parentAgentId: ttlOrOptions.parentAgentId } : {}),
       ...(ttlOrOptions?.id !== undefined ? { id: ttlOrOptions.id } : {}),
     };
@@ -159,7 +159,7 @@ export class AgentMessageBus {
       scope: 'broadcast',
       ...(fromMeta?.role !== undefined ? { fromRole: fromMeta.role } : {}),
       ...(options.cohort ?? fromMeta?.cohort ? { cohort: options.cohort ?? fromMeta?.cohort } : {}),
-      ...(options.wrfcId ?? fromMeta?.wrfcId ? { wrfcId: options.wrfcId ?? fromMeta?.wrfcId } : {}),
+      ...(options.contractId ?? fromMeta?.contractId ? { contractId: options.contractId ?? fromMeta?.contractId } : {}),
       ...(options.parentAgentId ?? fromMeta?.parentAgentId ? { parentAgentId: options.parentAgentId ?? fromMeta?.parentAgentId } : {}),
     };
 
@@ -221,7 +221,7 @@ export class AgentMessageBus {
       ...(message.fromRole !== undefined ? { fromRole: message.fromRole } : {}),
       ...(message.toRole !== undefined ? { toRole: message.toRole } : {}),
       ...(message.cohort !== undefined ? { cohort: message.cohort } : {}),
-      ...(message.wrfcId !== undefined ? { wrfcId: message.wrfcId } : {}),
+      ...(message.contractId !== undefined ? { contractId: message.contractId } : {}),
       ...(message.parentAgentId !== undefined ? { parentAgentId: message.parentAgentId } : {}),
     });
   }
@@ -285,18 +285,18 @@ export class AgentMessageBus {
    * Extract optional routing fields from options + sender/receiver metadata.
    *
    * Coalescing rules (intentionally asymmetric):
-   *   cohort, wrfcId  , options ?? fromMeta ?? toMeta
+   *   cohort, contractId  , options ?? fromMeta ?? toMeta
    *   parentAgentId   , options ?? fromMeta ONLY (toMeta excluded to avoid
    *                      leaking the recipient's parent onto unrelated messages).
    */
   private pickRoutingFields(
-    options: { cohort?: string | undefined; wrfcId?: string | undefined; parentAgentId?: string | undefined },
+    options: { cohort?: string | undefined; contractId?: string | undefined; parentAgentId?: string | undefined },
     fromMeta: AgentCommunicationMetadata | undefined,
     toMeta: AgentCommunicationMetadata | undefined,
-  ): { cohort?: string | undefined; wrfcId?: string | undefined; parentAgentId?: string | undefined } {
+  ): { cohort?: string | undefined; contractId?: string | undefined; parentAgentId?: string | undefined } {
     return {
       ...(options.cohort ?? fromMeta?.cohort ?? toMeta?.cohort ? { cohort: options.cohort ?? fromMeta?.cohort ?? toMeta?.cohort } : {}),
-      ...(options.wrfcId ?? fromMeta?.wrfcId ?? toMeta?.wrfcId ? { wrfcId: options.wrfcId ?? fromMeta?.wrfcId ?? toMeta?.wrfcId } : {}),
+      ...(options.contractId ?? fromMeta?.contractId ?? toMeta?.contractId ? { contractId: options.contractId ?? fromMeta?.contractId ?? toMeta?.contractId } : {}),
       ...(options.parentAgentId ?? fromMeta?.parentAgentId ? { parentAgentId: options.parentAgentId ?? fromMeta?.parentAgentId } : {}),
     };
   }

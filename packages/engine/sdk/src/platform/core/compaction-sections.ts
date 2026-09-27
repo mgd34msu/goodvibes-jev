@@ -210,7 +210,7 @@ export function buildRunningAgents(
   }
 
   const lines = active.map((a) => {
-    const chainId = a.wrfcId ?? agentToChain.get(a.id) ?? 'no-chain';
+    const chainId = a.contractId ?? agentToChain.get(a.id) ?? 'no-chain';
     const task = a.task.slice(0, 80).replace(/\n/g, ' ');
     return `- ${chainId} | ${a.id} | ${task}`;
   });
@@ -240,7 +240,7 @@ export function buildCompletedAgentWork(
   const finished = agents.filter(
     (a) =>
       (a.status === 'completed' || a.status === 'failed') &&
-      !a.wrfcId &&
+      !a.contractId &&
       !chainAgentIds.has(a.id),
   );
   if (finished.length === 0) return null;

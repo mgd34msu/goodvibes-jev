@@ -41,7 +41,7 @@ describe('planner template is read-only', () => {
       template: 'planner',
       tools: [...PLANNER_DECOMPOSITION_TOOLS],
       restrictTools: true,
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
     expect(record.template).toBe('planner');
     expect(record.tools).toEqual(['read', 'find', 'analyze', 'inspect']);

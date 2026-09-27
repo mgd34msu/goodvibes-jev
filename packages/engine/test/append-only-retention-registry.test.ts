@@ -164,6 +164,7 @@ describe('start-time retention sweep', () => {
     // user conversation file that must never be touched by this sweep.
     const legacyAgentJournal = join(sessionsDir, 'agent-deadbeef.jsonl');
     const legacyWorkmap = join(sessionsDir, 'ffffffff_workmap.jsonl');
+    const renamedWorkmap = join(sessionsDir, 'eeeeeeee_workmap.jsonl');
     const userConversation = join(sessionsDir, 'my-saved-chat.jsonl');
     // Real opening records: classification is name AND first-line content
     // (runtime/retention/legacy-agent-journal-patterns.ts), so these fixtures
@@ -175,9 +176,15 @@ describe('start-time retention sweep', () => {
         + JSON.stringify({ type: 'message', role: 'assistant', content: 'x'.repeat(800) }) + '\n',
       'utf-8',
     );
+    // A workmap from before the contract rename (keyed wrfcId) and one after.
     writeFileSync(
       legacyWorkmap,
       JSON.stringify({ ts: new Date().toISOString(), wrfcId: 'ffffffff', event: 'chain_passed' }) + '\n',
+      'utf-8',
+    );
+    writeFileSync(
+      renamedWorkmap,
+      JSON.stringify({ ts: new Date().toISOString(), contractId: 'eeeeeeee', event: 'chain_passed' }) + '\n',
       'utf-8',
     );
     writeFileSync(userConversation, 'z'.repeat(1000), 'utf-8');
@@ -185,6 +192,7 @@ describe('start-time retention sweep', () => {
     const fs = require('node:fs') as typeof import('node:fs');
     fs.utimesSync(legacyAgentJournal, past, past);
     fs.utimesSync(legacyWorkmap, past, past);
+    fs.utimesSync(renamedWorkmap, past, past);
     fs.utimesSync(userConversation, past, past);
 
     const outcome = runAppendOnlyRetentionSweep(
@@ -194,6 +202,7 @@ describe('start-time retention sweep', () => {
     expect(outcome.sweptStores).toContain('session-journals');
     expect(() => statSync(legacyAgentJournal)).toThrow();
     expect(() => statSync(legacyWorkmap)).toThrow();
+    expect(() => statSync(renamedWorkmap)).toThrow();
     // The user conversation file, same directory, same age, is never swept.
     expect(statSync(userConversation).size).toBe(1000);
   });

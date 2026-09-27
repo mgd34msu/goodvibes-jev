@@ -35,6 +35,7 @@
  *     `{"type":"meta","agentId":"agent-xxxxxxxx","model":...,"provider":...}`,
  *     which never carries schemaVersion / titleSource / saveSource.
  *   - A workmap opens with a WorkmapEntry, `{"ts":...,"wrfcId":...,"event":...}`
+ *     (files written before the contract rename) or `{"ts":...,"contractId":...,"event":...}`
  *    , which has no `type` field at all.
  *
  * Anything that does not positively match a journal's opening record, a file
@@ -114,10 +115,15 @@ function isAgentSessionStartRecord(record: Record<string, unknown>): boolean {
     && record.titleSource === undefined;
 }
 
-/** True when `record` is a WrfcWorkmap entry: `{ ts, wrfcId, event }`, with no `type` wrapper. */
+/**
+ * True when `record` is a workmap entry: `{ ts, contractId, event }`, or the
+ * `wrfcId` key every workmap written before the contract rename carries (those
+ * files stay on disk and must still be reaped), with no `type` wrapper.
+ */
 function isWorkmapEntryRecord(record: Record<string, unknown>): boolean {
   if (record.type !== undefined) return false;
-  return isNonEmptyString(record.wrfcId) && isNonEmptyString(record.event) && isNonEmptyString(record.ts);
+  const chainKey = record.contractId ?? record['wrfcId'];
+  return isNonEmptyString(chainKey) && isNonEmptyString(record.event) && isNonEmptyString(record.ts);
 }
 
 /**

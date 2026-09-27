@@ -6,7 +6,7 @@ import { resolveScopedDirectory } from '../runtime/surface-root.js';
 
 export interface WorkmapEntry {
   ts: string;
-  wrfcId: string;
+  contractId: string;
   event: 'engineer_complete' | 'integrator_complete' | 'review_complete' | 'fix_started' | 'gate_result' | 'chain_passed' | 'chain_failed' | 'owner_decision';
   agentId?: string | undefined;
   role?: string | undefined;
@@ -52,8 +52,8 @@ export class WrfcWorkmap {
     }
   }
 
-  /** Read all entries, optionally filtered by wrfcId */
-  read(wrfcId?: string): WorkmapEntry[] {
+  /** Read all entries, optionally filtered by contractId */
+  read(contractId?: string): WorkmapEntry[] {
     if (!existsSync(this.filePath)) return [];
     try {
       const lines = readFileSync(this.filePath, 'utf-8').trim().split('\n').filter(Boolean);
@@ -65,7 +65,7 @@ export class WrfcWorkmap {
           return null;
         }
       }).filter((e): e is WorkmapEntry => e !== null);
-      if (wrfcId) return entries.filter(e => e.wrfcId === wrfcId);
+      if (contractId) return entries.filter(e => e.contractId === contractId);
       return entries;
     } catch (error) {
       logger.warn('WrfcWorkmap: read failed', { error: summarizeError(error) });
@@ -74,19 +74,19 @@ export class WrfcWorkmap {
   }
 
   /** Get all unique WRFC chain IDs with their latest status */
-  listChains(): Array<{ wrfcId: string; task?: string; status: string; lastScore?: number; events: number }> {
+  listChains(): Array<{ contractId: string; task?: string; status: string; lastScore?: number; events: number }> {
     const entries = this.read();
     const chains = new Map<string, { task?: string; status: string; lastScore?: number; events: number }>();
     for (const e of entries) {
-      const existing = chains.get(e.wrfcId) ?? { status: 'active', events: 0 };
+      const existing = chains.get(e.contractId) ?? { status: 'active', events: 0 };
       existing.events++;
       if (e.task) existing.task = e.task;
       if (e.score !== undefined) existing.lastScore = e.score;
       if (e.event === 'chain_passed') existing.status = 'passed';
       if (e.event === 'chain_failed') existing.status = 'failed';
-      chains.set(e.wrfcId, existing);
+      chains.set(e.contractId, existing);
     }
-    return Array.from(chains.entries()).map(([wrfcId, data]) => ({ wrfcId, ...data }));
+    return Array.from(chains.entries()).map(([contractId, data]) => ({ contractId, ...data }));
   }
 
   /** Static: find the most recent workmap file in sessions dir */

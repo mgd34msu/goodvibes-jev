@@ -106,6 +106,8 @@ type AgentOrchestratorToolDeps = {
   readonly codeIndexReindexScheduler?: Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'> | undefined;
   /** Additional per-tool-execution tap (e.g. CI auto-watch minting); composed with the reindex scheduler, never blocking. */
   readonly toolExecutionObserver?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
+  /** The contract runner's agent-loop seams (`runner.hooks()`), passed into every run context; see AgentOrchestratorRunContext.contractHooks. */
+  readonly contractHooks?: import('../contract/agent-hooks.js').ContractAgentHooks | undefined;
   readonly sessionOrchestration: import('../sessions/orchestration/index.js').CrossSessionTaskRegistry;
   readonly archetypeLoader?: import('./archetypes.js').ArchetypeLoader | undefined;
   readonly configManager?: ConfigManager | undefined;
@@ -720,6 +722,7 @@ export class AgentOrchestrator {
           this.toolDeps?.toolExecutionObserver?.(toolName, args, success);
         }
         : undefined,
+      contractHooks: this.toolDeps?.contractHooks,
       archetypeLoader: this.toolDeps?.archetypeLoader,
       providerOptimizer: this.toolDeps?.providerOptimizer,
       providerRegistry: this.toolDeps!.providerRegistry!,

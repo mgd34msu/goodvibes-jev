@@ -247,7 +247,7 @@ describe('ChannelReplyPipeline', () => {
           fullOutput: 'The duplicate header read is gone and the parser tests pass.',
           tools: [],
           startedAt: Date.now(),
-          wrfcId: 'chain-1',
+          contractId: 'chain-1',
         }),
       },
       sessionBroker: { completeAgent: async () => null },

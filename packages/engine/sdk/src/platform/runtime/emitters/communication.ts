@@ -22,7 +22,7 @@ export function emitCommunicationSent(
     fromRole?: string | undefined;
     toRole?: string | undefined;
     cohort?: string | undefined;
-    wrfcId?: string | undefined;
+    contractId?: string | undefined;
     parentAgentId?: string | undefined;
   },
 ): void {
@@ -59,7 +59,7 @@ export function emitCommunicationBlocked(
     fromRole?: string | undefined;
     toRole?: string | undefined;
     cohort?: string | undefined;
-    wrfcId?: string | undefined;
+    contractId?: string | undefined;
     parentAgentId?: string | undefined;
   },
 ): void {

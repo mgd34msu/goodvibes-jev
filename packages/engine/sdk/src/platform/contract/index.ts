@@ -3,6 +3,7 @@
  * the convention orchestration/index.ts uses.
  */
 export {
+  CONTRACT_AGENT_ROLES,
   CONTRACT_DECISION_ACTIONS,
   CONTRACT_FAILURE_KINDS,
   CONTRACT_GROUP_STATUSES,
@@ -31,6 +32,7 @@ export type {
   CheckResult,
   CheckTrigger,
   Contract,
+  ContractAgentRole,
   ContractDecision,
   ContractDecisionAction,
   ContractFailureKind,
@@ -116,6 +118,7 @@ export {
   serializeContract,
 } from './store.js';
 export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, ContractStoreOptions } from './store.js';
+export type { ContractAgentHooks, ContractHoldOutcome } from './agent-hooks.js';
 export { CONTRACT_EVENT_SOURCE, contractEmitterContext, contractTraceId, emitContractEvent } from './events.js';
 export { executeGateCommand, failedGates, getSkippedGateReason, loadPackageScripts, runContractGates } from './gates.js';
 export type { QualityGate, QualityGateResult, RunContractGatesOptions } from './gates.js';

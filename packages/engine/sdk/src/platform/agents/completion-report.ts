@@ -13,7 +13,7 @@ export interface BaseCompletionReport {
   version: 1;
   archetype: string;
   summary: string;
-  wrfcId?: string | undefined;
+  contractId?: string | undefined;
 }
 
 /**

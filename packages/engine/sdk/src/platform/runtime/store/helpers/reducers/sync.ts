@@ -40,7 +40,7 @@ export function updateCommunicationState(
           ...(event.fromRole !== undefined ? { fromRole: event.fromRole } : {}),
           ...(event.toRole !== undefined ? { toRole: event.toRole } : {}),
           ...(event.cohort !== undefined ? { cohort: event.cohort } : {}),
-          ...(event.wrfcId !== undefined ? { wrfcId: event.wrfcId } : {}),
+          ...(event.contractId !== undefined ? { contractId: event.contractId } : {}),
           ...(event.parentAgentId !== undefined ? { parentAgentId: event.parentAgentId } : {}),
           ...('reason' in event && event.reason !== undefined ? { reason: event.reason } : {}),
         }

@@ -181,8 +181,12 @@ interface TestHarness {
   addAgent(id: string, task: string, template?: string): AgentRecord;
 }
 
-function latestSpawnedByWrfcRole(records: AgentRecord[], role: NonNullable<AgentRecord['wrfcRole']>): AgentRecord {
-  const record = records.filter((candidate) => candidate.wrfcRole === role).at(-1);
+function latestSpawnedByWrfcRole(
+  controller: Pick<WrfcController, 'phaseRoleOf'>,
+  records: AgentRecord[],
+  role: NonNullable<ReturnType<WrfcController['phaseRoleOf']>>,
+): AgentRecord {
+  const record = records.filter((candidate) => controller.phaseRoleOf(candidate.id) === role).at(-1);
   if (!record) throw new Error(`Expected spawned WRFC ${role} agent`);
   return record;
 }
@@ -387,7 +391,7 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     // Reviewer reports a PERFECT score and passed:true, but its own acceptance
     // checklist, derived from the task, flags the interface and the units as
     // NOT met (a valid-but-wrong deliverable). The contract gate must reject it.
@@ -429,8 +433,8 @@ describe('WrfcController: happy path', () => {
     await flushMicrotasks();
 
     // Reviewer should have been spawned
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer')).toHaveLength(1);
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer')).toHaveLength(1);
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     expect(chain.state).toBe('reviewing');
     expect(chain.reviewerAgentId).toBe(reviewerRecord.id);
 
@@ -478,7 +482,7 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -517,7 +521,7 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     reviewerRecord.usage = {
       inputTokens: 500,
       outputTokens: 150,
@@ -559,7 +563,7 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -589,14 +593,14 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const firstReviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const firstReviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(firstReviewer.id, FAILING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, firstReviewer.id);
     await flushMicrotasks(40);
 
     // The planned-fix cycle merged its work through the ENGINE's integration
     // lane; the terminal contract gate spawned a fresh reviewer.
-    const secondReviewer = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer').at(-1)!;
+    const secondReviewer = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer').at(-1)!;
     expect(secondReviewer.id).not.toBe(firstReviewer.id);
     h.setOutput(secondReviewer.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, secondReviewer.id);
@@ -606,7 +610,7 @@ describe('WrfcController: happy path', () => {
     // The superseded engineer tree is NEVER re-merged at chain level, the fix
     // work already landed via the workstream lane; no fixer agent exists.
     expect(h.mergedAgentIds).toEqual([]);
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'fixer')).toHaveLength(0);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'fixer')).toHaveLength(0);
 
     h.controller.dispose();
   });
@@ -615,7 +619,7 @@ describe('WrfcController: happy path', () => {
     const h = createHarness();
 
     const ownerRecord = h.addAgent('owner-compound-1', 'Build a small API with a rate limiter and request logger.', 'orchestrator');
-    ownerRecord.wrfcSubtasks = [
+    ownerRecord.proposedUnits = [
       { task: 'Implement token bucket rate limiter module.', template: 'engineer' },
       { task: 'Implement request logging middleware.', template: 'engineer' },
     ];
@@ -623,9 +627,9 @@ describe('WrfcController: happy path', () => {
 
     expect(chain.state).toBe('engineering');
     expect(chain.subtasks).toHaveLength(2);
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'engineer')).toHaveLength(2);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'engineer')).toHaveLength(2);
     expect(h.spawnedRecords.every((record) => record.parentAgentId === ownerRecord.id)).toBe(true);
-    expect(h.spawnedRecords.map((record) => record.wrfcSubtaskId)).toEqual(['deliverable-1', 'deliverable-2']);
+    expect(h.spawnedRecords.map((record) => record.contractUnitId)).toEqual(['deliverable-1', 'deliverable-2']);
 
     for (const subtask of chain.subtasks!) {
       h.setOutput(subtask.engineerAgentId!, `Implemented ${subtask.id}.`);
@@ -633,10 +637,10 @@ describe('WrfcController: happy path', () => {
       await flushMicrotasks(20);
     }
 
-    const subtaskReviewers = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer');
+    const subtaskReviewers = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer');
     expect(subtaskReviewers).toHaveLength(2);
-    expect(subtaskReviewers.map((record) => record.wrfcSubtaskId)).toEqual(['deliverable-1', 'deliverable-2']);
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'fixer')).toHaveLength(0);
+    expect(subtaskReviewers.map((record) => record.contractUnitId)).toEqual(['deliverable-1', 'deliverable-2']);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'fixer')).toHaveLength(0);
 
     for (const reviewer of subtaskReviewers) {
       h.setOutput(reviewer.id, PASSING_REVIEW_OUTPUT);
@@ -646,7 +650,7 @@ describe('WrfcController: happy path', () => {
 
     expect(chain.subtasks!.every((subtask) => subtask.state === 'passed')).toBe(true);
     expect(chain.state).toBe('integrating');
-    const integrator = latestSpawnedByWrfcRole(h.spawnedRecords, 'integrator');
+    const integrator = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'integrator');
     expect(integrator.template).toBe('integrator');
     expect(integrator.parentAgentId).toBe(ownerRecord.id);
 
@@ -655,10 +659,10 @@ describe('WrfcController: happy path', () => {
     await flushMicrotasks(20);
 
     expect(chain.state).toBe('reviewing');
-    const allReviewers = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer');
+    const allReviewers = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer');
     expect(allReviewers).toHaveLength(3);
     const finalReviewer = allReviewers.at(-1)!;
-    expect(finalReviewer.wrfcSubtaskId).toBeUndefined();
+    expect(finalReviewer.contractUnitId).toBeUndefined();
 
     h.setOutput(finalReviewer.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, finalReviewer.id);
@@ -678,7 +682,7 @@ describe('WrfcController: happy path', () => {
     const h = createHarness({ autoCommit: true, gitRepo: true });
 
     const ownerRecord = h.addAgent('owner-compound-autocommit', 'Build a rate limiter and request logger.', 'orchestrator');
-    ownerRecord.wrfcSubtasks = [
+    ownerRecord.proposedUnits = [
       { task: 'Implement token bucket rate limiter module.', template: 'engineer' },
       { task: 'Implement request logging middleware.', template: 'engineer' },
     ];
@@ -690,19 +694,19 @@ describe('WrfcController: happy path', () => {
       await flushMicrotasks(20);
     }
 
-    const subtaskReviewers = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer');
+    const subtaskReviewers = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer');
     for (const reviewer of subtaskReviewers) {
       h.setOutput(reviewer.id, PASSING_REVIEW_OUTPUT);
       emitAgentCompleted(h.bus, reviewer.id);
       await flushMicrotasks(20);
     }
 
-    const integrator = latestSpawnedByWrfcRole(h.spawnedRecords, 'integrator');
+    const integrator = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'integrator');
     h.setOutput(integrator.id, 'Integrated both deliverables.');
     emitAgentCompleted(h.bus, integrator.id);
     await flushMicrotasks(20);
 
-    const finalReviewer = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer').at(-1)!;
+    const finalReviewer = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer').at(-1)!;
     h.setOutput(finalReviewer.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, finalReviewer.id);
     await flushMicrotasks(20);
@@ -713,7 +717,7 @@ describe('WrfcController: happy path', () => {
     ];
     expect(chain.state).toBe('passed');
     expect(h.mergedAgentIds).toEqual(writerIds);
-    for (const reviewer of h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer')) {
+    for (const reviewer of h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer')) {
       expect(h.mergedAgentIds).not.toContain(reviewer.id);
     }
     expect(h.workflowEvents.map((e) => e.type)).toContain('WORKFLOW_AUTO_COMMITTED');
@@ -726,7 +730,7 @@ describe('WrfcController: happy path', () => {
     const fixRuns = installStubFixRunner(h.controller, 'merged');
 
     const ownerRecord = h.addAgent('owner-compound-2', 'Build a small API with a rate limiter and request logger.', 'orchestrator');
-    ownerRecord.wrfcSubtasks = [
+    ownerRecord.proposedUnits = [
       { task: 'Implement token bucket rate limiter module.', template: 'engineer' },
       { task: 'Implement request logging middleware.', template: 'engineer' },
     ];
@@ -746,9 +750,9 @@ describe('WrfcController: happy path', () => {
     await flushMicrotasks(20);
 
     const firstLimiterReviewer = h.spawnedRecords.find((record) =>
-      record.wrfcRole === 'reviewer' && record.wrfcSubtaskId === limiterSubtask.id)!;
+      h.controller.phaseRoleOf(record.id) === 'reviewer' && record.contractUnitId === limiterSubtask.id)!;
     const loggerReviewer = h.spawnedRecords.find((record) =>
-      record.wrfcRole === 'reviewer' && record.wrfcSubtaskId === loggerSubtask.id)!;
+      h.controller.phaseRoleOf(record.id) === 'reviewer' && record.contractUnitId === loggerSubtask.id)!;
 
     // The limiter review fails → ITS planned-fix cycle runs, scoped to the
     // sub-deliverable (never a chain-wide fixer); the sibling is untouched.
@@ -762,8 +766,8 @@ describe('WrfcController: happy path', () => {
     expect(fixRuns).toHaveLength(1);
     expect(fixRuns[0]!.chainId).toBe(`${chain.id}:${limiterSubtask.id}`);
     expect(fixRuns[0]!.originalTask).toContain('token bucket rate limiter');
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'fixer')).toHaveLength(0);
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'integrator')).toHaveLength(0);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'fixer')).toHaveLength(0);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'integrator')).toHaveLength(0);
 
     h.setOutput(loggerReviewer.id, reviewerReportOutput(10, true));
     emitAgentCompleted(h.bus, loggerReviewer.id);
@@ -772,7 +776,7 @@ describe('WrfcController: happy path', () => {
 
     // The merged cycle re-reviews the SUB-DELIVERABLE (its own terminal gate).
     const secondLimiterReviewer = h.spawnedRecords.filter((record) =>
-      record.wrfcRole === 'reviewer' && record.wrfcSubtaskId === limiterSubtask.id).at(-1)!;
+      h.controller.phaseRoleOf(record.id) === 'reviewer' && record.contractUnitId === limiterSubtask.id).at(-1)!;
     expect(secondLimiterReviewer.id).not.toBe(firstLimiterReviewer.id);
     h.setOutput(secondLimiterReviewer.id, reviewerReportOutput(10, true, [
       { constraintId: 'c1', satisfied: true, evidence: 'burst capacity is implemented' },
@@ -780,7 +784,7 @@ describe('WrfcController: happy path', () => {
     emitAgentCompleted(h.bus, secondLimiterReviewer.id);
     await flushMicrotasks(40);
 
-    const integrator = latestSpawnedByWrfcRole(h.spawnedRecords, 'integrator');
+    const integrator = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'integrator');
     expect(chain.state).toBe('integrating');
     // Integration sees the planned-fix workstream's merged summary, not the
     // superseded initial output.
@@ -828,7 +832,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -860,7 +864,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -902,7 +906,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -931,7 +935,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -956,7 +960,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -984,7 +988,7 @@ describe('WrfcController: contract.commitScope', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks();
@@ -1082,7 +1086,7 @@ describe('WrfcController: gate failure', () => {
 
     // Reviewer spawned
     expect(spawnedRecords.length).toBeGreaterThanOrEqual(1);
-    const reviewer = latestSpawnedByWrfcRole(spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(controller, spawnedRecords, 'reviewer');
     expect(chain.state).toBe('reviewing');
 
     // Reviewer passes with score 10
@@ -1105,7 +1109,7 @@ describe('WrfcController: gate failure', () => {
     // Chain remains active under the owner and starts a same-chain gate fix.
     expect(chain.state).toBe('fixing');
 
-    const fixer = latestSpawnedByWrfcRole(spawnedRecords, 'fixer');
+    const fixer = latestSpawnedByWrfcRole(controller, spawnedRecords, 'fixer');
     expect(fixer.parentAgentId).toBe(chain.ownerAgentId);
 
     const types = workflowEvents.map((e) => e.type);
@@ -1186,10 +1190,10 @@ describe('WrfcController: gate failure', () => {
 
     // Both reviewers should now be spawned
     const reviewer1 = spawnedRecords.find(
-      (r) => r.wrfcRole === 'reviewer' && r.parentAgentId === chain1.ownerAgentId,
+      (r) => controller.phaseRoleOf(r.id) === 'reviewer' && r.parentAgentId === chain1.ownerAgentId,
     );
     const reviewer2 = spawnedRecords.find(
-      (r) => r.wrfcRole === 'reviewer' && r.parentAgentId === chain2.ownerAgentId,
+      (r) => controller.phaseRoleOf(r.id) === 'reviewer' && r.parentAgentId === chain2.ownerAgentId,
     );
     expect(reviewer1).toBeDefined();
     expect(reviewer2).toBeDefined();
@@ -1215,7 +1219,7 @@ describe('WrfcController: gate failure', () => {
     await flushMicrotasks();
 
     // WRFC-3 invariant: exactly ONE fixer spawned (gateRunner only)
-    const fixerRecords = spawnedRecords.filter((r) => r.wrfcRole === 'fixer');
+    const fixerRecords = spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'fixer');
     expect(fixerRecords.length).toBe(1);
 
     // gateRunner (chain1, first inserted) transitions to 'fixing'
@@ -1243,7 +1247,7 @@ describe('WrfcController: escalation', () => {
     await flushMicrotasks();
 
     expect(chain.state).toBe('reviewing');
-    const reviewerRecord1 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord1 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
 
     // Reviewer 1 fails (score 5/10) → planned fix cycle 1 runs and merges
     h.setOutput(reviewerRecord1.id, FAILING_REVIEW_OUTPUT);
@@ -1254,8 +1258,8 @@ describe('WrfcController: escalation', () => {
     expect(fixRuns).toHaveLength(1);
     // The terminal contract gate re-reviews the merged result.
     expect(chain.state).toBe('reviewing');
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer')).toHaveLength(2);
-    const reviewerRecord2 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer')).toHaveLength(2);
+    const reviewerRecord2 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
 
     // Second reviewer also fails, fixAttempts(1) >= maxFixAttempts(1) → fail chain
     h.setOutput(reviewerRecord2.id, FAILING_REVIEW_OUTPUT);
@@ -1347,7 +1351,7 @@ describe('WrfcController: escalation', () => {
     const chain = h.controller.createChain(ownerRecord);
     expect(chain.state).toBe('engineering');
 
-    const firstEngineer = latestSpawnedByWrfcRole(h.spawnedRecords, 'engineer');
+    const firstEngineer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'engineer');
     expect(chain.transportRetryCount ?? 0).toBe(0);
 
     // First failure: transport-classified message the OLD substring-only
@@ -1368,7 +1372,7 @@ describe('WrfcController: escalation', () => {
     await new Promise((resolve) => setTimeout(resolve, 40));
     await flushMicrotasks();
 
-    const engineers = h.spawnedRecords.filter((r) => r.wrfcRole === 'engineer');
+    const engineers = h.spawnedRecords.filter((r) => h.controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineers).toHaveLength(2);
     const secondEngineer = engineers[1]!;
     expect(secondEngineer.id).not.toBe(firstEngineer.id);
@@ -1475,7 +1479,7 @@ describe('WrfcController: constraint integration', () => {
     expect(chain.constraints).toHaveLength(2);
     expect(chain.constraintsEnumerated).toBe(true);
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, makeReviewerOutput(10.0, [
       { constraintId: 'c1', satisfied: true, evidence: 'pure function verified' },
       { constraintId: 'c2', satisfied: true, evidence: 'zero imports' },
@@ -1509,7 +1513,7 @@ describe('WrfcController: constraint integration', () => {
     expect(chain.state).toBe('reviewing');
     expect(chain.constraints).toHaveLength(0);
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewerRecord.id, makeReviewerOutput(10.0, []));
     emitAgentCompleted(h.bus, reviewerRecord.id);
     await flushMicrotasks(20);
@@ -1547,7 +1551,7 @@ describe('WrfcController: constraint integration', () => {
     await flushMicrotasks(20);
 
     expect(chain.state).toBe('reviewing');
-    const reviewer1 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer1 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
 
     // Score 10 but c1 unsatisfied → constraint-forced fail → planned fix cycle
     h.setOutput(reviewer1.id, makeReviewerOutput(10.0, [
@@ -1560,7 +1564,7 @@ describe('WrfcController: constraint integration', () => {
     expect(fixRuns).toHaveLength(1);
     // Merged → the terminal contract gate re-reviews against the ORIGINAL ask.
     expect(chain.state).toBe('reviewing');
-    const reviewer2 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer2 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     expect(reviewer2.id).not.toBe(reviewer1.id);
 
     h.setOutput(reviewer2.id, makeReviewerOutput(10.0, [
@@ -1639,7 +1643,7 @@ describe('WrfcController: state machine', () => {
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks();
 
-    const reviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewer.id, PASSING_REVIEW_OUTPUT);
     emitAgentCompleted(h.bus, reviewer.id);
     await flushMicrotasks();
@@ -1856,7 +1860,7 @@ describe('WrfcController: acceptance-checklist gate (deterministic, both review 
   test('a compound SUBTASK review with an unverified checklist item and a passing score does NOT pass: a fix cycle starts', async () => {
     const h = createHarness({ maxFixAttempts: 3 });
     const ownerRecord = h.addAgent('owner-gate-1', 'Build two modules.', 'orchestrator');
-    ownerRecord.wrfcSubtasks = [
+    ownerRecord.proposedUnits = [
       { task: 'Implement module A.', template: 'engineer' },
       { task: 'Implement module B.', template: 'engineer' },
     ];
@@ -1867,7 +1871,7 @@ describe('WrfcController: acceptance-checklist gate (deterministic, both review 
     emitAgentCompleted(h.bus, subtask.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewer = h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer').at(-1)!;
+    const reviewer = h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer').at(-1)!;
     // Perfect score, but the reviewer itself recorded an UNVERIFIED contract item.
     h.setOutput(reviewer.id, reviewJson({
       score: 10, passed: true,
@@ -1893,7 +1897,7 @@ describe('WrfcController: acceptance-checklist gate (deterministic, both review 
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     // Perfect score, but NO checklist at all, the review records nothing verified.
     h.setOutput(reviewer.id, reviewJson({ score: 10, passed: true, acceptanceChecklist: [] }));
     emitAgentCompleted(h.bus, reviewer.id);
@@ -1913,7 +1917,7 @@ describe('WrfcController: acceptance-checklist gate (deterministic, both review 
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewer.id, reviewJson({
       score: 10, passed: true,
       acceptanceChecklist: [
@@ -1945,7 +1949,7 @@ describe('WrfcController: the review record rides the wire (checklist + verdict)
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     // Perfect score but ONE unverified contract item, the gate fails it, and
     // the wire must serve the TRUE (controller) verdict with the items intact.
     h.setOutput(reviewer.id, reviewJsonWire({
@@ -1989,7 +1993,7 @@ describe('WrfcController: the review record rides the wire (checklist + verdict)
     h.setOutput(chain.engineerAgentId!, 'done');
     emitAgentCompleted(h.bus, chain.engineerAgentId!);
     await flushMicrotasks(20);
-    const reviewer = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewer.id, reviewJsonWire({
       score: 10, passed: true,
       acceptanceChecklist: [{ item: 'meets the ask', verified: true, evidence: 'exercised directly' }],

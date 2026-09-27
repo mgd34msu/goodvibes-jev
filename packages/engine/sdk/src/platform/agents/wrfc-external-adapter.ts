@@ -4,7 +4,7 @@ export type WrfcExternalWorkStatus = 'queued' | 'running' | 'blocked' | 'complet
 
 export interface WrfcExternalWorkRequest {
   task: string;
-  wrfcId?: string | undefined;
+  contractId?: string | undefined;
   chainState?: WrfcState | undefined;
   metadata?: Record<string, unknown> | undefined;
 }

@@ -35,7 +35,7 @@ export type CommunicationEvent =
       fromRole?: string | undefined;
       toRole?: string | undefined;
       cohort?: string | undefined;
-      wrfcId?: string | undefined;
+      contractId?: string | undefined;
       parentAgentId?: string | undefined;
     }
   | {
@@ -57,7 +57,7 @@ export type CommunicationEvent =
       fromRole?: string | undefined;
       toRole?: string | undefined;
       cohort?: string | undefined;
-      wrfcId?: string | undefined;
+      contractId?: string | undefined;
       parentAgentId?: string | undefined;
     }
   | {

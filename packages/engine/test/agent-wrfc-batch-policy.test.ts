@@ -66,7 +66,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
     const result = await tool.execute({
       mode: 'batch-spawn',
       authoritativeTask: 'make a token bucket rate limiter',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         {
           task: 'Independently design a minimal, robust token bucket rate limiter API for a new empty repository. Do not write files. Return recommended language-neutral behavior, edge cases, and tests.',
@@ -74,7 +74,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
           tools: ['find', 'read'],
           restrictTools: true,
           reviewMode: 'none',
-          dangerously_disable_wrfc: true,
+          outsideContract: true,
         },
         {
           task: 'Independently review expected correctness properties for a token bucket rate limiter. Do not write files. Return concise validation checklist.',
@@ -82,7 +82,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
           tools: ['find', 'read'],
           restrictTools: true,
           reviewMode: 'none',
-          dangerously_disable_wrfc: true,
+          outsideContract: true,
         },
       ],
     });
@@ -120,7 +120,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const result = await tool.execute({
       mode: 'batch-spawn',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         {
           task: 'Independently design a minimal, robust token bucket rate limiter API for a new empty repository. Do not write files.',
@@ -154,12 +154,12 @@ describe('agent batch-spawn WRFC topology policy', () => {
       authoritativeTask: 'make a token bucket rate limiter',
       task: 'Review the implementation for correctness. Do not write files.',
       template: 'reviewer',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
-    const output = JSON.parse(result.output!) as { agentId: string; wrfcRole?: string };
-    expect(output.wrfcRole).toBe('owner');
+    const output = JSON.parse(result.output!) as { agentId: string; contractRole?: string };
+    expect(output.contractRole).toBe('owner');
     const owner = manager.getStatus(output.agentId)!;
     expect(owner.task).toBe('make a token bucket rate limiter');
     expect(owner.task).not.toContain('Do not write files');
@@ -177,7 +177,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
       tools: ['find', 'read'],
       restrictTools: true,
       reviewMode: 'none',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
@@ -203,7 +203,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
       tools: ['find', 'read'],
       restrictTools: true,
       reviewMode: 'none',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
@@ -224,7 +224,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
       tools: ['find', 'read'],
       restrictTools: true,
       reviewMode: 'none',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
@@ -239,7 +239,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const result = await tool.execute({
       mode: 'batch-spawn',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         { task: 'Build a simple rate limiter.', template: 'engineer' },
         { task: 'Test the implementation and verify rate limit behavior.', template: 'tester' },
@@ -256,7 +256,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
       skipped: number;
       collapsedTaskCount: number;
       roleTaskIndexes: number[];
-      agents: Array<{ id: string; wrfcRole?: string; wrfcId?: string; wrfcPhaseOrder?: number; continueRootSpawning?: boolean }>;
+      agents: Array<{ id: string; contractRole?: string; contractId?: string; continueRootSpawning?: boolean }>;
     };
     expect(output.collapsedToWrfc).toBe(true);
     expect(output.authoritativeWrfcChain).toBe(true);
@@ -269,12 +269,10 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const owner = manager.getStatus(output.agents[0]!.id)!;
     expect(owner.parentAgentId).toBeUndefined();
-    expect(owner.wrfcRole).toBe('owner');
-    expect(owner.wrfcPhaseOrder).toBe(0);
-    expect(output.agents[0]!.wrfcRole).toBe('owner');
-    expect(output.agents[0]!.wrfcPhaseOrder).toBe(0);
+    expect(owner.contractRole).toBe('owner');
+    expect(output.agents[0]!.contractRole).toBe('owner');
     expect(output.agents[0]!.continueRootSpawning).toBe(false);
-    expect(owner.dangerously_disable_wrfc).toBe(false);
+    expect(owner.outsideContract).toBe(false);
 
     const chains = controller.listChains();
     expect(chains).toHaveLength(1);
@@ -287,8 +285,8 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const engineer = manager.getStatus(chains[0]!.engineerAgentId!)!;
     expect(engineer.parentAgentId).toBe(owner.id);
-    expect(engineer.wrfcRole).toBe('engineer');
-    expect(engineer.wrfcPhaseOrder).toBe(1);
+    expect(controller.phaseRoleOf(engineer.id)).toBe('engineer');
+    expect(engineer.contractRole).toBe('unit');
     expect(runRecords.map((record) => record.id)).toEqual([engineer.id]);
   });
 
@@ -297,7 +295,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const result = await tool.execute({
       mode: 'batch-spawn',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         { task: 'Engineer: build a simple rate limiter.', template: 'general' },
         { task: 'Reviewer: review the implementation for correctness.', template: 'general' },
@@ -311,7 +309,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
     expect(output.continueRootSpawning).toBe(false);
     expect(controller.listChains()).toHaveLength(1);
     expect(manager.list().filter((agent) => !agent.parentAgentId)).toHaveLength(1);
-    expect(manager.getStatus(output.agents[0]!.id)?.wrfcRole).toBe('owner');
+    expect(manager.getStatus(output.agents[0]!.id)?.contractRole).toBe('owner');
   });
 
   test('keeps genuinely independent sidecar batches as separate non-WRFC roots', async () => {
@@ -319,7 +317,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const result = await tool.execute({
       mode: 'batch-spawn',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         { task: 'Inspect package manager configuration.', template: 'researcher' },
         { task: 'Inspect CI configuration.', template: 'researcher' },
@@ -334,7 +332,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
     expect(controller.listChains()).toHaveLength(0);
     const rootAgents = manager.list().filter((agent) => !agent.parentAgentId);
     expect(rootAgents).toHaveLength(2);
-    expect(rootAgents.every((agent) => agent.wrfcRole === undefined && agent.reviewMode === 'none')).toBe(true);
+    expect(rootAgents.every((agent) => agent.contractRole === undefined && agent.reviewMode === 'none')).toBe(true);
   });
 
   test('does not compound-collapse implementation batches when every implementation task explicitly disables WRFC', async () => {
@@ -343,8 +341,8 @@ describe('agent batch-spawn WRFC topology policy', () => {
     const result = await tool.execute({
       mode: 'batch-spawn',
       tasks: [
-        { task: 'Implement standalone rate limiter experiment.', template: 'engineer', reviewMode: 'none', dangerously_disable_wrfc: true },
-        { task: 'Implement standalone request logger experiment.', template: 'engineer', reviewMode: 'none', dangerously_disable_wrfc: true },
+        { task: 'Implement standalone rate limiter experiment.', template: 'engineer', reviewMode: 'none', outsideContract: true },
+        { task: 'Implement standalone request logger experiment.', template: 'engineer', reviewMode: 'none', outsideContract: true },
       ],
     });
 
@@ -362,7 +360,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
     const result = await tool.execute({
       mode: 'batch-spawn',
       authoritativeTask: 'Build a small API with a rate limiter and request logger.',
-      reviewMode: 'wrfc',
+      reviewMode: 'contract',
       tasks: [
         { task: 'Implement token bucket rate limiter module.', template: 'engineer' },
         { task: 'Implement request logging middleware.', template: 'engineer' },
@@ -376,20 +374,20 @@ describe('agent batch-spawn WRFC topology policy', () => {
       count: number;
       compoundTaskIndexes: number[];
       roleTaskIndexes: number[];
-      agents: Array<{ id: string; wrfcRole?: string; continueRootSpawning?: boolean }>;
+      agents: Array<{ id: string; contractRole?: string; continueRootSpawning?: boolean }>;
     };
     expect(output.collapsedToWrfc).toBe(true);
     expect(output.reason).toContain('compound WRFC owner chain');
     expect(output.count).toBe(1);
     expect(output.compoundTaskIndexes).toEqual([0, 1]);
     expect(output.roleTaskIndexes).toEqual([]);
-    expect(output.agents[0]!.wrfcRole).toBe('owner');
+    expect(output.agents[0]!.contractRole).toBe('owner');
     expect(output.agents[0]!.continueRootSpawning).toBe(false);
 
     const owner = manager.getStatus(output.agents[0]!.id)!;
     expect(owner.template).toBe('orchestrator');
     expect(owner.task).toBe('Build a small API with a rate limiter and request logger.');
-    expect(owner.wrfcSubtasks).toHaveLength(2);
+    expect(owner.proposedUnits).toHaveLength(2);
 
     const chain = controller.listChains()[0]!;
     expect(chain.ownerAgentId).toBe(owner.id);
@@ -397,9 +395,9 @@ describe('agent batch-spawn WRFC topology policy', () => {
       'Implement token bucket rate limiter module.',
       'Implement request logging middleware.',
     ]);
-    expect(runRecords.map((record) => record.wrfcRole)).toEqual(['engineer', 'engineer']);
+    expect(runRecords.map((record) => controller.phaseRoleOf(record.id))).toEqual(['engineer', 'engineer']);
     expect(runRecords.every((record) => record.parentAgentId === owner.id)).toBe(true);
-    expect(runRecords.every((record) => record.wrfcSubtaskId)).toBe(true);
+    expect(runRecords.every((record) => record.contractUnitId)).toBe(true);
     expect(runRecords.every((record) => record.tools.includes('write'))).toBe(true);
     expect(runRecords.every((record) => record.tools.includes('exec'))).toBe(true);
     expect(manager.list().filter((agent) => !agent.parentAgentId)).toEqual([owner]);
@@ -411,7 +409,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
     const result = await tool.execute({
       mode: 'batch-spawn',
       authoritativeTask: 'Build a small API with a rate limiter and request logger.',
-      reviewMode: 'wrfc',
+      reviewMode: 'contract',
       tasks: [
         {
           task: 'Design a token bucket rate limiter module. Do not write files.',
@@ -427,9 +425,9 @@ describe('agent batch-spawn WRFC topology policy', () => {
     const chain = controller.listChains()[0]!;
     expect(chain.subtasks?.[0]?.task).toContain('Implement');
     expect(chain.subtasks?.[0]?.task).not.toContain('Do not write files');
-    const owner = manager.list().find((agent) => agent.wrfcRole === 'owner')!;
-    expect(owner.wrfcSubtasks?.[0]?.tools).toBeUndefined();
-    expect(owner.wrfcSubtasks?.[0]?.restrictTools).toBe(false);
+    const owner = manager.list().find((agent) => agent.contractRole === 'owner')!;
+    expect(owner.proposedUnits?.[0]?.tools).toBeUndefined();
+    expect(owner.proposedUnits?.[0]?.restrictTools).toBe(false);
     expect(runRecords[0]?.task).toContain('Implement');
     expect(runRecords[0]?.task).not.toContain('Do not write files');
     expect(runRecords[0]?.tools).toContain('write');
@@ -443,30 +441,28 @@ describe('agent batch-spawn WRFC topology policy', () => {
       mode: 'spawn',
       task: 'Review the implementation for correctness.',
       template: 'reviewer',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(result.success).toBe(true);
     const output = JSON.parse(result.output!) as {
       agentId: string;
-      wrfcRole?: string;
-      wrfcPhaseOrder?: number;
-      wrfcRouteReason?: string | null;
+      contractRole?: string;
+      routeReason?: string | null;
       authoritativeWrfcChain?: boolean;
       continueRootSpawning?: boolean;
       orchestrationStopSignal?: string | null;
     };
-    expect(output.wrfcRole).toBe('owner');
-    expect(output.wrfcPhaseOrder).toBe(0);
-    expect(output.wrfcRouteReason).toBe('root-review-role-normalized');
+    expect(output.contractRole).toBe('owner');
+    expect(output.routeReason).toBe('root-review-role-normalized');
     expect(output.authoritativeWrfcChain).toBe(true);
     expect(output.continueRootSpawning).toBe(false);
     expect(output.orchestrationStopSignal).toBe('wrfc_owner_chain_started');
     expect(controller.listChains()).toHaveLength(1);
     const owner = manager.getStatus(output.agentId)!;
     expect(owner.template).toBe('engineer');
-    expect(owner.reviewMode).toBe('wrfc');
-    expect(owner.dangerously_disable_wrfc).toBe(false);
+    expect(owner.reviewMode).toBe('contract');
+    expect(owner.outsideContract).toBe(false);
     expect(manager.list().filter((agent) => !agent.parentAgentId)).toHaveLength(1);
   });
 
@@ -480,12 +476,12 @@ describe('agent batch-spawn WRFC topology policy', () => {
     });
 
     expect(result.success).toBe(true);
-    const output = JSON.parse(result.output!) as { agentId: string; wrfcRole?: string; continueRootSpawning?: boolean };
+    const output = JSON.parse(result.output!) as { agentId: string; contractRole?: string; continueRootSpawning?: boolean };
     const owner = manager.getStatus(output.agentId)!;
-    expect(owner.wrfcRole).toBe('owner');
+    expect(owner.contractRole).toBe('owner');
     expect(output.continueRootSpawning).toBe(false);
     expect(owner.template).toBe('engineer');
-    expect(owner.reviewMode).toBe('wrfc');
+    expect(owner.reviewMode).toBe('contract');
     expect(manager.list().filter((agent) => !agent.parentAgentId)).toHaveLength(1);
   });
 
@@ -494,7 +490,7 @@ describe('agent batch-spawn WRFC topology policy', () => {
 
     const result = await tool.execute({
       mode: 'batch-spawn',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       tasks: [
         { task: 'Inspect one independent subsystem.', template: 'researcher' },
       ],

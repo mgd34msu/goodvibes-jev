@@ -103,8 +103,7 @@ describe('WRFC owner agent orchestration', () => {
       orchestrationNodeId: 'owner-node',
     });
 
-    expect(owner.wrfcRole).toBe('owner');
-    expect(owner.wrfcPhaseOrder).toBe(0);
+    expect(owner.contractRole).toBe('owner');
     expect(owner.status).toBe('running');
     expect(owner.parentAgentId).toBeUndefined();
     expect(runRecords.map((record) => record.id)).not.toContain(owner.id);
@@ -115,8 +114,8 @@ describe('WRFC owner agent orchestration', () => {
     expect(chain.engineerAgentId).toBeDefined();
 
     const engineer = manager.getStatus(chain.engineerAgentId!)!;
-    expect(engineer.wrfcRole).toBe('engineer');
-    expect(engineer.wrfcPhaseOrder).toBe(1);
+    expect(controller.phaseRoleOf(engineer.id)).toBe('engineer');
+    expect(engineer.contractRole).toBe('unit');
     expect(engineer.parentAgentId).toBe(owner.id);
     expect(engineer.orchestrationGraphId).toBe('wrfc-owner-graph');
     expect(engineer.parentNodeId).toBe('owner-node');
@@ -129,16 +128,16 @@ describe('WRFC owner agent orchestration', () => {
       task: 'nested WRFC child work',
       template: 'engineer',
       parentAgentId: engineer.id,
-      dangerously_disable_wrfc: true,
-    })).toThrow('WRFC phase agents cannot spawn nested child agents');
+      outsideContract: true,
+    })).toThrow('Contract units cannot spawn nested child agents');
 
     engineer.fullOutput = 'Implementation complete.';
     emitAgentCompleted(bus, engineer.id);
     await flushMicrotasks(20);
 
-    const reviewer = manager.list().find((record) => record.wrfcRole === 'reviewer')!;
+    const reviewer = manager.list().find((record) => controller.phaseRoleOf(record.id) === 'reviewer')!;
     expect(reviewer).toBeDefined();
-    expect(reviewer.wrfcPhaseOrder).toBe(2);
+    expect(reviewer.contractRole).toBe('unit');
     expect(reviewer.parentAgentId).toBe(owner.id);
     expect(reviewer.orchestrationGraphId).toBe('wrfc-owner-graph');
     expect(reviewer.parentNodeId).toBe('owner-node');
@@ -252,8 +251,7 @@ describe('WRFC owner agent orchestration', () => {
     // side effect its flow analysis can't see.
     expect(owner.status as AgentRecord['status']).toBe('running');
     expect(owner.completedAt).toBeUndefined();
-    expect(owner.wrfcRole).toBe('owner');
-    expect(owner.wrfcPhaseOrder).toBe(0);
+    expect(owner.contractRole).toBe('owner');
     expect(engineer.status).toBe('running');
     expect(chain.ownerTerminalEmitted).toBe(false);
     expect(chain.ownerDecisions.map((decision) => decision.action)).toContain('owner_completion_ignored');
@@ -533,7 +531,7 @@ describe('WRFC owner agent orchestration', () => {
     };
     const bridge = new WrfcExternalWorkBridge(adapter);
 
-    await expect(bridge.dispatch({ task: 'partner app task', wrfcId: 'wrfc-1' })).resolves.toEqual({
+    await expect(bridge.dispatch({ task: 'partner app task', contractId: 'wrfc-1' })).resolves.toEqual({
       externalTaskId: 'external-1',
       status: 'queued',
     });

@@ -116,7 +116,7 @@ export function decideContinuationEscalation(
 export function continuationChainOptions(
   input: ContinuationInputLike | undefined,
   options: ContinuationEscalationOptions = {},
-): { readonly dangerously_disable_wrfc?: true; readonly replyStyle?: 'conversational' } {
+): { readonly outsideContract?: true; readonly replyStyle?: 'conversational' } {
   // `replyStyle` rides with the chain decision rather than being a second,
   // separately-derived judgement: a continuation that is conversation gets a
   // conversational REPLY, not a completion report addressed to nobody. The
@@ -124,7 +124,7 @@ export function continuationChainOptions(
   // fields for the first message of a conversation; this is the follow-up half.
   return decideContinuationEscalation(input, options).startsWorkChain
     ? {}
-    : { dangerously_disable_wrfc: true, replyStyle: 'conversational' };
+    : { outsideContract: true, replyStyle: 'conversational' };
 }
 
 /**

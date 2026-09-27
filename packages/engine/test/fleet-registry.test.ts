@@ -290,7 +290,7 @@ describe('fleet registry: adapter mapping', () => {
     registry.dispose();
   });
 
-  test('parentId precedence: wrfcSubtaskId > wrfcId > parentNodeId(resolved) > parentAgentId', () => {
+  test('parentId precedence: contractUnitId > contractId > parentNodeId(resolved) > parentAgentId', () => {
     const chain = makeChain({
       id: 'ch-1',
       ownerAgentId: 'owner-1',
@@ -298,13 +298,13 @@ describe('fleet registry: adapter mapping', () => {
       subtasks: [makeSubtask({ id: 'st-1' })],
     });
     const agents = [
-      makeAgent({ id: 'owner-1', wrfcId: 'ch-1', wrfcRole: 'owner' }),
-      makeAgent({ id: 'a-sub', wrfcSubtaskId: 'st-1', wrfcId: 'ch-1' }),
-      makeAgent({ id: 'a-chain', wrfcId: 'ch-1' }),
+      makeAgent({ id: 'owner-1', contractId: 'ch-1', contractRole: 'owner' }),
+      makeAgent({ id: 'a-sub', contractUnitId: 'st-1', contractId: 'ch-1' }),
+      makeAgent({ id: 'a-chain', contractId: 'ch-1' }),
       makeAgent({ id: 'a-orch-parent', orchestrationNodeId: 'node-9' }),
       makeAgent({ id: 'a-orch-child', parentNodeId: 'node-9' }),
       makeAgent({ id: 'a-plain-child', parentAgentId: 'a-orch-parent' }),
-      makeAgent({ id: 'a-dangling', wrfcId: 'missing-chain', parentAgentId: 'a-orch-parent' }),
+      makeAgent({ id: 'a-dangling', contractId: 'missing-chain', parentAgentId: 'a-orch-parent' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -315,7 +315,7 @@ describe('fleet registry: adapter mapping', () => {
     expect(nodeById(registry, 'owner-1').parentId).toBe('chain:ch-1');
     expect(nodeById(registry, 'a-orch-child').parentId).toBe('a-orch-parent');
     expect(nodeById(registry, 'a-plain-child').parentId).toBe('a-orch-parent');
-    // Dangling wrfcId falls through to the next resolvable edge.
+    // Dangling contractId falls through to the next resolvable edge.
     expect(nodeById(registry, 'a-dangling').parentId).toBe('a-orch-parent');
     registry.dispose();
   });
@@ -334,8 +334,8 @@ describe('fleet registry: adapter mapping', () => {
     };
     const agents = [
       // Owner usage mirrors children at completion, must NOT be double-counted.
-      makeAgent({ id: 'owner-2', wrfcId: 'ch-2', usage: { ...usage }, toolCallCount: 5 }),
-      makeAgent({ id: 'eng-1', wrfcId: 'ch-2', usage: { ...usage }, toolCallCount: 5, model: 'm1' }),
+      makeAgent({ id: 'owner-2', contractId: 'ch-2', usage: { ...usage }, toolCallCount: 5 }),
+      makeAgent({ id: 'eng-1', contractId: 'ch-2', usage: { ...usage }, toolCallCount: 5, model: 'm1' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -394,9 +394,9 @@ describe('fleet registry: adapter mapping', () => {
       // Owner's completedAt is deliberately the LATEST of the three so that,
       // if aggregateCost's owner-exclusion rule were ever violated here too,
       // this assertion would catch it (expected elapsedMs comes from m2-z).
-      makeAgent({ id: 'own-z', wrfcId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 9_000 }),
-      makeAgent({ id: 'm1-z', wrfcId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 3_000 }),
-      makeAgent({ id: 'm2-z', wrfcId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'interrupt', startedAt: T0, completedAt: T0 + 5_000 }),
+      makeAgent({ id: 'own-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 9_000 }),
+      makeAgent({ id: 'm1-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'kill', startedAt: T0, completedAt: T0 + 3_000 }),
+      makeAgent({ id: 'm2-z', contractId: 'ch-cascade-killed', status: 'cancelled', terminationKind: 'interrupt', startedAt: T0, completedAt: T0 + 5_000 }),
     ];
     const registryEarly = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -443,10 +443,10 @@ describe('fleet registry: adapter mapping', () => {
       createdAt: T0,
     });
     const agents = [
-      makeAgent({ id: 'own-c', wrfcId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'eng-c', wrfcId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'own-g', wrfcId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
-      makeAgent({ id: 'eng-g', wrfcId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
+      makeAgent({ id: 'own-c', contractId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
+      makeAgent({ id: 'eng-c', contractId: 'ch-committing', status: 'completed', completedAt: T0 + 1_000 }),
+      makeAgent({ id: 'own-g', contractId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
+      makeAgent({ id: 'eng-g', contractId: 'ch-gating', status: 'completed', completedAt: T0 + 1_000 }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -473,10 +473,10 @@ describe('fleet registry: adapter mapping', () => {
       transportRetryCount: 1,
     });
     const agents = [
-      makeAgent({ id: 'own-r', wrfcId: 'ch-retry-real', status: 'running' }),
+      makeAgent({ id: 'own-r', contractId: 'ch-retry-real', status: 'running' }),
       // The failed transport attempt is terminal, but this is the respawn
       // window (retryCount > 0), not an operator kill.
-      makeAgent({ id: 'm1-r', wrfcId: 'ch-retry-real', status: 'failed', completedAt: T0 + 1_000 }),
+      makeAgent({ id: 'm1-r', contractId: 'ch-retry-real', status: 'failed', completedAt: T0 + 1_000 }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -857,9 +857,9 @@ describe('fleet registry: cost honesty', () => {
   test('chain aggregation: mixed priced/unpriced members → estimated with priced subset only', () => {
     const chain = makeChain({ id: 'ch-cost', ownerAgentId: 'own', allAgentIds: ['own', 'm1', 'm2'] });
     const agents = [
-      makeAgent({ id: 'own', wrfcId: 'ch-cost', usage: { ...usage } }),
-      makeAgent({ id: 'm1', wrfcId: 'ch-cost', model: 'priced-model', usage: { ...usage } }),
-      makeAgent({ id: 'm2', wrfcId: 'ch-cost', model: 'mystery-model', usage: { ...usage } }),
+      makeAgent({ id: 'own', contractId: 'ch-cost', usage: { ...usage } }),
+      makeAgent({ id: 'm1', contractId: 'ch-cost', model: 'priced-model', usage: { ...usage } }),
+      makeAgent({ id: 'm2', contractId: 'ch-cost', model: 'mystery-model', usage: { ...usage } }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -887,9 +887,9 @@ describe('fleet registry: edge integrity', () => {
       ],
     });
     const agents = [
-      makeAgent({ id: 'owner-t', wrfcId: 'ch-tree', wrfcRole: 'owner' }),
-      makeAgent({ id: 'eng-a', wrfcId: 'ch-tree', wrfcSubtaskId: 'st-1', wrfcRole: 'engineer' }),
-      makeAgent({ id: 'rev-a', wrfcId: 'ch-tree', wrfcSubtaskId: 'st-2', wrfcRole: 'reviewer' }),
+      makeAgent({ id: 'owner-t', contractId: 'ch-tree', contractRole: 'owner' }),
+      makeAgent({ id: 'eng-a', contractId: 'ch-tree', contractUnitId: 'st-1', contractRole: 'unit' }),
+      makeAgent({ id: 'rev-a', contractId: 'ch-tree', contractUnitId: 'st-2', contractRole: 'unit' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -1060,8 +1060,8 @@ describe('fleet registry: control dispatch', () => {
       allAgentIds: ['own-verb', 'm1-verb'],
     });
     const agents = [
-      makeAgent({ id: 'own-verb', wrfcId: 'ch-verb' }),
-      makeAgent({ id: 'm1-verb', wrfcId: 'ch-verb' }),
+      makeAgent({ id: 'own-verb', contractId: 'ch-verb' }),
+      makeAgent({ id: 'm1-verb', contractId: 'ch-verb' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1188,9 +1188,9 @@ describe('fleet registry: control dispatch', () => {
       allAgentIds: ['own-k', 'm1-k', 'm2-k'],
     });
     const agents = [
-      makeAgent({ id: 'own-k', wrfcId: 'ch-kill' }),
-      makeAgent({ id: 'm1-k', wrfcId: 'ch-kill' }),
-      makeAgent({ id: 'm2-k', wrfcId: 'ch-kill', status: 'completed', completedAt: T0 }),
+      makeAgent({ id: 'own-k', contractId: 'ch-kill' }),
+      makeAgent({ id: 'm1-k', contractId: 'ch-kill' }),
+      makeAgent({ id: 'm2-k', contractId: 'ch-kill', status: 'completed', completedAt: T0 }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1223,8 +1223,8 @@ describe('fleet registry: control dispatch', () => {
       allAgentIds: ['own-c', 'm1-c'],
     });
     const agents = [
-      makeAgent({ id: 'own-c', wrfcId: 'ch-casc' }),
-      makeAgent({ id: 'm1-c', wrfcId: 'ch-casc' }),
+      makeAgent({ id: 'own-c', contractId: 'ch-casc' }),
+      makeAgent({ id: 'm1-c', contractId: 'ch-casc' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1250,8 +1250,8 @@ describe('fleet registry: control dispatch', () => {
       allAgentIds: ['own-e', 'm1-e'],
     });
     const agents = [
-      makeAgent({ id: 'own-e', wrfcId: 'ch-eq' }),
-      makeAgent({ id: 'm1-e', wrfcId: 'ch-eq' }),
+      makeAgent({ id: 'own-e', contractId: 'ch-eq' }),
+      makeAgent({ id: 'm1-e', contractId: 'ch-eq' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: {
@@ -1423,8 +1423,8 @@ describe('fleet registry: steer', () => {
       subtasks: [makeSubtask({ id: 'st-sub', state: 'engineering', engineerAgentId: 'eng-sub' })],
     });
     const agents = [
-      makeAgent({ id: 'owner-sub', wrfcId: 'ch-sub-steer', wrfcRole: 'owner' }),
-      makeAgent({ id: 'eng-sub', wrfcId: 'ch-sub-steer', wrfcSubtaskId: 'st-sub', status: 'running' }),
+      makeAgent({ id: 'owner-sub', contractId: 'ch-sub-steer', contractRole: 'owner' }),
+      makeAgent({ id: 'eng-sub', contractId: 'ch-sub-steer', contractUnitId: 'st-sub', status: 'running' }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },
@@ -1447,8 +1447,8 @@ describe('fleet registry: steer', () => {
       subtasks: [makeSubtask({ id: 'st-term', state: 'engineering', engineerAgentId: 'eng-t2' })],
     });
     const agents = [
-      makeAgent({ id: 'owner-t2', wrfcId: 'ch-sub-term' }),
-      makeAgent({ id: 'eng-t2', wrfcId: 'ch-sub-term', wrfcSubtaskId: 'st-term', status: 'completed', completedAt: T0 }),
+      makeAgent({ id: 'owner-t2', contractId: 'ch-sub-term' }),
+      makeAgent({ id: 'eng-t2', contractId: 'ch-sub-term', contractUnitId: 'st-term', status: 'completed', completedAt: T0 }),
     ];
     const registry = createProcessRegistry(makeDeps({
       agentManager: { list: () => [...agents], cancel: () => false },

@@ -6,7 +6,7 @@
  * below:
  *
  * 1. The conversation gate correctly decided "this is conversation" and spawned
- *    with `dangerously_disable_wrfc: true` + `replyStyle: 'conversational'`. The
+ *    with `outsideContract: true` + `replyStyle: 'conversational'`. The
  *    root-spawn normalization then read the CONTINUATION PROMPT, which embeds
  *    the chat transcript, found an earlier assistant sentence ("I'll review the
  *    route, timing, stops"), and forced the chain back on. It then fed itself:
@@ -139,19 +139,19 @@ describe('an explicit no-chain decision outranks a review/test wording match', (
     const record = manager.spawn({
       mode: 'spawn',
       task: ITINERARY_CONTINUATION_TASK,
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
       replyStyle: 'conversational',
     });
 
     expect(controller.listChains()).toHaveLength(0);
-    expect(record.wrfcId).toBeUndefined();
-    expect(record.wrfcRole).toBeUndefined();
-    expect(record.wrfcRouteReason).toBeUndefined();
+    expect(record.contractId).toBeUndefined();
+    expect(record.contractRole).toBeUndefined();
+    expect(record.routeReason).toBeUndefined();
     // The whole decision survives, not just half of it: the reply must still
     // read as a reply to a person, and the task must not be rewritten into an
     // authoritative engineering ask.
     expect(record.replyStyle).toBe('conversational');
-    expect(record.dangerously_disable_wrfc).toBe(true);
+    expect(record.outsideContract).toBe(true);
     expect(record.reviewMode).toBe('none');
     expect(record.template).not.toBe('engineer');
     expect(record.task).toBe(ITINERARY_CONTINUATION_TASK);
@@ -164,8 +164,8 @@ describe('an explicit no-chain decision outranks a review/test wording match', (
     const record = manager.spawn({ mode: 'spawn', task: ITINERARY_CONTINUATION_TASK });
 
     expect(controller.listChains()).toHaveLength(1);
-    expect(record.wrfcRole).toBe('owner');
-    expect(record.wrfcRouteReason).toBe('root-review-role-normalized');
+    expect(record.contractRole).toBe('owner');
+    expect(record.routeReason).toBe('root-review-role-normalized');
   });
 
   test('a DECLARED reviewer template is still normalized despite the suppression flag', () => {
@@ -178,13 +178,13 @@ describe('an explicit no-chain decision outranks a review/test wording match', (
       mode: 'spawn',
       task: 'Review the implementation for correctness.',
       template: 'reviewer',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     expect(controller.listChains()).toHaveLength(1);
-    expect(record.wrfcRole).toBe('owner');
+    expect(record.contractRole).toBe('owner');
     expect(record.template).toBe('engineer');
-    expect(record.dangerously_disable_wrfc).toBe(false);
+    expect(record.outsideContract).toBe(false);
   });
 
   test('the orchestration-batch role collapse still fires for a root review task', async () => {
@@ -219,7 +219,7 @@ describe('a finished chain reports its work, not its bookkeeping', () => {
     emitAgentCompleted(bus, engineer.id);
     await flushMicrotasks();
 
-    const reviewer = manager.list().find((record) => record.wrfcRole === 'reviewer')!;
+    const reviewer = manager.list().find((record) => controller.phaseRoleOf(record.id) === 'reviewer')!;
     reviewer.fullOutput = ['```json', JSON.stringify({
       version: 1,
       archetype: 'reviewer',
@@ -263,7 +263,7 @@ describe('a finished chain reports its work, not its bookkeeping', () => {
     emitAgentCompleted(bus, engineer.id);
     await flushMicrotasks();
 
-    const reviewer = manager.list().find((record) => record.wrfcRole === 'reviewer')!;
+    const reviewer = manager.list().find((record) => controller.phaseRoleOf(record.id) === 'reviewer')!;
     reviewer.fullOutput = ['```json', JSON.stringify({
       version: 1,
       archetype: 'reviewer',

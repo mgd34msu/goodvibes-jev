@@ -117,8 +117,12 @@ interface Harness {
   addAgent(id: string, task: string, template?: string): AgentRecord;
 }
 
-function latestSpawnedByWrfcRole(records: AgentRecord[], role: NonNullable<AgentRecord['wrfcRole']>): AgentRecord {
-  const record = records.filter((candidate) => candidate.wrfcRole === role).at(-1);
+function latestSpawnedByWrfcRole(
+  controller: Pick<WrfcController, 'phaseRoleOf'>,
+  records: AgentRecord[],
+  role: NonNullable<ReturnType<WrfcController['phaseRoleOf']>>,
+): AgentRecord {
+  const record = records.filter((candidate) => controller.phaseRoleOf(candidate.id) === role).at(-1);
   if (!record) throw new Error(`Expected spawned WRFC ${role} agent`);
   return record;
 }
@@ -252,7 +256,7 @@ async function seedChainWithConstraints(
   emitAgentCompleted(h.bus, chain.engineerAgentId!);
   await flushMicrotasks(20);
 
-  const reviewerAgentId = () => latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer').id;
+  const reviewerAgentId = () => latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer').id;
   return { h, chain, engineerAgentId: chain.engineerAgentId!, reviewerAgentId, fixRuns };
 }
 
@@ -285,10 +289,10 @@ describe('Engineer → review propagation', () => {
 
     // Reviewer should have been spawned (chain in reviewing)
     expect(chain.state).toBe('reviewing');
-    expect(h.spawnedRecords.filter((record) => record.wrfcRole === 'reviewer')).toHaveLength(1);
+    expect(h.spawnedRecords.filter((record) => h.controller.phaseRoleOf(record.id) === 'reviewer')).toHaveLength(1);
 
     // The reviewer task should contain the constraint section
-    const reviewerTask = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer').task;
+    const reviewerTask = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer').task;
     expect(reviewerTask).toContain('## Constraints to verify');
     expect(reviewerTask).toContain('c1');
     expect(reviewerTask).toContain('c2');
@@ -430,7 +434,7 @@ describe('Planned fix: authoritative constraints survive to the terminal gate', 
     // a fresh reviewer over the merged result.
     expect(fixRuns).toHaveLength(1);
     expect(fixRuns[0]!.originalTask).toBe(chain.task); // re-derived from the ORIGINAL request
-    const reviewer2 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer2 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     expect(reviewer2.id).not.toBe(firstReviewer);
     // The re-review carries the ORIGINAL ask and the AUTHORITATIVE constraints
     // (never anything a task agent echoed).
@@ -466,7 +470,7 @@ describe('Planned fix: authoritative constraints survive to the terminal gate', 
 
     // The terminal gate FAILS the contract again → a second planned cycle is
     // born (the loop), still never completing on slice green alone.
-    const reviewer2 = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewer2 = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     h.setOutput(reviewer2.id, reviewerOutput(5.0, [
       { constraintId: 'c1', satisfied: false, evidence: 'still impure', severity: 'major' },
     ]));
@@ -510,7 +514,7 @@ describe('Empty-list no-op: reviewer side', () => {
     expect(chain.constraints).toHaveLength(0);
     expect(chain.state).toBe('reviewing');
 
-    const reviewerRecord = latestSpawnedByWrfcRole(h.spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(h.controller, h.spawnedRecords, 'reviewer');
     const reviewerTask = reviewerRecord.task;
 
     expect(reviewerTask).not.toContain('## Constraints to verify');
@@ -638,7 +642,7 @@ describe('Gate retry: same-chain fix', () => {
     await flushMicrotasks(20);
 
     // Reviewer spawned
-    const reviewerRecord = latestSpawnedByWrfcRole(spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(controller, spawnedRecords, 'reviewer');
     reviewerRecord.fullOutput = reviewerOutput(10.0, [
       { constraintId: 'c1', satisfied: true, evidence: 'pure' },
       { constraintId: 'c2', satisfied: true, evidence: 'no external deps' },
@@ -652,7 +656,7 @@ describe('Gate retry: same-chain fix', () => {
 
     expect(parentChain.state).toBe('fixing');
 
-    const fixerRecord = latestSpawnedByWrfcRole(spawnedRecords, 'fixer');
+    const fixerRecord = latestSpawnedByWrfcRole(controller, spawnedRecords, 'fixer');
     expect(fixerRecord.task).toContain('## Constraints to preserve');
     expect(fixerRecord.task).toContain('c1: must be pure');
     expect(fixerRecord.task).toContain('c2: no deps');
@@ -684,7 +688,7 @@ describe('Gate retry: no child chain', () => {
     emitAgentCompleted(bus, parentChain.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewerRecord = latestSpawnedByWrfcRole(spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(controller, spawnedRecords, 'reviewer');
     reviewerRecord.fullOutput = reviewerOutput(10.0, [
       { constraintId: 'c1', satisfied: true, evidence: 'pure' },
       { constraintId: 'c2', satisfied: true, evidence: 'no deps' },
@@ -697,7 +701,7 @@ describe('Gate retry: no child chain', () => {
 
     expect(parentChain.state).toBe('fixing');
     expect(controller.listChains()).toHaveLength(1);
-    expect(latestSpawnedByWrfcRole(spawnedRecords, 'fixer').parentAgentId).toBe(parentChain.ownerAgentId);
+    expect(latestSpawnedByWrfcRole(controller, spawnedRecords, 'fixer').parentAgentId).toBe(parentChain.ownerAgentId);
 
     controller.dispose();
   });
@@ -719,7 +723,7 @@ describe('Zero-constraint gate retry', () => {
     emitAgentCompleted(bus, parentChain.engineerAgentId!);
     await flushMicrotasks(20);
 
-    const reviewerRecord = latestSpawnedByWrfcRole(spawnedRecords, 'reviewer');
+    const reviewerRecord = latestSpawnedByWrfcRole(controller, spawnedRecords, 'reviewer');
     reviewerRecord.fullOutput = reviewerOutput(10.0, []);
 
     const fixPromise = waitForEvent(bus, 'WORKFLOW_FIX_ATTEMPTED');
@@ -729,7 +733,7 @@ describe('Zero-constraint gate retry', () => {
 
     expect(parentChain.state).toBe('fixing');
     expect(parentChain.constraints).toHaveLength(0);
-    expect(latestSpawnedByWrfcRole(spawnedRecords, 'fixer').task).not.toContain('## Constraints to preserve');
+    expect(latestSpawnedByWrfcRole(controller, spawnedRecords, 'fixer').task).not.toContain('## Constraints to preserve');
 
     controller.dispose();
   });

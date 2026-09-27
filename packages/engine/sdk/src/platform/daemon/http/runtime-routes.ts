@@ -68,7 +68,7 @@ const deliveryModes = new Set(['none', 'webhook', 'surface', 'integration', 'lin
 const failureActions = new Set(['retry', 'cooldown', 'disable', 'dead_letter']);
 const retryStrategies = new Set(['fixed', 'linear', 'exponential']);
 const executionProtocols = new Set(['direct', 'gather-plan-apply']);
-const reviewModes = new Set(['none', 'wrfc']);
+const reviewModes = new Set(['none', 'contract']);
 const communicationLanes = new Set(['parent-only', 'parent-and-children', 'cohort', 'direct']);
 const executionRiskClasses = new Set(EXECUTION_RISK_CLASSES);
 const executionNetworkPolicies = new Set(EXECUTION_NETWORK_POLICIES);
@@ -269,7 +269,7 @@ function isRuntimeRouteSpawnAgentInput(input: SdkSpawnAgentInput): input is Runt
     && isOptionalStringFrom(input.executionProtocol, executionProtocols)
     && isOptionalStringFrom(input.reviewMode, reviewModes)
     && isOptionalStringFrom(input.communicationLane, communicationLanes)
-    && isOptionalBoolean(input.dangerously_disable_wrfc);
+    && isOptionalBoolean(input.outsideContract);
 }
 
 function parseRuntimeRouteSpawnAgentInput(input: SdkSpawnAgentInput): RuntimeRouteSpawnAgentInput {

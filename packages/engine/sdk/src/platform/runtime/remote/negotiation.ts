@@ -4,7 +4,7 @@ import type { RemoteRunnerContract } from './types.js';
 export interface RemoteNegotiationSnapshot {
   readonly transport: 'acp' | 'daemon';
   readonly executionProtocol: 'direct' | 'gather-plan-apply';
-  readonly reviewMode: 'none' | 'wrfc';
+  readonly reviewMode: 'none' | 'contract';
   readonly communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct';
   readonly trustClass: string;
   readonly detail: string;

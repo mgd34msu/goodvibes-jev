@@ -112,17 +112,17 @@ describe('buildCompletedAgentWork', () => {
     expect(section!.content).toContain('1 tool call'); // singular, not "1 tool calls"
   });
 
-  test('excludes an agent whose id appears in chain.allAgentIds even without wrfcId set', () => {
+  test('excludes an agent whose id appears in chain.allAgentIds even without contractId set', () => {
     const agents = [
-      makeRecord({ id: 'eng-1', task: 'chain work', status: 'completed', wrfcId: undefined }),
+      makeRecord({ id: 'eng-1', task: 'chain work', status: 'completed', contractId: undefined }),
     ];
     const chains = [makeChain({ id: 'chain-1', allAgentIds: ['eng-1'] })];
     expect(buildCompletedAgentWork(agents, chains)).toBeNull();
   });
 
-  test('excludes an agent with wrfcId set directly', () => {
+  test('excludes an agent with contractId set directly', () => {
     const agents = [
-      makeRecord({ id: 'eng-2', task: 'chain work', status: 'completed', wrfcId: 'chain-2' }),
+      makeRecord({ id: 'eng-2', task: 'chain work', status: 'completed', contractId: 'chain-2' }),
     ];
     expect(buildCompletedAgentWork(agents, [])).toBeNull();
   });

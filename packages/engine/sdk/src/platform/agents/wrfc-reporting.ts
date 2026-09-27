@@ -250,7 +250,7 @@ function normalizeEngineerReport(report: CompletionReport): EngineerReport {
     version: 1,
     archetype: 'engineer',
     summary: typeof candidate.summary === 'string' ? candidate.summary : '(no summary)',
-    ...(typeof candidate.wrfcId === 'string' ? { wrfcId: candidate.wrfcId } : {}),
+    ...(typeof candidate.contractId === 'string' ? { contractId: candidate.contractId } : {}),
     gatheredContext: Array.isArray(candidate.gatheredContext) ? candidate.gatheredContext.filter((item): item is string => typeof item === 'string') : [],
     plannedActions: Array.isArray(candidate.plannedActions) ? candidate.plannedActions.filter((item): item is string => typeof item === 'string') : [],
     appliedChanges: Array.isArray(candidate.appliedChanges) ? candidate.appliedChanges.filter((item): item is string => typeof item === 'string') : [],

@@ -214,7 +214,7 @@ describe('internal completion-report JSON never reaches the channel body', () =>
   const report = JSON.stringify({
     version: 1,
     archetype: 'engineer',
-    wrfcId: null,
+    contractId: null,
     summary: 'Fixed the ntfy final body and the delivery watermark.',
     gatheredContext: ['reply-pipeline.ts'],
     plannedActions: ['include assistant_text'],

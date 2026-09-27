@@ -134,7 +134,7 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "engineer",
-  "wrfcId": "<wrfc-id from context, or null>",
+  "contractId": "<contract id from context, or null>",
   "summary": "1-2 sentence summary",
   "gatheredContext": ["critical file, symbol, or constraint learned before editing"],
   "plannedActions": ["specific edit or write planned before execution"],
@@ -153,7 +153,7 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "reviewer",
-  "wrfcId": "<wrfc-id>",
+  "contractId": "<contract id>",
   "summary": "review summary",
   "score": 9.5,
   "passed": true,
@@ -167,7 +167,7 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "tester",
-  "wrfcId": "<wrfc-id>",
+  "contractId": "<contract id>",
   "summary": "testing summary",
   "testsWritten": ["test/file.test.ts"],
   "testsPassed": 10,
@@ -182,7 +182,7 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "<your-archetype>",
-  "wrfcId": "<wrfc-id>",
+  "contractId": "<contract id>",
   "summary": "what was accomplished",
   "result": "detailed result"
 }

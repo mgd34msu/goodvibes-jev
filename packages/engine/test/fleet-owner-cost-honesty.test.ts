@@ -102,9 +102,9 @@ describe('registry integration: owner priced, chain model, no double-count', () 
     const agents = [
       // Owner: no model → real priceUsage returns null → unpriced. Usage is the mixed
       // rollup of its children (as completeOwnerAgent backfills it).
-      makeAgent({ id: 'owner-1', wrfcId: 'ch', wrfcRole: 'owner', usage: { inputTokens: 2000, outputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 2, turnCount: 2 } }),
-      makeAgent({ id: 'eng', wrfcId: 'ch', model: 'm1', usage: { ...USAGE } }),
-      makeAgent({ id: 'rev', wrfcId: 'ch', model: 'm2', usage: { ...USAGE } }),
+      makeAgent({ id: 'owner-1', contractId: 'ch', contractRole: 'owner', usage: { inputTokens: 2000, outputTokens: 400, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 2, turnCount: 2 } }),
+      makeAgent({ id: 'eng', contractId: 'ch', model: 'm1', usage: { ...USAGE } }),
+      makeAgent({ id: 'rev', contractId: 'ch', model: 'm2', usage: { ...USAGE } }),
     ];
     const priceUsage = (model: string | undefined): number | null =>
       model === 'm1' ? 0.3 : model === 'm2' ? 0.146 : null;

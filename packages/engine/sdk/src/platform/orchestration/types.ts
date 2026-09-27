@@ -21,6 +21,7 @@
 import type { WrfcAgentRole } from '../agents/wrfc-types.js';
 import type { QualityGateResult } from '../contract/gates.js';
 import type { ContractCommitScope } from '../contract/config.js';
+import type { UnitRoute } from '../contract/types.js';
 import type { CompletionReport, ConstraintFinding } from '../agents/completion-report.js';
 
 /** A named agent role, OR an archetype name loaded via ArchetypeLoader. */
@@ -226,8 +227,9 @@ export type PriceProvenanceFn = (model: string | undefined) => PricingProvenance
  * One unit of pipeline work. `visits` bounds re-review cycles the same way
  * WrfcController.retryTransportFailure/evaluateConstraints cap fix attempts,
  * keyed by phaseId so a dynamically-inserted 'fix' phase gets its own counter.
+ * It carries its spec's contract binding unchanged ({@link WorkItemContractFields}).
  */
-export interface WorkItem {
+export interface WorkItem extends WorkItemContractFields {
   readonly id: string;
   title: string;
   readonly task: string;
@@ -366,7 +368,7 @@ export interface WorkItem {
   lastActivityAt?: number | undefined;
 }
 
-export interface WorkItemSpec {
+export interface WorkItemSpec extends WorkItemContractFields {
   readonly id?: string | undefined;
   readonly title: string;
   readonly task: string;
@@ -404,6 +406,25 @@ export interface WorkItemSpec {
   readonly cluster?: string | undefined;
   /** File citations for shared-file edges + conflict serialization. */
   readonly files?: readonly string[] | undefined;
+}
+
+/**
+ * The fields that make a work item one contract unit (docs/design/contract-runner.md
+ * section 4.1). When `contractId` and `contractUnitId` are set, the phase runner
+ * spawns the item's agent bound to that unit (the turn loop then calls the
+ * contract hooks for it), passes `task` to it verbatim as the unit brief, and
+ * takes the model from `route`, the tool contract from `tools`/`restrictTools`
+ * and the archetype from `template`. All optional: an item without them runs
+ * exactly as before.
+ */
+export interface WorkItemContractFields {
+  readonly contractId?: string | undefined;
+  readonly contractUnitId?: string | undefined;
+  /** The unit's model, chosen by the contract's route selector; its reason lands on the agent record. */
+  readonly route?: UnitRoute | undefined;
+  readonly tools?: readonly string[] | undefined;
+  readonly restrictTools?: boolean | undefined;
+  readonly template?: string | undefined;
 }
 
 /**

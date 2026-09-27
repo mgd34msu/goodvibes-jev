@@ -68,10 +68,10 @@ export function classifyChildFailureReason(
 
 /** Best-effort, honest lifecycle phase label from what the record records. */
 export function describeChildPhase(
-  record: Pick<AgentRecord, 'status' | 'progress' | 'wrfcRole'>,
+  record: Pick<AgentRecord, 'status' | 'progress' | 'contractRole'>,
 ): string {
   if (record.status === 'pending') return 'spawning';
-  if (record.wrfcRole) return `wrfc:${record.wrfcRole}`;
+  if (record.contractRole) return `contract:${record.contractRole}`;
   if (record.progress && record.progress.trim().length > 0) return record.progress;
   return record.status;
 }

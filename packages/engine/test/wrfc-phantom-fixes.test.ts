@@ -622,7 +622,7 @@ describe('Item 3: resumeChain: interrupt recovery from reviewing state', () => {
     await flushMicrotasks();
 
     // Simulate engineer completion
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
     emitAgentCompleted(bus, engineerRecord!.id, agentStore, engineerReportOutput('Done', [], []));
     await flushMicrotasks();
@@ -632,7 +632,7 @@ describe('Item 3: resumeChain: interrupt recovery from reviewing state', () => {
     const chainRecord = controller.getChain(chainId);
     expect(chainRecord?.state).toBe('reviewing');
 
-    const reviewerCount = spawnedRecords.filter((r) => r.wrfcRole === 'reviewer').length;
+    const reviewerCount = spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'reviewer').length;
     expect(reviewerCount).toBeGreaterThan(0); // sanity: original reviewer was spawned
 
     // Simulate an interrupted chain restart: mark all child agents as done
@@ -652,7 +652,7 @@ describe('Item 3: resumeChain: interrupt recovery from reviewing state', () => {
     await flushMicrotasks();
 
     // A new reviewer should have been spawned
-    const newReviewerCount = spawnedRecords.filter((r) => r.wrfcRole === 'reviewer').length;
+    const newReviewerCount = spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'reviewer').length;
     expect(newReviewerCount).toBeGreaterThan(reviewerCount);
   });
 });
@@ -671,7 +671,7 @@ describe('Item 2: phantom-work detection (controller integration)', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer claims a file that does NOT exist on disk and tmpDir is not a git repo
@@ -696,7 +696,7 @@ describe('Item 2: phantom-work detection (controller integration)', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer claims an existing file
@@ -720,7 +720,7 @@ describe('Item 2: phantom-work detection (controller integration)', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer reports zero files in a non-git directory → kind=unverifiable_no_claims
@@ -736,7 +736,7 @@ describe('Item 2: phantom-work detection (controller integration)', () => {
     expect(chainRecord?.state).toBe('reviewing');
     // The synthetic issue is injected into the reviewer's task and then cleared from the chain.
     // Verify it was forwarded: the spawned reviewer's task must contain the phantom-work flag.
-    const reviewerRecord = spawnedRecords.find((r) => r.wrfcRole === 'reviewer');
+    const reviewerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'reviewer');
     expect(reviewerRecord).toBeDefined();
     expect(reviewerRecord!.task).toContain('phantom work');
     expect(reviewerRecord!.task).toContain('## Synthetic issues from controller');
@@ -777,7 +777,7 @@ describe('Item 4a: silent-agent watchdog', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer completes normally
@@ -803,7 +803,7 @@ describe('Item 4a: silent-agent watchdog', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Set the engineer's startedAt far in the past to simulate a silent agent
@@ -876,7 +876,7 @@ describe('Item 4a: silent-agent watchdog', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
     const agentId = engineerRecord!.id;
 
@@ -949,7 +949,7 @@ describe('MIN-4: claimsVerified=false blocks review pass mechanically', () => {
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer claims a file that does NOT exist and tmpDir is not a git repo
@@ -966,7 +966,7 @@ describe('MIN-4: claimsVerified=false blocks review pass mechanically', () => {
     expect(chainAfterEngineer?.state).toBe('reviewing');
 
     // Now reviewer gives a perfect 10/10 score
-    const reviewerRecord = spawnedRecords.find((r) => r.wrfcRole === 'reviewer');
+    const reviewerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'reviewer');
     expect(reviewerRecord).toBeDefined();
     emitAgentCompleted(bus, reviewerRecord!.id, agentStore, reviewerReportOutput(10, true));
     await flushMicrotasks();
@@ -991,7 +991,7 @@ describe('MIN-6: resume re-injects synthetic issue when claimsVerified=false', (
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer');
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer');
     expect(engineerRecord).toBeDefined();
 
     // Engineer claims nonexistent file → claimsVerified=false
@@ -1018,7 +1018,7 @@ describe('MIN-6: resume re-injects synthetic issue when claimsVerified=false', (
     await flushMicrotasks();
 
     // After resume, a new reviewer should have been spawned
-    const newReviewerCount = spawnedRecords.filter((r) => r.wrfcRole === 'reviewer').length;
+    const newReviewerCount = spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'reviewer').length;
     expect(newReviewerCount).toBeGreaterThan(0);
     // syntheticIssues should be re-injected and then consumed by startReview (cleared)
     // The test verifies resume did NOT silently launder the claimsVerified=false
@@ -1043,14 +1043,14 @@ describe('MIN-11 (planned-fix rework): the fixer agent class no longer exists', 
     const chain = controller.createChain(ownerRecord);
     await flushMicrotasks();
 
-    const engineerRecord = spawnedRecords.find((r) => r.wrfcRole === 'engineer')!;
+    const engineerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'engineer')!;
     const existingFile = join(tmpDir, 'src', 'honest.ts');
     mkdirSync(join(tmpDir, 'src'), { recursive: true });
     writeFileSync(existingFile, 'export {}');
     emitAgentCompleted(bus, engineerRecord.id, agentStore, engineerReportOutput('Honest work', ['src/honest.ts'], []));
     await flushMicrotasks();
 
-    const reviewerRecord = spawnedRecords.find((r) => r.wrfcRole === 'reviewer')!;
+    const reviewerRecord = spawnedRecords.find((r) => controller.phaseRoleOf(r.id) === 'reviewer')!;
     emitAgentCompleted(bus, reviewerRecord.id, agentStore, reviewerReportOutput(5.0, false));
     await flushMicrotasks(40);
 
@@ -1058,10 +1058,10 @@ describe('MIN-11 (planned-fix rework): the fixer agent class no longer exists', 
     // slice reviews inside the engine, where per-task claim verification
     // lives, see phase-runner). NO fixer agent exists to lie:
     expect(fixRuns).toHaveLength(1);
-    expect(spawnedRecords.filter((r) => r.wrfcRole === 'fixer')).toHaveLength(0);
+    expect(spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'fixer')).toHaveLength(0);
     // The terminal contract gate re-reviews the merged result.
     expect(controller.getChain(chain.id)!.state).toBe('reviewing');
-    const reviewer2 = spawnedRecords.filter((r) => r.wrfcRole === 'reviewer').at(-1)!;
+    const reviewer2 = spawnedRecords.filter((r) => controller.phaseRoleOf(r.id) === 'reviewer').at(-1)!;
     expect(reviewer2.id).not.toBe(reviewerRecord.id);
   });
 });

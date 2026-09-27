@@ -16,7 +16,7 @@ function spawnAndFail(manager: AgentManager, error = 'Exceeded maximum turn limi
     mode: 'spawn',
     task: 'do the thing',
     template: 'general',
-    dangerously_disable_wrfc: true,
+    outsideContract: true,
   });
   // Simulate a terminally-failed (wedged) loop.
   record.status = 'failed';
@@ -47,7 +47,7 @@ describe('AgentManager.wakeWithSteer', () => {
 
   test('does not wake a genuinely-running agent (that path stays as-is)', async () => {
     const manager = makeManager(async () => {});
-    const record = manager.spawn({ mode: 'spawn', task: 't', template: 'general', dangerously_disable_wrfc: true });
+    const record = manager.spawn({ mode: 'spawn', task: 't', template: 'general', outsideContract: true });
     record.status = 'running';
     const result = manager.wakeWithSteer(record.id, 'steer');
     expect(result.woke).toBe(false);
@@ -56,10 +56,28 @@ describe('AgentManager.wakeWithSteer', () => {
 
   test('does not wake a completed or cancelled agent, and reports unknown agents', async () => {
     const manager = makeManager(async () => {});
-    const completed = manager.spawn({ mode: 'spawn', task: 't', template: 'general', dangerously_disable_wrfc: true });
+    const completed = manager.spawn({ mode: 'spawn', task: 't', template: 'general', outsideContract: true });
     completed.status = 'completed';
     expect(manager.wakeWithSteer(completed.id, 'steer').woke).toBe(false);
     expect(manager.wakeWithSteer('nope', 'steer')).toEqual({ woke: false, reason: 'unknown-agent' });
+  });
+
+  test('allowCompleted wakes a completed agent only when it is a contract unit\'s sub-agent', async () => {
+    const runs: AgentRecord[] = [];
+    const manager = makeManager(async (record) => { runs.push(record); });
+    const plain = manager.spawn({ mode: 'spawn', task: 't', template: 'general', outsideContract: true });
+    plain.status = 'completed';
+    expect(manager.wakeWithSteer(plain.id, 'steer', { allowCompleted: true }).woke).toBe(false);
+
+    const unit = manager.spawn({ mode: 'spawn', task: 't', template: 'engineer', outsideContract: true }, { contractId: 'ctr-00000001', contractUnitId: 'u1' });
+    unit.status = 'completed';
+    unit.completedAt = Date.now();
+    runs.length = 0;
+    expect(manager.wakeWithSteer(unit.id, 'steer').woke).toBe(false);
+    expect(manager.wakeWithSteer(unit.id, 'fix the parser', { allowCompleted: true }).woke).toBe(true);
+    expect(runs.map((record) => record.id)).toEqual([unit.id]);
+    expect(unit.resumeSteer?.steer).toBe('fix the parser');
+    expect(unit.completedAt).toBeUndefined();
   });
 
   test('refuses an empty steer message', async () => {

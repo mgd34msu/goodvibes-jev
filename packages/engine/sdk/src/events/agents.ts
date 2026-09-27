@@ -14,9 +14,9 @@ export type AgentEvent =
       taskId?: string | undefined;
       task: string;
       parentAgentId?: string | undefined;
-      wrfcId?: string | undefined;
-      wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-      wrfcPhaseOrder?: number | undefined;
+      contractId?: string | undefined;
+      contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+      contractUnitId?: string | undefined;
       orchestrationGraphId?: string | undefined;
       parentNodeId?: string | undefined;
     }
@@ -26,9 +26,9 @@ export type AgentEvent =
       agentId: string;
       taskId?: string;
       parentAgentId?: string | undefined;
-      wrfcId?: string | undefined;
-      wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-      wrfcPhaseOrder?: number | undefined;
+      contractId?: string | undefined;
+      contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+      contractUnitId?: string | undefined;
     }
   /** Agent emitted a textual progress update. */
   | {
@@ -45,9 +45,9 @@ export type AgentEvent =
        */
       audience?: 'owner' | 'operator' | undefined;
       parentAgentId?: string | undefined;
-      wrfcId?: string | undefined;
-      wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-      wrfcPhaseOrder?: number | undefined;
+      contractId?: string | undefined;
+      contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+      contractUnitId?: string | undefined;
     }
   /** Agent streamed a chunk of output. */
   | { type: 'AGENT_STREAM_DELTA'; agentId: string; taskId?: string; content: string; accumulated: string }

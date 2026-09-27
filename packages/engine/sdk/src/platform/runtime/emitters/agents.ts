@@ -16,9 +16,9 @@ export function emitAgentSpawning(
     taskId?: string | undefined;
     task: string;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
     orchestrationGraphId?: string | undefined;
     parentNodeId?: string | undefined;
   }
@@ -34,9 +34,9 @@ export function emitAgentRunning(
     agentId: string;
     taskId?: string;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
   }
 ): void {
   bus.emit('agents', createEventEnvelope('AGENT_RUNNING', { type: 'AGENT_RUNNING', ...data }, ctx));
@@ -53,9 +53,9 @@ export function emitAgentProgress(
     /** See platform/agents/progress-audience.ts. Absent means `operator`. */
     audience?: ProgressAudience | undefined;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
   }
 ): void {
   bus.emit('agents', createEventEnvelope('AGENT_PROGRESS', { type: 'AGENT_PROGRESS', ...data }, ctx));

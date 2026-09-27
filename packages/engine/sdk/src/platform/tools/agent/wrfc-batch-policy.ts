@@ -104,14 +104,14 @@ export function isRootReviewRoleTemplate(template: string | undefined): boolean 
  * never inside a batch (see evaluateWrfcBatchPolicy, where a role-labelled
  * fan-out is exactly the model behaviour the collapse exists to correct).
  *
- * An explicit `reviewMode: 'wrfc'` is the opposite decision and wins over a
+ * An explicit `reviewMode: 'contract'` is the opposite decision and wins over a
  * suppression flag on the same input.
  */
 export function callerSuppressedWrfcChain(
-  input: Pick<AgentInput, 'dangerously_disable_wrfc' | 'reviewMode'>,
+  input: Pick<AgentInput, 'outsideContract' | 'reviewMode'>,
 ): boolean {
-  if (input.reviewMode === 'wrfc') return false;
-  return input.dangerously_disable_wrfc === true || input.reviewMode === 'none';
+  if (input.reviewMode === 'contract') return false;
+  return input.outsideContract === true || input.reviewMode === 'none';
 }
 
 /**
@@ -394,13 +394,13 @@ export function evaluateWrfcBatchPolicy(input: AgentInput): WrfcBatchPolicyDecis
     const implementationTasksDisableWrfc = implementationTaskIndexes.length > 0
       && implementationTaskIndexes.every((index) => {
         const task = tasks[index]!;
-        return task.dangerously_disable_wrfc === true || task.reviewMode === 'none';
+        return task.outsideContract === true || task.reviewMode === 'none';
       });
-    const wantsWrfc = input.reviewMode === 'wrfc'
-      || tasks.some((task) => task.reviewMode === 'wrfc')
+    const wantsWrfc = input.reviewMode === 'contract'
+      || tasks.some((task) => task.reviewMode === 'contract')
       || (
         !implementationTasksDisableWrfc
-        && input.dangerously_disable_wrfc !== true
+        && input.outsideContract !== true
         && input.reviewMode !== 'none'
         && implementationTaskIndexes.length > 0
       );
@@ -459,15 +459,15 @@ export function evaluateWrfcBatchPolicy(input: AgentInput): WrfcBatchPolicyDecis
         ...tasks.map((task) => task.writeScope),
       ]),
       executionProtocol: input.executionProtocol,
-      reviewMode: 'wrfc',
+      reviewMode: 'contract',
       communicationLane: input.communicationLane,
       parentAgentId: input.parentAgentId,
       orchestrationGraphId: input.orchestrationGraphId,
       orchestrationNodeId: input.orchestrationNodeId,
       parentNodeId: input.parentNodeId,
-      dangerously_disable_wrfc: false,
+      outsideContract: false,
       cohort: input.cohort,
-      wrfcSubtasks: implementationTaskIndexes.map((index) => normalizeCompoundSubtask(tasks[index]!, authoritativeTask)),
+      proposedUnits: implementationTaskIndexes.map((index) => normalizeCompoundSubtask(tasks[index]!, authoritativeTask)),
       fanoutCollapse: {
         requestedAgentCount: implementationTaskIndexes.length,
         requestedShape: `${implementationTaskIndexes.length} separate implementation agents`,
@@ -532,13 +532,13 @@ export function evaluateWrfcBatchPolicy(input: AgentInput): WrfcBatchPolicyDecis
       ...tasks.map((task) => task.writeScope),
     ]),
     executionProtocol: ownerTask.executionProtocol ?? input.executionProtocol,
-    reviewMode: 'wrfc',
+    reviewMode: 'contract',
     communicationLane: ownerTask.communicationLane ?? input.communicationLane,
     parentAgentId: ownerTask.parentAgentId ?? input.parentAgentId,
     orchestrationGraphId: ownerTask.orchestrationGraphId ?? input.orchestrationGraphId,
     orchestrationNodeId: ownerTask.orchestrationNodeId ?? input.orchestrationNodeId,
     parentNodeId: ownerTask.parentNodeId ?? input.parentNodeId,
-    dangerously_disable_wrfc: false,
+    outsideContract: false,
     cohort: input.cohort,
     // A role-fragmentation collapse never honours "separate reviewer/tester roots"
     // (those are lifecycle phases, not what the user asked for). But if the user

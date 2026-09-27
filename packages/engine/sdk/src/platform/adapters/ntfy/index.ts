@@ -292,7 +292,7 @@ async function handleNtfyAgentPayload(
     agentId: spawnResult.id,
     task: message,
     ...(typeof submission.task === 'string' && submission.task.length > 0 ? { agentTask: submission.task } : {}),
-    ...(typeof spawnResult.wrfcId === 'string' && spawnResult.wrfcId.length > 0 ? { workflowChainId: spawnResult.wrfcId } : {}),
+    ...(typeof spawnResult.contractId === 'string' && spawnResult.contractId.length > 0 ? { workflowChainId: spawnResult.contractId } : {}),
     sessionId: submission.session.id,
   });
   return Response.json({

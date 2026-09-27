@@ -16,7 +16,7 @@ export interface AgentCompletionRecordView {
   readonly fullOutput?: string | undefined;
   readonly streamingContent?: string | undefined;
   readonly error?: string | undefined;
-  readonly wrfcId?: string | undefined;
+  readonly contractId?: string | undefined;
 }
 
 /**
@@ -38,8 +38,8 @@ export function renderAgentCompletionAnswer(record: AgentCompletionRecordView): 
     // A run that owes a PERSON an answer cannot arrive here empty: the agent
     // runtime regenerates the reply once and then substitutes a plain notice
     // (agents/conversational-reply-recovery.ts), so `answer` is set above.
-    const wrfcId = typeof record.wrfcId === 'string' ? record.wrfcId.trim() : '';
-    return wrfcId ? 'Finished the first pass. Review, fix, and gate updates will follow here.' : '';
+    const contractId = typeof record.contractId === 'string' ? record.contractId.trim() : '';
+    return contractId ? 'Finished the first pass. Review, fix, and gate updates will follow here.' : '';
   }
   return String(record.error ?? record.status);
 }

@@ -119,7 +119,7 @@ export function gateSurfaceSpawn(
     // message IS and what the reply should LOOK like are one decision, made
     // here, once.
     return deps.trySpawnAgent(
-      { ...input, dangerously_disable_wrfc: true, replyStyle: 'conversational' },
+      { ...input, outsideContract: true, replyStyle: 'conversational' },
       logLabel,
       sessionId,
     );
@@ -258,6 +258,6 @@ export async function startAgreedWork(
     agentId: spawned.id,
     task: proposal.summary,
     ...(proposal.sessionId ? { sessionId: proposal.sessionId } : {}),
-    ...(typeof spawned.wrfcId === 'string' && spawned.wrfcId.length > 0 ? { workflowChainId: spawned.wrfcId } : {}),
+    ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { workflowChainId: spawned.contractId } : {}),
   });
 }

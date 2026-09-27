@@ -14,6 +14,7 @@ import { runPhase } from './phase-runner.js';
 import { snapshotDirtyTree, type DirtyLaunchSnapshot } from './dirty-guard.js';
 import { createWorktreeIsolationManager, type WorktreeIsolationManager } from './worktree-isolation.js';
 import { createAttemptsCoordinator, type AttemptsCoordinator } from './attempts.js';
+import { copyContractFields } from './contract-binding.js';
 import {
   deserializeWorkstream as deserializeWorkstreamModel,
   deserializeWorkstreamSnapshot,
@@ -276,6 +277,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
       createdAt: now(),
       ...(spec.cluster !== undefined ? { cluster: spec.cluster } : {}),
       ...(spec.files !== undefined ? { files: [...spec.files] } : {}),
+      ...copyContractFields(spec),
       ...(startPhaseId ? {} : { completedAt: now() }),
     };
   }

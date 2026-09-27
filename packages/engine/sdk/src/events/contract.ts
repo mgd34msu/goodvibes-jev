@@ -74,6 +74,14 @@ export type ContractFailureKind = (typeof CONTRACT_FAILURE_KINDS)[number];
 export const CONTRACT_ORIGINS = ['turn', 'agent-tool', 'cli', 'hosted', 'external', 'proposal'] as const;
 export type ContractOrigin = (typeof CONTRACT_ORIGINS)[number];
 
+/**
+ * The part an agent plays in a contract: the owner record parents wait on, a
+ * unit's sub-agent, or the read-only planner. Carried on the agent record and
+ * on the `agents` domain events as `contractRole`.
+ */
+export const CONTRACT_AGENT_ROLES = ['owner', 'unit', 'planner'] as const;
+export type ContractAgentRole = (typeof CONTRACT_AGENT_ROLES)[number];
+
 /** What code does with a reading: act, confirm with the owner, or escalate. Same strings as the judgment foundation's Outcome. */
 export const CONTRACT_OUTCOMES = ['act', 'confirm', 'escalate'] as const;
 export type ContractOutcome = (typeof CONTRACT_OUTCOMES)[number];

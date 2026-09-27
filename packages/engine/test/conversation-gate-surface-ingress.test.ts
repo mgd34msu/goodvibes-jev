@@ -105,11 +105,11 @@ function buildHarness(
     companionChatManager: null,
     automationManager: { getRun: () => null },
     agentManager: { getStatus: () => null },
-    trySpawnAgent: (input: { task: string; dangerously_disable_wrfc?: boolean; replyStyle?: string }, logLabel?: string) => {
+    trySpawnAgent: (input: { task: string; outsideContract?: boolean; replyStyle?: string }, logLabel?: string) => {
       agentSeq += 1;
       spawns.push({
         task: input.task,
-        wrfcDisabled: input.dangerously_disable_wrfc === true,
+        wrfcDisabled: input.outsideContract === true,
         replyStyle: input.replyStyle,
         logLabel,
       });

@@ -42,11 +42,10 @@ function summarizeWrfcEvent(event: Record<string, unknown>) {
 function agentTopology(record: AgentRecord) {
   return {
     parentAgentId: record.parentAgentId ?? null,
-    wrfcId: record.wrfcId ?? null,
-    wrfcRole: record.wrfcRole ?? null,
-    wrfcPhaseOrder: record.wrfcPhaseOrder ?? null,
-    wrfcSubtaskId: record.wrfcSubtaskId ?? null,
-    wrfcRouteReason: record.wrfcRouteReason ?? null,
+    contractId: record.contractId ?? null,
+    contractRole: record.contractRole ?? null,
+    contractUnitId: record.contractUnitId ?? null,
+    routeReason: record.routeReason ?? null,
     orchestrationGraphId: record.orchestrationGraphId ?? null,
     orchestrationNodeId: record.orchestrationNodeId ?? null,
     parentNodeId: record.parentNodeId ?? null,
@@ -54,7 +53,7 @@ function agentTopology(record: AgentRecord) {
 }
 
 function agentOrchestrationControl(record: AgentRecord) {
-  const authoritativeWrfcChain = record.wrfcRole === 'owner' && typeof record.wrfcId === 'string' && record.wrfcId.length > 0;
+  const authoritativeWrfcChain = record.contractRole === 'owner' && typeof record.contractId === 'string' && record.contractId.length > 0;
   return {
     authoritativeWrfcChain,
     continueRootSpawning: authoritativeWrfcChain ? false : true,
@@ -139,7 +138,7 @@ function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInpu
     orchestrationGraphId: taskDef.orchestrationGraphId ?? input.orchestrationGraphId,
     orchestrationNodeId: taskDef.orchestrationNodeId,
     parentNodeId: taskDef.parentNodeId ?? input.parentNodeId,
-    dangerously_disable_wrfc: taskDef.dangerously_disable_wrfc ?? input.dangerously_disable_wrfc,
+    outsideContract: taskDef.outsideContract ?? input.outsideContract,
     cohort: input.cohort,
   };
 }
@@ -686,7 +685,7 @@ export function createAgentTool(config: {
           task: a.task?.slice(0, 80),
           status: a.status,
           template: a.template,
-          wrfcId: a.wrfcId,
+          contractId: a.contractId,
           toolCallCount: a.toolCallCount,
         }));
         return { success: true, output: JSON.stringify({ cohort: input.cohort, count: cohortAgents.length, agents: summary }) };
@@ -703,13 +702,13 @@ export function createAgentTool(config: {
         const lines: string[] = [
           `## Cohort: ${input.cohort} (${reportAgents.length} agents)`,
           '',
-          '| Agent | Task | Status | Template | WRFC | Tool Calls |',
-          '|-------|------|--------|----------|------|------------|',
+          '| Agent | Task | Status | Template | Contract | Tool Calls |',
+          '|-------|------|--------|----------|----------|------------|',
         ];
         for (const a of reportAgents) {
           const taskShort = (a.task ?? '').slice(0, 40).replace(/\|/g, '\\|');
-          const wrfcStatus = a.wrfcId ?? 'n/a';
-          lines.push(`| ${a.id.slice(-8)} | ${taskShort} | ${a.status} | ${a.template ?? 'general'} | ${wrfcStatus} | ${a.toolCallCount ?? 0} |`);
+          const contractCell = a.contractId ? `${a.contractId}${a.contractUnitId ? `/${a.contractUnitId}` : ''}` : 'n/a';
+          lines.push(`| ${a.id.slice(-8)} | ${taskShort} | ${a.status} | ${a.template ?? 'general'} | ${contractCell} | ${a.toolCallCount ?? 0} |`);
         }
         return { success: true, output: lines.join('\n') };
       }
@@ -731,7 +730,7 @@ export function createAgentTool(config: {
               chains: detail === 'full'
                 ? chains
                 : chains.map((chain) => ({
-                  wrfcId: chain.wrfcId,
+                  contractId: chain.contractId,
                   status: chain.status,
                   lastScore: chain.lastScore,
                   task: chain.task,
@@ -745,22 +744,22 @@ export function createAgentTool(config: {
       }
 
       case 'wrfc-history': {
-        if (!input.wrfcId) {
-          return { success: false, error: 'wrfc-history requires wrfcId' };
+        if (!input.contractId) {
+          return { success: false, error: 'wrfc-history requires contractId' };
         }
         try {
           const workmap = config.wrfcController?.getWorkmap();
           if (!workmap) {
             return { success: false, error: 'WRFC controller is not configured in this runtime.' };
           }
-          const events = workmap.read(input.wrfcId);
+          const events = workmap.read(input.contractId);
           const detail = input.detail ?? 'summary';
           return {
             success: true,
             output: JSON.stringify({
               mode: 'wrfc-history',
               detail,
-              wrfcId: input.wrfcId,
+              contractId: input.contractId,
               events: detail === 'full'
                 ? events
                 : events.map((event) => summarizeWrfcEvent(toRecord(event))),

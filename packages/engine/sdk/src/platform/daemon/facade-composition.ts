@@ -792,7 +792,7 @@ export function configureDaemonSessionContinuation(options: {
       agentId: spawned.id,
       task: input.body,
       agentTask: task,
-      ...(typeof spawned.wrfcId === 'string' && spawned.wrfcId.length > 0 ? { workflowChainId: spawned.wrfcId } : {}),
+      ...(typeof spawned.contractId === 'string' && spawned.contractId.length > 0 ? { workflowChainId: spawned.contractId } : {}),
       sessionId,
     });
     return { agentId: spawned.id };

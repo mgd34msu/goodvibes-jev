@@ -270,12 +270,12 @@ function isTerminalAgentStatus(status: AgentLifecycleState): boolean {
   return isTerminalLifecycleState(status);
 }
 
-function isWrfcOwnerRevivalEvent(event: AgentEvent): boolean {
+function isContractOwnerRevivalEvent(event: AgentEvent): boolean {
   return (
     (event.type === 'AGENT_RUNNING' || event.type === 'AGENT_PROGRESS')
-    && event.wrfcRole === 'owner'
-    && typeof event.wrfcId === 'string'
-    && event.wrfcId.length > 0
+    && event.contractRole === 'owner'
+    && typeof event.contractId === 'string'
+    && event.contractId.length > 0
   );
 }
 
@@ -309,8 +309,8 @@ export function updateAgentState(domain: AgentDomainState, event: AgentEvent): A
   if (!existing && event.type !== 'AGENT_SPAWNING') return domain;
 
   const nextStatus = agentStatusForEvent(event);
-  const revivedWrfcOwner = Boolean(existing && isTerminalAgentStatus(existing.status) && isWrfcOwnerRevivalEvent(event));
-  if (existing && isTerminalAgentStatus(existing.status) && nextStatus !== existing.status && !revivedWrfcOwner) {
+  const revivedContractOwner = Boolean(existing && isTerminalAgentStatus(existing.status) && isContractOwnerRevivalEvent(event));
+  if (existing && isTerminalAgentStatus(existing.status) && nextStatus !== existing.status && !revivedContractOwner) {
     return domain;
   }
 
@@ -334,13 +334,13 @@ export function updateAgentState(domain: AgentDomainState, event: AgentEvent): A
     ...agent,
     status: nextStatus,
     parentAgentId: 'parentAgentId' in event ? event.parentAgentId ?? agent.parentAgentId : agent.parentAgentId,
-    wrfcRef: 'wrfcId' in event && event.wrfcId
+    contractRef: 'contractId' in event && event.contractId
       ? {
-          chainId: event.wrfcId,
-          chainRole: event.wrfcRole ?? agent.wrfcRef?.chainRole ?? 'engineer',
-          phaseOrder: event.wrfcPhaseOrder ?? agent.wrfcRef?.phaseOrder,
+          contractId: event.contractId,
+          contractRole: event.contractRole ?? agent.contractRef?.contractRole ?? 'unit',
+          contractUnitId: event.contractUnitId ?? agent.contractRef?.contractUnitId,
         }
-      : agent.wrfcRef,
+      : agent.contractRef,
     taskId: event.taskId ?? agent.taskId,
     latestProgress:
       event.type === 'AGENT_PROGRESS'
@@ -357,10 +357,10 @@ export function updateAgentState(domain: AgentDomainState, event: AgentEvent): A
     endedAt:
       event.type === 'AGENT_COMPLETED' || event.type === 'AGENT_FAILED' || event.type === 'AGENT_CANCELLED'
         ? timestamp
-        : revivedWrfcOwner
+        : revivedContractOwner
           ? undefined
           : agent.endedAt,
-    error: event.type === 'AGENT_FAILED' ? event.error : revivedWrfcOwner ? undefined : agent.error,
+    error: event.type === 'AGENT_FAILED' ? event.error : revivedContractOwner ? undefined : agent.error,
     toolCallCount:
       event.type === 'AGENT_COMPLETED' && event.toolCallsMade !== undefined
         ? event.toolCallsMade
@@ -376,10 +376,10 @@ export function updateAgentState(domain: AgentDomainState, event: AgentEvent): A
             ...(event.output !== undefined ? { output: event.output } : {}),
             ...(event.toolCallsMade !== undefined ? { toolCallsMade: event.toolCallsMade } : {}),
           }
-        : revivedWrfcOwner ? undefined : agent.result,
+        : revivedContractOwner ? undefined : agent.result,
   });
-  const completedCorrection = revivedWrfcOwner && existing?.status === 'completed' ? -1 : 0;
-  const failedCorrection = revivedWrfcOwner && existing?.status === 'failed' ? -1 : 0;
+  const completedCorrection = revivedContractOwner && existing?.status === 'completed' ? -1 : 0;
+  const failedCorrection = revivedContractOwner && existing?.status === 'failed' ? -1 : 0;
   return {
     ...updateDomainMetadata(domain, event.type),
     agents,

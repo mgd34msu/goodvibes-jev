@@ -83,7 +83,7 @@ describe('fleet registry: live managers integration', () => {
       const spawned = agentManager.spawn({
         mode: 'spawn',
         task: 'integration probe',
-        dangerously_disable_wrfc: true,
+        outsideContract: true,
       });
       const agentId = spawned.id;
       expect(registry.getNode(agentId)).not.toBeNull();
@@ -159,7 +159,7 @@ describe('fleet registry: live managers integration', () => {
     try {
       const snapshots: number[] = [];
       registry.subscribe((snapshot) => snapshots.push(snapshot.nodes.length));
-      agentManager.spawn({ mode: 'spawn', task: 'tick probe', dangerously_disable_wrfc: true });
+      agentManager.spawn({ mode: 'spawn', task: 'tick probe', outsideContract: true });
       await until(() => snapshots.length > 0);
       expect(snapshots[snapshots.length - 1]).toBe(1);
     } finally {

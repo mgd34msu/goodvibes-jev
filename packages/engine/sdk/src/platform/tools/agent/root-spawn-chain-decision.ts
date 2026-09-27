@@ -32,7 +32,7 @@ import {
 } from './wrfc-batch-policy.js';
 
 export function rootSpawnNeedsWrfcNormalization(
-  input: Pick<AgentInput, 'dangerously_disable_wrfc' | 'reviewMode' | 'replyStyle' | 'parentAgentId'>,
+  input: Pick<AgentInput, 'outsideContract' | 'reviewMode' | 'replyStyle' | 'parentAgentId'>,
   task: string,
   template: string,
 ): boolean {

@@ -267,9 +267,9 @@ export interface DaemonRouteContext {
     provider?: string | undefined;
     context?: string | undefined;
     executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-    reviewMode?: 'none' | 'wrfc' | undefined;
+    reviewMode?: 'none' | 'contract' | undefined;
     communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
-    dangerously_disable_wrfc?: boolean | undefined;
+    outsideContract?: boolean | undefined;
   }, logLabel: string, sessionId?: string) => import('../tools/agent/index.js').AgentRecord | Response;
   readonly syncSpawnedAgentTask: (record: import('../tools/agent/index.js').AgentRecord, sessionId?: string) => void;
   readonly syncFinishedAgentTask: (record: import('../tools/agent/index.js').AgentRecord) => void;

@@ -49,7 +49,7 @@ describe('isChildFailureTerminal', () => {
 describe('describeChildPhase', () => {
   test('is honest and derived from the record', () => {
     expect(describeChildPhase(makeRecord({ status: 'pending' }))).toBe('spawning');
-    expect(describeChildPhase(makeRecord({ wrfcRole: 'reviewer' }))).toBe('wrfc:reviewer');
+    expect(describeChildPhase(makeRecord({ contractRole: 'unit' }))).toBe('contract:unit');
     expect(describeChildPhase(makeRecord({ progress: 'Turn 3 · Thinking…' }))).toBe('Turn 3 · Thinking…');
   });
 });

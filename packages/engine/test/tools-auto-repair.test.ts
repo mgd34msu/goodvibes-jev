@@ -21,7 +21,7 @@ const AGENT_SCHEMA: ToolDefinition = {
       template: { type: 'string', enum: ['engineer', 'reviewer', 'general'] },
       agentId: { type: 'string' },
       timeoutMs: { type: 'number' },
-      dangerously_disable_wrfc: { type: 'boolean' },
+      outsideContract: { type: 'boolean' },
     },
   },
 };
@@ -375,15 +375,15 @@ describe('RepairResult contract', () => {
     // duration: string number + agent mode missing
     const result = repairToolCall(
       'agent',
-      { task: 'Do work', timeoutMs: '30000', dangerously_disable_wrfc: 'true' },
+      { task: 'Do work', timeoutMs: '30000', outsideContract: 'true' },
       AGENT_SCHEMA,
     );
     expect(result.repaired).toBe(true);
-    // mode inferred + timeoutMs coerced + dangerously_disable_wrfc coerced
+    // mode inferred + timeoutMs coerced + outsideContract coerced
     expect(result.repairs.length).toBeGreaterThanOrEqual(2);
     expect(result.fixed['mode']).toBe('spawn');
     expect(result.fixed['timeoutMs']).toBe(30000);
-    expect(result.fixed['dangerously_disable_wrfc']).toBe(true);
+    expect(result.fixed['outsideContract']).toBe(true);
   });
 
   test('structuredClone protects nested objects from mutation', () => {

@@ -67,7 +67,7 @@ export { createInitialTasksState } from './tasks.js';
 export type {
   AgentLifecycleState,
   AgentRole,
-  AgentWrfcRef,
+  AgentContractRef,
   RuntimeAgent,
   AgentDomainState,
 } from './agents.js';

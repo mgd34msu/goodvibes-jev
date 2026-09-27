@@ -248,7 +248,7 @@ export interface RemoteRunnerCapabilityCeiling {
   readonly allowedTools: readonly string[];
   readonly capabilityCeilingTools: readonly string[];
   readonly executionProtocol: 'direct' | 'gather-plan-apply';
-  readonly reviewMode: 'none' | 'wrfc';
+  readonly reviewMode: 'none' | 'contract';
   readonly communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct';
   readonly orchestrationDepth: number;
   readonly successCriteria: readonly string[];

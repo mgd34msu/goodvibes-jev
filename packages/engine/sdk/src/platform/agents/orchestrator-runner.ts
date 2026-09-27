@@ -4,15 +4,12 @@
 // (LLM call → tool execution → loop) but delegates domain logic to imported
 // collaborators (ConversationManager, ToolRegistry, AgentSession, etc.).
 // It does not own any state beyond the duration of a single runAgentLoop() call.
-import { ConversationManager, type ConversationMessageSnapshot } from '../core/conversation.js';
-import { ToolRegistry } from '../tools/registry.js';
-import { join } from 'node:path';
-import type { ProviderRegistry } from '../providers/registry.js';
+import { ConversationManager } from '../core/conversation.js';
+import type { ToolRegistry } from '../tools/registry.js';
 import { logger } from '../utils/logger.js';
 import { ConsecutiveErrorBreaker } from '../core/circuit-breaker.js';
 import { isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
 import { AgentSession } from './session.js';
-import type { ProviderOptimizer } from '../providers/optimizer.js';
 import {
   estimateTokens,
   estimateConversationTokens,
@@ -22,10 +19,8 @@ import type { AgentRecord } from '../tools/agent/index.js';
 import type { LLMProvider, StreamDelta } from '../providers/interface.js';
 import type { ToolResult } from '../types/tools.js';
 import type { ProcessManager } from '../tools/shared/process-manager.js';
-import type { FeatureFlagManager } from '../runtime/feature-flags/manager.js';
-import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { emitCommunicationConsumed } from '../runtime/emitters/index.js';
-import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs, type ProgressAudience } from './orchestrator-utils.js';
+import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs } from './orchestrator-utils.js';
 import { buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, withOpenTierProfileBlock } from './orchestrator-prompts.js';
 import { completeOrRegenerate, recoverEmptyConversationalReply } from './conversational-reply-recovery.js';
 import {
@@ -34,13 +29,10 @@ import {
   recordTurnInjection,
   DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR,
 } from './turn-knowledge-injection.js';
-import type { AgentMessageBus } from './message-bus.js';
-import type { KnowledgeService } from '../knowledge/index.js';
-import type { ArchetypeLoader } from './archetypes.js';
 import { summarizeError } from '../utils/error-display.js';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
-import { gateBackgroundToolCall, type BackgroundPermissionManager } from './background-permission-gate.js';
+import { gateBackgroundToolCall } from './background-permission-gate.js';
 import { resolveTurnBudget, formatTurnLimitError, TURN_BUDGET_EXHAUSTED, type ResolvedTurnBudget } from './turn-budget.js';
 import { toolFormatTelemetry } from '../runtime/telemetry/tool-format-telemetry.js';
 import {
@@ -49,10 +41,14 @@ import {
   resolveContextCompactThreshold,
   resolveContextWindowModelDefinition,
 } from './orchestrator-runner-context-window.js';
+import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
+import { holdContractCompletion, reportContractTurnEnd } from './orchestrator-runner-contract.js';
 
-// Model-definition resolution moved to orchestrator-runner-context-window.ts;
-// re-exported here so `agents/index.ts`'s `export *` surface is unchanged.
+// Model-definition resolution moved to orchestrator-runner-context-window.ts and
+// the run context to orchestrator-run-context.ts; both re-exported here so
+// `agents/index.ts`'s `export *` surface is unchanged.
 export { resolveContextWindowModelDefinition } from './orchestrator-runner-context-window.js';
+export type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 
 const MAX_TURNS = 50; // fallback turn budget when no config source (mirrors agents.maxTurns default)
 const MAX_TURNS_CAP = 200; // fallback policy bound when no config source (mirrors agents.maxTurnsCap default)
@@ -69,118 +65,6 @@ function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: Agen
     policyCap: Number(cfg?.get('agents.maxTurnsCap') ?? MAX_TURNS_CAP),
   });
 }
-
-type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
-
-export interface AgentOrchestratorRunContext {
-  readonly workingDirectory: string;
-  readonly surfaceRoot?: string | undefined;
-  /** At-rest journal redaction + retention policy; undefined -> honest default (redaction on). */
-  readonly atRestPolicy?: import('../runtime/at-rest-persistence.js').AtRestPolicy | undefined;
-  readonly runtimeBus: RuntimeEventBus | null;
-  readonly featureFlagManager: FeatureFlagManager | null;
-  readonly emitterContext: (agentId: string) => EmitterContext;
-  readonly emitAgentProgress: (recordId: string, progress: string, audience: ProgressAudience) => void;
-  readonly emitOrchestrationProgress: (record: AgentRecord, progress: string) => void;
-  readonly emitAgentStarted: (recordId: string) => void;
-  readonly emitAgentCancelledEvent: (recordId: string, reason: string) => void;
-  readonly emitOrchestrationCancelled: (record: AgentRecord, reason: string) => void;
-  readonly emitAgentFailedEvent: (recordId: string, error: string, durationMs: number) => void;
-  readonly emitOrchestrationFailed: (record: AgentRecord, error: string) => void;
-  readonly emitAgentCompletedEvent: (
-    recordId: string,
-    durationMs: number,
-    output: string,
-    toolCallsMade: number,
-    usage: AgentRecord['usage'] | undefined,
-  ) => void;
-  readonly emitOrchestrationCompleted: (record: AgentRecord, output: string) => void;
-  readonly emitStreamDelta: (recordId: string, content: string, accumulated: string) => void;
-  /**
-   * Conversation-snapshot bridge (Part C6): register the running
-   * agent's live snapshot accessor with AgentManager so
-   * AgentManager.getConversationSnapshot(agentId) can serve a full-fidelity
-   * live transcript to a fleet tab. Optional, contexts that don't wire a
-   * manager (e.g. isolated tests) simply skip the bridge.
-   */
-  readonly registerConversationSource?: ((agentId: string, source: () => ConversationMessageSnapshot[]) => void) | undefined;
-  /**
-   * Release the live source at run end, freezing one final snapshot into
-   * AgentManager's bounded retention ring (see manager.ts). Always safe to
-   * call even when register was never called for this agentId.
-   */
-  readonly releaseConversationSource?: ((agentId: string) => void) | undefined;
-  /**
-   * Cooperative cancellation bridge: look up the AbortSignal
-   * an orchestration-engine work item registered for this agent, if any.
-   * Threaded into `toolRegistry.execute` opts so opted-in tools (exec,
-   * fetch) can abort an in-flight child process/request the instant
-   * `engine.kill(itemId)` fires, instead of waiting for the next turn
-   * boundary's `record.status === 'cancelled'` poll below. Optional,
-   * contexts that don't wire an orchestration engine simply omit it and
-   * every tool call runs with `opts` undefined, unchanged from before.
-   */
-  readonly getCancellationSignal?: ((agentId: string) => AbortSignal | undefined) | undefined;
-  readonly processManager?: ProcessManager | undefined;
-  readonly messageBus: Pick<AgentMessageBus, 'getMessages'>;
-  readonly knowledgeService?: Pick<KnowledgeService, 'buildPromptPacketSync'> | undefined;
-  readonly memoryRegistry?: Pick<import('../state/index.js').MemoryRegistry, 'getAll' | 'searchSemantic' | 'vectorStats'> | undefined;
-  /**
-   * Stage B, repo code index for per-turn code injection in a spawned agent run.
-   * Undefined is a hard no-op. Actual injection additionally requires the
-   * `agent-passive-code-injection` flag (DEFAULT OFF) and `isCodeInjectionSettingEnabled`.
-   */
-  readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined;
-  /** Live gate for the embedder's storage.codeIndexEnabled setting. Undefined defaults to allowed. */
-  readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined;
-  /**
-   * Stage B, called once per executed tool (toolName, args, success) so a code-index
-   * reindex scheduler can debounce an incremental reindex of touched files. Never awaited.
-   */
-  readonly onToolExecuted?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
-  /**
-   * Per-turn passive-injection knobs (see CHANGELOG 0.38.0). Both optional,
-   * undefined means "use the derived default" (see turn-knowledge-injection.ts:
-   * defaultTurnKnowledgeBudgetTokens / DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR).
-   * Setting passiveKnowledgeInjectionBudgetTokens to 0 is the config-level
-   * hard no-op: the feature never runs and the base system prompt is
-   * byte-identical, independent of the capability gate's own state.
-   */
-  readonly passiveKnowledgeInjectionBudgetTokens?: number | undefined;
-  readonly passiveKnowledgeInjectionRelevanceFloor?: number | undefined;
-  /**
-   * Optional config source. When present, supplies the DEFAULT passive-injection
-   * budget ceiling / relevance floor / code-chunk limit (agents.passiveInjection.*)
-   * and the context-window compaction threshold (agents.contextCompactThreshold).
-   * Explicit passiveKnowledgeInjection* context fields still override, and the
-   * module constants remain the final fallback when no config source is supplied,
-   * the config defaults equal those constants, so behaviour is unchanged by default.
-   */
-  readonly configManager?: Pick<import('../config/manager.js').ConfigManager, 'get'> | undefined;
-  readonly archetypeLoader?: { loadArchetype(template: string): { systemPrompt?: string | undefined } | null | undefined } | undefined;
-  /**
-   * Permission gate for this run's background/subagent tool calls (see
-   * gateBackgroundToolCall in background-permission-gate.ts). Undefined leaves
-   * the run ungated (e.g. isolated tests that wire no manager).
-   */
-  readonly permissionManager?: BackgroundPermissionManager | undefined;
-  readonly getFullRegistry: () => ToolRegistry;
-  readonly buildScopedRegistry: (allowedNames: string[], fullRegistry: ToolRegistry, captureAuthority?: import('../personal-capture/index.js').CaptureAuthorityDecision | undefined) => ToolRegistry;
-  readonly providerRegistry: Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'recordContextWindowRejection'>;
-  readonly providerOptimizer?: Pick<ProviderOptimizer, 'recordFallbackTransition'> | undefined;
-  readonly resolveProviderForRecord: (
-    providerRegistry: Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels'>,
-    record: AgentRecord,
-    currentModel: { id: string; provider: string; registryKey: string },
-  ) => { provider: LLMProvider; modelId: string; requestedModelId: string };
-  readonly resolveFallbackModelRoutes: (
-    providerRegistry: Pick<ProviderRegistry, 'listModels' | 'getForModel'>,
-    record: AgentRecord,
-    currentModel: { id: string; provider: string; registryKey: string },
-    primaryRequestedModelId: string,
-  ) => Array<{ provider: LLMProvider; modelId: string; requestedModelId: string }>;
-}
-
 
 function cleanupLeakedProcesses(
   processManager: ProcessManager | undefined,
@@ -475,6 +359,9 @@ export async function runAgentTask(
     // directive/broadcast is appended to the conversation exactly once (getMessages
     // returns all unexpired messages every turn until their TTL elapses).
     const injectedMessageIds = new Set<string>();
+    // Contract nudges a completion hold added as a user turn, reported consumed
+    // exactly as a drained steer is: after the next model call succeeds.
+    const heldNudgeIdsAwaitingTurn: string[] = [];
     // Iteration budget for the chat retry loop. Includes one slot per fallback
     // route so fallback-model transitions don't cannibalize the network/rate-limit
     // retry allowances.
@@ -512,16 +399,17 @@ export async function runAgentTask(
       }
       session.appendMessage({ type: 'llm_request', turn, messageCount: conversation.getMessagesForLLM().length, timestamp: new Date().toISOString() });
       const pending = context.messageBus.getMessages(record.id);
-      // Steers drained into the conversation THIS turn, awaiting the "consumed"
-      // signal below, deferred until the turn's chat call actually succeeds.
-      // See the comment at the emission site for why this can't fire here.
-      const drainedSteerMessageIds: string[] = [];
+      // Steers drained into the conversation THIS turn (and any contract nudge a
+      // completion hold added just before it), awaiting the "consumed" signal
+      // below, deferred until the turn's chat call actually succeeds. See the
+      // comment at the emission site for why this can't fire here.
+      const drainedSteerMessageIds: string[] = heldNudgeIdsAwaitingTurn.splice(0);
       // True when this turn actually added new content to the
       // conversation the model will see, turn 1 (the initial task) or any steer/directive
       // drained just above. Gates per-turn knowledge re-retrieval: no new input means the
       // evolving-conversation query would be identical to last turn's, so the prior turn's
       // block is reused verbatim instead of re-running retrieval for no behavioral gain.
-      let newUserInputThisTurn = turn === 1;
+      let newUserInputThisTurn = turn === 1 || drainedSteerMessageIds.length > 0;
       for (const msg of pending) {
         // Skip the agent's own broadcasts and any message already injected on a
         // prior turn so each directive is surfaced to the model exactly once.
@@ -845,6 +733,7 @@ export async function runAgentTask(
           context,
         );
         conversation.addToolResults(results);
+        reportContractTurnEnd(context, record, turn, response, results);
         // Per-model edit-failure + exec-expectation-miss telemetry (measurement only).
         toolFormatTelemetry.observeToolResults(activeRoute.modelId, response.toolCalls, results);
 
@@ -905,6 +794,9 @@ export async function runAgentTask(
         setAgentProgress(record, `Turn ${turn} · Thinking…`, 'operator');
       } else {
         continueLoop = completeOrRegenerate(record, conversation, response);
+        if (!continueLoop) {
+          continueLoop = await holdContractCompletion(context, record, conversation, turn, heldNudgeIdsAwaitingTurn);
+        }
       }
     }
 

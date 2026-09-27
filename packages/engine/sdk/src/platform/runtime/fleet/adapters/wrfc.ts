@@ -284,7 +284,7 @@ export function adaptSubtask(subtask: WrfcSubtask, chain: WrfcChain, opts: { ste
  * WrfcChain → ProcessNode. `memberNodes` are the already-adapted agent nodes
  * whose ids appear in chain.allAgentIds, EXCLUDING the owner agent (see
  * aggregateCost). Chain nodes are roots (the owner agent hangs under the
- * chain via its wrfcId edge, not the other way around).
+ * chain via its contractId edge, not the other way around).
  */
 export function adaptChain(chain: WrfcChain, memberNodes: readonly ProcessNode[], now: number): ProcessNode {
   const { state, phase } = chainState(chain, memberNodes);

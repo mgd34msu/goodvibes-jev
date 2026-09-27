@@ -82,7 +82,7 @@ export type WorkPlanItemStatus = typeof WORK_PLAN_STATUSES[number];
 
 export interface WorkPlanLinkTargets {
   readonly agentId?: string | undefined;
-  readonly wrfcId?: string | undefined;
+  readonly contractId?: string | undefined;
   readonly taskId?: string | undefined;
   readonly sessionId?: string | undefined;
 }
@@ -206,12 +206,12 @@ function createItemId(): string {
 function normalizeLinked(value: unknown): WorkPlanLinkTargets | undefined {
   if (!isObject(value)) return undefined;
   const agentId = readString(value.agentId);
-  const wrfcId = readString(value.wrfcId);
+  const contractId = readString(value.contractId);
   const taskId = readString(value.taskId);
   const sessionId = readString(value.sessionId);
   const linked: WorkPlanLinkTargets = {
     ...(agentId ? { agentId } : {}),
-    ...(wrfcId ? { wrfcId } : {}),
+    ...(contractId ? { contractId } : {}),
     ...(taskId ? { taskId } : {}),
     ...(sessionId ? { sessionId } : {}),
   };

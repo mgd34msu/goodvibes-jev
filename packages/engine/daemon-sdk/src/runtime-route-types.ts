@@ -254,9 +254,9 @@ export interface DaemonRuntimeRouteContext {
     context?: string | undefined;
     executionIntent?: ExecutionIntent | undefined;
     executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-    reviewMode?: 'none' | 'wrfc' | undefined;
+    reviewMode?: 'none' | 'contract' | undefined;
     communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
-    dangerously_disable_wrfc?: boolean | undefined;
+    outsideContract?: boolean | undefined;
   }, logLabel: string, sessionId?: string) => AgentRecordLike | Response;
   readonly queueSurfaceReplyFromBinding: (
     binding: AutomationRouteBinding | undefined,

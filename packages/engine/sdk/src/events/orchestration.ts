@@ -11,7 +11,7 @@ export interface OrchestrationTaskContract {
   requiredEvidence?: string[] | undefined;
   writeScope?: string[] | undefined;
   executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-  reviewMode?: 'none' | 'wrfc' | undefined;
+  reviewMode?: 'none' | 'contract' | undefined;
   inheritsParentConstraints?: boolean | undefined;
   communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
 }

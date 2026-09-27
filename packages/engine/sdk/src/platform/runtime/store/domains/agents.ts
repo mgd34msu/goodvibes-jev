@@ -29,14 +29,14 @@ export type AgentRole =
   | 'subagent'
   | 'background';
 
-/** A WRFC chain reference for agent grouping. */
-export interface AgentWrfcRef {
-  /** ID of the WRFC chain this agent belongs to. */
-  chainId: string;
-  /** The agent's role within that chain. */
-  chainRole: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier';
-  /** Stable phase order for display: owner=0, engineer=1, reviewer=2, fixer=3, verifier=4. */
-  phaseOrder?: number | undefined;
+/** The contract an agent belongs to, for agent grouping. */
+export interface AgentContractRef {
+  /** ID of the contract this agent belongs to. */
+  contractId: string;
+  /** The agent's part in that contract. */
+  contractRole: 'owner' | 'unit' | 'planner';
+  /** The contract unit a unit's sub-agent works on. */
+  contractUnitId?: string | undefined;
 }
 
 /**
@@ -64,9 +64,9 @@ export interface RuntimeAgent {
   /** IDs of agents spawned by this agent. */
   childAgentIds: string[];
 
-  // ── WRFC integration ─────────────────────────────────────────────────────
-  /** WRFC chain reference if this agent is part of a WRFC workflow. */
-  wrfcRef?: AgentWrfcRef | undefined;
+  // ── Contract membership ──────────────────────────────────────────────────
+  /** Contract reference if this agent belongs to a contract. */
+  contractRef?: AgentContractRef | undefined;
 
   // ── Task linkage ─────────────────────────────────────────────────────────
   /** Task ID this agent is executing (from tasks domain). */

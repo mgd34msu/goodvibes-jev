@@ -40,9 +40,9 @@ export function deriveRemoteCapabilities(
     },
     {
       id: 'approvals',
-      supported: contract?.capabilityCeiling.reviewMode === 'wrfc' || transportState !== 'disconnected',
+      supported: contract?.capabilityCeiling.reviewMode === 'contract' || transportState !== 'disconnected',
       source: contract ? 'contract' : 'connection',
-      detail: contract?.capabilityCeiling.reviewMode === 'wrfc'
+      detail: contract?.capabilityCeiling.reviewMode === 'contract'
         ? 'review-backed remote flow'
         : 'approval continuity available through transport',
     },

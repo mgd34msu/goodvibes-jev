@@ -18,22 +18,21 @@ import {
 } from '../../runtime/emitters/index.js';
 import type { OrchestrationTaskContract } from '../../runtime/events/index.js';
 import { evaluateOrchestrationSpawn } from '../../runtime/orchestration/spawn-policy.js';
-import type { ExecutionIntent } from '../../runtime/execution-intents.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentInput } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { splitModelRegistryKey } from '../../providers/registry-helpers.js';
 import type { ProviderRegistry } from '../../providers/registry.js';
 import { requireProviderQualifiedModel, normalizeProviderQualifiedModelList } from './model-routing.js';
-import type { WrfcAgentRole } from '../../agents/wrfc-types.js';
-import type { TurnInjectionRecord } from '../../agents/turn-knowledge-injection.js';
-import type { ProgressBearingRecord } from '../../agents/progress-audience.js';
+import type { AgentRecord } from './record.js';
 import {
   resolveAuthoritativeWrfcScope,
   resolveImplementationToolContract,
   resolveNarrowedRootSpawnScope,
 } from './wrfc-batch-policy.js';
 import { rootSpawnNeedsWrfcNormalization } from './root-spawn-chain-decision.js';
+
+export type { AgentRecord } from './record.js';
 
 export type AgentExecutor = {
   runAgent(record: AgentRecord): Promise<void>;
@@ -53,6 +52,14 @@ export interface AgentManagerDependencies {
   readonly conversationSnapshotRetention?: number | undefined;
   /** The live provider registry, when wired up, enables bare model id resolution for spawn() overrides. */
   readonly providerRegistry?: Pick<ProviderRegistry, 'listModels'> | undefined;
+}
+
+/** Binds a spawn to a contract unit (see AgentManager.spawn). Never model-supplied: it is not part of AgentInput. */
+export interface ContractUnitBinding {
+  readonly contractId: string;
+  readonly contractUnitId: string;
+  /** The route selector's reason for the unit's model, copied to AgentRecord.routeReason. */
+  readonly routeReason?: string | undefined;
 }
 
 /**
@@ -102,128 +109,6 @@ export const AGENT_TEMPLATES: Record<string, { description: string; defaultTools
     defaultTools: ['read', 'write', 'edit', 'find', 'exec', 'analyze', 'inspect', 'fetch', 'registry'],
   },
 };
-
-export interface AgentRecord extends ProgressBearingRecord {
-  id: string;
-  task: string;
-  template: string;
-  model?: string | undefined;
-  provider?: string | undefined;
-  fallbackModels?: string[] | undefined;
-  routing?: AgentInput['routing'] | undefined;
-  executionIntent?: ExecutionIntent | undefined;
-  reasoningEffort?: string | undefined;
-  context?: string | undefined;
-  tools: string[]; /** Bound write authority for this run's `profile` tool; see AgentInput.captureAuthority. */ captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  /**
-   * Set by cancel(id, kind) when status transitions to 'cancelled'. Distinguishes
-   * a graceful interrupt request from a hard kill for display purposes
-   * (verb formalization) without overloading `status`, which is
-   * consumed widely (ledger parse, orchestrator finalize, exportState/
-   * importState). Absent on records cancelled before this field existed, and
-   * on any record cancelled via the single-arg cancel(id) call, both default
-   * to 'kill' at the read site (fleet/adapters/agent.ts deriveAgentState).
-   */
-  terminationKind?: 'interrupt' | 'kill' | undefined;
-  startedAt: number;
-  completedAt?: number | undefined;
-  // `progress` and `progressAudience` come from ProgressBearingRecord: set them
-  // together with `setAgentProgress`, never `progress` alone.
-  toolCallCount: number;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    reasoningTokens?: number | undefined;
-    llmCallCount: number;
-    turnCount: number;
-    reasoningSummaryCount?: number | undefined;
-  };
-  error?: string | undefined;
-  /** Per-spawn turn-budget override; replaces the agents.maxTurns default for this run, capped by agents.maxTurnsCap. */
-  maxTurns?: number | undefined;
-  /** The applied turn budget + its source, stamped on a turn-budget-exhaustion failure so the outcome can report it. */
-  turnBudget?: { limit: number; source: 'default' | 'spawn-override' | 'policy-bound' } | undefined;
-  /** Machine-readable failure reason set at the source (e.g. 'max_turns'), not derived from prose. */
-  failureReason?: string | undefined;
-  fullOutput?: string | undefined;
-  streamingContent?: string | undefined;
-  wrfcId?: string | undefined;
-  wrfcRole?: WrfcAgentRole | undefined;
-  wrfcPhaseOrder?: number | undefined;
-  wrfcSubtaskId?: string | undefined;
-  wrfcRouteReason?: string | undefined;
-  wrfcSubtasks?: AgentInput['wrfcSubtasks'] | undefined;
-  /** Set when this owner agent's chain was created by collapsing a requested fan-out (schema.ts FanoutCollapseInfo). */
-  fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined;
-  dangerously_disable_wrfc?: boolean | undefined;
-  /** Completion report, or reply to a person; see AgentInput.replyStyle. Absent ⇒ 'report'. */
-  replyStyle?: 'report' | 'conversational' | undefined;
-  /**
-   * Orchestration engine tag: set by phase-runner.ts when it
-   * spawns an agent to run one WorkItem through one Phase. Mirrors
-   * wrfcId/wrfcSubtaskId, the fleet's agent adapter uses it to parent this
-   * agent node under its work-item ProcessNode (adapters/agent.ts
-   * resolveParentId), separate from the WRFC parenting track so the two
-   * systems' agents are never conflated.
-   */
-  workItemId?: string | undefined;
-  /**
-   * Overrides this agent's tool working directory (absolute path), see
-   * AgentInput.workingDirectory. Copied from the spawn input at construction
-   * (NOT settable post-hoc like workItemId: AgentOrchestrator.runAgent reads
-   * it synchronously to select/build the per-cwd ToolRegistry before the
-   * caller of spawn() gets its return value back). Absent ⇒ the
-   * orchestrator's default working directory, unchanged from before this
-   * field existed.
-   */
-  workingDirectory?: string | undefined;
-  cohort?: string | undefined;
-  orchestrationGraphId?: string | undefined;
-  orchestrationNodeId?: string | undefined;
-  orchestrationDepth: number;
-  parentAgentId?: string | undefined;
-  parentNodeId?: string | undefined;
-  capabilityCeilingTools?: string[] | undefined;
-  successCriteria?: string[] | undefined;
-  requiredEvidence?: string[] | undefined;
-  writeScope?: string[] | undefined;
-  executionProtocol: 'direct' | 'gather-plan-apply';
-  reviewMode: 'none' | 'wrfc';
-  communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct';
-  /** Appended verbatim to the system prompt when the agent runs. Used by WRFC to inject constraint addenda. */
-  systemPromptAddendum?: string | undefined;
-  knowledgeInjections?: Array<{
-    id: string;
-    cls: string;
-    summary: string;
-    reason: string;
-    confidence: number;
-    reviewState: 'fresh' | 'reviewed' | 'stale' | 'contradicted';
-  }>;
-  /**
-   * Bounded ring of per-turn passive-injection honesty
-   * records, one entry per turn that actually ran retrieval (turns that
-   * reused the prior turn's cached block, or that ran with the feature
-   * flag/budget off, append nothing). See turn-knowledge-injection.ts for
-   * the record shape and recordTurnInjection for the ring-eviction policy.
-   * Deliberately a plain field (no new KnowledgeEvent contract member),
-   * the same entries are also appended to the agent's session transcript
-   * via `session.appendMessage({type:'knowledge_injection', ...})`.
-   */
-  turnInjections?: TurnInjectionRecord[] | undefined;
-  /**
-   * Transient wake seed set by {@link AgentManager.wakeWithSteer} when a steer
-   * re-triggers a wedged (terminally-failed) agent. runAgentTask consumes it on
-   * the next run: it seeds the fresh conversation with a summary of the prior
-   * run's transcript tail (honest context, not a risky tool-call replay) and the
-   * steer as a user turn, then clears the field. Never persisted across a clean
-   * completion.
-   */
-  resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined } | undefined;
-}
 
 export class AgentManager {
   private agents = new Map<string, AgentRecord>();
@@ -309,7 +194,7 @@ export class AgentManager {
       throw new Error(`Unknown parent agent: '${input.parentAgentId}'`);
     }
 
-    if (parentRecord.wrfcRole === 'owner' && input.dangerously_disable_wrfc) {
+    if (parentRecord.contractRole === 'owner' && input.outsideContract) {
       return {
         tools: requestedTools,
         capabilityCeilingTools: requestedTools,
@@ -328,7 +213,13 @@ export class AgentManager {
     };
   }
 
-  spawn(input: AgentInput): AgentRecord {
+  /**
+   * Spawn an agent. `binding` marks it as a contract unit's sub-agent (the
+   * phase runner passes it for a contract work item): the record carries the
+   * contract, unit and route reason, the turn loop calls the contract hooks for
+   * it, and the spawn never starts a chain of its own.
+   */
+  spawn(input: AgentInput, binding?: ContractUnitBinding): AgentRecord {
     let task = input.task;
     if (!task || typeof task !== 'string' || task.trim() === '') {
       throw new Error('spawn() requires a non-empty task string');
@@ -337,10 +228,10 @@ export class AgentManager {
       throw new Error('AgentManager requires configManager');
     }
     let template = input.template ?? 'general';
-    let wrfcRouteReason: string | undefined;
+    let routeReason: string | undefined;
     const rootReviewRoleTask = rootSpawnNeedsWrfcNormalization(input, task, template);
     if (rootReviewRoleTask) {
-      wrfcRouteReason = 'root-review-role-normalized';
+      routeReason = 'root-review-role-normalized';
       const scope = resolveAuthoritativeWrfcScope(input, task);
       const toolContract = input.authoritativeTask || scope.scopeMutation
         ? resolveImplementationToolContract({
@@ -358,8 +249,8 @@ export class AgentManager {
         tools: toolContract.tools,
         restrictTools: toolContract.restrictTools,
         template: 'engineer',
-        reviewMode: 'wrfc',
-        dangerously_disable_wrfc: false,
+        reviewMode: 'contract',
+        outsideContract: false,
         context: [
           input.context?.trim(),
           'SDK WRFC topology enforcement normalized this root review/test/verification task into a single owner chain. Review, test, verification, and fix work are lifecycle phases owned by the WRFC controller, not independent root agents.',
@@ -428,12 +319,12 @@ export class AgentManager {
     if (input.parentAgentId && !parentRecord) {
       throw new Error(`Unknown parent agent: '${input.parentAgentId}'`);
     }
-    if (parentRecord?.wrfcId && parentRecord.wrfcRole !== 'owner') {
-      throw new Error('WRFC phase agents cannot spawn nested child agents; spawn work through the WRFC owner.');
+    if (parentRecord?.contractId && parentRecord.contractRole !== 'owner') {
+      throw new Error('Contract units cannot spawn nested child agents; units are leaves and the contract plans sub-work.');
     }
     const orchestrationDepth = parentRecord ? parentRecord.orchestrationDepth + 1 : 0;
     const activeAgents = this.list().filter((agent) => agent.status === 'pending' || agent.status === 'running').length;
-    const isWrfcOwnerChild = Boolean(parentRecord?.wrfcRole === 'owner' && input.dangerously_disable_wrfc);
+    const isWrfcOwnerChild = Boolean(parentRecord?.contractRole === 'owner' && input.outsideContract);
     const spawnDecision = evaluateOrchestrationSpawn({
       configManager: this.configManager,
       mode: input.parentAgentId && !isWrfcOwnerChild ? 'recursive-child' : 'manual-batch',
@@ -460,7 +351,7 @@ export class AgentManager {
     }
 
     const executionProtocol = input.executionProtocol ?? 'gather-plan-apply';
-    const reviewMode = input.reviewMode ?? (input.dangerously_disable_wrfc ? 'none' : 'wrfc');
+    const reviewMode = input.reviewMode ?? (input.outsideContract && !binding ? 'none' : 'contract');
     const communicationLane = input.communicationLane
       ?? (input.parentAgentId ? 'parent-only' : input.cohort ? 'cohort' : 'direct');
     const modelCandidates = this.providerRegistry?.listModels();
@@ -515,7 +406,7 @@ export class AgentManager {
       reviewMode,
       communicationLane,
       systemPromptAddendum: input.systemPromptAddendum,
-      wrfcSubtasks: input.wrfcSubtasks,
+      proposedUnits: input.proposedUnits,
       ...(input.fanoutCollapse ? { fanoutCollapse: input.fanoutCollapse } : {}),
       status: 'pending',
       startedAt: Date.now(),
@@ -529,7 +420,7 @@ export class AgentManager {
         turnCount: 0,
         reasoningSummaryCount: 0,
       },
-      dangerously_disable_wrfc: input.dangerously_disable_wrfc,
+      outsideContract: input.outsideContract,
       ...(input.replyStyle ? { replyStyle: input.replyStyle } : {}),
       workingDirectory: input.workingDirectory,
       cohort: input.cohort,
@@ -540,7 +431,8 @@ export class AgentManager {
       } : {}),
       ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
       ...(parentNodeId ? { parentNodeId } : {}),
-      ...(wrfcRouteReason ? { wrfcRouteReason } : {}),
+      ...(binding ? { contractId: binding.contractId, contractRole: 'unit' as const, contractUnitId: binding.contractUnitId } : {}),
+      ...(binding?.routeReason ?? routeReason ? { routeReason: binding?.routeReason ?? routeReason } : {}),
       ...(toolResolution.capabilityCeilingTools ? { capabilityCeilingTools: toolResolution.capabilityCeilingTools } : {}),
       ...(input.successCriteria ? { successCriteria: [...input.successCriteria] } : {}),
       ...(input.requiredEvidence ? { requiredEvidence: [...input.requiredEvidence] } : {}),
@@ -563,6 +455,7 @@ export class AgentManager {
         agentId: id,
         task,
         ...(record.parentAgentId ? { parentAgentId: record.parentAgentId } : {}),
+        ...(record.contractUnitId ? { contractId: record.contractId, contractRole: record.contractRole, contractUnitId: record.contractUnitId } : {}),
         ...(record.orchestrationGraphId ? { orchestrationGraphId: record.orchestrationGraphId } : {}),
         ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
       });
@@ -630,10 +523,10 @@ export class AgentManager {
       return record;
     }
 
-    if (!input.dangerously_disable_wrfc) {
+    if (!input.outsideContract && !binding) {
       try {
         this.wrfcController?.createChain(record);
-        if (record.wrfcRole === 'owner') {
+        if (record.contractRole === 'owner') {
           record.status = 'running';
           record.progress ??= 'WRFC owner supervising child agents';
           if (this.runtimeBus) {
@@ -645,16 +538,14 @@ export class AgentManager {
             };
             emitAgentRunning(this.runtimeBus, ctx, {
               agentId: id,
-              wrfcId: record.wrfcId,
-              wrfcRole: record.wrfcRole,
-              wrfcPhaseOrder: record.wrfcPhaseOrder,
+              contractId: record.contractId,
+              contractRole: record.contractRole,
             });
             emitAgentProgress(this.runtimeBus, ctx, {
               agentId: id,
               progress: record.progress,
-              wrfcId: record.wrfcId,
-              wrfcRole: record.wrfcRole,
-              wrfcPhaseOrder: record.wrfcPhaseOrder,
+              contractId: record.contractId,
+              contractRole: record.contractRole,
             });
           }
           return record;
@@ -684,19 +575,23 @@ export class AgentManager {
   /**
    * Re-trigger a wedged agent's processing loop with a steer message as input.
    *
-   * Only a terminally-FAILED agent is woken: its turn loop has definitively
-   * exited (an exhausted turn/circuit-breaker loop, idle-after-error, or a
-   * watchdog kill), so re-running cannot race a still-live promise, the honest,
-   * safe subset of "wedged". A genuinely-running agent is left alone (its steer
-   * is delivered through the message bus and drained at its next turn boundary,
-   * exactly as today); a completed or cancelled agent is not auto-woken. The
-   * re-run restores context from the frozen transcript tail (a summary, not a
-   * risky tool-call replay) and appends the steer as a fresh user turn.
+   * Only a terminally-FAILED agent is woken by default: its turn loop has
+   * definitively exited (an exhausted turn/circuit-breaker loop, idle-after-error,
+   * or a watchdog kill), so re-running cannot race a still-live promise. A
+   * genuinely-running agent is left alone (its steer is delivered through the
+   * message bus and drained at its next turn boundary); a cancelled agent is
+   * never woken. A completed agent is woken only with `allowCompleted` and only
+   * when it is a contract unit's sub-agent (`contractUnitId` set): the contract
+   * runner reopens a unit whose work a later check found failing. The fleet
+   * steer path passes no options, so operator behaviour is unchanged. The re-run
+   * restores context from the frozen transcript tail (a summary, not a risky
+   * tool-call replay) and appends the steer as a fresh user turn.
    */
-  wakeWithSteer(agentId: string, steer: string): { woke: boolean; reason: string } {
+  wakeWithSteer(agentId: string, steer: string, options: { readonly allowCompleted?: boolean } = {}): { woke: boolean; reason: string } {
     const record = this.agents.get(agentId);
     if (!record) return { woke: false, reason: 'unknown-agent' };
-    if (record.status !== 'failed') {
+    const wakeCompleted = record.status === 'completed' && options.allowCompleted === true && Boolean(record.contractUnitId);
+    if (record.status !== 'failed' && !wakeCompleted) {
       return { woke: false, reason: `agent status is '${record.status}', not a wedged/failed loop` };
     }
     if (!this.executor) return { woke: false, reason: 'no executor configured' };
@@ -708,6 +603,8 @@ export class AgentManager {
     // Clear the prior terminal outcome; runAgentTask sets status back to
     // 'running' and emits agent-started on the re-run.
     record.error = undefined;
+    record.failureReason = undefined;
+    record.turnBudget = undefined;
     record.completedAt = undefined;
     this.executor.runAgent(record).catch((error) => {
       record.status = 'failed';
@@ -716,7 +613,7 @@ export class AgentManager {
       });
       record.completedAt = Date.now();
     });
-    return { woke: true, reason: 're-triggered from failed state with steer' };
+    return { woke: true, reason: `re-triggered from ${wakeCompleted ? 'completed' : 'failed'} state with steer` };
   }
 
   /** Build an honest prior-context summary from the frozen transcript tail for a wake. */

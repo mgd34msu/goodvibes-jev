@@ -24,7 +24,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
     'cohort-status (JSON summary of all agents in a named cohort), ' +
     'cohort-report (markdown table report for all agents in a named cohort).' +
     ' Discovery: use mode=list to see all agents and their status, mode=templates to see available agent templates. ' +
-    'If the user asks for WRFC, agent review, reviewed implementation, review/fix cycles, or test/verify work for one deliverable, call this tool with mode=spawn, template=engineer, reviewMode=wrfc; do not answer by describing WRFC in prose.',
+    'If the user asks for WRFC, agent review, reviewed implementation, review/fix cycles, or test/verify work for one deliverable, call this tool with mode=spawn, template=engineer, reviewMode=contract; do not answer by describing WRFC in prose.',
   sideEffects: ['agent', 'workflow', 'state'],
   concurrency: 'serial',
   supportsProgress: true,
@@ -40,7 +40,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       // mode: spawn
       task: {
         type: 'string',
-        description: 'Task description for the agent to execute (mode: spawn). For a user request that asks for WRFC/review/test/verify of one deliverable, describe the implementation deliverable itself and use reviewMode=wrfc; do not spawn reviewer/tester roots. For batch-spawn collapse, the SDK preserves authoritativeTask/task as the original user ask when present.',
+        description: 'Task description for the agent to execute (mode: spawn). For a user request that asks for WRFC/review/test/verify of one deliverable, describe the implementation deliverable itself and use reviewMode=contract; do not spawn reviewer/tester roots. For batch-spawn collapse, the SDK preserves authoritativeTask/task as the original user ask when present.',
       },
       authoritativeTask: {
         type: 'string',
@@ -130,8 +130,8 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       },
       reviewMode: {
         type: 'string',
-        enum: ['none', 'wrfc'],
-        description: 'Review loop requirement for the spawned agent (mode: spawn). Default: wrfc unless explicitly disabled. Use wrfc for any requested WRFC, review/fix cycle, reviewed implementation, test, or verification flow for a single deliverable.',
+        enum: ['none', 'contract'],
+        description: 'Whether the spawned work is checked as a contract (mode: spawn). Default: contract unless outsideContract is set. Use contract for any requested review/fix cycle, reviewed implementation, test, or verification flow for a single deliverable.',
       },
       communicationLane: {
         type: 'string',
@@ -162,9 +162,9 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
           'Only applies when tools is also provided (mode: spawn).',
         default: false,
       },
-      dangerously_disable_wrfc: {
+      outsideContract: {
         type: 'boolean',
-        description: 'If true, skip the WRFC review chain for ordinary implementation/research agents (mode: spawn). A task templated as reviewer/tester/verifier is still normalized into one WRFC owner chain.',
+        description: 'If true, run the agent outside any contract, with no checks on its work, for ordinary implementation/research agents (mode: spawn). A task templated as reviewer/tester/verifier is still normalized into one contract owner.',
         default: false,
       },
       // mode: batch-spawn
@@ -198,16 +198,16 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
             requiredEvidence: { type: 'array', items: { type: 'string' }, description: 'Evidence the spawned agent must return.' },
             writeScope: { type: 'array', items: { type: 'string' }, description: 'Expected write ownership scope.' },
             executionProtocol: { type: 'string', enum: ['direct', 'gather-plan-apply'], description: 'Execution discipline.' },
-            reviewMode: { type: 'string', enum: ['none', 'wrfc'], description: 'Review loop requirement.' },
+            reviewMode: { type: 'string', enum: ['none', 'contract'], description: 'Whether the work is checked as a contract.' },
             communicationLane: { type: 'string', enum: ['parent-only', 'parent-and-children', 'cohort', 'direct'], description: 'Permitted communication lane.' },
             parentAgentId: { type: 'string', description: 'Parent agent to inherit capability ceiling from.' },
             orchestrationGraphId: { type: 'string', description: 'Graph id to attach the worker to.' },
             orchestrationNodeId: { type: 'string', description: 'Explicit node id for the worker.' },
             parentNodeId: { type: 'string', description: 'Parent node id for the worker.' },
-            dangerously_disable_wrfc: { type: 'boolean', description: 'Skip WRFC review for ordinary implementation/research agents. Review/test/verify role tasks in a batch are still normalized into WRFC ownership.' },
+            outsideContract: { type: 'boolean', description: 'Run outside any contract, with no checks, for ordinary implementation/research agents. Review/test/verify role tasks in a batch are still normalized into one contract owner.' },
           },
         },
-        description: 'Array of genuinely independent tasks to spawn as agents (mode: batch-spawn). Max 20. One-task batches are normalized through spawn. Do not place tester/reviewer/verifier role phases here for one deliverable; those are WRFC lifecycle children owned by one owner chain. If reviewMode=wrfc and multiple implementation deliverables are part of one larger outcome, the SDK collapses them to one compound WRFC owner with concurrent engineer children, per-deliverable review/fix loops, an integrator, and final full-scope review.',
+        description: 'Array of genuinely independent tasks to spawn as agents (mode: batch-spawn). Max 20. One-task batches are normalized through spawn. Do not place tester/reviewer/verifier role phases here for one deliverable; those are WRFC lifecycle children owned by one owner chain. If reviewMode=contract and multiple implementation deliverables are part of one larger outcome, the SDK collapses them to one compound WRFC owner with concurrent engineer children, per-deliverable review/fix loops, an integrator, and final full-scope review.',
       },
       // mode: spawn, batch-spawn, list, cohort-status, cohort-report
       cohort: {
@@ -240,9 +240,9 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
         description: 'Structured communication kind for the message (mode: message). Default: directive.',
       },
       // mode: wrfc-history
-      wrfcId: {
+      contractId: {
         type: 'string',
-        description: 'WRFC chain ID for wrfc-history mode.',
+        description: 'Contract ID for wrfc-history mode.',
       },
     },
   },
@@ -295,21 +295,21 @@ export interface AgentInput {
   captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined;
   /** Internal prompt addendum used by WRFC phase agents. */
   systemPromptAddendum?: string | undefined;
-  /** Internal compound WRFC deliverables owned by one top-level WRFC chain. */
-  wrfcSubtasks?: AgentInput['tasks'] | undefined;
+  /** Internal: units a batch proposed for one contract, carried to its owner. */
+  proposedUnits?: AgentInput['tasks'] | undefined;
   /** Internal: set by the topology guard when a requested fan-out was collapsed into this owner chain. */
   fanoutCollapse?: FanoutCollapseInfo | undefined;
   successCriteria?: string[] | undefined;
   requiredEvidence?: string[] | undefined;
   writeScope?: string[] | undefined;
   executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-  reviewMode?: 'none' | 'wrfc' | undefined;
+  reviewMode?: 'none' | 'contract' | undefined;
   communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
   parentAgentId?: string | undefined;
   orchestrationGraphId?: string | undefined;
   orchestrationNodeId?: string | undefined;
   parentNodeId?: string | undefined;
-  dangerously_disable_wrfc?: boolean | undefined;
+  outsideContract?: boolean | undefined;
   /**
    * What the caller wants the agent's final message to LOOK like.
    *
@@ -353,13 +353,13 @@ export interface AgentInput {
     requiredEvidence?: string[] | undefined;
     writeScope?: string[] | undefined;
     executionProtocol?: 'direct' | 'gather-plan-apply' | undefined;
-    reviewMode?: 'none' | 'wrfc' | undefined;
+    reviewMode?: 'none' | 'contract' | undefined;
     communicationLane?: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct' | undefined;
     parentAgentId?: string | undefined;
     orchestrationGraphId?: string | undefined;
     orchestrationNodeId?: string | undefined;
     parentNodeId?: string | undefined;
-    dangerously_disable_wrfc?: boolean | undefined;
+    outsideContract?: boolean | undefined;
   }>;
   // status / cancel / get / budget / plan / wait / message
   agentId?: string | undefined;
@@ -369,6 +369,6 @@ export interface AgentInput {
   // message
   message?: string | undefined;
   kind?: 'directive' | 'status' | 'question' | 'finding' | 'review' | 'handoff' | 'escalation' | 'completion' | undefined;
-  // wrfc-history
-  wrfcId?: string | undefined;
+  // wrfc-history: the contract to read
+  contractId?: string | undefined;
 }

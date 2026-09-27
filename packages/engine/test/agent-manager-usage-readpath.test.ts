@@ -55,7 +55,7 @@ describe('AgentManager: usage read path after direct-executed completion', () =>
     const spawned = manager.spawn({
       mode: 'spawn',
       task: 'do work',
-      dangerously_disable_wrfc: true,
+      outsideContract: true,
     });
 
     // Let the (synchronous-bodied) async executor settle.

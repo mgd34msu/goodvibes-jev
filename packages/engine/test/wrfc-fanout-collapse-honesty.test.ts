@@ -61,7 +61,7 @@ describe('evaluateWrfcBatchPolicy: explicit parallel fan-out ruling', () => {
     const decision = evaluateWrfcBatchPolicy({
       mode: 'batch-spawn',
       authoritativeTask: 'implement each endpoint as a separate subagent per file, in parallel',
-      reviewMode: 'wrfc',
+      reviewMode: 'contract',
       tasks: [
         { task: 'Implement the users endpoint in users.ts', template: 'engineer' },
         { task: 'Implement the orders endpoint in orders.ts', template: 'engineer' },
@@ -76,7 +76,7 @@ describe('evaluateWrfcBatchPolicy: explicit parallel fan-out ruling', () => {
     const decision = evaluateWrfcBatchPolicy({
       mode: 'batch-spawn',
       authoritativeTask: 'implement the three endpoints',
-      reviewMode: 'wrfc',
+      reviewMode: 'contract',
       tasks: [
         { task: 'Implement the users endpoint in users.ts', template: 'engineer' },
         { task: 'Implement the orders endpoint in orders.ts', template: 'engineer' },
@@ -209,7 +209,7 @@ describe('WrfcController: fan-out-collapse system-unsatisfiable constraints', ()
     // Part (c): the chain did NOT enter a fix loop chasing c1, it advanced past review.
     expect(chain.state).not.toBe('fixing');
     expect(['awaiting_gates', 'gating', 'passed', 'committing']).toContain(chain.state);
-    expect(h.spawnedRecords.some((r) => r.wrfcRole === 'fixer')).toBe(false);
+    expect(h.spawnedRecords.some((r) => h.controller.phaseRoleOf(r.id) === 'fixer')).toBe(false);
     h.controller.dispose();
   });
 

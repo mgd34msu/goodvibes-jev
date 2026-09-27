@@ -87,7 +87,7 @@ export function usageFromAgentRecord(record: AgentRecord): ProcessUsage | undefi
 
 /**
  * parentId precedence (brief-mandated, stable):
- * wrfcSubtaskId → `subtask:<id>` else wrfcId → `chain:<id>` else
+ * contractUnitId → `subtask:<id>` else contractId → `chain:<id>` else
  * workItemId → `work-item:<id>` (orchestration-engine phase
  * agents, a separate track from WRFC so the two systems' agents are never
  * conflated) else orchestrationNodeId/parentNodeId (resolved to the owning
@@ -96,11 +96,11 @@ export function usageFromAgentRecord(record: AgentRecord): ProcessUsage | undefi
  * is a root.
  */
 function resolveParentId(record: AgentRecord, ctx: AgentAdapterContext): string | undefined {
-  if (record.wrfcSubtaskId && ctx.subtaskIds.has(record.wrfcSubtaskId)) {
-    return subtaskNodeId(record.wrfcSubtaskId);
+  if (record.contractUnitId && ctx.subtaskIds.has(record.contractUnitId)) {
+    return subtaskNodeId(record.contractUnitId);
   }
-  if (record.wrfcId && ctx.chainIds.has(record.wrfcId)) {
-    return chainNodeId(record.wrfcId);
+  if (record.contractId && ctx.chainIds.has(record.contractId)) {
+    return chainNodeId(record.contractId);
   }
   if (record.workItemId && ctx.workItemIds.has(record.workItemId)) {
     return workItemNodeId(record.workItemId);
@@ -208,7 +208,7 @@ export function adaptAgent(record: AgentRecord, ctx: AgentAdapterContext): Proce
     }
   }
 
-  const label = record.wrfcRole ? `${record.template} (${record.wrfcRole})` : record.template;
+  const label = record.contractRole ? `${record.template} (${record.contractRole})` : record.template;
   const elapsedMs = Math.max(0, (record.completedAt ?? ctx.now) - record.startedAt);
 
   return {

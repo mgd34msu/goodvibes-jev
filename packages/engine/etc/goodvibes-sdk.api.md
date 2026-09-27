@@ -106,9 +106,9 @@ export type AgentEvent =
     taskId?: string | undefined;
     task: string;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
     orchestrationGraphId?: string | undefined;
     parentNodeId?: string | undefined;
 }
@@ -118,9 +118,9 @@ export type AgentEvent =
     agentId: string;
     taskId?: string;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
 }
 /** Agent emitted a textual progress update. */
 | {
@@ -130,9 +130,9 @@ export type AgentEvent =
     progress: string;
     audience?: 'owner' | 'operator' | undefined;
     parentAgentId?: string | undefined;
-    wrfcId?: string | undefined;
-    wrfcRole?: 'owner' | 'orchestrator' | 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | undefined;
-    wrfcPhaseOrder?: number | undefined;
+    contractId?: string | undefined;
+    contractRole?: 'owner' | 'unit' | 'planner' | undefined;
+    contractUnitId?: string | undefined;
 }
 /** Agent streamed a chunk of output. */
 | {
@@ -462,7 +462,7 @@ export type CommunicationEvent = {
     fromRole?: string | undefined;
     toRole?: string | undefined;
     cohort?: string | undefined;
-    wrfcId?: string | undefined;
+    contractId?: string | undefined;
     parentAgentId?: string | undefined;
 } | {
     type: 'COMMUNICATION_DELIVERED';
@@ -482,7 +482,7 @@ export type CommunicationEvent = {
     fromRole?: string | undefined;
     toRole?: string | undefined;
     cohort?: string | undefined;
-    wrfcId?: string | undefined;
+    contractId?: string | undefined;
     parentAgentId?: string | undefined;
 } | {
     type: 'COMMUNICATION_CONSUMED';
@@ -732,6 +732,9 @@ export interface Constraint {
     readonly text: string;
 }
 
+// @public
+export const CONTRACT_AGENT_ROLES: readonly ["owner", "unit", "planner"];
+
 // @public (undocumented)
 export const CONTRACT_COMMIT_STATUSES: readonly ["committed", "applied", "skipped", "failed"];
 
@@ -763,6 +766,9 @@ export const CONTRACT_STATUSES: readonly ["queued", "shaping", "planning", "chec
 
 // @public
 export const CONTRACT_UNIT_STATUSES: readonly ["pending", "blocked", "running", "checking", "held", "nudged", "fixing", "awaiting-owner", "held-merge", "passed", "failed", "cancelled"];
+
+// @public (undocumented)
+export type ContractAgentRole = (typeof CONTRACT_AGENT_ROLES)[number];
 
 // @public (undocumented)
 export interface ContractCheckedCriterion {
@@ -25118,7 +25124,7 @@ export interface OrchestrationTaskContract {
     // (undocumented)
     requiredEvidence?: string[] | undefined;
     // (undocumented)
-    reviewMode?: 'none' | 'wrfc' | undefined;
+    reviewMode?: 'none' | 'contract' | undefined;
     // (undocumented)
     successCriteria?: string[] | undefined;
     // (undocumented)

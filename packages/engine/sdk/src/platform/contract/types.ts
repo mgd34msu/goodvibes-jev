@@ -17,6 +17,7 @@ import type {
   CheckResult,
   CheckTrigger,
   ClaimVerificationKind,
+  ContractAgentRole,
   ContractFailureKind,
   ContractGroupStatus,
   ContractOrigin,
@@ -44,6 +45,7 @@ import type { QualityGateResult } from './gates.js';
 export type {
   CheckResult,
   CheckTrigger,
+  ContractAgentRole,
   ContractFailureKind,
   ContractOrigin,
   ContractStatus,
@@ -61,6 +63,7 @@ export type {
   YesNoVerdict,
 };
 export {
+  CONTRACT_AGENT_ROLES,
   CONTRACT_FAILURE_KINDS,
   CONTRACT_GROUP_STATUSES,
   CONTRACT_ORIGINS,

@@ -16,7 +16,7 @@ export interface AgentCommunicationMetadata {
   role: AgentCommunicationRole;
   parentAgentId?: string | undefined;
   cohort?: string | undefined;
-  wrfcId?: string | undefined;
+  contractId?: string | undefined;
 }
 
 export function communicationRoleForTemplate(template?: string): AgentCommunicationRole {
@@ -52,7 +52,7 @@ function sharesCohort(from: AgentCommunicationMetadata, to: AgentCommunicationMe
 }
 
 function sharesWrfc(from: AgentCommunicationMetadata, to: AgentCommunicationMetadata): boolean {
-  return !!from.wrfcId && from.wrfcId === to.wrfcId;
+  return !!from.contractId && from.contractId === to.contractId;
 }
 
 export function evaluateCommunicationRoute(input: {

@@ -93,8 +93,8 @@ describe('orchestrator WRFC spawn continuation contract', () => {
       success: true,
       output: JSON.stringify({
         agentId: 'agent-owner',
-        wrfcId: 'wrfc-1',
-        wrfcRole: 'owner',
+        contractId: 'wrfc-1',
+        contractRole: 'owner',
         authoritativeWrfcChain: true,
         continueRootSpawning: false,
         orchestrationStopSignal: 'wrfc_owner_chain_started',
@@ -106,8 +106,8 @@ describe('orchestrator WRFC spawn continuation contract', () => {
       output: JSON.stringify({
         agents: [{
           id: 'agent-owner',
-          wrfcId: 'wrfc-1',
-          wrfcRole: 'owner',
+          contractId: 'wrfc-1',
+          contractRole: 'owner',
           continueRootSpawning: false,
         }],
       }),
@@ -152,8 +152,8 @@ describe('orchestrator WRFC spawn continuation contract', () => {
         output: JSON.stringify({
           agentId: 'agent-owner',
           status: 'spawned',
-          wrfcId: 'wrfc-1',
-          wrfcRole: 'owner',
+          contractId: 'wrfc-1',
+          contractRole: 'owner',
           authoritativeWrfcChain: true,
           continueRootSpawning: false,
           orchestrationStopSignal: 'wrfc_owner_chain_started',
@@ -210,8 +210,8 @@ describe('orchestrator WRFC spawn continuation contract', () => {
           output: JSON.stringify({
             agentId: 'agent-owner',
             status: 'spawned',
-            wrfcId: 'wrfc-1',
-            wrfcRole: 'owner',
+            contractId: 'wrfc-1',
+            contractRole: 'owner',
             authoritativeWrfcChain: true,
             continueRootSpawning: false,
             orchestrationStopSignal: 'wrfc_owner_chain_started',

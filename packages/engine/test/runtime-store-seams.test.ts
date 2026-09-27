@@ -86,24 +86,22 @@ describe('runtime store lifecycle seams', () => {
     dispatch.dispatchAgentEvent({
       type: 'AGENT_RUNNING',
       agentId: 'owner-1',
-      wrfcId: 'wrfc-1',
-      wrfcRole: 'owner',
-      wrfcPhaseOrder: 0,
+      contractId: 'ctr-00000001',
+      contractRole: 'owner',
     });
     dispatch.dispatchAgentEvent({
       type: 'AGENT_PROGRESS',
       agentId: 'owner-1',
       progress: 'WRFC owner supervising child agents',
-      wrfcId: 'wrfc-1',
-      wrfcRole: 'owner',
-      wrfcPhaseOrder: 0,
+      contractId: 'ctr-00000001',
+      contractRole: 'owner',
     });
 
     const agent = store.getState().agents.agents.get('owner-1');
     expect(agent?.status).toBe('running');
     expect(agent?.endedAt).toBeUndefined();
     expect(agent?.result).toBeUndefined();
-    expect(agent?.wrfcRef).toEqual({ chainId: 'wrfc-1', chainRole: 'owner', phaseOrder: 0 });
+    expect(agent?.contractRef).toEqual({ contractId: 'ctr-00000001', contractRole: 'owner', contractUnitId: undefined });
     expect(store.getState().agents.activeAgentIds).toContain('owner-1');
     expect(store.getState().agents.totalCompleted).toBe(0);
   });
