@@ -173,8 +173,9 @@ describe('the compaction manager', () => {
     expect(result!.strategySwitchReason).toContain('escalating from autocompact to collapse');
     expect(result!.qualityScore!.isLowQuality).toBe(true);
     expect(events.map((e) => e.type)).toContain('COMPACTION_STRATEGY_SWITCH');
-    // Autocompact and collapse are each read by the rubric and the fidelity check.
-    expect(requests).toHaveLength(4);
+    // Autocompact and collapse are each read by the rubric and the fidelity
+    // check; collapse first reads which messages to keep, in one request.
+    expect(requests).toHaveLength(5);
   });
 
   test('a good score commits the first strategy', async () => {

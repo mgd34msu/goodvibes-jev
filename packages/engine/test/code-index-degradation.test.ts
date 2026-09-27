@@ -71,7 +71,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     store.init();
     await store.buildFull();
 
-    const results = store.search('foo', { limit: 10 });
+    const results = await store.search('foo', { limit: 10 });
     expect(results.length).toBeGreaterThan(0);
     for (const result of results) {
       expect(result.label).toBe('lexical');
@@ -103,7 +103,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     expect(store.describeDegradation()).toBeNull();
 
     await store.buildFull();
-    const results = store.search('foo', { limit: 10 });
+    const results = await store.search('foo', { limit: 10 });
     expect(results.length).toBeGreaterThan(0);
     for (const result of results) {
       expect(result.label).toBe('semantic');

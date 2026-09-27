@@ -10,8 +10,9 @@
  *  2. embedding-provider mismatch: after building under provider X, switching
  *     the default to Y must (a) surface an explicit mismatch string in
  *     stats(), (b) disable the vector search path, query vectors in Y-space
- *     against X-space rows are meaningless, degrading to lexical
- *     symbol/path matching labeled 'lexical', and (c) force a full re-embed
+ *     against X-space rows are meaningless, degrading to the lexical search
+ *     (symbol/path recall, ordered by the code-search rerank) labeled
+ *     'lexical', and (c) force a full re-embed
  *     on the next buildFull(), after which the mismatch clears and search is
  *     semantic again.
  *
@@ -29,6 +30,8 @@ import {
   type MemoryEmbeddingProvider,
 } from '../sdk/src/platform/state/memory-embeddings.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 const roots: string[] = [];
 
@@ -121,7 +124,7 @@ describe('CodeIndexStore: reroot()-during-build race (epoch abort)', () => {
     expect(rebuilt.abortReason).toBeUndefined();
     expect(rebuilt.filesIndexed).toBe(1);
 
-    const hits = store.search('treeAOnly treeBOnly', { limit: 10 });
+    const hits = await store.search('treeAOnly treeBOnly', { limit: 10 });
     expect(hits.some((r) => r.chunk.path === 'tree-a-file.ts')).toBe(false);
     expect(hits.some((r) => r.chunk.path === 'tree-b-file.ts')).toBe(true);
   });
@@ -141,7 +144,7 @@ describe('CodeIndexStore: embedding-provider mismatch honesty', () => {
 
     // Same provider: vector path, semantic label, no mismatch reported.
     expect(store.stats().embeddingProviderMismatch).toBeUndefined();
-    const semanticHits = store.search('fooBar', { limit: 5 });
+    const semanticHits = await store.search('fooBar', { limit: 5 });
     expect(semanticHits.length).toBeGreaterThan(0);
     expect(semanticHits.every((r) => r.label === 'semantic')).toBe(true);
 
@@ -155,7 +158,14 @@ describe('CodeIndexStore: embedding-provider mismatch honesty', () => {
     expect(mismatch).toContain('prov-y');
     expect(mismatch).toContain('rebuild to re-embed');
 
-    const lexicalHits = store.search('fooBar', { limit: 5 });
+    // The lexical path orders its recall through the code-search rerank.
+    const previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.9)).port);
+    let lexicalHits;
+    try {
+      lexicalHits = await store.search('fooBar', { limit: 5 });
+    } finally {
+      installJudgmentPort(previousPort);
+    }
     expect(lexicalHits.length).toBeGreaterThan(0);
     expect(lexicalHits.every((r) => r.label === 'lexical')).toBe(true);
     expect(lexicalHits[0]!.chunk.symbol).toBe('fooBar');
@@ -167,7 +177,7 @@ describe('CodeIndexStore: embedding-provider mismatch honesty', () => {
     expect(rebuild.filesUnchanged).toBe(0);
     expect(yCalls()).toBeGreaterThan(0);
     expect(store.stats().embeddingProviderMismatch).toBeUndefined();
-    const postRebuildHits = store.search('fooBar', { limit: 5 });
+    const postRebuildHits = await store.search('fooBar', { limit: 5 });
     expect(postRebuildHits.every((r) => r.label === 'semantic')).toBe(true);
   });
 });

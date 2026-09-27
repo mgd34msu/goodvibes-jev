@@ -45,7 +45,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     expect(stats.skip.ignoredByGitignore).toBe(1);
     expect(stats.filesIndexed).toBe(1);
 
-    const results = store.search('secret kept', { limit: 10 });
+    const results = await store.search('secret kept', { limit: 10 });
     expect(results.some((r) => r.chunk.path === 'ignored.ts')).toBe(false);
     expect(results.some((r) => r.chunk.path === 'kept.ts')).toBe(true);
   });
@@ -61,7 +61,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     const stats = await store.buildFull();
     expect(stats.skip.tooLarge).toBe(1);
     expect(stats.filesIndexed).toBe(1);
-    const results = store.search('big small', { limit: 10 });
+    const results = await store.search('big small', { limit: 10 });
     expect(results.some((r) => r.chunk.path === 'big.ts')).toBe(false);
   });
 
@@ -114,7 +114,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     const stats = await store.buildFull();
     expect(stats.skip.ignoredByGitignore).toBe(1);
 
-    const results = store.search('nestedSecret nestedKept top', { limit: 10 });
+    const results = await store.search('nestedSecret nestedKept top', { limit: 10 });
     expect(results.some((r) => r.chunk.path === 'sub/ignored.ts')).toBe(false);
     expect(results.some((r) => r.chunk.path === 'sub/kept.ts')).toBe(true);
     expect(results.some((r) => r.chunk.path === 'top.ts')).toBe(true);

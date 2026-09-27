@@ -1,14 +1,16 @@
 /**
- * A fake judgment port for the compaction quality readings
- * (runtime/compaction/quality-score.ts): the `engine.compaction.retention`
+ * A fake judgment port for the compaction readings: the quality readings
+ * (runtime/compaction/quality-score.ts), the `engine.compaction.retention`
  * rubric (question `substance`, levels 0 to 3) and the
- * `engine.compaction.fidelity` check (question `relation`). Tests of the
- * scorer, the compaction manager and the guarded compactor use it so they
- * never call the live Jev API.
+ * `engine.compaction.fidelity` check (question `relation`), and the collapse
+ * strategy's `engine.compaction.collapse-keep` reading (one `keep_<n>`
+ * question per message). Tests of the scorer, the compaction manager, the
+ * collapse strategy and the guarded compactor use it so they never call the
+ * live Jev API.
  */
 import { afterEach, beforeEach } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 export interface CompactionReadings {
@@ -16,6 +18,8 @@ export interface CompactionReadings {
   readonly substance?: number;
   /** How the written text relates to the source; default 'supports'. */
   readonly relation?: 'supports' | 'contradicts' | 'says_nothing';
+  /** The keep probability for message number `n` of a collapsed conversation; default 0.05 (not kept). */
+  readonly keep?: (n: number) => number;
 }
 
 /** A port answering both compaction readings from `readings`, recording every request. */
@@ -23,6 +27,7 @@ export function compactionQualityPort(readings: CompactionReadings = {}) {
   return fakePort((name: string, question: Question) => {
     if (name === 'substance') return scoreAnswer(question, readings.substance ?? 3, 0.95);
     if (name === 'relation') return choiceAnswer(question, readings.relation ?? 'supports', 0.95);
+    if (name.startsWith('keep_')) return noulAnswer(readings.keep?.(Number(name.slice('keep_'.length))) ?? 0.05);
     throw new Error(`compaction quality port: unexpected question ${name}`);
   });
 }

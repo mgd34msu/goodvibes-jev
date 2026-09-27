@@ -1,4 +1,11 @@
-import { buildEcosystemRecommendations, type EcosystemRecommendation } from './ecosystem/recommendations.js';
+import {
+  collectRecommendationCandidates,
+  rankRecommendationCandidates,
+  type EcosystemRecommendation,
+  type RecommendationCandidates,
+} from './ecosystem/recommendations.js';
+import { logger } from '../utils/logger.js';
+import { summarizeError } from '../utils/error-display.js';
 import type { RuntimeServices } from './services.js';
 import type { UiReadModel } from './ui-read-models-base.js';
 import { combineSubscriptions, createStoreBackedReadModel } from './ui-read-model-helpers.js';
@@ -80,6 +87,78 @@ export interface UiSystemObservabilityReadModels {
   readonly health: UiReadModel<UiHealthSnapshot>;
 }
 
+/** What decides the recommendations: the live needs and the entries each could use. */
+function candidatesKey(candidates: readonly RecommendationCandidates[]): string {
+  return JSON.stringify(candidates.map((candidate) => [candidate.need, candidate.reason, candidate.entries]));
+}
+
+/**
+ * The marketplace read model. Startup issues are counted from the store on
+ * every snapshot. Recommendations are read by Jev, which is asynchronous, so
+ * the snapshot carries the last ranked list: each snapshot collects the live
+ * needs and uninstalled entries (code, as before), and when they differ from
+ * the ones last ranked a ranking starts; its result replaces the list and
+ * notifies subscribers. A ranking overtaken by a newer one is discarded.
+ */
+function createMarketplaceReadModel(runtimeServices: RuntimeServices): UiReadModel<UiMarketplaceSnapshot> {
+  const { runtimeStore } = runtimeServices;
+  const catalogOptions = {
+    cwd: runtimeServices.shellPaths.workingDirectory,
+    homeDir: runtimeServices.shellPaths.homeDirectory,
+  };
+  const listeners = new Set<() => void>();
+  let recommendations: readonly EcosystemRecommendation[] = [];
+  let rankedKey: string | undefined;
+
+  const publish = (key: string, next: readonly EcosystemRecommendation[]): void => {
+    if (rankedKey !== key) return;
+    recommendations = next;
+    for (const listener of [...listeners]) listener();
+  };
+
+  const refreshRecommendations = (): void => {
+    const candidates = collectRecommendationCandidates(runtimeStore, catalogOptions);
+    const key = candidatesKey(candidates);
+    if (key === rankedKey) return;
+    rankedKey = key;
+    rankRecommendationCandidates(candidates).then(
+      (ranked) => publish(key, ranked),
+      (err: unknown) => {
+        logger.warn('Marketplace recommendations could not be ranked', { error: summarizeError(err) });
+        publish(key, []);
+      },
+    );
+  };
+
+  return {
+    getSnapshot() {
+      const state = runtimeStore.getState();
+      const startupIssues: string[] = [];
+      if (state.permissions.denialCount >= 3) {
+        startupIssues.push(`${state.permissions.denialCount} permission denials suggest a policy-pack or trust posture review.`);
+      }
+      const authRequiredServers = [...state.mcp.servers.values()].filter((server) => server.status === 'auth_required');
+      if (authRequiredServers.length > 0) {
+        startupIssues.push(`${authRequiredServers.length} MCP server${authRequiredServers.length === 1 ? '' : 's'} need auth or reconnect repair.`);
+      }
+      const staleSchemas = [...state.mcp.servers.values()].filter((server) => server.schemaFreshness !== 'fresh');
+      if (staleSchemas.length > 0) {
+        startupIssues.push(`${staleSchemas.length} MCP server schema${staleSchemas.length === 1 ? ' is' : 's are'} stale or quarantined.`);
+      }
+      refreshRecommendations();
+      return { startupIssues, recommendations };
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      const unsubscribeStore = runtimeStore.subscribe(listener);
+      return () => {
+        listeners.delete(listener);
+        unsubscribeStore();
+      };
+    },
+  };
+}
+
 export function createSystemObservabilityReadModels(
   runtimeServices: RuntimeServices,
   options: import('./ui-read-models-observability-options.js').UiObservabilityReadModelOptions = {},
@@ -105,28 +184,7 @@ export function createSystemObservabilityReadModels(
         diagnostics: state.diagnostics,
       };
     }),
-    marketplace: createStoreBackedReadModel(runtimeServices, () => {
-      const state = runtimeStore.getState();
-      const startupIssues: string[] = [];
-      if (state.permissions.denialCount >= 3) {
-        startupIssues.push(`${state.permissions.denialCount} permission denials suggest a policy-pack or trust posture review.`);
-      }
-      const authRequiredServers = [...state.mcp.servers.values()].filter((server) => server.status === 'auth_required');
-      if (authRequiredServers.length > 0) {
-        startupIssues.push(`${authRequiredServers.length} MCP server${authRequiredServers.length === 1 ? '' : 's'} need auth or reconnect repair.`);
-      }
-      const staleSchemas = [...state.mcp.servers.values()].filter((server) => server.schemaFreshness !== 'fresh');
-      if (staleSchemas.length > 0) {
-        startupIssues.push(`${staleSchemas.length} MCP server schema${staleSchemas.length === 1 ? ' is' : 's are'} stale or quarantined.`);
-      }
-      return {
-        startupIssues,
-        recommendations: buildEcosystemRecommendations(runtimeStore, {
-          cwd: runtimeServices.shellPaths.workingDirectory,
-          homeDir: runtimeServices.shellPaths.homeDirectory,
-        }),
-      };
-    }),
+    marketplace: createMarketplaceReadModel(runtimeServices),
     cockpit: {
       getSnapshot() {
         const state = runtimeStore.getState();

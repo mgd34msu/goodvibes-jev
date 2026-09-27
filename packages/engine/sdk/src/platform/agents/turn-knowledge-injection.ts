@@ -93,7 +93,7 @@ export const DEFAULT_TURN_INJECTION_RING_SIZE = 20;
  * not auto-inject", see collectCodeInjectionCandidates.
  */
 export type TurnCodeIndexSource = {
-  search(query: string, opts?: { limit?: number }): readonly CodeContextResult[];
+  search(query: string, opts?: { limit?: number }): Promise<readonly CodeContextResult[]>;
   stats(): Pick<
     CodeIndexStats,
     'available' | 'indexedChunks' | 'embeddingProviderMismatch' | 'semanticRetrievalAvailable'
@@ -287,14 +287,14 @@ function codeHitId(hit: CodeContextResult): string {
  * store's own honesty signals (never inject from an empty or provider-mismatched index, and
  * never from a hashed-only provider whose "semantic" retrieval is a weak lexical-ish signal).
  */
-function collectCodeInjectionCandidates(
+async function collectCodeInjectionCandidates(
   codeIndex: TurnCodeIndexSource | undefined,
   enabled: boolean,
   query: string,
   relevanceFloor: number,
   codeLimit: number,
   alreadyInjectedIdSet: ReadonlySet<string>,
-): { candidates: MergedCandidate[]; considered: number; skipped: string | undefined } {
+): Promise<{ candidates: MergedCandidate[]; considered: number; skipped: string | undefined }> {
   if (!enabled || !codeIndex) return { candidates: [], considered: 0, skipped: undefined };
 
   const stats = codeIndex.stats();
@@ -303,7 +303,7 @@ function collectCodeInjectionCandidates(
   if (stats.embeddingProviderMismatch) return { candidates: [], considered: 0, skipped: stats.embeddingProviderMismatch };
   if (!stats.semanticRetrievalAvailable) return { candidates: [], considered: 0, skipped: 'no semantic embedding provider' };
 
-  const hits = codeIndex.search(query, { limit: codeLimit });
+  const hits = await codeIndex.search(query, { limit: codeLimit });
   const candidates: MergedCandidate[] = [];
   let considered = 0;
   for (const hit of hits) {
@@ -394,7 +394,7 @@ export async function buildPerTurnKnowledgeInjection(
       injection: entry.injection,
     }));
 
-  const code = collectCodeInjectionCandidates(codeIndex, codeInjectionEnabled, query, relevanceFloor, codeLimit, alreadyInjectedIdSet);
+  const code = await collectCodeInjectionCandidates(codeIndex, codeInjectionEnabled, query, relevanceFloor, codeLimit, alreadyInjectedIdSet);
 
   // One merged pool, sorted best-first, so memory and code compete in the SAME budget and the
   // trim always drops the globally-lowest-scored surviving line regardless of its source.

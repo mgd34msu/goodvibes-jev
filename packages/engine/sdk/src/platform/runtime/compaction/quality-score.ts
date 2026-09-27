@@ -65,7 +65,7 @@ const MIN_COMPRESSION_RATIO = 0;
  * Compression ratio above which the compression dimension is fully saturated.
  * Anything at or above this (e.g. 80% reduction) receives a perfect compression score.
  */
-const MAX_COMPRESSION_RATIO = 0.8;
+export const MAX_COMPRESSION_RATIO = 0.8;
 
 // ---------------------------------------------------------------------------
 // Types

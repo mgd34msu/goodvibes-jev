@@ -88,7 +88,7 @@ describe('CodeIndexStore: chunking determinism', () => {
     expect(stats.filesIndexed).toBe(1);
     expect(stats.skip.chunkedByWindow).toBe(0);
 
-    const results = store.search('foo', { limit: 10 });
+    const results = await store.search('foo', { limit: 10 });
     const symbols = results.map((r) => r.chunk.symbol).sort();
     expect(symbols).toEqual(['Bar', 'baz', 'foo']);
   });
@@ -100,11 +100,11 @@ describe('CodeIndexStore: chunking determinism', () => {
     const store = makeStore(root, registry);
 
     await store.buildFull();
-    const first = store.search('foo bar baz', { limit: 10 }).map((r) => r.chunk.chunkId).sort();
+    const first = (await store.search('foo bar baz', { limit: 10 })).map((r) => r.chunk.chunkId).sort();
 
     const store2 = makeStore(root, registry);
     await store2.buildFull();
-    const second = store2.search('foo bar baz', { limit: 10 }).map((r) => r.chunk.chunkId).sort();
+    const second = (await store2.search('foo bar baz', { limit: 10 })).map((r) => r.chunk.chunkId).sort();
 
     expect(second).toEqual(first);
   });
@@ -133,7 +133,7 @@ describe('CodeIndexStore: incremental reindex', () => {
     const store = makeStore(root, registry);
 
     await store.buildFull();
-    const bChunksBefore = store.search('untouched', { limit: 10 }).filter((r) => r.chunk.path === 'b.ts');
+    const bChunksBefore = (await store.search('untouched', { limit: 10 })).filter((r) => r.chunk.path === 'b.ts');
     expect(bChunksBefore.length).toBeGreaterThan(0);
     const bChunkIdBefore = bChunksBefore[0]!.chunk.chunkId;
 
@@ -142,11 +142,11 @@ describe('CodeIndexStore: incremental reindex', () => {
     await store.buildFull();
     expect(callCount()).toBeGreaterThan(afterFirstBuild);
 
-    const bChunksAfter = store.search('untouched', { limit: 10 }).filter((r) => r.chunk.path === 'b.ts');
+    const bChunksAfter = (await store.search('untouched', { limit: 10 })).filter((r) => r.chunk.path === 'b.ts');
     expect(bChunksAfter.length).toBe(bChunksBefore.length);
     expect(bChunksAfter[0]!.chunk.chunkId).toBe(bChunkIdBefore);
 
-    const aChunks = store.search('extra foo bar baz', { limit: 20 }).filter((r) => r.chunk.path === 'a.ts');
+    const aChunks = (await store.search('extra foo bar baz', { limit: 20 })).filter((r) => r.chunk.path === 'a.ts');
     const symbolNames = aChunks.map((r) => r.chunk.symbol).sort();
     expect(symbolNames).toContain('extra');
   });
@@ -167,7 +167,7 @@ describe('CodeIndexStore: incremental reindex', () => {
 
     const stats = store.stats();
     expect(stats.indexedFiles).toBe(1);
-    const remaining = store.search('removeMe', { limit: 10 });
+    const remaining = await store.search('removeMe', { limit: 10 });
     expect(remaining.find((r) => r.chunk.path === 'gone.ts')).toBeUndefined();
   });
 
@@ -233,7 +233,7 @@ describe('CodeIndexStore: chunk shape', () => {
     const store = makeStore(root, registry);
     await store.buildFull();
 
-    const results = store.search('foo', { limit: 10 });
+    const results = await store.search('foo', { limit: 10 });
     const fooChunk = results.find((r) => r.chunk.symbol === 'foo')?.chunk as CodeChunk;
     expect(fooChunk).toBeDefined();
     expect(fooChunk.path).toBe('a.ts');

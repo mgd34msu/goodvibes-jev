@@ -455,7 +455,7 @@ export class CompactionManager {
         return output;
       }
       case 'collapse': {
-        const output = runCollapse(input);
+        const output = await runCollapse(input);
         emitCompactionCollapse(this._bus, this._ctx, {
           sessionId: this._sessionId,
           messageCount: input.messages.length,

@@ -32,8 +32,9 @@
  * embedding provider differs from the stored one, search() refuses to run the
  * vector path, a query embedded in provider-Y space compared against
  * provider-X vectors is meaningless, and degrades to an honestly-labeled
- * lexical match over chunk symbol/path metadata until a rebuild re-embeds
- * (buildFull() detects the mismatch and forces a full re-embed).
+ * lexical search (symbol/path recall, ordered by the `engine.state.code-search`
+ * rerank) until a rebuild re-embeds (buildFull() detects the mismatch and
+ * forces a full re-embed).
  *
  * Incremental reindex is LAZY, never a watcher: a recursive fs.watch over a
  * repo tree is a per-file-descriptor liability and races the agent's own
@@ -101,6 +102,7 @@ import {
   type FindDiagnostics,
 } from '../tools/find/shared.js';
 import { openVersionedBunSqliteStore } from './store-versioning.js';
+import { rankLexicalChunks } from './code-index-lexical.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -336,7 +338,7 @@ export class CodeIndexStore {
 
   // ── Search (Stage A explicit query) ─────────────────────────────────────
 
-  search(query: string, opts: { limit?: number } = {}): CodeContextResult[] {
+  async search(query: string, opts: { limit?: number } = {}): Promise<CodeContextResult[]> {
     if (!this.db || !this.available) return [];
     const trimmed = query.trim();
     if (!trimmed) return [];
@@ -345,7 +347,7 @@ export class CodeIndexStore {
 
     // Provider-space honesty: a query embedded under the CURRENT provider is
     // meaningless against vectors stored under a DIFFERENT one, skip the
-    // vector path entirely and degrade to lexical metadata matching.
+    // vector path entirely and degrade to the lexical search.
     if (this.getProviderMismatch() !== null) {
       return this.searchLexical(trimmed, limit);
     }
@@ -383,12 +385,14 @@ export class CodeIndexStore {
   }
 
   /**
-   * Lexical fallback used when the vector path is disabled by a provider
-   * mismatch: token match over chunk symbol/path metadata (chunk text is not
-   * stored, so this is name/path matching only, labeled 'lexical', never
-   * 'semantic'). Similarity is the matched-token fraction.
+   * Lexical search used when the vector path is disabled by a provider
+   * mismatch. Recall is code: chunks whose symbol or path contains a query
+   * token (chunk text is not stored), up to five per requested result. The
+   * order is the `engine.state.code-search` rerank's, read against each
+   * chunk's code (code-index-lexical.ts); chunks it reads as not matching are
+   * left out. Labeled 'lexical', never 'semantic'.
    */
-  private searchLexical(query: string, limit: number): CodeContextResult[] {
+  private async searchLexical(query: string, limit: number): Promise<CodeContextResult[]> {
     if (!this.db) return [];
     const tokens = Array.from(new Set(
       query.toLowerCase().split(/[^a-z0-9_$]+/).filter((token) => token.length >= 2),
@@ -400,20 +404,7 @@ export class CodeIndexStore {
     const rows = this.db.query<ChunkRow, SQLQueryBindings[]>(
       `SELECT ${CHUNK_ROW_COLUMNS} FROM code_chunks WHERE ${where} LIMIT ?`,
     ).all(...bindings, limit * 5) as ChunkRow[];
-
-    const scored = rows.map((row) => {
-      const haystack = `${row.symbol} ${row.path}`.toLowerCase();
-      const matched = tokens.filter((token) => haystack.includes(token)).length;
-      const similarity = matched / tokens.length;
-      return {
-        chunk: rowToChunk(row),
-        distance: 2 * (1 - similarity),
-        similarity,
-        label: 'lexical' as const,
-      };
-    });
-    scored.sort((a, b) => b.similarity - a.similarity);
-    return scored.slice(0, limit);
+    return rankLexicalChunks(this.rootDir, query, rows.map(rowToChunk), limit);
   }
 
   // ── Build / reindex ──────────────────────────────────────────────────────

@@ -119,7 +119,7 @@ describe('createCodeIndexServices: real CodeIndexStore wiring', () => {
     expect(codeIndexStore.describeDegradation()).toBe(
       'code auto-retrieval disabled: no semantic embedding provider configured',
     );
-    const results = codeIndexStore.search('greet');
+    const results = await codeIndexStore.search('greet');
     for (const result of results) expect(result.label).toBe('lexical');
 
     codeIndexStore.close();

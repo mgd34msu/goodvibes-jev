@@ -6,14 +6,39 @@
  * exceeds 85% or when manually triggered.
  *
  * All messages are reduced to a structured handoff that preserves:
- * - The original task context (if known)
- * - Key decisions and outcomes
+ * - Key decisions and outcomes: the collapsed messages that state a
+ *   decision, an outcome, a user requirement or constraint, a file change,
+ *   or an open task the continuation still depends on, picked by the
+ *   `engine.compaction.collapse-keep` reading and quoted in order
  * - The most recent user/assistant exchange
+ *
+ * Fitting the handoff is code: the quoted text shares a budget of
+ * (1 - MAX_COMPRESSION_RATIO) of the tokens before collapse, the point at
+ * which the quality score gives full credit for compression. Long quotes are
+ * clipped evenly; when clipping is not enough the oldest key messages are
+ * left out and counted.
  */
 
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ProviderMessage } from '../../../providers/interface.js';
 import { estimateTokens } from '../../../core/compaction-types.js';
+import { collapseKeep, type KeepEntry } from '../batteries/collapse-keep.js';
+import { clip, fit, renderMessage, type Entry } from '../judged-views.js';
+import { MAX_COMPRESSION_RATIO } from '../quality-score.js';
 import type { StrategyInput, StrategyOutput } from '../types.js';
+
+export const COLLAPSE_KEEP_SITE = 'runtime.compaction.collapse';
+
+/** Characters per token in the strategy's own estimate (core/compaction-types.ts estimateTokens). */
+const CHARS_PER_TOKEN = 4;
+
+/** Refits allowed when JSON escaping pushes the handoff past its budget. */
+const MAX_REFITS = 3;
+
+/** One quoted body in the handoff; recent-exchange bodies are never left out. */
+interface Quote extends Entry {
+  readonly prefix: string;
+}
 
 /**
  * Applies the collapse strategy: reduces all messages to a single structured
@@ -22,46 +47,59 @@ import type { StrategyInput, StrategyOutput } from '../types.js';
  * @param input - Strategy input containing messages and context.
  * @returns Strategy output with a single collapsed message.
  */
-export function runCollapse(input: StrategyInput): StrategyOutput {
+export async function runCollapse(input: StrategyInput): Promise<StrategyOutput> {
   const startMs = Date.now();
   const { messages, tokensBefore, sessionId, strategy } = input;
   const warnings: string[] = [];
 
-  // Extract the last user/assistant exchange to preserve conversational context
-  const lastUserMsg = messages.findLast((m) => m.role === 'user');
-  const lastAssistantMsg = messages.findLast((m) => m.role === 'assistant');
+  // The last user/assistant exchange is quoted as it stands.
+  const lastUserIndex = messages.findLastIndex((m) => m.role === 'user');
+  const lastAssistantIndex = messages.findLastIndex((m) => m.role === 'assistant');
+  const recent: Quote[] = [];
+  const lastUserText = lastUserIndex >= 0 ? extractText(messages[lastUserIndex]!) : '';
+  const lastAssistantText = lastAssistantIndex >= 0 ? extractText(messages[lastAssistantIndex]!) : '';
+  if (lastUserText) recent.push({ prefix: 'User: ', body: lastUserText, droppable: false, omitted: false });
+  if (lastAssistantText) recent.push({ prefix: 'Assistant: ', body: lastAssistantText, droppable: false, omitted: false });
 
-  const recentExchange: string[] = [];
-  if (lastUserMsg) {
-    const text = extractText(lastUserMsg);
-    if (text) recentExchange.push(`User: ${text.slice(0, 500)}`);
-  }
-  if (lastAssistantMsg) {
-    const text = extractText(lastAssistantMsg);
-    if (text) recentExchange.push(`Assistant: ${text.slice(0, 500)}`);
-  }
+  const keys: Quote[] = (await selectKeyMessages(messages, new Set([lastUserIndex, lastAssistantIndex])))
+    .map((text) => ({ prefix: '- ', body: text, droppable: true, omitted: false }));
 
-  const handoffLines: string[] = [
-    `[Session Collapse: ${new Date().toISOString()}]`,
-    `Session: ${sessionId}`,
-    `${messages.length} message(s) collapsed to reduce context from ~${tokensBefore} tokens.`,
-    '',
-    '## Most Recent Exchange',
-    recentExchange.length > 0
-      ? recentExchange.join('\n')
-      : '(no user/assistant exchange found)',
-    '',
-    '## Context Note',
-    'The full conversation history has been collapsed. Please resume from the above context.',
-  ];
-
-  const handoff: ProviderMessage = {
-    role: 'user',
-    content: [{ type: 'text', text: handoffLines.join('\n') }],
+  const render = (cap: number): string => {
+    const omitted = keys.filter((quote) => quote.omitted).length;
+    const kept = keys.filter((quote) => !quote.omitted).map((quote) => quote.prefix + clip(quote.body, cap));
+    const keySection = keys.length === 0
+      ? ['(no decisions or outcomes found)']
+      : [...(omitted > 0 ? [`[${omitted} earlier key message(s) left out for length]`] : []), ...kept];
+    return [
+      `[Session Collapse: ${new Date().toISOString()}]`,
+      `Session: ${sessionId}`,
+      `${messages.length} message(s) collapsed to reduce context from ~${tokensBefore} tokens.`,
+      '',
+      '## Key Decisions and Outcomes',
+      ...keySection,
+      '',
+      '## Most Recent Exchange',
+      recent.length > 0
+        ? recent.map((quote) => quote.prefix + clip(quote.body, cap)).join('\n')
+        : '(no user/assistant exchange found)',
+      '',
+      '## Context Note',
+      'The full conversation history has been collapsed. Please resume from the above context.',
+    ].join('\n');
   };
+  const handoffOf = (text: string): ProviderMessage[] => [{ role: 'user', content: [{ type: 'text', text }] }];
 
-  const compacted: ProviderMessage[] = [handoff];
-  const tokensAfter = estimateTokens(JSON.stringify(compacted));
+  const budgetTokens = Math.floor(tokensBefore * (1 - MAX_COMPRESSION_RATIO));
+  const quotes = [...keys, ...recent];
+  const fixedChars = render(0).length - quotes.reduce((sum, quote) => sum + clip(quote.body, 0).length, 0);
+  let bodyBudget = budgetTokens * CHARS_PER_TOKEN - fixedChars;
+  let compacted = handoffOf(render(fit(quotes, bodyBudget)));
+  let tokensAfter = estimateTokens(JSON.stringify(compacted));
+  for (let refit = 0; refit < MAX_REFITS && tokensAfter > budgetTokens; refit++) {
+    bodyBudget -= (tokensAfter - budgetTokens) * CHARS_PER_TOKEN;
+    compacted = handoffOf(render(fit(quotes, bodyBudget)));
+    tokensAfter = estimateTokens(JSON.stringify(compacted));
+  }
 
   if (tokensAfter >= tokensBefore) {
     warnings.push('collapse: compacted output is not smaller than input; possible data issue');
@@ -75,6 +113,19 @@ export function runCollapse(input: StrategyInput): StrategyOutput {
     durationMs: Date.now() - startMs,
     warnings,
   };
+}
+
+/**
+ * The rendered text of every collapsed message the keep reading selects, in
+ * conversation order. The recent exchange is quoted on its own and is not asked about.
+ */
+async function selectKeyMessages(messages: readonly ProviderMessage[], recentIndexes: ReadonlySet<number>): Promise<string[]> {
+  const entries: KeepEntry[] = messages
+    .map((msg, index) => ({ number: index + 1, text: renderMessage(msg) }))
+    .filter((entry) => !recentIndexes.has(entry.number - 1));
+  if (entries.length === 0) return [];
+  const readings = await collapseKeep.select(judgmentPort(COLLAPSE_KEEP_SITE), entries, { site: COLLAPSE_KEEP_SITE });
+  return entries.filter((entry) => readings.get(entry.number)?.verdict === 'yes').map((entry) => entry.text);
 }
 
 /** Extracts plain text from a ProviderMessage. */

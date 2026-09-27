@@ -65,7 +65,7 @@ const HEALTHY_STATS: Pick<CodeIndexStats, 'available' | 'indexedChunks' | 'embed
 
 function fakeCodeIndex(hits: CodeContextResult[], statsOverride: Partial<typeof HEALTHY_STATS> = {}): TurnCodeIndexSource {
   return {
-    search: () => hits,
+    search: async () => hits,
     stats: () => ({ ...HEALTHY_STATS, ...statsOverride }),
   };
 }
@@ -153,7 +153,7 @@ describe('code injection: never injects from an unhealthy index (stats gates)', 
   test('empty index (indexedChunks 0) => skipped "code index empty", no search, no injection', async () => {
     let searched = false;
     const code: TurnCodeIndexSource = {
-      search: () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
+      search: async () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
       stats: () => ({ ...HEALTHY_STATS, indexedChunks: 0 }),
     };
     const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: true }));
@@ -189,7 +189,7 @@ describe('code injection: flag/gate off is a hard no-op', () => {
   test('codeInjectionEnabled false: index never queried, no code fields set', async () => {
     let searched = false;
     const code: TurnCodeIndexSource = {
-      search: () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
+      search: async () => { searched = true; return [makeCodeHit('src/x.ts', 0.9)]; },
       stats: () => HEALTHY_STATS,
     };
     const result = await buildPerTurnKnowledgeInjection(baseInput({ codeIndex: code, codeInjectionEnabled: false }));

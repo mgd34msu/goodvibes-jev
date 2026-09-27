@@ -23,12 +23,16 @@ registry.register(memoryUsage);
 // Runtime: compaction, forensics, ops, tool contracts.
 // (The forensics classifier reads error messages through engine.failure-reading,
 // registered in packages/engine/errors/src/judgment-registry.ts.)
+import { collapseKeep } from './compaction/batteries/collapse-keep.js';
 import { compactionFidelity } from './compaction/batteries/compaction-fidelity.js';
 import { compactionRetention } from './compaction/batteries/compaction-retention.js';
+import { recommendationFit } from './ecosystem/batteries/recommendation-fit.js';
 import { playbookSearch } from './ops/batteries/playbook-search.js';
 import { descriptionQuality } from './tools/batteries/description-quality.js';
+registry.register(collapseKeep);
 registry.register(compactionFidelity);
 registry.register(compactionRetention);
+registry.register(recommendationFit);
 registry.register(playbookSearch);
 registry.register(descriptionQuality);
 
@@ -39,3 +43,7 @@ import { systemMessagePriority } from './batteries/system-message-priority.js';
 registry.register(pendingApproval);
 registry.register(setupReplyCommand);
 registry.register(systemMessagePriority);
+
+// State: code index.
+import { codeSearchRerank } from '../state/batteries/code-search-rerank.js';
+registry.register(codeSearchRerank);

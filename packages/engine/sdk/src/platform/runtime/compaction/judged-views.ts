@@ -70,7 +70,8 @@ function matchCarried(input: readonly ProviderMessage[], output: readonly Provid
   return output.map((msg) => unmatched.get(JSON.stringify(msg))?.shift() ?? -1);
 }
 
-interface Entry {
+/** One rendered entry being fitted into a character budget. */
+export interface Entry {
   readonly body: string;
   /** Source messages may be left out, oldest first, when even clipped entries do not fit. */
   readonly droppable: boolean;
@@ -88,7 +89,7 @@ function costAt(entries: readonly Entry[], cap: number): number {
  * falls below MIN_ENTRY_CHARS, the oldest source messages are left out until
  * the rest fit at MIN_ENTRY_CHARS.
  */
-function fit(entries: Entry[], budget: number): number {
+export function fit(entries: Entry[], budget: number): number {
   if (costAt(entries, Number.POSITIVE_INFINITY) <= budget) return Number.POSITIVE_INFINITY;
   const lengths = entries.map((entry) => entry.body.length).sort((a, b) => a - b);
   let remaining = budget - entries.length * ENTRY_OVERHEAD_CHARS;
@@ -109,7 +110,8 @@ function fit(entries: Entry[], budget: number): number {
   return MIN_ENTRY_CHARS;
 }
 
-function clip(text: string, cap: number): string {
+/** The text clipped to `cap` characters with a note of how many were cut. */
+export function clip(text: string, cap: number): string {
   return text.length <= cap ? text : `${text.slice(0, cap)} [${text.length - cap} more characters]`;
 }
 

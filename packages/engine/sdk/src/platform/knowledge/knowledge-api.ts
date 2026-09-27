@@ -126,7 +126,7 @@ export type MemoryApiRegistry = Pick<
  * provenance semantics, see createCodeIndexApi / createMemoryApi below.
  */
 export interface CodeIndexApi {
-  search(query: string, opts?: { limit?: number }): readonly CodeContextResult[];
+  search(query: string, opts?: { limit?: number }): Promise<readonly CodeContextResult[]>;
   stats(): CodeIndexStats;
   reindex(): Promise<CodeIndexBuildStats>;
   scheduleReindex(): void;
