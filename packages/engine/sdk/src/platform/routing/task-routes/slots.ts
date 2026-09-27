@@ -25,7 +25,7 @@
  *   chose it without escalating; otherwise the route keeps its generic string.
  */
 import { defineBattery, oneOf, STAKES_BANDS, yesNo, type JudgmentPort, type Selection, type YesNoReading } from '@goodvibes-jev/judgment';
-import { NAMED_ID_KINDS, namedIdCandidates, taskRouteNamedId, type NamedIdKind } from './named-ids.js';
+import { NAMED_ID_KINDS, namedIdCandidates, taskRouteNamedId, type NamedIdKind, type NamedIdSources } from './named-ids.js';
 import type { ChannelTask, PersonalOpsLaneId, TaskRouteSlots } from './types.js';
 
 const LOW = STAKES_BANDS.low;
@@ -205,8 +205,8 @@ const variant = (reading: YesNoReading): boolean => reading.verdict === 'yes';
 export const namedIdFrom = (selection: Selection): string | null =>
   selection.chosen !== undefined && selection.outcome !== 'escalate' ? selection.chosen : null;
 
-/** The slots, composed from the battery's readings and the three named-id selections. */
-export function composeSlots(readings: SlotReadings, named: Readonly<Record<NamedIdKind, Selection>>): TaskRouteSlots {
+/** The slots, composed from the battery's readings and the named-id selections (a kind with no listing has none). */
+export function composeSlots(readings: SlotReadings, named: Readonly<Partial<Record<NamedIdKind, Selection>>>): TaskRouteSlots {
   const lane = readings.lane.outcome === 'escalate' || readings.lane.choice === 'none' ? null : (readings.lane.choice as PersonalOpsLaneId);
   const policyTarget = readings.policyTarget.outcome === 'escalate' || readings.policyTarget.choice === 'none' ? null : readings.policyTarget.choice;
   return {
@@ -224,9 +224,9 @@ export function composeSlots(readings: SlotReadings, named: Readonly<Record<Name
     lane,
     channelTask: readings.channelTask.outcome === 'escalate' ? 'status' : readings.channelTask.choice,
     policyTarget,
-    modelProvider: namedIdFrom(named.modelProvider),
-    memoryProvider: namedIdFrom(named.memoryProvider),
-    channelTarget: namedIdFrom(named.channelTarget),
+    modelProvider: named.modelProvider ? namedIdFrom(named.modelProvider) : null,
+    memoryProvider: named.memoryProvider ? namedIdFrom(named.memoryProvider) : null,
+    channelTarget: named.channelTarget ? namedIdFrom(named.channelTarget) : null,
   };
 }
 
@@ -235,20 +235,25 @@ export interface SlotRun {
   recordAction(action: string): void;
 }
 
-/** Reads a request's slots: the battery and the three named-id selections, asked concurrently. */
+/**
+ * Reads a request's slots: the battery and one named-id selection per kind
+ * whose live listing is non-empty, asked concurrently.
+ */
 export async function readSlots(
   port: JudgmentPort,
   request: string,
-  options: { readonly site: string; readonly signal?: AbortSignal },
+  options: { readonly site: string; readonly signal?: AbortSignal; readonly namedIds?: NamedIdSources | undefined },
 ): Promise<SlotRun> {
   const call = { site: options.site, ...(options.signal === undefined ? {} : { signal: options.signal }) };
-  const kinds = Object.keys(NAMED_ID_KINDS) as NamedIdKind[];
+  const listed = (Object.keys(NAMED_ID_KINDS) as NamedIdKind[])
+    .map((kind) => ({ kind, ids: options.namedIds?.[kind]?.() ?? [] }))
+    .filter(({ ids }) => ids.length > 0);
   const [run, selections] = await Promise.all([
     taskRouteSlots.run(port, { request }, call),
-    Promise.all(kinds.map((kind) =>
-      taskRouteNamedId.select(port, { request, kind: NAMED_ID_KINDS[kind].kind }, namedIdCandidates(NAMED_ID_KINDS[kind].ids), call),
+    Promise.all(listed.map(({ kind, ids }) =>
+      taskRouteNamedId.select(port, { request, kind: NAMED_ID_KINDS[kind] }, namedIdCandidates(ids), call),
     )),
   ]);
-  const named = Object.fromEntries(kinds.map((kind, index) => [kind, selections[index]!])) as Record<NamedIdKind, Selection>;
+  const named = Object.fromEntries(listed.map(({ kind }, index) => [kind, selections[index]!])) as Partial<Record<NamedIdKind, Selection>>;
   return { slots: composeSlots(run.readings, named), recordAction: run.recordAction };
 }

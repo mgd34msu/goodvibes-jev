@@ -42160,11 +42160,6 @@
   ],
   "./platform/routing": [
     {
-      "name": "CHANNEL_TARGET_IDS",
-      "kind": "const",
-      "text": "CHANNEL_TARGET_IDS: readonly NamedId[]"
-    },
-    {
       "name": "CHANNEL_TASKS",
       "kind": "const",
       "text": "CHANNEL_TASKS: { readonly receipts: \"Review the history or receipts of messages already delivered\"; readonly triage: \"Troubleshoot channel problems: failed or pending deliveries, retries, errors or blockers\"; readonly setup: \"Set up, connect, configure, enable or repair a channel\"; readonly send: \"Send a message, notification or test ping through a channel\"; readonly status: \"Check whether channels are configured and ready, or anything else about channels\"; }"
@@ -42183,11 +42178,6 @@
       "name": "DOMAINS",
       "kind": "const",
       "text": "DOMAINS: { readonly software: \"Software engineering: code, systems, tooling, infrastructure\"; readonly data: \"Data work: datasets, queries, pipelines, statistics, machine learning\"; readonly mathematics: \"Mathematics: proofs, calculation, formal reasoning\"; readonly science: \"Natural or physical sciences\"; readonly law: \"Law, contracts, compliance or regulation\"; readonly medicine: \"Medicine or health\"; readonly finance: \"Finance, accounting, investing or tax\"; readonly business: \"Business operations, strategy, sales, marketing or management\"; readonly creative: \"Creative writing, art, design or entertainment\"; readonly personal: \"Personal life: email, calendar, errands, travel, household\"; readonly general: \"General knowledge or anything not covered above\"; }"
-    },
-    {
-      "name": "EXTERNAL_MEMORY_PROVIDER_IDS",
-      "kind": "const",
-      "text": "EXTERNAL_MEMORY_PROVIDER_IDS: readonly NamedId[]"
     },
     {
       "name": "ErrorClass",
@@ -42245,11 +42235,6 @@
       "name": "MAIN_CONVERSATION_ID",
       "kind": "const",
       "text": "MAIN_CONVERSATION_ID = \"main-conversation-first\""
-    },
-    {
-      "name": "MODEL_PROVIDER_IDS",
-      "kind": "const",
-      "text": "MODEL_PROVIDER_IDS: readonly NamedId[]"
     },
     {
       "name": "MODEL_TIER_OPTIONS",
@@ -42311,6 +42296,11 @@
       "text": "export declare class ModelTierStore { #private; constructor(options?: { readonly path?: string | undefined; }); known(facts: ModelFacts): TierRecord | undefined; lastReading(registryKey: string): TierRecord | undefined; read(facts: ModelFacts, options?: { readonly site?: string; readonly signal?: AbortSignal; }): Promise<TierRecord>; readMany(models: readonly ModelFacts[], options?: { readonly site?: string; readonly signal?: AbortSignal; }): Promise<ReadonlyMap<string, TierRecord>>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
+      "name": "NAMED_ID_KINDS",
+      "kind": "const",
+      "text": "NAMED_ID_KINDS: { readonly modelProvider: \"model provider\"; readonly memoryProvider: \"external memory provider\"; readonly channelTarget: \"messaging channel or notification target\"; }"
+    },
+    {
       "name": "NamedId",
       "kind": "interface",
       "required": [
@@ -42323,6 +42313,11 @@
       "name": "NamedIdKind",
       "kind": "type",
       "text": "export type NamedIdKind = keyof typeof NAMED_ID_KINDS;"
+    },
+    {
+      "name": "NamedIdSources",
+      "kind": "type",
+      "text": "export type NamedIdSources = { readonly [K in NamedIdKind]?: (() => readonly NamedId[]) | undefined; };"
     },
     {
       "name": "NoRouteError",
@@ -42392,6 +42387,16 @@
         "sampleModels"
       ],
       "text": "export interface ProviderFacts { readonly id: string; readonly name: string; readonly api?: string | undefined; readonly doc?: string | undefined; readonly envVars: readonly string[]; readonly sampleModels: readonly string[]; }"
+    },
+    {
+      "name": "ProviderListing",
+      "kind": "interface",
+      "required": [
+        "getConfiguredProviderIds",
+        "getRawCatalogModels",
+        "listProviders"
+      ],
+      "text": "export interface ProviderListing { listProviders(): readonly Pick<LLMProvider, 'name'>[]; getConfiguredProviderIds(): readonly string[]; getRawCatalogModels(): readonly Pick<CatalogModel, 'providerId' | 'provider'>[]; } ;; via CatalogModel = export interface CatalogModel { id: string; name: string; family?: string | undefined; provider: string; providerId: string; providerEnvVars: string[]; pricing: CatalogModelPricing | null; tier: 'free' | 'paid' | 'subscription'; contextWindow?: number | undefined; maxOutputTokens?: number | undefined; reasoning?: boolean | undefined; reasoningOptions?: ModelsDevReasoningOption[] | undefined; inputModalities?: readonly string[] | undefined; } ;; LLMProvider = export interface LLMProvider { readonly name: string; readonly models: string[]; readonly batch?: ProviderBatchAdapter | undefined; readonly capabilities?: Partial<ProviderCapability> | undefined; readonly modelSource?: ProviderModelSource | undefined; readonly credentialAuthority?: 'resolver' | 'anonymous' | 'subscription' | 'oauth' | undefined; chat(params: ChatRequest): Promise<ChatResponse>; embed?(request: ProviderEmbeddingRequest): Promise<ProviderEmbeddingResult>; describeRuntime?(deps: ProviderRuntimeMetadataDeps): ProviderRuntimeMetadata | Promise<ProviderRuntimeMetadata>; isConfigured?(): boolean; describeAuthState?(): ProviderAuthState; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "REASONING_FAMILY_ROUTES",
@@ -42606,7 +42611,7 @@
     {
       "name": "TaskRouteDeps",
       "kind": "interface",
-      "text": "export interface TaskRouteDeps { workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface TaskRouteDeps { namedIds?: NamedIdSources | undefined; workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "TaskRouteDraft",
@@ -42707,9 +42712,14 @@
       "text": "catalogProviderAccess: import(\"@goodvibes-jev/judgment\").Battery<{ readonly local: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly plan: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
     },
     {
+      "name": "channelTargetNamedIds",
+      "kind": "function",
+      "text": "export declare function channelTargetNamedIds(plugins: { listDescriptors(): readonly Pick<ChannelAdapterDescriptor, 'surface' | 'displayName'>[]; }): NamedId[]; ;; via ChannelAdapterDescriptor = export interface ChannelAdapterDescriptor { id: string; surface: ChannelSurface; displayName: string; capabilities: ChannelCapability[]; setupVersion?: number | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
       "name": "composeSlots",
       "kind": "function",
-      "text": "export declare function composeSlots(readings: SlotReadings, named: Readonly<Record<NamedIdKind, Selection>>): TaskRouteSlots; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; } ;; SlotReadings = type SlotReadings = Awaited<ReturnType<typeof taskRouteSlots.run>>['readings'];"
+      "text": "export declare function composeSlots(readings: SlotReadings, named: Readonly<Partial<Record<NamedIdKind, Selection>>>): TaskRouteSlots; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; } ;; SlotReadings = type SlotReadings = Awaited<ReturnType<typeof taskRouteSlots.run>>['readings'];"
     },
     {
       "name": "composeTier",
@@ -42802,6 +42812,11 @@
       "text": "modelIdentity: import(\"@goodvibes-jev/judgment\").Selector"
     },
     {
+      "name": "modelProviderNamedIds",
+      "kind": "function",
+      "text": "export declare function modelProviderNamedIds(registry: ProviderListing): NamedId[];"
+    },
+    {
       "name": "modelTier",
       "kind": "const",
       "text": "modelTier: import(\"@goodvibes-jev/judgment\").Battery<{ readonly frontier: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly small: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
@@ -42869,7 +42884,7 @@
     {
       "name": "readSlots",
       "kind": "function",
-      "text": "export declare function readSlots(port: JudgmentPort, request: string, options: { readonly site: string; readonly signal?: AbortSignal; }): Promise<SlotRun>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function readSlots(port: JudgmentPort, request: string, options: { readonly site: string; readonly signal?: AbortSignal; readonly namedIds?: NamedIdSources | undefined; }): Promise<SlotRun>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "readStopReason",

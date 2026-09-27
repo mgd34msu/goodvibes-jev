@@ -2,6 +2,7 @@
  * Shapes shared by the task route catalog, the planner and the route tool.
  * The candidate and plan shapes match the agent's planAgentTaskRoute output.
  */
+import type { NamedIdSources } from './named-ids.js';
 
 export interface TaskRouteArgs {
   readonly query?: unknown;
@@ -96,6 +97,14 @@ export interface TaskRouteEntry {
  * without them gets empty match lists.
  */
 export interface TaskRouteDeps {
+  /**
+   * The live listings named ids are read against (named-ids.ts): model
+   * providers from the provider registry (`modelProviderNamedIds`), channel
+   * targets from the channel plugin registry (`channelTargetNamedIds`), and
+   * the external memory providers the product recognizes. A kind with no
+   * listing gets no reading and its generic route string.
+   */
+  namedIds?: NamedIdSources | undefined;
   workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
   modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>;
 }

@@ -3,7 +3,7 @@
  * handle a user task, read by Jev.
  */
 export { MAIN_CONVERSATION_ID, TASK_ROUTES, mainConversationRoute, taskRouteEntry } from './catalog.js';
-export { CHANNEL_TARGET_IDS, EXTERNAL_MEMORY_PROVIDER_IDS, MODEL_PROVIDER_IDS, taskRouteNamedId, type NamedId, type NamedIdKind } from './named-ids.js';
+export { NAMED_ID_KINDS, channelTargetNamedIds, modelProviderNamedIds, taskRouteNamedId, type NamedId, type NamedIdKind, type NamedIdSources, type ProviderListing } from './named-ids.js';
 export { planTaskRoute, readLimit, TASK_ROUTE_SITE } from './planner.js';
 export { routeCandidates, taskRoutePick } from './route-selector.js';
 export { CHANNEL_TASKS, PERSONAL_OPS_LANES, POLICY_TARGETS, composeSlots, readSlots, taskRouteSlots, type SlotRun } from './slots.js';

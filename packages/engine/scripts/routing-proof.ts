@@ -28,6 +28,7 @@ import { BenchmarkStore, compositeScore } from '../sdk/src/platform/providers/mo
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.ts';
 import { createRoutePlanner, type RoutePlanRequest } from '../sdk/src/platform/routing/route-planner.ts';
 import { planTaskRoute } from '../sdk/src/platform/routing/task-routes/planner.ts';
+import { modelProviderNamedIds } from '../sdk/src/platform/routing/task-routes/named-ids.ts';
 import { readUserFacingErrorLine } from '../sdk/src/platform/routing/user-error.ts';
 
 type RegistryOptions = ConstructorParameters<typeof ProviderRegistry>[0];
@@ -105,13 +106,13 @@ for (const request of REQUESTS) {
   }
 }
 
-console.log('Task routes (the hoisted agent route planner):');
-for (const query of ['take a screenshot of the screen', 'remind me tomorrow to stretch']) {
-  const plan = await planTaskRoute({ query });
+console.log('Task routes (the hoisted agent route planner; model providers named from the live provider registry):');
+const taskDeps = { namedIds: { modelProvider: () => modelProviderNamedIds(registry) } };
+for (const query of ['take a screenshot of the screen', 'remind me tomorrow to stretch', 'is my ZenMux API key still working?']) {
+  const plan = await planTaskRoute({ query }, taskDeps);
   if (plan.status !== 'ready') { failures += 1; continue; }
-  console.log(`  "${query}" -> ${plan.preferred.id} (${plan.preferred.confidence}), confirmation ${plan.preferred.requiresConfirmation ? 'required' : 'not required'}`);
+  console.log(`  "${query}" -> ${plan.preferred.id} (${plan.preferred.confidence}), confirmation ${plan.preferred.requiresConfirmation ? 'required' : 'not required'}; ${plan.preferred.modelRoute}`);
 }
-
 console.log('\nUser error lines (the hoisted TUI formatter):');
 for (const error of [new Error('This model\'s maximum context length is 128000 tokens. However, your messages resulted in 131072 tokens.'), Object.assign(new Error('Your subscription session has ended. Sign in again.'), { status: 401 })]) {
   console.log(`  ${await readUserFacingErrorLine(error, 'routing.proof.user-error')}`);

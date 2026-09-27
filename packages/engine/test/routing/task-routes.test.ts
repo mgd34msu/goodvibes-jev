@@ -4,7 +4,9 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry } from '../../sdk/src/platform/tools/registry.js';
 import {
+  channelTargetNamedIds,
   createTaskRouteTool,
+  modelProviderNamedIds,
   normalizeRouteAction,
   planTaskRoute,
   registerTaskRouteTool,
@@ -69,7 +71,20 @@ afterEach(() => {
   installJudgmentPort(previous);
 });
 
-async function plan(query: string, script: Script, extra: { includeParameters?: boolean; limit?: unknown } = {}, deps: TaskRouteDeps = {}): Promise<ReadyPlan> {
+/** Listings shaped as the live sources produce them (a provider registry, the channel adapters, a product's memory providers). */
+const LISTINGS: NonNullable<TaskRouteDeps['namedIds']> = {
+  modelProvider: () => modelProviderNamedIds({
+    listProviders: () => [{ name: 'openrouter' }, { name: 'ollama' }],
+    getConfiguredProviderIds: () => ['openrouter', 'zenmux'],
+    getRawCatalogModels: () => [{ providerId: 'openrouter', provider: 'OpenRouter' }, { providerId: 'zenmux', provider: 'ZenMux' }],
+  }),
+  memoryProvider: () => [{ id: 'supermemory', names: ['Supermemory'] }, { id: 'mem0', names: ['Mem0'] }],
+  channelTarget: () => channelTargetNamedIds({
+    listDescriptors: () => [{ surface: 'slack', displayName: 'Slack' }, { surface: 'discord', displayName: 'Discord' }, { surface: 'telegram', displayName: 'Telegram' }],
+  }),
+};
+
+async function plan(query: string, script: Script, extra: { includeParameters?: boolean; limit?: unknown } = {}, deps: TaskRouteDeps = { namedIds: LISTINGS }): Promise<ReadyPlan> {
   installJudgmentPort(scriptedPort(script).port);
   const result = await planTaskRoute({ query, ...extra }, deps);
   if (result.status !== 'ready') throw new Error(`expected a ready plan, got ${result.status}`);
@@ -83,14 +98,33 @@ describe('judgment port', () => {
     await expect(tool.execute({ action: 'plan', query: 'check daemon health' })).rejects.toThrow(JudgmentPortMissingError);
   });
 
-  test('one planning pass asks the selection, the slots and the three named ids together', async () => {
+  test('one planning pass asks the selection, the slots and one named id per listing together', async () => {
     const { port, requests } = scriptedPort({ pick: 'host-runtime-diagnostics' });
     installJudgmentPort(port);
-    await planTaskRoute({ query: 'check daemon health' });
+    await planTaskRoute({ query: 'check daemon health' }, { namedIds: LISTINGS });
     expect(requests).toHaveLength(5);
     const pick = requests.find((request) => Object.keys(request.questions).length === TASK_ROUTES.length + 1);
     expect(pick).toBeDefined();
     expect(requests.every((request) => request.context?.site === 'routing.task-route.plan')).toBe(true);
+  });
+
+  test('named-id candidates are the live listings, and a kind with no listing asks nothing', async () => {
+    const { port, requests } = scriptedPort({ pick: 'host-runtime-diagnostics' });
+    installJudgmentPort(port);
+    await planTaskRoute({ query: 'connect my ZenMux key' }, { namedIds: { modelProvider: LISTINGS.modelProvider } });
+    expect(requests).toHaveLength(3);
+    const providerRequest = requests.find((request) => (request.state as unknown as SelectionState).context?.kind === 'model provider')!;
+    const offered = (providerRequest.state as { candidates: { id: string; content: { names: string[] } }[] }).candidates;
+    // A configured provider no builtin list names is offered, under its catalog name.
+    expect(offered.map((candidate) => candidate.id)).toEqual(['ollama', 'openrouter', 'zenmux']);
+    expect(offered.find((candidate) => candidate.id === 'zenmux')!.content.names).toEqual(['ZenMux', 'zenmux']);
+  });
+
+  test('with no listings at all only the selection and the slots are asked', async () => {
+    const { port, requests } = scriptedPort({ pick: 'host-runtime-diagnostics' });
+    installJudgmentPort(port);
+    await planTaskRoute({ query: 'check daemon health' });
+    expect(requests).toHaveLength(2);
   });
 
   test('the registry holds every task route decision', () => {

@@ -138,7 +138,7 @@ export async function planTaskRoute(
 
   const [selection, slotRun, workspaceMatches, harnessModeMatches] = await Promise.all([
     taskRoutePick.select(port, { request: asked }, routeCandidates(), call),
-    readSlots(port, asked, call),
+    readSlots(port, asked, { ...call, namedIds: deps.namedIds }),
     catalogMatches(deps.workspaceMatches, request, matchLimit),
     catalogMatches(deps.modeMatches, request, matchLimit),
   ]);
