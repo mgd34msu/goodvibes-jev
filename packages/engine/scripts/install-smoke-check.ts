@@ -98,6 +98,7 @@ const transportRealtimePackage = await import('${TRANSPORT_REALTIME_PACKAGE_NAME
 const operatorSdkPackage = await import('${OPERATOR_SDK_PACKAGE_NAME}');
 const peerSdkPackage = await import('${PEER_SDK_PACKAGE_NAME}');
 const judgmentDecisions = await import('${JUDGMENT_PACKAGE_NAME}/decisions');
+const judgmentRoot = await import('${JUDGMENT_PACKAGE_NAME}');
 const engineErrors = await import('${ERRORS_PACKAGE_NAME}');
 
 const sdk = root.createGoodVibesSdk({ baseUrl: 'http://127.0.0.1:3210' });
@@ -142,6 +143,7 @@ if (typeof transportRealtimePackage.createRemoteRuntimeEvents !== 'function') th
 if (typeof operatorSdkPackage.createOperatorSdk !== 'function') throw new Error('operator-sdk package export missing');
 if (typeof peerSdkPackage.createPeerSdk !== 'function') throw new Error('peer-sdk package export missing');
 if (typeof judgmentDecisions.defineBattery !== 'function') throw new Error('judgment decisions export missing');
+if (typeof judgmentRoot.createSystemOnePort !== 'function') throw new Error('judgment root export missing');
 if (typeof engineErrors.readFailure !== 'function' || typeof engineErrors.installJudgmentPort !== 'function') throw new Error('engine errors judgment reading export missing');
 if (require.resolve('${JUDGMENT_PACKAGE_NAME}/package.json').includes(join('${ENGINE_PACKAGE_NAME}', 'node_modules'))) throw new Error('judgment installed nested under the engine instead of beside it');
 const packageRoot = dirname(require.resolve('${ENGINE_PACKAGE_NAME}/package.json'));

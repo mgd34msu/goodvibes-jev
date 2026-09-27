@@ -1,4 +1,17 @@
-import { Database } from 'bun:sqlite';
+import { createRequire } from 'node:module';
+import type { Database } from 'bun:sqlite';
+
+/**
+ * bun:sqlite is a Bun-only builtin, and a static import of it makes the whole
+ * package root unloadable under Node, whose ESM loader rejects the `bun:`
+ * scheme at link time. Engine code that runs under Node imports this root for
+ * batteries and patterns, so the constructor is resolved only when a log is
+ * opened, which stays a Bun-only path.
+ */
+let databaseCtor: typeof Database | null = null;
+function bunDatabase(): typeof Database {
+  return (databaseCtor ??= (createRequire(import.meta.url)('bun:sqlite') as typeof import('bun:sqlite')).Database);
+}
 
 /*
  * The decision log's storage layout: its one table, the columns, and opening
@@ -63,7 +76,8 @@ export const rowsOf = <T>(db: Database, sql: string, params: Params = {}): T[] =
 
 /** Opens the log file. A file with no tables yet is new and gets the schema; any other file must carry this schema version. */
 export function openLog(path: string): Database {
-  const db = new Database(path, { create: true, strict: true });
+  const Ctor = bunDatabase();
+  const db = new Ctor(path, { create: true, strict: true });
   db.exec('PRAGMA journal_mode = WAL;');
   if (rowsOf(db, 'SELECT 1 FROM sqlite_master').length === 0) {
     db.exec(SCHEMA);

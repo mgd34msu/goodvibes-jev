@@ -12,7 +12,7 @@ npm install @goodvibes-jev/judgment
 
 ## Entry points
 
-- `@goodvibes-jev/judgment`: the full foundation. It includes the SQLite decision log, which uses `bun:sqlite`, so this entry point runs under Bun.
+- `@goodvibes-jev/judgment`: the full foundation. It loads under Node and Bun; the SQLite decision log (`SqliteDecisionLog`) opens its database with `bun:sqlite`, so logging to SQLite runs under Bun.
 - `@goodvibes-jev/judgment/decisions`: the runtime-neutral part (batteries, readings, bands and the port's types) with no transport, decision log, Node or Bun module. Code that runs in browsers and Workers imports this subpath.
 - `@goodvibes-jev/judgment/testing`: a fake port and answer builders for tests that must not call a model.
 
