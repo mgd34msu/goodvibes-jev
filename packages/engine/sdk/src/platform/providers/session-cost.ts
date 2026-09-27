@@ -12,11 +12,15 @@
 //      setModelPricingResolver()/wireCostPricing(): manual `pricing.modelPrices`
 //      -> registration -> provider-served -> catalog -> honest unknown.
 //   3. The live model catalog, when a source has been wired via
-//      setPricingSource(), exact id match, then prefix/substring.
+//      setPricingSource(): an exact id match, else the catalog entry Jev read
+//      as the same model (routing.model-identity, see routing/model-identity.ts).
 //   4. STATIC_FALLBACK_PRICING, a small hand-maintained safety net for common
 //      frontier models, used when nothing above has a source wired (e.g. tests)
 //      or nothing above matched (catalog not yet loaded, or a model this net
-//      covers that the catalog happens to miss).
+//      covers that the catalog happens to miss): an exact key, else the key
+//      Jev read as the same model.
+//   An identity that has not been read yet is requested and the model is
+//   unpriced until the reading lands; nothing is matched by a guess.
 //   5. Unpriced: the model is genuinely unknown to every source above. This is
 //      reported explicitly via `priced: false` so consumers can render an
 //      honest "unpriced" state instead of a silent $0.
@@ -26,8 +30,9 @@
 // rather than billing cache traffic at the full input rate.
 // ---------------------------------------------------------------------------
 
-import { computeUsageCostUsd, type ResolvedModelPricing } from './model-pricing.js';
+import { cacheRatiosFromCatalog, computeUsageCostUsd, setProviderCacheRatios, type ResolvedModelPricing } from './model-pricing.js';
 import type { CatalogModel } from './model-catalog.js';
+import { ModelIdentityResolver, type IdentityCandidate } from '../routing/model-identity.js';
 
 export interface ModelPricing {
   input: number;
@@ -121,26 +126,54 @@ export function wireCostPricing(registry: {
 }): void {
   setPricingSource(() => registry.getRawCatalogModels());
   setModelPricingResolver((modelId) => registry.resolveModelPricing(modelId));
+  let ratiosFrom: readonly CatalogModel[] | undefined;
+  let ratios: ReturnType<typeof cacheRatiosFromCatalog> = () => undefined;
+  setProviderCacheRatios((provider) => {
+    const models = registry.getRawCatalogModels();
+    if (models !== ratiosFrom) {
+      ratiosFrom = models;
+      ratios = cacheRatiosFromCatalog(models);
+    }
+    return ratios(provider);
+  });
+}
+
+let catalogCandidatesFrom: readonly CatalogModel[] | undefined;
+let catalogCandidates: readonly IdentityCandidate[] = [];
+
+/** The live catalog as identity candidates, rebuilt only when the catalog array changes. */
+function currentCatalogCandidates(): readonly IdentityCandidate[] {
+  const models = pricingSource?.() ?? [];
+  if (models !== catalogCandidatesFrom) {
+    catalogCandidatesFrom = models;
+    catalogCandidates = models.map((m) => ({ key: m.id, id: m.id, name: m.name, provider: m.providerId }));
+  }
+  return catalogCandidates;
+}
+
+const STATIC_CANDIDATES: readonly IdentityCandidate[] = Object.keys(STATIC_FALLBACK_PRICING).map((key) => ({ key, id: key }));
+
+const catalogIdentity = new ModelIdentityResolver({ universe: 'catalog', candidates: currentCatalogCandidates });
+const staticIdentity = new ModelIdentityResolver({ universe: 'static-pricing', candidates: () => STATIC_CANDIDATES });
+
+function catalogPricing(model: CatalogModel): ModelPricing | null {
+  return model.tier === 'free' ? { input: 0, output: 0 } : model.pricing;
 }
 
 function findInCatalog(modelId: string, models: readonly CatalogModel[]): ModelPricing | null {
   const exact = models.find((m) => m.id === modelId);
-  if (exact) return exact.tier === 'free' ? { input: 0, output: 0 } : exact.pricing;
-  for (const m of models) {
-    if (modelId.startsWith(m.id) || modelId.includes(m.id)) {
-      return m.tier === 'free' ? { input: 0, output: 0 } : m.pricing;
-    }
-  }
-  return null;
+  if (exact) return catalogPricing(exact);
+  if (models.length === 0) return null;
+  const same = catalogIdentity.lookup({ id: modelId }, 'providers.session-cost.catalog-identity');
+  const match = same === null ? undefined : models.find((m) => m.id === same);
+  return match ? catalogPricing(match) : null;
 }
 
 function findInStaticFallback(modelId: string): ModelPricing | null {
   const exact = STATIC_FALLBACK_PRICING[modelId];
   if (exact) return exact;
-  for (const [key, pricing] of Object.entries(STATIC_FALLBACK_PRICING)) {
-    if (modelId.startsWith(key) || modelId.includes(key)) return pricing;
-  }
-  return null;
+  const same = staticIdentity.lookup({ id: modelId }, 'providers.session-cost.static-identity');
+  return same === null ? null : STATIC_FALLBACK_PRICING[same] ?? null;
 }
 
 /**

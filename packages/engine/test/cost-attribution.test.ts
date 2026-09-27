@@ -12,23 +12,41 @@ import {
   type ResolvePricing,
 } from '../sdk/src/platform/runtime/cost/attribution.ts';
 import { QuotaWindowTracker } from '../sdk/src/platform/runtime/cost/quota-window.ts';
+import { cacheRatiosFromCatalog, setProviderCacheRatios } from '../sdk/src/platform/providers/model-pricing.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
 import { registerCostGatewayMethods } from '../sdk/src/platform/control-plane/routes/cost.ts';
 
 const ctx = { context: { admin: true } } as const;
-// $3/1M input, $15/1M output, an Anthropic-shaped model so cache multipliers apply.
+// $3/1M input, $15/1M output.
 const anthropicPricing: ResolvePricing = (model) => (model === 'claude-x' ? { input: 3, output: 15 } : null);
 
 describe('CostAttributionService', () => {
-  test('prices a record cache-aware (anthropic cache-read 0.1x, cache-write 1.25x of input)', () => {
+  test('prices a record cache-aware with the provider\'s published cache ratios', () => {
+    // The provider's catalog lists cache-read at 0.1x and cache-write at 1.25x its input rate.
+    setProviderCacheRatios(cacheRatiosFromCatalog([
+      { id: 'other', name: 'Other', provider: 'Anthropic', providerId: 'anthropic', providerEnvVars: [], tier: 'paid', pricing: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+    ]));
+    try {
+      const svc = new CostAttributionService({ resolvePricing: anthropicPricing });
+      const { costUsd, state } = svc.priceRecord({
+        at: 0, provider: 'anthropic', model: 'claude-x',
+        inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000,
+      });
+      expect(state).toBe('priced');
+      // 3 (input) + 0.3 (cacheRead 0.1x3) + 3.75 (cacheWrite 1.25x3) + 15 (output) = 22.05
+      expect(costUsd).toBeCloseTo(22.05, 6);
+    } finally {
+      setProviderCacheRatios(null);
+    }
+  });
+
+  test('a provider that publishes no cache ratio prices cache tokens at the full input rate', () => {
     const svc = new CostAttributionService({ resolvePricing: anthropicPricing });
-    const { costUsd, state } = svc.priceRecord({
+    const { costUsd } = svc.priceRecord({
       at: 0, provider: 'anthropic', model: 'claude-x',
-      inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000,
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000,
     });
-    expect(state).toBe('priced');
-    // 3 (input) + 0.3 (cacheRead 0.1x3) + 3.75 (cacheWrite 1.25x3) + 15 (output) = 22.05
-    expect(costUsd).toBeCloseTo(22.05, 6);
+    expect(costUsd).toBeCloseTo(6, 6);
   });
 
   test('an unknown model is honestly unpriced (null cost), never a fabricated amount', () => {

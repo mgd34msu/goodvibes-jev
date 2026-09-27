@@ -35,12 +35,11 @@ import {
   type NativeChatResult,
   type NativeFetch,
   normalizeProviderError,
-  shouldFallbackFromNative,
-  shouldFallbackFromResponses,
   toNativeChatInput,
   toRecord,
 } from './lm-studio-helpers.js';
 import { parseToolCallArguments } from './tool-formats.js';
+import { shouldUseOtherApi } from './provider-error.js';
 import { mapLmStudioStopReason } from './stop-reason-maps.js';
 
 export interface LMStudioProviderOptions extends OpenAICompatOptions {
@@ -88,7 +87,7 @@ export class LMStudioProvider implements LLMProvider {
         try {
           return await this.chatViaNativeChat(params, model, nativeContext);
         } catch (err: unknown) {
-          if (!shouldFallbackFromNative(err)) {
+          if (!(await shouldUseOtherApi(err, 'providers.lm-studio.native-chat'))) {
             throw normalizeProviderError(err, this.name, 'chat', 'request');
           }
         }
@@ -97,7 +96,7 @@ export class LMStudioProvider implements LLMProvider {
       try {
         return await this.chatViaResponses(params, model);
       } catch (err: unknown) {
-        if (!shouldFallbackFromResponses(err)) {
+        if (!(await shouldUseOtherApi(err, 'providers.lm-studio.responses'))) {
           throw normalizeProviderError(err, this.name, 'chat', 'request');
         }
       }

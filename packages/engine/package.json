@@ -848,6 +848,11 @@
       "types": "./sdk/dist/platform/rewind/index.d.ts",
       "import": "./sdk/dist/platform/rewind/index.js"
     },
+    "./sdk/platform/routing": {
+      "bun": "./sdk/src/platform/routing/index.ts",
+      "types": "./sdk/dist/platform/routing/index.d.ts",
+      "import": "./sdk/dist/platform/routing/index.js"
+    },
     "./sdk/platform/runtime": {
       "bun": "./sdk/src/platform/runtime/index.ts",
       "types": "./sdk/dist/platform/runtime/index.d.ts",

@@ -75,7 +75,7 @@ export interface ProviderRegistryOptions {
   readonly capabilityRegistry: ProviderCapabilityRegistry;
   readonly cacheHitTracker: CacheHitTracker;
   readonly favoritesStore: Pick<FavoritesStore, 'load'>;
-  readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getTopBenchmarkModelIds'>;
+  readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds'>;
   readonly modelLimitsService?: ModelLimitsService | undefined;
   readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
   readonly runtimeBus?: RuntimeEventBus | null | undefined;

@@ -14,6 +14,7 @@ import {
   type LiveModelDiscoveryResult,
 } from './live-model-discovery.js';
 import { applyAnthropicReasoning, isAnthropicThinkingEnabled } from './anthropic-stream.js';
+import { prepareReasoningEffort } from './reasoning-effort-families.js';
 import { describeReasoningRejection } from './reasoning-effort.js';
 import { ProviderError } from '../types/errors.js';
 import { withRetry, type RetryConfig } from '../utils/retry.js';
@@ -250,6 +251,7 @@ export class AnthropicCompatProvider implements LLMProvider {
         body['tools'] = toAnthropicTools(tools);
       }
 
+      await prepareReasoningEffort(reasoningEffort, { modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-compat.reasoning-family');
       const resolvedEffort = applyAnthropicReasoning(
         body,
         { model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
@@ -293,7 +295,7 @@ export class AnthropicCompatProvider implements LLMProvider {
         const text = await res.text().catch(() => 'unknown error');
         throw new ProviderError(
           `AnthropicCompat(${this.name}) API error ${res.status}: ${text}`
-            + (describeReasoningRejection(res.status, text, resolvedEffort.value) ?? ''),
+            + ((await describeReasoningRejection(res.status, text, resolvedEffort.value, 'providers.anthropic-compat.reasoning-rejection')) ?? ''),
           {
             statusCode: res.status,
             provider: this.name,

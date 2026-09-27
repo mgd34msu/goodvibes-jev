@@ -2,8 +2,6 @@ import type OpenAI from 'openai';
 import { createOpenAIClient } from './optional-openai.js';
 import { ProviderError } from '../types/errors.js';
 import type { ToolCall, ToolDefinition } from '../types/tools.js';
-import { summarizeError } from '../utils/error-display.js';
-import { getErrorStatus } from './provider-error.js';
 import { resolveOpenAIClientApiKey } from './openai-compat.js';
 export { normalizeProviderError } from './provider-error.js';
 import type {
@@ -328,18 +326,4 @@ export function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
-export function shouldFallbackFromNative(err: unknown): boolean {
-  const status = getErrorStatus(err);
-  const message = summarizeError(err);
-  if (status === 404 || status === 405 || status === 501) return true;
-  if (status === 400 && /previous_response_id|response_id/i.test(message)) return true;
-  return /not implemented|unsupported|unknown endpoint/i.test(message);
-}
-
-export function shouldFallbackFromResponses(err: unknown): boolean {
-  const status = getErrorStatus(err);
-  const message = summarizeError(err);
-  if (status === 404 || status === 405 || status === 501) return true;
-  return /not implemented|unsupported|unknown endpoint/i.test(message);
-}
 

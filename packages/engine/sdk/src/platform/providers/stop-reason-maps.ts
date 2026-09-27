@@ -1,4 +1,5 @@
 import type { ChatStopReason } from './interface.js';
+import { readStopReason } from '../routing/provider-readings.js';
 
 /** Maps Anthropic raw stop_reason values to the canonical ChatStopReason vocab. */
 export const ANTHROPIC_STOP_REASON_MAP: Readonly<Record<string, ChatStopReason>> = {
@@ -86,16 +87,35 @@ export function mapLlamaCppStopReason(
 }
 
 /**
- * Maps Ollama done_reason values to the canonical ChatStopReason vocab.
- * Ollama uses its own done_reason field ('stop', 'length', 'tool-calls', 'load', etc.).
+ * Ollama's documented done_reason values, an exact wire table. Its spelling
+ * of the tool-call value has varied across versions, so both spellings are
+ * listed; a value outside the table is read by routing.stop-reason.
  */
-export function mapOllamaStopReason(
+export const OLLAMA_DONE_REASON_MAP: Readonly<Record<string, ChatStopReason>> = {
+  stop: 'completed',
+  load: 'completed',
+  unload: 'completed',
+  length: 'max_tokens',
+  max_tokens: 'max_tokens',
+  tool_calls: 'tool_call',
+  'tool-calls': 'tool_call',
+};
+
+/**
+ * Maps an Ollama done_reason to the canonical ChatStopReason vocab: a call to
+ * a tool decides on its own, then the exact table, then a reading of the
+ * unfamiliar value (once per value per process).
+ */
+export async function readOllamaStopReason(
   doneReason: string,
   hasToolCalls: boolean,
-): ChatStopReason {
-  if (hasToolCalls || /tool/i.test(doneReason)) return 'tool_call';
-  if (/length|max_tokens/i.test(doneReason)) return 'max_tokens';
-  return 'completed';
+  site: string,
+): Promise<ChatStopReason> {
+  if (hasToolCalls) return 'tool_call';
+  const known = OLLAMA_DONE_REASON_MAP[doneReason];
+  if (known) return known;
+  if (doneReason.trim().length === 0) return 'completed';
+  return readStopReason(doneReason, site);
 }
 
 /**

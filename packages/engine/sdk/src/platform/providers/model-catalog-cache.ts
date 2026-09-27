@@ -6,12 +6,14 @@ import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import type { ModelsDevReasoningOption } from './reasoning-effort.js';
+import { ProviderAccessReadings, type ProviderAccess, type ProviderFacts } from '../routing/catalog-access.js';
 
 interface CatalogProviderShape {
   id: string;
   name: string;
   env?: string[] | undefined;
   api?: string | undefined;
+  doc?: string | undefined;
   models?: Record<string, ModelsDevModel> | undefined;
 }
 
@@ -66,43 +68,59 @@ const CATALOG_FETCH_TIMEOUT_MS = 30_000;
  * list, which decides `multimodal` per model instead of by vendor. Version-3
  * caches predate the field; left in place they would report every model as
  * text-only for a day, so they are discarded and refetched.
+ *
+ * Version 5: `tier` comes from each provider's access reading
+ * (routing.catalog-provider-access) instead of hardcoded provider-id lists.
+ * Version-4 caches carry tiers the lists decided, so they are refetched.
  */
-const CATALOG_CACHE_VERSION = 4;
+const CATALOG_CACHE_VERSION = 5;
 
 export function getCatalogCachePath(cacheDir: string): string {
   return join(cacheDir, 'model-catalog.json');
+}
+
+/** Where the provider access readings are remembered, beside the catalog cache. */
+export function getProviderAccessPath(cacheDir: string): string {
+  return join(cacheDir, 'provider-access.json');
 }
 
 export function getCatalogTmpPath(cacheDir: string): string {
   return `${getCatalogCachePath(cacheDir)}.tmp`;
 }
 
-function categorizeProvider(providerId: string): 'subscription' | 'shutdown' | 'normal' {
-  const subscriptionProviders = new Set([
-    'github-copilot',
-    'github-models',
-    'v0',
-    'vercel',
-    'gitlab',
-    'kimi-for-coding',
-    'llama',
-    'lmstudio',
-  ]);
-  const shutdownProviders = new Set(['iflow', 'iflowcn']);
-  if (providerId.includes('coding-plan')) return 'subscription';
-  if (subscriptionProviders.has(providerId)) return 'subscription';
-  if (shutdownProviders.has(providerId)) return 'shutdown';
-  return 'normal';
+/**
+ * The catalog tier of one model from its provider's access reading
+ * (routing.catalog-provider-access) and its listed cost: a plan or a local
+ * server is not metered ('subscription': the listed per-token price is not
+ * what the user pays), a metered model listed at zero input and output cost
+ * is free, and everything else, including a provider whose access reading
+ * did not settle, is paid. The zero test is arithmetic; the access is judged.
+ */
+function catalogTier(access: ProviderAccess | undefined, cost: ModelsDevModelCost | undefined): 'free' | 'paid' | 'subscription' {
+  if (access === 'subscription' || access === 'local') return 'subscription';
+  if (access === 'metered' && cost?.input === 0 && cost?.output === 0) return 'free';
+  return 'paid';
 }
 
-function isFreeModel(
-  modelId: string,
-  cost: ModelsDevModelCost | undefined,
-  providerCategory: 'subscription' | 'shutdown' | 'normal',
-): boolean {
-  if (providerCategory === 'subscription') return false;
-  if (modelId.includes('coding-plan')) return false;
-  return (cost?.input ?? -1) === 0 && (cost?.output ?? -1) === 0;
+/** How many model names a provider's access reading sees for context. */
+const ACCESS_SAMPLE_MODELS = 5;
+
+/** The published facts the access reading needs, for every well-formed provider in the feed. */
+function providerFactsOf(json: ModelsDevResponse): ProviderFacts[] {
+  const facts: ProviderFacts[] = [];
+  for (const [providerId, providerData] of Object.entries(json)) {
+    if (!providerData || typeof providerData !== 'object' || Array.isArray(providerData)) continue;
+    const models = providerData.models && typeof providerData.models === 'object' && !Array.isArray(providerData.models) ? Object.entries(providerData.models) : [];
+    facts.push({
+      id: providerId,
+      name: typeof providerData.name === 'string' && providerData.name.trim() ? providerData.name : providerId,
+      ...(typeof providerData.api === 'string' ? { api: providerData.api } : {}),
+      ...(typeof providerData.doc === 'string' ? { doc: providerData.doc } : {}),
+      envVars: getStringArray(providerData.env),
+      sampleModels: models.slice(0, ACCESS_SAMPLE_MODELS).map(([key, model]) => (typeof model?.name === 'string' ? model.name : key)),
+    });
+  }
+  return facts;
 }
 
 function getStringArray(value: unknown): string[] {
@@ -139,7 +157,7 @@ function getReasoningOptions(value: unknown): ModelsDevReasoningOption[] | undef
   return options;
 }
 
-function transformModelsDevResponse(json: ModelsDevResponse): CatalogModel[] {
+function transformModelsDevResponse(json: ModelsDevResponse, access: ReadonlyMap<string, ProviderAccess | undefined>): CatalogModel[] {
   const models: CatalogModel[] = [];
   let skippedProviders = 0;
   let skippedProviderModelLists = 0;
@@ -151,9 +169,7 @@ function transformModelsDevResponse(json: ModelsDevResponse): CatalogModel[] {
       continue;
     }
 
-    const providerCategory = categorizeProvider(providerId);
-    if (providerCategory === 'shutdown') continue;
-
+    const providerAccess = access.get(providerId);
     const providerName = typeof providerData.name === 'string' && providerData.name.trim()
       ? providerData.name
       : providerId;
@@ -195,14 +211,7 @@ function transformModelsDevResponse(json: ModelsDevResponse): CatalogModel[] {
         : null;
       const contextWindow = typeof limit?.context === 'number' && limit.context > 0 ? limit.context : undefined;
 
-      let tier: 'free' | 'paid' | 'subscription';
-      if (providerCategory === 'subscription') {
-        tier = 'subscription';
-      } else if (isFreeModel(modelId, cost, providerCategory)) {
-        tier = 'free';
-      } else {
-        tier = 'paid';
-      }
+      const tier = catalogTier(providerAccess, cost);
 
       const maxOutputTokens = typeof limit?.output === 'number' ? limit.output : undefined;
 
@@ -281,10 +290,11 @@ function isCatalogCacheStale(cache: CatalogCacheFile): boolean {
 }
 
 /**
- * Fetch models.dev/api.json and parse into CatalogModel[].
- * Uses a 30-second timeout.
+ * Fetch models.dev/api.json and parse into CatalogModel[], reading each
+ * provider's access (remembered in `accessPath` when given) before the tiers
+ * are set. Uses a 30-second timeout for the fetch.
  */
-export async function fetchCatalog(): Promise<CatalogModel[]> {
+export async function fetchCatalog(options: { readonly accessPath?: string | undefined } = {}): Promise<CatalogModel[]> {
   const response = await fetchWithTimeout(MODELS_DEV_URL, {
     headers: { Accept: 'application/json' },
   }, CATALOG_FETCH_TIMEOUT_MS, instrumentedFetch);
@@ -294,12 +304,14 @@ export async function fetchCatalog(): Promise<CatalogModel[]> {
   }
 
   const json = await response.json() as ModelsDevResponse;
-  const models = transformModelsDevResponse(json);
+  const access = await new ProviderAccessReadings({ path: options.accessPath }).readAll(providerFactsOf(json));
+  const models = transformModelsDevResponse(json, access);
   logger.debug('[model-catalog] Fetched models from models.dev', { count: models.length });
   return models;
 }
 
 export {
+  transformModelsDevResponse,
   loadCatalogCache,
   saveCatalogCache,
   isCatalogCacheStale,

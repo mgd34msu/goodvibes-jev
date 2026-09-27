@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { getTierPromptSupplement, getTierForContextWindow } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { getTierPromptSupplement, readTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ModelTier } from '@goodvibes-jev/engine/sdk/platform/providers';
 
 describe('getTierPromptSupplement', () => {
@@ -53,30 +53,17 @@ describe('getTierPromptSupplement', () => {
   });
 });
 
-describe('getTierForContextWindow', () => {
-  test('small context (<32K) returns free tier', () => {
-    expect(getTierForContextWindow(0)).toBe('free');
-    expect(getTierForContextWindow(8_192)).toBe('free');
-    expect(getTierForContextWindow(31_999)).toBe('free');
+describe('readTierPromptSupplement', () => {
+  const facts = { registryKey: 'p:m', id: 'm', name: 'M', provider: 'p' };
+  const store = (tier: 'economy' | 'standard' | 'premium' | undefined) => ({ read: async () => ({ tier, frontier: 0, small: 0 }) });
+
+  test('the read tier picks the supplement: economy gets the fullest guidance, premium none', async () => {
+    expect(await readTierPromptSupplement(facts, store('economy'))).toBe(getTierPromptSupplement('free'));
+    expect(await readTierPromptSupplement(facts, store('standard'))).toBe(getTierPromptSupplement('standard'));
+    expect(await readTierPromptSupplement(facts, store('premium'))).toBe('');
   });
 
-  test('medium context (32K–128K) returns standard tier', () => {
-    expect(getTierForContextWindow(32_000)).toBe('standard');
-    expect(getTierForContextWindow(65_536)).toBe('standard');
-    expect(getTierForContextWindow(128_000)).toBe('standard');
-  });
-
-  test('large context (>128K) returns premium tier', () => {
-    expect(getTierForContextWindow(128_001)).toBe('premium');
-    expect(getTierForContextWindow(200_000)).toBe('premium');
-    expect(getTierForContextWindow(1_000_000)).toBe('premium');
-  });
-
-  test('boundary: exactly 32K is standard not free', () => {
-    expect(getTierForContextWindow(32_000)).toBe('standard');
-  });
-
-  test('boundary: exactly 128K is standard not premium', () => {
-    expect(getTierForContextWindow(128_000)).toBe('standard');
+  test('an unsettled tier gets the fullest guidance', async () => {
+    expect(await readTierPromptSupplement(facts, store(undefined))).toBe(getTierPromptSupplement('free'));
   });
 });

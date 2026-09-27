@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { ModelIdentityResolver } from '../routing/model-identity.js';
 
 export interface ModelBenchmarks {
   gpqa?: number | undefined;
@@ -167,6 +168,8 @@ export class BenchmarkStore {
   private readonly dir: string;
   private cache: BenchmarksCache | null = null;
   private nameIndex: Map<string, BenchmarkEntry> | null = null;
+  private identityResolver: ModelIdentityResolver | null = null;
+  private identityEntries: readonly BenchmarkEntry[] | null = null;
   private readonly refreshCallbacks = new Set<() => void>();
 
   constructor(options: BenchmarkStoreOptions) {
@@ -217,7 +220,32 @@ export class BenchmarkStore {
     logger.debug('[model-benchmarks] Cache updated', { count: entries.length });
   }
 
+  /**
+   * The leaderboard entry for a model: an exact name or id, the same ignoring
+   * case, else the entry Jev read as the same model (routing.model-identity).
+   * An identity not read yet is requested, and the model has no entry until
+   * the reading lands.
+   */
   getBenchmarks(modelName: string): BenchmarkEntry | undefined {
+    return this.findBenchmarks(modelName, true);
+  }
+
+  /** {@link getBenchmarks} without requesting a reading: for sweeps over many models. */
+  getKnownBenchmarks(modelName: string): BenchmarkEntry | undefined {
+    return this.findBenchmarks(modelName, false);
+  }
+
+  /** {@link getBenchmarks}, waiting for the identity reading instead of answering without it. */
+  async readBenchmarks(modelName: string, site = 'providers.model-benchmarks.identity'): Promise<BenchmarkEntry | undefined> {
+    const known = this.findBenchmarks(modelName, false);
+    if (known) return known;
+    const entries = this.cache?.entries ?? [];
+    if (entries.length === 0) return undefined;
+    const same = await this.identity().resolve({ id: modelName }, site);
+    return same === null ? undefined : entries.find((entry) => entry.modelId === same);
+  }
+
+  private findBenchmarks(modelName: string, request: boolean): BenchmarkEntry | undefined {
     const entries = this.cache?.entries;
     if (!entries || entries.length === 0) return undefined;
     const index = this.nameIndex ?? buildNameIndex(entries);
@@ -225,60 +253,23 @@ export class BenchmarkStore {
     const exact = entries.find((entry) => entry.name === modelName || entry.modelId === modelName);
     if (exact) return exact;
 
-    const lower = modelName.toLowerCase();
-    const indexed = index.get(lower);
+    const indexed = index.get(modelName.toLowerCase());
     if (indexed) return indexed;
 
-    const slug = lower.replace(/[^a-z0-9]/g, '');
-    if (slug.length > 0) {
-      let slugBest: BenchmarkEntry | undefined;
-      let slugBestLen = Infinity;
-      let slugPrefixBest: BenchmarkEntry | undefined;
-      let slugPrefixBestLen = Infinity;
-      for (const entry of entries) {
-        const nameSlug = entry.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const idSlug = entry.modelId.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (nameSlug === slug || idSlug === slug) {
-          const len = Math.min(
-            nameSlug === slug ? entry.name.length : Infinity,
-            idSlug === slug ? entry.modelId.length : Infinity,
-          );
-          if (len < slugBestLen) {
-            slugBestLen = len;
-            slugBest = entry;
-          }
-        } else if (nameSlug.startsWith(slug) || idSlug.startsWith(slug)) {
-          const len = Math.min(
-            nameSlug.startsWith(slug) ? entry.name.length : Infinity,
-            idSlug.startsWith(slug) ? entry.modelId.length : Infinity,
-          );
-          if (len < slugPrefixBestLen) {
-            slugPrefixBestLen = len;
-            slugPrefixBest = entry;
-          }
-        }
-      }
-      if (slugBest) return slugBest;
-      if (slugPrefixBest) return slugPrefixBest;
-    }
+    const query = { id: modelName };
+    const same = request ? this.identity().lookup(query, 'providers.model-benchmarks.identity') : this.identity().known(query) ?? null;
+    return same === null ? undefined : entries.find((entry) => entry.modelId === same);
+  }
 
-    let best: BenchmarkEntry | undefined;
-    let bestLen = Infinity;
-    for (const entry of entries) {
-      const nameLower = entry.name.toLowerCase();
-      const idLower = entry.modelId.toLowerCase();
-      if (nameLower.includes(lower) || idLower.includes(lower)) {
-        const len = Math.min(
-          nameLower.includes(lower) ? entry.name.length : Infinity,
-          idLower.includes(lower) ? entry.modelId.length : Infinity,
-        );
-        if (len < bestLen) {
-          bestLen = len;
-          best = entry;
-        }
-      }
+  /** Identity readings over the current leaderboard, rebuilt when the leaderboard is refreshed. */
+  private identity(): ModelIdentityResolver {
+    const entries = this.cache?.entries ?? [];
+    if (!this.identityResolver || this.identityEntries !== entries) {
+      const candidates = entries.filter((entry) => entry.modelId).map((entry) => ({ key: entry.modelId, id: entry.modelId, name: entry.name }));
+      this.identityEntries = entries;
+      this.identityResolver = new ModelIdentityResolver({ universe: 'benchmarks', candidates: () => candidates });
     }
-    return best;
+    return this.identityResolver;
   }
 
   getTopBenchmarkModelIds(n: number): string[] {

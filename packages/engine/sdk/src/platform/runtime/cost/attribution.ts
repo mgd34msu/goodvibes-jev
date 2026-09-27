@@ -15,12 +15,13 @@
  *
  * CACHE ECONOMICS: fresh input, cache-read, and cache-write tokens are priced
  * distinctly. The catalog carries only the fresh input/output rates, so the
- * cache-read/write rates are derived from the fresh input rate via a documented
- * per-provider multiplier table ({@link CACHE_MULTIPLIERS}), these are the
- * providers' own published cache ratios (e.g. Anthropic cache-read 0.1x,
- * cache-write 1.25x), NOT a guessed base price: the base rate is always the
- * catalog's, and an unknown model stays unpriced regardless.
+ * cache-read/write rates are derived from the fresh input rate via each
+ * provider's published cache ratio (cacheRateMultipliers in
+ * providers/model-pricing.ts, computed from the provider's own catalog cache
+ * rates), NOT a guessed base price: the base rate is always the catalog's, and
+ * an unknown model stays unpriced regardless.
  */
+import { cacheRateMultipliers } from '../../providers/model-pricing.js';
 
 /** A single usage record. Every dimension is optional, the service attributes over whatever a record carries. */
 export interface CostUsageRecord {
@@ -102,7 +103,7 @@ export interface CostAttributionResult {
  * providerRegistry.resolveModelPricing (the one pricing resolver: manual ->
  * registration -> provider-served -> catalog -> honest null). Explicit
  * cacheRead/cacheWrite rates, when the source carried them, take precedence
- * over the CACHE_MULTIPLIERS fallback in priceRecord.
+ * over the published-ratio fallback in priceRecord.
  */
 export type ResolvePricing = (model: string | undefined, provider?: string | undefined) => {
   readonly input: number;
@@ -114,20 +115,6 @@ export type ResolvePricing = (model: string | undefined, provider?: string | und
   /** ISO date (YYYY-MM-DD) of the catalog/provider pricing snapshot; absent for user prices. */
   readonly asOf?: string | undefined;
 } | null;
-
-/**
- * Published per-provider cache ratios relative to the fresh input rate. Keyed by
- * a provider substring (matched case-insensitively). `read`/`write` multiply the
- * catalog input rate to price cache-read/cache-write tokens. The default (no
- * match) is 1.0/1.0, cache tokens priced at full input rate, the conservative
- * honest choice when the provider's ratio is unknown.
- */
-export const CACHE_MULTIPLIERS: Readonly<Record<string, { readonly read: number; readonly write: number }>> = {
-  anthropic: { read: 0.1, write: 1.25 },
-  openai: { read: 0.5, write: 1.0 },
-  google: { read: 0.25, write: 1.0 },
-  deepseek: { read: 0.1, write: 1.0 },
-};
 
 const WINDOW_MS: Record<CostWindow, number> = {
   '24h': 24 * 60 * 60 * 1000,
@@ -146,15 +133,6 @@ const DIMENSION_KEY: Record<CostDimension, (r: CostUsageRecord) => string | unde
 
 const UNATTRIBUTED = '(unattributed)';
 
-function cacheMultipliers(provider: string | undefined): { read: number; write: number } {
-  if (provider) {
-    const lower = provider.toLowerCase();
-    for (const [needle, mult] of Object.entries(CACHE_MULTIPLIERS)) {
-      if (lower.includes(needle)) return mult;
-    }
-  }
-  return { read: 1.0, write: 1.0 };
-}
 
 interface AccumulatorState {
   costUsd: number;
@@ -225,7 +203,7 @@ export class CostAttributionService {
   } {
     const pricing = this.resolvePricing(rec.model, rec.provider);
     if (!pricing) return { costUsd: null, state: 'unpriced' };
-    const mult = cacheMultipliers(rec.provider);
+    const mult = cacheRateMultipliers(rec.provider);
     // Source-carried cache rates win; the published ratio table is the
     // fallback when the pricing feed had no cache-specific rates.
     const cacheReadRate = pricing.cacheRead ?? pricing.input * mult.read;

@@ -19,9 +19,8 @@ import { OpenAICompatProvider, type OpenAICompatOptions } from './openai-compat.
 import { LOCAL_SERVER_EFFORT } from './discovered-traits.js';
 import { reasoningEffortLevels } from './reasoning-effort.js';
 import { toOpenAITools } from './tool-formats.js';
-import { summarizeError } from '../utils/error-display.js';
-import { getErrorStatus, normalizeProviderError } from './provider-error.js';
-import { mapOllamaStopReason } from './stop-reason-maps.js';
+import { normalizeProviderError, shouldUseOtherApi } from './provider-error.js';
+import { readOllamaStopReason } from './stop-reason-maps.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 
 type NativeFetch = (
@@ -92,7 +91,7 @@ export class OllamaProvider implements LLMProvider {
         try {
           return await this.chatViaNativeOllama(params, model);
         } catch (err: unknown) {
-          if (!shouldFallbackFromNative(err)) {
+          if (!(await shouldUseOtherApi(err, 'providers.ollama.native-chat'))) {
             throw normalizeProviderError(err, this.name, 'chat', 'request');
           }
         }
@@ -275,7 +274,7 @@ export class OllamaProvider implements LLMProvider {
       }
     });
 
-    const stopReason = mapOllamaStopReason(doneReason, finalToolCalls.length > 0);
+    const stopReason = await readOllamaStopReason(doneReason, finalToolCalls.length > 0, 'providers.ollama.stop-reason');
 
     return {
       content: responseText,
@@ -448,13 +447,6 @@ async function buildHttpError(
   });
 }
 
-function shouldFallbackFromNative(err: unknown): boolean {
-  const status = getErrorStatus(err);
-  const message = summarizeError(err);
-  if (status === 404 || status === 405 || status === 501) return true;
-  if (status === 400 && /tool|messages|unsupported/i.test(message)) return true;
-  return /not implemented|unsupported|unknown endpoint/i.test(message);
-}
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};

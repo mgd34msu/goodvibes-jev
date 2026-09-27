@@ -10,7 +10,7 @@ import type {
   ProviderRuntimeMetadataDeps,
 } from './interface.js';
 import { budgetTokensForLevel, describeReasoningRejection } from './reasoning-effort.js';
-import { resolveEffortForRequest } from './reasoning-effort-families.js';
+import { prepareReasoningEffort, resolveEffortForRequest } from './reasoning-effort-families.js';
 import {
   fetchGeminiModelIds,
   runLiveModelRefresh,
@@ -332,6 +332,7 @@ export class GeminiProvider implements LLMProvider {
       // take a numeric `thinking_budget`. Google's thinking docs are explicit
       // that a request specifying both is rejected, so the resolved spec picks
       // exactly one and the other is never sent.
+      await prepareReasoningEffort(params.reasoningEffort, { modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.gemini.reasoning-family');
       const thinking = buildGeminiThinkingConfig(model, params);
       if (thinking.config) {
         body['generationConfig'] = {
@@ -364,7 +365,7 @@ export class GeminiProvider implements LLMProvider {
 
       if (!res.ok) {
         const text = await res.text().catch(() => 'unknown error');
-        const effortHint = describeReasoningRejection(res.status, text, thinking.level) ?? '';
+        const effortHint = (await describeReasoningRejection(res.status, text, thinking.level, 'providers.gemini.reasoning-rejection')) ?? '';
         throw new ProviderError(`Gemini API error ${res.status}: ${text}${effortHint}`, {
           statusCode: res.status,
           provider: this.name,

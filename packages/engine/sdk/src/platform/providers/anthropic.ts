@@ -18,6 +18,7 @@ import {
   type LiveModelDiscoveryResult,
 } from './live-model-discovery.js';
 import { applyAnthropicReasoning, isAnthropicThinkingEnabled } from './anthropic-stream.js';
+import { prepareReasoningEffort } from './reasoning-effort-families.js';
 import { describeReasoningRejection } from './reasoning-effort.js';
 import { getCacheCapability } from './cache-capability.js';
 import { mapAnthropicStopReason } from './stop-reason-maps.js';
@@ -316,6 +317,7 @@ export class AnthropicProvider implements LLMProvider {
 
       body['messages'] = anthropicMessages;
 
+      await prepareReasoningEffort(reasoningEffort, { modelId: resolvedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic.reasoning-family');
       const resolvedEffort = applyAnthropicReasoning(
         body,
         { model: resolvedModel, reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },
@@ -359,7 +361,7 @@ export class AnthropicProvider implements LLMProvider {
 
       if (!res.ok) {
         const text = await res.text().catch(() => 'unknown error');
-        const effortHint = describeReasoningRejection(res.status, text, resolvedEffort.value) ?? '';
+        const effortHint = (await describeReasoningRejection(res.status, text, resolvedEffort.value, 'providers.anthropic.reasoning-rejection')) ?? '';
         throw new ProviderError(`${formatAnthropicErrorText(res.status, text)}${effortHint}`, {
           statusCode: res.status,
           provider: this.name,
@@ -513,6 +515,10 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   private async createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult> {
+    await Promise.all(input.requests.map((request) => prepareReasoningEffort(request.params.reasoningEffort, {
+      modelId: normalizeAnthropicModel(request.params.model),
+      ...(request.params.reasoningEffortSpec ? { spec: request.params.reasoningEffortSpec } : {}),
+    }, 'providers.anthropic.reasoning-family')));
     const res = await instrumentedFetch(`${ANTHROPIC_API_BASE}/messages/batches`, {
       method: 'POST',
       headers: this.batchHeaders(),

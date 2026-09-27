@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -77,6 +79,7 @@ function makeRegistry(root: string): ProviderRegistry {
     favoritesStore: { load: async () => ({ pinned: [], history: [] }) },
     benchmarkStore: {
       getBenchmarks: () => undefined,
+      getKnownBenchmarks: () => undefined,
       getTopBenchmarkModelIds: () => [],
     },
     secretsManager: {} as unknown as ConstructorParameters<typeof ProviderRegistry>[0]['secretsManager'],
@@ -200,12 +203,15 @@ describe('provider cache observability', () => {
       badModels: { name: 'Bad Models', models: [] },
       badModelEntry: { name: 'Bad Model Entry', models: { broken: null } },
     }), { status: 200 })) as unknown as typeof fetch;
+    // Every provider's access is read before tiers are set; this port reads each as metered.
+    const previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.05)).port);
     try {
       const models = await fetchCatalog();
 
       expect(models.map((model) => model.id)).toEqual(['good-model']);
       expect(warningMessages(warnSpy)).toContain('[model-catalog] Ignored malformed catalog entries');
     } finally {
+      installJudgmentPort(previousPort);
       warnSpy.mockRestore();
     }
   });

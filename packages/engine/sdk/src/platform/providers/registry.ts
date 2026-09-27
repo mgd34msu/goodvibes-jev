@@ -38,6 +38,8 @@ import { ContextWindowOverrideStore, getContextWindowOverridesPath } from './con
 import { splitModelRegistryKey, withRegistryKey } from './registry-helpers.js';
 import { computeConfiguredProviderIds } from './registry-configured-ids.js';
 import { initProviderCatalog, refreshProviderCatalog } from './registry-catalog-lifecycle.js';
+import { findAlternativeModel, RegistryRoutingReadings } from './registry-routing.js';
+import type { ModelTierStore } from '../routing/model-tiers.js';
 import {
   buildModelRegistry, diffCustomModels, findModelDefinition, findModelDefinitionForProvider,
 } from './registry-models.js';
@@ -82,7 +84,7 @@ export class ProviderRegistry {
   private readonly cacheHitTracker: CacheHitTracker;
   private readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null;
   private readonly favoritesStore: Pick<FavoritesStore, 'load'>;
-  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getTopBenchmarkModelIds'>;
+  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds'>;
   private readonly modelLimitsService: ModelLimitsService;
   private readonly gatewayPricing: GatewayPricingService;
   private readonly runtimeMetadataDeps: ProviderRuntimeMetadataDeps;
@@ -91,6 +93,7 @@ export class ProviderRegistry {
   private catalogModels: CatalogModel[] = [];
   private pricingCatalog: PricingCatalog | null = null;
   private syntheticCanonicalModels: CanonicalModel[] = [];
+  private readonly routingReadings = new RegistryRoutingReadings({ root: () => this.getPersistenceRoot(), models: () => this.catalogModels });
   private _cachedModelRegistry: ModelDefinition[] | null = null;
   private _modelRegistryRevision = 0;
   /** Persisted per-model context-window overrides; lazy-constructed (needs persistence root). */
@@ -127,7 +130,7 @@ export class ProviderRegistry {
       cacheHitTracker: this.cacheHitTracker,
       resolveProvider: (providerName) => this.require(providerName),
       getCatalogModels: () => this.syntheticCanonicalModels,
-      getBenchmarks: (modelId) => this.benchmarkStore.getBenchmarks(modelId),
+      getBenchmarks: (modelId) => this.benchmarkStore.getKnownBenchmarks(modelId),
       githubCopilotTokenCachePath: getGitHubCopilotTokenCachePath(this.getPersistenceRoot()),
       subscriptionManager: this.subscriptionManager,
       runtimeBus: this.runtimeBus,
@@ -163,14 +166,14 @@ export class ProviderRegistry {
     return { cachePath: getCatalogCachePath(root), tmpPath: getCatalogTmpPath(root) };
   }
 
-  private getCatalogBuiltins(): ModelDefinition[] { return getCatalogModelDefinitionsFrom(this.catalogModels) as ModelDefinition[]; }
+  private getCatalogBuiltins(): ModelDefinition[] { return getCatalogModelDefinitionsFrom(this.catalogModels, this.routingReadings.tiers) as ModelDefinition[]; }
 
   private getSyntheticBuiltins(): ModelDefinition[] { return getSyntheticModelDefinitions(this.catalogModels, this.syntheticCanonicalModels) as ModelDefinition[]; }
 
   private updateCatalogState(models: readonly CatalogModel[], fetchedAt = Date.now()): void {
     this.catalogModels = [...models];
     this.pricingCatalog = { fetchedAt, models: this.catalogModels };
-    this.syntheticCanonicalModels = buildSyntheticCanonicalModels(this.catalogModels);
+    this.syntheticCanonicalModels = buildSyntheticCanonicalModels(this.catalogModels, this.routingReadings.synthetic);
     this.capabilityRegistry.setModelFactsSource(modelCapabilityFactsFromCatalog(this.catalogModels));
     this._invalidateModelRegistry();
   }
@@ -511,7 +514,7 @@ export class ProviderRegistry {
     return getSyntheticModelInfo(
       modelId,
       this.syntheticCanonicalModels,
-      (candidateId) => this.benchmarkStore.getBenchmarks(candidateId),
+      (candidateId) => this.benchmarkStore.getKnownBenchmarks(candidateId),
     );
   }
 
@@ -735,19 +738,14 @@ export class ProviderRegistry {
     return this._readyPromise ?? Promise.resolve();
   }
 
-  /**
-   * Find an alternative model when the current provider fails non-transiently.
-   * Prefers a synthetic failover wrapper; falls back to same-tier model on a different provider.
-   */
+  /** An alternative when the current provider fails non-transiently (registry-routing.ts): its failover group, else a same-tier model elsewhere. */
   findAlternativeModel(currentRegistryKey: string): ModelDefinition | null {
-    const current = findModelDefinition(currentRegistryKey, this.getModelRegistry());
-    if (!current || current.provider === 'synthetic') return null;
-    const baseName = current.id.split('/').pop() ?? '';
-    const syntheticMatch = this.getModelRegistry().find((model) => model.provider === 'synthetic' && (model.id === baseName || model.id.endsWith('/' + baseName)));
-    if (syntheticMatch) return syntheticMatch;
-    // Find same-tier model on different provider
-    return this.getModelRegistry().find((model) => model.registryKey !== current.registryKey && model.provider !== current.provider && model.tier === current.tier && model.selectable) ?? null;
+    const registry = this.getModelRegistry();
+    return findAlternativeModel(findModelDefinition(currentRegistryKey, registry), registry, this.syntheticCanonicalModels);
   }
+
+  /** Model tier readings (routing.model-tier), for the route planner. */
+  get modelTiers(): ModelTierStore { return this.routingReadings.tiers; }
 
   /**
    * Resolve the full capability record for a model.
@@ -832,6 +830,7 @@ export class ProviderRegistry {
       favoritesStore: this.favoritesStore,
       benchmarkStore: this.benchmarkStore,
       refreshCatalog: () => this.refreshCatalog(),
+      afterCatalogApplied: () => this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt)),
     };
   }
 }

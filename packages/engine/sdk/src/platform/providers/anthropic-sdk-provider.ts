@@ -8,6 +8,7 @@ import type {
   ProviderRuntimeMetadataDeps,
 } from './interface.js';
 import { applyAnthropicReasoning } from './anthropic-stream.js';
+import { prepareReasoningEffort } from './reasoning-effort-families.js';
 import type { AnthropicContentBlock } from './tool-formats.js';
 import { mapAnthropicStopReason } from './stop-reason-maps.js';
 import {
@@ -119,6 +120,7 @@ export class AnthropicSdkProvider implements LLMProvider {
         body['tools'] = toAnthropicTools(params.tools);
       }
 
+      await prepareReasoningEffort(params.reasoningEffort, { modelId: params.model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.anthropic-sdk.reasoning-family');
       applyAnthropicReasoning(
         body,
         { model: params.model, reasoningEffort: params.reasoningEffort, ...(params.reasoningEffortSpec ? { reasoningEffortSpec: params.reasoningEffortSpec } : {}) },

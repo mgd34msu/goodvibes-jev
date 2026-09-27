@@ -33,7 +33,7 @@ import { parseRateLimitHeaders } from './rate-limit-headers.js';
 import { getCacheCapability } from './cache-capability.js';
 import type { ProviderCacheCapability } from './cache-capability.js';
 import type { CacheHitTracker } from './cache-strategy.js';
-import { extractOpenAIStreamTextDelta } from './openai-stream-delta.js';
+import { extractOpenAIStreamTextDelta, readStreamDeltaLabels } from './openai-stream-delta.js';
 import { StreamTextAccumulator } from './inline-reasoning.js';
 import { logger } from '../utils/logger.js';
 import { toProviderError } from '../utils/error-display.js';
@@ -44,7 +44,7 @@ import {
 } from './openai-compat-diagnostics.js';
 
 import { mapOpenAIStopReason } from './stop-reason-maps.js';
-import { resolveEffortForRequest, resolveReasoningEffortSpec } from './reasoning-effort-families.js';
+import { prepareReasoningEffort, resolveEffortForRequest, resolveReasoningEffortSpec } from './reasoning-effort-families.js';
 import { describeReasoningRejection, reasoningEffortLevels } from './reasoning-effort.js';
 
 const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'recordTurn'> = {
@@ -363,6 +363,7 @@ export class OpenAICompatProvider implements LLMProvider {
       // Provider-specific reasoning params. The requested level is first mapped
       // onto what this exact model accepts, so a level it does not offer snaps
       // down instead of earning a provider-side 400.
+      await prepareReasoningEffort(reasoningEffort, { modelId: selectedModel, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai-compat.reasoning-family');
       const effortValue = resolveEffortForRequest(reasoningEffort, {
         modelId: selectedModel,
         ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
@@ -446,6 +447,7 @@ export class OpenAICompatProvider implements LLMProvider {
           };
 
           const delta = raw.choices[0]?.delta;
+          await readStreamDeltaLabels(raw, 'providers.openai-compat.content-part-kind');
           streamText.push(extractOpenAIStreamTextDelta(raw, { allowReasoning: true }), onDelta);
 
           // Mercury-2: reasoning_summary may appear on any chunk, capture and emit
@@ -477,11 +479,12 @@ export class OpenAICompatProvider implements LLMProvider {
         rawToolCalls = finalizeOpenAIToolCalls(accToolCalls);
       } catch (err: unknown) {
         const diagnostic = extractOpenAICompatErrorDiagnostic(err);
-        const effortHint = describeReasoningRejection(
+        const effortHint = (await describeReasoningRejection(
           diagnostic.status ?? 0,
           `${diagnostic.detail ?? ''} ${diagnostic.rawMessage}`,
           effortValue,
-        ) ?? '';
+          'providers.openai-compat.reasoning-rejection',
+        )) ?? '';
         const phase = streamOpened ? 'stream' : 'request';
         const message = buildOpenAICompatErrorMessage(this.name, phase, diagnostic) + effortHint;
         logger.error('OpenAICompatProvider.chat failed', {

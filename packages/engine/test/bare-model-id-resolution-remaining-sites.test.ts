@@ -123,6 +123,8 @@ describe('providers/provider-api.ts: bare model id resolution', () => {
       },
       benchmarkStore: {
         getBenchmarks: () => undefined,
+        getKnownBenchmarks: () => undefined,
+        readBenchmarks: async () => undefined,
         refreshBenchmarks: async () => {},
       },
     };

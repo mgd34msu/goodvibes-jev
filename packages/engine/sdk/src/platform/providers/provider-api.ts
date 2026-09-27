@@ -199,7 +199,7 @@ export interface ProviderApiRegistry {
 
 export interface ProviderApiFavoritesStore extends Pick<FavoritesStore, 'load' | 'pinModel' | 'recordUsage' | 'unpinModel'> {}
 
-export interface ProviderApiBenchmarkStore extends Pick<BenchmarkStore, 'getBenchmarks' | 'refreshBenchmarks'> {}
+export interface ProviderApiBenchmarkStore extends Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'readBenchmarks' | 'refreshBenchmarks'> {}
 
 export interface ProviderApiDependencies {
   readonly providerRegistry: ProviderApiRegistry;
@@ -275,17 +275,23 @@ function buildCatalogBenchmarkRecord(
   };
 }
 
+/**
+ * The benchmark record for one model. The current model's leaderboard
+ * identity is requested when it has not been read; a listing of many models
+ * reports only identities already read, so listing the catalog asks nothing.
+ */
 function buildModelBenchmark(
   model: ModelDefinition,
   deps: ProviderApiDependencies,
+  isCurrent: boolean,
 ): ProviderApiBenchmarkRecord | undefined {
   if (model.provider === 'synthetic') {
     const syntheticInfo = deps.providerRegistry.getSyntheticModelInfoFromCatalog(model.id);
     return syntheticInfo ? buildSyntheticBenchmarkRecord(model, syntheticInfo) : undefined;
   }
 
-  const benchmark = deps.benchmarkStore.getBenchmarks(model.id)
-    ?? deps.benchmarkStore.getBenchmarks(model.displayName);
+  const lookup = (name: string) => (isCurrent ? deps.benchmarkStore.getBenchmarks(name) : deps.benchmarkStore.getKnownBenchmarks(name));
+  const benchmark = lookup(model.id) ?? lookup(model.displayName);
   return benchmark ? buildCatalogBenchmarkRecord(model, benchmark) : undefined;
 }
 
@@ -326,6 +332,10 @@ function buildModelRouting(
   };
 }
 
+function benchmarkField(benchmark: ProviderApiBenchmarkRecord | undefined): { benchmark?: ProviderApiBenchmarkRecord } {
+  return benchmark ? { benchmark } : {};
+}
+
 function buildModelRecord(
   model: ModelDefinition,
   currentModel: ModelDefinition,
@@ -352,7 +362,7 @@ function buildModelRecord(
       ...(pinned ? { pinnedAt: pinned.pinnedAt } : {}),
       ...(recent ? { lastUsed: recent.lastUsed, useCount: recent.count } : {}),
     },
-    ...(buildModelBenchmark(model, deps) ? { benchmark: buildModelBenchmark(model, deps)! } : {}),
+    ...benchmarkField(buildModelBenchmark(model, deps, currentModel.registryKey === model.registryKey)),
     routing: buildModelRouting(model, deps),
   };
 }
@@ -470,8 +480,17 @@ async function buildBenchmarkRecords(
         .filter((model): model is ModelDefinition => model != null)
     : models;
 
-  const records = selectedModels
-    .map((model) => buildModelBenchmark(model, deps))
+  // Models named in the query have their leaderboard identity read before
+  // answering; a listing of the whole registry reports identities already read.
+  const named = query?.registryKeys !== undefined;
+  const built = await Promise.all(selectedModels.map(async (model) => {
+    if (named && model.provider !== 'synthetic') {
+      const benchmark = await deps.benchmarkStore.readBenchmarks(model.id) ?? await deps.benchmarkStore.readBenchmarks(model.displayName);
+      return benchmark ? buildCatalogBenchmarkRecord(model, benchmark) : undefined;
+    }
+    return buildModelBenchmark(model, deps, false);
+  }));
+  const records = built
     .filter((record): record is ProviderApiBenchmarkRecord => record != null)
     .sort((a, b) => {
       const scoreA = a.compositeScore ?? -1;

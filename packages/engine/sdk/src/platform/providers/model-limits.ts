@@ -6,6 +6,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { ModelIdentityResolver } from '../routing/model-identity.js';
 
 interface OpenRouterModelData {
   id: string;
@@ -122,37 +123,35 @@ async function fetchOpenRouterModels(): Promise<Map<string, OpenRouterModelData>
   return map;
 }
 
-function getModelStem(modelId: string): string {
-  return modelId
-    .replace(/-\d{8}$/, '')
-    .replace(/-(?:2[4-9]|3[0-9])\d{2}$/, '')
-    .replace(/-\d{6}$/, '');
+/** Identity readings per OpenRouter model map, so a refreshed feed is read afresh. */
+const orIdentities = new WeakMap<Map<string, OpenRouterModelData>, ModelIdentityResolver>();
+
+function identityFor(orModels: Map<string, OpenRouterModelData>): ModelIdentityResolver {
+  let resolver = orIdentities.get(orModels);
+  if (!resolver) {
+    const candidates = [...orModels.keys()].map((id) => ({ key: id, id }));
+    resolver = new ModelIdentityResolver({ universe: 'openrouter-limits', candidates: () => candidates });
+    orIdentities.set(orModels, resolver);
+  }
+  return resolver;
 }
 
+/**
+ * The OpenRouter entry for a provider's model: the exact id, then the
+ * `<provider>/<model>` id OpenRouter publishes models under (both fixed
+ * formats), then the entry Jev read as the same model
+ * (routing.model-identity). An identity not read yet is requested and the
+ * model has no OpenRouter match until it lands.
+ */
 function findOpenRouterMatch(
   modelId: string,
   provider: string,
   orModels: Map<string, OpenRouterModelData>,
 ): OpenRouterModelData | null {
-  if (orModels.has(modelId)) return orModels.get(modelId) ?? null;
-
-  const prefixed = `${provider}/${modelId}`;
-  if (orModels.has(prefixed)) return orModels.get(prefixed) ?? null;
-
-  const stem = getModelStem(modelId);
-  if (stem !== modelId) {
-    if (orModels.has(stem)) return orModels.get(stem) ?? null;
-    const prefixedStem = `${provider}/${stem}`;
-    if (orModels.has(prefixedStem)) return orModels.get(prefixedStem) ?? null;
-  }
-
-  for (const [orId, orModel] of orModels) {
-    if (orId.endsWith(`/${stem}`) || orId.endsWith(`/${modelId}`)) {
-      return orModel;
-    }
-  }
-
-  return null;
+  const exact = orModels.get(modelId) ?? orModels.get(`${provider}/${modelId}`);
+  if (exact) return exact;
+  const same = identityFor(orModels).lookup({ id: modelId, provider }, 'providers.model-limits.openrouter-identity');
+  return same === null ? null : orModels.get(same) ?? null;
 }
 
 function buildOrMap(cache: ModelLimitsCache): Map<string, OpenRouterModelData> {
@@ -247,7 +246,7 @@ export class ModelLimitsService {
 
   getContextWindowForModel(modelDef: ModelDefinition): number {
     // An explicit user-configured cap (configured_cap) is authoritative and must
-    // never be widened, or narrowed, by a fuzzy OpenRouter match. provider_api
+    // never be widened, or narrowed, by an OpenRouter identity match. provider_api
     // values are likewise trusted, as are learned provider limits
     // (observed_limit, the provider itself rejected anything larger). All
     // short-circuit ahead of the OpenRouter lookup.

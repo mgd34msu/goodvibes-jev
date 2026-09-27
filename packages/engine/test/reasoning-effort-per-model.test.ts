@@ -16,7 +16,9 @@
  * and 2.5-series take `thinking_budget`, and Google's docs are explicit that a
  * request specifying both is rejected.
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { describe, expect, test, afterEach, afterAll, beforeAll } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,10 +48,51 @@ import {
 import type { CreateDaemonBatchJobInput } from '../sdk/src/platform/batch/types.ts';
 import {
   findFamilyReasoningEffortSpec,
-  normalizeReasoningModelId,
   resolveEffortForRequest,
   resolveReasoningEffortSpec,
 } from '../sdk/src/platform/providers/reasoning-effort-families.ts';
+import { forgetProviderReadings, readReasoningFamily } from '../sdk/src/platform/routing/provider-readings.ts';
+import type { EntryType, Question } from '@goodvibes-jev/judgment';
+import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
+
+/**
+ * What routing.reasoning-family reads for each model id these tests use: the
+ * readings the family rows are keyed by. The port below answers from this
+ * table, and every id is read before the synchronous resolvers run.
+ */
+const FAMILY_READINGS: Readonly<Record<string, string>> = {
+  'claude-fable-5': 'claude-fable-mythos', 'claude-mythos-5': 'claude-fable-mythos',
+  'claude-opus-5': 'claude-5', 'claude-sonnet-5': 'claude-5', 'anthropic/claude-opus-5': 'claude-5',
+  'claude-opus-4-7': 'claude-opus-4-7-8', 'claude-opus-4-8': 'claude-opus-4-7-8',
+  'us.anthropic.claude-opus-4-7-v1:0': 'claude-opus-4-7-8', 'anthropic/claude-opus-4-7': 'claude-opus-4-7-8',
+  'claude-opus-4-6': 'claude-4-6', 'claude-sonnet-4-6': 'claude-4-6',
+  'claude-opus-4-5': 'claude-opus-4-5', 'claude-opus-4-5@20251101': 'claude-opus-4-5',
+  'claude-3-7-sonnet-20250219': 'claude-3-7',
+  'claude-sonnet-4-5': 'claude-4-early', 'claude-haiku-4-5': 'claude-4-early', 'claude-opus-4-1': 'claude-4-early',
+  'claude-3-5-sonnet-20241022': 'claude-before-3-7', 'claude-3-5-haiku-20241022': 'claude-before-3-7', 'claude-3-opus-20240229': 'claude-before-3-7',
+  'claude-2.1': 'claude-before-3-7', 'claude-instant-1.2': 'claude-before-3-7',
+  'gemini-3-pro': 'gemini-3', 'gemini-3.1-pro-preview': 'gemini-3', 'gemini-3.5-flash': 'gemini-3',
+  'gemini-2.5-pro': 'gemini-2-5', 'gemini-2.5-flash': 'gemini-2-5', 'gemini-2.5-clone': 'gemini-2-5',
+  'gemini-2.0-flash': 'gemini-legacy',
+  'grok-4': 'grok-4-base', 'grok-4-1-fast': 'grok-4-plus', 'grok-4-community': 'grok-4-plus',
+  'deepseek-reasoner': 'deepseek-reasoner', 'deepseek-chat': 'deepseek', 'deepseek-v3': 'deepseek',
+  'deepseek-r1': 'deepseek', 'deepseek-r1:70b': 'deepseek', 'deepseek-r1:8b': 'deepseek',
+  'gpt-5.2-pro': 'openai-reasoning', 'gpt-5-local-gguf': 'openai-reasoning', 'gpt-4o': 'none', 'gpt-x': 'none',
+  'mercury-2': 'mercury', 'mercury-edit': 'mercury-edit',
+  'some-unknown-vendor-model-v9': 'none',
+};
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeAll(async () => {
+  forgetProviderReadings();
+  previousPort = installJudgmentPort(fakePort((_name: string, question: Question, state: EntryType) =>
+    choiceAnswer(question, FAMILY_READINGS[(state as { model_id: string }).model_id] ?? 'none', 0.95)).port);
+  for (const modelId of Object.keys(FAMILY_READINGS)) await readReasoningFamily(modelId, 'test');
+});
+afterAll(() => {
+  installJudgmentPort(previousPort);
+  forgetProviderReadings();
+});
 import { applyAnthropicReasoning } from '../sdk/src/platform/providers/anthropic-stream.ts';
 import { AnthropicSdkProvider } from '../sdk/src/platform/providers/anthropic-sdk-provider.ts';
 import { GeminiProvider } from '../sdk/src/platform/providers/gemini.ts';
@@ -150,6 +193,11 @@ describe('reasoning-effort source precedence', () => {
     expect(resolved.kind).toBe('budget_tokens');
   });
 
+  test('an id that has not been read yet gets the labelled ladder, never a guessed row', () => {
+    expect(findFamilyReasoningEffortSpec('claude-opus-9-unread')).toBeUndefined();
+    expect(resolveReasoningEffortSpec({ modelId: 'claude-opus-9-unread' }).source).toBe('fallback');
+  });
+
   test('an unrecognized model falls back to a ladder that labels itself a guess', () => {
     const resolved = resolveReasoningEffortSpec({ modelId: 'some-unknown-vendor-model-v9' });
     expect(resolved.source).toBe('fallback');
@@ -157,10 +205,8 @@ describe('reasoning-effort source precedence', () => {
     expect(resolved.note).toContain('Best-guess');
   });
 
-  test('provider routing decoration reaches the same family row', () => {
-    expect(normalizeReasoningModelId('us.anthropic.claude-opus-4-7-v1:0')).toBe('claude-opus-4-7');
-    expect(normalizeReasoningModelId('anthropic/claude-opus-5')).toBe('claude-opus-5');
-    expect(normalizeReasoningModelId('claude-opus-4-5@20251101')).toBe('claude-opus-4-5');
+  test('provider routing decoration reaches the same family row once the id is read', () => {
+    expect(findFamilyReasoningEffortSpec('claude-opus-4-5@20251101')).toBe(findFamilyReasoningEffortSpec('claude-opus-4-5'));
     for (const id of ['us.anthropic.claude-opus-4-7-v1:0', 'anthropic/claude-opus-4-7']) {
       expect(findFamilyReasoningEffortSpec(id)?.kind).toBe('effort');
     }
@@ -425,23 +471,41 @@ describe('Anthropic reasoning wire shape', () => {
 });
 
 describe('request-time rejections name the effort level', () => {
-  test('a 400 mentioning a reasoning field points at the level that caused it', () => {
-    const hint = describeReasoningRejection(
-      400,
-      'thinking.budget_tokens is not supported on this model',
-      'high',
-    );
-    expect(hint).toContain("'high'");
-    expect(hint).toContain('/effort');
+  /** A port reading the provider text as blaming the reasoning setting when it says so. */
+  const rejectionPort = () => fakePort((_name, _question, state) => noulAnswer(JSON.stringify(state).includes('budget_tokens') ? 0.95 : 0.05));
+
+  test('a 400 the reading blames on the reasoning setting points at the level that caused it', async () => {
+    const { port } = rejectionPort();
+    const previous = installJudgmentPort(port);
+    try {
+      const hint = await describeReasoningRejection(400, 'thinking.budget_tokens is not supported on this model', 'high', 'test');
+      expect(hint).toContain("'high'");
+      expect(hint).toContain('/effort');
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 
-  test('an unrelated 400 is not blamed on the effort setting', () => {
-    expect(describeReasoningRejection(400, 'messages: roles must alternate', 'high')).toBeUndefined();
+  test('an unrelated 400 is not blamed on the effort setting', async () => {
+    const { port } = rejectionPort();
+    const previous = installJudgmentPort(port);
+    try {
+      expect(await describeReasoningRejection(400, 'messages: roles must alternate', 'high', 'test')).toBeUndefined();
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 
-  test('non-400 statuses and unset levels produce no hint', () => {
-    expect(describeReasoningRejection(429, 'reasoning effort', 'high')).toBeUndefined();
-    expect(describeReasoningRejection(400, 'reasoning effort', undefined)).toBeUndefined();
+  test('non-400 statuses and unset levels produce no hint and ask nothing', async () => {
+    const { port, requests } = rejectionPort();
+    const previous = installJudgmentPort(port);
+    try {
+      expect(await describeReasoningRejection(429, 'reasoning effort', 'high', 'test')).toBeUndefined();
+      expect(await describeReasoningRejection(400, 'reasoning effort', undefined, 'test')).toBeUndefined();
+      expect(requests).toHaveLength(0);
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 
   test('an Anthropic-compat provider resolves against its default model, not an empty id', () => {

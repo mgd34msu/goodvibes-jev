@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'bun:test';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetProviderReadings } from '../sdk/src/platform/routing/provider-readings.js';
 import type { ChatStopReason } from '../sdk/src/platform/providers/interface.js';
 import {
   mapAnthropicStopReason,
   mapOpenAIStopReason,
   mapGeminiStopReason,
   mapLlamaCppStopReason,
-  mapOllamaStopReason,
+  readOllamaStopReason,
   mapCodexStopReason,
   mapLmStudioStopReason,
   isContextOverflowSignal,
@@ -175,18 +178,33 @@ describe('llama.cpp stop reason mapper', () => {
 // ---------------------------------------------------------------------------
 
 describe('Ollama stop reason mapper', () => {
-  it('maps hasToolCalls=true → tool_call', () => {
-    expect(mapOllamaStopReason('stop', true)).toBe<ChatStopReason>('tool_call');
+  it('maps hasToolCalls=true to tool_call', async () => {
+    expect(await readOllamaStopReason('stop', true, 'test')).toBe<ChatStopReason>('tool_call');
   });
-  it('maps done_reason containing tool → tool_call', () => {
-    expect(mapOllamaStopReason('tool-calls', false)).toBe<ChatStopReason>('tool_call');
+  it('maps both documented tool-call spellings to tool_call', async () => {
+    expect(await readOllamaStopReason('tool-calls', false, 'test')).toBe<ChatStopReason>('tool_call');
+    expect(await readOllamaStopReason('tool_calls', false, 'test')).toBe<ChatStopReason>('tool_call');
   });
-  it('maps done_reason containing length → max_tokens', () => {
-    expect(mapOllamaStopReason('length', false)).toBe<ChatStopReason>('max_tokens');
-    expect(mapOllamaStopReason('max_tokens', false)).toBe<ChatStopReason>('max_tokens');
+  it('maps length and max_tokens to max_tokens', async () => {
+    expect(await readOllamaStopReason('length', false, 'test')).toBe<ChatStopReason>('max_tokens');
+    expect(await readOllamaStopReason('max_tokens', false, 'test')).toBe<ChatStopReason>('max_tokens');
   });
-  it('maps stop → completed', () => {
-    expect(mapOllamaStopReason('stop', false)).toBe<ChatStopReason>('completed');
+  it('maps stop, load and unload to completed with no reading', async () => {
+    expect(await readOllamaStopReason('stop', false, 'test')).toBe<ChatStopReason>('completed');
+    expect(await readOllamaStopReason('unload', false, 'test')).toBe<ChatStopReason>('completed');
+  });
+  it('reads an unfamiliar done_reason once', async () => {
+    forgetProviderReadings();
+    const { port, requests } = fakePort((_name, question) => choiceAnswer(question, 'max_tokens', 0.95));
+    const previous = installJudgmentPort(port);
+    try {
+      expect(await readOllamaStopReason('context_full', false, 'test')).toBe<ChatStopReason>('max_tokens');
+      expect(await readOllamaStopReason('context_full', false, 'test')).toBe<ChatStopReason>('max_tokens');
+      expect(requests).toHaveLength(1);
+    } finally {
+      installJudgmentPort(previous);
+      forgetProviderReadings();
+    }
   });
 });
 
@@ -257,29 +275,6 @@ describe('llama.cpp provider stop-reason wiring', () => {
 
   it('stop finish_reason → completed stopReason', () => {
     expect(mapLlamaCppStopReason('stop', false)).toBe<ChatStopReason>('completed');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Integration, Ollama provider wiring
-// ---------------------------------------------------------------------------
-
-describe('Ollama provider stop-reason wiring', () => {
-  it('done_reason=tool-calls → tool_call stopReason', () => {
-    // Simulates { done: true, done_reason: 'tool-calls' } Ollama chunk
-    expect(mapOllamaStopReason('tool-calls', false)).toBe<ChatStopReason>('tool_call');
-  });
-
-  it('accumulated tool calls → tool_call stopReason', () => {
-    expect(mapOllamaStopReason('stop', true)).toBe<ChatStopReason>('tool_call');
-  });
-
-  it('done_reason=length → max_tokens stopReason', () => {
-    expect(mapOllamaStopReason('length', false)).toBe<ChatStopReason>('max_tokens');
-  });
-
-  it('done_reason=stop → completed stopReason', () => {
-    expect(mapOllamaStopReason('stop', false)).toBe<ChatStopReason>('completed');
   });
 });
 

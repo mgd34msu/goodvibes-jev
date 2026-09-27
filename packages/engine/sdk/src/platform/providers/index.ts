@@ -142,13 +142,13 @@ export {
 export {
   buildSyntheticCanonicalModels,
   nameToSlug,
-  normalizeModelName,
+  SyntheticIdentities,
 } from './model-catalog-synthetic.js';
 export { OpenAICodexProvider } from './openai-codex.js';
 export { OpenAICompatProvider } from './openai-compat.js';
 export { OpenAIProvider } from './openai.js';
 export { OllamaProvider } from './ollama.js';
-export { extractOpenAIStreamTextDelta } from './openai-stream-delta.js';
+export { extractOpenAIStreamTextDelta, readStreamDeltaLabels } from './openai-stream-delta.js';
 export type { ProviderApiCatalogRefreshResult } from './provider-api.js';
 export { SyntheticProvider } from './synthetic.js';
 export type { CanonicalModel } from './synthetic.js';
@@ -207,7 +207,8 @@ export type {
 } from './reasoning-effort.js';
 export {
   findFamilyReasoningEffortSpec,
-  normalizeReasoningModelId,
+  prepareReasoningEffort,
+  readFamilyReasoningEffortSpec,
   resolveEffortForRequest,
   resolveReasoningEffortSpec,
   REASONING_EFFORT_FAMILIES_AS_OF,
@@ -247,7 +248,7 @@ export { ProviderCapabilityRegistry, RouteRejectionCode } from './capabilities.j
 export type { ProviderCapability, RequestProfile, RouteExplanation, RouteRejectionDetail } from './capabilities.js';
 export { ProviderOptimizer } from './optimizer.js';
 export type { FallbackTestResult, FallbackTransition } from './optimizer.js';
-export { getTierForContextWindow, getTierPromptSupplement } from './tier-prompts.js';
+export { getTierPromptSupplement, readTierPromptSupplement } from './tier-prompts.js';
 export { getProviderRuntimeSnapshot, getProviderUsageSnapshot, listProviderRuntimeSnapshots } from './runtime-snapshot.js';
 
 export {

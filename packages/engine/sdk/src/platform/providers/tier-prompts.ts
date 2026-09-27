@@ -3,26 +3,32 @@
  *
  * Model capability tiers drive how much extra guidance is injected into
  * the system prompt.  All features remain available regardless of tier;
- * only the verbosity of the guidance changes.
+ * only the verbosity of the guidance changes. The tier is read by routing
+ * (readTierPromptSupplement); the supplement texts are fixed.
  */
 
 import type { ModelTier } from './registry.js';
+import type { ModelFacts, ModelTierStore } from '../routing/model-tiers.js';
+import { GUIDANCE_TIER_WHEN_UNSETTLED } from '../routing/policy.js';
+import type { RouteTier } from '../routing/tiers.js';
 export type { ModelTier };
 
+/** The guidance level each capability tier gets: the smallest models the most. */
+const GUIDANCE_FOR_TIER: Readonly<Record<RouteTier, ModelTier>> = {
+  economy: 'free',
+  standard: 'standard',
+  premium: 'premium',
+};
+
 /**
- * Derive the model tier from a model's context window size.
- *
- * - small  (<32K)     → 'free'     (needs most guidance)
- * - medium (32K–128K) → 'standard' (brief reminders)
- * - large  (>128K)    → 'premium'  (no extra guidance needed)
- *
- * This is used instead of the static ModelDefinition.tier field so that
- * tier-prompt selection is driven by actual model capabilities.
+ * The supplement for a model, from its capability tier as routing.model-tier
+ * reads it from the model's published facts (remembered per model), in place
+ * of the old context-window thresholds. A model whose tier reading does not
+ * settle gets the guidance policy.ts names for that case.
  */
-export function getTierForContextWindow(contextWindow: number): ModelTier {
-  if (contextWindow > 128_000) return 'premium';
-  if (contextWindow >= 32_000) return 'standard';
-  return 'free';
+export async function readTierPromptSupplement(model: ModelFacts, tiers: Pick<ModelTierStore, 'read'>, site = 'providers.tier-prompts'): Promise<string> {
+  const { tier } = await tiers.read(model, { site });
+  return getTierPromptSupplement(GUIDANCE_FOR_TIER[tier ?? GUIDANCE_TIER_WHEN_UNSETTLED]);
 }
 
 /**

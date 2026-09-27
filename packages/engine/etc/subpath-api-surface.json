@@ -38252,12 +38252,14 @@
         "constructor",
         "getBenchmarks",
         "getCachePath",
+        "getKnownBenchmarks",
         "getTopBenchmarkModelIds",
         "initBenchmarks",
         "onRefreshed",
+        "readBenchmarks",
         "refreshBenchmarks"
       ],
-      "text": "export declare class BenchmarkStore { private readonly dir; private cache; private nameIndex; private readonly refreshCallbacks; constructor(options: BenchmarkStoreOptions); getCachePath(): string; private getTmpPath; onRefreshed(callback: () => void): () => void; initBenchmarks(): void; refreshBenchmarks(): Promise<void>; getBenchmarks(modelName: string): BenchmarkEntry | undefined; getTopBenchmarkModelIds(n: number): string[]; private fetchBenchmarks; private loadCache; private saveCache; private isCacheStale; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class BenchmarkStore { private readonly dir; private cache; private nameIndex; private identityResolver; private identityEntries; private readonly refreshCallbacks; constructor(options: BenchmarkStoreOptions); getCachePath(): string; private getTmpPath; onRefreshed(callback: () => void): () => void; initBenchmarks(): void; refreshBenchmarks(): Promise<void>; getBenchmarks(modelName: string): BenchmarkEntry | undefined; getKnownBenchmarks(modelName: string): BenchmarkEntry | undefined; readBenchmarks(modelName: string, site?: string): Promise<BenchmarkEntry | undefined>; private findBenchmarks; private identity; getTopBenchmarkModelIds(n: number): string[]; private fetchBenchmarks; private loadCache; private saveCache; private isCacheStale; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "BenchmarkStoreOptions",
@@ -38905,7 +38907,7 @@
     {
       "name": "ProviderApiBenchmarkStore",
       "kind": "interface",
-      "text": "export interface ProviderApiBenchmarkStore extends Pick<BenchmarkStore, 'getBenchmarks' | 'refreshBenchmarks'> { }"
+      "text": "export interface ProviderApiBenchmarkStore extends Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'readBenchmarks' | 'refreshBenchmarks'> { }"
     },
     {
       "name": "ProviderApiCatalogBenchmarkRecord",
@@ -39046,7 +39048,7 @@
         "setCurrentModel",
         "tryGet"
       ],
-      "text": "export interface ProviderApiRegistry { describeRuntime(name: string): Promise<ProviderRuntimeMetadata | null>; findAlternativeModel(currentRegistryKey: string): ModelDefinition | null; getCostFromCatalog(modelId: string): CatalogModelPricing | null; getPricingForModel(modelId: string, provider: string): ProviderModelPricing | null; resolveModelPricing(modelRef: string, providerId?: string): ResolvedModelPricing; getCatalogModelDefinitions(): readonly MinimalModelDefinition[]; has(id: string): boolean; get?(id: string): LLMProvider | undefined; require(id: string): LLMProvider; tryGet(name: string): LLMProvider | undefined; getCurrentModel(): ModelDefinition; getContextWindowForModel(modelDef: ModelDefinition): number; getForModel(modelId: string, provider?: string): LLMProvider; getRegistered(name: string): LLMProvider; getSelectableModels(): ModelDefinition[]; getSyntheticModelInfoFromCatalog(modelId: string): SyntheticModelInfo | null; listModels(): ModelDefinition[]; listProviders(): readonly LLMProvider[]; registerDiscoveredProviders(servers: DiscoveredServer[]): void; refreshCatalog(): Promise<void>; refreshLiveModelDiscovery(providerId?: string, options?: { force?: boolean; }): Promise<Array<{ providerId: string; } & LiveModelDiscoveryResult>>; refreshModelLimits(): Promise<number>; setCurrentModel(registryKey: string): void; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; CatalogModelPricing = export interface CatalogModelPricing { input: number; output: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; DiscoveredServer = export interface DiscoveredServer { name: string; host: string; port: number; baseURL: string; models: string[]; serverType: ServerType; modelContextWindows?: Record<string, number>; modelOutputLimits?: Record<string, number>; } ;; MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier: 'free' | 'standard' | 'premium' | 'subscription'; reasoningEffort?: ReasoningEffortSpec | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProviderModelPricing = export interface ProviderModelPricing { prompt: number; completion: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; SyntheticModelInfo = export interface SyntheticModelInfo { backendCount: number; keyedBackendCount: number; tier: SyntheticTier; bestCompositeScore: number | null; }"
+      "text": "export interface ProviderApiRegistry { describeRuntime(name: string): Promise<ProviderRuntimeMetadata | null>; findAlternativeModel(currentRegistryKey: string): ModelDefinition | null; getCostFromCatalog(modelId: string): CatalogModelPricing | null; getPricingForModel(modelId: string, provider: string): ProviderModelPricing | null; resolveModelPricing(modelRef: string, providerId?: string): ResolvedModelPricing; getCatalogModelDefinitions(): readonly MinimalModelDefinition[]; has(id: string): boolean; get?(id: string): LLMProvider | undefined; require(id: string): LLMProvider; tryGet(name: string): LLMProvider | undefined; getCurrentModel(): ModelDefinition; getContextWindowForModel(modelDef: ModelDefinition): number; getForModel(modelId: string, provider?: string): LLMProvider; getRegistered(name: string): LLMProvider; getSelectableModels(): ModelDefinition[]; getSyntheticModelInfoFromCatalog(modelId: string): SyntheticModelInfo | null; listModels(): ModelDefinition[]; listProviders(): readonly LLMProvider[]; registerDiscoveredProviders(servers: DiscoveredServer[]): void; refreshCatalog(): Promise<void>; refreshLiveModelDiscovery(providerId?: string, options?: { force?: boolean; }): Promise<Array<{ providerId: string; } & LiveModelDiscoveryResult>>; refreshModelLimits(): Promise<number>; setCurrentModel(registryKey: string): void; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; CatalogModelPricing = export interface CatalogModelPricing { input: number; output: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; DiscoveredServer = export interface DiscoveredServer { name: string; host: string; port: number; baseURL: string; models: string[]; serverType: ServerType; modelContextWindows?: Record<string, number>; modelOutputLimits?: Record<string, number>; } ;; MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier?: 'free' | 'standard' | 'premium' | 'subscription' | undefined; reasoningEffort?: ReasoningEffortSpec | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ProviderModelPricing = export interface ProviderModelPricing { prompt: number; completion: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; SyntheticModelInfo = export interface SyntheticModelInfo { backendCount: number; keyedBackendCount: number; tier: SyntheticTier; bestCompositeScore: number | null; }"
     },
     {
       "name": "ProviderApiRuntimeQuery",
@@ -39244,6 +39246,7 @@
         "listModels",
         "listProviders",
         "loadCustomProviders",
+        "modelTiers",
         "ready",
         "reconcileObservedContextWindow",
         "recordContextWindowRejection",
@@ -39262,7 +39265,7 @@
         "stopWatching",
         "tryGet"
       ],
-      "text": "export declare class ProviderRegistry { private providers; private currentModelRegistryKey; private readonly configuredModel; private discoveredProviderNames; private discoveredServers; private runtimeProviderNames; private customModels; private runtimeModels; private discoveredModels; private providerNativeModels; private readonly runtimeCatalogSuppressedRegistryKeys; private _watcher; private _readyPromise; private readonly configManager; private readonly subscriptionManager; private readonly capabilityRegistry; private readonly cacheHitTracker; private readonly featureFlags; private readonly favoritesStore; private readonly benchmarkStore; private readonly modelLimitsService; private readonly gatewayPricing; private readonly runtimeMetadataDeps; private readonly runtimeBus; private readonly localContextIngestionService; private catalogModels; private pricingCatalog; private syntheticCanonicalModels; private _cachedModelRegistry; private _modelRegistryRevision; private _contextWindowOverrideStore; constructor(options: ProviderRegistryOptions); private registerBuiltins; refreshProviderCredentials(): Promise<void>; private getPersistenceRoot; private getCustomProvidersDir; private getCatalogCachePaths; private getCatalogBuiltins; private getSyntheticBuiltins; private updateCatalogState; private getSuppressedCatalogModelRegistryKeys; private _invalidateModelRegistry; private getModelRegistry; private contextWindowOverrideStore; register(provider: LLMProvider): void; refreshLiveModelDiscovery(providerId?: string, options?: { force?: boolean; }): Promise<Array<{ providerId: string; } & LiveModelDiscoveryResult>>; registerRuntimeProvider(registration: RuntimeProviderRegistration): () => void; listDiscoveredServers(): readonly DiscoveredServer[]; listProviders(): readonly LLMProvider[]; registerDiscoveredProviders(servers: DiscoveredServer[]): void; has(id: string): boolean; require(id: string): LLMProvider; tryGet(name: string): LLMProvider | undefined; get(name: string): LLMProvider | undefined; getRegistered(name: string): LLMProvider; describeRuntime(name: string): Promise<ProviderRuntimeMetadata | null>; getForModel(modelId: string, provider?: string): LLMProvider; listModels(): ModelDefinition[]; getCostFromCatalog(modelId: string): CatalogModelPricing | null; resolveModelPricing(modelRef: string, providerId?: string): ResolvedModelPricing; getContextWindowForModel(modelDef: ModelDefinition): number; getTokenLimitsForModel(modelDef: ModelDefinition): Required<TokenLimits>; getPricingForModel(modelId: string, provider: string): { prompt: number; completion: number; } | null; getToolResultMaxCharsForModel(model: ModelDefinition | null | undefined): number; initModelLimits(): void; refreshModelLimits(): Promise<number>; getRawCatalogModels(): readonly CatalogModel[]; getCatalogModelDefinitions(): readonly MinimalModelDefinition[]; getSyntheticModelDefinitions(): readonly MinimalModelDefinition[]; getSyntheticCanonicalModels(): readonly CanonicalModel[]; getSyntheticBackendModelIds(): Set<string>; getSyntheticModelInfoFromCatalog(modelId: string): import(\"./model-catalog-synthetic.js\").SyntheticModelInfo | null; getConfiguredProviderIds(): string[]; getSelectableModels(): ModelDefinition[]; getCurrentModel(): ModelDefinition; private buildConfiguredModelFallback; setModelContextCap(registryKey: string, cap: number): void; clearModelContextCap(registryKey: string): boolean; getModelContextCap(registryKey: string): number | null; getObservedContextWindow(registryKey: string): number | null; recordContextWindowRejection(registryKey: string, rejectedAtTokens: number): void; reconcileObservedContextWindow(registryKey: string, successfulInputTokens: number): void; setCurrentModel(modelReference: string): void; loadCustomProviders(): Promise<{ warnings: string[]; added: string[]; removed: string[]; updated: string[]; }>; startWatching(runtimeBus?: RuntimeEventBus | null): void; stopWatching(): void; ready(): Promise<void>; findAlternativeModel(currentRegistryKey: string): ModelDefinition | null; getCapabilityForModel(modelReference: string): ProviderCapability; explainRoute(modelReference: string, profile: RequestProfile): RouteExplanation; private _resolveModelContext; initCustomProviders(): void; initCatalog(): void; initProviderModelDiscovery(): void; refreshCatalog(): Promise<void>; private _catalogLifecycleCtx; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; CatalogModelPricing = export interface CatalogModelPricing { input: number; output: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; DiscoveredServer = export interface DiscoveredServer { name: string; host: string; port: number; baseURL: string; models: string[]; serverType: ServerType; modelContextWindows?: Record<string, number>; modelOutputLimits?: Record<string, number>; } ;; MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier: 'free' | 'standard' | 'premium' | 'subscription'; reasoningEffort?: ReasoningEffortSpec | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Required = type Required<T> = { [P in keyof T]-?: T[P]; }; ;; Set = interface Set<T> { add(value: T): this; clear(): void; delete(value: T): boolean; forEach(callbackfn: (value: T, value2: T, set: Set<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; }"
+      "text": "export declare class ProviderRegistry { private providers; private currentModelRegistryKey; private readonly configuredModel; private discoveredProviderNames; private discoveredServers; private runtimeProviderNames; private customModels; private runtimeModels; private discoveredModels; private providerNativeModels; private readonly runtimeCatalogSuppressedRegistryKeys; private _watcher; private _readyPromise; private readonly configManager; private readonly subscriptionManager; private readonly capabilityRegistry; private readonly cacheHitTracker; private readonly featureFlags; private readonly favoritesStore; private readonly benchmarkStore; private readonly modelLimitsService; private readonly gatewayPricing; private readonly runtimeMetadataDeps; private readonly runtimeBus; private readonly localContextIngestionService; private catalogModels; private pricingCatalog; private syntheticCanonicalModels; private readonly routingReadings; private _cachedModelRegistry; private _modelRegistryRevision; private _contextWindowOverrideStore; constructor(options: ProviderRegistryOptions); private registerBuiltins; refreshProviderCredentials(): Promise<void>; private getPersistenceRoot; private getCustomProvidersDir; private getCatalogCachePaths; private getCatalogBuiltins; private getSyntheticBuiltins; private updateCatalogState; private getSuppressedCatalogModelRegistryKeys; private _invalidateModelRegistry; private getModelRegistry; private contextWindowOverrideStore; register(provider: LLMProvider): void; refreshLiveModelDiscovery(providerId?: string, options?: { force?: boolean; }): Promise<Array<{ providerId: string; } & LiveModelDiscoveryResult>>; registerRuntimeProvider(registration: RuntimeProviderRegistration): () => void; listDiscoveredServers(): readonly DiscoveredServer[]; listProviders(): readonly LLMProvider[]; registerDiscoveredProviders(servers: DiscoveredServer[]): void; has(id: string): boolean; require(id: string): LLMProvider; tryGet(name: string): LLMProvider | undefined; get(name: string): LLMProvider | undefined; getRegistered(name: string): LLMProvider; describeRuntime(name: string): Promise<ProviderRuntimeMetadata | null>; getForModel(modelId: string, provider?: string): LLMProvider; listModels(): ModelDefinition[]; getCostFromCatalog(modelId: string): CatalogModelPricing | null; resolveModelPricing(modelRef: string, providerId?: string): ResolvedModelPricing; getContextWindowForModel(modelDef: ModelDefinition): number; getTokenLimitsForModel(modelDef: ModelDefinition): Required<TokenLimits>; getPricingForModel(modelId: string, provider: string): { prompt: number; completion: number; } | null; getToolResultMaxCharsForModel(model: ModelDefinition | null | undefined): number; initModelLimits(): void; refreshModelLimits(): Promise<number>; getRawCatalogModels(): readonly CatalogModel[]; getCatalogModelDefinitions(): readonly MinimalModelDefinition[]; getSyntheticModelDefinitions(): readonly MinimalModelDefinition[]; getSyntheticCanonicalModels(): readonly CanonicalModel[]; getSyntheticBackendModelIds(): Set<string>; getSyntheticModelInfoFromCatalog(modelId: string): import(\"./model-catalog-synthetic.js\").SyntheticModelInfo | null; getConfiguredProviderIds(): string[]; getSelectableModels(): ModelDefinition[]; getCurrentModel(): ModelDefinition; private buildConfiguredModelFallback; setModelContextCap(registryKey: string, cap: number): void; clearModelContextCap(registryKey: string): boolean; getModelContextCap(registryKey: string): number | null; getObservedContextWindow(registryKey: string): number | null; recordContextWindowRejection(registryKey: string, rejectedAtTokens: number): void; reconcileObservedContextWindow(registryKey: string, successfulInputTokens: number): void; setCurrentModel(modelReference: string): void; loadCustomProviders(): Promise<{ warnings: string[]; added: string[]; removed: string[]; updated: string[]; }>; startWatching(runtimeBus?: RuntimeEventBus | null): void; stopWatching(): void; ready(): Promise<void>; findAlternativeModel(currentRegistryKey: string): ModelDefinition | null; get modelTiers(): ModelTierStore; getCapabilityForModel(modelReference: string): ProviderCapability; explainRoute(modelReference: string, profile: RequestProfile): RouteExplanation; private _resolveModelContext; initCustomProviders(): void; initCatalog(): void; initProviderModelDiscovery(): void; refreshCatalog(): Promise<void>; private _catalogLifecycleCtx; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; CatalogModelPricing = export interface CatalogModelPricing { input: number; output: number; cacheRead?: number | undefined; cacheWrite?: number | undefined; } ;; DiscoveredServer = export interface DiscoveredServer { name: string; host: string; port: number; baseURL: string; models: string[]; serverType: ServerType; modelContextWindows?: Record<string, number>; modelOutputLimits?: Record<string, number>; } ;; MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier?: 'free' | 'standard' | 'premium' | 'subscription' | undefined; reasoningEffort?: ReasoningEffortSpec | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Required = type Required<T> = { [P in keyof T]-?: T[P]; }; ;; Set = interface Set<T> { add(value: T): this; clear(): void; delete(value: T): boolean; forEach(callbackfn: (value: T, value2: T, set: Set<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; }"
     },
     {
       "name": "ProviderRegistryOptions",
@@ -39277,7 +39280,7 @@
         "serviceRegistry",
         "subscriptionManager"
       ],
-      "text": "export interface ProviderRegistryOptions { readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>; readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>; readonly secretsManager: ProviderRuntimeMetadataDeps['secretsManager']; readonly serviceRegistry: ProviderRuntimeMetadataDeps['serviceRegistry']; readonly capabilityRegistry: ProviderCapabilityRegistry; readonly cacheHitTracker: CacheHitTracker; readonly favoritesStore: Pick<FavoritesStore, 'load'>; readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getTopBenchmarkModelIds'>; readonly modelLimitsService?: ModelLimitsService | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly runtimeBus?: RuntimeEventBus | null | undefined; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export interface ProviderRegistryOptions { readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>; readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>; readonly secretsManager: ProviderRuntimeMetadataDeps['secretsManager']; readonly serviceRegistry: ProviderRuntimeMetadataDeps['serviceRegistry']; readonly capabilityRegistry: ProviderCapabilityRegistry; readonly cacheHitTracker: CacheHitTracker; readonly favoritesStore: Pick<FavoritesStore, 'load'>; readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds'>; readonly modelLimitsService?: ModelLimitsService | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly runtimeBus?: RuntimeEventBus | null | undefined; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "ProviderRuntimeMetadata",
@@ -39477,6 +39480,17 @@
       "text": "export interface StreamDelta { content?: string; toolCalls?: PartialToolCall[]; reasoning?: string; }"
     },
     {
+      "name": "SyntheticIdentities",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "known",
+        "query",
+        "readAll"
+      ],
+      "text": "export declare class SyntheticIdentities { #private; constructor(options: { readonly path?: string | undefined; readonly models: () => readonly CatalogModel[]; }); static query(model: CatalogModel): IdentityQuery; known(model: CatalogModel): string | null | undefined; readAll(models: readonly CatalogModel[], site?: string): Promise<number>; } ;; via IdentityQuery = export interface IdentityQuery { readonly id: string; readonly name?: string | undefined; readonly provider?: string | undefined; readonly family?: string | undefined; readonly otherProviderThan?: string | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "SyntheticProvider",
       "kind": "class",
       "publicMembers": [
@@ -39571,7 +39585,7 @@
     {
       "name": "buildSyntheticCanonicalModels",
       "kind": "function",
-      "text": "export declare function buildSyntheticCanonicalModels(models: readonly CatalogModel[]): CanonicalModel[];"
+      "text": "export declare function buildSyntheticCanonicalModels(models: readonly CatalogModel[], identities: Pick<SyntheticIdentities, 'known'>): CanonicalModel[]; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "calcSessionCost",
@@ -39731,7 +39745,7 @@
     {
       "name": "getCatalogModelDefinitionsFrom",
       "kind": "function",
-      "text": "export declare function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[]): MinimalModelDefinition[]; ;; via MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier: 'free' | 'standard' | 'premium' | 'subscription'; reasoningEffort?: ReasoningEffortSpec | undefined; }"
+      "text": "export declare function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], tiers?: Pick<ModelTierStore, 'lastReading'>): MinimalModelDefinition[]; ;; via MinimalModelDefinition = export interface MinimalModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; tier?: 'free' | 'standard' | 'premium' | 'subscription' | undefined; reasoningEffort?: ReasoningEffortSpec | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "getCostFromPricingCatalog",
@@ -39782,11 +39796,6 @@
       "name": "getQualityTierFromScore",
       "kind": "function",
       "text": "export declare function getQualityTierFromScore(score: number): QualityTier;"
-    },
-    {
-      "name": "getTierForContextWindow",
-      "kind": "function",
-      "text": "export declare function getTierForContextWindow(contextWindow: number): ModelTier;"
     },
     {
       "name": "getTierPromptSupplement",
@@ -39844,19 +39853,14 @@
       "text": "export declare function normalizeModelId(modelId: string): string;"
     },
     {
-      "name": "normalizeModelName",
-      "kind": "function",
-      "text": "export declare function normalizeModelName(name: string): string;"
-    },
-    {
-      "name": "normalizeReasoningModelId",
-      "kind": "function",
-      "text": "export declare function normalizeReasoningModelId(modelId: string): string;"
-    },
-    {
       "name": "parseReasoningOptions",
       "kind": "function",
       "text": "export declare function parseReasoningOptions(options: readonly ModelsDevReasoningOption[] | undefined): ReasoningEffortSpec | undefined;"
+    },
+    {
+      "name": "prepareReasoningEffort",
+      "kind": "function",
+      "text": "export declare function prepareReasoningEffort(requested: string | undefined, input: ReasoningEffortSpecRequest, site: string): Promise<void>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "readBudgetAlertUsd",
@@ -39864,9 +39868,24 @@
       "text": "export declare function readBudgetAlertUsd(configGet: (key: string) => unknown): number;"
     },
     {
+      "name": "readFamilyReasoningEffortSpec",
+      "kind": "function",
+      "text": "export declare function readFamilyReasoningEffortSpec(modelId: string, site: string): Promise<ReasoningEffortSpec | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "readReasoningEffortLevel",
       "kind": "function",
       "text": "export declare function readReasoningEffortLevel(value: unknown): string | undefined;"
+    },
+    {
+      "name": "readStreamDeltaLabels",
+      "kind": "function",
+      "text": "export declare function readStreamDeltaLabels(rawChunk: unknown, site: string): Promise<void>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readTierPromptSupplement",
+      "kind": "function",
+      "text": "export declare function readTierPromptSupplement(model: ModelFacts, tiers: Pick<ModelTierStore, 'read'>, site?: string): Promise<string>; ;; via ModelFacts = export interface ModelFacts { readonly registryKey: string; readonly id: string; readonly name: string; readonly provider: string; readonly family?: string | undefined; readonly contextWindow?: number | undefined; readonly maxOutputTokens?: number | undefined; readonly price?: { readonly input: number; readonly output: number; } | 'free' | 'subscription' | 'unpriced' | undefined; readonly reasoning?: boolean | undefined; readonly inputModalities?: readonly string[] | undefined; readonly benchmark?: number | null | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "reasoningEffortLevels",
@@ -40624,6 +40643,860 @@
       "name": "summarizeTurnLabel",
       "kind": "function",
       "text": "export declare function summarizeTurnLabel(text: string | null | undefined, max?: number): string;"
+    }
+  ],
+  "./platform/routing": [
+    {
+      "name": "CHANNEL_TARGET_IDS",
+      "kind": "const",
+      "text": "CHANNEL_TARGET_IDS: readonly NamedId[]"
+    },
+    {
+      "name": "CHANNEL_TASKS",
+      "kind": "const",
+      "text": "CHANNEL_TASKS: { readonly receipts: \"Review the history or receipts of messages already delivered\"; readonly triage: \"Troubleshoot channel problems: failed or pending deliveries, retries, errors or blockers\"; readonly setup: \"Set up, connect, configure, enable or repair a channel\"; readonly send: \"Send a message, notification or test ping through a channel\"; readonly status: \"Check whether channels are configured and ready, or anything else about channels\"; }"
+    },
+    {
+      "name": "CHOICE_SHORTLIST",
+      "kind": "const",
+      "text": "CHOICE_SHORTLIST = 8"
+    },
+    {
+      "name": "ChannelTask",
+      "kind": "type",
+      "text": "export type ChannelTask = 'receipts' | 'triage' | 'setup' | 'send' | 'status';"
+    },
+    {
+      "name": "DOMAINS",
+      "kind": "const",
+      "text": "DOMAINS: { readonly software: \"Software engineering: code, systems, tooling, infrastructure\"; readonly data: \"Data work: datasets, queries, pipelines, statistics, machine learning\"; readonly mathematics: \"Mathematics: proofs, calculation, formal reasoning\"; readonly science: \"Natural or physical sciences\"; readonly law: \"Law, contracts, compliance or regulation\"; readonly medicine: \"Medicine or health\"; readonly finance: \"Finance, accounting, investing or tax\"; readonly business: \"Business operations, strategy, sales, marketing or management\"; readonly creative: \"Creative writing, art, design or entertainment\"; readonly personal: \"Personal life: email, calendar, errands, travel, household\"; readonly general: \"General knowledge or anything not covered above\"; }"
+    },
+    {
+      "name": "EXTERNAL_MEMORY_PROVIDER_IDS",
+      "kind": "const",
+      "text": "EXTERNAL_MEMORY_PROVIDER_IDS: readonly NamedId[]"
+    },
+    {
+      "name": "ErrorClass",
+      "kind": "type",
+      "text": "export type ErrorClass = 'auth' | 'rate-limit' | 'context-overflow' | 'network' | 'generic';"
+    },
+    {
+      "name": "FALLBACK_ROUTES",
+      "kind": "const",
+      "text": "FALLBACK_ROUTES = 3"
+    },
+    {
+      "name": "GUIDANCE_TIER_WHEN_UNSETTLED",
+      "kind": "const",
+      "text": "GUIDANCE_TIER_WHEN_UNSETTLED: RouteTier"
+    },
+    {
+      "name": "IDENTITY_SHORTLIST",
+      "kind": "const",
+      "text": "IDENTITY_SHORTLIST = 8"
+    },
+    {
+      "name": "INTENTS",
+      "kind": "const",
+      "text": "INTENTS: { readonly code_change: \"Write, change, fix or refactor code or configuration\"; readonly code_review: \"Review existing code or a change and report problems\"; readonly debugging: \"Find the cause of a failure, crash, wrong result or flaky behavior\"; readonly planning: \"Plan, design or break down work before doing it\"; readonly research: \"Find, gather and synthesize information from sources\"; readonly writing: \"Write or edit prose: documents, messages, posts, explanations\"; readonly analysis: \"Analyze data or information and reach conclusions\"; readonly operations: \"Run commands, manage systems, deploy, or configure tools and services\"; readonly conversation: \"Chat, answer a quick question, or acknowledge something\"; }"
+    },
+    {
+      "name": "IdentityCandidate",
+      "kind": "interface",
+      "required": [
+        "id",
+        "key"
+      ],
+      "text": "export interface IdentityCandidate { readonly key: string; readonly id: string; readonly name?: string | undefined; readonly provider?: string | undefined; readonly family?: string | undefined; }"
+    },
+    {
+      "name": "IdentityQuery",
+      "kind": "interface",
+      "required": [
+        "id"
+      ],
+      "text": "export interface IdentityQuery { readonly id: string; readonly name?: string | undefined; readonly provider?: string | undefined; readonly family?: string | undefined; readonly otherProviderThan?: string | undefined; }"
+    },
+    {
+      "name": "LANGUAGES",
+      "kind": "const",
+      "text": "LANGUAGES: { readonly english: \"English\"; readonly chinese: \"Chinese\"; readonly japanese: \"Japanese\"; readonly korean: \"Korean\"; readonly spanish: \"Spanish\"; readonly french: \"French\"; readonly german: \"German\"; readonly portuguese: \"Portuguese\"; readonly russian: \"Russian\"; readonly other: \"Another language\"; }"
+    },
+    {
+      "name": "LocalServerSoftware",
+      "kind": "type",
+      "text": "export type LocalServerSoftware = typeof localServerIdentity.routes[number];"
+    },
+    {
+      "name": "MAIN_CONVERSATION_ID",
+      "kind": "const",
+      "text": "MAIN_CONVERSATION_ID = \"main-conversation-first\""
+    },
+    {
+      "name": "MODEL_PROVIDER_IDS",
+      "kind": "const",
+      "text": "MODEL_PROVIDER_IDS: readonly NamedId[]"
+    },
+    {
+      "name": "MODEL_TIER_OPTIONS",
+      "kind": "const",
+      "text": "MODEL_TIER_OPTIONS: { readonly economy: \"A small or lightweight model: fast and inexpensive, good at simple well-defined tasks, weak at hard multi-step reasoning. Includes small open-weight models, \\\"mini\\\", \\\"nano\\\", \\\"flash-lite\\\" and \\\"instant\\\" style variants, and embedding or special-purpose models.\"; readonly standard: \"A capable mid-range general model: solid at ordinary coding, writing and multi-step tasks, below the strongest models on hard reasoning. Includes mid-size open-weight models and the balanced middle of a model family.\"; readonly premium: \"A frontier flagship model: among the strongest reasoning and coding models available, usually the largest and highest-priced of its family.\"; }"
+    },
+    {
+      "name": "MissingRequestPlan",
+      "kind": "interface",
+      "required": [
+        "examples",
+        "policy",
+        "status",
+        "usage"
+      ],
+      "text": "export interface MissingRequestPlan { readonly status: 'missing_request'; readonly usage: string; readonly examples: readonly string[]; readonly policy: string; }"
+    },
+    {
+      "name": "ModelFacts",
+      "kind": "interface",
+      "required": [
+        "id",
+        "name",
+        "provider",
+        "registryKey"
+      ],
+      "text": "export interface ModelFacts { readonly registryKey: string; readonly id: string; readonly name: string; readonly provider: string; readonly family?: string | undefined; readonly contextWindow?: number | undefined; readonly maxOutputTokens?: number | undefined; readonly price?: { readonly input: number; readonly output: number; } | 'free' | 'subscription' | 'unpriced' | undefined; readonly reasoning?: boolean | undefined; readonly inputModalities?: readonly string[] | undefined; readonly benchmark?: number | null | undefined; }"
+    },
+    {
+      "name": "ModelIdentityResolver",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "known",
+        "lookup",
+        "resolve"
+      ],
+      "text": "export declare class ModelIdentityResolver { #private; constructor(options: ModelIdentityResolverOptions); known(query: IdentityQuery): string | null | undefined; lookup(query: IdentityQuery, site: string): string | null; resolve(query: IdentityQuery, site: string, signal?: AbortSignal): Promise<string | null>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "ModelIdentityResolverOptions",
+      "kind": "interface",
+      "required": [
+        "candidates",
+        "universe"
+      ],
+      "text": "export interface ModelIdentityResolverOptions { readonly universe: string; readonly candidates: () => readonly IdentityCandidate[]; readonly path?: string | undefined; }"
+    },
+    {
+      "name": "ModelTierStore",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "known",
+        "lastReading",
+        "read",
+        "readMany"
+      ],
+      "text": "export declare class ModelTierStore { #private; constructor(options?: { readonly path?: string | undefined; }); known(facts: ModelFacts): TierRecord | undefined; lastReading(registryKey: string): TierRecord | undefined; read(facts: ModelFacts, options?: { readonly site?: string; readonly signal?: AbortSignal; }): Promise<TierRecord>; readMany(models: readonly ModelFacts[], options?: { readonly site?: string; readonly signal?: AbortSignal; }): Promise<ReadonlyMap<string, TierRecord>>; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "NamedId",
+      "kind": "interface",
+      "required": [
+        "id",
+        "names"
+      ],
+      "text": "export interface NamedId { readonly id: string; readonly names: readonly string[]; }"
+    },
+    {
+      "name": "NamedIdKind",
+      "kind": "type",
+      "text": "export type NamedIdKind = keyof typeof NAMED_ID_KINDS;"
+    },
+    {
+      "name": "NoRouteError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor"
+      ],
+      "text": "export declare class NoRouteError extends Error { constructor(message: string); }"
+    },
+    {
+      "name": "PERSONAL_OPS_LANES",
+      "kind": "const",
+      "text": "PERSONAL_OPS_LANES: { readonly inbox: \"Email: the inbox, mail, messages, threads or replies\"; readonly calendar: \"The calendar: agenda, meetings, events, availability or RSVPs\"; readonly notes: \"Notes: jotting something down or a scratchpad\"; readonly tasks: \"Tasks, to-dos or work items\"; readonly reminders: \"Reminders or follow-ups\"; readonly routines: \"Routines, checklists or repeatable personal procedures\"; readonly delivery: \"Delivering or sending a summary or briefing somewhere\"; readonly none: \"None of these\"; }"
+    },
+    {
+      "name": "POLICY_TARGETS",
+      "kind": "const",
+      "text": "POLICY_TARGETS: { readonly agent_harness: \"The agent_harness tool\"; readonly settings: \"Settings or configuration\"; readonly terminal: \"Terminal or shell commands\"; readonly process: \"Background or running processes\"; readonly exec: \"Code or script execution (exec)\"; readonly channels: \"External messaging channels\"; readonly schedule: \"Schedules or reminders\"; readonly personal_ops: \"Personal Ops: email or calendar actions\"; readonly models: \"Models or model providers\"; readonly memory: \"Memory\"; readonly computer: \"The browser, screenshots or computer use\"; readonly device: \"Devices, voice or text-to-speech\"; readonly workspace: \"Workspace actions\"; readonly host: \"The connected host or daemon\"; readonly none: \"No particular tool or area\"; }"
+    },
+    {
+      "name": "PREVIEW_LIMIT",
+      "kind": "const",
+      "text": "PREVIEW_LIMIT = 56"
+    },
+    {
+      "name": "PersonalOpsLaneId",
+      "kind": "type",
+      "text": "export type PersonalOpsLaneId = 'inbox' | 'calendar' | 'notes' | 'tasks' | 'reminders' | 'routines' | 'delivery';"
+    },
+    {
+      "name": "PlannedRoute",
+      "kind": "interface",
+      "required": [
+        "chosenTier",
+        "fallbackModels",
+        "model",
+        "modelId",
+        "pick",
+        "provider",
+        "reason",
+        "request",
+        "tier"
+      ],
+      "text": "export interface PlannedRoute { readonly model: string; readonly provider: string; readonly modelId: string; readonly fallbackModels: readonly string[]; readonly tier: RouteTier; readonly chosenTier: RouteTier; readonly reason: string; readonly request: RequestReading; readonly pick: Selection; } ;; via Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; }"
+    },
+    {
+      "name": "ProviderAccess",
+      "kind": "type",
+      "text": "export type ProviderAccess = 'metered' | 'subscription' | 'local';"
+    },
+    {
+      "name": "ProviderAccessReadings",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "readAll"
+      ],
+      "text": "export declare class ProviderAccessReadings { #private; constructor(options?: { readonly path?: string | undefined; }); readAll(providers: readonly ProviderFacts[], site?: string): Promise<ReadonlyMap<string, ProviderAccess | undefined>>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "ProviderFacts",
+      "kind": "interface",
+      "required": [
+        "envVars",
+        "id",
+        "name",
+        "sampleModels"
+      ],
+      "text": "export interface ProviderFacts { readonly id: string; readonly name: string; readonly api?: string | undefined; readonly doc?: string | undefined; readonly envVars: readonly string[]; readonly sampleModels: readonly string[]; }"
+    },
+    {
+      "name": "REASONING_FAMILY_ROUTES",
+      "kind": "const",
+      "text": "REASONING_FAMILY_ROUTES: { readonly 'claude-fable-mythos': \"Claude Fable or Claude Mythos, any version\"; readonly 'claude-5': \"Claude Opus 5, Sonnet 5 or Haiku 5 (generation 5 or later of Opus, Sonnet or Haiku)\"; readonly 'claude-opus-4-7-8': \"Claude Opus 4.7 or Claude Opus 4.8\"; readonly 'claude-4-6': \"Claude Opus 4.6 or Claude Sonnet 4.6\"; readonly 'claude-opus-4-5': \"Claude Opus 4.5\"; readonly 'claude-3-7': \"Claude 3.7 Sonnet\"; readonly 'claude-4-early': \"Claude Opus, Sonnet or Haiku 4, 4.1 or 4.5, other than Opus 4.5 (for example Sonnet 4, Sonnet 4.5, Haiku 4.5, Opus 4.1)\"; readonly 'claude-before-3-7': \"Claude Instant, Claude 1, 2 or 3, or Claude 3.5 (any Claude before 3.7 Sonnet)\"; readonly 'gemini-3': \"Gemini 3 series (any Gemini 3 or 3.x model)\"; readonly 'gemini-latest': \"The Gemini \\\"flash-latest\\\" or \\\"pro-latest\\\" aliases\"; readonly 'gemini-2-5': \"Gemini 2.5 series\"; readonly 'gemini-legacy': \"Gemini 2.0, 1.5 or 1.0\"; readonly 'grok-4-base': \"The base grok-4 model exactly, with no suffix or later version\"; readonly 'grok-4-plus': \"Grok 4 variants and later Grok models (grok-4.x, grok-4-fast, grok-5, grok-code)\"; readonly 'deepseek-reasoner': \"deepseek-reasoner\"; readonly deepseek: \"Any other DeepSeek model (deepseek-chat, deepseek-v3, deepseek-v4 and so on)\"; readonly 'openai-reasoning': \"GPT-5 family, o1, o3 or o4 reasoning models\"; readonly 'mercury-edit': \"Mercury Edit\"; readonly mercury: \"Any other Mercury model (mercury-2, mercury-coder and so on)\"; readonly none: \"None of these families, or a different model family altogether\"; }"
+    },
+    {
+      "name": "REQUEST_BATTERIES",
+      "kind": "const",
+      "text": "REQUEST_BATTERIES: { readonly tier: import(\"@goodvibes-jev/judgment\").Battery<{ readonly tier: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly economy: \"A small, fast, inexpensive model does this well: a simple lookup, a short rewrite, formatting, a routine one-step edit, or a casual reply.\"; readonly standard: \"A capable general-purpose model is needed: ordinary coding, writing, summarizing or multi-step work of moderate difficulty.\"; readonly premium: \"The strongest reasoning model is needed: hard debugging, architecture or design decisions, subtle correctness or security, long multi-step planning, research synthesis, or work where a mistake is costly.\"; }>; }>; readonly intent: import(\"@goodvibes-jev/judgment\").Battery<{ readonly intent: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly code_change: \"Write, change, fix or refactor code or configuration\"; readonly code_review: \"Review existing code or a change and report problems\"; readonly debugging: \"Find the cause of a failure, crash, wrong result or flaky behavior\"; readonly planning: \"Plan, design or break down work before doing it\"; readonly research: \"Find, gather and synthesize information from sources\"; readonly writing: \"Write or edit prose: documents, messages, posts, explanations\"; readonly analysis: \"Analyze data or information and reach conclusions\"; readonly operations: \"Run commands, manage systems, deploy, or configure tools and services\"; readonly conversation: \"Chat, answer a quick question, or acknowledge something\"; }>; }>; readonly difficulty: import(\"@goodvibes-jev/judgment\").Battery<{ readonly difficulty: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Trivial: a single obvious step, seconds of thought.\", \"Routine: a familiar task with a few clear steps, minutes of work.\", \"Demanding: careful work across several interacting steps or some investigation, around an hour for a skilled professional.\", \"Hard: deep specialist reasoning that would take a senior expert many hours, such as distributed-systems correctness, security design, novel algorithms or proofs.\"]>; }>; readonly risk: import(\"@goodvibes-jev/judgment\").Battery<{ readonly risk: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Negligible: a mistake is obvious and redone in moments.\", \"Minor: a mistake wastes a little time or needs a small follow-up fix.\", \"Serious: a mistake breaks something that matters or wastes significant time, but can be recovered.\", \"Severe: a mistake could lose data, expose secrets or security holes, cost money, take production down, or cannot be undone.\"]>; }>; readonly domain: import(\"@goodvibes-jev/judgment\").Battery<{ readonly domain: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly software: \"Software engineering: code, systems, tooling, infrastructure\"; readonly data: \"Data work: datasets, queries, pipelines, statistics, machine learning\"; readonly mathematics: \"Mathematics: proofs, calculation, formal reasoning\"; readonly science: \"Natural or physical sciences\"; readonly law: \"Law, contracts, compliance or regulation\"; readonly medicine: \"Medicine or health\"; readonly finance: \"Finance, accounting, investing or tax\"; readonly business: \"Business operations, strategy, sales, marketing or management\"; readonly creative: \"Creative writing, art, design or entertainment\"; readonly personal: \"Personal life: email, calendar, errands, travel, household\"; readonly general: \"General knowledge or anything not covered above\"; }>; }>; readonly language: import(\"@goodvibes-jev/judgment\").Battery<{ readonly language: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly english: \"English\"; readonly chinese: \"Chinese\"; readonly japanese: \"Japanese\"; readonly korean: \"Korean\"; readonly spanish: \"Spanish\"; readonly french: \"French\"; readonly german: \"German\"; readonly portuguese: \"Portuguese\"; readonly russian: \"Russian\"; readonly other: \"Another language\"; }>; }>; }"
+    },
+    {
+      "name": "ROUTE_TIERS",
+      "kind": "const",
+      "text": "ROUTE_TIERS: readonly [\"economy\", \"standard\", \"premium\"]"
+    },
+    {
+      "name": "ReadStopReason",
+      "kind": "type",
+      "text": "export type ReadStopReason = 'completed' | 'tool_call' | 'max_tokens';"
+    },
+    {
+      "name": "ReadyPlan",
+      "kind": "interface",
+      "required": [
+        "alternatives",
+        "harnessModeMatches",
+        "nextAction",
+        "policy",
+        "preferred",
+        "request",
+        "routesConsidered",
+        "status",
+        "workspaceMatches"
+      ],
+      "text": "export interface ReadyPlan { readonly status: 'ready'; readonly request: string; readonly preferred: TaskRouteCandidate; readonly alternatives: readonly TaskRouteCandidate[]; readonly routesConsidered: number; readonly note?: string; readonly nextAction: string; readonly workspaceMatches: readonly Record<string, unknown>[]; readonly harnessModeMatches: readonly Record<string, unknown>[]; readonly policy: string; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "ReasoningFamily",
+      "kind": "type",
+      "text": "export type ReasoningFamily = Exclude<keyof typeof REASONING_FAMILY_ROUTES, 'none'>; ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
+    },
+    {
+      "name": "RequestDomain",
+      "kind": "type",
+      "text": "export type RequestDomain = keyof typeof DOMAINS;"
+    },
+    {
+      "name": "RequestIntent",
+      "kind": "type",
+      "text": "export type RequestIntent = keyof typeof INTENTS;"
+    },
+    {
+      "name": "RequestLanguage",
+      "kind": "type",
+      "text": "export type RequestLanguage = keyof typeof LANGUAGES;"
+    },
+    {
+      "name": "RequestReading",
+      "kind": "interface",
+      "required": [
+        "decisionId",
+        "readings",
+        "recordAction",
+        "tier",
+        "tierBecause"
+      ],
+      "text": "export interface RequestReading { readonly tier: RouteTier; readonly tierBecause: string; readonly readings: { readonly tier: ChoiceReading<RouteTier>; readonly intent: ChoiceReading<RequestIntent>; readonly difficulty: ScoreReading; readonly risk: ScoreReading; readonly domain: ChoiceReading<RequestDomain>; readonly language: ChoiceReading<RequestLanguage>; }; readonly decisionId: string | undefined; recordAction(action: string): void; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; ScoreReading = export interface ScoreReading { readonly kind: 'score'; readonly score: number; readonly level: number; readonly normalized: number; readonly confidence: number; readonly probabilities: readonly number[]; readonly outcome: Outcome; }"
+    },
+    {
+      "name": "RoutePlanRequest",
+      "kind": "interface",
+      "text": "export interface RoutePlanRequest extends RoutingRequest { readonly requires?: RouteRequirements | undefined; readonly signal?: AbortSignal | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
+      "name": "RoutePlanner",
+      "kind": "interface",
+      "required": [
+        "planRoute"
+      ],
+      "text": "export interface RoutePlanner { planRoute(request: RoutePlanRequest): Promise<PlannedRoute>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "RoutePlannerCatalog",
+      "kind": "interface",
+      "required": [
+        "getConfiguredProviderIds",
+        "getContextWindowForModel",
+        "listModels",
+        "resolveModelPricing"
+      ],
+      "text": "export interface RoutePlannerCatalog { listModels(): readonly ModelDefinition[]; getConfiguredProviderIds(): readonly string[]; getContextWindowForModel(model: ModelDefinition): number; resolveModelPricing(modelRef: string, providerId?: string): ResolvedModelPricing; } ;; via ModelDefinition = export interface ModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; reasoningEffort?: ReasoningEffortSpec | undefined; tier?: ModelTier | undefined; tokenLimits?: TokenLimits | undefined; pricing?: ManualModelPrice | undefined; } ;; ResolvedModelPricing = export type ResolvedModelPricing = { readonly status: 'priced'; readonly source: ModelPricingSource; readonly asOf?: string | undefined; readonly rates: ModelPricingRates; } | { readonly status: 'subscription'; } | { readonly status: 'unknown'; };"
+    },
+    {
+      "name": "RoutePlannerDeps",
+      "kind": "interface",
+      "required": [
+        "catalog",
+        "tiers"
+      ],
+      "text": "export interface RoutePlannerDeps { readonly catalog: RoutePlannerCatalog; readonly tiers: ModelTierStore; readonly providerHealth?: (() => ReadonlyMap<string, { readonly status: ProviderStatus; }>) | undefined; readonly benchmarkFor?: ((model: ModelDefinition) => number | null | undefined) | undefined; } ;; via ModelDefinition = export interface ModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; reasoningEffort?: ReasoningEffortSpec | undefined; tier?: ModelTier | undefined; tokenLimits?: TokenLimits | undefined; pricing?: ManualModelPrice | undefined; } ;; ProviderStatus = export type ProviderStatus = 'unknown' | 'healthy' | 'degraded' | 'rate_limited' | 'auth_error' | 'unavailable'; ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "RouteRequirements",
+      "kind": "interface",
+      "text": "export interface RouteRequirements { readonly toolCalling?: boolean | undefined; readonly imageInput?: boolean | undefined; readonly minContextTokens?: number | undefined; }"
+    },
+    {
+      "name": "RouteTier",
+      "kind": "type",
+      "text": "export type RouteTier = (typeof ROUTE_TIERS)[number];"
+    },
+    {
+      "name": "RoutingRequest",
+      "kind": "interface",
+      "required": [
+        "brief",
+        "purpose"
+      ],
+      "text": "export interface RoutingRequest { readonly purpose: string; readonly brief: string; }"
+    },
+    {
+      "name": "ServerProbeEvidence",
+      "kind": "interface",
+      "required": [
+        "headers",
+        "modelIds",
+        "port"
+      ],
+      "text": "export interface ServerProbeEvidence { readonly port: number; readonly headers: Readonly<Record<string, string>>; readonly modelIds: readonly string[]; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "SlotRun",
+      "kind": "interface",
+      "required": [
+        "recordAction",
+        "slots"
+      ],
+      "text": "export interface SlotRun { readonly slots: TaskRouteSlots; recordAction(action: string): void; }"
+    },
+    {
+      "name": "TASK_ROUTES",
+      "kind": "const",
+      "text": "TASK_ROUTES: readonly TaskRouteEntry[]"
+    },
+    {
+      "name": "TASK_ROUTE_SITE",
+      "kind": "const",
+      "text": "TASK_ROUTE_SITE = \"routing.task-route.plan\""
+    },
+    {
+      "name": "TIER_FLOOR_FOR_PURPOSE",
+      "kind": "const",
+      "text": "TIER_FLOOR_FOR_PURPOSE: Readonly<Record<string, RouteTier>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "TIER_FLOOR_FOR_RISK",
+      "kind": "const",
+      "text": "TIER_FLOOR_FOR_RISK: readonly RouteTier[]"
+    },
+    {
+      "name": "TIER_FLOOR_FOR_UNSURE_NON_ENGLISH",
+      "kind": "const",
+      "text": "TIER_FLOOR_FOR_UNSURE_NON_ENGLISH: RouteTier"
+    },
+    {
+      "name": "TIER_FOR_DIFFICULTY",
+      "kind": "const",
+      "text": "TIER_FOR_DIFFICULTY: readonly RouteTier[]"
+    },
+    {
+      "name": "TIER_READ_CONCURRENCY",
+      "kind": "const",
+      "text": "TIER_READ_CONCURRENCY = 8"
+    },
+    {
+      "name": "TIER_READ_SHORTLIST",
+      "kind": "const",
+      "text": "TIER_READ_SHORTLIST = 24"
+    },
+    {
+      "name": "TaskRouteArgs",
+      "kind": "interface",
+      "text": "export interface TaskRouteArgs { readonly query?: unknown; readonly target?: unknown; readonly includeParameters?: unknown; readonly limit?: unknown; }"
+    },
+    {
+      "name": "TaskRouteCandidate",
+      "kind": "interface",
+      "required": [
+        "confidence",
+        "id",
+        "inspectRoute",
+        "label",
+        "modelRoute",
+        "requiresConfirmation",
+        "userOutcome",
+        "userSurface",
+        "why"
+      ],
+      "text": "export interface TaskRouteCandidate { readonly id: string; readonly label: string; readonly confidence: TaskRouteConfidence; readonly userSurface: string; readonly userOutcome: string; readonly why: string; readonly modelRoute: string; readonly inspectRoute: string; readonly userRoute?: string; readonly requiresConfirmation: boolean; readonly missingFields?: readonly string[]; readonly nextQuestion?: string; readonly supportingRoutes?: readonly string[]; readonly policy?: string; readonly score?: number; }"
+    },
+    {
+      "name": "TaskRouteConfidence",
+      "kind": "type",
+      "text": "export type TaskRouteConfidence = 'high' | 'medium' | 'low';"
+    },
+    {
+      "name": "TaskRouteDeps",
+      "kind": "interface",
+      "text": "export interface TaskRouteDeps { workspaceMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; modeMatches?(request: string, limit: number): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "TaskRouteDraft",
+      "kind": "interface",
+      "required": [
+        "id",
+        "inspectRoute",
+        "label",
+        "modelRoute",
+        "requiresConfirmation",
+        "userOutcome",
+        "userSurface",
+        "why"
+      ],
+      "text": "export interface TaskRouteDraft { readonly id: string; readonly label: string; readonly userSurface: string; readonly userOutcome: string; readonly why: string; readonly modelRoute: string; readonly inspectRoute: string; readonly userRoute?: string; readonly requiresConfirmation: boolean; readonly missingFields?: readonly string[] | undefined; readonly nextQuestion?: string; readonly supportingRoutes?: readonly string[]; readonly policy?: string; }"
+    },
+    {
+      "name": "TaskRouteEntry",
+      "kind": "interface",
+      "required": [
+        "build",
+        "description",
+        "id"
+      ],
+      "text": "export interface TaskRouteEntry { readonly id: string; readonly description: string; build(request: string, slots: TaskRouteSlots): TaskRouteDraft; }"
+    },
+    {
+      "name": "TaskRoutePlan",
+      "kind": "type",
+      "text": "export type TaskRoutePlan = MissingRequestPlan | ReadyPlan;"
+    },
+    {
+      "name": "TaskRouteSlots",
+      "kind": "interface",
+      "required": [
+        "changes",
+        "channelTarget",
+        "channelTask",
+        "controls",
+        "delegated",
+        "device",
+        "evidence",
+        "existing",
+        "freshRead",
+        "instructionFiles",
+        "lane",
+        "memoryProvider",
+        "modelProvider",
+        "opensUi",
+        "policyTarget",
+        "reminder",
+        "starts"
+      ],
+      "text": "export interface TaskRouteSlots { readonly changes: boolean; readonly starts: boolean; readonly opensUi: boolean; readonly controls: boolean; readonly existing: boolean; readonly freshRead: boolean; readonly reminder: boolean; readonly delegated: boolean; readonly device: boolean; readonly evidence: boolean; readonly instructionFiles: boolean; readonly lane: PersonalOpsLaneId | null; readonly channelTask: ChannelTask; readonly policyTarget: string | null; readonly modelProvider: string | null; readonly memoryProvider: string | null; readonly channelTarget: string | null; }"
+    },
+    {
+      "name": "TierRecord",
+      "kind": "interface",
+      "required": [
+        "frontier",
+        "small",
+        "tier"
+      ],
+      "text": "export interface TierRecord { readonly tier: RouteTier | undefined; readonly frontier: number; readonly small: number; }"
+    },
+    {
+      "name": "UserErrorReading",
+      "kind": "interface",
+      "required": [
+        "kind",
+        "sessionEnded"
+      ],
+      "text": "export interface UserErrorReading { readonly kind: ErrorClass; readonly sessionEnded: boolean; }"
+    },
+    {
+      "name": "UserFacingError",
+      "kind": "interface",
+      "required": [
+        "action",
+        "kind",
+        "message"
+      ],
+      "text": "export interface UserFacingError { readonly message: string; readonly action: string; readonly kind: ErrorClass; }"
+    },
+    {
+      "name": "WORK_TIER_OPTIONS",
+      "kind": "const",
+      "text": "WORK_TIER_OPTIONS: { readonly economy: \"A small, fast, inexpensive model does this well: a simple lookup, a short rewrite, formatting, a routine one-step edit, or a casual reply.\"; readonly standard: \"A capable general-purpose model is needed: ordinary coding, writing, summarizing or multi-step work of moderate difficulty.\"; readonly premium: \"The strongest reasoning model is needed: hard debugging, architecture or design decisions, subtle correctness or security, long multi-step planning, research synthesis, or work where a mistake is costly.\"; }"
+    },
+    {
+      "name": "alternateApi",
+      "kind": "const",
+      "text": "alternateApi: import(\"@goodvibes-jev/judgment\").Battery<{ readonly unsupported: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "catalogProviderAccess",
+      "kind": "const",
+      "text": "catalogProviderAccess: import(\"@goodvibes-jev/judgment\").Battery<{ readonly local: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly plan: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "composeSlots",
+      "kind": "function",
+      "text": "export declare function composeSlots(readings: SlotReadings, named: Readonly<Record<NamedIdKind, Selection>>): TaskRouteSlots; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Selection = export interface Selection { readonly chosen: string | undefined; readonly outcome: Outcome; readonly pick: ChoiceReading; readonly fits: Readonly<Record<string, YesNoReading>>; readonly decisionId: string | undefined; recordAction(action: string): void; } ;; SlotReadings = type SlotReadings = Awaited<ReturnType<typeof taskRouteSlots.run>>['readings'];"
+    },
+    {
+      "name": "composeTier",
+      "kind": "function",
+      "text": "export declare function composeTier(readings: RequestReading['readings'], purpose: string): { readonly tier: RouteTier; readonly because: string; };"
+    },
+    {
+      "name": "contentPartKind",
+      "kind": "const",
+      "text": "contentPartKind: import(\"@goodvibes-jev/judgment\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "createRoutePlanner",
+      "kind": "function",
+      "text": "export declare function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner;"
+    },
+    {
+      "name": "createTaskRouteTool",
+      "kind": "function",
+      "text": "export declare function createTaskRouteTool(deps?: TaskRouteDeps): Tool; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+    },
+    {
+      "name": "describeUserError",
+      "kind": "function",
+      "text": "export declare function describeUserError(err: unknown, reading: UserErrorReading): UserFacingError;"
+    },
+    {
+      "name": "eligibleModels",
+      "kind": "function",
+      "text": "export declare function eligibleModels(deps: RoutePlannerDeps, requires?: RouteRequirements): ModelDefinition[]; ;; via ModelDefinition = export interface ModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; reasoningEffort?: ReasoningEffortSpec | undefined; tier?: ModelTier | undefined; tokenLimits?: TokenLimits | undefined; pricing?: ManualModelPrice | undefined; }"
+    },
+    {
+      "name": "factsFor",
+      "kind": "function",
+      "text": "export declare function factsFor(deps: Pick<RoutePlannerDeps, 'catalog' | 'benchmarkFor'>, model: ModelDefinition): ModelFacts; ;; via ModelDefinition = export interface ModelDefinition { id: string; provider: string; registryKey: string; displayName: string; description: string; capabilities: { toolCalling: boolean; codeEditing: boolean; reasoning: boolean; multimodal: boolean; }; contextWindow: number; contextWindowProvenance?: ContextWindowProvenance | undefined; selectable: boolean; reasoningEffort?: ReasoningEffortSpec | undefined; tier?: ModelTier | undefined; tokenLimits?: TokenLimits | undefined; pricing?: ManualModelPrice | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
+      "name": "forgetProviderReadings",
+      "kind": "function",
+      "text": "export declare function forgetProviderReadings(): void;"
+    },
+    {
+      "name": "higherTier",
+      "kind": "function",
+      "text": "export declare function higherTier(a: RouteTier, b: RouteTier): RouteTier;"
+    },
+    {
+      "name": "identityShortlist",
+      "kind": "function",
+      "text": "export declare function identityShortlist(query: IdentityQuery, index: readonly IndexedCandidate[], limit?: number): IdentityCandidate[]; ;; via IndexedCandidate = interface IndexedCandidate { readonly candidate: IdentityCandidate; readonly tokens: ReadonlySet<string>; readonly length: number; }"
+    },
+    {
+      "name": "identityTokens",
+      "kind": "function",
+      "text": "export declare function identityTokens(text: string): string[];"
+    },
+    {
+      "name": "knownContentPartIsReasoning",
+      "kind": "function",
+      "text": "export declare function knownContentPartIsReasoning(label: string): boolean | undefined;"
+    },
+    {
+      "name": "knownReasoningFamily",
+      "kind": "function",
+      "text": "export declare function knownReasoningFamily(modelId: string): ReasoningFamily | null | undefined;"
+    },
+    {
+      "name": "localServerIdentity",
+      "kind": "const",
+      "text": "localServerIdentity: import(\"@goodvibes-jev/judgment\").Dispatch<\"unknown\" | \"lm-studio\" | \"vllm\" | \"llamacpp\" | \"localai\" | \"tgi\" | \"ollama\">"
+    },
+    {
+      "name": "mainConversationRoute",
+      "kind": "function",
+      "text": "export declare function mainConversationRoute(request: string): TaskRouteDraft;"
+    },
+    {
+      "name": "modelChoice",
+      "kind": "const",
+      "text": "modelChoice: import(\"@goodvibes-jev/judgment\").Selector"
+    },
+    {
+      "name": "modelFactsState",
+      "kind": "function",
+      "text": "export declare function modelFactsState(facts: ModelFacts): { model: Record<string, JsonValue>; }; ;; via JsonValue = type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "modelIdentity",
+      "kind": "const",
+      "text": "modelIdentity: import(\"@goodvibes-jev/judgment\").Selector"
+    },
+    {
+      "name": "modelTier",
+      "kind": "const",
+      "text": "modelTier: import(\"@goodvibes-jev/judgment\").Battery<{ readonly frontier: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly small: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "modelTierFrom",
+      "kind": "function",
+      "text": "export declare function modelTierFrom(readings: { readonly frontier: YesNoReading; readonly small: YesNoReading; }): RouteTier | undefined; ;; via YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+    },
+    {
+      "name": "normalizeRouteAction",
+      "kind": "function",
+      "text": "export declare function normalizeRouteAction(value: unknown): TaskRouteAction | null; ;; via TaskRouteAction = type TaskRouteAction = 'plan' | 'status';"
+    },
+    {
+      "name": "planTaskRoute",
+      "kind": "function",
+      "text": "export declare function planTaskRoute(args: TaskRouteArgs, deps?: TaskRouteDeps, options?: { readonly signal?: AbortSignal; }): Promise<TaskRoutePlan>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "previewText",
+      "kind": "function",
+      "text": "export declare function previewText(value: string, maxLength?: number): string;"
+    },
+    {
+      "name": "providerAccessFrom",
+      "kind": "function",
+      "text": "export declare function providerAccessFrom(readings: { readonly local: YesNoReading; readonly plan: YesNoReading; }): ProviderAccess | undefined; ;; via YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+    },
+    {
+      "name": "providerFactsState",
+      "kind": "function",
+      "text": "export declare function providerFactsState(facts: ProviderFacts): { provider: Record<string, string | string[]>; }; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "quote",
+      "kind": "function",
+      "text": "export declare function quote(value: string, limit?: number): string;"
+    },
+    {
+      "name": "readContentPartIsReasoning",
+      "kind": "function",
+      "text": "export declare function readContentPartIsReasoning(label: string, site: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readLimit",
+      "kind": "function",
+      "text": "export declare function readLimit(value: unknown, fallback: number): number;"
+    },
+    {
+      "name": "readLocalServerIdentity",
+      "kind": "function",
+      "text": "export declare function readLocalServerIdentity(evidence: ServerProbeEvidence, site: string): Promise<LocalServerSoftware>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readReasoningFamily",
+      "kind": "function",
+      "text": "export declare function readReasoningFamily(modelId: string, site: string): Promise<ReasoningFamily | null>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readRequest",
+      "kind": "function",
+      "text": "export declare function readRequest(request: RoutingRequest, options?: { readonly site?: string; readonly signal?: AbortSignal; }): Promise<RequestReading>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readSlots",
+      "kind": "function",
+      "text": "export declare function readSlots(port: JudgmentPort, request: string, options: { readonly site: string; readonly signal?: AbortSignal; }): Promise<SlotRun>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readStopReason",
+      "kind": "function",
+      "text": "export declare function readStopReason(rawReason: string, site: string): Promise<ReadStopReason>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readUserErrorClass",
+      "kind": "function",
+      "text": "export declare function readUserErrorClass(err: unknown, site?: string): Promise<UserErrorReading>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readUserFacingError",
+      "kind": "function",
+      "text": "export declare function readUserFacingError(err: unknown, site?: string): Promise<UserFacingError>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readUserFacingErrorLine",
+      "kind": "function",
+      "text": "export declare function readUserFacingErrorLine(err: unknown, site?: string): Promise<string>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readsAsAlternateApi",
+      "kind": "function",
+      "text": "export declare function readsAsAlternateApi(error: { readonly status?: number | undefined; readonly message: string; }, site: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readsAsReasoningRejection",
+      "kind": "function",
+      "text": "export declare function readsAsReasoningRejection(providerText: string, site: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "reasoningFamily",
+      "kind": "const",
+      "text": "reasoningFamily: import(\"@goodvibes-jev/judgment\").Dispatch<\"none\" | \"deepseek-reasoner\" | \"claude-fable-mythos\" | \"claude-5\" | \"claude-opus-4-7-8\" | \"claude-4-6\" | \"claude-opus-4-5\" | \"claude-3-7\" | \"claude-4-early\" | \"claude-before-3-7\" | \"gemini-3\" | \"gemini-latest\" | \"gemini-2-5\" | \"gemini-legacy\" | \"grok-4-base\" | \"grok-4-plus\" | \"deepseek\" | \"openai-reasoning\" | \"mercury-edit\" | \"mercury\">"
+    },
+    {
+      "name": "reasoningRejection",
+      "kind": "const",
+      "text": "reasoningRejection: import(\"@goodvibes-jev/judgment\").Battery<{ readonly reasoning: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
+    },
+    {
+      "name": "registerTaskRouteTool",
+      "kind": "function",
+      "text": "export declare function registerTaskRouteTool(registry: ToolRegistry, deps?: TaskRouteDeps): void;"
+    },
+    {
+      "name": "requestDifficulty",
+      "kind": "const",
+      "text": "requestDifficulty: import(\"@goodvibes-jev/judgment\").Battery<{ readonly difficulty: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Trivial: a single obvious step, seconds of thought.\", \"Routine: a familiar task with a few clear steps, minutes of work.\", \"Demanding: careful work across several interacting steps or some investigation, around an hour for a skilled professional.\", \"Hard: deep specialist reasoning that would take a senior expert many hours, such as distributed-systems correctness, security design, novel algorithms or proofs.\"]>; }>"
+    },
+    {
+      "name": "requestDomain",
+      "kind": "const",
+      "text": "requestDomain: import(\"@goodvibes-jev/judgment\").Battery<{ readonly domain: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly software: \"Software engineering: code, systems, tooling, infrastructure\"; readonly data: \"Data work: datasets, queries, pipelines, statistics, machine learning\"; readonly mathematics: \"Mathematics: proofs, calculation, formal reasoning\"; readonly science: \"Natural or physical sciences\"; readonly law: \"Law, contracts, compliance or regulation\"; readonly medicine: \"Medicine or health\"; readonly finance: \"Finance, accounting, investing or tax\"; readonly business: \"Business operations, strategy, sales, marketing or management\"; readonly creative: \"Creative writing, art, design or entertainment\"; readonly personal: \"Personal life: email, calendar, errands, travel, household\"; readonly general: \"General knowledge or anything not covered above\"; }>; }>"
+    },
+    {
+      "name": "requestIntent",
+      "kind": "const",
+      "text": "requestIntent: import(\"@goodvibes-jev/judgment\").Battery<{ readonly intent: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly code_change: \"Write, change, fix or refactor code or configuration\"; readonly code_review: \"Review existing code or a change and report problems\"; readonly debugging: \"Find the cause of a failure, crash, wrong result or flaky behavior\"; readonly planning: \"Plan, design or break down work before doing it\"; readonly research: \"Find, gather and synthesize information from sources\"; readonly writing: \"Write or edit prose: documents, messages, posts, explanations\"; readonly analysis: \"Analyze data or information and reach conclusions\"; readonly operations: \"Run commands, manage systems, deploy, or configure tools and services\"; readonly conversation: \"Chat, answer a quick question, or acknowledge something\"; }>; }>"
+    },
+    {
+      "name": "requestLanguage",
+      "kind": "const",
+      "text": "requestLanguage: import(\"@goodvibes-jev/judgment\").Battery<{ readonly language: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly english: \"English\"; readonly chinese: \"Chinese\"; readonly japanese: \"Japanese\"; readonly korean: \"Korean\"; readonly spanish: \"Spanish\"; readonly french: \"French\"; readonly german: \"German\"; readonly portuguese: \"Portuguese\"; readonly russian: \"Russian\"; readonly other: \"Another language\"; }>; }>"
+    },
+    {
+      "name": "requestRisk",
+      "kind": "const",
+      "text": "requestRisk: import(\"@goodvibes-jev/judgment\").Battery<{ readonly risk: import(\"@goodvibes-jev/judgment\").ScoreItem<readonly [\"Negligible: a mistake is obvious and redone in moments.\", \"Minor: a mistake wastes a little time or needs a small follow-up fix.\", \"Serious: a mistake breaks something that matters or wastes significant time, but can be recovered.\", \"Severe: a mistake could lose data, expose secrets or security holes, cost money, take production down, or cannot be undone.\"]>; }>"
+    },
+    {
+      "name": "requestState",
+      "kind": "function",
+      "text": "export declare function requestState(request: RoutingRequest): { purpose: string; work: string; };"
+    },
+    {
+      "name": "requestTier",
+      "kind": "const",
+      "text": "requestTier: import(\"@goodvibes-jev/judgment\").Battery<{ readonly tier: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly economy: \"A small, fast, inexpensive model does this well: a simple lookup, a short rewrite, formatting, a routine one-step edit, or a casual reply.\"; readonly standard: \"A capable general-purpose model is needed: ordinary coding, writing, summarizing or multi-step work of moderate difficulty.\"; readonly premium: \"The strongest reasoning model is needed: hard debugging, architecture or design decisions, subtle correctness or security, long multi-step planning, research synthesis, or work where a mistake is costly.\"; }>; }>"
+    },
+    {
+      "name": "routeCandidates",
+      "kind": "function",
+      "text": "export declare function routeCandidates(): readonly Candidate[]; ;; via Candidate = export interface Candidate { readonly id: string; readonly content: JsonValue; }"
+    },
+    {
+      "name": "routingRegistry",
+      "kind": "const",
+      "text": "registry: BatteryRegistry"
+    },
+    {
+      "name": "shortlistOrder",
+      "kind": "function",
+      "text": "export declare function shortlistOrder(tier: RouteTier): (a: ModelFacts, b: ModelFacts) => number;"
+    },
+    {
+      "name": "stopReason",
+      "kind": "const",
+      "text": "stopReason: import(\"@goodvibes-jev/judgment\").Battery<{ readonly stop: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly completed: \"The model finished its answer normally, or the reason is housekeeping such as loading or unloading the model\"; readonly tool_call: \"The model stopped to call a tool or function\"; readonly max_tokens: \"Generation was cut off at the token or length limit\"; }>; }>"
+    },
+    {
+      "name": "taskRouteEntry",
+      "kind": "function",
+      "text": "export declare function taskRouteEntry(id: string): TaskRouteEntry;"
+    },
+    {
+      "name": "taskRouteNamedId",
+      "kind": "const",
+      "text": "taskRouteNamedId: import(\"@goodvibes-jev/judgment\").Selector"
+    },
+    {
+      "name": "taskRoutePick",
+      "kind": "const",
+      "text": "taskRoutePick: import(\"@goodvibes-jev/judgment\").Selector"
+    },
+    {
+      "name": "taskRouteRegistry",
+      "kind": "const",
+      "text": "registry: BatteryRegistry"
+    },
+    {
+      "name": "taskRouteSlots",
+      "kind": "const",
+      "text": "taskRouteSlots: import(\"@goodvibes-jev/judgment\").Battery<{ readonly changes: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly starts: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly opensUi: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly controls: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly existing: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly freshRead: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly reminder: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly delegated: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly device: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly evidence: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly instructionFiles: import(\"@goodvibes-jev/judgment\").YesNoItem; readonly lane: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly inbox: \"Email: the inbox, mail, messages, threads or replies\"; readonly calendar: \"The calendar: agenda, meetings, events, availability or RSVPs\"; readonly notes: \"Notes: jotting something down or a scratchpad\"; readonly tasks: \"Tasks, to-dos or work items\"; readonly reminders: \"Reminders or follow-ups\"; readonly routines: \"Routines, checklists or repeatable personal procedures\"; readonly delivery: \"Delivering or sending a summary or briefing somewhere\"; readonly none: \"None of these\"; }>; readonly channelTask: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly receipts: \"Review the history or receipts of messages already delivered\"; readonly triage: \"Troubleshoot channel problems: failed or pending deliveries, retries, errors or blockers\"; readonly setup: \"Set up, connect, configure, enable or repair a channel\"; readonly send: \"Send a message, notification or test ping through a channel\"; readonly status: \"Check whether channels are configured and ready, or anything else about channels\"; }>; readonly policyTarget: import(\"@goodvibes-jev/judgment\").ChoiceItem<{ readonly agent_harness: \"The agent_harness tool\"; readonly settings: \"Settings or configuration\"; readonly terminal: \"Terminal or shell commands\"; readonly process: \"Background or running processes\"; readonly exec: \"Code or script execution (exec)\"; readonly channels: \"External messaging channels\"; readonly schedule: \"Schedules or reminders\"; readonly personal_ops: \"Personal Ops: email or calendar actions\"; readonly models: \"Models or model providers\"; readonly memory: \"Memory\"; readonly computer: \"The browser, screenshots or computer use\"; readonly device: \"Devices, voice or text-to-speech\"; readonly workspace: \"Workspace actions\"; readonly host: \"The connected host or daemon\"; readonly none: \"No particular tool or area\"; }>; }>"
+    },
+    {
+      "name": "tierRank",
+      "kind": "function",
+      "text": "export declare function tierRank(tier: RouteTier): number;"
+    },
+    {
+      "name": "tierSearchOrder",
+      "kind": "function",
+      "text": "export declare function tierSearchOrder(wanted: RouteTier): readonly RouteTier[];"
+    },
+    {
+      "name": "userErrorEvidence",
+      "kind": "function",
+      "text": "export declare function userErrorEvidence(err: unknown): { readonly evidence: FailureEvidence; readonly causeCode?: string | undefined; }; ;; via FailureEvidence = export interface FailureEvidence { readonly message: string; readonly status?: number | undefined; readonly code?: string | undefined; readonly errorName?: string | undefined; }"
+    },
+    {
+      "name": "userErrorReading",
+      "kind": "const",
+      "text": "userErrorReading: import(\"@goodvibes-jev/judgment\").Battery<{ readonly session_ended: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
     }
   ],
   "./platform/runtime": [

@@ -59,29 +59,67 @@ export const UNKNOWN_MODEL_PRICING: ResolvedModelPricing = { status: 'unknown' }
 /** Wire shape of an event-level pricing source stamp. */
 export type UsageCostSource = ModelPricingSource | 'subscription' | 'unknown';
 
-/**
- * Published per-provider cache ratios relative to the fresh input rate, used
- * only when the pricing source carried no explicit cache rates. Keyed by a
- * provider substring (matched case-insensitively). Default 1.0/1.0, cache
- * tokens priced at the full input rate, the conservative honest choice.
- * Kept in sync with runtime/cost/attribution.ts CACHE_MULTIPLIERS (that module
- * cannot be imported here without inverting the providers -> runtime layering).
- */
-const CACHE_RATE_MULTIPLIERS: Readonly<Record<string, { readonly read: number; readonly write: number }>> = {
-  anthropic: { read: 0.1, write: 1.25 },
-  openai: { read: 0.5, write: 1.0 },
-  google: { read: 0.25, write: 1.0 },
-  deepseek: { read: 0.1, write: 1.0 },
-};
+/** A provider's cache-read and cache-write rates as multiples of its fresh input rate. */
+export interface CacheRatio {
+  readonly read: number;
+  readonly write: number;
+}
 
-function cacheRateMultipliers(provider: string | undefined): { read: number; write: number } {
-  if (provider) {
-    const lower = provider.toLowerCase();
-    for (const [needle, mult] of Object.entries(CACHE_RATE_MULTIPLIERS)) {
-      if (lower.includes(needle)) return mult;
-    }
+/**
+ * Each provider's published cache ratios, computed from its own catalog
+ * entries: the median of cache-read over input and of cache-write over input
+ * across the provider's models that list those rates. Arithmetic over
+ * published prices, keyed by the exact catalog provider id; a side the
+ * provider publishes no rate for is left out.
+ */
+export function cacheRatiosFromCatalog(models: readonly CatalogModel[]): (provider: string) => Partial<CacheRatio> | undefined {
+  const reads = new Map<string, number[]>();
+  const writes = new Map<string, number[]>();
+  const push = (map: Map<string, number[]>, key: string, value: number): void => {
+    const list = map.get(key) ?? [];
+    list.push(value);
+    map.set(key, list);
+  };
+  for (const model of models) {
+    const pricing = model.pricing;
+    if (!pricing || !(pricing.input > 0)) continue;
+    if (typeof pricing.cacheRead === 'number') push(reads, model.providerId, pricing.cacheRead / pricing.input);
+    if (typeof pricing.cacheWrite === 'number') push(writes, model.providerId, pricing.cacheWrite / pricing.input);
   }
-  return { read: 1.0, write: 1.0 };
+  const median = (values: readonly number[] | undefined): number | undefined => {
+    if (!values || values.length === 0) return undefined;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+  };
+  const ratios = new Map<string, Partial<CacheRatio>>();
+  for (const provider of new Set([...reads.keys(), ...writes.keys()])) {
+    const read = median(reads.get(provider));
+    const write = median(writes.get(provider));
+    ratios.set(provider, { ...(read === undefined ? {} : { read }), ...(write === undefined ? {} : { write }) });
+  }
+  return (provider) => ratios.get(provider);
+}
+
+// Module-level source, wired at bootstrap by wireCostPricing (session-cost.ts)
+// the same way the pricing resolver is: cost surfaces are plain functions with
+// no registry in scope.
+let providerCacheRatios: ((provider: string) => Partial<CacheRatio> | undefined) | null = null;
+
+/** Wire (or clear, with null) where providers' published cache ratios come from. */
+export function setProviderCacheRatios(source: ((provider: string) => Partial<CacheRatio> | undefined) | null): void {
+  providerCacheRatios = source;
+}
+
+/**
+ * The cache ratios to price a provider's cache tokens with when the resolved
+ * price carried no cache rates: the provider's published ratio from the
+ * catalog, else 1.0 (cache tokens at the full input rate, the conservative
+ * honest choice when the provider publishes nothing).
+ */
+export function cacheRateMultipliers(provider: string | undefined): CacheRatio {
+  const published = provider ? providerCacheRatios?.(provider) : undefined;
+  return { read: published?.read ?? 1.0, write: published?.write ?? 1.0 };
 }
 
 export interface UsageTokenCounts {
@@ -95,7 +133,8 @@ export interface UsageTokenCounts {
  * usage x resolved price -> USD. Null when the pricing is not `priced`
  * (unknown/subscription), callers must carry the unpriced state forward,
  * never coerce to $0. Cache tokens use the source's explicit cache rates when
- * present, else the published per-provider ratio over the input rate.
+ * present, else the provider's published ratio over the input rate
+ * (cacheRateMultipliers).
  */
 export function computeUsageCostUsd(
   pricing: ResolvedModelPricing,

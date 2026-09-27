@@ -6,6 +6,8 @@ import { inferFallbackContextWindow } from './context-window-fallback.js';
 import { type ModelsDevReasoningOption, parseReasoningOptions } from './reasoning-effort.js';
 import type { ModelCapabilityFacts, ModelCapabilityFactsSource } from './capabilities.js';
 import { resolveReasoningEffortSpec } from './reasoning-effort-families.js';
+import { ModelIdentityResolver } from '../routing/model-identity.js';
+import type { ModelTierStore } from '../routing/model-tiers.js';
 
 export interface CatalogProvider {
   id: string;
@@ -56,8 +58,23 @@ export interface PricingCatalog {
   models: CatalogModel[];
 }
 
+/** Identity readings per catalog array, so a refreshed catalog is read afresh. */
+const catalogIdentities = new WeakMap<readonly CatalogModel[], ModelIdentityResolver>();
+
+function identityFor(models: readonly CatalogModel[]): ModelIdentityResolver {
+  let resolver = catalogIdentities.get(models);
+  if (!resolver) {
+    const candidates = models.map((model) => ({ key: model.id, id: model.id, name: model.name, provider: model.providerId }));
+    resolver = new ModelIdentityResolver({ universe: 'catalog', candidates: () => candidates });
+    catalogIdentities.set(models, resolver);
+  }
+  return resolver;
+}
+
 /**
- * Legacy string-keyed catalog price lookup. Returns null when the model is
+ * Legacy string-keyed catalog price lookup. An id with no exact entry is
+ * matched only to the entry Jev read as the same model (routing.model-identity);
+ * until that reading lands the model is unpriced. Returns null when the model is
  * absent from the catalog or its entry carries no cost, absent must never
  * look free. Prefer ProviderRegistry.resolveModelPricing (model-pricing.ts),
  * which resolves per (provider, model) with manual/provider/catalog
@@ -77,11 +94,11 @@ export function getCostFromPricingCatalog(
     if (exact.tier === 'free') return { input: 0, output: 0 };
     return exact.pricing ? { ...exact.pricing } : null;
   }
-  for (const model of catalog.models) {
-    if (modelId.startsWith(model.id) || modelId.includes(model.id)) {
-      if (model.tier === 'free') return { input: 0, output: 0 };
-      return model.pricing ? { ...model.pricing } : null;
-    }
+  const same = catalog.models.length > 0 ? identityFor(catalog.models).lookup({ id: modelId }, 'providers.model-catalog.cost-identity') : null;
+  const match = same === null ? undefined : catalog.models.find((model) => model.id === same);
+  if (match) {
+    if (match.tier === 'free') return { input: 0, output: 0 };
+    return match.pricing ? { ...match.pricing } : null;
   }
   if (catalog.models.length === 0) {
     const slashIdx = modelId.indexOf('/');
@@ -187,7 +204,19 @@ export function createModelCatalog(registry: ModelCatalogRegistry): ModelCatalog
   return new RegistryBackedCatalog(registry);
 }
 
-export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[]): MinimalModelDefinition[] {
+/**
+ * The registry label for a metered model's capability: its routing.model-tier
+ * reading (premium stays premium, standard and economy are labelled
+ * standard). A model that has not been read carries no capability label; the
+ * old input-price cut-off is gone.
+ */
+function paidTierLabel(tiers: Pick<ModelTierStore, 'lastReading'> | undefined, registryKey: string): 'premium' | 'standard' | undefined {
+  const tier = tiers?.lastReading(registryKey)?.tier;
+  if (tier === undefined) return undefined;
+  return tier === 'premium' ? 'premium' : 'standard';
+}
+
+export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], tiers?: Pick<ModelTierStore, 'lastReading'>): MinimalModelDefinition[] {
   return models.map((model): MinimalModelDefinition => {
     const isFree = model.tier === 'free';
     // Same principle as `reasoning` below, applied to image input: the
@@ -234,7 +263,7 @@ export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[]):
         : inferFallbackContextWindow(model.provider, model.id),
       ...(!hasCatalogContextWindow ? { contextWindowProvenance: 'fallback' as const } : {}),
       selectable: true,
-      tier: model.tier === 'subscription' ? 'subscription' : isFree ? 'free' : (model.pricing?.input ?? 0) >= 3 ? 'premium' : 'standard',
+      tier: model.tier === 'subscription' ? 'subscription' : isFree ? 'free' : paidTierLabel(tiers, `${model.providerId}:${model.id}`),
       ...(reasoningEffort ? { reasoningEffort } : {}),
     };
   });
@@ -303,7 +332,7 @@ export {
   getSyntheticModelDefinitions,
   getSyntheticModelInfo,
   nameToSlug,
-  normalizeModelName,
+  SyntheticIdentities,
 } from './model-catalog-synthetic.js';
 export {
   diffCatalogs,

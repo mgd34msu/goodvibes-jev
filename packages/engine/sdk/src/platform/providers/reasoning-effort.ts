@@ -1,5 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
+import { readsAsReasoningRejection } from '../routing/provider-readings.js';
+
 /**
  * Per-model reasoning-effort resolution.
  *
@@ -420,16 +422,18 @@ export function resolveEffortForModel(
  *
  * A 400 already surfaces to the user, it is not in the retryable set, so the
  * only gap this closes is that the message never named the setting responsible.
- * Deliberately conservative: it fires only on a 400 whose body mentions a
- * reasoning field, so an unrelated validation error is not blamed on effort.
+ * Only a 400 with a reasoning level set is considered (code), and only when
+ * routing.reasoning-rejection reads the provider's text as blaming the
+ * reasoning setting, so an unrelated validation error is not blamed on effort.
  */
-export function describeReasoningRejection(
+export async function describeReasoningRejection(
   status: number,
   providerText: string,
   effort: string | undefined,
-): string | undefined {
-  if (status !== 400 || effort === undefined) return undefined;
-  if (!/effort|reasoning|thinking|budget_tokens/i.test(providerText)) return undefined;
+  site: string,
+): Promise<string | undefined> {
+  if (status !== 400 || effort === undefined || providerText.trim().length === 0) return undefined;
+  if (!(await readsAsReasoningRejection(providerText, site))) return undefined;
   return ` Reasoning effort '${effort}' is the likely cause, this model may not accept that level.`
     + ' Choose another with /effort, or clear provider.reasoningEffort to use the model default.';
 }

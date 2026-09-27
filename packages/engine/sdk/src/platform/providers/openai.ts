@@ -35,10 +35,10 @@ import { accumOpenAIToolCall, finalizeOpenAIToolCalls, applyOpenAIChunkUsage, re
 import { resolveCompletedStopReason, withProviderStopReason } from './provider-stop-reason.js';
 import { parseRateLimitHeaders } from './rate-limit-headers.js';
 import type { CacheHitTracker } from './cache-strategy.js';
-import { extractOpenAIStreamTextDelta } from './openai-stream-delta.js';
+import { extractOpenAIStreamTextDelta, readStreamDeltaLabels } from './openai-stream-delta.js';
 import { summarizeError, toProviderError } from '../utils/error-display.js';
 import { resolveOpenAIClientApiKey } from './openai-compat.js';
-import { resolveEffortForRequest } from './reasoning-effort-families.js';
+import { prepareReasoningEffort, resolveEffortForRequest } from './reasoning-effort-families.js';
 
 const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'recordTurn'> = {
   recordTurn: () => {},
@@ -154,6 +154,7 @@ export class OpenAIProvider implements LLMProvider {
     // family table recognises this model, so there is no evidence it reasons at
     // all. OpenAI serves plenty of non-reasoning models on this same endpoint
     // and rejects `reasoning_effort` on them, so silence beats a guess here.
+    await prepareReasoningEffort(params.reasoningEffort, { modelId: model, ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}) }, 'providers.openai.reasoning-family');
     const resolvedEffort = resolveEffortForRequest(params.reasoningEffort, {
       modelId: model,
       ...(params.reasoningEffortSpec ? { spec: params.reasoningEffortSpec } : {}),
@@ -204,6 +205,7 @@ export class OpenAIProvider implements LLMProvider {
 
         for await (const chunk of stream) {
           const delta = chunk.choices[0]?.delta;
+          await readStreamDeltaLabels(chunk, 'providers.openai.content-part-kind');
           const textDelta = extractOpenAIStreamTextDelta(chunk);
           for (const contentDelta of textDelta.content) {
             responseText += contentDelta;

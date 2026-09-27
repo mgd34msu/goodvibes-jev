@@ -21,6 +21,8 @@ import { join } from 'node:path';
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.js';
 import { ProviderCapabilityRegistry } from '../sdk/src/platform/providers/capabilities.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 const originalFetch = globalThis.fetch;
 
@@ -89,7 +91,7 @@ function makeServiceWithFuzzyCache(tmp: string): ModelLimitsService {
   return service;
 }
 
-describe('S01: getContextWindowForModel honors configured_cap over fuzzy OpenRouter match', () => {
+describe('S01: getContextWindowForModel honors configured_cap over an OpenRouter identity match', () => {
   test('configured_cap is NOT widened by a larger fuzzy OpenRouter entry', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-ctx-cap-'));
     try {
@@ -116,16 +118,25 @@ describe('S01: getContextWindowForModel honors configured_cap over fuzzy OpenRou
     }
   });
 
-  test('control: a fallback-provenance model DOES consult the fuzzy OpenRouter match', () => {
-    // Proves the cache really is loaded and the fuzzy endsWith match fires,
-    // otherwise the configured_cap assertions above would be vacuous.
+  test('control: a fallback-provenance model DOES consult the OpenRouter entry read as the same model', async () => {
+    // Proves the cache really is loaded and the identity match applies,
+    // otherwise the configured_cap assertions above would be vacuous. The
+    // identity is read by routing.model-identity: unread, the model keeps its
+    // own window while the reading is requested; once read, the entry applies.
     const tmp = mkdtempSync(join(tmpdir(), 'gv-ctx-cap-'));
+    const { port, requests } = fakePort((name, question) =>
+      name === 'pick' ? choiceAnswer(question, 'meta-llama/llama-3.1-8b-instruct', 0.95) : noulAnswer(0.95));
+    const previous = installJudgmentPort(port);
     try {
       const service = makeServiceWithFuzzyCache(tmp);
       const model = makeModel({ contextWindowProvenance: 'fallback', contextWindow: 65_536 });
 
+      expect(service.getContextWindowForModel(model)).toBe(65_536);
+      await Bun.sleep(0);
+      expect(requests).toHaveLength(1);
       expect(service.getContextWindowForModel(model)).toBe(131_072);
     } finally {
+      installJudgmentPort(previous);
       rmSync(tmp, { recursive: true, force: true });
     }
   });

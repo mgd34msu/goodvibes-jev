@@ -1,4 +1,5 @@
 import { networkInterfaces } from 'node:os';
+import { readLocalServerIdentity } from '../routing/provider-readings.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logger } from '../utils/logger.js';
@@ -300,54 +301,24 @@ function extractV1Models(body: unknown): string[] | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Heuristic identification of the server software.
+ * Which server software answered: the well-known default ports decide on
+ * their own (a fixed table); any other port is read from the probe's headers
+ * and model ids by routing.local-server-identity, 'unknown' when the reading
+ * is not strong enough to act on.
  */
-function identifyServer(
+async function identifyServer(
   port: number,
   headers: Record<string, string>,
   responseBody: unknown,
-): ServerType {
-
-  const headerValues = Object.entries(headers)
-    .map(([k, v]) => `${k}:${v}`)
-    .join(' ');
-
-  // Model IDs as a flat string for pattern matching
-  let modelIds = '';
-  if (
-    typeof responseBody === 'object' &&
-    responseBody !== null &&
-    'data' in responseBody &&
-    Array.isArray((responseBody as Record<string, unknown>).data)
-  ) {
-    modelIds = ((responseBody as Record<string, unknown>).data as unknown[])
-      .filter((item): item is Record<string, unknown> =>
-        typeof item === 'object' && item !== null && 'id' in item,
-      )
-      .map((item) => String(item.id))
-      .join(' ');
-  }
-
+): Promise<ServerType> {
   if (port === WELL_KNOWN_LOCAL_PORTS.ollama) return 'ollama';
   if (port === WELL_KNOWN_LOCAL_PORTS.jan) return 'jan';
   if (port === WELL_KNOWN_LOCAL_PORTS.gpt4all) return 'gpt4all';
   if (port === WELL_KNOWN_LOCAL_PORTS.koboldCpp) return 'koboldcpp';
   if (port === WELL_KNOWN_LOCAL_PORTS.aphrodite) return 'aphrodite';
-
-  if (port === WELL_KNOWN_LOCAL_PORTS.lmStudio || headerValues.includes('lmstudio') || modelIds.includes('lmstudio')) {
-    return 'lm-studio';
-  }
-
-  if (Object.keys(headers).some((k) => k.startsWith('x-vllm'))) return 'vllm';
-
-  // Check server header on any port (llama.cpp/localai can run on non-standard ports)
-  const serverHeader = headers['server'] ?? '';
-  if (serverHeader.includes('llama')) return 'llamacpp';
-  if (serverHeader.includes('localai')) return 'localai';
-
-  if (headerValues.includes('text-generation-inference')) return 'tgi';
-
-  return 'unknown';
+  if (port === WELL_KNOWN_LOCAL_PORTS.lmStudio) return 'lm-studio';
+  const modelIds = extractV1Models(responseBody) ?? [];
+  return readLocalServerIdentity({ port, headers, modelIds }, 'discovery.scanner.server-identity');
 }
 
 // ---------------------------------------------------------------------------
@@ -764,7 +735,7 @@ export async function scanHosts(
 
     if (result === null) return;
 
-    const serverType = identifyServer(port, result.headers, result.responseBody);
+    const serverType = await identifyServer(port, result.headers, result.responseBody);
     const name = buildServerName(serverType, host, port);
     const baseURL = `http://${host}:${port}/v1`;
     // Fetch context windows and output limits in parallel (independent queries to the same server)

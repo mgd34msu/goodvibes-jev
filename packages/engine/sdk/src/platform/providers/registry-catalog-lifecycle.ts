@@ -1,4 +1,6 @@
+import { dirname } from 'node:path';
 import { logger } from '../utils/logger.js';
+import { getProviderAccessPath } from './model-catalog-cache.js';
 import { summarizeError } from '../utils/error-display.js';
 import {
   fetchCatalog,
@@ -27,6 +29,8 @@ export interface CatalogLifecycleContext {
   readonly benchmarkStore: Pick<BenchmarkStore, 'getTopBenchmarkModelIds'>;
   /** Triggers an async background catalog refresh (used by initCatalog). */
   refreshCatalog(): Promise<void>;
+  /** Starts the background routing readings a newly applied catalog needs (failover identities). */
+  afterCatalogApplied(): void;
 }
 
 /**
@@ -40,6 +44,7 @@ export function initProviderCatalog(ctx: CatalogLifecycleContext): void {
   const cached = loadCatalogCache(ctx.getCatalogCachePaths().cachePath);
   if (cached) {
     ctx.updateCatalogState(cached.models, cached.fetchedAt);
+    ctx.afterCatalogApplied();
   }
   if (!cached || isCatalogCacheStale(cached)) {
     void ctx.refreshCatalog().catch((err) => {
@@ -57,14 +62,15 @@ export function initProviderCatalog(ctx: CatalogLifecycleContext): void {
  */
 export async function refreshProviderCatalog(ctx: CatalogLifecycleContext): Promise<void> {
   const previous = [...ctx.getCatalogModels()];
-  const models = await fetchCatalog();
+  const { cachePath, tmpPath } = ctx.getCatalogCachePaths();
+  const models = await fetchCatalog({ accessPath: getProviderAccessPath(dirname(cachePath)) });
   if (models.length === 0) {
     logger.warn('[model-catalog] Refresh returned 0 models, keeping existing catalog');
     return;
   }
-  const { cachePath, tmpPath } = ctx.getCatalogCachePaths();
   saveCatalogCache(models, cachePath, tmpPath);
   ctx.updateCatalogState(models);
+  ctx.afterCatalogApplied();
   const favorites = await ctx.favoritesStore.load();
   notifyCatalogChanges(
     previous,
