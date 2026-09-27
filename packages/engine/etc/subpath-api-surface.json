@@ -898,7 +898,7 @@
         "readings",
         "transientNetwork"
       ],
-      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
+      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "FailureEvidence",
@@ -3032,7 +3032,7 @@
     {
       "name": "installJudgmentPort",
       "kind": "function",
-      "text": "export declare function installJudgmentPort(port: JudgmentPort | undefined): JudgmentPort | undefined;"
+      "text": "export declare function installJudgmentPort(port: JudgmentPort | undefined): JudgmentPort | undefined; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
     },
     {
       "name": "invokeContractRoute",
@@ -3107,7 +3107,7 @@
     {
       "name": "judgmentPort",
       "kind": "function",
-      "text": "export declare function judgmentPort(site: string): JudgmentPort;"
+      "text": "export declare function judgmentPort(site: string): JudgmentPort; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
     },
     {
       "name": "listOperatorMethods",
@@ -6519,7 +6519,7 @@
         "readings",
         "transientNetwork"
       ],
-      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
+      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "FailureEvidence",
@@ -6655,7 +6655,7 @@
     {
       "name": "installJudgmentPort",
       "kind": "function",
-      "text": "export declare function installJudgmentPort(port: JudgmentPort | undefined): JudgmentPort | undefined;"
+      "text": "export declare function installJudgmentPort(port: JudgmentPort | undefined): JudgmentPort | undefined; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
     },
     {
       "name": "isErrorCode",
@@ -6675,7 +6675,7 @@
     {
       "name": "judgmentPort",
       "kind": "function",
-      "text": "export declare function judgmentPort(site: string): JudgmentPort;"
+      "text": "export declare function judgmentPort(site: string): JudgmentPort; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
     },
     {
       "name": "readFailure",
@@ -18086,7 +18086,7 @@
         "probabilityUnmet",
         "verdict"
       ],
-      "text": "export interface CriterionReading { readonly checkId: string; readonly at: number; readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome; readonly severity?: CriterionSeverity | undefined; readonly decisionId: string | undefined; }"
+      "text": "export interface CriterionReading { readonly checkId: string; readonly at: number; readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome; readonly severity?: CriterionSeverity | undefined; readonly decisionId: string | undefined; } ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate';"
     },
     {
       "name": "CriterionSeverity",
@@ -18171,7 +18171,7 @@
         "targetId",
         "unmetCriterionIds"
       ],
-      "text": "export interface Escalation { readonly id: string; readonly at: number; readonly scope: EscalationScope; readonly targetId: string; readonly reason: EscalationReason; readonly question: string; readonly unmetCriterionIds: readonly string[]; resolvedAt?: number | undefined; reply?: { readonly text: string; readonly reading: ReplyReadingName; readonly outcome: Outcome; readonly decisionId: string | undefined; } | undefined; }"
+      "text": "export interface Escalation { readonly id: string; readonly at: number; readonly scope: EscalationScope; readonly targetId: string; readonly reason: EscalationReason; readonly question: string; readonly unmetCriterionIds: readonly string[]; resolvedAt?: number | undefined; reply?: { readonly text: string; readonly reading: ReplyReadingName; readonly outcome: Outcome; readonly decisionId: string | undefined; } | undefined; } ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate'; ;; ReplyReadingName = export type ReplyReadingName = keyof typeof REPLY_READINGS;"
     },
     {
       "name": "EscalationReason",
@@ -18628,17 +18628,17 @@
     {
       "name": "UNIT_JUDGES",
       "kind": "const",
-      "text": "UNIT_JUDGES: Readonly<Record<ContractAcceptanceStakes, Judge>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "UNIT_JUDGES: Readonly<Record<ContractAcceptanceStakes, Judge>> ;; via Judge = export interface Judge extends NamedDecision { judge(port: JudgmentPort, input: JudgeInput, options?: CallOptions): Promise<Judgment>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "UNIT_JUDGE_BANDS",
       "kind": "const",
-      "text": "UNIT_JUDGE_BANDS: Readonly<Record<ContractAcceptanceStakes, YesNoBand>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "UNIT_JUDGE_BANDS: Readonly<Record<ContractAcceptanceStakes, YesNoBand>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; YesNoBand = export interface YesNoBand { readonly yes: ConfidenceBand; readonly no: ConfidenceBand; }"
     },
     {
       "name": "UNIT_QUALITY_BAND",
       "kind": "const",
-      "text": "UNIT_QUALITY_BAND: YesNoBand"
+      "text": "UNIT_QUALITY_BAND: YesNoBand ;; via YesNoBand = export interface YesNoBand { readonly yes: ConfidenceBand; readonly no: ConfidenceBand; }"
     },
     {
       "name": "UNIT_SHAPE_ROLES",
@@ -18668,7 +18668,7 @@
         "result",
         "trigger"
       ],
-      "text": "export interface UnitCheck { readonly id: string; readonly at: number; readonly trigger: CheckTrigger; readonly claims?: { readonly kind: ClaimVerificationKind; readonly summary: string; } | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly goal: { readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome; }; readonly quality: Readonly<Record<QualityItem, { readonly verdict: YesNoVerdict; readonly outcome: Outcome; }>>; readonly result: CheckResult; readonly problems?: readonly NudgeKind[] | undefined; readonly qualityProblems?: readonly QualityItem[] | undefined; readonly decisionIds: readonly string[]; readonly evidenceDigest: string; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface UnitCheck { readonly id: string; readonly at: number; readonly trigger: CheckTrigger; readonly claims?: { readonly kind: ClaimVerificationKind; readonly summary: string; } | undefined; readonly gates?: readonly QualityGateResult[] | undefined; readonly goal: { readonly probabilityUnmet: number; readonly verdict: CriterionVerdict; readonly outcome: Outcome; }; readonly quality: Readonly<Record<QualityItem, { readonly verdict: YesNoVerdict; readonly outcome: Outcome; }>>; readonly result: CheckResult; readonly problems?: readonly NudgeKind[] | undefined; readonly qualityProblems?: readonly QualityItem[] | undefined; readonly decisionIds: readonly string[]; readonly evidenceDigest: string; } ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "UnitCheckInput",
@@ -18884,7 +18884,7 @@
     {
       "name": "criterionVerdict",
       "kind": "function",
-      "text": "export declare function criterionVerdict(reading: YesNoReading): CriterionVerdict;"
+      "text": "export declare function criterionVerdict(reading: YesNoReading): CriterionVerdict; ;; via YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "defaultRepositoryMap",
@@ -19119,7 +19119,7 @@
     {
       "name": "meteredPort",
       "kind": "function",
-      "text": "export declare function meteredPort(port: JudgmentPort, usage: JudgmentUsage): JudgmentPort;"
+      "text": "export declare function meteredPort(port: JudgmentPort, usage: JudgmentUsage): JudgmentPort; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
     },
     {
       "name": "newContractId",
@@ -19164,7 +19164,7 @@
     {
       "name": "qualityVerdict",
       "kind": "function",
-      "text": "export declare function qualityVerdict(reading: YesNoReading): QualityVerdict;"
+      "text": "export declare function qualityVerdict(reading: YesNoReading): QualityVerdict; ;; via YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "readContractConfig",
@@ -19189,7 +19189,7 @@
     {
       "name": "readRequestShape",
       "kind": "function",
-      "text": "export declare function readRequestShape(port: JudgmentPort, ask: string, options?: { readonly signal?: AbortSignal | undefined; }): Promise<{ readonly shape: RequestShape; readonly usage: { readonly inputTokens: number; readonly outputTokens: number; }; }>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function readRequestShape(port: JudgmentPort, ask: string, options?: { readonly signal?: AbortSignal | undefined; }): Promise<{ readonly shape: RequestShape; readonly usage: { readonly inputTokens: number; readonly outputTokens: number; }; }>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "readUnmetSeverities",
@@ -19279,7 +19279,7 @@
     {
       "name": "unitJudgeDecision",
       "kind": "const",
-      "text": "unitJudgeDecision: Judge"
+      "text": "unitJudgeDecision: Judge ;; via Judge = export interface Judge extends NamedDecision { judge(port: JudgmentPort, input: JudgeInput, options?: CallOptions): Promise<Judgment>; }"
     },
     {
       "name": "unitMustWrite",

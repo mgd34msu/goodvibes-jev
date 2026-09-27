@@ -268,8 +268,8 @@
     "rationale": "config facade with secrets, services, subscriptions, helper model, tool LLM, the daemon-served shared-config tier + admin-scoped credential-status read, and the config-ownership surface (scope resolution, daemon-tier paths, the daemon-owned migration and the derived control-plane base-url readers); re-anchored when the tree-root and daemon-home resolution policy (goodvibes-home.ts: the GOODVIBES_HOME / GOODVIBES_DAEMON_HOME readers, the derived tree directory, the ownership record and the relocated-process question) moved here from the two products that each carried a copy, together with the getConfiguredProviderId and isEffectiveDangerMode derivations; measured 3163 B gzip @ the config-twin hoist; headroom max(ceil(3163*1.2)=3796, 3163+50=3213) \u2192 3796 (1.2x dominates by 583 B)"
   },
   "./platform/contract": {
-    "gzip_bytes": 813,
-    "rationale": "new entry: the contract runner's public surface (contract data model, settings, store, events, checks and reports); measured 677 B gzip @ commit 804052e; headroom max(ceil(677*1.2)=813, 677+50=727) \u2192 813 (1.2x dominates by 86 B)"
+    "gzip_bytes": 1361,
+    "rationale": "new entry: the contract runner's public surface (contract data model, settings, store, events, checks, reports and planning); measured 1134 B gzip @ commit 0da5db9; headroom max(ceil(1134*1.2)=1361, 1134+50=1184) \u2192 1361 (1.2x dominates by 177 B)"
   },
   "./platform/control-plane": {
     "gzip_bytes": 1967,
