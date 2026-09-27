@@ -32707,6 +32707,349 @@
       "text": "export declare function isNodeLikeRuntime(runtime?: RuntimeGlobal): boolean; ;; via RuntimeGlobal = type RuntimeGlobal = typeof globalThis & { readonly process?: { readonly versions?: { readonly node?: string | undefined; }; readonly release?: { readonly name?: string | undefined; }; }; };"
     }
   ],
+  "./platform/observe": [
+    {
+      "name": "BatteryAccuracy",
+      "kind": "interface",
+      "required": [
+        "accuracy",
+        "accuracyFloor",
+        "automaticAccuracy",
+        "battery",
+        "belowFloor",
+        "bins",
+        "checks",
+        "correct",
+        "outcomes",
+        "sources"
+      ],
+      "text": "export interface BatteryAccuracy { readonly battery: string; readonly checks: number; readonly correct: number; readonly accuracy: number; readonly automaticAccuracy: number | null; readonly outcomes: Readonly<Record<Outcome, number>>; readonly bins: readonly ConfidenceBin[]; readonly sources: Readonly<Record<TruthSource, number>>; readonly accuracyFloor: number | undefined; readonly belowFloor: boolean | undefined; } ;; via ConfidenceBin = export interface ConfidenceBin { readonly from: number; readonly to: number; readonly checks: number; readonly correct: number; readonly accuracy: number | null; } ;; Outcome = export type Outcome = 'act' | 'confirm' | 'escalate'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; TruthSource = export type TruthSource = 'fixture' | 'owner' | 'outcome';"
+    },
+    {
+      "name": "BatteryDrift",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "changed",
+        "windows"
+      ],
+      "text": "export interface BatteryDrift { readonly battery: string; readonly windows: readonly DriftWindow[]; readonly changed: boolean; }"
+    },
+    {
+      "name": "BatterySweep",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "points",
+        "readings",
+        "truthChecks"
+      ],
+      "text": "export interface BatterySweep { readonly battery: string; readonly readings: number; readonly truthChecks: number; readonly points: readonly LoggedSweepPoint[]; }"
+    },
+    {
+      "name": "COST_HISTORY_LENGTH",
+      "kind": "const",
+      "text": "COST_HISTORY_LENGTH = 16"
+    },
+    {
+      "name": "CostTracker",
+      "kind": "class",
+      "publicMembers": [
+        "agentCompleted",
+        "agentFailed",
+        "agentSpawned",
+        "agents",
+        "agentsCost",
+        "attach",
+        "constructor",
+        "costHistory",
+        "pollRunningAgents",
+        "refreshSession",
+        "sessionCost",
+        "sessionModel",
+        "sessionUsage",
+        "subscribe",
+        "syncSession"
+      ],
+      "text": "export declare class CostTracker { private usage; private model; private history; private lastSessionCost; private readonly agentRows; private readonly subscribers; private readonly price; private readonly historyLength; private readonly getAgentStatus; constructor(options?: CostTrackerOptions); attach(turns: UiEventFeed<TurnEvent>, agents: UiEventFeed<AgentEvent>, getUsage: () => CostTrackerUsage & { readonly model?: string | undefined; }): () => void; refreshSession(usage: CostTrackerUsage & { readonly model?: string | undefined; }): void; syncSession(usage: CostTrackerUsage): void; private takeUsage; agentSpawned(agentId: string, task: string): void; agentCompleted(agentId: string): void; agentFailed(agentId: string): void; pollRunningAgents(): boolean; private applyUsage; sessionUsage(): CostTrackerUsage; sessionModel(): string; sessionCost(): number; costHistory(): readonly number[]; agents(): readonly TrackedAgentCost[]; agentsCost(): number; subscribe(cb: () => void): () => void; private notify; } ;; via AgentEvent = export type AgentEvent = { type: 'AGENT_SPAWNING'; agentId: string; taskId?: string | undefined; task: string; parentAgentId?: string | undefined; contractId?: string | undefined; contractRole?: 'owner' | 'unit' | 'planner' | undefined; contractUnitId?: string | undefined; orchestrationGraphId?: string | undefined; parentNodeId?: string | undefined; taskContract?: AgentTaskContract | undefined; } | { type: 'AGENT_RUNNING'; agentId: string; taskId?: string; parentAgentId?: string | undefined; contractId?: string | undefined; contractRole?: 'owner' | 'unit' | 'planner' | undefined; contractUnitId?: string | undefined; } | { type: 'AGENT_PROGRESS'; agentId: string; taskId?: string; progress: string; audience?: 'owner' | 'operator' | undefined; parentAgentId?: string | undefined; contractId?: string | undefined; contractRole?: 'owner' | 'unit' | 'planner' | undefined; contractUnitId?: string | undefined; } | { type: 'AGENT_STREAM_DELTA'; agentId: string; taskId?: string; content: string; accumulated: string; } | { type: 'AGENT_AWAITING_MESSAGE'; agentId: string; taskId?: string; } | { type: 'AGENT_AWAITING_TOOL'; agentId: string; taskId?: string; callId: string; tool: string; } | { type: 'AGENT_FINALIZING'; agentId: string; taskId?: string; } | { type: 'AGENT_COMPLETED'; agentId: string; taskId?: string; durationMs: number; output?: string; toolCallsMade?: number; usage?: AgentUsage | undefined; } | { type: 'AGENT_FAILED'; agentId: string; taskId?: string; error: string; durationMs: number; } | { type: 'AGENT_CANCELLED'; agentId: string; taskId?: string; reason?: string; }; ;; TurnEvent = export type TurnEvent = { type: 'TURN_SUBMITTED'; turnId: string; prompt: string; origin?: TurnInputOrigin; } | { type: 'PREFLIGHT_OK'; turnId: string; } | { type: 'PREFLIGHT_FAIL'; turnId: string; reason: string; stopReason: Extract<TurnStopReason, 'preflight_failed' | 'context_overflow'>; } | { type: 'STREAM_START'; turnId: string; scope?: 'provider'; terminal?: false; } | { type: 'STREAM_DELTA'; turnId: string; content: string; accumulated: string; reasoning?: string; toolCalls?: PartialToolCall[]; } | { type: 'STREAM_END'; turnId: string; scope?: 'provider'; terminal?: false; } | { type: 'STREAM_RETRY'; turnId: string; provider: string; attempt: number; maxAttempts: number; delayMs: number; reason: string; } | { type: 'LLM_REQUEST_STARTED'; turnId: string; provider: string; model: string; promptSummary: { length: number; sha256: string; first100chars: string; } | string; } | { type: 'LLM_RESPONSE_RECEIVED'; turnId: string; provider: string; model: string; contentSummary: { length: number; sha256: string; first100chars: string; } | string; toolCallCount: number; inputTokens: number; outputTokens: number; cacheReadTokens?: number | undefined; cacheWriteTokens?: number | undefined; durationMs?: number | undefined; retries?: number | undefined; costUsdCents?: number | undefined; costSource?: 'user' | 'provider' | 'catalog' | 'subscription' | 'unknown' | undefined; finishReason?: string | undefined; providerRequestId?: string | undefined; originTool?: string | undefined; originCallId?: string | undefined; originHook?: string | undefined; originMcpServer?: string | undefined; rateLimit?: { limit?: number | undefined; remaining?: number | undefined; resetAt?: number | undefined; retryAfterMs?: number | undefined; } | undefined; } | { type: 'TOOL_BATCH_READY'; turnId: string; toolCalls: string[]; } | { type: 'TOOLS_DONE'; turnId: string; } | { type: 'POST_HOOKS_DONE'; turnId: string; } | { type: 'TURN_COMPLETED'; turnId: string; response: string; stopReason: Extract<TurnStopReason, 'completed' | 'empty_response'>; metadata?: TurnCompletedMetadata | undefined; } | { type: 'TURN_ERROR'; turnId: string; error: string; stopReason: Exclude<TurnStopReason, 'completed' | 'empty_response' | 'cancelled'>; } | { type: 'TURN_CANCEL'; turnId: string; reason?: string; stopReason: Extract<TurnStopReason, 'cancelled'>; }; ;; UiEventFeed = export type UiEventFeed<TEvent extends AnyRuntimeEvent> = RuntimeEventFeed<TEvent>;"
+    },
+    {
+      "name": "CostTrackerOptions",
+      "kind": "interface",
+      "text": "export interface CostTrackerOptions { readonly getAgentStatus?: ((agentId: string) => AgentRecord | null) | undefined; readonly price?: SessionPricer | undefined; readonly historyLength?: number | undefined; } ;; via AgentRecord = export interface AgentRecord extends ProgressBearingRecord { id: string; task: string; template: string; model?: string | undefined; provider?: string | undefined; fallbackModels?: string[] | undefined; routing?: AgentInput['routing'] | undefined; executionIntent?: ExecutionIntent | undefined; reasoningEffort?: string | undefined; context?: string | undefined; tools: string[]; captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; terminationKind?: 'interrupt' | 'kill' | undefined; startedAt: number; completedAt?: number | undefined; toolCallCount: number; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens?: number | undefined; llmCallCount: number; turnCount: number; reasoningSummaryCount?: number | undefined; }; error?: string | undefined; maxTurns?: number | undefined; turnBudget?: { limit: number; source: 'default' | 'spawn-override' | 'policy-bound'; } | undefined; failureReason?: string | undefined; fullOutput?: string | undefined; streamingContent?: string | undefined; contractId?: string | undefined; contractRole?: ContractAgentRole | undefined; contractUnitId?: string | undefined; routeReason?: string | undefined; proposedUnits?: AgentInput['proposedUnits'] | undefined; fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined; outsideContract?: boolean | undefined; replyStyle?: 'report' | 'conversational' | undefined; workItemId?: string | undefined; workingDirectory?: string | undefined; cohort?: string | undefined; orchestrationGraphId?: string | undefined; orchestrationNodeId?: string | undefined; orchestrationDepth: number; parentAgentId?: string | undefined; parentNodeId?: string | undefined; capabilityCeilingTools?: string[] | undefined; successCriteria?: string[] | undefined; requiredEvidence?: string[] | undefined; writeScope?: string[] | undefined; executionProtocol: 'direct' | 'gather-plan-apply'; reviewMode: 'none' | 'contract'; communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct'; systemPromptAddendum?: string | undefined; knowledgeInjections?: Array<{ id: string; cls: string; summary: string; reason: string; confidence: number; reviewState: 'fresh' | 'reviewed' | 'stale' | 'contradicted'; }>; turnInjections?: TurnInjectionRecord[] | undefined; resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined; } | undefined; }"
+    },
+    {
+      "name": "CostTrackerUsage",
+      "kind": "interface",
+      "required": [
+        "cacheRead",
+        "cacheWrite",
+        "input",
+        "output"
+      ],
+      "text": "export interface CostTrackerUsage { readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheWrite: number; }"
+    },
+    {
+      "name": "DriftOptions",
+      "kind": "interface",
+      "text": "export interface DriftOptions { readonly windowMs?: number; readonly windows?: number; }"
+    },
+    {
+      "name": "DriftWindow",
+      "kind": "interface",
+      "required": [
+        "changed",
+        "from",
+        "meanSignal",
+        "models",
+        "outcomeMix",
+        "readings",
+        "reasons",
+        "signalBins",
+        "to"
+      ],
+      "text": "export interface DriftWindow { readonly from: string; readonly to: string; readonly readings: number; readonly meanSignal: number; readonly signalBins: readonly { readonly from: number; readonly readings: number; }[]; readonly outcomeMix: Readonly<Record<Outcome, number>>; readonly models: readonly string[]; readonly changed: boolean; readonly reasons: readonly string[]; } ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "EvalRegistry",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "getGateResults",
+        "getLastRunAt",
+        "getSuiteResults",
+        "isRunning",
+        "push",
+        "pushGate",
+        "setRunning",
+        "subscribe"
+      ],
+      "text": "export declare class EvalRegistry { private readonly now; private _suiteResults; private _gateResults; private _running; private _lastRunAt; private readonly _subscribers; constructor(now?: () => number); push(result: EvalSuiteResult): void; pushGate(gate: EvalGateResult): void; setRunning(running: boolean): void; isRunning(): boolean; getLastRunAt(): number | null; getSuiteResults(): EvalSuiteResult[]; getGateResults(): EvalGateResult[]; subscribe(cb: () => void): () => void; private _notify; } ;; via EvalGateResult = export interface EvalGateResult { suite: string; passed: boolean; regressionThreshold: number; fresh: EvalSuiteResult; baseline?: EvalBaseline | undefined; regressions: RegressionEntry[]; floorFailures: FloorFailureEntry[]; unbaselined: UnbaselinedScenario[]; } ;; EvalSuiteResult = export interface EvalSuiteResult { suite: string; startedAt: number; finishedAt: number; results: EvalResult[]; meanScore: number; passed: boolean; }"
+    },
+    {
+      "name": "JUDGMENT_EVAL_SUITE",
+      "kind": "const",
+      "text": "JUDGMENT_EVAL_SUITE = \"judgment-accuracy\""
+    },
+    {
+      "name": "JudgmentCost",
+      "kind": "interface",
+      "required": [
+        "calls",
+        "costState",
+        "costUsd",
+        "failed",
+        "inputTokens",
+        "outputTokens",
+        "rows"
+      ],
+      "text": "export interface JudgmentCost { readonly rows: readonly JudgmentCostRow[]; readonly calls: number; readonly failed: number; readonly inputTokens: number; readonly outputTokens: number; readonly costUsd: number | null; readonly costState: CostAttributionState; } ;; via CostAttributionState = export type CostAttributionState = 'priced' | 'estimated' | 'unpriced';"
+    },
+    {
+      "name": "JudgmentCostRow",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "calls",
+        "costState",
+        "costUsd",
+        "failed",
+        "inputTokens",
+        "meanLatencyMs",
+        "outputTokens",
+        "site"
+      ],
+      "text": "export interface JudgmentCostRow { readonly battery: string; readonly site: string; readonly calls: number; readonly failed: number; readonly inputTokens: number; readonly outputTokens: number; readonly meanLatencyMs: number; readonly costUsd: number | null; readonly costState: CostAttributionState; } ;; via CostAttributionState = export type CostAttributionState = 'priced' | 'estimated' | 'unpriced';"
+    },
+    {
+      "name": "LoggedReading",
+      "kind": "interface",
+      "required": [
+        "action",
+        "answer",
+        "at",
+        "battery",
+        "batteryVersion",
+        "decisionId",
+        "kind",
+        "model",
+        "outcome",
+        "pattern",
+        "question",
+        "signal",
+        "site"
+      ],
+      "text": "export interface LoggedReading { readonly decisionId: string; readonly at: string; readonly battery: string | undefined; readonly batteryVersion: number | undefined; readonly site: string | undefined; readonly pattern: string | undefined; readonly model: string; readonly question: string; readonly kind: AnyReading['kind']; readonly signal: number; readonly outcome: Outcome; readonly answer: string; readonly action: string | undefined; } ;; via AnyReading = export type AnyReading = YesNoReading | ChoiceReading | ScoreReading; ;; Outcome = export type Outcome = 'act' | 'confirm' | 'escalate';"
+    },
+    {
+      "name": "LoggedSweepPoint",
+      "kind": "interface",
+      "required": [
+        "accuracy",
+        "automatic",
+        "threshold"
+      ],
+      "text": "export interface LoggedSweepPoint { readonly threshold: number; readonly automatic: number; readonly accuracy: number | null; }"
+    },
+    {
+      "name": "OBSERVE_THRESHOLDS",
+      "kind": "const",
+      "text": "OBSERVE_THRESHOLDS: { readonly drift: { readonly minReadings: 5; readonly outcomeShift: 0.2; readonly signalShift: 0.1; readonly windowMs: number; }; readonly discovery: { readonly examples: 3; readonly actions: 3; }; readonly sweep: number[]; readonly entryLimit: 100000; }"
+    },
+    {
+      "name": "ObserveOptions",
+      "kind": "interface",
+      "text": "export interface ObserveOptions { readonly since?: string; readonly until?: string; readonly battery?: string; readonly site?: string; readonly excludeCalibration?: boolean; readonly registered?: readonly Pick<NamedDecision, 'name' | 'accuracyFloor'>[]; readonly thresholds?: readonly number[]; readonly drift?: DriftOptions; readonly resolvePricing?: ResolvePricing; readonly limit?: number; } ;; via NamedDecision = export interface NamedDecision { readonly name: string; readonly version: number; readonly description: string; readonly accuracyFloor: number; readonly model?: string; readonly fixtureCount: number; checkFixtures(port: JudgmentPort, options?: { readonly signal?: AbortSignal; }): Promise<readonly FixtureCheck[]>; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; ResolvePricing = export type ResolvePricing = (model: string | undefined, provider?: string | undefined) => { readonly input: number; readonly output: number; readonly cacheRead?: number | undefined; readonly cacheWrite?: number | undefined; readonly source?: 'user' | 'provider' | 'catalog' | undefined; readonly asOf?: string | undefined; } | null;"
+    },
+    {
+      "name": "ObserveReport",
+      "kind": "interface",
+      "required": [
+        "accuracy",
+        "answered",
+        "cost",
+        "drift",
+        "entries",
+        "failed",
+        "readings",
+        "stuck",
+        "sweeps",
+        "truncated",
+        "unregistered",
+        "window",
+        "withTruth"
+      ],
+      "text": "export interface ObserveReport { readonly window: { readonly since: string | undefined; readonly until: string | undefined; readonly first: string | null; readonly last: string | null; }; readonly entries: number; readonly answered: number; readonly failed: number; readonly readings: number; readonly withTruth: number; readonly accuracy: readonly BatteryAccuracy[]; readonly sweeps: readonly BatterySweep[]; readonly drift: readonly BatteryDrift[]; readonly stuck: readonly StuckQuestion[]; readonly unregistered: readonly UnregisteredCalls[] | undefined; readonly cost: JudgmentCost; readonly truncated: boolean; }"
+    },
+    {
+      "name": "SessionPricer",
+      "kind": "type",
+      "text": "export type SessionPricer = (input: number, output: number, cacheRead: number, cacheWrite: number, model: string) => number;"
+    },
+    {
+      "name": "StuckQuestion",
+      "kind": "interface",
+      "required": [
+        "actions",
+        "battery",
+        "confirm",
+        "escalate",
+        "examples",
+        "question",
+        "readings",
+        "site",
+        "stuckMeanSignal",
+        "stuckShare"
+      ],
+      "text": "export interface StuckQuestion { readonly battery: string; readonly site: string; readonly question: string; readonly readings: number; readonly confirm: number; readonly escalate: number; readonly stuckShare: number; readonly stuckMeanSignal: number; readonly examples: readonly string[]; readonly actions: readonly { readonly action: string; readonly count: number; }[]; }"
+    },
+    {
+      "name": "TrackedAgentCost",
+      "kind": "interface",
+      "required": [
+        "agentId",
+        "cost",
+        "inputTokens",
+        "model",
+        "outputTokens",
+        "shortId",
+        "status",
+        "task"
+      ],
+      "text": "export interface TrackedAgentCost { readonly agentId: string; readonly shortId: string; readonly task: string; readonly model: string; readonly inputTokens: number; readonly outputTokens: number; readonly cost: number; readonly status: 'running' | 'done' | 'failed'; }"
+    },
+    {
+      "name": "UNNAMED",
+      "kind": "const",
+      "text": "UNNAMED = \"(none)\""
+    },
+    {
+      "name": "UnregisteredCalls",
+      "kind": "interface",
+      "required": [
+        "battery",
+        "calls",
+        "examples",
+        "site"
+      ],
+      "text": "export interface UnregisteredCalls { readonly battery: string; readonly site: string; readonly calls: number; readonly examples: readonly string[]; }"
+    },
+    {
+      "name": "analyzeDecisionLog",
+      "kind": "function",
+      "text": "export declare function analyzeDecisionLog(log: DecisionLog, options?: ObserveOptions): ObserveReport; ;; via DecisionLog = export interface DecisionLog { record(entry: NewDecisionEntry): DecisionId; attach(id: string, note: DecisionNote): void; get(id: string): DecisionEntry | undefined; query(query?: DecisionQuery): readonly DecisionEntry[]; }"
+    },
+    {
+      "name": "analyzeEntries",
+      "kind": "function",
+      "text": "export declare function analyzeEntries(entries: readonly DecisionEntry[], options?: Omit<ObserveOptions, 'since' | 'until' | 'battery' | 'site' | 'limit'>): Omit<ObserveReport, 'window' | 'truncated'>; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry; ;; Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;"
+    },
+    {
+      "name": "batteryAccuracy",
+      "kind": "function",
+      "text": "export declare function batteryAccuracy(entries: readonly DecisionEntry[], floors?: ReadonlyMap<string, number>): BatteryAccuracy[]; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry; ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
+      "name": "formatObserveReport",
+      "kind": "function",
+      "text": "export declare function formatObserveReport(report: ObserveReport, source?: string): string;"
+    },
+    {
+      "name": "judgmentCost",
+      "kind": "function",
+      "text": "export declare function judgmentCost(entries: readonly DecisionEntry[], resolvePricing?: ResolvePricing): JudgmentCost; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry; ;; ResolvePricing = export type ResolvePricing = (model: string | undefined, provider?: string | undefined) => { readonly input: number; readonly output: number; readonly cacheRead?: number | undefined; readonly cacheWrite?: number | undefined; readonly source?: 'user' | 'provider' | 'catalog' | undefined; readonly asOf?: string | undefined; } | null;"
+    },
+    {
+      "name": "judgmentEvalScenarios",
+      "kind": "function",
+      "text": "export declare function judgmentEvalScenarios(accuracy: readonly BatteryAccuracy[]): EvalScenario[]; ;; via EvalScenario = export interface EvalScenario { id: string; name: string; suite: string; description: string; tags: string[]; run(): Promise<EvalRawResult>; }"
+    },
+    {
+      "name": "judgmentUsageRecord",
+      "kind": "function",
+      "text": "export declare function judgmentUsageRecord(entry: DecisionEntry): CostUsageRecord | undefined; ;; via CostUsageRecord = export interface CostUsageRecord { readonly at: number; readonly provider?: string | undefined; readonly model?: string | undefined; readonly sessionId?: string | undefined; readonly agentId?: string | undefined; readonly tool?: string | undefined; readonly hook?: string | undefined; readonly mcpServer?: string | undefined; readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number; readonly cacheWriteTokens: number; } ;; DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry;"
+    },
+    {
+      "name": "loggedReadings",
+      "kind": "function",
+      "text": "export declare function loggedReadings(entries: readonly DecisionEntry[]): LoggedReading[]; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry;"
+    },
+    {
+      "name": "outcomeShift",
+      "kind": "function",
+      "text": "export declare function outcomeShift(a: Readonly<Record<Outcome, number>>, b: Readonly<Record<Outcome, number>>): number; ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate'; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "readingDrift",
+      "kind": "function",
+      "text": "export declare function readingDrift(readings: readonly LoggedReading[], options?: DriftOptions): BatteryDrift[];"
+    },
+    {
+      "name": "readingsOfEntry",
+      "kind": "function",
+      "text": "export declare function readingsOfEntry(entry: DecisionEntry): LoggedReading[]; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry;"
+    },
+    {
+      "name": "stuckQuestions",
+      "kind": "function",
+      "text": "export declare function stuckQuestions(readings: readonly LoggedReading[]): StuckQuestion[];"
+    },
+    {
+      "name": "thresholdSweeps",
+      "kind": "function",
+      "text": "export declare function thresholdSweeps(readings: readonly LoggedReading[], entries: readonly DecisionEntry[], thresholds: readonly number[]): BatterySweep[]; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry;"
+    },
+    {
+      "name": "truthChecksByBattery",
+      "kind": "function",
+      "text": "export declare function truthChecksByBattery(entries: readonly DecisionEntry[]): Map<string, { checks: FixtureCheck[]; sources: Record<TruthSource, number>; }>; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry; ;; FixtureCheck = export interface FixtureCheck { readonly fixture: string; readonly aspect: string; readonly expected: string; readonly got: string; readonly correct: boolean; readonly signal: number; readonly outcome: Outcome; readonly answers?: readonly string[]; readonly question?: string; } ;; Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; TruthSource = export type TruthSource = 'fixture' | 'owner' | 'outcome';"
+    },
+    {
+      "name": "unregisteredCalls",
+      "kind": "function",
+      "text": "export declare function unregisteredCalls(entries: readonly DecisionEntry[], registered: ReadonlySet<string>): UnregisteredCalls[]; ;; via DecisionEntry = export type DecisionEntry = AnsweredEntry | FailedEntry; ;; ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; }"
+    }
+  ],
   "./platform/occasions": [
     {
       "name": "AGENT_NOTICE_HEADING",
@@ -41554,7 +41897,7 @@
     {
       "name": "observability",
       "kind": "other",
-      "text": "export type { DiagnosticFilter, DiagnosticLevel, ComponentConfig, ToolCallEntry, ToolCallPhase, ToolCallPermission, AgentEntry, AgentDiagnosticState, TaskEntry, EventEntry, DomainStateEntry, RuntimeStateSnapshot, DomainHealthSummary, HealthDashboardData, ComponentResourceEntry, ComponentResourceSnapshot, } from './diagnostics/index.js'; export { DEFAULT_BUFFER_LIMIT, DEFAULT_COMPONENT_CONFIG, applyFilter, appendBounded, } from './diagnostics/index.js'; export type { DiagnosticActionType, DiagnosticActionPermission, DiagnosticActionPayload, DiagnosticAction, HighSeverityDiagnostic, ActionResult, NavigateToEntryCallback, PermissionChecker, DiagnosticActionDispatcherConfig, LoadReplayPayload, RunPolicySimulationPayload, JumpToTaskPayload, JumpToAgentPayload, JumpToToolCallPayload, RetryTaskPayload, CancelTaskPayload, CancelAgentPayload, } from './diagnostics/index.js'; export { DiagnosticActionDispatcher, buildLoadReplayAction, buildRunPolicySimulationAction, buildJumpToTaskAction, buildJumpToAgentAction, buildJumpToToolCallAction, buildRetryTaskAction, buildCancelTaskAction, buildCancelAgentAction, diagnosticFromTaskFailure, diagnosticFromAgentFailure, diagnosticFromToolContractViolation, diagnosticFromForensicsRun, } from './diagnostics/index.js'; export { ToolCallsPanel, AgentsPanel, TasksPanel, EventsPanel, StateInspectorPanel, HealthPanel, ForensicsDataPanel, DivergencePanel, ReplayPanel, SecurityPanel, ToolContractsPanel, TransportPanel, } from './diagnostics/index.js'; export type { SecurityPanelSnapshot, TransportPanelSnapshot, } from './diagnostics/index.js'; export { DiagnosticsProvider, createDiagnosticsProvider } from './diagnostics/index.js'; export type { DiagnosticsProviderConfig, DiagnosticPanelName } from './diagnostics/index.js'; export type { EvalScenario, EvalRawResult, EvalResult, EvalSuiteResult, EvalScorecard, EvalBaseline, EvalGateResult, EvalDimension, DimensionScore, RegressionEntry, BaselineSuiteSummary, EvalRunnerOptions, } from './eval/index.js'; export { EvalRunner, scoreScenario, formatScorecard, DIMENSION_FLOOR, BUILTIN_SUITES, GATE_SUITES, ALL_SCENARIOS, captureBaseline, serialiseBaseline, deserialiseBaseline, writeBaseline, loadBaseline, formatBaselineComparison, formatSuiteResult, formatGateResult, } from './eval/index.js'; export type { FailureReport, FailureClass, PhaseTimingEntry, CausalChainEntry, ForensicsJumpLink, ForensicsBundle, ForensicsReplayEvidence, ForensicsEvidenceSummary, ReplaySnapshotInput, } from './forensics/index.js'; export { classifyFailure, summariseFailure, ForensicsRegistry, DEFAULT_REGISTRY_LIMIT, ForensicsCollector, } from './forensics/index.js'; export type { IdempotencyKeyContext, IdempotencyRecord, IdempotencyStoreConfig, IdempotencyStatus, } from './idempotency/index.js'; export { IdempotencyStore } from './idempotency/index.js'; export type { PerfBudget, PerfMetric, BudgetViolation, PerfReport, PerfUnit, PerfSnapshot, ComponentResourceContract, ComponentHealthState, ComponentThrottleStatus, ComponentHealthStatus, PanelResourceContract, PanelHealthState, PanelThrottleStatus, PanelHealthStatus, } from './perf/index.js'; export { DEFAULT_BUDGETS, PerfMonitor, formatReport, exitCode, SloCollector, SLO_METRICS, CATEGORY_CONTRACTS, buildContract, createInitialComponentHealthState, createInitialPanelHealthState, ComponentHealthMonitor, } from './perf/index.js'; export { RuntimeHealthAggregator, } from './health/aggregator.js'; export { CascadeEngine } from './health/cascade-engine.js'; export { CASCADE_RULES } from './health/cascade-rules.js'; export { ALL_CASCADE_RULE_IDS, CASCADE_PLAYBOOK_MAP, CascadeTimer, createCascadeAppliedEvent, createHealthSystem, deriveCascadeSeverity, } from './health/index.js'; export type { HealthStatus, HealthDomain as RuntimeHealthDomain, DomainHealth, CompositeHealth, CascadeRule, CascadeEffect, CascadeResult, EvaluateResult, CascadeAppliedEvent, } from './health/types.js'; export { BoundedTransitionLog, TimelineBuffer, SelectorHotspotSampler, StateInspectorProvider, createStateInspector, } from './inspection/state-inspector/index.js'; export type { CreateStateInspectorOptions, DomainSnapshot, HotspotReport, HotspotSamplerConfig, SelectorHotspot, StateInspectorConfig, StateSnapshot, SubscriptionInfo, TimeTravelCursor, TimelineEvent, TransitionEntry, } from './inspection/state-inspector/index.js'; export { TelemetryApiService, } from './telemetry/index.js'; export type { LedgerEntry, } from './telemetry/exporters/local-ledger.js'; export { getSecuritySettingsReport } from './security-settings.js'; export type { SecuritySettingReport, SecuritySettingsReporter } from './security-settings.js'; export { snapshotMetrics } from './metrics.js'; export type { RuntimeMetricsSnapshot, RuntimeMetricsBucket } from './metrics.js'; export type { ToolFormatFailureClass } from './telemetry/tool-format-telemetry.js'; export type { ComponentConfig as PanelConfig } from './diagnostics/types.js'; export { DEFAULT_COMPONENT_CONFIG as DEFAULT_PANEL_CONFIG } from './diagnostics/types.js'; //# sourceMappingURL=observability.d.ts.map"
+      "text": "export type { DiagnosticFilter, DiagnosticLevel, ComponentConfig, ToolCallEntry, ToolCallPhase, ToolCallPermission, AgentEntry, AgentDiagnosticState, TaskEntry, EventEntry, DomainStateEntry, RuntimeStateSnapshot, DomainHealthSummary, HealthDashboardData, ComponentResourceEntry, ComponentResourceSnapshot, } from './diagnostics/index.js'; export { DEFAULT_BUFFER_LIMIT, DEFAULT_COMPONENT_CONFIG, applyFilter, appendBounded, } from './diagnostics/index.js'; export type { DiagnosticActionType, DiagnosticActionPermission, DiagnosticActionPayload, DiagnosticAction, HighSeverityDiagnostic, ActionResult, NavigateToEntryCallback, PermissionChecker, DiagnosticActionDispatcherConfig, LoadReplayPayload, RunPolicySimulationPayload, JumpToTaskPayload, JumpToAgentPayload, JumpToToolCallPayload, RetryTaskPayload, CancelTaskPayload, CancelAgentPayload, } from './diagnostics/index.js'; export { DiagnosticActionDispatcher, buildLoadReplayAction, buildRunPolicySimulationAction, buildJumpToTaskAction, buildJumpToAgentAction, buildJumpToToolCallAction, buildRetryTaskAction, buildCancelTaskAction, buildCancelAgentAction, diagnosticFromTaskFailure, diagnosticFromAgentFailure, diagnosticFromToolContractViolation, diagnosticFromForensicsRun, } from './diagnostics/index.js'; export { ToolCallsPanel, AgentsPanel, TasksPanel, EventsPanel, StateInspectorPanel, HealthPanel, ForensicsDataPanel, DivergencePanel, ReplayPanel, SecurityPanel, ToolContractsPanel, TransportPanel, } from './diagnostics/index.js'; export type { SecurityPanelSnapshot, TransportPanelSnapshot, } from './diagnostics/index.js'; export { DiagnosticsProvider, createDiagnosticsProvider } from './diagnostics/index.js'; export type { DiagnosticsProviderConfig, DiagnosticPanelName } from './diagnostics/index.js'; export type { EvalScenario, EvalRawResult, EvalResult, EvalSuiteResult, EvalScorecard, EvalBaseline, EvalGateResult, EvalDimension, EvalJudgmentAccuracy, DimensionScore, RegressionEntry, BaselineSuiteSummary, EvalRunnerOptions, } from './eval/index.js'; export { EvalRunner, scoreScenario, formatScorecard, judgmentQualityScore, DIMENSION_FLOOR, BUILTIN_SUITES, GATE_SUITES, ALL_SCENARIOS, captureBaseline, serialiseBaseline, deserialiseBaseline, writeBaseline, loadBaseline, formatBaselineComparison, formatSuiteResult, formatGateResult, } from './eval/index.js'; export type { FailureReport, FailureClass, PhaseTimingEntry, CausalChainEntry, ForensicsJumpLink, ForensicsBundle, ForensicsReplayEvidence, ForensicsEvidenceSummary, ReplaySnapshotInput, } from './forensics/index.js'; export { classifyFailure, summariseFailure, ForensicsRegistry, DEFAULT_REGISTRY_LIMIT, ForensicsCollector, } from './forensics/index.js'; export type { IdempotencyKeyContext, IdempotencyRecord, IdempotencyStoreConfig, IdempotencyStatus, } from './idempotency/index.js'; export { IdempotencyStore } from './idempotency/index.js'; export type { PerfBudget, PerfMetric, BudgetViolation, PerfReport, PerfUnit, PerfSnapshot, ComponentResourceContract, ComponentHealthState, ComponentThrottleStatus, ComponentHealthStatus, PanelResourceContract, PanelHealthState, PanelThrottleStatus, PanelHealthStatus, } from './perf/index.js'; export { DEFAULT_BUDGETS, PerfMonitor, formatReport, exitCode, SloCollector, SLO_METRICS, CATEGORY_CONTRACTS, buildContract, createInitialComponentHealthState, createInitialPanelHealthState, ComponentHealthMonitor, } from './perf/index.js'; export { RuntimeHealthAggregator, } from './health/aggregator.js'; export { CascadeEngine } from './health/cascade-engine.js'; export { CASCADE_RULES } from './health/cascade-rules.js'; export { ALL_CASCADE_RULE_IDS, CASCADE_PLAYBOOK_MAP, CascadeTimer, createCascadeAppliedEvent, createHealthSystem, deriveCascadeSeverity, } from './health/index.js'; export type { HealthStatus, HealthDomain as RuntimeHealthDomain, DomainHealth, CompositeHealth, CascadeRule, CascadeEffect, CascadeResult, EvaluateResult, CascadeAppliedEvent, } from './health/types.js'; export { BoundedTransitionLog, TimelineBuffer, SelectorHotspotSampler, StateInspectorProvider, createStateInspector, } from './inspection/state-inspector/index.js'; export type { CreateStateInspectorOptions, DomainSnapshot, HotspotReport, HotspotSamplerConfig, SelectorHotspot, StateInspectorConfig, StateSnapshot, SubscriptionInfo, TimeTravelCursor, TimelineEvent, TransitionEntry, } from './inspection/state-inspector/index.js'; export { TelemetryApiService, } from './telemetry/index.js'; export type { LedgerEntry, } from './telemetry/exporters/local-ledger.js'; export { getSecuritySettingsReport } from './security-settings.js'; export type { SecuritySettingReport, SecuritySettingsReporter } from './security-settings.js'; export { snapshotMetrics } from './metrics.js'; export type { RuntimeMetricsSnapshot, RuntimeMetricsBucket } from './metrics.js'; export type { ToolFormatFailureClass } from './telemetry/tool-format-telemetry.js'; export type { ComponentConfig as PanelConfig } from './diagnostics/types.js'; export { DEFAULT_COMPONENT_CONFIG as DEFAULT_PANEL_CONFIG } from './diagnostics/types.js'; //# sourceMappingURL=observability.d.ts.map"
     },
     {
       "name": "operations",
@@ -46749,13 +47092,24 @@
       "text": "export interface EvalGateResult { suite: string; passed: boolean; regressionThreshold: number; fresh: EvalSuiteResult; baseline?: EvalBaseline | undefined; regressions: RegressionEntry[]; floorFailures: FloorFailureEntry[]; unbaselined: UnbaselinedScenario[]; } ;; via FloorFailureEntry = export interface FloorFailureEntry { scenarioId: string; scenarioName: string; freshScore: number; failingDimensions: string[]; } ;; UnbaselinedScenario = export interface UnbaselinedScenario { scenarioId: string; scenarioName: string; freshScore: number; floorPassed: boolean; }"
     },
     {
+      "name": "EvalJudgmentAccuracy",
+      "kind": "interface",
+      "required": [
+        "accuracy",
+        "accuracyFloor",
+        "battery",
+        "checks"
+      ],
+      "text": "export interface EvalJudgmentAccuracy { battery: string; accuracy: number; accuracyFloor: number; checks: number; }"
+    },
+    {
       "name": "EvalRawResult",
       "kind": "interface",
       "required": [
         "completed",
         "durationMs"
       ],
-      "text": "export interface EvalRawResult { completed: boolean; durationMs: number; tokens?: { input: number; output: number; }; costUsd?: number | undefined; perfReport?: PerfReport | undefined; safetyViolations?: number | undefined; recoverySucceeded?: boolean | undefined; recoveryFailed?: boolean | undefined; observations?: Record<string, number | string | boolean> | undefined; errorMessage?: string | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface EvalRawResult { completed: boolean; durationMs: number; tokens?: { input: number; output: number; }; costUsd?: number | undefined; perfReport?: PerfReport | undefined; safetyViolations?: number | undefined; recoverySucceeded?: boolean | undefined; recoveryFailed?: boolean | undefined; observations?: Record<string, number | string | boolean> | undefined; judgment?: EvalJudgmentAccuracy | undefined; errorMessage?: string | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "EvalResult",
@@ -47866,6 +48220,11 @@
       "name": "getSecuritySettingsReport",
       "kind": "function",
       "text": "export declare function getSecuritySettingsReport(reporter: SecuritySettingsReporter | null | undefined): SecuritySettingReport[];"
+    },
+    {
+      "name": "judgmentQualityScore",
+      "kind": "function",
+      "text": "export declare function judgmentQualityScore(accuracy: number, accuracyFloor: number): number;"
     },
     {
       "name": "loadBaseline",

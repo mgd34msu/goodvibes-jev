@@ -24,6 +24,7 @@ export type {
   EvalBaseline,
   EvalGateResult,
   EvalDimension,
+  EvalJudgmentAccuracy,
   DimensionScore,
   RegressionEntry,
   FloorFailureEntry,
@@ -34,7 +35,7 @@ export type {
 export { EvalRunner } from './runner.js';
 export type { EvalRunnerOptions } from './runner.js';
 
-export { scoreScenario, formatScorecard, DIMENSION_FLOOR } from './scorecard.js';
+export { scoreScenario, formatScorecard, judgmentQualityScore, DIMENSION_FLOOR } from './scorecard.js';
 
 export { BUILTIN_SUITES, ALL_SCENARIOS } from './suites.js';
 

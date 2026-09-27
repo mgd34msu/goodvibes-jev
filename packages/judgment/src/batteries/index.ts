@@ -11,6 +11,7 @@ export {
   checkReading,
   concludedAnswer,
   readItem,
+  readingAnswers,
   readingSignal,
   type AnyReading,
   defineBattery,
@@ -31,9 +32,11 @@ export {
   type YesNoItem,
 } from './battery.ts';
 export {
+  CALIBRATION_SITE,
   checkEachFixture,
   decisionHeader,
   type CalibrationRun,
+  type CheckVocabulary,
   type DecisionIdentity,
   fixtureCheck,
   type FixtureCheck,

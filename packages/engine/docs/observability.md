@@ -772,6 +772,25 @@ A unit passes only when every judged criterion reads met. `CONTRACT_PASSED`, `CO
 
 ---
 
+## Judgment analytics
+
+Every Jev reading the engine takes is recorded in the state layer's decision log (`<workspace>/.goodvibes/<surface>/decisions.sqlite`): the call, what the decision concluded (a `readings` note), what code did with it (an `action` note) and, once known, what was right (a `truth` note from a calibration fixture, an owner correction or an observed outcome). The observe subsystem (`@goodvibes-jev/engine/sdk/platform/observe`) reads it without making new calls:
+
+| Analysis | What it reads |
+|---|---|
+| Accuracy against confidence | Per decision, the share of ground-truth checks it got right, per confidence bin, against its registered accuracy floor |
+| Threshold sweeps | Every logged reading re-banded at each threshold: the share code would act on alone, and the accuracy among ground-truth checks that clear it |
+| Drift | Per decision and time window, the signal distribution, the act/confirm/escalate mix and the answering models, with a change flag computed in code from the thresholds in `observe/thresholds.ts` |
+| Question discovery | Readings stuck in confirm or escalate, grouped by decision, site and question, with example decision ids and what code did with them |
+| Calls outside a registered battery | Logged calls naming no registered decision |
+| Judgment cost | Jev calls, tokens and latency by decision and site, priced through the cost attribution pricing (unpriced, never $0, for an unknown model) |
+
+`bun run observe:report` prints every analysis for a log (`--log`, or the one surface log under `--workspace`), plus the `judgment-accuracy` eval suite: one eval scenario per decision with ground truth, whose quality dimension scores accuracy against the decision's floor, so the eval scorecard, baseline and gate cover judgment accuracy. `--check` exits 1 when a decision is below its floor or a call was made outside a registered battery. `bun run observe:proof` seeds a fresh log from a live calibration run and shows every analysis producing output.
+
+`bun run judgment:lint` runs in `validate`: it fails when a registered decision has no fixture expecting one of its answers (each yes or no, option, rubric level or route), or when engine source asks Jev outside a registered decision.
+
+The observe subsystem also holds the eval registry (newest suite and gate result per suite, with subscribe) and the cost tracker (session usage, per-refresh cost history and per-agent cost rows, driven by the turn and agent feeds) that the TUI's `/eval` command and Cost panel show.
+
 ## Next reads
 
 - [Performance and Tuning](./performance.md)

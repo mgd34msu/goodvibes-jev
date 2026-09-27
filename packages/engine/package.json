@@ -783,6 +783,11 @@
       "types": "./sdk/dist/platform/node/runtime-boundary.d.ts",
       "import": "./sdk/dist/platform/node/runtime-boundary.js"
     },
+    "./sdk/platform/observe": {
+      "bun": "./sdk/src/platform/observe/index.ts",
+      "types": "./sdk/dist/platform/observe/index.d.ts",
+      "import": "./sdk/dist/platform/observe/index.js"
+    },
     "./sdk/platform/occasions": {
       "bun": "./sdk/src/platform/occasions/index.ts",
       "types": "./sdk/dist/platform/occasions/index.d.ts",

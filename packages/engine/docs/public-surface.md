@@ -293,6 +293,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/multimodal` | Multimodal input | beta |
 | `platform/node` | Runtime capability metadata plus Node-like runtime-boundary helpers; not a platform aggregate | beta |
 | `platform/node/runtime-boundary` | Client-safe runtime boundary detection (no Bun globals) | beta |
+| `platform/observe` | Judgment analytics over the decision log (accuracy against confidence, threshold sweeps, drift, stuck questions, calls outside a registered battery, judgment cost), the judgment-accuracy eval suite, and the eval registry and cost tracker the TUI shows | beta |
 | `platform/occasions` | Durable facts about dated things in the owner's life (birthdays, anniversaries) that the daemon raises on its own; exports the shapes and pure render helpers a surface needs, not the service or its store | beta |
 | `platform/orchestration` | The multi-agent orchestration engine: phases, gates, work items, commit exclusions, and budget ceilings | beta |
 | `platform/owner-profile` | The platform's read model of the person who owns it, backed by one Markdown file at daemon scope | beta |

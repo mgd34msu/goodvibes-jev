@@ -61,8 +61,26 @@ export interface EvalRawResult {
   recoveryFailed?: boolean | undefined;
   /** Custom key-value observations from the scenario. */
   observations?: Record<string, number | string | boolean> | undefined;
+  /**
+   * A named decision's accuracy where the decision log holds ground truth,
+   * with the accuracy floor it is registered with. The quality dimension is
+   * scored against that floor when present.
+   */
+  judgment?: EvalJudgmentAccuracy | undefined;
   /** Error message if the run threw or did not complete. */
   errorMessage?: string | undefined;
+}
+
+/** A decision's logged accuracy against its registered floor. */
+export interface EvalJudgmentAccuracy {
+  /** The named decision. */
+  battery: string;
+  /** Share of ground-truth checks the decision got right, in [0, 1]. */
+  accuracy: number;
+  /** The decision's registered accuracy floor, in (0, 1]. */
+  accuracyFloor: number;
+  /** How many ground-truth checks the accuracy is over. */
+  checks: number;
 }
 
 // ── Scorecard ────────────────────────────────────────────────────────────────

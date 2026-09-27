@@ -24,6 +24,10 @@ run('bun', ['run', 'line:check'], 'line:check');
 // so a push that bypassed the hook reached CI with an unclassified credential
 // write and every one of the ten CI jobs stayed green.
 run('bun', ['run', 'credential-scope:check'], 'credential-scope:check');
+// Every answer of every registered judgment decision has a fixture, and
+// engine source asks Jev only through registered decisions. Source and
+// fixtures only, no model call and no build.
+run('bun', ['run', 'judgment:lint'], 'judgment:lint');
 run('bun', ['run', 'changelog:check'], 'changelog:check');
 run('bun', ['run', 'version:check'], 'version:check');
 run('bun', ['run', 'todo:check'], 'todo:check');

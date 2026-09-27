@@ -142,6 +142,11 @@ export const failureReading = defineBattery({
       expect: { category: 'not_found', transient_network: 'no', rate_limited: 'no' },
     },
     {
+      name: 'message that names no cause',
+      state: 'Error type: Error\nMessage: Error: undefined',
+      expect: { category: 'unknown', billing: 'no', rate_limited: 'no', context_exceeded: 'no' },
+    },
+    {
       name: 'tool failure unrelated to transport',
       state: 'Message: File not writable: /etc/hosts is owned by root',
       expect: { transient_network: 'no', before_response: 'no', rate_limited: 'no', provider_unusable: 'no' },

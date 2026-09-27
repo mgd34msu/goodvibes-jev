@@ -62,12 +62,40 @@ function scoreSafety(raw: EvalRawResult): DimensionScore {
 }
 
 /**
+ * Quality score for a judgment accuracy observation, on the dimension's own
+ * scale: accuracy at the decision's floor scores exactly the quality floor,
+ * perfect accuracy scores 100, and anything below the floor scores below the
+ * quality floor in proportion, so the gate fails a decision exactly when it
+ * falls below its registered floor and regressions still show as points lost.
+ */
+export function judgmentQualityScore(accuracy: number, accuracyFloor: number): number {
+  const floor = DIMENSION_FLOOR.quality;
+  if (accuracy < accuracyFloor) return clamp((floor * accuracy) / accuracyFloor);
+  if (accuracyFloor >= 1) return 100;
+  return clamp(floor + ((100 - floor) * (accuracy - accuracyFloor)) / (1 - accuracyFloor));
+}
+
+/**
  * Quality score: based on run completion and absence of errors.
  * 100 = completed cleanly; 50 = completed with error; 0 = did not complete.
+ * A scenario carrying a judgment accuracy observation is scored on that
+ * accuracy against the decision's floor instead (see judgmentQualityScore),
+ * with no PerfMonitor deduction.
  */
 function scoreQuality(raw: EvalRawResult): DimensionScore {
   let score: number;
   let rationale: string;
+
+  if (raw.completed && raw.judgment !== undefined) {
+    // A decision's accuracy is not a runtime measurement: PerfMonitor budgets do not apply.
+    const { battery, accuracy, accuracyFloor, checks } = raw.judgment;
+    return {
+      dimension: 'quality',
+      score: judgmentQualityScore(accuracy, accuracyFloor),
+      weight: DIMENSION_WEIGHT.quality,
+      rationale: `${battery}: accuracy ${(accuracy * 100).toFixed(1)}% over ${checks} ground-truth check(s), floor ${(accuracyFloor * 100).toFixed(1)}%.`,
+    };
+  }
 
   if (!raw.completed) {
     score = 0;
