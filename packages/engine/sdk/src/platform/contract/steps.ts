@@ -22,7 +22,7 @@ import { createEscalations, type OwnerReplyOutcome } from './escalation.js';
 import type { GroupRunner, GroupSteps } from './group-runner.js';
 import type { ContractPlannerDeps, PlanningOutcome, ShapeOutcome } from './planner.js';
 import type { ContractRun } from './run-context.js';
-import type { ContractRouteSelector } from './types.js';
+import type { CheckTrigger, ContractRouteSelector } from './types.js';
 
 /** The correction and completion steps: what the runner hands a unit, group or contract to when a nudge is not the answer. */
 export interface ContractSteps extends UnitCheckEscalations, GroupSteps {}
@@ -49,6 +49,12 @@ export interface StepContext {
 export interface ContractStepsWithReplies extends ContractSteps {
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
+  /** Judges a group now; a restart stopped it while it was being judged (design 7.2). */
+  judgeGroup(run: ContractRun, groupId: string, trigger: CheckTrigger): Promise<void>;
+  /** Judges the deliverable now; a restart stopped it while it was being judged. */
+  judgeDeliverable(run: ContractRun, trigger: CheckTrigger): Promise<void>;
+  /** Commits the passed deliverable; a restart stopped it while it was committing. */
+  commitDeliverable(run: ContractRun): Promise<void>;
 }
 
 export function createContractSteps(context: StepContext): ContractStepsWithReplies {
@@ -71,5 +77,8 @@ export function createContractSteps(context: StepContext): ContractStepsWithRepl
     groupsPassed: completion.groupsPassed,
     fixGroupPassed: correction.fixGroupPassed,
     reply: escalations.reply,
+    judgeGroup: completion.judgeGroup,
+    judgeDeliverable: completion.judgeDeliverable,
+    commitDeliverable: completion.commitDeliverable,
   };
 }

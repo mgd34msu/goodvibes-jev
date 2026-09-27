@@ -91,7 +91,7 @@ export function saveSession(
     returnContext: data.returnContext,
     saveSource,
   };
-  manager.save(sessionId, data.messages as Array<Record<string, unknown>>, meta);
+  manager.save(sessionId, data.messages as Array<Record<string, unknown>>, meta, undefined, data.contracts);
 }
 
 export function persistConversation(

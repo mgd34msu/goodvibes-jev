@@ -20,7 +20,9 @@
  *                           worktree ONLY if the tree is clean; a dirty tree
  *                           is KEPT (data safety) and counted against the
  *                           kept-worktree cap (oldest-first eviction).
- *   reconcileOrphans()   , at import (a resumed/crashed workstream), find any
+ *   reconcileOrphans()   , at import (a resumed/crashed workstream), put any
+ *                           passed item whose branch had not integrated back
+ *                           on the integration lane, then find any
  *                           on-disk `ws/<wsShort>/*` worktree not already
  *                           recorded on one of the imported items and either
  *                           ADOPT it (the item still has unresolved work) or
@@ -86,7 +88,11 @@ export interface WorktreeIsolationManager {
   enqueueIntegration(workstream: Workstream, item: WorkItem): Promise<void>;
   /** Fail/kill cleanup rule: remove the item's worktree if clean, else KEEP it (data safety). No-op if the item never got a worktree. Never throws. */
   cleanupTerminated(workstream: Workstream, item: WorkItem): Promise<void>;
-  /** Synchronous orphan scan, see the module doc. Call once, right after registering an imported workstream, before start()/tick(). */
+  /**
+   * Import reconciliation, see the module doc: passed items whose branch had
+   * not integrated re-enter the lane, then the synchronous orphan scan. Call
+   * once, right after registering an imported workstream, before start()/tick().
+   */
   reconcileOrphans(workstream: Workstream): void;
   /**
    * The diff an item's worktree branch introduced over base (best-of-N candidate
@@ -310,6 +316,16 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
   }
 
   function reconcileOrphans(workstream: Workstream): void {
+    // A passed item whose branch had not finished integrating when the
+    // snapshot was written re-enters the lane: nothing else would merge it,
+    // and a dependent released only on merge would wait forever. A best-of-N
+    // attempt integrates only once it was picked.
+    for (const item of workstream.items) {
+      const integrable = item.attemptGroupId === undefined || item.attemptWinner === true;
+      if (item.state === 'passed' && integrable && item.mergeState !== 'merged' && item.mergeState !== 'conflict') {
+        void enqueueIntegration(workstream, item);
+      }
+    }
     let raw: string;
     try {
       const result = Bun.spawnSync(['git', '-C', deps.projectRoot, 'worktree', 'list', '--porcelain']);

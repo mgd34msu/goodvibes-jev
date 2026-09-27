@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readSync, readdirSync, writeFileSy
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import type { AgentRecord } from '../tools/agent/index.js';
+import type { Contract } from '../contract/types.js';
 import type { SessionReturnContextSummary } from '../runtime/session-return-context.js';
 import type { ConversationTitleSource } from '../core/conversation.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -64,14 +65,33 @@ export interface SessionInfo {
  * Format: each line is a JSON object.
  *   Line 0: { type: 'meta', ...SessionMeta }
  *   Line N: { type: 'message', ...message fields }
+ *   then:   { type: 'agent_record', ...AgentRecord } per agent record
+ *   then:   { type: 'contract', contract } per contract started in the session (version 2)
  */
 /**
  * Current schema version written to session files.
  * Increment when the file format changes in a backward-incompatible way.
  * Readers accept: version undefined (legacy, treated as 0), version <= CURRENT, and
  * version > CURRENT (future, logged as a warning, accepted with best-effort parsing).
+ *
+ * Version 2 adds the session's contract trees, one `{ type: 'contract', contract }`
+ * line per contract started in the session (docs/design/contract-runner.md
+ * section 7.1). A file of an earlier version loads with no contracts.
  */
-export const CURRENT_SESSION_SCHEMA_VERSION = 1;
+export const CURRENT_SESSION_SCHEMA_VERSION = 2;
+
+/** The first session schema version that carries contract lines. */
+const CONTRACT_LINES_SINCE_VERSION = 2;
+
+/** A contract line's contract, when it has the fields every reader relies on. */
+function readContractLine(value: unknown): Contract | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const contract = value as Record<string, unknown>;
+  return typeof contract['id'] === 'string' && typeof contract['status'] === 'string' && typeof contract['sessionId'] === 'string'
+    && Array.isArray(contract['groups']) && Array.isArray(contract['units'])
+    ? (value as Contract)
+    : null;
+}
 
 /**
  * Turn a session name (or session id) into the filename stem its durable
@@ -227,6 +247,8 @@ export class SessionManager {
     messages: object[],
     meta: SessionMeta,
     agentRecords?: AgentRecord[],
+    /** The trees of the contracts started in this session, written after the agent records. */
+    contracts?: readonly Contract[],
   ): { filePath: string; sanitizedName: string } {
     if (!name || !name.trim()) throw new Error('Session name cannot be empty');
     mkdirSync(this.sessionsDir, { recursive: true });
@@ -264,6 +286,10 @@ export class SessionManager {
       }
     }
 
+    for (const contract of contracts ?? []) {
+      lines.push(JSON.stringify({ type: 'contract' as const, contract }));
+    }
+
     this._atomicWrite(filePath, lines.join('\n') + '\n');
     return { filePath, sanitizedName };
   }
@@ -272,7 +298,7 @@ export class SessionManager {
    * Load a session from JSONL. Returns meta and messages (excluding removed ones).
    * Throws if the file does not exist or cannot be parsed.
    */
-  load(name: string): { meta: SessionMeta; messages: object[]; agentRecords: AgentRecord[] } {
+  load(name: string): { meta: SessionMeta; messages: object[]; agentRecords: AgentRecord[]; contracts: Contract[] } {
     if (!name || !name.trim()) throw new Error('Session name cannot be empty');
     const filename = this.sanitizeName(name);
     const filePath = join(this.sessionsDir, `${filename}.jsonl`);
@@ -287,6 +313,7 @@ export class SessionManager {
     let meta: SessionMeta = { title: '', model: '', provider: '', timestamp: 0, titleSource: 'system' };
     const messages: object[] = [];
     const agentRecords: AgentRecord[] = [];
+    const contracts: Contract[] = [];
 
     let skipped = 0;
     for (const line of lines) {
@@ -330,11 +357,17 @@ export class SessionManager {
         if (typeof agentFields.id === 'string' && typeof agentFields.status === 'string' && typeof agentFields.task === 'string') {
           agentRecords.push(agentFields as unknown as AgentRecord);
         }
+      } else if (record.type === 'contract') {
+        // Contract lines exist from version 2; a version 1 file loads with none.
+        if ((meta.schemaVersion ?? 0) < CONTRACT_LINES_SINCE_VERSION) continue;
+        const contract = readContractLine(record.contract);
+        if (contract === null) skipped++;
+        else contracts.push(contract);
       }
     }
 
     if (skipped > 0) logger.warn('Skipped malformed session log lines', { name, skipped });
-    return { meta, messages, agentRecords };
+    return { meta, messages, agentRecords, contracts };
   }
 
   /**

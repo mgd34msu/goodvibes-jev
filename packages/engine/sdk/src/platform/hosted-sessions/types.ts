@@ -101,6 +101,12 @@ export interface HostedSessionRecord {
    * different file halfway through its life.
    */
   readonly originSurface?: string | undefined;
+  /**
+   * The contracts this session started, oldest first
+   * (docs/design/contract-runner.md section 7.1). Their trees live in the
+   * contract store; a record persisted before contracts existed loads with none.
+   */
+  readonly contractIds: readonly string[];
 }
 
 /** One message of a hosted session's history, as a client renders it. */

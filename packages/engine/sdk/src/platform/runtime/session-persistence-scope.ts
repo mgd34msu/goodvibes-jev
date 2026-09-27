@@ -14,6 +14,7 @@
  * below is internal plumbing shared between the two siblings.
  */
 
+import type { Contract } from '../contract/types.js';
 import { join } from 'path';
 
 import { SessionManager, sanitizeSessionName } from '../sessions/manager.js';
@@ -29,6 +30,8 @@ export type SessionSnapshot = {
   title?: string | undefined;
   titleSource?: ConversationTitleSource | undefined;
   returnContext?: SessionReturnContextSummary | undefined;
+  /** The trees of the contracts started in the session, saved as its contract lines. */
+  contracts?: readonly Contract[] | undefined;
 };
 
 /**

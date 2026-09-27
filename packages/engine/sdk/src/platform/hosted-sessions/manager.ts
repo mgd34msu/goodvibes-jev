@@ -347,12 +347,10 @@ export class HostedSessionManager {
         effectiveDetachPolicy: this.effectivePolicy(input.detachPolicy ?? null),
         attachedClients: input.clientId ? [input.clientId] : [],
         ...(model ? { providerId: model.provider, modelId: model.registryKey } : {}),
-        createdAt: at,
-        updatedAt: at,
-        turnCount: 0,
-        messageCount: 0,
+        createdAt: at, updatedAt: at, turnCount: 0, messageCount: 0,
         restoredFromDisk: false,
         ...(input.originSurface ? { originSurface: input.originSurface } : {}),
+        contractIds: [],
       };
       const live: LiveSession = {
         record,

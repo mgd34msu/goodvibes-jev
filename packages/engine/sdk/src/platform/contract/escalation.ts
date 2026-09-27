@@ -194,9 +194,6 @@ export interface Escalations {
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
 }
 
-/** The contract status each run returns to once its last open escalation is answered. */
-const statusBeforeOwner = new WeakMap<ContractRun, ContractStatus>();
-
 export function createEscalations(context: StepContext, rejudge: Rejudge): Escalations {
   function open(run: ContractRun): Escalation[] {
     return run.contract.escalations.filter((escalation) => escalation.resolvedAt === undefined);
@@ -225,7 +222,7 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
       if (group !== undefined) run.moveGroup(group, 'awaiting-owner');
     }
     if (contract.status !== 'awaiting-owner') {
-      statusBeforeOwner.set(run, contract.status);
+      contract.statusBeforeOwner = contract.status;
       run.moveContract('awaiting-owner');
     }
     contract.escalations.push(escalation);
@@ -247,8 +244,8 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
   /** Back to the status the contract left for the owner, once nothing else waits on them. */
   function resume(run: ContractRun, to?: ContractStatus): void {
     if (open(run).length > 0 || run.contract.status !== 'awaiting-owner') return;
-    run.moveContract(to ?? statusBeforeOwner.get(run) ?? 'running');
-    statusBeforeOwner.delete(run);
+    run.moveContract(to ?? run.contract.statusBeforeOwner ?? 'running');
+    run.contract.statusBeforeOwner = undefined;
     context.ownerProgress(run);
   }
 

@@ -13,7 +13,7 @@ import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
 import type { OrchestrationEngine } from '../orchestration/engine.js';
 import type { AgentRecord } from '../tools/agent/index.js';
-import type { ContractUnitOutcome } from '../orchestration/phase-runner.js';
+import type { ContractPreSpawn, ContractUnitOutcome } from '../orchestration/phase-runner.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ContractHoldOutcome } from './agent-hooks.js';
 import type { ContractConfig } from './config.js';
@@ -78,6 +78,17 @@ export interface UnitRuntime {
   evidencePaths: ReadonlySet<string> | null;
   /** A session-mode unit (design 6.6): the session's turn that works on it. */
   session: SessionTurnState | null;
+  /**
+   * What the unit's phase does before it spawns an agent (design 7.2). Null:
+   * it spawns as usual. `wait`: after a restart the unit has no agent and its
+   * phase waits until the runner decides (a check, a respawn or the owner).
+   * A decision made before the phase asked is kept here until it asks.
+   */
+  preSpawn: 'wait' | ContractPreSpawn | null;
+  /** The phase waiting for the pre-spawn decision. */
+  spawnGate: { readonly resolve: (decision: ContractPreSpawn) => void } | null;
+  /** The active agent belonged to the process before a restart: it is gone, whatever a restored record says. */
+  agentLost: boolean;
 }
 
 /** The session turn a session-mode unit is bound to (design 6.6). */
@@ -237,6 +248,9 @@ export class ContractRun {
         abort: new AbortController(),
         evidencePaths: null,
         session: null,
+        preSpawn: null,
+        spawnGate: null,
+        agentLost: false,
       };
       this.unitRuntimes.set(unit.id, runtime);
     }
@@ -260,9 +274,35 @@ export class ContractRun {
     hold.resolve(outcome);
   }
 
-  /** Resolves the phase runner's wait on a unit's current agent. */
+  /**
+   * Decides what a unit's phase does before it spawns (design 7.2): hands the
+   * decision to the phase waiting for it, or keeps it until the phase asks.
+   */
+  decidePreSpawn(unit: ContractUnit, decision: ContractPreSpawn): void {
+    const runtime = this.runtime(unit);
+    const gate = runtime.spawnGate;
+    if (gate === null) {
+      runtime.preSpawn = decision;
+      return;
+    }
+    runtime.spawnGate = null;
+    runtime.preSpawn = null;
+    gate.resolve(decision);
+  }
+
+  /** Whether the unit's phase waits for the runner before it spawns an agent. */
+  spawnWaits(unit: ContractUnit): boolean {
+    const runtime = this.unitRuntimes.get(unit.id);
+    return runtime !== undefined && (runtime.preSpawn === 'wait' || runtime.spawnGate !== null);
+  }
+
+  /** Resolves the phase runner's wait on a unit's current agent, or on the decision before its spawn. */
   settle(unit: ContractUnit, outcome: ContractUnitOutcome): void {
     const runtime = this.unitRuntimes.get(unit.id);
+    if (runtime !== undefined && this.spawnWaits(unit)) {
+      this.decidePreSpawn(unit, { kind: 'settled', outcome });
+      return;
+    }
     const settlement = runtime?.settlement;
     if (runtime === undefined || settlement === null || settlement === undefined) return;
     runtime.settlement = null;

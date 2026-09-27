@@ -42,6 +42,7 @@ import type { CancellationRegistry } from './cancellation.js';
 import { excludeUntouchedLaunchResidue, type DirtyLaunchSnapshot } from './dirty-guard.js';
 import { classifyBookkeepingFailure } from './bookkeeping.js';
 import { mergeWorkItemUsage } from './types.js';
+import type { UnitRoute } from '../contract/types.js';
 import type { CommitExclusion, GateOutcome, Phase, PhaseCommitOutcome, PhaseResult, PriceProvenanceFn, WorkItem, WorkItemUsage, Workstream } from './types.js';
 
 /** Narrow structural pick, testable with stubs, mirrors AgentManagerLike (contract/types.ts). */
@@ -82,7 +83,22 @@ export type ContractUnitOutcome = 'completed' | 'failed' | 'cancelled';
  */
 export interface ContractUnitSettlement {
   settle(item: WorkItem, agentId: string, signal: AbortSignal): Promise<ContractUnitOutcome>;
+  /**
+   * Asked before a contract unit's phase spawns an agent. After a restart, a
+   * unit whose agent was held, checked, nudged or waiting on its owner has no
+   * agent, and the runner decides what its phase does: spawn one (with a
+   * revised brief and route, when given), or settle with no agent, as when a
+   * check after the restart passed the work the earlier agent left. `signal`
+   * aborts when the engine kills or requeues the item, and the decision is
+   * then `cancelled`.
+   */
+  beforeSpawn(item: WorkItem, signal: AbortSignal): Promise<ContractPreSpawn>;
 }
+
+/** What a contract unit's phase does before it spawns: spawn an agent, or settle with none. */
+export type ContractPreSpawn =
+  | { readonly kind: 'spawn'; readonly task?: string | undefined; readonly route?: UnitRoute | undefined }
+  | { readonly kind: 'settled'; readonly outcome: ContractUnitOutcome };
 
 export interface PhaseRunnerDeps {
   readonly agentManager: PhaseRunnerAgentManagerLike;
@@ -379,6 +395,39 @@ async function commitPhaseWork(
   }
 }
 
+/**
+ * A contract unit's phase that the runner settled before any agent ran (a
+ * check after a restart passed the work an earlier agent left, or the unit
+ * ended while it waited): `completed` commits the item's work as a passing
+ * phase does; `failed` and `cancelled` end the phase with no agent.
+ */
+async function settleWithoutAgent(
+  item: WorkItem,
+  phase: Phase,
+  outcome: ContractUnitOutcome,
+  startedAt: number,
+  worktree: WrfcWorktreeOps,
+  deps: PhaseRunnerDeps,
+): Promise<PhaseRunOutcome> {
+  const base = { itemId: item.id, phaseId: phase.id, agentId: '', startedAt, usage: usageFromRecord(null, deps.priceUsage, deps.priceProvenance) };
+  if (outcome !== 'completed') {
+    const summary = outcome === 'cancelled' ? 'cancelled by operator' : 'the contract runner failed the unit before an agent ran';
+    return { agentStatus: outcome, result: { ...base, report: genericReport(summary), gate: { passed: false, results: [] }, completedAt: Date.now() } };
+  }
+  const committed = await commitPhaseWork(item, phase, '', worktree, deps);
+  return {
+    agentStatus: 'completed',
+    result: {
+      ...base,
+      report: genericReport('checked and passed by the contract runner after a restart; no agent ran this phase'),
+      gate: { passed: true, results: [] },
+      completedAt: Date.now(),
+      ...(committed.exclusion ? { commitExclusion: committed.exclusion } : {}),
+      ...(committed.commit ? { commit: committed.commit } : {}),
+    },
+  };
+}
+
 /** Runs one WorkItem through one Phase to completion (or cancellation/failure). Recurses (bounded by transportRetryLimit) on a transport-classified spawn failure. */
 export async function runPhase(
   workstream: Workstream,
@@ -393,6 +442,20 @@ export async function runPhase(
 
   // A contract unit's item spawns its agent bound to the unit, with the unit
   // brief (item.task) verbatim, the route's model and the item's tool contract.
+  if (contractUnitSpawn(item)) {
+    if (!deps.contractUnitSettlement) throw new Error(`work item ${item.id} is a contract unit, but the engine has no contract unit settlement`);
+    const gateSignal = deps.cancellation.start(item.id);
+    let decided: ContractPreSpawn;
+    try {
+      decided = await deps.contractUnitSettlement.beforeSpawn(item, gateSignal);
+    } finally {
+      deps.cancellation.release(item.id, gateSignal);
+    }
+    if (decided.kind === 'settled') return settleWithoutAgent(item, phase, decided.outcome, startedAt, worktree, deps);
+    if (decided.task !== undefined && decided.task.trim().length > 0) item.task = decided.task;
+    // The engine owns the item: the unit's next agent runs on the runner's route.
+    if (decided.route !== undefined) Object.assign(item, { route: decided.route });
+  }
   const unitSpawn = contractUnitSpawn(item);
   const record = deps.agentManager.spawn({
     mode: 'spawn',
@@ -427,7 +490,7 @@ export async function runPhase(
     }
   } finally {
     deps.agentManager.releaseCancellationSignal(record.id);
-    deps.cancellation.release(item.id);
+    deps.cancellation.release(item.id, signal);
   }
 
   const usage = usageFromRecord(outcome.record, deps.priceUsage, deps.priceProvenance);

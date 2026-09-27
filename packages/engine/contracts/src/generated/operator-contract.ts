@@ -90891,6 +90891,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -90905,7 +90911,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             },
@@ -91073,6 +91080,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91087,7 +91100,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91210,6 +91224,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91224,7 +91244,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91344,6 +91365,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91358,7 +91385,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91473,6 +91501,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   },
                   "restoredFromDisk": {
                     "type": "boolean"
+                  },
+                  "contractIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 },
                 "required": [
@@ -91487,7 +91521,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                   "updatedAt",
                   "turnCount",
                   "messageCount",
-                  "restoredFromDisk"
+                  "restoredFromDisk",
+                  "contractIds"
                 ],
                 "additionalProperties": false
               }
@@ -105211,6 +105246,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -105225,7 +105266,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             },

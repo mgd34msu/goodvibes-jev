@@ -22666,6 +22666,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            contractIds: readonly string[];
         };
         history: readonly ({
             role: "assistant" | "system" | "tool" | "user";
@@ -22693,6 +22694,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            contractIds: readonly string[];
         };
     };
     // (undocumented)
@@ -22715,6 +22717,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            contractIds: readonly string[];
         };
     };
     // (undocumented)
@@ -22737,6 +22740,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            contractIds: readonly string[];
         };
     };
     // (undocumented)
@@ -22759,6 +22763,7 @@ export interface OperatorMethodOutputMap {
             terminatedAt?: number;
             terminatedReason?: string;
             restoredFromDisk: boolean;
+            contractIds: readonly string[];
         })[];
     };
     // (undocumented)

@@ -11,12 +11,13 @@
  */
 
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
   HostedSessionStore,
+  CURRENT_HOSTED_SESSION_VERSION,
   boundMessages,
   describeInvalidPersistedHostedSession,
 } from '../sdk/src/platform/hosted-sessions/store.ts';
@@ -43,6 +44,7 @@ function record(overrides: Partial<HostedSessionRecord> & { id: string }): Hoste
     turnCount: 0,
     messageCount: 0,
     restoredFromDisk: false,
+    contractIds: [],
     ...overrides,
   };
 }
@@ -99,7 +101,7 @@ test('an unusable file is rejected with a reason and moved aside rather than dro
 
 test('the validator names the specific thing that is wrong', () => {
   expect(describeInvalidPersistedHostedSession(null)).toBe('not a JSON object');
-  expect(describeInvalidPersistedHostedSession({ version: 2 })).toContain('unsupported version');
+  expect(describeInvalidPersistedHostedSession({ version: 3 })).toContain('unsupported version');
   expect(describeInvalidPersistedHostedSession({ version: 1 })).toContain('missing the session record');
   expect(describeInvalidPersistedHostedSession({ version: 1, record: { id: '../escape' } }))
     .toContain('not a safe file name');
@@ -113,6 +115,34 @@ test('the validator names the specific thing that is wrong', () => {
     version: 1,
     record: { id: 'ok', workspaceRoot: '/w', status: 'idle', createdAt: 1, updatedAt: 1 },
   })).toBeNull();
+});
+
+test('a version 1 file, written before sessions carried contracts, loads with an empty contract list', async () => {
+  const { contractIds: _dropped, ...v1Record } = record({ id: 'legacy' });
+  writeFileSync(join(dir, 'legacy.json'), JSON.stringify({ version: 1, record: v1Record, conversation: null }));
+  const loaded = await new HostedSessionStore(dir, LIMITS).load(1_000);
+  expect(loaded.rejected).toEqual([]);
+  expect(loaded.restored).toHaveLength(1);
+  expect(loaded.restored[0]!.version).toBe(CURRENT_HOSTED_SESSION_VERSION);
+  expect(loaded.restored[0]!.record.contractIds).toEqual([]);
+});
+
+test('a save writes version 2 with the contracts the session started, and they load back', async () => {
+  const store = new HostedSessionStore(dir, LIMITS);
+  await store.save(record({ id: 'with-contracts', contractIds: ['ctr-00000001', 'ctr-00000002'] }), null);
+  const written = JSON.parse(readFileSync(join(dir, 'with-contracts.json'), 'utf-8')) as { version: number; record: { contractIds: string[] } };
+  expect(CURRENT_HOSTED_SESSION_VERSION).toBe(2);
+  expect(written.version).toBe(2);
+  expect(written.record.contractIds).toEqual(['ctr-00000001', 'ctr-00000002']);
+  const loaded = await store.load(1_000);
+  expect(loaded.restored[0]!.record.contractIds).toEqual(['ctr-00000001', 'ctr-00000002']);
+});
+
+test('a version 2 record without a contract id list is rejected with that reason', () => {
+  const valid = { id: 'ok', workspaceRoot: '/w', status: 'idle', createdAt: 1, updatedAt: 1 };
+  expect(describeInvalidPersistedHostedSession({ version: 2, record: valid })).toContain('contract id list');
+  expect(describeInvalidPersistedHostedSession({ version: 2, record: { ...valid, contractIds: [7] } })).toContain('contract id list');
+  expect(describeInvalidPersistedHostedSession({ version: 2, record: { ...valid, contractIds: ['ctr-00000001'] } })).toBeNull();
 });
 
 test('a session id that is not a safe file name is refused at the write, not at the read', async () => {

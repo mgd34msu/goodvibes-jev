@@ -37,6 +37,7 @@ function record(id = 'hosted-1'): HostedSessionRecord {
     turnCount: 0,
     messageCount: 0,
     restoredFromDisk: false,
+    contractIds: [],
   };
 }
 

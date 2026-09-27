@@ -518,7 +518,13 @@ export function attachDebouncedWriter(
 
   return () => {
     unsubscribe();
-    for (const timer of timers.values()) clearTimeout(timer);
+    // A write still waiting is the latest state: it is written now, since the
+    // snapshot is what a restart resumes from.
+    for (const [workstreamId, timer] of timers) {
+      clearTimeout(timer);
+      const workstream = getWorkstream(workstreamId);
+      if (workstream) writeWorkstreamSnapshot(projectRoot, workstream, getCompletedResults(workstreamId));
+    }
     timers.clear();
     if (sweepTimer !== null) {
       clearInterval(sweepTimer);

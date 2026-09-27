@@ -23,8 +23,13 @@ export interface CancellationRegistry {
   start(itemId: string): AbortSignal;
   /** Abort the item's controller, if one is registered. Returns false when nothing was registered (already terminal, or never started). */
   abort(itemId: string): boolean;
-  /** Drop the registration once the item's phase run has ended (success, failure, or cancel). Safe to call unconditionally. */
-  release(itemId: string): void;
+  /**
+   * Drop the registration once the item's phase run has ended (success,
+   * failure, or cancel). Safe to call unconditionally. With `signal`, only the
+   * registration that handed out that signal is dropped: a requeued item's
+   * next phase may already have registered its own before the old one ends.
+   */
+  release(itemId: string, signal?: AbortSignal): void;
   /** True when this item currently has a live (non-aborted) registration. */
   isActive(itemId: string): boolean;
 }
@@ -46,7 +51,8 @@ export function createCancellationRegistry(): CancellationRegistry {
     return true;
   }
 
-  function release(itemId: string): void {
+  function release(itemId: string, signal?: AbortSignal): void {
+    if (signal !== undefined && controllers.get(itemId)?.signal !== signal) return;
     controllers.delete(itemId);
   }
 

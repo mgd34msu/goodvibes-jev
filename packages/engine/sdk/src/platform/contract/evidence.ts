@@ -242,7 +242,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
 
 /**
  * Collects a unit's evidence for one check, trimmed to the budget: the diff
- * always; claims at completion; gates at every trigger but turn-end.
+ * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
   contract: Pick<ContractView, 'id' | 'sessionId'>,
@@ -253,7 +253,8 @@ export async function collectUnitEvidence(
   const collected = await collectChanges(unit, sources);
   const scope = sources.paths;
   const changes = scope === null || scope === undefined ? collected : collected.filter((change) => scope.has(change.path));
-  const claims = trigger === 'completion' ? verifyUnitClaims(parseUnitCompletionReport(sources.output), sources.cwd) : undefined;
+  // A check after a restart reads the completion report the earlier agent left (design 7.2).
+  const claims = trigger === 'completion' || trigger === 'resume' ? verifyUnitClaims(parseUnitCompletionReport(sources.output), sources.cwd) : undefined;
   const gates = GATED_TRIGGERS.has(trigger)
     ? await runContractGates({
       configManager: sources.configManager,

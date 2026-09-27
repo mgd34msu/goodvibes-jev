@@ -158,14 +158,16 @@ describe('what each trigger collects', () => {
     expect(evidence.commands).toHaveLength(1);
   });
 
-  test('completion: claims and gates', async () => {
-    const evidence = await collectUnitEvidence(contract, makeUnit(), 'completion', sources());
-    expect(evidence.claims?.kind).toBe('unverifiable_no_claims');
-    expect(evidence.gates).toEqual([]);
+  test('completion and resume: claims and gates (a check after a restart reads the report the earlier agent left)', async () => {
+    for (const trigger of ['completion', 'resume'] as const) {
+      const evidence = await collectUnitEvidence(contract, makeUnit(), trigger, sources());
+      expect(evidence.claims?.kind).toBe('unverifiable_no_claims');
+      expect(evidence.gates).toEqual([]);
+    }
   });
 
   test('the other triggers run gates but not claims', async () => {
-    for (const trigger of ['agent-failed', 'fix-passed', 'resume', 'owner-amend'] as const) {
+    for (const trigger of ['agent-failed', 'fix-passed', 'owner-amend'] as const) {
       const evidence = await collectUnitEvidence(contract, makeUnit(), trigger, sources());
       expect(evidence.claims).toBeUndefined();
       expect(evidence.gates).toEqual([]);

@@ -92683,6 +92683,12 @@ Join a hosted session and receive its transcript so far, so a client that was ne
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -92697,7 +92703,8 @@ Join a hosted session and receive its transcript so far, so a client that was ne
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     },
@@ -92870,6 +92877,12 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -92884,7 +92897,8 @@ Compose a full conversation loop INSIDE the daemon for a workspace: the same orc
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     }
@@ -93013,6 +93027,12 @@ Leave a hosted session. When other clients are still attached, nothing else happ
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -93027,7 +93047,8 @@ Leave a hosted session. When other clients are still attached, nothing else happ
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     }
@@ -93152,6 +93173,12 @@ End a hosted session regardless of who is attached or what its detach policy say
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -93166,7 +93193,8 @@ End a hosted session regardless of who is attached or what its detach policy say
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     }
@@ -93290,6 +93318,12 @@ Every session this daemon hosts, most recently updated first. Terminated session
           },
           "restoredFromDisk": {
             "type": "boolean"
+          },
+          "contractIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -93304,7 +93338,8 @@ Every session this daemon hosts, most recently updated first. Terminated session
           "updatedAt",
           "turnCount",
           "messageCount",
-          "restoredFromDisk"
+          "restoredFromDisk",
+          "contractIds"
         ],
         "additionalProperties": false
       }
@@ -107126,6 +107161,12 @@ Every lifecycle transition of a session whose loop runs INSIDE the daemon: creat
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -107140,7 +107181,8 @@ Every lifecycle transition of a session whose loop runs INSIDE the daemon: creat
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     },

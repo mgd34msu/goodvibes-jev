@@ -210,6 +210,11 @@ export class ContractStore {
     this.scheduleWrite(contract.id);
   }
 
+  /** Holds a contract read from its own file in memory, without writing it back (resume, design 7.2). */
+  hold(contract: Contract): void {
+    this.contracts.set(contract.id, contract);
+  }
+
   /** The envelope for a held contract, for export; null when it is not held. */
   serialize(contractId: string): string | null {
     const contract = this.contracts.get(contractId);

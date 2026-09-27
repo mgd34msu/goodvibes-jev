@@ -498,7 +498,10 @@ describe('phase runner contract binding', () => {
       persist: false,
       skipClaimVerification: true,
       // A contract item's phase waits on the runner's settlement, not on its agent's terminal event.
-      contractUnitSettlement: { settle: (_item, agentId) => new Promise((resolve) => { settlements.set(agentId, resolve); }) },
+      contractUnitSettlement: {
+        settle: (_item, agentId) => new Promise((resolve) => { settlements.set(agentId, resolve); }),
+        beforeSpawn: async () => ({ kind: 'spawn' }),
+      },
     });
     const route = { model: 'fake:fake-model', provider: 'fake', fallbackModels: ['fake:other-model'], reasoningEffort: 'high', reason: 'tier: implementation' };
     const ws = engine.createWorkstream({

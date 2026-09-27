@@ -5,6 +5,8 @@
 ```ts
 
 import { JudgmentPort } from '@goodvibes-jev/judgment';
+import type { Outcome } from '@goodvibes-jev/judgment';
+import type { ReplyReadingName } from '@goodvibes-jev/judgment';
 import type { SimpleGit } from 'simple-git';
 import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import type { Stakes } from '@goodvibes-jev/judgment';

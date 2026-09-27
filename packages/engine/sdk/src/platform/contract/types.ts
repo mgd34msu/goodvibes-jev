@@ -255,6 +255,12 @@ export interface ContractUnit {
   usage: WorkItemUsage;
   /** The unit's completion summary. */
   answer?: string | undefined;
+  /**
+   * The output the unit's last completion check read (its agent's final
+   * report), head and tail kept. The agent record does not survive a restart,
+   * so a check after one reads this (design 7.2).
+   */
+  lastOutput?: string | undefined;
   failureReason?: string | undefined;
   /**
    * Best-of-N (design 6.2), on a plan unit with `attempts > 1` in worktree
@@ -370,6 +376,8 @@ export interface Contract {
   baseline?: TreeBaseline | undefined;
   /** The user forbade delegation (design 6.6): the session's own turns do the one unit, and no sub-agent is ever spawned. */
   sessionMode?: boolean | undefined;
+  /** Units an agent-tool batch or AgentInput.proposedUnits proposed; kept so planning that starts again after a restart weighs them too. */
+  readonly proposedUnits?: readonly { readonly task: string; readonly template?: string | undefined }[] | undefined;
   /** The whole contract's token and cost ceiling; each group's workstream gets what remains of it when the group starts. */
   readonly budget?: BudgetCeiling | undefined;
   goal: string;
@@ -379,6 +387,18 @@ export interface Contract {
   units: ContractUnit[];
   shape?: RequestShape | undefined;
   status: ContractStatus;
+  /**
+   * The status the contract left for its owner (design 6.3): it returns there
+   * once its last open escalation is answered. Kept on the contract so a
+   * contract waiting on its owner across a restart still knows it.
+   */
+  statusBeforeOwner?: ContractStatus | undefined;
+  /**
+   * A resumed contract that found the active-contract cap full waits in
+   * `queued` (design 7.2 and 7.3): the step it was on, which it resumes from
+   * when a slot opens.
+   */
+  resumeFrom?: ContractStatus | undefined;
   /** Deliverable checks. */
   checks: UnitCheck[];
   fixRounds: number;

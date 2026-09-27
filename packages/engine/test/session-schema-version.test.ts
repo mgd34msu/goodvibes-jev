@@ -202,8 +202,8 @@ describe('SessionManager schemaVersion', () => {
     }
   });
 
-  test('CURRENT_SESSION_SCHEMA_VERSION is exported and equals 1', () => {
-    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(1);
+  test('CURRENT_SESSION_SCHEMA_VERSION is exported and equals 2', () => {
+    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(2);
   });
 
   test('save() defaults saveSource to "auto" when the caller does not specify one', () => {
@@ -267,6 +267,73 @@ describe('SessionManager schemaVersion', () => {
       // No lingering .tmp- files
       const files = readdirSync(dir);
       expect(files.filter(f => f.startsWith('.tmp-'))).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('SessionManager contract lines (version 2)', () => {
+  const contract = (id: string) => ({ id, status: 'running', sessionId: 'session-1', ask: 'Add a parser.', groups: [], units: [], criteria: [] });
+
+  test('save writes one contract line per contract after the agent records, and load returns them', () => {
+    const dir = makeTmpDir();
+    try {
+      const mgr = new SessionManager('/unused', { sessionsDir: dir });
+      const contracts = [contract('ctr-00000001'), contract('ctr-00000002')] as unknown as Parameters<SessionManager['save']>[4];
+      const agent = { id: 'agent-1', status: 'completed', task: 'work' } as unknown as NonNullable<Parameters<SessionManager['save']>[3]>[number];
+      const { filePath } = mgr.save('with-contracts', SAMPLE_MESSAGES, SAMPLE_META, [agent], contracts);
+      const types = readFileSync(filePath, 'utf-8').trim().split('\n').map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(types).toEqual(['meta', 'message', 'agent_record', 'contract', 'contract']);
+      const loaded = mgr.load('with-contracts');
+      expect(loaded.contracts.map((entry) => entry.id)).toEqual(['ctr-00000001', 'ctr-00000002']);
+      expect(loaded.agentRecords.map((entry) => entry.id)).toEqual(['agent-1']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a session saved without contracts loads with an empty list', () => {
+    const dir = makeTmpDir();
+    try {
+      const mgr = new SessionManager('/unused', { sessionsDir: dir });
+      mgr.save('no-contracts', SAMPLE_MESSAGES, SAMPLE_META);
+      expect(mgr.load('no-contracts').contracts).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a version 1 file loads with an empty contract list, whatever lines it carries', () => {
+    const dir = makeTmpDir();
+    try {
+      const mgr = new SessionManager('/unused', { sessionsDir: dir });
+      const lines = [
+        { type: 'meta', schemaVersion: 1, timestamp: 1, title: 'old', model: 'm', provider: 'p' },
+        { type: 'message', role: 'user', content: 'hello' },
+        { type: 'contract', contract: contract('ctr-00000003') },
+      ];
+      writeFileSync(join(dir, 'version-one.jsonl'), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+      const loaded = mgr.load('version-one');
+      expect(loaded.meta.schemaVersion).toBe(1);
+      expect(loaded.messages).toHaveLength(1);
+      expect(loaded.contracts).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a contract line without the fields readers rely on is skipped, not returned', () => {
+    const dir = makeTmpDir();
+    try {
+      const mgr = new SessionManager('/unused', { sessionsDir: dir });
+      const lines = [
+        { type: 'meta', schemaVersion: 2, timestamp: 1, title: 't', model: 'm', provider: 'p' },
+        { type: 'contract', contract: { id: 'ctr-00000004' } },
+        { type: 'contract', contract: contract('ctr-00000005') },
+      ];
+      writeFileSync(join(dir, 'partial.jsonl'), `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+      expect(mgr.load('partial').contracts.map((entry) => entry.id)).toEqual(['ctr-00000005']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

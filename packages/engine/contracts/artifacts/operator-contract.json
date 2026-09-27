@@ -90889,6 +90889,12 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -90903,7 +90909,8 @@
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             },
@@ -91071,6 +91078,12 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91085,7 +91098,8 @@
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91208,6 +91222,12 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91222,7 +91242,8 @@
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91342,6 +91363,12 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -91356,7 +91383,8 @@
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             }
@@ -91471,6 +91499,12 @@
                   },
                   "restoredFromDisk": {
                     "type": "boolean"
+                  },
+                  "contractIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 },
                 "required": [
@@ -91485,7 +91519,8 @@
                   "updatedAt",
                   "turnCount",
                   "messageCount",
-                  "restoredFromDisk"
+                  "restoredFromDisk",
+                  "contractIds"
                 ],
                 "additionalProperties": false
               }
@@ -105209,6 +105244,12 @@
                 },
                 "restoredFromDisk": {
                   "type": "boolean"
+                },
+                "contractIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -105223,7 +105264,8 @@
                 "updatedAt",
                 "turnCount",
                 "messageCount",
-                "restoredFromDisk"
+                "restoredFromDisk",
+                "contractIds"
               ],
               "additionalProperties": false
             },

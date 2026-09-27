@@ -64,9 +64,10 @@ export const HOSTED_SESSION_RECORD_SCHEMA = objectSchema({
   terminatedAt: NUMBER_SCHEMA,
   terminatedReason: STRING_SCHEMA,
   restoredFromDisk: BOOLEAN_SCHEMA,
+  contractIds: arraySchema(STRING_SCHEMA),
 }, [
   'id', 'workspaceRoot', 'title', 'status', 'detachPolicy', 'effectiveDetachPolicy',
-  'attachedClients', 'createdAt', 'updatedAt', 'turnCount', 'messageCount', 'restoredFromDisk',
+  'attachedClients', 'createdAt', 'updatedAt', 'turnCount', 'messageCount', 'restoredFromDisk', 'contractIds',
 ]);
 
 const HOSTED_SESSION_HISTORY_SCHEMA = arraySchema(objectSchema({

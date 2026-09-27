@@ -1183,6 +1183,12 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         },
         "restoredFromDisk": {
           "type": "boolean"
+        },
+        "contractIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -1197,7 +1203,8 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         "updatedAt",
         "turnCount",
         "messageCount",
-        "restoredFromDisk"
+        "restoredFromDisk",
+        "contractIds"
       ],
       "additionalProperties": false
     },

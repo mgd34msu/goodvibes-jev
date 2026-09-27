@@ -182,6 +182,11 @@ export interface HarnessOptions {
   readonly routeSelector?: ContractRouteSelector;
   readonly workPlanService?: WorkPlanService;
   readonly planManager?: ExecutionPlans;
+  /**
+   * An existing repository to run in (a second runner resuming what the first
+   * left on disk, as after a restart); the harness then leaves it on dispose.
+   */
+  readonly root?: string;
 }
 
 const ROUTE: UnitRoute = { model: 'provider-a:model-a', provider: 'provider-a', reason: 'test tier' };
@@ -196,7 +201,7 @@ function configManager(contract: Record<string, unknown>): Pick<ConfigManager, '
 }
 
 export function makeHarness(options: HarnessOptions): Harness {
-  const root = makeRepo();
+  const root = options.root ?? makeRepo();
   const bus = new RuntimeEventBus();
   const messageBus = new AgentMessageBus();
   const events: ContractEvent[] = [];
@@ -321,7 +326,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     dispose: () => {
       runner.dispose();
       installJudgmentPort(previous);
-      rmSync(root, { recursive: true, force: true });
+      if (options.root === undefined) rmSync(root, { recursive: true, force: true });
     },
   };
 }

@@ -56,6 +56,8 @@ export interface Completion {
   judgeGroup(run: ContractRun, groupId: string, trigger: CheckTrigger): Promise<void>;
   /** Judges the deliverable now. */
   judgeDeliverable(run: ContractRun, trigger: CheckTrigger): Promise<void>;
+  /** Commits the passed deliverable and passes the contract: the step a contract was on when a restart stopped it in `committing` (design 7.2). */
+  commitDeliverable(run: ContractRun): Promise<void>;
 }
 
 /** The tree the contract's work sits in: the contract worktree, or the project root. */
@@ -289,6 +291,13 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         return;
       }
     }
+    await commitDeliverable(run);
+  }
+
+  async function commitDeliverable(run: ContractRun): Promise<void> {
+    const { contract } = run;
+    if (run.terminal) return;
+    const answer = renderContractAnswer(contract);
     run.moveContract('committing');
     context.ownerProgress(run);
     const commit = await commitContract(run);
@@ -380,6 +389,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     groupsPassed: (run) => guarded(run, 'the deliverable could not be judged', () => groupsPassed(run)),
     judgeGroup: (run, groupId, trigger) => guarded(run, `group ${groupId} could not be judged`, () => judgeGroup(run, groupId, trigger)),
     judgeDeliverable: (run, trigger) => guarded(run, 'the deliverable could not be judged', () => judgeDeliverable(run, trigger)),
+    commitDeliverable: (run) => guarded(run, 'the deliverable could not be committed', () => commitDeliverable(run)),
   };
 }
 

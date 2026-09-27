@@ -20041,7 +20041,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       },
       "history": [
         {
@@ -20081,7 +20084,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -20110,7 +20116,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -20138,7 +20147,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -20167,7 +20179,10 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "lastTurnAt": 0,
           "terminatedAt": 0,
           "terminatedReason": "sample",
-          "restoredFromDisk": false
+          "restoredFromDisk": false,
+          "contractIds": [
+            "sample"
+          ]
         }
       ]
     }

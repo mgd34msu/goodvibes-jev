@@ -17528,7 +17528,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       },
       "history": [
         {
@@ -17563,7 +17566,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -17591,7 +17597,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -17619,7 +17628,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         "lastTurnAt": 0,
         "terminatedAt": 0,
         "terminatedReason": "sample",
-        "restoredFromDisk": false
+        "restoredFromDisk": false,
+        "contractIds": [
+          "sample"
+        ]
       }
     }
   },
@@ -17648,7 +17660,10 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "lastTurnAt": 0,
           "terminatedAt": 0,
           "terminatedReason": "sample",
-          "restoredFromDisk": false
+          "restoredFromDisk": false,
+          "contractIds": [
+            "sample"
+          ]
         }
       ]
     }

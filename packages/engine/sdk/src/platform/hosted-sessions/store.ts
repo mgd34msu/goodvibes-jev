@@ -33,9 +33,15 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { HostedSessionRecord } from './types.js';
 
+/**
+ * The envelope version written now. Version 2 adds the record's
+ * `contractIds`; a version 1 file loads with an empty list.
+ */
+export const CURRENT_HOSTED_SESSION_VERSION = 2;
+
 /** The on-disk envelope. `version` is checked, not assumed. */
 export interface PersistedHostedSession {
-  readonly version: 1;
+  readonly version: typeof CURRENT_HOSTED_SESSION_VERSION;
   readonly record: HostedSessionRecord;
   /** `ConversationManager.toJSON()`, replayed through `fromJSON` on restore. */
   readonly conversation: unknown;
@@ -77,9 +83,14 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
  */
 export function describeInvalidPersistedHostedSession(value: unknown): string | null {
   if (!isRecordObject(value)) return 'not a JSON object';
-  if (value['version'] !== 1) return `unsupported version ${String(value['version'])}`;
+  const version = value['version'];
+  if (version !== 1 && version !== CURRENT_HOSTED_SESSION_VERSION) return `unsupported version ${String(version)}`;
   const record = value['record'];
   if (!isRecordObject(record)) return 'missing the session record';
+  if (version === CURRENT_HOSTED_SESSION_VERSION) {
+    const contractIds = record['contractIds'];
+    if (!Array.isArray(contractIds) || !contractIds.every((id) => typeof id === 'string')) return 'the contract id list is missing or not a list of ids';
+  }
   const id = record['id'];
   if (typeof id !== 'string' || !SAFE_ID.test(id)) return 'the session id is missing or not a safe file name';
   if (typeof record['workspaceRoot'] !== 'string' || record['workspaceRoot'].length === 0) {
@@ -93,6 +104,16 @@ export function describeInvalidPersistedHostedSession(value: unknown): string | 
     return 'the record has no usable timestamps';
   }
   return null;
+}
+
+/**
+ * A validated envelope at the current version: a version 1 record, written
+ * before sessions carried contracts, gets an empty contract list.
+ */
+export function upgradePersistedHostedSession(value: Record<string, unknown>): PersistedHostedSession {
+  const envelope = value as unknown as { readonly version: number; readonly record: HostedSessionRecord; readonly conversation: unknown };
+  if (envelope.version === CURRENT_HOSTED_SESSION_VERSION) return envelope as PersistedHostedSession;
+  return { version: CURRENT_HOSTED_SESSION_VERSION, record: { ...envelope.record, contractIds: [] }, conversation: envelope.conversation };
 }
 
 /** Keep the last `max` entries of a message array. Returns the kept slice. */
@@ -161,7 +182,7 @@ export class HostedSessionStore {
         await this.setAside(full);
         continue;
       }
-      const session = parsed as PersistedHostedSession;
+      const session = upgradePersistedHostedSession(parsed as Record<string, unknown>);
       if (this.isRetired(session.record, now)) {
         swept.push(session.record.id);
         await this.delete(session.record.id);
@@ -220,7 +241,7 @@ export class HostedSessionStore {
       throw new Error(`Refusing to persist hosted session '${record.id}': the id is not a safe file name.`);
     }
     const bounded = this.boundConversation(conversation);
-    const payload: PersistedHostedSession = { version: 1, record, conversation: bounded };
+    const payload: PersistedHostedSession = { version: CURRENT_HOSTED_SESSION_VERSION, record, conversation: bounded };
     const file = this.fileFor(record.id);
     const tmp = `${file}.tmp`;
     try {

@@ -26,16 +26,15 @@
  * readings to outcomes is code there and in progress.ts.
  */
 import type { AgentMessageBus } from '../agents/message-bus.js';
-import type { WorkItem } from '../orchestration/types.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, runUnitCheck, type DecidedCheck, type UnitCheckOutcome } from './check.js';
 import type { ContractConfigReader } from './config.js';
-import { collectUnitEvidence, type ContractTurnRecord } from './evidence.js';
+import { collectUnitEvidence, headAndTail, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
 import { createNudge, dispatchNudge, type NudgeTargetState } from './nudge.js';
-import { takeBaseline } from './group-runner.js';
+import { engineItem, takeBaseline } from './group-runner.js';
 import { describeStall } from './progress.js';
 import { failureFromError, isAbortError, type ContractRun, type InFlightCheck, type UnitRuntime } from './run-context.js';
 import { isTerminalUnitStatus, type CheckTrigger, type ContractFailureKind, type ContractUnit } from './types.js';
@@ -179,6 +178,8 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
   function targetState(unit: ContractUnit, runtime: UnitRuntime): NudgeTargetState | 'stopped' {
     if (runtime.hold !== null) return 'held';
     if (runtime.session !== null) return runtime.session.active && runtime.session.record.id === unit.activeAgentId ? 'running' : 'stopped';
+    // The agent ran before a restart: no loop of it runs here, whatever a restored record says (design 7.2).
+    if (runtime.agentLost) return 'gone';
     const record = unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId);
     if (record === null) return 'gone';
     if (record.status === 'running' || record.status === 'pending') return 'running';
@@ -199,6 +200,8 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     try {
       const record = runtime.session?.record ?? (unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId));
       output = given ?? (trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? runtime.lastAssistantText));
+      // The agent's final report outlives its record only on the unit: a check after a restart reads it.
+      if (given === undefined && trigger !== 'turn-end' && output.trim().length > 0) unit.lastOutput = headAndTail(output, OUTPUT_CAP_CHARS);
       const evidence = await collectUnitEvidence(run.contract, unit, trigger, {
         output,
         turns: runtime.turns,
@@ -425,6 +428,17 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
   return { hooks: { onTurnEnd, holdCompletion, sessionTurn, takeSessionNudge }, runCheck, supersede, passUnit };
 }
 
+/**
+ * Session mode with no live turn (after a restart, design 7.2): the nudge
+ * waits for the session's next turn, which binds to the unit and takes it
+ * before its first model call.
+ */
+export function queueSessionNudge(run: ContractRun, unit: ContractUnit, message: string, nudgeId: string): void {
+  const runtime = run.runtime(unit);
+  const queued = [...(runtime.session?.queued ?? []), { message, nudgeId }];
+  runtime.session = { record: sessionRecord(run, unit, unit.activeAgentId ?? unit.id), active: false, queued };
+}
+
 /** The stand-in record for a session turn working on a session-mode unit: it runs no agent of its own. */
 function sessionRecord(run: ContractRun, unit: ContractUnit, turnId: string): AgentRecord {
   return {
@@ -443,12 +457,4 @@ function sessionRecord(run: ContractRun, unit: ContractUnit, turnId: string): Ag
     contractRole: 'unit',
     contractUnitId: unit.id,
   };
-}
-
-function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
-  for (const workstream of run.engine?.listWorkstreams() ?? []) {
-    const item = workstream.items.find((candidate) => candidate.id === itemId);
-    if (item !== undefined) return item;
-  }
-  return undefined;
 }

@@ -24,6 +24,7 @@
  * engine runs and no sub-agent is spawned.
  */
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContractEvent } from '../../events/contract.js';
 import type { AgentMessageBus } from '../agents/message-bus.js';
@@ -32,13 +33,13 @@ import { IsolatedWorktree } from '../agents/worktree.js';
 import type { DecompositionRunner } from '../core/plan-decomposition.js';
 import type { OrchestrationEngine } from '../orchestration/engine.js';
 import type { FleetCapacityFn } from '../orchestration/elastic-pool.js';
-import type { ContractUnitOutcome, ContractUnitSettlement } from '../orchestration/phase-runner.js';
+import type { ContractPreSpawn, ContractUnitOutcome, ContractUnitSettlement } from '../orchestration/phase-runner.js';
 import { emptyWorkItemUsage, type PriceProvenanceFn } from '../orchestration/types.js';
 import { emitAgentCancelled, emitAgentCompleted, emitAgentFailed } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import { delegationForbidden } from './batteries/request-shape.js';
-import { createUnitCheckLoop, type ContractSessionHooks } from './agent-hooks.js';
+import { createUnitCheckLoop, queueSessionNudge, type ContractSessionHooks } from './agent-hooks.js';
 import { readContractConfig, type ContractConfigReader } from './config.js';
 import { emitContractEvent } from './events.js';
 import type { OwnerReplyOutcome } from './escalation.js';
@@ -46,6 +47,7 @@ import { createGroupRunner, takeBaseline, type ContractEngineInput } from './gro
 import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
 import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } from './plan-sync.js';
+import { createContractResume, type ResumeReport } from './resume.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
 import { createContractSteps, type ContractSteps } from './steps.js';
 import type { ContractStore } from './store.js';
@@ -110,6 +112,12 @@ export interface ContractRunner {
   cancel(contractId: string, reason: string): boolean;
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
   reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
+  /**
+   * At startup (design 7.2): every contract on disk that had not ended
+   * resumes at the step it was on, or is reaped as a zombie when what it needs
+   * to resume is gone. The active-contract cap applies.
+   */
+  resumeAll(): Promise<ResumeReport>;
   importContract(snapshotJson: string, force?: boolean): boolean;
   serializeContract(contractId: string): string | null;
   /** Installed into AgentOrchestrator's tool dependencies and the core turn loop. */
@@ -201,6 +209,34 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
         runtime.settlement = entry;
       });
     },
+    beforeSpawn(item, signal) {
+      const run = item.contractId === undefined ? undefined : runs.get(item.contractId);
+      const unit = item.contractUnitId === undefined ? undefined : run?.unit(item.contractUnitId);
+      const cancelled: ContractPreSpawn = { kind: 'settled', outcome: 'cancelled' };
+      if (run === undefined || unit === undefined || run.terminal || signal.aborted) return Promise.resolve(cancelled);
+      const runtime = run.runtime(unit);
+      const decided = runtime.preSpawn;
+      if (decided === null) return Promise.resolve({ kind: 'spawn' });
+      if (decided !== 'wait') {
+        runtime.preSpawn = null;
+        return Promise.resolve(decided);
+      }
+      // After a restart: the phase waits until a check, a respawn or the owner decides (design 7.2).
+      return new Promise<ContractPreSpawn>((resolve) => {
+        const entry = {
+          resolve: (decision: ContractPreSpawn) => {
+            signal.removeEventListener('abort', onAbort);
+            resolve(decision);
+          },
+        };
+        function onAbort(): void {
+          if (runtime.spawnGate === entry) runtime.spawnGate = null;
+          resolve(cancelled);
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        runtime.spawnGate = entry;
+      });
+    },
   };
 
   function watched(): WatchedAgent[] {
@@ -250,7 +286,11 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     escalations: steps,
     failContract: (run, kind, reason) => fail(run, kind, reason),
     unitPassed: (run, unit) => (run.contract.sessionMode === true ? sessionUnitPassed(run, unit) : groups.unitPassed(run, unit)),
-    respawnUnit: (run, unit, reason, firstTurn) => groups.requeueUnit(run, unit, reason, 'resume', firstTurn),
+    respawnUnit: (run, unit, reason, firstTurn) => {
+      // Session mode has no agent to respawn: the nudge waits for the session's next turn.
+      if (run.contract.sessionMode === true) queueSessionNudge(run, unit, firstTurn, unit.nudges.at(-1)?.id ?? '');
+      else groups.requeueUnit(run, unit, reason, 'resume', firstTurn);
+    },
     sessionUnit,
   });
 
@@ -279,10 +319,10 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
 
   // ── The cap and queue (design 7.3) ──────────────────────────────────────────
 
-  /** Takes a slot for the contract and starts it. */
+  /** Takes a slot for the contract and starts it, or, for a resumed contract that waited, takes up its step. */
   function admit(run: ContractRun): void {
     admitted.add(run.id);
-    void activate(run);
+    void (run.contract.resumeFrom === undefined ? activate(run) : resume.continueResumed(run));
   }
 
   function dequeue(): void {
@@ -342,15 +382,10 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       usage: emptyWorkItemUsage(),
       judgmentUsage: { calls: 0, inputTokens: 0, outputTokens: 0 },
       plannerAgentIds: [],
+      ...(input.proposedUnits === undefined ? {} : { proposedUnits: input.proposedUnits }),
       createdAt: now(),
     };
-    const run = new ContractRun(contract, env, {
-      passGroup: (groupId) => groups.passGroup(run, groupId),
-      finishPassed: (result) => finishPassed(run, result),
-      fail: (kind, reason) => fail(run, kind, reason),
-      cancel: (reason) => cancelRun(run, reason),
-    }, input.proposedUnits);
-    runs.set(id, run);
+    const run = newRun(contract);
     deps.store.put(contract);
     run.decide('created', id, `origin ${input.origin}; ${isolation} isolation`);
     run.emit({ type: 'CONTRACT_CREATED', contractId: id, sessionId: input.sessionId, origin: input.origin, ask: input.ask, ownerAgentId: owner.id });
@@ -361,6 +396,18 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       run.decide('queued', id, `${config.maxActiveContracts} contracts are active; waiting for a slot`);
     }
     return { contract: run.view(), owner };
+  }
+
+  /** A run of this runner for the contract, registered by id. */
+  function newRun(contract: Contract): ContractRun {
+    const run: ContractRun = new ContractRun(contract, env, {
+      passGroup: (groupId) => groups.passGroup(run, groupId),
+      finishPassed: (result) => finishPassed(run, result),
+      fail: (kind, reason) => fail(run, kind, reason),
+      cancel: (reason) => cancelRun(run, reason),
+    }, contract.proposedUnits);
+    runs.set(contract.id, run);
+    return run;
   }
 
   function plannerDeps(run: ContractRun): ContractPlannerDeps {
@@ -387,6 +434,18 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       if (run.terminal) return;
       const failure = failureFromError(error);
       fail(run, failure.kind, `contract ${contract.id} could not start: ${failure.reason}`);
+    }
+  }
+
+  /** Plans a shaped contract from the beginning (a restart stopped its planning), then runs the accepted plan. */
+  async function replan(run: ContractRun): Promise<void> {
+    try {
+      const planned = await planContract(run.contract, plannerDeps(run), { proposedUnits: run.proposedUnits, signal: run.abort.signal });
+      await continuePlanning(run, planned);
+    } catch (error) {
+      if (run.terminal) return;
+      const failure = failureFromError(error);
+      fail(run, failure.kind, `contract ${run.id} could not plan again: ${failure.reason}`);
     }
   }
 
@@ -429,7 +488,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       updateOwnerProgress(run);
       return;
     }
-    if (contract.isolation === 'worktree' && contract.worktreePath !== undefined && contract.branch !== undefined) {
+    // A worktree made before a restart stopped planning is the contract's still.
+    if (contract.isolation === 'worktree' && contract.worktreePath !== undefined && contract.branch !== undefined && !existsSync(contract.worktreePath)) {
       await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').create();
       if (run.terminal) return;
     }
@@ -521,7 +581,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     });
   }
 
-  function fail(run: ContractRun, kind: ContractFailureKind, reason: string): void {
+  /** Fails the contract. `settled` states the members settled (a zombie's agents did not survive the restart); otherwise it is read from their records. */
+  function fail(run: ContractRun, kind: ContractFailureKind, reason: string, settled?: boolean): void {
     if (run.terminal) return;
     const { contract } = run;
     contract.failureKind = kind;
@@ -533,7 +594,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     groups.stopRun(run);
     contract.statusLine = `Contract ${contract.id} failed: ${reason}`;
     run.decide('failed', contract.id, reason);
-    run.emit({ type: 'CONTRACT_FAILED', contractId: contract.id, reason, failureKind: kind, membersSettled: membersSettled(contract) });
+    run.emit({ type: 'CONTRACT_FAILED', contractId: contract.id, reason, failureKind: kind, membersSettled: settled ?? membersSettled(contract) });
     settleEnded(run);
   }
 
@@ -577,6 +638,28 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     settleEnded(run);
   }
 
+  // ── Resume (design 7.2) ─────────────────────────────────────────────────────
+
+  const resume = createContractResume({
+    store: deps.store,
+    isLive: (contractId) => runs.has(contractId),
+    adopt: (contract) => {
+      deps.store.hold(contract);
+      return newRun(contract);
+    },
+    hasSlot: () => admitted.size < env.config().maxActiveContracts,
+    takeSlot: (run) => { admitted.add(run.id); },
+    enqueue: (run) => { queue.push(run); },
+    fail,
+    groups,
+    checks,
+    steps,
+    activate,
+    plan: replan,
+    sessionUnitPassed,
+    ownerProgress: updateOwnerProgress,
+  });
+
   // ── The API ─────────────────────────────────────────────────────────────────
 
   return {
@@ -598,6 +681,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       if (run === undefined || run.terminal) throw new Error(`contract ${contractId} is not running`);
       return steps.reply(run, escalationId, text);
     },
+    resumeAll: () => resume.resumeAll(),
     importContract: (snapshotJson, force = false) => deps.store.importContract(snapshotJson, force),
     serializeContract: (contractId) => deps.store.serialize(contractId),
     hooks: () => checks.hooks,

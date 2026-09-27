@@ -88,6 +88,17 @@ export interface GroupRunner {
   requeueUnit(run: ContractRun, unit: ContractUnit, reason: string, purpose: SpawnPurpose, firstTurn?: string): void;
   /** Stops every unit agent still working, and the engine. */
   stopRun(run: ContractRun): void;
+  /**
+   * After a restart (design 7.2): creates the contract's engine and reloads
+   * its workstreams from their snapshots. Returns how many were resumed.
+   */
+  resumeEngine(run: ContractRun): number;
+  /** Starts every pending group whose dependencies passed. */
+  startReadyGroups(run: ContractRun): void;
+  /** A passing unit whose branch merged while the runner was not listening passes now. */
+  reconcileMerged(run: ContractRun, unit: ContractUnit): void;
+  /** Reads the selection over a best-of-N unit's attempts again (its reading did not finish before a restart). */
+  selectAttempts(run: ContractRun, unitId: string): void;
 }
 
 /** A unit's baseline in `cwd`: HEAD and the hashes of paths already dirty (design 4.3). Undefined outside git. */
@@ -105,7 +116,8 @@ function unitItemId(unit: ContractUnit): string | undefined {
   return unit.attemptUnits === undefined ? unit.id : unit.attemptSelection?.pickedId;
 }
 
-function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
+/** The live engine item with this id, in any of the contract's workstreams. */
+export function engineItem(run: ContractRun, itemId: string): WorkItem | undefined {
   for (const workstream of run.engine?.listWorkstreams() ?? []) {
     const item = workstream.items.find((candidate) => candidate.id === itemId);
     if (item !== undefined) return item;
@@ -119,7 +131,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     return run.unit(item?.contractUnitId ?? itemId);
   }
 
-  function startRun(run: ContractRun): void {
+  function attachEngine(run: ContractRun): OrchestrationEngine {
     const { contract } = run;
     const engine = deps.createEngine({
       projectRoot: contract.worktreePath ?? contract.projectRoot,
@@ -131,6 +143,12 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     });
     run.engine = engine;
     run.unsubscribeEngine = engine.on((event) => onEngineEvent(run, event));
+    return engine;
+  }
+
+  function startRun(run: ContractRun): void {
+    const { contract } = run;
+    attachEngine(run);
     // The deliverable's diff and the shared-mode commit are measured from here.
     contract.baseline ??= takeBaseline(contract.worktreePath ?? contract.projectRoot);
     run.moveContract('running');
@@ -220,6 +238,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       if (planUnit.status === 'pending' || planUnit.status === 'blocked') run.moveUnit(planUnit, 'running');
     }
     unit.activeAgentId = agentId;
+    runtime.agentLost = false;
     runtime.agentStartedAt = run.env.now();
     runtime.cwd = item?.worktreePath ?? run.contract.worktreePath ?? run.contract.projectRoot;
     unit.baseline ??= takeBaseline(runtime.cwd);
@@ -382,7 +401,30 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     if (agentId !== undefined) deps.watchdog.forget(agentId);
     run.moveUnit(unit, 'pending');
     const task = [briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit), unit), firstTurn].filter((part): part is string => part !== undefined && part.length > 0).join('\n\n');
+    if (run.spawnWaits(unit)) {
+      // After a restart the unit's phase waits before spawning (design 7.2): it spawns the fresh agent itself.
+      run.decide('resumed', unit.id, reason);
+      run.decidePreSpawn(unit, { kind: 'spawn', task, route: unit.route });
+      return;
+    }
     if (!engine.requeueItem(unit.id, reason, task, unit.route)) deps.failUnit(run, unit, 'other', `unit ${unit.id} could not be given a fresh agent (${reason})`);
+  }
+
+  function resumeEngine(run: ContractRun): number {
+    return (run.engine ?? attachEngine(run)).resumeAllFromDisk();
+  }
+
+  function reconcileMerged(run: ContractRun, unit: ContractUnit): void {
+    const itemId = unitItemId(unit);
+    if (unit.status === 'held-merge' && itemId !== undefined && engineItem(run, itemId)?.mergeState === 'merged') markMerged(run, itemId);
+  }
+
+  function selectAttemptsAgain(run: ContractRun, unitId: string): void {
+    const unit = run.unit(unitId);
+    const first = unit?.attemptUnits?.[0];
+    const engineGroupId = first === undefined ? undefined : engineItem(run, first.id)?.attemptGroupId;
+    if (unit === undefined || engineGroupId === undefined) return;
+    attemptsReady(run, { type: 'attempts-ready', workstreamId: unit.groupId, groupId: engineGroupId, candidateItemIds: [] });
   }
 
   function stopRun(run: ContractRun): void {
@@ -414,5 +456,5 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
     void startGroup(run, group);
   }
 
-  return { startRun, unitPassed, passGroup, startGroupNow, requeueUnit, stopRun };
+  return { startRun, unitPassed, passGroup, startGroupNow, requeueUnit, stopRun, resumeEngine, startReadyGroups, reconcileMerged, selectAttempts: selectAttemptsAgain };
 }
