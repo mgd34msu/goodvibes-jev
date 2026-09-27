@@ -110,19 +110,6 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
     ceiling: 960,
     justification: 'OTLP protobuf wire encoding, pre-split, shrink-only',
   },
-  // orchestrator-runner.ts ~0.97k, agent orchestrator runner, pre-split, shrink-only
-  'sdk/src/platform/agents/orchestrator-runner.ts': {
-    ceiling: 815,
-    justification: 'agent orchestrator runner; the run context interface moved to orchestrator-run-context.ts and the contract seams (turn-end report, completion hold) live in orchestrator-runner-contract.ts, both re-exported or imported here, lowering the ceiling 923 -> 815; the context-window unit (the ActiveProviderRoute '
-      + 'route-id parsing, providerQualifiedRouteLabel, resolveContextWindowModelDefinition, '
-      + 'applyContextWindowAwareness, and the compaction-threshold constants + resolver) moved to '
-      + 'orchestrator-runner-context-window.ts, with resolveContextWindowModelDefinition re-exported '
-      + 'here so the agents/index.ts `export *` surface is unchanged, the same convention '
-      + 'session-broker-intent.ts used. What remains is the turn loop itself. The ceiling is lowered '
-      + 'to the exact post-split count (1028 -> 918): this is not a config-key file, so there is no '
-      + 'concurrent-key argument for slack, and the next addition should cost a re-justification. '
-      + 'Prior growth this entry recorded, retained as history: +9 for the model-context-warning compaction call after each chat response (logic lives in orchestrator-utils.ts); +6 for learning the observed context ceiling on provider too-long rejections; +9 for the background permission gate integration into the per-tool-call loop (gate call + denied/executed/threw branch, unified via a local recordResult closure; the gate logic itself lives in background-permission-gate.ts); +2 for the run context\'s at-rest journal redaction/retention policy field, threaded into the AgentSession construction (policy resolution + logic live in runtime/at-rest-persistence.ts); +3 for per-model tool-format telemetry (import + observeToolResults after the background-agent tool loop); +11 for the steer-wake resume seed (restore prior-context summary + inject the steer as a fresh user turn when a wedged agent is re-triggered); +5 for threading the agent cancellation signal into provider.chat (the mid-run abort seam) so a cancel/kill aborts the in-flight LLM call instead of only cooperatively at the next boundary; +25 for promoting the passive-injection + context-window-awareness knobs to live config: the optional configManager field on AgentOrchestratorRunContext + doc, the resolveContextCompactThreshold helper (agents.contextCompactThreshold vs the fallback constant) applied at the four threshold sites, and the budget-ceiling / relevance-floor / code-limit reads (agents.passiveInjection.*) in the per-turn injection block; +1 (918 -> 919) for composing the open-tier owner-profile block into the per-turn system prompt: composeTurnSystemPrompt now takes the raw prompt and derives `base` through withOpenTierProfileBlock, so the profile is composed fresh each turn and never written back into stored state. Paying the re-justification this entry asked the next addition to pay; the block itself lives in orchestrator-prompts.ts and nothing else moved here; +4 (919 -> 923) for reading error meaning with Jev: the context-exceeded, network-retry and rate-limit/billing checks became awaited judgment calls that each name their call site, and the rate-limit condition now spans five lines (the reading itself lives in types/errors.ts)',
-  },
   // service.ts (knowledge) ~0.92k, knowledge service facade, pre-split, shrink-only
   'sdk/src/platform/knowledge/service.ts': {
     ceiling: 929,

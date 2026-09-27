@@ -58,9 +58,14 @@ export function registerBootstrapHookBridge(
       },
     });
   }));
+  // A cancelled run emits AGENT_CANCELLED (every cancel path in the agent runner,
+  // including a cancel seen during a retry wait), so the hook follows the event
+  // type, never the wording of an error.
   unsubs.push(runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_FAILED' }>>('AGENT_FAILED', ({ payload }) => {
-    const specific = payload.error === 'Agent cancelled' || payload.error.includes('cancelled') ? 'cancelled' : 'failed';
-    fireHook(fireOptions, `Lifecycle:agent:${specific}` as HookEventPath, 'Lifecycle', 'agent', specific, { agentId: payload.agentId, error: payload.error });
+    fireHook(fireOptions, 'Lifecycle:agent:failed', 'Lifecycle', 'agent', 'failed', { agentId: payload.agentId, error: payload.error });
+  }));
+  unsubs.push(runtimeBus.on<Extract<AgentEvent, { type: 'AGENT_CANCELLED' }>>('AGENT_CANCELLED', ({ payload }) => {
+    fireHook(fireOptions, 'Lifecycle:agent:cancelled', 'Lifecycle', 'agent', 'cancelled', { agentId: payload.agentId, error: payload.reason ?? 'Agent cancelled' });
   }));
 
   unsubs.push(runtimeBus.on<Extract<WorkflowEvent, { type: 'WORKFLOW_CHAIN_CREATED' }>>('WORKFLOW_CHAIN_CREATED', ({ payload }) => {

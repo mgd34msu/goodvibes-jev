@@ -18,7 +18,6 @@ import {
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { LLMProvider, StreamDelta } from '../providers/interface.js';
 import type { ToolResult } from '../types/tools.js';
-import type { ProcessManager } from '../tools/shared/process-manager.js';
 import { emitCommunicationConsumed } from '../runtime/emitters/index.js';
 import { maybeCompactAfterModelContextWarning, setAgentProgress, summarizeToolArgs } from './orchestrator-utils.js';
 import { buildLayeredOrchestratorSystemPrompt, buildOrchestratorSystemPrompt, withOpenTierProfileBlock } from './orchestrator-prompts.js';
@@ -43,6 +42,7 @@ import {
 } from './orchestrator-runner-context-window.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 import { holdContractCompletion, reportContractTurnEnd } from './orchestrator-runner-contract.js';
+import { cleanupLeakedProcesses, disposeSession, finishCancelledRun } from './orchestrator-runner-finish.js';
 
 // Model-definition resolution moved to orchestrator-runner-context-window.ts and
 // the run context to orchestrator-run-context.ts; both re-exported here so
@@ -64,29 +64,6 @@ function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: Agen
     spawnOverride: record.maxTurns,
     policyCap: Number(cfg?.get('agents.maxTurnsCap') ?? MAX_TURNS_CAP),
   });
-}
-
-function cleanupLeakedProcesses(
-  processManager: ProcessManager | undefined,
-  preAgentProcessIds: Set<string>,
-): void {
-  const pm = processManager;
-  if (!pm) return;
-  for (const p of pm.list()) {
-    if (!preAgentProcessIds.has(p.id)) {
-      pm.stop(p.id);
-    }
-  }
-}
-
-async function disposeSession(session: AgentSession): Promise<void> {
-  try {
-    await session.dispose();
-  } catch (error) {
-    logger.warn('[AgentOrchestrator] session disposal failed', {
-      error: summarizeError(error),
-    });
-  }
 }
 
 async function executeToolCalls(
@@ -224,6 +201,8 @@ async function handleAgentRunFailure(
   preAgentProcessIds: Set<string>,
   err: unknown,
 ): Promise<void> {
+  // A retry wait that saw the cancel throws to get here; the run was cancelled, not failed.
+  if ((record as { status: string }).status === 'cancelled') return finishCancelledRun(context, record, session, preAgentProcessIds);
   const message = summarizeError(err, {
     ...(record.provider ? { provider: record.provider } : {}),
   });
@@ -370,13 +349,7 @@ export async function runAgentTask(
 
     while (continueLoop) {
       if ((record as { status: string }).status === 'cancelled') {
-        record.completedAt = Date.now();
-        context.emitAgentCancelledEvent(record.id, 'Agent cancelled');
-        cleanupLeakedProcesses(context.processManager, preAgentProcessIds);
-        if (session) {
-          session.appendMessage({ type: 'session_end', status: 'cancelled', turn, timestamp: new Date().toISOString() });
-          await disposeSession(session);
-        }
+        await finishCancelledRun(context, record, session, preAgentProcessIds, turn);
         return;
       }
       if (++turn > turnBudget.limit) {
