@@ -2,7 +2,7 @@ import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
 import type { PermissionAttribution, PermissionRequestHandler } from './prompt.js';
 import { analyzePermissionRequest, withReading } from './analysis.js';
-import { isOutwardByCode, runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
+import { isOutwardByCode, runBoundary, shellCommandsOf, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
 import { categoryForSideEffectKind, readToolCall, type GateReading } from '../gate/reading.js';
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
@@ -184,6 +184,7 @@ const readingRecord = (reading: GateReading): GateReadingRecord => ({
     irreversible: reading.irreversible,
     beyondProject: reading.beyondProject,
     weakensSecurity: reading.weakensSecurity,
+    obfuscated: reading.obfuscated,
   },
   uncertain: reading.uncertain,
 });
@@ -299,6 +300,7 @@ export class PermissionManager {
       args,
       workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
       askKind: TOOL_CATEGORIES[toolName] === undefined,
+      askObfuscated: shellCommandsOf(toolName, args).length > 0,
     });
     if (reading.kind !== undefined && TOOL_CATEGORIES[toolName] === undefined) category = categoryForSideEffectKind(reading.kind);
     analysis = withReading(analyzePermissionRequest(toolName, args, category), reading, category);

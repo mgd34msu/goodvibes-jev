@@ -410,7 +410,7 @@ async function executeTextEdits(
     } else if (matchMode === 'ast') {
       editResult = await computeAstEdit(currentContent, item, resolvedPath);
     } else {
-      editResult! = computeSingleEdit(currentContent, item, matchMode, caseSensitive, whitespaceSensitive, multiline);
+      editResult = await computeSingleEdit(currentContent, item, matchMode, caseSensitive, whitespaceSensitive, multiline);
     }
 
     if ('error' in editResult) {

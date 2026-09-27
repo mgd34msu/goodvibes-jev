@@ -27,6 +27,7 @@ export interface GateCallReading {
   readonly irreversible?: boolean;
   readonly beyondProject?: boolean;
   readonly weakensSecurity?: boolean;
+  readonly obfuscated?: boolean;
   readonly kind?: SideEffectKind;
   readonly capability?: string;
   readonly flagsRisk?: boolean;
@@ -43,7 +44,7 @@ function defaultReading(state: unknown): GateCallReading {
   return { mutates: true, family: edits ? 'file-mutation' : 'generic', kind: edits ? 'write' : 'other' };
 }
 
-const YES_NO = ['mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'flagsRisk'] as const;
+const YES_NO = ['mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'flagsRisk'] as const;
 
 /** A port answering the gate batteries from `table`, recording every request. */
 export function gateReadingsPort(table: GateReadingTable = []) {

@@ -1909,6 +1909,7 @@ export type GateEvent =
     irreversible: boolean;
     beyondProject: boolean;
     weakensSecurity: boolean;
+    obfuscated: boolean;
     uncertain: readonly string[];
 }
 /** The active preset mapped the call's stakes to an action. */

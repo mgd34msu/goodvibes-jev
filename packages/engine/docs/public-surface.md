@@ -128,8 +128,8 @@ barrel, or an explicit `./events/<domain>` subpath for a single domain such as
 `@goodvibes-jev/engine/sdk/events/agents`.
 
 Supported event domain subpaths are: `agents`, `automation`, `communication`,
-`compaction`, `control-plane`, `deliveries`, `forensics`, `knowledge`, `mcp`,
-`ops`, `orchestration`, `permissions`, `planner`, `plugins`, `providers`,
+`compaction`, `control-plane`, `deliveries`, `forensics`, `gate`, `knowledge`, `mcp`,
+`ops`, `orchestration`, `planner`, `plugins`, `providers`,
 `routes`, `security`, `session`, `surfaces`, `tasks`, `tools`, `transport`,
 `turn`, `ui`, `watchers`, `workflows`, and `workspace`. Event implementation
 modules are not exported as deep package subpaths. What each domain carries is
@@ -298,7 +298,9 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/orchestration` | The multi-agent orchestration engine: phases, gates, work items, commit exclusions, and budget ceilings | beta |
 | `platform/owner-profile` | The platform's read model of the person who owns it, backed by one Markdown file at daemon scope | beta |
 | `platform/pairing` | Companion token, QR, pairing index | beta |
-| `platform/permissions` | Permission analysis, prompts, briefs, and manager | beta |
+| `platform/gate` | The gate: the deterministic boundary, the stakes reading and its batteries, the presets over the stakes table, and surface authority | beta |
+| `platform/gate/policy` | The policy and posture runtimes the TUI and agent call: `/policy` and `/permissions` dispatch, the tool policy guard and its allowlists, exec posture, operator policy, execution ledger, tool permission safety | beta |
+| `platform/permissions` | `PermissionManager` (runs the gate for every tool call), request analysis, prompts and approval briefs | beta |
 | `platform/personal-capture` | Capture authority (whether a turn may write to the owner profile) and the narrow store/service surface a conversational capture tool calls | beta |
 | `platform/plugins` | Plugin API, loader, and manager | beta |
 | `platform/power` | Sleep ownership: automatic work inhibition, sleep-edge handling, and the owner's keep-awake toggle | beta |

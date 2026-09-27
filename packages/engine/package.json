@@ -813,6 +813,16 @@
       "types": "./sdk/dist/platform/pairing/index.d.ts",
       "import": "./sdk/dist/platform/pairing/index.js"
     },
+    "./sdk/platform/gate": {
+      "bun": "./sdk/src/platform/gate/index.ts",
+      "types": "./sdk/dist/platform/gate/index.d.ts",
+      "import": "./sdk/dist/platform/gate/index.js"
+    },
+    "./sdk/platform/gate/policy": {
+      "bun": "./sdk/src/platform/gate/policy/index.ts",
+      "types": "./sdk/dist/platform/gate/policy/index.d.ts",
+      "import": "./sdk/dist/platform/gate/policy/index.js"
+    },
     "./sdk/platform/permissions": {
       "bun": "./sdk/src/platform/permissions/index.ts",
       "types": "./sdk/dist/platform/permissions/index.d.ts",
@@ -1324,6 +1334,7 @@
     "test:workers:wrangler": "bun scripts/test.ts test/workers-wrangler/wrangler.test.ts",
     "test-skip:check": "bun scripts/no-skipped-tests.ts",
     "delivery:proof": "bun scripts/delivery-proof.ts",
+    "gate:proof": "bun scripts/gate-proof.ts",
     "routing:proof": "bun scripts/routing-proof.ts"
   },
   "dependencies": {
@@ -1340,7 +1351,6 @@
     "bash-language-server": "^5.6.0",
     "bplist-parser": "0.3.2",
     "cloudflare": "6.0.0",
-    "fuse.js": "7.3.0",
     "google-auth-library": "10.6.2",
     "graphql": "16.13.2",
     "jsdom": "29.1.1",

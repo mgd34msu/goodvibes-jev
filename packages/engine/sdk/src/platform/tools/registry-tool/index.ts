@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { logger } from '../../utils/logger.js';
-import { loadOptionalDependency } from '../../utils/optional-dependency.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { registryCandidateView, registryRank } from '../batteries/registry-rank.js';
 import {
   collectMarkdownReferences,
   extractMarkdownPreview,
@@ -16,21 +17,6 @@ import { REGISTRY_TOOL_SCHEMA } from './schema.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import type { RegistryInput } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
-
-// ---------------------------------------------------------------------------
-// Frontmatter parser
-// ---------------------------------------------------------------------------
-
-function parseFrontmatter(content: string): Record<string, string> {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match) return {};
-  const result: Record<string, string> = {};
-  for (const line of (match[1] ?? '').split('\n')) {
-    const [key, ...rest] = line.split(':');
-    if (key && rest.length) result[key.trim()] = rest.join(':').trim();
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // Directory scanning helpers
@@ -50,17 +36,6 @@ interface RegistryMatch {
 export interface RegistryToolRoots {
   readonly workingDirectory: string;
   readonly homeDirectory?: string | undefined;
-}
-
-async function scanDirectory(
-  dir: string,
-  itemType: 'skill' | 'agent',
-  query: string,
-): Promise<FuzzyFilterOutcome> {
-  if (!existsSync(dir)) return { items: [] };
-  const all = scanDirectoryAll(dir, itemType);
-  if (!query) return { items: all };
-  return await fuzzyFilter(all, query);
 }
 
 function scanDirectoryAll(
@@ -127,49 +102,49 @@ function scanDirectoryAll(
   return results;
 }
 
-/** A filtered list, plus the reason it was filtered the lesser way. */
-interface FuzzyFilterOutcome {
-  readonly items: RegistryMatch[];
-  readonly degradedReason?: string;
+/** The decision site the registry-rank reading is logged under. */
+export const REGISTRY_RANK_SITE = 'tools.registry-rank';
+
+/** Project-local entries override global ones of the same type and name (first seen wins). */
+function dedupe(items: readonly RegistryMatch[]): RegistryMatch[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.type}:${item.name}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
- * Fuzzy-filter a list of RegistryMatch items using Fuse.js.
- * Weights: name (3) > path/filename (2) > description (1).
- * Results are sorted by ascending Fuse score (lower = better match).
- *
- * `fuse.js` is an optionalDependency, so it is reached through a dynamic
- * import at the moment a query needs it rather than at module init, a static
- * import of an optional package takes down every graph that reaches this
- * module when the package is absent, which for this one includes the daemon
- * (see utils/optional-dependency.ts for the measured failure). Without it the
- * search still answers, by exact substring, and says which ranking it used.
+ * Reads every candidate against `query` (search words or a task description)
+ * through the `engine.tools.registry-rank` rerank. `matching` holds the
+ * candidates not read as a no, best first; `rest` holds the ones read as a
+ * no, alphabetically.
  */
-async function fuzzyFilter(items: RegistryMatch[], query: string): Promise<FuzzyFilterOutcome> {
-  if (!query || items.length === 0) return { items };
-  const loaded = await loadOptionalDependency('fuse.js', () => import('fuse.js'));
-  if (!loaded.available) {
-    const needle = query.toLowerCase();
-    const substring = items.filter((item) => (
-      `${item.name} ${item.path} ${item.description}`.toLowerCase().includes(needle)
-    ));
-    return {
-      items: substring,
-      degradedReason: `Ranked by exact substring instead of fuzzy match: ${loaded.reason}`,
-    };
-  }
-  const Fuse = loaded.module.default;
-  const fuse = new Fuse(items, {
-    keys: [
-      { name: 'name', weight: 3 },
-      { name: 'path', weight: 2 },
-      { name: 'description', weight: 1 },
-    ],
-    threshold: 0.4,
-    includeScore: true,
-    minMatchCharLength: 1,
-  });
-  return { items: fuse.search(query).map((r) => r.item) };
+async function rankAgainst(
+  items: readonly RegistryMatch[],
+  query: string,
+): Promise<{ matching: RegistryMatch[]; rest: RegistryMatch[] }> {
+  if (items.length === 0) return { matching: [], rest: [] };
+  const byId = new Map(items.map((item) => [`${item.type}:${item.name}`, item]));
+  const candidates = Array.from(byId, ([id, item]) => ({ id, content: registryCandidateView(item) }));
+  const { ranked } = await registryRank.rerank(judgmentPort(REGISTRY_RANK_SITE), query, candidates, { site: REGISTRY_RANK_SITE });
+  const matching = ranked.filter((entry) => entry.reading.verdict !== 'no').map((entry) => byId.get(entry.id)!);
+  const rest = ranked
+    .filter((entry) => entry.reading.verdict === 'no')
+    .map((entry) => byId.get(entry.id)!)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { matching, rest };
+}
+
+function listTools(toolRegistry: ToolRegistry): RegistryMatch[] {
+  return toolRegistry.list().map((t) => ({
+    name: t.definition.name,
+    type: 'tool' as const,
+    description: t.definition.description,
+    path: '',
+  }));
 }
 
 function getSkillDirs(roots: RegistryToolRoots): string[] {
@@ -258,59 +233,29 @@ async function runSearch(
   roots: RegistryToolRoots,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const query = input.query ?? '';
-  let degradedReason: string | undefined;
   const typeFilter = input.type ?? 'all';
-  const matches: RegistryMatch[] = [];
+  const all: RegistryMatch[] = [];
 
   if (typeFilter === 'skills' || typeFilter === 'all') {
-    for (const dir of getSkillDirs(roots)) {
-      const scanned = await scanDirectory(dir, 'skill', query);
-      degradedReason ??= scanned.degradedReason;
-      matches.push(...scanned.items);
-    }
+    for (const dir of getSkillDirs(roots)) all.push(...scanDirectoryAll(dir, 'skill'));
   }
-
   if (typeFilter === 'agents' || typeFilter === 'all') {
-    for (const dir of getAgentDirs(roots)) {
-      const scanned = await scanDirectory(dir, 'agent', query);
-      degradedReason ??= scanned.degradedReason;
-      matches.push(...scanned.items);
-    }
+    for (const dir of getAgentDirs(roots)) all.push(...scanDirectoryAll(dir, 'agent'));
   }
-
   if (typeFilter === 'tools' || typeFilter === 'all') {
-    const allTools: RegistryMatch[] = toolRegistry.list().map((t) => ({
-      name: t.definition.name,
-      type: 'tool' as const,
-      description: t.definition.description,
-      path: '',
-    }));
-    if (query) {
-      const filtered = await fuzzyFilter(allTools, query);
-      degradedReason = filtered.degradedReason;
-      matches.push(...filtered.items);
-    } else {
-      matches.push(...allTools);
-    }
+    all.push(...listTools(toolRegistry));
   }
 
-  // Deduplicate: project-local entries override global (first seen wins)
-  const seen = new Set<string>();
-  const deduped = matches.filter((r) => {
-    const key = `${r.type}:${r.name}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const candidates = dedupe(all);
+  const results = query ? (await rankAgainst(candidates, query)).matching : candidates;
 
   return {
     success: true,
     output: JSON.stringify({
       mode: 'search',
       query,
-      count: deduped.length,
-      results: deduped,
-      ...(degradedReason ? { warning: degradedReason } : {}),
+      count: results.length,
+      results,
     }),
   };
 }
@@ -321,57 +266,27 @@ async function runRecommend(
   roots: RegistryToolRoots,
 ): Promise<{ success: boolean; output?: string; error?: string }> {
   const task = input.task ?? '';
-  let degradedReason: string | undefined;
   const scope = input.scope ?? 'skills';
-  const lowerTask = task.toLowerCase();
 
   let candidates: RegistryMatch[];
-
   if (scope === 'tools') {
-    candidates = toolRegistry.list().map((t) => ({
-      name: t.definition.name,
-      type: 'tool' as const,
-      description: t.definition.description,
-      path: '',
-    }));
+    candidates = listTools(toolRegistry);
   } else {
     candidates = [];
     for (const dir of getSkillDirs(roots)) {
       candidates.push(...scanDirectoryAll(dir, 'skill'));
     }
-    // Deduplicate: project-local entries override global (first seen wins)
-    const seen = new Set<string>();
-    candidates = candidates.filter((r) => {
-      const key = `${r.type}:${r.name}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    candidates = dedupe(candidates);
   }
 
-  // Use Fuse.js for fuzzy scoring when task is given; otherwise sort alphabetically
+  // With a task: the candidates read as fitting it, best first, then the rest
+  // alphabetically. Without one: every candidate alphabetically.
   let sorted: RegistryMatch[];
   if (task) {
-    const filtered = await fuzzyFilter(candidates, task);
-    degradedReason = filtered.degradedReason;
-    sorted = filtered.items;
-    // For items not matched by fuzzy (below threshold), append alphabetically
-    const matchedNames = new Set(sorted.map((r) => `${r.type}:${r.name}`));
-    const unmatched = candidates
-      .filter((c) => !matchedNames.has(`${c.type}:${c.name}`))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    sorted = [...sorted, ...unmatched];
+    const { matching, rest } = await rankAgainst(candidates, task);
+    sorted = [...matching, ...rest];
   } else {
-    // No task, fall back to simple word-overlap scoring.
-    const lowerTask2 = lowerTask; // already empty string
-    const taskWords = lowerTask2.split(/\s+/).filter(Boolean);
-    const scored = candidates.map((item) => {
-      const target = `${item.name} ${item.description}`.toLowerCase();
-      const score = taskWords.reduce((acc, word) => acc + (target.includes(word) ? 1 : 0), 0);
-      return { ...item, score };
-    });
-    scored.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-    sorted = scored;
+    sorted = [...candidates].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   return {
@@ -381,8 +296,7 @@ async function runRecommend(
       task,
       scope,
       count: sorted.length,
-      results: sorted.map(({ score: _score, ...item }: { score?: number } & RegistryMatch) => item),
-      ...(degradedReason ? { warning: degradedReason } : {}),
+      results: sorted,
     }),
   };
 }

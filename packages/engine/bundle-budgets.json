@@ -64,11 +64,11 @@
       "domain-map",
       "fleet",
       "forensics",
+      "gate",
       "knowledge",
       "mcp",
       "mcp-types",
       "ops",
-      "permissions",
       "planner",
       "plugins",
       "providers",
@@ -126,8 +126,8 @@
     "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
   },
   "./events/gate": {
-    "gzip_bytes": 161,
-    "rationale": "new public package export budget; measured 111 B gzip @ v0.33.0 release verification; headroom max(ceil(111*1.2)=134, 111+50=161) -> 161 (+50 B floor dominates)"
+    "gzip_bytes": 512,
+    "rationale": "gate event domain (renamed from permissions in E.5); now also exports GATE_EVENT_TYPES; measured 426 B gzip @ E.5; headroom max(ceil(426*1.2)=512, 426+50=476) -> 512 (1.2x dominates)"
   },
   "./events/planner": {
     "gzip_bytes": 165,
@@ -388,6 +388,14 @@
   "./platform/payments": {
     "gzip_bytes": 2823,
     "rationale": "new entry: the payment capability's whole public surface, so no surface re-implements a budget, a ladder step or a window, currency/minor-unit and command-authority parsing, day-key arithmetic, BudgetLedger with its reservation TTL and cap, shipping ranking and ladder walk, and the approval-gate/veto-window state machines including interrupted-window recovery; measured 2352 B gzip @ commit 625afa04; headroom max(ceil(2352*1.2)=2823, 2352+50=2402) \u2192 2823 (1.2x dominates by 421 B)"
+  },
+  "./platform/gate": {
+    "gzip_bytes": 502,
+    "rationale": "new entry (E.5): the gate's boundary, stakes reading, presets, surface authority and batteries; measured 418 B gzip @ E.5; headroom max(ceil(418*1.2)=502, 418+50=468) -> 502 (1.2x dominates)"
+  },
+  "./platform/gate/policy": {
+    "gzip_bytes": 434,
+    "rationale": "new entry (E.5): the hoisted TUI and agent policy and posture runtimes; measured 361 B gzip @ E.5; headroom max(ceil(361*1.2)=434, 361+50=411) -> 434 (1.2x dominates)"
   },
   "./platform/permissions": {
     "gzip_bytes": 157,

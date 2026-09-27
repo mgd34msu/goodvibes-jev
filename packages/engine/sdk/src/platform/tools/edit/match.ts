@@ -4,6 +4,8 @@ import { CodeIntelligence } from '../../intelligence/index.js';
 import type { EditItem, OccurrenceSpec, EditResult, EditResultStatus } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { assertSafeRegexInput, compileSafeRegExp, safeRegExpExec } from '../../utils/safe-regex.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { editTarget, editTargetView } from '../batteries/edit-target.js';
 
 type AstGrepModule = typeof import('@ast-grep/napi');
 type EditComputationResult =
@@ -34,8 +36,18 @@ function lineNumberAt(content: string, offset: number): number {
 }
 
 const MAX_FUZZY_FILE_LINES = 5000;
-const FUZZY_MATCH_THRESHOLD = 0.7;
 
+/** The decision site the edit-target reading is logged under. */
+export const EDIT_TARGET_SITE = 'tools.edit-fuzzy-line';
+
+/**
+ * The shortlist for a fuzzy line match (arithmetic, no acceptance): slides a
+ * window of the find text's line count over the file and returns the window
+ * with the largest share of lines equal to the find text's lines after
+ * whitespace normalization. Null when the file is too large or no window
+ * shares a single line with the find text. Whether the window is edited is
+ * the `engine.tools.edit-target` reading's call (see computeSingleEdit).
+ */
 export function findFuzzyLineMatch(
   content: string,
   findStr: string,
@@ -74,17 +86,15 @@ export function findFuzzyLineMatch(
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
       bestStart = lineOffsets[i]!;
+      // The window ends where its last line's text ends, so the newline after it is kept.
       const lastLineIdx = i + windowSize - 1;
-      bestEnd =
-        lastLineIdx + 1 < contentLines.length
-          ? lineOffsets[lastLineIdx + 1]!
-          : content.length;
+      bestEnd = lineOffsets[lastLineIdx]! + contentLines[lastLineIdx]!.length;
       bestCandidateLines = contentLines.slice(i, i + windowSize);
       if (similarity === 1.0) break;
     }
   }
 
-  if (bestSimilarity < 0) return null;
+  if (bestSimilarity <= 0) return null;
   return { start: bestStart, end: bestEnd, similarity: bestSimilarity, candidateLines: bestCandidateLines };
 }
 
@@ -545,14 +555,28 @@ export function buildFailedEditResult(
   };
 }
 
-export function computeSingleEdit(
+/**
+ * Whether the fuzzy line window may be edited: the edit-target reading must
+ * say yes with enough confidence to act. A yes that would only confirm is
+ * refused and shown back as a "Did you mean this?" hint, so the caller
+ * confirms by resending the corrected find text.
+ */
+async function acceptsEditTarget(findStr: string, windowLines: readonly string[]): Promise<{ accepted: boolean; probability: number }> {
+  const run = await editTarget.run(judgmentPort(EDIT_TARGET_SITE), editTargetView(findStr, windowLines), { site: EDIT_TARGET_SITE });
+  const reading = run.readings.same_target;
+  const accepted = reading.verdict === 'yes' && reading.outcome === 'act';
+  run.recordAction(accepted ? 'applied fuzzy line match' : 'refused fuzzy line match');
+  return { accepted, probability: reading.probability };
+}
+
+export async function computeSingleEdit(
   fileContent: string,
   item: EditItem,
   mode: 'exact' | 'fuzzy' | 'regex',
   caseSensitive: boolean,
   whitespaceSensitive: boolean = true,
   multiline: boolean = false,
-): { newContent: string; occurrencesReplaced: number; warning?: string | undefined } | { error: string; hint?: string | undefined } {
+): Promise<{ newContent: string; occurrencesReplaced: number; warning?: string | undefined } | { error: string; hint?: string | undefined }> {
   const findStr = item.find_base64 ? decodeBase64(item.find_base64) : item.find;
   const replaceStr = item.replace_base64 ? decodeBase64(item.replace_base64) : item.replace;
 
@@ -578,23 +602,25 @@ export function computeSingleEdit(
       usedFallback = 'whitespace';
     } else {
       const fuzzyMatch = findFuzzyLineMatch(fileContent, findStr);
-      if (fuzzyMatch !== null && fuzzyMatch.similarity >= FUZZY_MATCH_THRESHOLD) {
+      const target = fuzzyMatch === null ? null : await acceptsEditTarget(findStr, fuzzyMatch.candidateLines);
+      if (fuzzyMatch !== null && target?.accepted) {
         positions = [{ start: fuzzyMatch.start, end: fuzzyMatch.end }];
         usedFallback = 'fuzzy-lines';
         logger.warn('[edit] Fuzzy line match used', {
           similarity: fuzzyMatch.similarity,
+          probability: target.probability,
           file: item.path,
           findPreview: findStr.split('\n').slice(0, 2).join('\n'),
         });
       } else if (fuzzyMatch !== null) {
         const candidatePreview = fuzzyMatch.candidateLines.slice(0, 3).join('\n');
-        const pct = Math.round(fuzzyMatch.similarity * 100);
+        const startLine = lineNumberAt(fileContent, fuzzyMatch.start);
         return {
           error:
-            `Find string not found in file (best match was ${pct}% similar, below the ${Math.round(FUZZY_MATCH_THRESHOLD * 100)}% threshold).\n` +
+            `Find string not found in file (the closest lines, from line ${startLine}, were not read as the same edit target).\n` +
             `Closest candidate (first 3 lines):\n${candidatePreview}\n` +
             `Tip: correct the find string to match the file content exactly.`,
-          hint: `Did you mean this? (${pct}% match):\n${candidatePreview}`,
+          hint: `Did you mean this? (from line ${startLine}):\n${candidatePreview}`,
         };
       } else {
         return { error: 'Find string not found in file', hint: 'The find string was not found. Check spelling, whitespace, and that the file has been read recently.' };

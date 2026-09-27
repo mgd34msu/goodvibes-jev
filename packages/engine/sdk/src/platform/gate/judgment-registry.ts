@@ -13,3 +13,11 @@ export const registry = new BatteryRegistry();
 registry.register(riskFamily);
 registry.register(sideEffect);
 registry.register(sandboxAdvisory);
+
+import { editTarget } from '../tools/batteries/edit-target.js';
+import { contentRank } from '../tools/batteries/content-rank.js';
+import { registryRank } from '../tools/batteries/registry-rank.js';
+
+registry.register(editTarget);
+registry.register(contentRank);
+registry.register(registryRank);

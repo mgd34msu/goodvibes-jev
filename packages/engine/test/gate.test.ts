@@ -49,7 +49,7 @@ function gate(mode: PermissionMode, options: { approve?: boolean; surface?: stri
 const CARD = '4111 1111 1111 1111';
 
 describe('the stakes rule (composed in code from the readings)', () => {
-  const none = { mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false };
+  const none = { mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false };
   test('each fact moves the stakes as the rule says', () => {
     expect(stakesFromFacts(none)).toBe('low');
     expect(stakesFromFacts({ ...none, mutates: true })).toBe('medium');
@@ -60,6 +60,7 @@ describe('the stakes rule (composed in code from the readings)', () => {
     expect(stakesFromFacts({ ...none, irreversible: true, outward: true })).toBe('critical');
     expect(stakesFromFacts({ ...none, secrets: true, outward: true })).toBe('critical');
     expect(stakesFromFacts({ ...none, weakensSecurity: true })).toBe('critical');
+    expect(stakesFromFacts({ ...none, obfuscated: true })).toBe('critical');
   });
 
   test('long argument strings reach the reading as a head plus the dropped length', () => {
@@ -158,7 +159,7 @@ describe('the gate pipeline', () => {
     const { manager } = gate('prompt');
     const r = await manager.checkDetailed('exec', { command: 'ls' });
     expect(r.approved).toBe(true);
-    expect(r.reading).toEqual({ family: 'generic', stakes: 'low', facts: { mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false }, uncertain: [] });
+    expect(r.reading).toEqual({ family: 'generic', stakes: 'low', facts: { mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false }, uncertain: [] });
     expect(r.preset).toEqual({ preset: 'normal', action: 'allow' });
     expect(r.analysis.riskLevel).toBe('low');
   });

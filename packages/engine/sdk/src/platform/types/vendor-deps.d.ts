@@ -86,27 +86,6 @@ declare module '@agentclientprotocol/sdk' {
   }
 }
 
-// Fuse.js, fuzzy-search library (used by registry-tool / knowledge search).
-declare module 'fuse.js' {
-  export interface IFuseOptions<T> {
-    keys?: Array<string | { name: string; weight: number }>;
-    threshold?: number;
-    includeScore?: boolean;
-    minMatchCharLength?: number;
-    [key: string]: unknown;
-  }
-  export interface FuseResult<T> {
-    item: T;
-    score?: number;
-    refIndex: number;
-  }
-  export default class Fuse<T> {
-    constructor(list: readonly T[], options?: IFuseOptions<T>);
-    search(pattern: string): FuseResult<T>[];
-    setCollection(list: readonly T[]): void;
-  }
-}
-
 // node-edge-tts, Microsoft Edge TTS voice provider.
 declare module 'node-edge-tts' {
   export interface EdgeTTSOptions {

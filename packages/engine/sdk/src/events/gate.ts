@@ -58,6 +58,7 @@ export type GateEvent =
       irreversible: boolean;
       beyondProject: boolean;
       weakensSecurity: boolean;
+      obfuscated: boolean;
       /** Facts whose reading was uncertain and were therefore taken as true. */
       uncertain: readonly string[];
     }

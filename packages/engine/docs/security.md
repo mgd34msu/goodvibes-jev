@@ -228,13 +228,13 @@ is what it guards.
 | Setting | What it guards |
 | --- | --- |
 | `fetch.sanitizeMode` | How untrusted web content is sanitized before the model sees it |
-| `permissions.engine` | Whether the layered policy engine evaluates tool/path/parameter rules |
+| `permissions.engine` | Whether the layered policy engine evaluates user and managed tool/path/parameter rules inside the gate |
 | `permissions.simulation` | Shadow dual-evaluation that records permission divergences without blocking |
 | `permissions.divergenceDashboard` | The divergence aggregation that gates enforce-mode transitions |
 | `policy.registryEnabled` | The policy bundle promote/rollback registry |
 | `policy.requireSignedBundles` | HMAC validation of policy bundles in managed mode |
 | `runtime.toolBudget.enforced` | Hard wall-clock, token, and cost limits on tool execution |
-| `permissions.commandParser` | Per-segment AST evaluation of shell commands before execution |
+| `permissions.commandParser` | Per-segment AST parsing of shell commands before execution (class gating and the catastrophic list; obfuscation is the gate's reading) |
 | `security.tokenAudit.enabled` | Advisory auditing of token scopes and rotation |
 | `tools.contractVerification` | Registration-time verification that keeps malformed tools out of the registry |
 
@@ -319,65 +319,85 @@ Slack setup uses this same URI mechanism. Direct setup writes Slack token values
 
 ---
 
-## Permission system
+## The gate
 
-**Public subpath:** `@goodvibes-jev/engine/sdk/platform/runtime`: use the `security.*` namespace for policy simulation and signed policy bundles. Tool-execution permission checks remain daemon-host wiring.
+**Public subpaths:** `@goodvibes-jev/engine/sdk/platform/gate` (the boundary, the presets, the stakes reading and surface authority) and `@goodvibes-jev/engine/sdk/platform/gate/policy` (the policy and posture runtimes the TUI and agent call). `@goodvibes-jev/engine/sdk/platform/runtime` keeps the `security.*` namespace for policy simulation and signed policy bundles.
 
-Every tool call goes through the `PermissionManager` before execution.
+The gate replaces the old permission layer. It is the one path every tool call takes before it runs, and `PermissionManager` (`platform/permissions/manager.ts`) runs it. A call passes a deterministic boundary first, then graduated autonomy: Jev reads what the call does, code composes the reading into the call's stakes, and the active preset maps the stakes to allow, ask or deny.
 
-### Categories
+### 1. The deterministic boundary
 
-| Category | Tools | Examples |
+Nothing in the boundary is judged, and no preset, rule, remembered approval or phrase in the conversation relaxes it (`platform/gate/boundary.ts`):
+
+| Check | What it refuses | Reason code |
 |---|---|---|
-| `read` | File reads, information queries | `read_file`, `list_directory`, `search` |
-| `write` | File writes, state mutations | `write_file`, `edit_file`, `create_directory` |
-| `execute` | Shell execution, process spawning | `bash`, `exec`, `run_script` |
-| `delegate` | Agent spawning, ACP tasks | `precision_agent`, delegate tools |
+| Catastrophic commands | Any shell segment on the frozen catastrophic list: root deletion, raw disk writes, filesystem creation over a device, fork bombs. The list only grows with the owner's explicit approval. The exec tool repeats the same check at run time. | `boundary_catastrophic` |
+| Surface authority | A call that changes anything, made for a turn whose input came from an input-only surface (email, webhooks and any undeclared surface). Command surfaces are declared in `gate/surface-authority.ts`; each turn's surface is scoped to that turn's async work (`security/turn-boundary.ts`). | `boundary_surface_authority` |
+| Card-shape scanner | An outward call whose arguments carry card-shaped content. The refusal names positions and kinds, never digits. | `boundary_card_shapes` |
+| Outward-effect check | An outward call made after untrusted content entered the turn, when what it sends derives from what was read (`security/untrusted-content.ts`). | `boundary_outward_effect` |
 
-### Risk levels
+Which calls are outward is code's answer (the channel and remote tools, a fetch that sends a body or a writing method, a shell command the parser classifies as network) united with Jev's `outward` reading. Jev can add a call to the outward checks, never take one out.
 
-`analyzePermissionRequest()` classifies each tool call:
+**Trust-gated approval.** The only thing that clears an outward-effect refusal is the owner answering the gate's prompt for that exact call. The answer mints a single-use owner approval bound to the call's content (`security/owner-approval.ts`, five-minute lifetime) and the check runs again with it; the decision reports `owner_approved_outward`. It is never remembered as a rule.
 
-| Risk Level | Criteria |
+### 2. Explicit owner decisions
+
+After the boundary, decisions the owner made explicitly stand as given, with no reading:
+
+1. **`behavior.autoApprove`** (`config_policy` / `config_allow`): the owner's opt-out of the presets and prompts. It never bypasses the boundary.
+2. **Policy as code**, when the `permissions-policy-engine` feature is on: user and managed policy rules (`managed_policy`) and the policy engine's safety layer (`safety_check`, deny only). The evaluator's own mode layer is not consulted.
+3. **The custom preset's per-tool settings** (`permissions.tools.*`): `allow`, `deny`, or `prompt` (always ask).
+4. **Remembered approvals**: the session cache (`session_override`) and durable rules (`user_rule`). A remembered allow does not carry a change into the plan preset.
+
+Known read-only built-in tools (read, find, analyze, inspect, state, registry and the other `read`-category tools except `fetch`) then run without a reading, except a read of a well-known credential store, which is read by Jev like any side-effecting call.
+
+### 3. The stakes reading
+
+Jev reads every other call through two batteries asked in parallel (`platform/gate/batteries`), each question narrow and read through a band scaled to its stakes:
+
+| Battery | Questions |
 |---|---|
-| `low` | Read-only access to project files; no side effects |
-| `medium` | Writes within the project directory; bounded blast radius |
-| `high` | Writes outside project, shell execution, external network access |
-| `critical` | Writes to system paths, secrets exposure detection, destructive operations |
+| `engine.gate.side-effect` | Does the call change state (`mutates`)? Does it send data or cause an effect outside this machine (`outward`)? Does it read, print, send or embed secrets (`secrets`)? For a shell command: is it written to hide what it does (`obfuscated`)? For an unknown tool: what kind of action is it (`kind`)? |
+| `engine.gate.risk-family` | Which risk family is it (the closed set the approval brief and checklists use)? Is its effect hard to undo (`irreversible`)? Does it reach beyond the project (`beyondProject`)? Does it loosen a security boundary (`weakensSecurity`)? |
 
-The analyzer detects inline secrets in command arguments using pattern matching (`SECRET_NAME_PATTERN`, `INLINE_SECRET_PATTERN`) and flags them as critical risk.
+Code composes the facts into stakes (`gate/reading.ts`, `stakesFromFacts`). A fact whose reading is uncertain counts as true, so doubt raises the stakes and never lowers them:
 
-### Decision sources
+| Stakes | When |
+|---|---|
+| `critical` | Loosens a security boundary; is written to hide what it does; is hard to undo and reaches beyond the project or outside the machine; or sends secrets out |
+| `high` | Hard to undo, touches secrets, reaches beyond the project, or goes outside the machine |
+| `medium` | Changes something |
+| `low` | Changes nothing |
 
-Permission decisions are evaluated in this order, and the first layer that reaches an
-opinion wins:
+The stakes become the analysis `riskLevel`; the family, the facts, the side effects and the blast radius ride on the analysis and the decision (`reading`), and the tool pipeline emits them as `STAKES_READ` on the `gate` event domain. A failure of the judgment port fails the call; there is no heuristic fallback, and outage handling is the provider failover chain behind the port.
 
-1. **`behavior.autoApprove`.** When true, every call is approved (`sourceLayer:
-   config_policy`, `reasonCode: config_allow`) before anything else runs.
-2. **`permissions.mode`.** Four of the five modes settle most calls outright:
-   `allow-all` approves everything (`mode_allow_all`); `plan` allows reads and refuses
-   every mutating/exec/delegate call with a structured plan-mode denial (`plan_mode`),
-   steering the model toward presenting a plan instead of acting; `accept-edits`
-   auto-approves reads and file writes (`mode_accept_edits`) but lets `execute`/`delegate`
-   calls fall through to the layers below; `custom` checks the per-tool
-   `permissions.tools` setting (`config_allow` / `config_deny`, or falls through on
-   `prompt`). The fifth mode, the default `prompt`, auto-approves reads (except a
-   gated credential-store read) and falls through for everything else.
-3. **The policy engine**, only when the `permissions-policy-engine` feature is on. It
-   layers hardcoded safety guardrails (`safety_check` / `safety_guardrail`, deny-only,
-   cannot be overridden) over programmatic policies registered at runtime
-   (`managed_policy`) over the mode/default layers above.
-4. **`session_override`.** A cached allow/deny decision from earlier in this session.
-5. **`user_rule`.** A durable, remembered decision that survives a restart (distinct from
-   the in-memory session cache).
-6. **`user_prompt`.** Falls through to an interactive prompt; the operator's choice can be
-   remembered as a session or durable rule for next time.
+### 4. Presets over the stakes table
 
-`checkDetailed()` returns a `PermissionCheckResult` with `approved: boolean`, `persisted: boolean` (whether to cache for session), `sourceLayer`, `reasonCode`, and the full `analysis`.
+The `permissions.mode` setting keeps its values, so existing settings files, the Shift+Tab cycle and the mode pill keep working; each value selects a preset (`platform/gate/presets.ts`):
 
-### Auto-approve policies
+| Setting value | Preset | low | medium | high | critical | Notes |
+|---|---|---|---|---|---|---|
+| `prompt` (default) | normal | allow | ask | ask | ask | |
+| `accept-edits` | accept-edits | allow | ask | ask | ask | file, notebook and configuration edits run through high |
+| `plan` | plan | allow | ask | ask | ask | any call Jev reads as a change or outward is refused (`plan_mode`) |
+| `allow-all` | auto | allow | allow | allow | ask | |
+| `custom` | custom | allow | ask | ask | ask | per-tool settings decide first |
 
-When `behavior.autoApprove: true` is set in config (default `false`), all tool calls are approved without prompting; the decision is reported with `sourceLayer: config_policy` and `reasonCode: config_allow`. The distinct `permissions.mode: 'allow-all'` setting also approves every call, but reports `reasonCode: mode_allow_all`. This is appropriate for headless automation runs. For interactive use, leave this disabled and configure explicit per-tool permissions, or use `plan` mode to require an explicit plan before any mutating call:
+An allow reports `stakes_preset` / `preset_allow`, a plan refusal `runtime_mode` / `plan_mode`, and an ask goes to the owner's approval prompt (`user_prompt`), where the answer can be remembered at the tier the owner picks. `PRESET_CHANGED` on the `gate` domain announces a preset change.
+
+Background agents follow the same gate. The escape hatch `permissions.backgroundAgents: 'allow-all'` exempts them from presets and prompts, never from the boundary.
+
+### Sandbox escalations
+
+A sandboxed command that needs host access asks the owner through the same approval broker. With `sandbox.judgment` set to annotate or auto-approve, the `engine.gate.sandbox-advisory` battery reads whether the command shows a risk the owner should see; the reading annotates the ask, and only in the opt-in auto-approve mode does a confident looks-safe reading approve it. It never denies and never touches the catastrophic list.
+
+### MCP tool calls
+
+`McpPermissionManager` reads each MCP call's capability class through the side-effect battery's `capability` question; the role, scope and trust-mode rules that consume it stay code. A server whose trust mode is `blocked`, or whose schema is quarantined, is refused before any reading.
+
+`checkDetailed()` returns a `PermissionCheckResult` with `approved`, `persisted`, `sourceLayer`, `reasonCode`, the `analysis`, and when present the `boundary` checks, the `reading`, the `preset` decision and a `detail` explaining a refusal.
+
+For headless automation, `permissions.mode: allow-all` (the auto preset) runs everything below critical stakes; `behavior.autoApprove: true` removes the prompts entirely but keeps the boundary. For per-tool control:
 
 ```yaml
 permissions:

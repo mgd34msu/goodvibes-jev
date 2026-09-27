@@ -207,7 +207,6 @@ export function formatDenialResponse(
     classification: s.classification,
     allowed: s.allowed,
     reason: s.reason,
-    ...(s.hasObfuscation ? { obfuscation: s.obfuscationPatterns } : {}),
   }));
 
   return {

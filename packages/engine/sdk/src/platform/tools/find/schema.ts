@@ -126,7 +126,7 @@ export const findSchema: ToolDefinition = {
             ranked: {
               type: 'boolean',
               description:
-                'Sort results by relevance (mode: content). Exact matches score +10, matches in export declarations +5, recently modified files +3. Results sorted by score descending.',
+                'Sort results by relevance (mode: content). Each matched file is judged against the pattern; files where what the pattern names is defined, declared, exported or implemented come first, files that only mention it come after. Every match is still returned.',
             },
             preview_replace: {
               type: 'string',

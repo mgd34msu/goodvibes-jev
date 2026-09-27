@@ -20,7 +20,7 @@ export const REGISTRY_TOOL_SCHEMA = {
     },
     query: {
       type: 'string',
-      description: '(mode: search) Search term to match against name, description.',
+      description: '(mode: search) Search words; each item is judged against them by its name and description, and matching items are returned best first.',
     },
     type: {
       type: 'string',
@@ -29,7 +29,7 @@ export const REGISTRY_TOOL_SCHEMA = {
     },
     task: {
       type: 'string',
-      description: '(mode: recommend) Task description used for keyword-based relevance sorting.',
+      description: '(mode: recommend) Task description; items judged to fit it come first, best first, then the rest alphabetically.',
     },
     scope: {
       type: 'string',

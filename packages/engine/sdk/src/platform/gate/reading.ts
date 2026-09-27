@@ -21,6 +21,8 @@ export interface GateFacts {
   readonly irreversible: boolean;
   readonly beyondProject: boolean;
   readonly weakensSecurity: boolean;
+  /** Asked only for a call that carries a shell command; false otherwise. */
+  readonly obfuscated: boolean;
 }
 
 export type GateFactName = keyof GateFacts;
@@ -39,13 +41,14 @@ export interface GateReading extends GateFacts {
 }
 
 /**
- * The stakes rule. Critical: loosens a security boundary, or is hard to undo
+ * The stakes rule. Critical: loosens a security boundary, is written to hide
+ * what it does, or is hard to undo
  * and reaches beyond the project or outside the machine, or sends secrets out.
  * High: hard to undo, touches secrets, reaches beyond the project, or goes
  * outside the machine. Medium: changes something. Low: changes nothing.
  */
 export function stakesFromFacts(facts: GateFacts): Stakes {
-  if (facts.weakensSecurity) return 'critical';
+  if (facts.weakensSecurity || facts.obfuscated) return 'critical';
   if (facts.irreversible && (facts.beyondProject || facts.outward)) return 'critical';
   if (facts.secrets && facts.outward) return 'critical';
   if (facts.irreversible || facts.secrets || facts.beyondProject || facts.outward) return 'high';
@@ -87,6 +90,8 @@ export interface ReadToolCallInput {
   readonly workingDirectory?: string | undefined;
   /** Also ask the side-effect kind (for a tool the closed tool table does not name). */
   readonly askKind?: boolean | undefined;
+  /** Also ask whether the shell command is obfuscated (for a call that carries one). */
+  readonly askObfuscated?: boolean | undefined;
   readonly signal?: AbortSignal | undefined;
 }
 
@@ -101,21 +106,28 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
   const [effect, risk] = await Promise.all([
     sideEffect.run(port, state, {
       site,
-      only: input.askKind ? ['mutates', 'outward', 'secrets', 'kind'] : ['mutates', 'outward', 'secrets'],
+      only: [
+        'mutates',
+        'outward',
+        'secrets',
+        ...(input.askKind ? (['kind'] as const) : []),
+        ...(input.askObfuscated ? (['obfuscated'] as const) : []),
+      ],
       ...signal,
     }),
     riskFamily.run(port, state, { site, ...signal }),
   ]);
-  const yesNo: Readonly<Record<GateFactName, YesNoReading>> = {
+  const yesNo: Partial<Record<GateFactName, YesNoReading>> = {
     mutates: effect.readings.mutates,
     outward: effect.readings.outward,
     secrets: effect.readings.secrets,
     irreversible: risk.readings.irreversible,
     beyondProject: risk.readings.beyondProject,
     weakensSecurity: risk.readings.weakensSecurity,
+    ...(input.askObfuscated ? { obfuscated: effect.readings.obfuscated } : {}),
   };
-  const facts = Object.fromEntries(Object.entries(yesNo).map(([name, reading]) => [name, factOf(reading)])) as unknown as GateFacts;
-  const uncertain = (Object.keys(yesNo) as GateFactName[]).filter((name) => yesNo[name].verdict === 'uncertain');
+  const facts = { obfuscated: false, ...Object.fromEntries(Object.entries(yesNo).map(([name, reading]) => [name, factOf(reading!)])) } as GateFacts;
+  const uncertain = (Object.keys(yesNo) as GateFactName[]).filter((name) => yesNo[name]!.verdict === 'uncertain');
   const kindReading = input.askKind ? effect.readings.kind : undefined;
   return {
     ...facts,

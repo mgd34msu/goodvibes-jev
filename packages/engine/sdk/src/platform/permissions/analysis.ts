@@ -3,7 +3,7 @@
  * what it does, for the approval card, hooks and events.
  *
  * The structural parts are code: the target, its kind, the surface, the host
- * and the shell parser's command class and obfuscation findings. The risk
+ * and the shell parser's command class and catastrophic findings. The risk
  * level, risk family, side effects and blast radius come from Jev's reading
  * of the call (gate/reading.ts) and are attached with withReading. Before a
  * reading exists (a known read-only tool, or a call an explicit owner rule or
@@ -67,8 +67,7 @@ function describeExec(args: Record<string, unknown>, category: PermissionCategor
     summary: 'Execute shell command',
     reasons: cleanReasons([
       verdict.denialExplanation ?? '',
-      ...verdict.segments.filter((segment) => !segment.allowed || segment.hasObfuscation).map((segment) => segment.reason),
-      ...verdict.segments.flatMap((segment) => segment.obfuscationPatterns),
+      ...verdict.segments.filter((segment) => !segment.allowed).map((segment) => segment.reason),
     ]),
     target: truncatePreview(command),
     targetKind: 'command',
@@ -146,6 +145,7 @@ const FACT_WORDING = {
   irreversible: 'is hard to undo',
   beyondProject: 'reaches beyond the project',
   weakensSecurity: 'loosens a security boundary',
+  obfuscated: 'is written to hide what it does',
 } as const;
 
 function blastRadiusOf(reading: GateReading, category: PermissionCategory): PermissionBlastRadius {

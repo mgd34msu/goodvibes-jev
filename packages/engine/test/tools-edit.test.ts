@@ -9,6 +9,8 @@ import { join } from 'path';
 import { createEditTool } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { EditToolOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { FileStateCache } from '@goodvibes-jev/engine/sdk/platform/state';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -298,42 +300,83 @@ describe('edit tool', () => {
       expect(output).toMatch(/whitespace-normalized/);
     });
 
-    test('fuzzy-line fallback: exact fails, fuzzy line match above 70% succeeds (1 of 4 lines has a typo)', async () => {
-      // 4 lines, 1 has a real typo → similarity = 3/4 = 75% ≥ 70% threshold
-      const content = 'line one\nline two\nline three\nline four\n';
-      const file = writeFile(tmpDir, 'fuzz_line.ts', content);
-      const result = await tool.execute({
-        edits: [{ path: relPath(file), find: 'line one\nline two\nline TYPO\nline four', replace: 'line one\nline two\nreplaced line\nline four' }],
-      });
-      expect(result.success).toBe(true);
-      expect(readFileSync(file, 'utf-8')).toContain('replaced line');
-      const output = JSON.stringify(result);
-      expect(output).toMatch(/fuzzy line match/);
-    });
+    describe('fuzzy line window judged by engine.tools.edit-target', () => {
+      /** Probability the fake port answers for a find text; anything unlisted reads as a strong no. */
+      let sameTarget: Map<string, number>;
+      let requests: ReadonlyArray<{ readonly state: unknown }>;
+      let previous: ReturnType<typeof installJudgmentPort>;
 
-    test('fuzzy-line match below 70%: completely wrong find string returns error with candidate preview', async () => {
-      const content = 'alpha beta\ngamma delta\nepsilon zeta\n';
-      const file = writeFile(tmpDir, 'fuzz_low.ts', content);
-      const result = await tool.execute({
-        edits: [{ path: relPath(file), find: 'XXXX YYYY\nZZZZ WWWW\nAAAA BBBB', replace: 'replaced' }],
+      beforeEach(() => {
+        sameTarget = new Map();
+        const fake = fakePort((_name, _question, state) => noulAnswer(sameTarget.get((state as { find: string }).find) ?? 0.03));
+        requests = fake.requests;
+        previous = installJudgmentPort(fake.port);
       });
-      expect(result.success).toBe(false);
-      const errStr = JSON.stringify(result);
-      // Should contain threshold info and candidate preview
-      expect(errStr).toMatch(/threshold|similarity|candidate/);
-    });
 
-    test('fuzzy-line match below threshold returns error with candidate info', async () => {
-      const content = 'const x = 1;\nconst y = 2;\nconst z = 3;\n';
-      const file = writeFile(tmpDir, 'fuzz_warn.ts', content);
-      // 2 exact lines + 1 typo = 2/3 similarity ≈ 67%, below threshold
-      // Use 3 lines where 2 match and 1 has a minor diff that still passes after normalization
-      const result = await tool.execute({
-        edits: [{ path: relPath(file), find: 'const x = 1;\nconst y = 2;\nconst z = TYPO;', replace: 'const x = 1;\nconst y = 2;\nconst z = 99;' }],
+      afterEach(() => {
+        installJudgmentPort(previous);
       });
-      // 2/3 lines match = 67%, just below 70% threshold, should fail
-      expect(result.success).toBe(false);
-      expect(JSON.stringify(result)).toMatch(/threshold|similarity/i);
+
+      test('an aligned window is edited, with the fuzzy line warning', async () => {
+        const file = writeFile(tmpDir, 'fuzz_line.ts', 'line one\nline two\nline three\nline four\n');
+        const find = 'line one\nline two\nline TYPO\nline four';
+        sameTarget.set(find, 0.95);
+        const result = await tool.execute({
+          edits: [{ path: relPath(file), find, replace: 'line one\nline two\nreplaced line\nline four' }],
+        });
+        expect(result.success).toBe(true);
+        expect(readFileSync(file, 'utf-8')).toBe('line one\nline two\nreplaced line\nline four\n');
+        expect(JSON.stringify(result)).toMatch(/fuzzy line match/);
+        expect(requests).toHaveLength(1);
+        expect(requests[0]!.state).toEqual({ find, window: 'line one\nline two\nline three\nline four' });
+      });
+
+      test('a window read as a different target is refused and the file is untouched', async () => {
+        const content = 'const x = 1;\nconst y = 2;\nconst z = 3;\n';
+        const file = writeFile(tmpDir, 'fuzz_warn.ts', content);
+        const result = await tool.execute({
+          edits: [{ path: relPath(file), find: 'const x = 1;\nconst y = 2;\nconst w = 4;', replace: 'replaced' }],
+        });
+        expect(result.success).toBe(false);
+        expect(readFileSync(file, 'utf-8')).toBe(content);
+        const text = JSON.stringify(result);
+        expect(text).toMatch(/not read as the same edit target/);
+        expect(text).toMatch(/Did you mean this\? \(from line 1\)/);
+        expect(text).toContain('const z = 3;');
+        expect(requests).toHaveLength(1);
+      });
+
+      test('a yes too weak to act on is refused, not applied', async () => {
+        const content = 'alpha();\nbeta();\ngamma();\n';
+        const file = writeFile(tmpDir, 'fuzz_confirm.ts', content);
+        const find = 'alpha();\nbeta();\ngama();';
+        sameTarget.set(find, 0.65);
+        const result = await tool.execute({ edits: [{ path: relPath(file), find, replace: 'replaced' }] });
+        expect(result.success).toBe(false);
+        expect(readFileSync(file, 'utf-8')).toBe(content);
+        expect(JSON.stringify(result)).toMatch(/not read as the same edit target/);
+      });
+
+      test('the best window is the one sent for judgment, however low its line share', async () => {
+        // 1 of 4 lines matches: no fixed cutoff decides, the reading does.
+        const file = writeFile(tmpDir, 'fuzz_low_share.ts', 'function a() {\n  one();\n  two();\n}\n');
+        const find = 'function a() {\n  uno();\n  dos();\n};';
+        sameTarget.set(find, 0.9);
+        const result = await tool.execute({ edits: [{ path: relPath(file), find, replace: 'function a() {}' }] });
+        expect(result.success).toBe(true);
+        expect(readFileSync(file, 'utf-8')).toBe('function a() {}\n');
+        expect(requests).toHaveLength(1);
+      });
+
+      test('no window shares a line with the find text: plain not found, nothing is judged', async () => {
+        const file = writeFile(tmpDir, 'fuzz_low.ts', 'alpha beta\ngamma delta\nepsilon zeta\n');
+        const result = await tool.execute({
+          edits: [{ path: relPath(file), find: 'XXXX YYYY\nZZZZ WWWW\nAAAA BBBB', replace: 'replaced' }],
+        });
+        expect(result.success).toBe(false);
+        expect(JSON.stringify(result)).toMatch(/not found/);
+        expect(requests).toHaveLength(0);
+      });
     });
   });
 

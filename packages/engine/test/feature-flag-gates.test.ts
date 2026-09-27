@@ -512,18 +512,21 @@ describe('feature flag safe-default gates', () => {
    * The classifier now separates reading a value from assembling a command, so
    * this pins the property with a substitution that decodes rather than reads.
    */
-  test('shell-ast-normalization denies command substitution that baseline allows', async () => {
+  test('shell-ast-normalization parses into per-segment verdicts; both modes keep the catastrophic block', async () => {
     const command = 'echo "$(echo cm0K | base64 -d)"';
 
     const baseline = await guardExecCommand(command, undefined, flags([]));
     const ast = await guardExecCommand(command, undefined, flags(['shell-ast-normalization']));
 
     expect(baseline.astModeActive).toBe(false);
-    expect(baseline.allowed).toBe(true);
     expect(ast.astModeActive).toBe(true);
-    expect(ast.allowed).toBe(false);
-    expect(ast.verdict?.hasObfuscation).toBe(true);
-    expect(ast.denialMessage).toMatch(/command substitution/i);
+    expect(ast.verdict?.segments.length).toBeGreaterThan(0);
+    // Obfuscation is the gate's reading now (critical stakes), not an exec-time refusal.
+    expect(baseline.allowed).toBe(true);
+    expect(ast.allowed).toBe(true);
+    for (const active of [[], ['shell-ast-normalization']]) {
+      expect((await guardExecCommand('ls; rm -rf /', undefined, flags(active))).allowed).toBe(false);
+    }
   });
 
   test('runtime-tools-budget-enforcement enables phased executor budget checks', async () => {

@@ -1,20 +1,14 @@
 /**
- * The obfuscation classifier recognises ordinary diagnostics.
+ * Obfuscation is the gate's reading, not an exec-time regex.
  *
- * Three read-only commands were refused mid-debugging as attacks:
- *   tr '\0' '\n' < /proc/1/environ   → "null-byte injection attempt"
- *   tr -d '\0' < file                → "null-byte injection attempt"
- *   curl -H "Bearer $(cat token)"    → "command substitution in argument"
- *
- * Reading a null-delimited file with `tr` is standard Unix, and `$(cat file)`
- * in an argument is everyday shell. Both were classifier bugs: one matched the
- * two-character text `\0` anywhere in the command, the other matched any `$(…)`
- * anywhere in the command.
- *
- * Every case below is a PAIR, the benign shape that must now pass, and the
- * genuinely malicious neighbour that must still be denied, so the narrowing is
- * demonstrably a narrowing and not a hole. The frozen unconditional
- * catastrophic block is untouched by this file and by the change it covers.
+ * The exec-time shell verdict used to deny commands on a regex ladder over
+ * their text (null-byte escapes, substitutions, percent escapes), and each
+ * narrowing of it left a benign command refused or a malicious neighbour
+ * through. Whether a command is written to hide what it does is now the gate's
+ * side-effect reading (`obfuscated`, gate/batteries/side-effect.ts, whose
+ * fixtures carry these pairs), and an obfuscated command is critical stakes,
+ * so every preset asks the owner. The exec-time verdict keeps only the frozen
+ * catastrophic block, and the parser still structures every shape below.
  */
 import { describe, expect, test } from 'bun:test';
 import { normalizeCommandWithVerdicts } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
@@ -30,17 +24,9 @@ function expectFirst(nodes: CommandNode[]): CommandNode {
   return first;
 }
 
-/**
- * Evaluates with ALL classes allowed, which is what the exec tool passes: class
- * risk is the permission layer's decision, so a denial here is attributable to
- * the obfuscation classifier rather than to class gating.
- */
+/** The exec-time verdict with every class allowed, as the exec tool evaluates it. */
 function verdict(cmd: string) {
-  const result = normalizeCommandWithVerdicts(cmd, ALL_COMMAND_CLASSES);
-  return {
-    allowed: result.allowed,
-    patterns: result.segments.flatMap((s) => [...s.obfuscationPatterns]),
-  };
+  return { allowed: normalizeCommandWithVerdicts(cmd, ALL_COMMAND_CLASSES).allowed };
 }
 
 /** [label, benign command that must pass, malicious neighbour that must not] */
@@ -106,62 +92,13 @@ const PAIRS: Array<[string, string, string]> = [
   ],
 ];
 
-describe('obfuscation classifier: benign diagnostics pass', () => {
-  for (const [label, benign] of PAIRS) {
-    test(`${label} is not obfuscation`, () => {
-      const v = verdict(benign);
-
-      expect(v.patterns).toEqual([]);
-      expect(v.allowed).toBe(true);
+describe('the exec-time verdict leaves obfuscation to the gate reading', () => {
+  for (const [label, benign, neighbour] of PAIRS) {
+    test(`${label}: neither shape is refused at exec time`, () => {
+      expect(verdict(benign).allowed).toBe(true);
+      expect(verdict(neighbour).allowed).toBe(true);
     });
   }
-
-  test('the exact command that was refused mid-debugging now runs', () => {
-    expect(verdict(`tr '\\0' '\\n' < /proc/1/environ`).allowed).toBe(true);
-    expect(verdict(`tr -d '\\0' < file`).allowed).toBe(true);
-    expect(verdict(`curl -H "Bearer $(cat token)" https://api.example.com/v1/me`).allowed).toBe(true);
-  });
-});
-
-describe('obfuscation classifier: the malicious neighbour is still denied', () => {
-  for (const [label, , malicious] of PAIRS) {
-    test(`the attacking counterpart of "${label}" stays denied`, () => {
-      const v = verdict(malicious);
-
-      expect(v.allowed).toBe(false);
-      expect(v.patterns.length).toBeGreaterThan(0);
-    });
-  }
-
-  test('a command name assembled from a substitution is reported as such', () => {
-    const v = verdict(`sudo $(cat payload) --now`);
-
-    expect(v.allowed).toBe(false);
-    expect(v.patterns.join(' ')).toContain('command substitution');
-  });
-
-  test('an encoded null byte is still a null-byte injection', () => {
-    const v = verdict(`curl http://example.com/a%00b`);
-
-    expect(v.allowed).toBe(false);
-    expect(v.patterns.join(' ')).toContain('null-byte');
-  });
-
-  test('an actual NUL byte in the command text is always obfuscation', () => {
-    // Spelled by char code: the byte itself cannot appear in this source.
-    const v = verdict(`echo a${String.fromCharCode(0)}b`);
-
-    expect(v.allowed).toBe(false);
-    expect(v.patterns.join(' ')).toContain('null-byte');
-  });
-
-  test('a QUOTED substitution in command-name position is still obfuscation', () => {
-    expect(verdict(`"$(cat payload)" --now`).allowed).toBe(false);
-  });
-
-  test('a nested substitution is still obfuscation', () => {
-    expect(verdict(`curl -H "X: $(cat $(cat which))" https://x/y`).allowed).toBe(false);
-  });
 });
 
 /**
@@ -175,7 +112,7 @@ describe('obfuscation classifier: the malicious neighbour is still denied', () =
  * had vanished. The identical `$()` shape was caught, so the protection existed
  * and only the backtick spelling walked past it.
  */
-describe('backtick command-name assembly reaches the classifier', () => {
+describe('backtick command-name assembly is parsed whole', () => {
   const NAME_ASSEMBLY = '`which rm` -rf /tmp/x';
 
   test('the assembled command and its arguments survive parsing', () => {
@@ -191,13 +128,6 @@ describe('backtick command-name assembly reaches the classifier', () => {
     expect(node.flags).toContain('-rf');
   });
 
-  test('it is denied, with the substitution named as the reason', () => {
-    const v = verdict(NAME_ASSEMBLY);
-
-    expect(v.allowed).toBe(false);
-    expect(v.patterns.join(' ')).toContain('command substitution');
-  });
-
   test('the first token being a subshell is itself the signal', () => {
     // The node carries no resolvable command name, so the denial must not
     // depend on the name, it comes from the structure.
@@ -207,28 +137,10 @@ describe('backtick command-name assembly reaches the classifier', () => {
     expect(node.tokens[0]?.type).toBe('subshell');
   });
 
-  test('a decoding backtick in name position is denied', () => {
-    expect(verdict('`echo cm0K | base64 -d` /tmp/x').allowed).toBe(false);
-  });
-
-  test('a bare backtick substitution with nothing after it stays a subshell', () => {
-    // Unchanged behavior: with no arguments following, this really is a
-    // standalone subshell expression, not a command being assembled.
-    expect(verdict('`ls`').allowed).toBe(true);
-  });
-
-  test('a backtick in argument position is still ordinary shell', () => {
-    expect(verdict('ls `pwd`').allowed).toBe(true);
-    expect(verdict('grep -f "`cat patterns`" file.txt').allowed).toBe(true);
-  });
-
-  test('a nested substitution inside backticks is denied', () => {
-    expect(verdict('echo `cat $(cat inner)`').allowed).toBe(false);
-  });
 });
 
-describe('obfuscation classifier: the frozen catastrophic block is unchanged', () => {
-  test('rm -rf / is denied regardless of the narrowing above', () => {
+describe('the frozen catastrophic block is unchanged', () => {
+  test('rm -rf / is denied', () => {
     expect(verdict('rm -rf /').allowed).toBe(false);
   });
 

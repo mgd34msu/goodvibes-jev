@@ -19,7 +19,7 @@ This document maps every top-level directory under `packages/engine/sdk/src/plat
 | `bookmarks/` | Session bookmark manager: named save-points within a session for quick navigation and branching |
 | `browser/` | Browser automation as a platform capability: provisioning, sessions, snapshots, and page operations over an injected Playwright driver, with no product-specific wiring |
 | `calendar/` | External-calendar read connectivity: an RFC 5545 (iCalendar) reader and a `SubscriptionStore` for named feeds with per-feed honest status and conditional refresh |
-| `channel-profiles/` | Per-channel profile bindings: lets the inbound path attribute an originated session to its sending principal and inherit that channel's model/provider/permission-mode defaults |
+| `channel-profiles/` | Per-channel profile bindings: lets the inbound path attribute an originated session to its sending principal and inherit that channel's model/provider and gate preset (`permissions.mode`) defaults |
 | `channels/` | Channel surface registry, delivery router, delivery strategies (core / bridge / enterprise), plugin registry, and builtin channel runtime |
 | `channel-sync/` | The two channel tables a daemon mirrors so a surface draws the same screen on a second device: channel-to-profile routing, and the unsent-draft mirror |
 | `checkin/` | Proactive check-in ("heartbeat initiative"): on a configured cadence assembles a state briefing and lets the model judge whether to contact the user through channel delivery; off by default, every run leaves a visible receipt |
@@ -52,7 +52,8 @@ This document maps every top-level directory under `packages/engine/sdk/src/plat
 | `owner-profile/` | The platform's read model of the person who owns it, backed by one Markdown file at daemon scope (`~/.goodvibes/daemon/owner-profile.md`) |
 | `pairing/` | Companion pairing: token generation, `CompanionConnectionInfo` encoding, QR matrix generation and ASCII rendering, token revocation |
 | `payments/` | Payment decision order, budget pools, approval/veto window state machines, taint gate, and prompt rendering |
-| `permissions/` | `PermissionManager`, layered policy evaluation (allow/deny/auto-approve), per-call approval prompting, and brief generation for operator review |
+| `gate/` | The gate, the one path for every side effect: the deterministic boundary (frozen catastrophic list, surface authority, card-shape scanner, outward-effect check, trust-gated approvals), the side-effect, risk-family and sandbox-advisory batteries, the stakes rule, the presets over the stakes table that `permissions.mode` selects, and (`gate/policy/`) the policy and posture runtimes hoisted from the TUI and agent |
+| `permissions/` | `PermissionManager`, which runs the gate's pipeline for every tool call (boundary, explicit owner rules, Jev stakes reading, preset, owner prompt), plus remembered approval rules and the approval brief for operator review |
 | `personal-capture/` | Capture authority (whether a conversational turn may write to the owner profile) and the narrow store/service surface the capture tool calls |
 | `plugins/` | Plugin loader, `PluginManager` lifecycle (registration → activation → hook dispatch → deactivation), `PluginApi`, hook dispatcher |
 | `power/` | Sleep ownership: automatic work inhibition, sleep-edge handling, and the owner's keep-awake toggle |
@@ -113,7 +114,8 @@ artifacts ───────────────────────�
 bookmarks ──────────────────────────────────────► sessions, runtime
 security ───────────────────────────────────────► utils
 hooks ──────────────────────────────────────────► types, utils
-permissions ────────────────────────────────────► config, hooks, runtime
+permissions ────────────────────────────────────► gate, config, hooks, runtime
+gate ───────────────────────────────────────────► security, runtime (normalization), judgment
 knowledge ──────────────────────────────────────► state, config (persistence paths)
 state ──────────────────────────────────────────► types, utils
 scheduler ──────────────────────────────────────► state, core
@@ -178,7 +180,7 @@ Not all directories are equal candidates for eventual extraction to their own np
 | `runtime/` | No | The store and event bus are tightly coupled to the daemon lifecycle |
 | `security/` | No | Thin utility layer; not enough surface to warrant a package |
 | `sessions/` | No | Storage paths are GoodVibes-specific (`surfaceRoot` convention) |
-| `tools/` | No | Tool behavior is tied to the GoodVibes permission and config model |
+| `tools/` | No | Tool behavior is tied to the GoodVibes gate and config model |
 | `types/` | No | Cross-cutting internal types; no external consumer would import these |
 | `utils/` | No | Internal utilities only |
 | `workspace/` | No | Carries GoodVibes workspace conventions and host runtime metadata |

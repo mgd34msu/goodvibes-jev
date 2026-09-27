@@ -1,4 +1,7 @@
 import { stat as statAsync } from 'node:fs/promises';
+import { relative } from 'node:path';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { contentMatchView, contentRank } from '../batteries/content-rank.js';
 import type { ContentQuery, OutputOptions, ContentMatch } from './shared.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
@@ -16,6 +19,27 @@ import {
   withFindWarnings,
 } from './shared.js';
 import { partitionByReadAccess, accessRestrictedNote, type ReadAccessFilter } from '../shared/read-access.js';
+
+/** The decision site the content-rank reading is logged under. */
+export const CONTENT_RANK_SITE = 'tools.find-content-ranked';
+
+/**
+ * Ranked mode: orders the matched files by the `engine.tools.content-rank`
+ * reading of each against the searched pattern, best first. Every matched
+ * file is kept; the reading only sets the order.
+ */
+async function rankMatchedFiles(
+  matchedFiles: Map<string, { content: string; matches: ContentMatch[] }>,
+  pattern: string,
+  projectRoot: string,
+): Promise<Map<string, { content: string; matches: ContentMatch[] }>> {
+  const candidates = Array.from(matchedFiles, ([file, { matches }]) => ({
+    id: file,
+    content: contentMatchView(relative(projectRoot, file) || file, matches),
+  }));
+  const { ranked } = await contentRank.rerank(judgmentPort(CONTENT_RANK_SITE), pattern, candidates, { site: CONTENT_RANK_SITE });
+  return new Map(ranked.map(({ id }) => [id, matchedFiles.get(id)!] as const));
+}
 
 interface CacheKey {
   pattern: string;
@@ -54,6 +78,7 @@ async function executeContentQuery(
     return { error: 'content mode requires pattern or pattern_base64' };
   }
 
+  const searchedPattern = rawPattern;
   if (query.whole_word) {
     rawPattern = `\\b(?:${rawPattern})\\b`;
   }
@@ -183,41 +208,8 @@ async function executeContentQuery(
     });
   }
 
-  if (query.ranked) {
-    const fileMtimes = new Map<string, number>();
-    await Promise.all(
-      Array.from(matchedFiles.keys()).map(async (f) => {
-        try {
-          const s = await statAsync(f);
-          fileMtimes.set(f, s.mtimeMs);
-        } catch (err) {
-          addFindWarning(diagnostics, `Could not stat '${f}' for ranked search; ranking may be incomplete: ${summarizeError(err)}`);
-          fileMtimes.set(f, 0);
-        }
-      }),
-    );
-    const mostRecentMtime = Math.max(...Array.from(fileMtimes.values()), 0);
-    const exactPattern = query.pattern_base64
-      ? Buffer.from(query.pattern_base64, 'base64').toString('utf8')
-      : (query.pattern ?? '');
-
-    const scoredEntries: Array<{ file: string; matches: ContentMatch[]; score: number }> = [];
-    for (const [file, { matches }] of matchedFiles) {
-      let fileScore = 0;
-      const mtime = fileMtimes.get(file) ?? 0;
-      if (mostRecentMtime > 0 && mtime >= mostRecentMtime * 0.95) fileScore += 3;
-      for (const m of matches) {
-        if (m.text.includes(exactPattern)) fileScore += 10;
-        if (/^export\s/.test(m.text.trimStart())) fileScore += 5;
-      }
-      scoredEntries.push({ file, matches, score: fileScore });
-    }
-    scoredEntries.sort((a, b) => b.score - a.score);
-    const sortedEntries = scoredEntries.map(({ file, matches }) => {
-      const original = matchedFiles.get(file);
-      return [file, { content: original?.content ?? '', matches }] as const;
-    });
-    matchedFiles = new Map(sortedEntries);
+  if (query.ranked && matchedFiles.size > 1) {
+    matchedFiles = await rankMatchedFiles(matchedFiles, searchedPattern, projectRoot);
   }
 
   const expandTo = output.expand_to;

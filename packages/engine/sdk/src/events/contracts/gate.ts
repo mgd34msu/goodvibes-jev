@@ -52,6 +52,7 @@ export const GATE_EVENT_FIELD_SPECS: { readonly [T in GateEventType]: readonly F
     bool('irreversible'),
     bool('beyondProject'),
     bool('weakensSecurity'),
+    bool('obfuscated'),
     strs('uncertain'),
   ],
   PRESET_EVALUATED: [...CALL, str('preset'), oneOf('stakes', STAKES), oneOf('result', PRESET_RESULTS)],
