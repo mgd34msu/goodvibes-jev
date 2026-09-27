@@ -1,3 +1,4 @@
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broker.js';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
@@ -5,6 +6,8 @@ import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions
 import { executeToolCalls, type ToolExecutionDeps } from '../sdk/src/platform/core/orchestrator-tool-runtime.js';
 import type { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import type { ToolCall, ToolResult } from '../sdk/src/platform/types/tools.js';
+
+useGateReadings();
 
 /**
  * Regression test for the "per-hunk deselect applies everything anyway" bug.

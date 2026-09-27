@@ -29,6 +29,7 @@
  * trying to cause.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { getProcessUntrustedContentLedger, type UntrustedContentLedger } from './untrusted-content.js';
 import type { TurnInputOrigin } from '../../events/turn.js';
 
@@ -110,4 +111,28 @@ export function startTurnForOwnerInput(
   if (!inputOriginIsOwnerDirect(origin)) return false;
   ledger.startTurn();
   return true;
+}
+
+/**
+ * The surface a turn's input came from, scoped to that turn's async work, so
+ * concurrent turns in one process (a daemon serving several sessions) never
+ * see each other's surface. Read by the gate's surface-authority check
+ * (gate/boundary.ts). Outside any scoped turn there is no surface: the call
+ * is the local owner's.
+ */
+const turnSurfaceScope = new AsyncLocalStorage<{ readonly surface: string | undefined }>();
+
+/** The surface a turn origin names, or undefined when the owner gave the input directly. */
+export function turnSurfaceOf(origin: TurnInputOrigin | undefined): string | undefined {
+  return inputOriginIsOwnerDirect(origin) ? undefined : (origin?.surface ?? origin?.source ?? 'unknown');
+}
+
+/** Runs one turn's work with its input surface in scope. */
+export function withTurnSurface<T>(origin: TurnInputOrigin | undefined, fn: () => Promise<T>): Promise<T> {
+  return turnSurfaceScope.run({ surface: turnSurfaceOf(origin) }, fn);
+}
+
+/** The current turn's input surface; undefined for owner-direct input or outside a turn. */
+export function currentTurnSurfaceId(): string | undefined {
+  return turnSurfaceScope.getStore()?.surface;
 }

@@ -1,261 +1,175 @@
+/**
+ * The request analysis every gate decision carries: what the call targets and
+ * what it does, for the approval card, hooks and events.
+ *
+ * The structural parts are code: the target, its kind, the surface, the host
+ * and the shell parser's command class and obfuscation findings. The risk
+ * level, risk family, side effects and blast radius come from Jev's reading
+ * of the call (gate/reading.ts) and are attached with withReading. Before a
+ * reading exists (a known read-only tool, or a call an explicit owner rule or
+ * the boundary decided first) the level is fixed by category: low for a
+ * read-only tool, high for anything unread.
+ *
+ * The old secret-name and token-shape regexes over command text, the
+ * sensitive-path regex and the if/else chains that picked a risk band from
+ * the command class and host trust tier are gone; the side-effect and
+ * risk-family batteries answer those questions.
+ */
 import { normalizeCommandWithVerdicts } from '../runtime/permissions/normalization/index.js';
-import { classifyHostTrustTier, extractHostname } from '../tools/fetch/trust-tiers.js';
+import { extractHostname } from '../tools/fetch/trust-tiers.js';
+import { RISK_HEADLINES } from '../runtime/permissions/risk-model.js';
+import type { GateReading } from '../gate/reading.js';
 import type {
+  PermissionBlastRadius,
   PermissionCategory,
   PermissionRequestAnalysis,
-  PermissionRiskLevel,
 } from './types.js';
 
 function truncatePreview(value: string, limit = 120): string {
   return value.length <= limit ? value : `${value.slice(0, limit - 3)}...`;
 }
 
-function cleanReasons(values: readonly string[]): string[] {
+function cleanReasons(values: readonly string[], limit = 4): string[] {
   const deduped = new Set<string>();
   for (const value of values) {
     const trimmed = value.trim();
     if (trimmed.length > 0) deduped.add(trimmed);
-    if (deduped.size >= 3) break;
+    if (deduped.size >= limit) break;
   }
   return Array.from(deduped);
 }
 
-function riskFromClassification(classification: string): PermissionRiskLevel {
-  switch (classification) {
-    case 'read':
-      return 'low';
-    case 'write':
-    case 'network':
-      return 'medium';
-    case 'escalation':
-      return 'high';
-    case 'destructive':
-      return 'critical';
-    default:
-      return 'high';
-  }
-}
+const firstString = (args: Record<string, unknown>, keys: readonly string[]): string => {
+  for (const key of keys) if (typeof args[key] === 'string') return args[key] as string;
+  return '';
+};
 
-const SECRET_NAME_PATTERN = /\b(api[_-]?key|token|secret|password|passwd|private[_-]?key|authorization)\b/i;
-const INLINE_SECRET_PATTERN =
-  /\b(Bearer\s+[A-Za-z0-9._-]{12,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{12,}|AIza[0-9A-Za-z_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/;
+/** The risk level before any reading: fixed by category. */
+const unreadRisk = (category: PermissionCategory): PermissionRequestAnalysis['riskLevel'] => (category === 'read' ? 'low' : 'high');
 
-function detectSecretExposure(command: string): string[] {
-  const warnings: string[] = [];
-  if (SECRET_NAME_PATTERN.test(command)) {
-    warnings.push('Command references secret or credential material.');
-  }
-  if (INLINE_SECRET_PATTERN.test(command)) {
-    warnings.push('Command appears to contain an inline credential or token value.');
-  }
-  if (/curl\s+.*authorization[:=]/i.test(command) || /-H\s+["']?Authorization:/i.test(command)) {
-    warnings.push('Command includes an explicit Authorization header.');
-  }
-  if (/echo\s+.*(api[_-]?key|token|secret|password)/i.test(command)) {
-    warnings.push('Command may print secret material into logs or terminal output.');
-  }
-  return warnings;
-}
-
-function pathLooksSensitive(path: string): boolean {
-  return /(^|\/)(\.env(\..+)?)$|(^|\/)(id_rsa|id_ed25519|known_hosts|authorized_keys)$|\.pem$|\.p12$|credentials|secrets?/i.test(path);
-}
-
-function analyzeExec(args: Record<string, unknown>): PermissionRequestAnalysis {
-  const command =
-    typeof args['command'] === 'string'
-      ? args['command']
-      : typeof args['cmd'] === 'string'
-        ? args['cmd']
-        : '';
-
+function describeExec(args: Record<string, unknown>, category: PermissionCategory): PermissionRequestAnalysis {
+  const command = firstString(args, ['command', 'cmd']);
   if (command.length === 0) {
     return {
       classification: 'write',
-      riskLevel: 'high',
+      riskLevel: unreadRisk(category),
       summary: 'Execute shell command',
       reasons: ['Shell execution can mutate files, spawn processes, or access the network.'],
       target: '',
       targetKind: 'command',
       surface: 'shell',
-      blastRadius: 'project',
-      sideEffects: ['process execution', 'filesystem mutation', 'possible network access'],
     };
   }
-
   const verdict = normalizeCommandWithVerdicts(command);
-  const classification = verdict.highestClassification;
-  const reasons = cleanReasons([
-    verdict.denialExplanation ?? '',
-    ...verdict.segments.filter((segment) => !segment.allowed || segment.hasObfuscation).map((segment) => segment.reason),
-    ...verdict.segments.flatMap((segment) => segment.obfuscationPatterns),
-    ...detectSecretExposure(command),
-  ]);
-
-  const secretWarnings = detectSecretExposure(command);
-  const riskLevel = secretWarnings.length > 0
-    ? 'critical'
-    : verdict.allowed && !verdict.hasObfuscation
-      ? riskFromClassification(classification)
-      : classification === 'destructive'
-        ? 'critical'
-        : 'high';
-
   return {
-    classification,
-    riskLevel,
-    summary:
-      classification === 'destructive'
-        ? 'Execute destructive shell command'
-        : classification === 'escalation'
-          ? 'Execute privileged or delegated shell command'
-          : classification === 'network'
-            ? 'Execute networked shell command'
-            : classification === 'write'
-              ? 'Execute shell command with write-capable effects'
-              : 'Execute read-only shell command',
-    reasons:
-      reasons.length > 0
-        ? reasons
-        : [`Highest detected shell risk: ${classification}.`],
+    classification: verdict.highestClassification,
+    riskLevel: unreadRisk(category),
+    summary: 'Execute shell command',
+    reasons: cleanReasons([
+      verdict.denialExplanation ?? '',
+      ...verdict.segments.filter((segment) => !segment.allowed || segment.hasObfuscation).map((segment) => segment.reason),
+      ...verdict.segments.flatMap((segment) => segment.obfuscationPatterns),
+    ]),
     target: truncatePreview(command),
     targetKind: 'command',
     surface: 'shell',
-    blastRadius:
-      secretWarnings.length > 0 || classification === 'destructive'
-        ? 'platform'
-        : classification === 'network'
-          ? 'external'
-          : 'project',
-    sideEffects: cleanReasons([
-      classification === 'network' ? 'outbound network access' : '',
-      classification === 'write' || classification === 'destructive' ? 'filesystem mutation' : '',
-      classification === 'escalation' || classification === 'destructive' ? 'privileged or chained execution' : '',
-      'process execution',
-    ]),
   };
 }
 
-function analyzeFetch(args: Record<string, unknown>): PermissionRequestAnalysis {
-  const rawUrl =
-    typeof args['url'] === 'string'
-      ? args['url']
-      : typeof args['endpoint'] === 'string'
-        ? args['endpoint']
-        : '';
+function describeFetch(args: Record<string, unknown>, category: PermissionCategory): PermissionRequestAnalysis {
+  const urls = Array.isArray(args['urls']) ? args['urls'] : [];
+  const first = urls.find((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object');
+  const rawUrl = firstString(first ?? args, ['url', 'endpoint']);
   const host = rawUrl.length > 0 ? extractHostname(rawUrl) : null;
-  const trust = host ? classifyHostTrustTier(host) : null;
-
-  const reasons = cleanReasons([
-    host ? `Target host: ${host}` : '',
-    trust ? `Host trust tier: ${trust.tier} (${trust.reason})` : '',
-  ]);
-
   return {
     classification: 'network',
-    riskLevel:
-      trust?.tier === 'blocked'
-        ? 'critical'
-        : trust?.tier === 'unknown'
-          ? 'medium'
-          : 'low',
+    riskLevel: unreadRisk(category),
     summary: host ? `Fetch remote resource from ${host}` : 'Fetch remote resource',
-    reasons:
-      reasons.length > 0
-        ? reasons
-        : ['Outbound network access can disclose local context and pull remote content into the session.'],
+    reasons: host ? [`Target host: ${host}`] : [],
     target: truncatePreview(rawUrl),
     targetKind: 'url',
     surface: 'network',
-    blastRadius: 'external',
-    sideEffects: cleanReasons([
-      'outbound network access',
-      'remote content ingestion',
-      trust?.tier === 'unknown' || trust?.tier === 'blocked' ? 'untrusted host interaction' : '',
-    ]),
     host: host ?? undefined,
   };
 }
 
-function analyzePathTool(
-  toolName: string,
-  args: Record<string, unknown>,
-  category: PermissionCategory,
-): PermissionRequestAnalysis {
-  const path =
-    typeof args['path'] === 'string'
-      ? args['path']
-      : typeof args['file'] === 'string'
-        ? args['file']
-        : '';
-
+function describePathTool(toolName: string, args: Record<string, unknown>, category: PermissionCategory): PermissionRequestAnalysis {
+  const path = firstString(args, ['path', 'file', 'file_path']);
   return {
     classification: category === 'write' ? 'write' : 'read',
-    riskLevel: category === 'write' ? (pathLooksSensitive(path) ? 'high' : 'medium') : 'low',
-    summary:
-      category === 'write'
-        ? `Modify local file or project state via ${toolName}`
-        : `Read local project state via ${toolName}`,
-    reasons: cleanReasons([
-      category === 'write'
-        ? 'This action can modify files or other local project state.'
-        : 'This action is read-oriented and does not directly mutate project state.',
-      pathLooksSensitive(path) ? 'Target path looks like a secret or credential file.' : '',
-    ]),
+    riskLevel: unreadRisk(category),
+    summary: category === 'write' ? `Modify local file or project state via ${toolName}` : `Read local project state via ${toolName}`,
+    reasons: [],
     target: path,
     targetKind: 'path',
     surface: 'filesystem',
-    blastRadius: pathLooksSensitive(path) ? 'platform' : 'project',
-    sideEffects: cleanReasons([
-      category === 'write' ? 'filesystem mutation' : 'filesystem read',
-      pathLooksSensitive(path) ? 'possible secret exposure' : '',
-    ]),
   };
 }
 
-function analyzeDelegate(
-  toolName: string,
-  args: Record<string, unknown>,
-): PermissionRequestAnalysis {
-  const task =
-    typeof args['task'] === 'string'
-      ? args['task']
-      : typeof args['name'] === 'string'
-        ? args['name']
-        : typeof args['prompt'] === 'string'
-          ? args['prompt']
-          : '';
-
+function describeDelegate(toolName: string, args: Record<string, unknown>, category: PermissionCategory): PermissionRequestAnalysis {
+  const task = firstString(args, ['task', 'name', 'prompt']);
   return {
     classification: 'escalation',
-    riskLevel: 'high',
+    riskLevel: unreadRisk(category),
     summary: `Delegate work through ${toolName}`,
-    reasons: ['Delegated execution can fan out work, tools, and side effects beyond the current step.'],
+    reasons: [],
     target: truncatePreview(task),
     targetKind: 'task',
     surface: 'orchestration',
-    blastRadius: 'delegated',
-    sideEffects: ['delegated execution', 'task fan-out', 'tool-capability inheritance'],
   };
 }
 
+/** The structural analysis of a call, before any reading. */
 export function analyzePermissionRequest(
   toolName: string,
   args: Record<string, unknown>,
   category: PermissionCategory,
 ): PermissionRequestAnalysis {
-  if (toolName === 'exec') return analyzeExec(args);
-  if (toolName === 'fetch') return analyzeFetch(args);
-  if (category === 'write' || category === 'read') return analyzePathTool(toolName, args, category);
-  if (category === 'delegate') return analyzeDelegate(toolName, args);
-
+  if (toolName === 'exec') return describeExec(args, category);
+  if (toolName === 'fetch') return describeFetch(args, category);
+  if (category === 'write' || category === 'read') return describePathTool(toolName, args, category);
+  if (category === 'delegate') return describeDelegate(toolName, args, category);
   return {
     classification: category,
-    riskLevel: 'high',
+    riskLevel: unreadRisk(category),
     summary: `Request permission for ${toolName}`,
-    reasons: ['Review the target and intent before approving this action.'],
+    reasons: [],
     targetKind: 'generic',
     surface: 'shell',
-    blastRadius: 'project',
+  };
+}
+
+const FACT_WORDING = {
+  mutates: 'changes state',
+  outward: 'reaches outside this machine',
+  secrets: 'touches secret or credential material',
+  irreversible: 'is hard to undo',
+  beyondProject: 'reaches beyond the project',
+  weakensSecurity: 'loosens a security boundary',
+} as const;
+
+function blastRadiusOf(reading: GateReading, category: PermissionCategory): PermissionBlastRadius {
+  if (reading.weakensSecurity || reading.secrets) return 'platform';
+  if (reading.outward || reading.beyondProject) return category === 'delegate' ? 'delegated' : 'external';
+  if (category === 'delegate') return 'delegated';
+  return reading.mutates ? 'project' : 'local';
+}
+
+/** The analysis with Jev's reading attached: risk level, family, side effects and blast radius. */
+export function withReading(analysis: PermissionRequestAnalysis, reading: GateReading, category: PermissionCategory): PermissionRequestAnalysis {
+  const facts = (Object.keys(FACT_WORDING) as (keyof typeof FACT_WORDING)[]).filter((name) => reading[name]);
+  const uncertain = reading.uncertain.length > 0 ? [`Uncertain, taken as true: ${reading.uncertain.map((name) => FACT_WORDING[name]).join(', ')}.`] : [];
+  return {
+    ...analysis,
+    riskLevel: reading.stakes,
+    riskFamily: reading.family,
+    reasons: cleanReasons([
+      `${RISK_HEADLINES[reading.family]}: ${reading.stakes} stakes.`,
+      facts.length > 0 ? `This call ${facts.map((name) => FACT_WORDING[name]).join(', ')}.` : 'This call changes nothing and stays on this machine.',
+      ...uncertain,
+      ...analysis.reasons,
+    ], 5),
+    sideEffects: facts.map((name) => FACT_WORDING[name]),
+    blastRadius: blastRadiusOf(reading, category),
   };
 }

@@ -488,7 +488,6 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(configManager));
   const approvalHandlers = createApprovalDerivedHandlers({
     requestApproval: options.requestApproval,
-    providerRegistry: providers.providerRegistry,
     configManager,
     featureFlags,
     announcementStore,

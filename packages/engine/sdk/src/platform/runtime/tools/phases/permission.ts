@@ -33,8 +33,9 @@ function deniedPhaseResult(
   scope: string,
   start: number,
   userReason?: string,
+  detail?: string,
 ): PhaseResult {
-  const source = { reasonCode: reason, sourceLayer: scope, userReason };
+  const source = { reasonCode: reason, sourceLayer: scope, userReason, detail };
   return {
     phase: 'permissioned',
     success: false,
@@ -104,6 +105,36 @@ export async function permissionPhase(
         reasons: analysis.analysis.reasons,
       });
 
+      const ctx = { sessionId: context.ids.sessionId, traceId: context.ids.traceId, source: 'permission-manager' };
+      if (analysis.boundary) {
+        emitBoundaryChecked(context.runtimeBus, ctx, {
+          callId: call.id,
+          tool: call.name,
+          passed: analysis.boundary.passed,
+          refusedBy: analysis.boundary.refusedBy,
+          checks: analysis.boundary.checks.map(({ check, result }) => ({ check, result })),
+        });
+      }
+      if (analysis.reading) {
+        emitStakesRead(context.runtimeBus, ctx, {
+          callId: call.id,
+          tool: call.name,
+          family: analysis.reading.family,
+          stakes: analysis.reading.stakes,
+          ...analysis.reading.facts,
+          uncertain: [...analysis.reading.uncertain],
+        });
+      }
+      if (analysis.preset && analysis.reading) {
+        emitPresetEvaluated(context.runtimeBus, ctx, {
+          callId: call.id,
+          tool: call.name,
+          preset: analysis.preset.preset,
+          stakes: analysis.reading.stakes,
+          result: analysis.preset.action,
+        });
+      }
+
       emitGateDecision(context.runtimeBus, {
         sessionId: context.ids.sessionId,
         traceId: context.ids.traceId,
@@ -122,12 +153,12 @@ export async function permissionPhase(
       });
 
       if (!analysis.approved) {
-        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason);
+        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason, analysis.detail);
       }
     } else {
       const analysis = await resolvePermissionResult();
       if (!analysis.approved) {
-        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason);
+        return deniedPhaseResult(call.name, analysis.reasonCode, analysis.sourceLayer, start, analysis.userReason, analysis.detail);
       }
     }
 

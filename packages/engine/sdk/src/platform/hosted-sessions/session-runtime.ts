@@ -184,7 +184,6 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(services.configManager));
   const approvalHandlers = createApprovalDerivedHandlers({
     requestApproval: services.requestApproval,
-    providerRegistry,
     configManager: services.configManager,
     featureFlags: services.featureFlags,
     announcementStore,

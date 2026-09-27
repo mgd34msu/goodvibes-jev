@@ -1,3 +1,4 @@
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,8 @@ import type { ToolCall, ToolResult } from '../sdk/src/platform/types/tools.js';
 import { FileStateCache } from '../sdk/src/platform/state/file-cache.js';
 import { FileUndoManager } from '../sdk/src/platform/state/file-undo.js';
 import { createEditTool } from '../sdk/src/platform/tools/edit/index.js';
+
+useGateReadings();
 
 function makePermissionConfigReader(mode: 'prompt' | 'custom' | 'allow-all' = 'prompt'): PermissionConfigReader {
   return {

@@ -10,7 +10,7 @@ import type { ContentPart } from '../providers/interface.js';
 import { notifyCompletion } from '../utils/notify.js';
 import { logger } from '../utils/logger.js';
 import type { PermissionManager } from '../permissions/manager.js';
-import { startTurnForOwnerInput } from '../security/turn-boundary.js';
+import { startTurnForOwnerInput, withTurnSurface } from '../security/turn-boundary.js';
 import {
   isPassiveCodeInjectionEnabled,
   isPassiveKnowledgeInjectionEnabled,
@@ -545,7 +545,7 @@ export class Orchestrator {
     // Set the original task on the first user message (idempotent, subsequent calls are no-ops)
     getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker).setOriginalTask(text.slice(0, 200));
 
-    await this.runTurn(text, content, options);
+    await withTurnSurface(options?.origin, () => this.runTurn(text, content, options)); // gate surface scope
 
     // Process any messages queued while the LLM was thinking. Draining is gated on
     // isCompacting so a queued turn cannot start while a background auto-compaction is
@@ -565,7 +565,7 @@ export class Orchestrator {
     while (this.messageQueue.length > 0 && !this.isThinking && !this.isCompacting) {
       const next = this.messageQueue.shift()!;
       this.emitQueueChange('delivered', next.id);
-      await this.runTurn(next.text, next.content, next.options);
+      await withTurnSurface(next.options?.origin, () => this.runTurn(next.text, next.content, next.options));
     }
     this.followUpRuntime.scheduleFlush();
   }

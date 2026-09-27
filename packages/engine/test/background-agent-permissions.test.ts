@@ -8,6 +8,7 @@
  * riding on a brokered ask, structured ToolDenial reaching the subagent result,
  * and the allow-all exemption.
  */
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
@@ -52,6 +53,8 @@ function makeManager(
 }
 
 const record = { id: 'agent-42', template: 'engineer' } as const;
+
+useGateReadings();
 
 // ── mode matrix (inherit) ────────────────────────────────────────────────────
 
@@ -112,6 +115,15 @@ describe('background permission gate: allow-all escape hatch exempts background 
     const { manager } = makeManager('plan', 'allow-all');
     const outcome = await gateBackgroundToolCall({ permissionManager: manager }, record, 'write', { path: 'a.ts' });
     expect(outcome.approved).toBe(true);
+  });
+
+  test('backgroundAgents=allow-all never bypasses the boundary: a catastrophic command is refused', async () => {
+    const { manager, asks } = makeManager('allow-all', 'allow-all', true);
+    const outcome = await gateBackgroundToolCall({ permissionManager: manager }, record, 'exec', { command: 'rm -rf /' });
+    expect(outcome.approved).toBe(false);
+    if (outcome.approved) throw new Error('expected refusal');
+    expect(outcome.denial.reason).toBe('boundary_catastrophic');
+    expect(asks).toEqual([]);
   });
 });
 

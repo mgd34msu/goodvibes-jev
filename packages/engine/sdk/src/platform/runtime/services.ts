@@ -846,7 +846,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     onSandboxedRun,
   } = createApprovalDerivedHandlers({
     requestApproval: (input) => approvalBroker.requestApproval(input),
-    providerRegistry,
     configManager,
     featureFlags,
     announcementStore,

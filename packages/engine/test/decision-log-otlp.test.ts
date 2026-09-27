@@ -8,6 +8,7 @@
  * mapping; the off-by-default / no-endpoint no-ops; and a live POST round-trip
  * proving the on-the-wire body parses back into the OTLP shape.
  */
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test, afterAll, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,8 @@ import {
 } from '../sdk/src/platform/runtime/permissions/decision-otlp.js';
 import type { DecisionLogEntry } from '../sdk/src/platform/runtime/permissions/decision-log.js';
 import type { PermissionDecision } from '../sdk/src/platform/runtime/permissions/types.js';
+
+useGateReadings();
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 

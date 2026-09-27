@@ -18,7 +18,7 @@ import { parseCommandAST } from '../../runtime/permissions/normalization/parser.
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
 import { evaluateCommandAST, asSingleLine, DEFAULT_ALLOWED_CLASSES } from '../../runtime/permissions/normalization/verdict.js';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
-import { catastrophicReason } from '../../runtime/permissions/normalization/classifier.js';
+import { catastrophicCheck } from '../../gate/boundary.js';
 import type { CompoundVerdict } from '../../runtime/permissions/normalization/verdict.js';
 import type { CommandClassification } from '../../runtime/permissions/normalization/types.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
@@ -60,11 +60,12 @@ export interface ASTGuardResult {
 /**
  * Evaluates a command using the baseline flat segmentation pipeline.
  *
- * Catastrophic segments (root deletion, raw disk destruction, fork bombs,
- * see catastrophicReason in the classifier; that list is frozen) are denied
- * unconditionally. Everything else is gated by `allowedClasses`: the caller
- * decides which classification tiers pass, so class-level risk stays with
- * the permission layer rather than a second config-blind gate here.
+ * Catastrophic commands (the gate boundary's frozen list and safety layer,
+ * gate/boundary.ts catastrophicCheck) are denied unconditionally. Everything
+ * else is gated by `allowedClasses`: the caller decides which classification
+ * tiers pass. The exec tool passes every class, because exec risk is decided
+ * by the gate (Jev's stakes reading and the active preset) before the call
+ * runs, not by a second config-blind gate here.
  *
  * @param command        - The raw shell command string.
  * @param allowedClasses - Classification tiers the caller permits.
@@ -74,22 +75,21 @@ function baselineGuard(
   command: string,
   allowedClasses: ReadonlySet<CommandClassification>,
 ): ASTGuardResult {
-  const normalized = normalizeCommand(command);
-
-  for (const seg of normalized.segments) {
-    const reason = catastrophicReason(seg);
-    if (reason !== null) {
-      return {
-        allowed: false,
-        denialMessage:
-          `Command denied (safety block): "${asSingleLine(command)}"\n` +
-          `Unconditionally blocked destructive command, ${reason}.\n` +
-          `This block is not affected by permission settings.`,
-        astModeActive: false,
-      };
-    }
+  // The same catastrophic check the gate's boundary ran before the call was
+  // approved (gate/boundary.ts), repeated at exec time.
+  const catastrophic = catastrophicCheck('exec', { command });
+  if (catastrophic.result === 'refuse') {
+    return {
+      allowed: false,
+      denialMessage:
+        `Command denied (safety block): "${asSingleLine(command)}"\n` +
+        `Unconditionally blocked destructive command, ${catastrophic.detail}.\n` +
+        `This block is not affected by permission settings.`,
+      astModeActive: false,
+    };
   }
 
+  const normalized = normalizeCommand(command);
   const cls = normalized.highestClassification;
   if (!allowedClasses.has(cls)) {
     return {

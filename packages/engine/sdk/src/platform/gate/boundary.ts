@@ -5,8 +5,8 @@
  * remembered approval can relax it.
  *
  * 1. Catastrophic commands: the frozen catastrophic list
- *    (normalization/classifier.ts catastrophicReason) and the bypass-immune
- *    safety layer (runtime/permissions/safety-checks.ts).
+ *    (normalization/classifier.ts catastrophicReason: root deletion, raw disk
+ *    writes, filesystem creation over a device, fork bombs).
  * 2. Surface authority: a call that changes anything, made on behalf of an
  *    input-only surface, is refused (gate/surface-authority.ts).
  * 3. Card-shape scanner: an outward call whose arguments carry card-shaped
@@ -28,7 +28,6 @@
  */
 import { normalizeCommand } from '../runtime/permissions/normalization/index.js';
 import { catastrophicReason } from '../runtime/permissions/normalization/classifier.js';
-import { runSafetyChecks } from '../runtime/permissions/safety-checks.js';
 import { extractCommandArgs } from '../runtime/permissions/rules/prefix.js';
 import { detectCardShapes, hasRefusableCardShapes, renderCardShapeRefusal } from '../security/card-shapes.js';
 import {
@@ -118,10 +117,16 @@ export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Reco
   return fields;
 }
 
-/** The catastrophic-command check: the frozen list, then the bypass-immune safety layer. */
+/**
+ * The catastrophic-command check: the frozen catastrophic list
+ * (normalization/classifier.ts catastrophicReason) over every segment of every
+ * shell command the call carries. The list is frozen by the owner's doctrine:
+ * it never grows without the owner's explicit approval, so the boundary adds
+ * nothing to it. (The policy engine's safety layer, safety-checks.ts, still
+ * runs inside the policy-as-code evaluator when that feature is on.)
+ */
 export function catastrophicCheck(toolName: string, args: Record<string, unknown>): BoundaryCheck {
-  const commands = shellCommandsOf(toolName, args);
-  for (const command of commands) {
+  for (const command of shellCommandsOf(toolName, args)) {
     const segments = (() => {
       try {
         return normalizeCommand(command).segments;
@@ -133,12 +138,6 @@ export function catastrophicCheck(toolName: string, args: Record<string, unknown
       const reason = catastrophicReason(segment);
       if (reason !== null) return { check: 'catastrophic', result: 'refuse', detail: reason };
     }
-    const safety = runSafetyChecks(toolName, { command });
-    if (safety.blocked) return { check: 'catastrophic', result: 'refuse', detail: safety.reason ?? 'safety check' };
-  }
-  if (commands.length === 0) {
-    const safety = runSafetyChecks(toolName, args);
-    if (safety.blocked) return { check: 'catastrophic', result: 'refuse', detail: safety.reason ?? 'safety check' };
   }
   return { check: 'catastrophic', result: 'pass' };
 }

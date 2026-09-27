@@ -1,5 +1,3 @@
-/** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
-
 /**
  * Shared construction of the structured, call-scoped {@link ToolDenial} that
  * rides on a refused tool call, plus the self-explaining error string the
@@ -28,6 +26,8 @@ export interface DenialSource {
   readonly sourceLayer: string;
   /** The user's free-text note from the prompt decision, when one was given. */
   readonly userReason?: string | undefined;
+  /** The gate's own explanation of a refusal (a boundary check's reason and fix). */
+  readonly detail?: string | undefined;
 }
 
 /** True when this refusal was produced by plan mode. */
@@ -47,7 +47,7 @@ export function buildToolDenial(source: DenialSource): ToolDenial {
     denied: true,
     reason: isPlanModeDenial(source) ? PLAN_MODE_DENIAL_REASON : source.reasonCode,
     scope: source.sourceLayer,
-    ...(source.userReason ? { detail: source.userReason } : {}),
+    ...(source.userReason ? { detail: source.userReason } : source.detail ? { detail: source.detail } : {}),
   };
 }
 
@@ -65,7 +65,7 @@ export function buildDenialErrorMessage(toolName: string, source: DenialSource):
       + `approve it or switch out of plan mode.`
     );
   }
-  const note = source.userReason ? ` The user said: "${source.userReason}".` : '';
+  const note = source.userReason ? ` The user said: "${source.userReason}".` : source.detail ? ` ${source.detail}` : '';
   return (
     `Permission denied for tool '${toolName}' (reason: ${source.reasonCode}, scope: ${source.sourceLayer}).${note} `
     + `This call was refused; adapt to the user's feedback, continue without it, and report that it was not run.`

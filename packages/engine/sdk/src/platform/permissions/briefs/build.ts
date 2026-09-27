@@ -1,5 +1,5 @@
 import type { PermissionPromptRequest } from '../prompt.js';
-import { classifyPermissionRiskFamily } from '../../runtime/permissions/risk-model.js';
+import { riskDescriptorFor } from '../../runtime/permissions/risk-model.js';
 import { explainPermissionRiskFamily } from '../../runtime/permissions/risk-language.js';
 import type { PermissionApprovalBrief } from './types.js';
 import type { PermissionRequestAnalysis } from '../types.js';
@@ -75,7 +75,7 @@ function checklistForDecision(family: string, decisionModeLabel: string): string
 
 export function buildPermissionApprovalBrief(request: PermissionPromptRequest): PermissionApprovalBrief {
   const analysis = fallbackAnalysis(request);
-  const risk = classifyPermissionRiskFamily(request.tool, request.args, analysis);
+  const risk = riskDescriptorFor(analysis);
   const decisionModeLabel = decisionModeLabelForRisk(risk.family);
   return {
     title: titleForRisk(decisionModeLabel),

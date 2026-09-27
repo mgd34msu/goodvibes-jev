@@ -272,7 +272,7 @@ export class McpRegistry {
       );
     }
 
-    const permission = this.permissions.evaluateToolCall(parsed.serverName, parsed.toolName, args);
+    const permission = await this.permissions.evaluateToolCall(parsed.serverName, parsed.toolName, args);
     if (permission.verdict === 'deny') {
       throw new Error(`MCP call '${qualifiedName}' denied: ${permission.reason}`);
     }

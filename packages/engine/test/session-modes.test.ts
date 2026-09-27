@@ -7,6 +7,7 @@
  * denial, the mode-change runtime event, and the plan-mode standing
  * instruction (injected + survives compaction).
  */
+import { READ_ONLY, useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { LayeredPolicyEvaluator } from '../sdk/src/platform/runtime/permissions/evaluator.js';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
@@ -99,21 +100,32 @@ describe('LayeredPolicyEvaluator mode matrix', () => {
 
 // ── PermissionManager mode matrix (authoritative path) ───────────────────────
 
-describe('PermissionManager mode matrix', () => {
-  test('normal (prompt) auto-approves reads, asks for writes/exec', async () => {
+describe('gate presets over the stakes table (permissions.mode values keep working)', () => {
+  useGateReadings([
+    ['"ls"', READ_ONLY],
+    ['--force', { mutates: true, outward: true, irreversible: true, family: 'shell-destructive' }],
+    ['sandbox.mcpIsolation', { mutates: true, weakensSecurity: true, family: 'sandbox-policy-change' }],
+  ]);
+
+  test('normal (prompt): read-only calls run, changes ask', async () => {
     const { manager, prompts } = makeManager('prompt');
     expect((await manager.checkDetailed('read', { path: 'a' })).approved).toBe(true);
+    const ls = await manager.checkDetailed('exec', { command: 'ls' });
+    expect(ls.approved).toBe(true);
+    expect(ls.reasonCode).toBe('preset_allow');
+    expect(ls.reading?.stakes).toBe('low');
     expect(prompts).toEqual([]);
     await manager.checkDetailed('write', { path: 'a' });
-    await manager.checkDetailed('exec', { command: 'ls' });
+    await manager.checkDetailed('exec', { command: 'git push --force origin main' });
     expect(prompts).toEqual(['write', 'exec']);
   });
 
-  test('plan mode refuses every mutating/exec/delegate tool with plan_mode; allows reads', async () => {
+  test('plan refuses every call Jev reads as a change with plan_mode; read-only calls run', async () => {
     const { manager, prompts } = makeManager('plan');
     expect((await manager.checkDetailed('read', { path: 'a' })).approved).toBe(true);
-    for (const tool of ['write', 'edit', 'exec', 'agent']) {
-      const r = await manager.checkDetailed(tool, { path: 'a', command: 'x' });
+    expect((await manager.checkDetailed('exec', { command: 'ls' })).approved).toBe(true);
+    for (const tool of ['write', 'edit', 'agent']) {
+      const r = await manager.checkDetailed(tool, { path: 'a', task: 'x' });
       expect(r.approved).toBe(false);
       expect(r.reasonCode).toBe('plan_mode');
       expect(r.sourceLayer).toBe('runtime_mode');
@@ -122,28 +134,44 @@ describe('PermissionManager mode matrix', () => {
     expect(prompts).toEqual([]);
   });
 
-  test('accept-edits auto-approves write/edit, still asks for exec/delegate', async () => {
+  test('accept-edits runs file edits through high stakes; other changes still ask', async () => {
     const { manager, prompts } = makeManager('accept-edits');
     const w = await manager.checkDetailed('write', { path: 'a' });
     expect(w.approved).toBe(true);
-    expect(w.reasonCode).toBe('mode_accept_edits');
+    expect(w.reasonCode).toBe('preset_allow');
+    expect(w.preset).toEqual({ preset: 'accept-edits', action: 'allow' });
     expect((await manager.checkDetailed('edit', { path: 'a' })).approved).toBe(true);
     expect(prompts).toEqual([]);
-    await manager.checkDetailed('exec', { command: 'ls' });
-    expect(prompts).toEqual(['exec']); // exec still asks
+    await manager.checkDetailed('exec', { command: 'bun run build' });
+    expect(prompts).toEqual(['exec']);
   });
 
-  test('auto (allow-all) approves everything without prompting', async () => {
+  test('auto (allow-all) runs everything below critical stakes; critical still asks', async () => {
     const { manager, prompts } = makeManager('allow-all');
-    for (const tool of ['read', 'write', 'exec', 'agent']) {
-      expect((await manager.checkDetailed(tool, { command: 'x', path: 'a' })).approved).toBe(true);
+    for (const tool of ['read', 'write', 'agent']) {
+      expect((await manager.checkDetailed(tool, { path: 'a', task: 'x' })).approved).toBe(true);
     }
+    expect((await manager.checkDetailed('exec', { command: 'bun run build' })).approved).toBe(true);
     expect(prompts).toEqual([]);
+    await manager.checkDetailed('goodvibes_settings', { mode: 'set', key: 'sandbox.mcpIsolation', value: 'disabled' });
+    expect(prompts).toEqual(['goodvibes_settings']);
   });
 
-  test('getMode reflects the configured session mode', () => {
+  test('the frozen catastrophic list refuses in every preset, before any reading', async () => {
+    for (const mode of ['prompt', 'accept-edits', 'plan', 'allow-all'] as const) {
+      const { manager, prompts } = makeManager(mode);
+      const r = await manager.checkDetailed('exec', { command: 'rm -rf /' });
+      expect(r.approved).toBe(false);
+      expect(r.reasonCode).toBe('boundary_catastrophic');
+      expect(r.reading).toBeUndefined();
+      expect(prompts).toEqual([]);
+    }
+  });
+
+  test('getMode reflects the setting and getPreset names its preset', () => {
     expect(makeManager('plan').manager.getMode()).toBe('plan');
-    expect(makeManager('accept-edits').manager.getMode()).toBe('accept-edits');
+    expect(makeManager('allow-all').manager.getPreset().name).toBe('auto');
+    expect(makeManager('prompt').manager.getPreset().name).toBe('normal');
   });
 });
 

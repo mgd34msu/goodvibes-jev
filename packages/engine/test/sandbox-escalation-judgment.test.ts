@@ -3,13 +3,16 @@
  *
  * The per-command exec sandbox routes its host-access escalations through the
  * ONE approval broker (same request shape + attribution as a permission ask and
- * an MCP elicitation), and an optional model-judgment tier annotates or
- * (opt-in) auto-approves the residual ask WITHOUT ever converting allow→deny or
- * touching the frozen catastrophic block. Pins: broker attribution, approve/deny
- * passthrough, annotate-only default, auto-approve opt-in path, frozen-list /
- * allow→deny invariant, and judgment-failure degrade-to-plain-ask.
+ * an MCP elicitation), and the Jev advisory tier (engine.gate.sandbox-advisory)
+ * annotates or (opt-in) auto-approves the residual ask WITHOUT ever converting
+ * allow to deny or touching the frozen catastrophic block. Pins: broker
+ * attribution, approve/deny passthrough, annotate-only default, auto-approve
+ * opt-in path only on a confident looks-safe reading, the allow-to-deny
+ * invariant, an uncertain reading annotating, and a port failure surfacing.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   createSandboxEscalationApprovalHandler,
   type EscalationApprovalRequester,
@@ -17,8 +20,6 @@ import {
 import {
   applySandboxJudgment,
   runSandboxJudgment,
-  createSandboxJudgmentProvider,
-  type SandboxJudgmentProvider,
   type SandboxJudgmentResult,
   type SandboxJudgmentReceipt,
 } from '../sdk/src/platform/runtime/permissions/sandbox-judgment.js';
@@ -50,9 +51,16 @@ function req() {
   };
 }
 
-const looksSafe: SandboxJudgmentProvider = async () => ({ verdict: 'looks-safe', reasons: ['read-only fetch of a public URL'] });
-const flagsRisk: SandboxJudgmentProvider = async () => ({ verdict: 'flags-risk', reasons: ['exfiltration risk'] });
-const throwing: SandboxJudgmentProvider = async () => { throw new Error('provider down'); };
+/** Installs a port whose sandbox-advisory reading has this risk probability; returns the request log. */
+function readRisk(probability: number) {
+  const { port, requests } = fakePort(() => noulAnswer(probability));
+  installJudgmentPort(port);
+  return requests;
+}
+const looksSafe = () => readRisk(0.04);
+const flagsRisk = () => readRisk(0.96);
+const uncertain = () => readRisk(0.5);
+afterEach(() => { installJudgmentPort(undefined); });
 
 // ── 3a: broker routing + attribution ─────────────────────────────────────────
 
@@ -83,68 +91,77 @@ describe('sandbox escalation → approval broker', () => {
 
 describe('sandbox judgment tier', () => {
   test('annotate-only default: looks-safe still asks the human, ask carries the annotation', async () => {
+    looksSafe();
     const { requester, seen } = spyApproval(true);
     const receipts: SandboxJudgmentReceipt[] = [];
     const handler = createSandboxEscalationApprovalHandler(requester, {
-      provider: looksSafe,
       config: { enabled: true, autoApprove: false },
       onReceipt: (r) => receipts.push(r),
     });
     const outcome = await handler(req());
     expect(seen).toHaveLength(1); // the human was still asked
-    expect(seen[0]!.analysis.reasons.some((x) => x.includes('model judgment: looks safe because'))).toBe(true);
+    expect(seen[0]!.analysis.reasons.some((x) => x.includes('Jev reading: looks safe'))).toBe(true);
     expect(outcome.judgmentReceipt?.outcome).toBe('annotated');
     expect(receipts[0]!.outcome).toBe('annotated');
   });
 
-  test('auto-approve opt-in: looks-safe auto-approves WITHOUT prompting, leaves a receipt', async () => {
+  test('auto-approve opt-in: a confident looks-safe reading auto-approves WITHOUT prompting', async () => {
+    const requests = looksSafe();
     const { requester, seen } = spyApproval(false); // would deny if asked, proves we did NOT ask
     const handler = createSandboxEscalationApprovalHandler(requester, {
-      provider: looksSafe,
       config: { enabled: true, autoApprove: true },
     });
     const outcome = await handler(req());
     expect(outcome.approved).toBe(true);
     expect(seen).toHaveLength(0); // auto-approved: no human prompt
     expect(outcome.judgmentReceipt?.outcome).toBe('auto-approved');
+    expect(requests).toHaveLength(1);
+    expect(JSON.stringify(requests[0]!.state)).toContain('curl https://example.com');
   });
 
-  test('frozen-list / allow→deny invariant: flags-risk NEVER auto-denies, even in auto-approve mode', async () => {
+  test('allow-to-deny invariant: flags-risk NEVER auto-denies, even in auto-approve mode', async () => {
+    flagsRisk();
     const { requester, seen } = spyApproval(true);
     const handler = createSandboxEscalationApprovalHandler(requester, {
-      provider: flagsRisk,
       config: { enabled: true, autoApprove: true },
     });
     const outcome = await handler(req());
-    // flags-risk does not auto-approve AND does not auto-deny, the human is asked.
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.analysis.reasons.some((x) => x.includes('model judgment: flags risk because'))).toBe(true);
+    expect(seen[0]!.analysis.reasons.some((x) => x.includes('Jev reading: flags a risk'))).toBe(true);
     expect(outcome.judgmentReceipt?.outcome).toBe('annotated');
-    expect(outcome.approved).toBe(true); // the human's decision stands, not the model's
+    expect(outcome.approved).toBe(true); // the human's decision stands, not the reading's
   });
 
-  test('judgment failure degrades to a plain ask (no annotation, degraded receipt)', async () => {
+  test('an uncertain reading annotates and asks, even in auto-approve mode', async () => {
+    uncertain();
     const { requester, seen } = spyApproval(true);
     const handler = createSandboxEscalationApprovalHandler(requester, {
-      provider: throwing,
       config: { enabled: true, autoApprove: true },
     });
     const outcome = await handler(req());
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.analysis.reasons.some((x) => x.includes('model judgment'))).toBe(false);
-    expect(outcome.judgmentReceipt?.outcome).toBe('degraded-to-ask');
-    expect(outcome.approved).toBe(true);
+    expect(seen[0]!.analysis.reasons.some((x) => x.includes('cannot tell'))).toBe(true);
+    expect(outcome.judgmentReceipt?.verdict).toBe('uncertain');
   });
 
-  test('disabled tier does not run the provider at all', async () => {
+  test('a missing judgment port surfaces as an error, never a silent pass', async () => {
+    installJudgmentPort(undefined);
     const { requester, seen } = spyApproval(true);
-    let called = false;
     const handler = createSandboxEscalationApprovalHandler(requester, {
-      provider: async () => { called = true; return { verdict: 'looks-safe', reasons: [] }; },
+      config: { enabled: true, autoApprove: true },
+    });
+    await expect(handler(req())).rejects.toThrow();
+    expect(seen).toHaveLength(0);
+  });
+
+  test('disabled tier does not read at all', async () => {
+    const requests = looksSafe();
+    const { requester, seen } = spyApproval(true);
+    const handler = createSandboxEscalationApprovalHandler(requester, {
       config: { enabled: false, autoApprove: true },
     });
     await handler(req());
-    expect(called).toBe(false);
+    expect(requests).toHaveLength(0);
     expect(seen).toHaveLength(1);
   });
 });
@@ -184,53 +201,48 @@ describe('exec runtime raises the escalation through the injected seam', () => {
 // ── applySandboxJudgment unit invariants ─────────────────────────────────────
 
 describe('applySandboxJudgment invariants', () => {
-  const mk = (verdict: SandboxJudgmentResult['verdict']): SandboxJudgmentResult =>
-    ({ verdict, reasons: ['r'], annotation: verdict === 'unavailable' ? '' : `model judgment: ${verdict}` });
+  const mk = (verdict: SandboxJudgmentResult['verdict'], confident = true): SandboxJudgmentResult =>
+    ({ verdict, riskProbability: verdict === 'looks-safe' ? 0.04 : 0.9, confident, annotation: `Jev reading: ${verdict}` });
 
-  test('looks-safe + autoApprove → auto-approves', () => {
+  test('confident looks-safe + autoApprove auto-approves', () => {
     const a = applySandboxJudgment(mk('looks-safe'), { enabled: true, autoApprove: true }, 'cmd');
     expect(a.autoApprove).toBe(true);
     expect(a.receipt.outcome).toBe('auto-approved');
   });
-  test('looks-safe + annotate-only → annotates, does not auto-approve', () => {
+  test('looks-safe that is not confident never auto-approves', () => {
+    const a = applySandboxJudgment(mk('looks-safe', false), { enabled: true, autoApprove: true }, 'cmd');
+    expect(a.autoApprove).toBe(false);
+    expect(a.receipt.outcome).toBe('annotated');
+  });
+  test('looks-safe + annotate-only annotates, does not auto-approve', () => {
     const a = applySandboxJudgment(mk('looks-safe'), { enabled: true, autoApprove: false }, 'cmd');
     expect(a.autoApprove).toBe(false);
     expect(a.annotations.length).toBeGreaterThan(0);
     expect(a.receipt.outcome).toBe('annotated');
   });
-  test('flags-risk + autoApprove → NEVER auto-approves (annotates)', () => {
+  test('flags-risk + autoApprove NEVER auto-approves (annotates)', () => {
     const a = applySandboxJudgment(mk('flags-risk'), { enabled: true, autoApprove: true }, 'cmd');
     expect(a.autoApprove).toBe(false);
     expect(a.receipt.outcome).toBe('annotated');
   });
-  test('unavailable → degrade-to-ask, no auto-approve, no annotation', () => {
-    const a = applySandboxJudgment(mk('unavailable'), { enabled: true, autoApprove: true }, 'cmd');
-    expect(a.autoApprove).toBe(false);
-    expect(a.annotations).toHaveLength(0);
-    expect(a.receipt.outcome).toBe('degraded-to-ask');
-  });
 });
 
-// ── provider adapter parse ───────────────────────────────────────────────────
+// ── the reading itself ───────────────────────────────────────────────────────
 
-describe('createSandboxJudgmentProvider', () => {
-  const input = {
-    command: 'curl x', sandboxPlan: 'p', escalations: ESC, policyReasons: ['r'],
-  };
-  test('parses a JSON verdict reply', async () => {
-    const p = createSandboxJudgmentProvider(async () => 'sure: {"verdict":"looks-safe","reasons":["ok"]}');
-    const r = await runSandboxJudgment(input, p);
+describe('runSandboxJudgment', () => {
+  const input = { command: 'curl x', sandboxPlan: 'p', escalations: ESC, policyReasons: ['r'] };
+  test('a low risk probability reads as looks-safe and confident', async () => {
+    looksSafe();
+    const r = await runSandboxJudgment(input);
     expect(r.verdict).toBe('looks-safe');
-    expect(r.reasons).toEqual(['ok']);
+    expect(r.confident).toBe(true);
   });
-  test('an off-contract reply is treated as unavailable (degrade to ask)', async () => {
-    const p = createSandboxJudgmentProvider(async () => '{"verdict":"definitely-deny"}');
-    const r = await runSandboxJudgment(input, p);
-    expect(r.verdict).toBe('unavailable');
+  test('a high risk probability reads as flags-risk', async () => {
+    flagsRisk();
+    expect((await runSandboxJudgment(input)).verdict).toBe('flags-risk');
   });
-  test('a no-JSON reply is treated as unavailable', async () => {
-    const p = createSandboxJudgmentProvider(async () => 'I cannot answer');
-    const r = await runSandboxJudgment(input, p);
-    expect(r.verdict).toBe('unavailable');
+  test('a middling probability reads as uncertain', async () => {
+    uncertain();
+    expect((await runSandboxJudgment(input)).verdict).toBe('uncertain');
   });
 });

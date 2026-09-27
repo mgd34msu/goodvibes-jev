@@ -12,9 +12,9 @@
  * Every surface's existing approval UI then renders it and background bubbling
  * applies, one learned pattern, not five.
  *
- * The optional model-judgment tier (see sandbox-judgment.ts) rides here: when
- * enabled it annotates the ask with a proposed verdict, or, only in opt-in
- * auto-approve mode, and only for a `looks-safe` verdict, auto-approves it. It
+ * The Jev advisory tier (see sandbox-judgment.ts) rides here: when enabled it
+ * annotates the ask with the reading, or, only in opt-in auto-approve mode and
+ * only for a confident `looks-safe` reading, auto-approves it. It
  * NEVER converts the standing ask into a deny and NEVER touches the frozen
  * catastrophic block.
  */
@@ -23,7 +23,6 @@ import type { PermissionPromptDecision, PermissionPromptRequest } from '../../pe
 import {
   runSandboxJudgment,
   applySandboxJudgment,
-  type SandboxJudgmentProvider,
   type SandboxJudgmentConfig,
   type SandboxJudgmentReceipt,
 } from './sandbox-judgment.js';
@@ -65,9 +64,8 @@ export type EscalationApprovalRequester = (input: {
   readonly metadata?: Record<string, unknown> | undefined;
 }) => Promise<PermissionPromptDecision>;
 
-/** Wiring for the optional model-judgment tier. */
+/** Wiring for the Jev advisory tier. */
 export interface SandboxEscalationJudgment {
-  readonly provider: SandboxJudgmentProvider;
   readonly config: SandboxJudgmentConfig;
   /** Called with every judgment receipt (a judgment always leaves a receipt). */
   readonly onReceipt?: ((receipt: SandboxJudgmentReceipt) => void) | undefined;
@@ -79,10 +77,9 @@ export interface SandboxEscalationJudgment {
  * + escalations, and is resolved by `requestApproval`. Approve → true;
  * deny/cancel/expire → false.
  *
- * When a judgment tier is wired AND enabled, the proposed verdict either
- * auto-approves the ask (opt-in, `looks-safe` only) or annotates the reasons the
- * human sees; either way a receipt is emitted. A judgment failure degrades to a
- * plain ask.
+ * When the advisory tier is wired AND enabled, the reading either
+ * auto-approves the ask (opt-in, confident `looks-safe` only) or annotates the
+ * reasons the human sees; either way a receipt is emitted.
  */
 export function createSandboxEscalationApprovalHandler(
   requestApproval: EscalationApprovalRequester,
@@ -104,7 +101,6 @@ export function createSandboxEscalationApprovalHandler(
           policyReasons: request.policyReasons,
           ...(request.workspaceContext ? { workspaceContext: request.workspaceContext } : {}),
         },
-        judgment.provider,
       );
       const applied = applySandboxJudgment(resolved, judgment.config, request.command);
       judgmentReceipt = applied.receipt;

@@ -1,7 +1,13 @@
 import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
 import type { PermissionAttribution, PermissionRequestHandler } from './prompt.js';
-import { analyzePermissionRequest } from './analysis.js';
+import { analyzePermissionRequest, withReading } from './analysis.js';
+import { isOutwardByCode, runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
+import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
+import { categoryForSideEffectKind, readToolCall, type GateReading } from '../gate/reading.js';
+import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
+import type { UntrustedContentLedger } from '../security/untrusted-content.js';
+import { currentTurnSurfaceId } from '../security/turn-boundary.js';
 import { buildDurableRuleForDecision, buildRememberOptions, commandClassOf, matchDurableRules } from './approval-rules.js';
 import type { UserPermissionRuleStore } from './user-rule-store.js';
 import { extractCommandArgs } from '../runtime/permissions/rules/prefix.js';
@@ -22,10 +28,13 @@ import type { ConfigManager } from '../config/manager.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
+  GateBoundaryRecord,
+  GateReadingRecord,
   PermissionCategory,
   PermissionCheckResult,
   PermissionDecisionReasonCode,
   PermissionDecisionSource,
+  PermissionRequestAnalysis,
 } from './types.js';
 export type { PermissionMode } from '../config/schema.js';
 export type {
@@ -135,15 +144,64 @@ const TOOL_CONFIG_KEYS: Record<string, keyof PermissionsToolConfig> = {
   mcp: 'mcp',
 };
 
+/** How the gate learns who is asking and what the turn has read. */
+export interface GateOptions {
+  /**
+   * The surface the current turn's instruction came from (gate/surface-authority.ts);
+   * defaults to the turn boundary's record (security/turn-boundary.ts).
+   * Returning undefined means the owner gave the instruction directly.
+   */
+  readonly surfaceOf?: (() => string | undefined) | undefined;
+  /** The untrusted-content ledger; the process ledger when absent. */
+  readonly ledger?: UntrustedContentLedger | undefined;
+}
+
+/** Built-in tools that only read local state: the gate reads them with no Jev reading. */
+const isKnownReadOnly = (toolName: string, category: PermissionCategory): boolean =>
+  category === 'read' && toolName !== 'fetch' && TOOL_CATEGORIES[toolName] !== undefined;
+
+const BOUNDARY_REASON: Readonly<Record<BoundaryCheckName, PermissionDecisionReasonCode>> = {
+  catastrophic: 'boundary_catastrophic',
+  'surface-authority': 'boundary_surface_authority',
+  'card-shapes': 'boundary_card_shapes',
+  'outward-effect': 'boundary_outward_effect',
+};
+
+
+const boundaryRecord = (verdict: BoundaryVerdict): GateBoundaryRecord => ({
+  passed: verdict.passed,
+  ...(verdict.passed ? {} : { refusedBy: verdict.refusedBy }),
+  checks: verdict.checks,
+});
+
+const readingRecord = (reading: GateReading): GateReadingRecord => ({
+  family: reading.family,
+  stakes: reading.stakes,
+  facts: {
+    mutates: reading.mutates,
+    outward: reading.outward,
+    secrets: reading.secrets,
+    irreversible: reading.irreversible,
+    beyondProject: reading.beyondProject,
+    weakensSecurity: reading.weakensSecurity,
+  },
+  uncertain: reading.uncertain,
+});
+
 /**
- * PermissionManager - Controls tool execution approval.
+ * PermissionManager, the gate: the one path every tool call takes.
  *
- * Approval logic (priority order):
- *   1. --no-worries-just-vibes flag OR mode='allow-all' -> auto-approve everything
- *   2. mode='custom' -> check per-tool config action ('allow'/'prompt'/'deny')
- *   3. mode='prompt' (default) -> auto-approve reads, prompt for writes/execute/delegate
- *   4. Session approval cache hit -> use cached decision
- *   5. Ask the shell-owned permission controller and block until user responds
+ *   1. The deterministic boundary (gate/boundary.ts): catastrophic commands,
+ *      surface authority, card shapes and the outward-effect check. A refusal
+ *      stands; a tainted outward call can only be cleared by the owner
+ *      answering a prompt for that exact call (a single-use owner approval).
+ *   2. The explicit owner opt-out (autoApprove) and explicit owner rules:
+ *      user and managed policy rules, the custom preset's per-tool settings,
+ *      remembered approvals (session and durable).
+ *   3. Known read-only tools run (credential-store reads still ask).
+ *   4. Jev reads the call's stakes (gate/reading.ts), and the active preset
+ *      (gate/presets.ts, selected by `permissions.mode`) allows, asks or denies.
+ *   5. An ask goes to the owner through the surface's approval prompt.
  */
 export class PermissionManager {
   private sessionApprovals = new Map<string, boolean>();
@@ -153,6 +211,7 @@ export class PermissionManager {
   private readonly policyRuntimeState: Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'>;
   private readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null;
   private readonly userRuleStore: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null;
+  private readonly gate: GateOptions;
 
   constructor(
     requestPermission: PermissionRequestHandler = async () => ({ approved: false, remember: false }),
@@ -161,6 +220,7 @@ export class PermissionManager {
     hookDispatcher: Pick<HookDispatcher, 'fire'> | null = null,
     featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null = null,
     userRuleStore: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null = null,
+    gate: GateOptions = {},
   ) {
     this.requestPermission = requestPermission;
     this.configReader = configReader;
@@ -168,137 +228,195 @@ export class PermissionManager {
     this.hookDispatcher = hookDispatcher;
     this.featureFlags = featureFlags;
     this.userRuleStore = userRuleStore;
+    this.gate = { surfaceOf: currentTurnSurfaceId, ...gate };
   }
 
-  /**
-   * check - Returns a Promise that resolves to true (approved) or false (denied).
-   * Blocks orchestrator until the user responds when a prompt is needed.
-   */
+  /** Resolves to true when the gate approves the call. */
   async check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<boolean> {
     const result = await this.checkDetailed(toolName, args, attribution);
     return result.approved;
   }
 
   /**
+   * Runs one call through the gate.
+   *
    * @param attribution When present, rides on the brokered ask so a surface can
-   * render which background agent is asking. Only reaches the ask path
-   * (prompt/session-cache-miss); auto-approve/deny short-circuits ignore it.
+   * render which background agent (or server, or sandbox) is asking.
    */
   async checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<PermissionCheckResult> {
-    // 1. Auto-approve when --no-worries-just-vibes is active
-    const category = this.getCategory(toolName, args);
-    const analysis = analyzePermissionRequest(toolName, args, category);
+    let category = this.getCategory(toolName, args);
+    let analysis = analyzePermissionRequest(toolName, args, category);
     const callId = crypto.randomUUID();
-    await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', {
-      callId,
-      toolName,
-      category,
-      analysis,
-    });
-    this.policyRuntimeState.recordPermissionRequest({
-      callId,
-      tool: toolName,
-      category,
-      analysis,
-    });
-    if (this.configReader.isAutoApproveEnabled()) {
-      return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'config_policy', 'config_allow', analysis));
-    }
+    await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', { callId, toolName, category, analysis });
+    this.policyRuntimeState.recordPermissionRequest({ callId, tool: toolName, category, analysis });
+    const done = (result: PermissionCheckResult): PermissionCheckResult => this.emitAndReturn(callId, toolName, category, result);
 
+    // 1. The deterministic boundary.
+    const outwardByCode = isOutwardByCode(toolName, args);
+    let boundary = this.runGateBoundary(toolName, args, category, outwardByCode);
+    if (!boundary.passed) {
+      return done(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, attribution));
+    }
+    const base = { boundary: boundaryRecord(boundary) };
+
+    // 2. The owner's explicit opt-out and explicit rules.
+    if (this.configReader.isAutoApproveEnabled()) {
+      return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+    }
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
-
-    // 2. allow-all mode ("auto"): auto-approve everything
-    if (mode === 'allow-all') {
-      return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'runtime_mode', 'mode_allow_all', analysis));
-    }
-
-    // 2a. plan mode: read-only tools allowed; every mutating/exec/delegate tool
-    // is refused with a structured plan-mode denial (reasonCode 'plan_mode'),
-    // which the tool-runtime turns into a ToolDenial with reason 'plan-mode'
-    // that steers the model toward presenting a plan.
-    if (mode === 'plan') {
-      if (category === 'read') {
-        return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'runtime_mode', 'mode_allow_all', analysis));
-      }
-      return this.emitAndReturn(callId, toolName, category, this.result(false, false, 'runtime_mode', 'plan_mode', analysis));
-    }
-
-    // 2b. accept-edits mode: file write/edit tools auto-approve; reads
-    // auto-approve; exec and every other risky class fall through to the
-    // prompt/cache path so they still ask.
-    if (mode === 'accept-edits') {
-      if (category === 'read' && !this.isGatedCredentialRead(category, args)) {
-        return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'runtime_mode', 'mode_allow_all', analysis));
-      }
-      if (category === 'write') {
-        return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'runtime_mode', 'mode_accept_edits', analysis));
-      }
-      // execute / delegate: fall through to session cache + prompt below.
-    }
+    const preset = presetForMode(mode);
 
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const evaluatorDecision = this.evaluateRuntimePolicy(toolName, args, mode);
-      const mappedDecision = this.mapEvaluatorDecision(evaluatorDecision, analysis);
-      if (mappedDecision) {
-        return this.emitAndReturn(callId, toolName, category, mappedDecision);
-      }
+      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode), analysis);
+      if (mapped) return done({ ...mapped, ...base });
     }
 
-    // 3. custom mode: check per-tool setting
-    if (mode === 'custom') {
-      if (TOOL_CONFIG_KEYS[toolName] !== undefined) {
-        const toolKey = TOOL_CONFIG_KEYS[toolName]!;
-        const action: PermissionAction = permsConfig?.tools?.[toolKey] ?? 'prompt';
-        if (action === 'allow') return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'config_policy', 'config_allow', analysis));
-        if (action === 'deny') return this.emitAndReturn(callId, toolName, category, this.result(false, false, 'config_policy', 'config_deny', analysis));
-        // action === 'prompt': fall through to cache + prompt
-      } else {
-        // Unknown tool in custom mode: default to 'prompt' behavior
-        // Fall through to cache + prompt
-      }
-    } else {
-      // 4. prompt mode: auto-approve read operations, EXCEPT reads of a
-      // well-known credential store, which fall through to the ask/prompt path
-      // (a shipped default the user can override by approving once).
-      if (category === 'read' && !this.isGatedCredentialRead(category, args)) {
-        return this.emitAndReturn(callId, toolName, category, this.result(true, false, 'config_policy', 'config_allow', analysis));
-      }
+    let forceAsk = false;
+    if (preset.perTool && TOOL_CONFIG_KEYS[toolName] !== undefined) {
+      const action: PermissionAction = permsConfig?.tools?.[TOOL_CONFIG_KEYS[toolName]!] ?? 'prompt';
+      if (action === 'allow') return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+      if (action === 'deny') return done(this.result(false, false, 'config_policy', 'config_deny', analysis, base));
+      forceAsk = true;
     }
 
-    // 5. Check session approval cache (an in-memory layer over the durable rules)
     const key = this.getApprovalKey(toolName, args);
+    const remembered = this.rememberedDecision(key, toolName, args);
+    // Plan is read-only: a remembered allow does not carry a change into it.
+    if (remembered && !(preset.readOnly && remembered.approved)) {
+      return done(this.result(remembered.approved, true, remembered.source, remembered.reason, analysis, base));
+    }
+
+    // 3. Known read-only tools run; a credential-store read (the shipped
+    //    default list) is read by Jev like any side-effecting call.
+    if (!forceAsk && isKnownReadOnly(toolName, category) && !this.isGatedCredentialRead(category, args)) {
+      return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+    }
+
+    // 4. Jev reads the call; the preset decides.
+    const reading = await readToolCall({
+      toolName,
+      args,
+      workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
+      askKind: TOOL_CATEGORIES[toolName] === undefined,
+    });
+    if (reading.kind !== undefined && TOOL_CATEGORIES[toolName] === undefined) category = categoryForSideEffectKind(reading.kind);
+    analysis = withReading(analyzePermissionRequest(toolName, args, category), reading, category);
+    const read = { ...base, reading: readingRecord(reading) };
+
+    if (reading.outward && !outwardByCode) {
+      boundary = this.runGateBoundary(toolName, args, category, true);
+      if (!boundary.passed) {
+        reading.recordAction('boundary-refused');
+        return done({ ...(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, attribution)), reading: read.reading });
+      }
+      read.boundary = boundaryRecord(boundary);
+    }
+
+    const decision = decideByPreset(preset, {
+      stakes: reading.stakes,
+      family: reading.familyConfident ? reading.family : 'generic',
+      changesState: reading.mutates || reading.outward,
+    });
+    const withPreset = { ...read, preset: { preset: preset.name, action: forceAsk ? 'ask' as const : decision.action } };
+    reading.recordAction(`preset:${preset.name}:${withPreset.preset.action}`);
+    if (!forceAsk && decision.action === 'allow') {
+      return done(this.result(true, false, 'stakes_preset', 'preset_allow', analysis, withPreset));
+    }
+    if (!forceAsk && decision.action === 'deny') {
+      const planned = decision.reason === 'plan-read-only';
+      return done(this.result(false, false, planned ? 'runtime_mode' : 'stakes_preset', planned ? 'plan_mode' : 'preset_deny', analysis, withPreset));
+    }
+
+    // 5. Ask the owner.
+    return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset));
+  }
+
+  /**
+   * Whether the call passes the deterministic boundary, judged by code alone.
+   * The background-agent escape hatch uses it: exempt from presets and
+   * prompts, never from the boundary.
+   */
+  passesBoundary(toolName: string, args: Record<string, unknown>): boolean {
+    return this.runGateBoundary(toolName, args, this.getCategory(toolName, args), isOutwardByCode(toolName, args)).passed;
+  }
+
+  /** The boundary over one call, with this gate's surface and ledger. */
+  private runGateBoundary(toolName: string, args: Record<string, unknown>, category: PermissionCategory, outward: boolean, approval?: OwnerApproval | null): BoundaryVerdict {
+    return runBoundary({
+      toolName,
+      args,
+      category,
+      outward,
+      surfaceId: this.gate.surfaceOf?.(),
+      ledger: this.gate.ledger,
+      ...(approval ? { approval } : {}),
+    });
+  }
+
+  /**
+   * A boundary refusal. Every check's refusal stands, except a tainted outward
+   * call, which the owner may clear by answering a prompt for this exact call:
+   * the answer mints a single-use owner approval bound to the call's content,
+   * and the outward check is run again with it.
+   */
+  private async boundaryOutcome(
+    callId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    category: PermissionCategory,
+    analysis: PermissionRequestAnalysis,
+    verdict: Extract<BoundaryVerdict, { passed: false }>,
+    attribution: PermissionAttribution | undefined,
+  ): Promise<PermissionCheckResult> {
+    const detail = [verdict.reason, verdict.fix ?? ''].filter((part) => part.length > 0).join(' ');
+    const refused = this.result(false, false, 'boundary', BOUNDARY_REASON[verdict.refusedBy], analysis, { boundary: boundaryRecord(verdict), detail });
+    if (verdict.approvable === undefined) return refused;
+    const decision = await this.requestPermission({
+      callId,
+      tool: toolName,
+      args,
+      category,
+      analysis: { ...analysis, summary: `Outward call after untrusted content: ${analysis.summary}`, reasons: [verdict.reason] },
+      workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
+      ...(attribution ? { attribution } : {}),
+    });
+    if (!decision.approved) return { ...refused, sourceLayer: 'user_prompt', reasonCode: 'user_denied', userReason: decision.reason };
+    const approval = grantOwnerApproval({ action: verdict.approvable.action, surface: 'owner-direct', content: verdict.approvable.content });
+    const cleared = this.runGateBoundary(toolName, args, category, true, approval);
+    if (!cleared.passed) return refused;
+    return this.result(true, false, 'user_prompt', 'owner_approved_outward', analysis, { boundary: boundaryRecord(cleared) });
+  }
+
+  /** A remembered decision for this call: the session cache, then the durable rules. */
+  private rememberedDecision(
+    key: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): { approved: boolean; source: PermissionDecisionSource; reason: PermissionDecisionReasonCode } | null {
     if (this.sessionApprovals.has(key)) {
       const approved = this.sessionApprovals.get(key)!;
-      return this.emitAndReturn(callId, toolName, category, this.result(
-        approved,
-        true,
-        'session_override',
-        approved ? 'session_cached_allow' : 'session_cached_deny',
-        analysis,
-      ));
+      return { approved, source: 'session_override', reason: approved ? 'session_cached_allow' : 'session_cached_deny' };
     }
-
-    // 5a. Durable user-origin rules, remembered decisions that survive
-    // restart. Consulted with the policy-engine flag on OR off, so the tenth
-    // `git commit` never re-asks once "git commands" was granted.
     const durable = this.userRuleStore
-      ? matchDurableRules(this.userRuleStore.rules(), toolName, args, {
-        projectRoot: this.configReader.getWorkingDirectory() ?? undefined,
-      })
+      ? matchDurableRules(this.userRuleStore.rules(), toolName, args, { projectRoot: this.configReader.getWorkingDirectory() ?? undefined })
       : null;
-    if (durable) {
-      this.sessionApprovals.set(key, durable.effect === 'allow');
-      return this.emitAndReturn(callId, toolName, category, this.result(
-        durable.effect === 'allow',
-        true,
-        'user_rule',
-        durable.effect === 'allow' ? 'user_rule_allow' : 'user_rule_deny',
-        analysis,
-      ));
-    }
+    if (!durable) return null;
+    this.sessionApprovals.set(key, durable.effect === 'allow');
+    return { approved: durable.effect === 'allow', source: 'user_rule', reason: durable.effect === 'allow' ? 'user_rule_allow' : 'user_rule_deny' };
+  }
 
-    // 6. Prompt user via the shell-owned permission controller
+  /** Asks the owner through the surface's prompt, and remembers the answer at the tier they chose. */
+  private async ask(
+    callId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    category: PermissionCategory,
+    analysis: PermissionRequestAnalysis,
+    key: string,
+    attribution: PermissionAttribution | undefined,
+    extra: Partial<PermissionCheckResult>,
+  ): Promise<PermissionCheckResult> {
     let decision: Awaited<ReturnType<PermissionRequestHandler>>;
     try {
       decision = await this.requestPermission({
@@ -312,41 +430,25 @@ export class PermissionManager {
         rememberOptions: buildRememberOptions(toolName, args),
       });
     } catch (error) {
-      void this.fireHook('Fail:permission:request', 'Fail', 'permission', 'request', {
-        callId,
-        toolName,
-        category,
-        analysis,
-        error: summarizeError(error),
-      });
+      void this.fireHook('Fail:permission:request', 'Fail', 'permission', 'request', { callId, toolName, category, analysis, error: summarizeError(error) });
       throw error;
     }
     const tier = decision.rememberTier ?? (decision.remember ? 'session' : undefined);
     if (tier) {
       this.sessionApprovals.set(key, decision.approved);
       if (tier !== 'session' && this.userRuleStore) {
-        const rule = buildDurableRuleForDecision({
-          toolName,
-          args,
-          tier,
-          effect: decision.approved ? 'allow' : 'deny',
-        });
+        const rule = buildDurableRuleForDecision({ toolName, args, tier, effect: decision.approved ? 'allow' : 'deny' });
         if (rule) {
-          // Await: the grant must be durable before the call proceeds, or a
-          // crash right after approval silently forgets the decision.
+          // Await: the grant must be durable before the call proceeds.
           await this.userRuleStore.add({ rule, createdAt: Date.now(), tier, tool: toolName });
         }
       }
     }
-    return this.emitAndReturn(callId, toolName, category, this.result(
-      decision.approved,
-      Boolean(tier),
-      'user_prompt',
-      decision.approved ? 'user_approved' : 'user_denied',
-      analysis,
-      decision.modifiedArgs,
-      decision.reason,
-    ));
+    return {
+      ...this.result(decision.approved, Boolean(tier), 'user_prompt', decision.approved ? 'user_approved' : 'user_denied', analysis, extra),
+      modifiedArgs: decision.modifiedArgs,
+      userReason: decision.reason,
+    };
   }
 
   /**
@@ -367,39 +469,23 @@ export class PermissionManager {
     if (typeof rawPath !== 'string' || rawPath.length === 0) return 'allow';
     const category: PermissionCategory = 'read';
     const args: Record<string, unknown> = { path: rawPath };
-
     if (this.configReader.isAutoApproveEnabled()) return 'allow';
 
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
-
-    if (mode === 'allow-all') return 'allow';
-    if (mode === 'plan') return 'allow'; // reads are permitted in plan mode
-    if (mode === 'accept-edits') {
-      return this.isGatedCredentialRead(category, args) ? 'restricted' : 'allow';
-    }
-
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const analysis = analyzePermissionRequest('read', args, category);
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode), analysis);
+      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode), analyzePermissionRequest('read', args, category));
       if (mapped) return mapped.approved ? 'allow' : 'restricted';
     }
-
-    if (mode === 'custom') {
-      const toolKey = TOOL_CONFIG_KEYS['read'];
-      if (toolKey !== undefined) {
-        const action = permsConfig?.tools?.[toolKey] ?? 'prompt';
-        if (action === 'allow') return 'allow';
-        if (action === 'deny') return 'restricted';
-      }
-      // No per-tool allow: a read would prompt, which a mid-search filter cannot
-      // do, treat as restricted so no unvetted content is surfaced.
-      return 'restricted';
+    if (presetForMode(mode).perTool) {
+      // A read the custom preset would ask about cannot be asked mid-search.
+      return (permsConfig?.tools?.[TOOL_CONFIG_KEYS['read']!] ?? 'prompt') === 'allow' ? 'allow' : 'restricted';
     }
-
-    // prompt mode ("normal"): reads auto-allow EXCEPT gated credential stores,
-    // which fall through to the ask path and are therefore restricted here.
-    return this.isGatedCredentialRead(category, args) ? 'restricted' : 'allow';
+    // Every other preset runs reads. A credential-store read touches secrets,
+    // which the stakes rule puts at high stakes at least; it is surfaced only
+    // where the preset runs high-stakes calls without asking.
+    if (!this.isGatedCredentialRead(category, args)) return 'allow';
+    return presetForMode(mode).stakes.high === 'allow' ? 'allow' : 'restricted';
   }
 
   /**
@@ -409,6 +495,11 @@ export class PermissionManager {
    */
   getMode(): PermissionMode {
     return this.configReader.getSnapshot().permissions?.mode ?? 'prompt';
+  }
+
+  /** The gate preset the current `permissions.mode` selects. */
+  getPreset(): GatePreset {
+    return presetForMode(this.getMode());
   }
 
   /**
@@ -458,19 +549,10 @@ export class PermissionManager {
     persisted: boolean,
     sourceLayer: PermissionDecisionSource,
     reasonCode: PermissionDecisionReasonCode,
-    analysis: ReturnType<typeof analyzePermissionRequest>,
-    modifiedArgs?: Record<string, unknown>,
-    userReason?: string,
+    analysis: PermissionRequestAnalysis,
+    extra: Partial<PermissionCheckResult> = {},
   ): PermissionCheckResult {
-    return {
-      approved,
-      persisted,
-      sourceLayer,
-      reasonCode,
-      analysis,
-      modifiedArgs,
-      userReason,
-    };
+    return { ...extra, approved, persisted, sourceLayer, reasonCode, analysis };
   }
 
   /**
@@ -555,39 +637,23 @@ export class PermissionManager {
       });
   }
 
+  /**
+   * The policy-as-code evaluator's decision, where it is an explicit rule: a
+   * user or managed policy rule, or the safety layer's refusal. Its mode layer
+   * is not consulted; the presets decide on Jev's reading instead.
+   */
   private mapEvaluatorDecision(
     decision: LayeredPermissionDecision,
-    analysis: ReturnType<typeof analyzePermissionRequest>,
+    analysis: PermissionRequestAnalysis,
   ): PermissionCheckResult | null {
-    if (decision.allowed) {
-      if (decision.sourceLayer === 'policy') {
-        return this.result(true, false, 'managed_policy', 'managed_policy_allow', analysis);
-      }
-      // No 'safety' case here on purpose: the safety layer only ever produces
-      // `allowed: false` (evaluator.ts returns sourceLayer 'safety' solely from
-      // its `safety.blocked` branch). Mapping an allowed safety decision to a
-      // denial asserted the opposite of what the decision says, so a safety
-      // layer that ever learns to allow falls through to `null` (no opinion,
-      // the caller keeps evaluating) rather than being silently inverted.
-      if (decision.sourceLayer === 'mode') {
-        return this.result(true, false, 'runtime_mode', 'mode_allow_all', analysis);
-      }
-      if (decision.sourceLayer === 'default' && decision.classification === 'read') {
-        return this.result(true, false, 'config_policy', 'config_allow', analysis);
-      }
-      return null;
+    if (decision.sourceLayer === 'policy') {
+      return decision.allowed
+        ? this.result(true, false, 'managed_policy', 'managed_policy_allow', analysis)
+        : this.result(false, false, 'managed_policy', 'managed_policy_deny', analysis);
     }
-
-    if (decision.sourceLayer === 'safety') {
+    if (decision.sourceLayer === 'safety' && !decision.allowed) {
       return this.result(false, false, 'safety_check', 'safety_guardrail', analysis);
     }
-    if (decision.sourceLayer === 'mode') {
-      return this.result(false, false, 'runtime_mode', 'mode_denied', analysis);
-    }
-    if (decision.sourceLayer === 'policy') {
-      return this.result(false, false, 'managed_policy', 'managed_policy_deny', analysis);
-    }
-
     return null;
   }
 
@@ -613,6 +679,10 @@ export class PermissionManager {
       reasonCode: result.reasonCode,
       riskLevel: result.analysis.riskLevel,
       classification: result.analysis.classification,
+      riskFamily: result.reading?.family,
+      stakes: result.reading?.stakes,
+      preset: result.preset?.preset,
+      boundaryRefusedBy: result.boundary?.refusedBy,
     });
     return result;
   }

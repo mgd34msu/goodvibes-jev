@@ -27,7 +27,6 @@ import { join } from 'node:path';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import type { ConfigManager } from '../../config/manager.js';
-import type { ProviderRegistry } from '../../providers/registry.js';
 import type { PermissionPromptDecision } from '../../permissions/prompt.js';
 import { PermissionManager, createPermissionConfigReader } from '../../permissions/manager.js';
 import { UserPermissionRuleStore } from '../../permissions/user-rule-store.js';
@@ -132,7 +131,6 @@ export function createBrokeredPermissionManager(options: BrokeredPermissionManag
 
 export interface ApprovalDerivedHandlerOptions {
   readonly requestApproval: ApprovalRaiser;
-  readonly providerRegistry: ProviderRegistry;
   readonly configManager: ConfigManager;
   readonly featureFlags: FeatureFlagManager;
   /** Announce-once store backing the containment receipt. */
@@ -149,12 +147,11 @@ export interface ApprovalDerivedHandlers {
 
 export function createApprovalDerivedHandlers(options: ApprovalDerivedHandlerOptions): ApprovalDerivedHandlers {
   // Sandbox boundary escalations ride the SAME ask seam as a permission ask and
-  // an MCP elicitation, one learned pattern, not five. The optional
-  // model-judgment tier (dark flag) annotates or opt-in auto-approves the ask;
+  // an MCP elicitation, one learned pattern, not five. The Jev advisory
+  // tier (dark flag) annotates or opt-in auto-approves the ask;
   // it never converts allow→deny and never touches the frozen catastrophic block.
   const sandboxEscalationHandler = buildSandboxEscalationHandler({
     requestApproval: options.requestApproval,
-    providerRegistry: options.providerRegistry,
     configManager: options.configManager,
     featureFlags: options.featureFlags,
   });

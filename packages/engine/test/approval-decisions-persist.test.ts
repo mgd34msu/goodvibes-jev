@@ -9,6 +9,7 @@
  *   - a remember-tier decision sweeps queued covered asks
  *   - rules are listable/deletable via the permissions.rules.* settings verbs
  */
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,8 @@ import { ApprovalBroker } from '../sdk/src/platform/control-plane/approval-broke
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.js';
 import { registerPermissionRulesGatewayMethods } from '../sdk/src/platform/control-plane/routes/permission-rules.js';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
+
+useGateReadings();
 
 const WORKSPACE = '/tmp/gv-approval-workspace';
 

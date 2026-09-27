@@ -234,7 +234,6 @@ test('the approval-derived handlers ride the same ask seam the loop does', async
       seen.push(input.request.tool);
       return { approved: false };
     },
-    providerRegistry: client.providerRegistry,
     configManager,
     featureFlags: client.featureFlags,
     announcementStore: new FeatureAnnouncementStore(featureAnnouncementsPath(configManager)),

@@ -19,6 +19,9 @@ import type {
   McpServerPermissions,
 } from './types.js';
 import { logger } from '../../utils/logger.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { sideEffect } from '../../gate/batteries/side-effect.js';
+import { readingArguments } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -62,25 +65,38 @@ function riskForCapability(capability: McpCapabilityClass): import('./types.js')
   }
 }
 
-function inferCapability(toolName: string, args: Record<string, unknown>): McpCapabilityClass {
-  const lower = toolName.toLowerCase();
-  const path = typeof args['path'] === 'string' ? args['path'].toLowerCase() : '';
-  const url = typeof args['url'] === 'string' ? args['url'].toLowerCase() : '';
-
-  if (lower.includes('secret') || path.includes('.ssh') || path.includes('.env')) return 'secret_read';
-  if (lower.includes('write') || lower.includes('edit') || lower.includes('save') || lower.includes('patch')) return 'write_fs';
-  if (lower.includes('read') || lower.includes('list') || lower.includes('grep') || lower.includes('search')) return 'read_fs';
-  if (lower.includes('exec') || lower.includes('shell') || lower.includes('run') || lower.includes('command')) return 'exec';
-  if (lower.includes('spawn') || lower.includes('delegate') || lower.includes('agent')) return 'spawn_agent';
-  if (lower.includes('config') || lower.includes('settings')) return 'config_mutation';
-  if (lower.includes('git') && (lower.includes('commit') || lower.includes('push') || lower.includes('merge'))) return 'system_mutation';
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return lower.includes('post') || lower.includes('send') || lower.includes('submit')
-      ? 'network_write'
-      : 'network_read';
-  }
-  return 'generic';
+/**
+ * The capability class of an MCP tool call, read by Jev (the side-effect
+ * battery's `capability` question) from the server, tool name and arguments.
+ * It replaces the keyword match over tool names; a reading that does not
+ * reach act is treated as the riskiest plausible class the reading allowed,
+ * which the role, scope and trust-mode rules below then apply to as code.
+ */
+async function readCapability(serverName: string, toolName: string, args: Record<string, unknown>): Promise<McpCapabilityClass> {
+  const site = 'engine.mcp.capability';
+  const run = await sideEffect.run(judgmentPort(site), {
+    server: serverName,
+    tool: toolName,
+    arguments: readingArguments(args),
+  }, { site, only: ['capability'] });
+  const reading = run.readings.capability;
+  const capability = reading.outcome === 'act' ? reading.choice : riskiestCapability(reading.probabilities);
+  run.recordAction(`capability:${capability}`);
+  return capability;
 }
+
+/** Of the classes a reading gives real weight to, the one with the highest risk. */
+function riskiestCapability(probabilities: Readonly<Record<McpCapabilityClass, number>>): McpCapabilityClass {
+  const rank: Readonly<Record<import('./types.js').McpRiskLevel, number>> = { low: 0, medium: 1, high: 2, critical: 3 };
+  const plausible = (Object.keys(probabilities) as McpCapabilityClass[]).filter((capability) => probabilities[capability] >= PLAUSIBLE_CAPABILITY);
+  return plausible.reduce<McpCapabilityClass>(
+    (worst, capability) => (rank[riskForCapability(capability)] > rank[riskForCapability(worst)] ? capability : worst),
+    'generic',
+  );
+}
+
+/** The probability at which a capability class counts as plausible for an uncertain reading. */
+const PLAUSIBLE_CAPABILITY = 0.15;
 
 function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClass): boolean {
   switch (role) {
@@ -457,11 +473,11 @@ export class McpPermissionManager {
     return { allowed: true, reason: `trust level '${record.trustLevel}'`, verdict: 'allow', profileMode: record.profile.mode };
   }
 
-  evaluateToolCall(
+  async evaluateToolCall(
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
-  ): McpPermission {
+  ): Promise<McpPermission> {
     const record = this.permissions.get(serverName);
     if (!record) {
       return { allowed: false, reason: `server '${serverName}' is not registered`, verdict: 'deny' };
@@ -481,7 +497,7 @@ export class McpPermissionManager {
       };
     }
 
-    const capability = inferCapability(toolName, args);
+    const capability = await readCapability(serverName, toolName, args);
     const riskLevel = riskForCapability(capability);
     const capabilityAllowed = record.profile.allowedCapabilities.length === 0 || record.profile.allowedCapabilities.includes(capability);
     const coherentRole = roleAllowsCapability(record.profile.role, capability);

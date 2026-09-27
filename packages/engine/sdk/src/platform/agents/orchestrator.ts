@@ -123,7 +123,7 @@ type AgentOrchestratorToolDeps = {
    * permission enforcement existed.
    */
   readonly permissionManager?:
-    | Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'previewReadAccess'>
+    | Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'previewReadAccess' | 'passesBoundary'>
     | undefined;
   /**
    * Settable holder for the context_accounting tool's session source. Threaded

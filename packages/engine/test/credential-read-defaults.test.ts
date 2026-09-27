@@ -8,6 +8,7 @@
  * defaults (managed rules / a read guard), NOT the frozen exec block.
  */
 import { describe, expect, test } from 'bun:test';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import {
   CREDENTIAL_READ_PATH_PATTERNS,
   SHIPPED_CREDENTIAL_READ_RULES,
@@ -65,7 +66,9 @@ function makePolicyRuntimeState(): Pick<PolicyRuntimeState, 'recordPermissionReq
 }
 
 describe('PermissionManager: shipped credential-read gate (prompt mode)', () => {
-  test('a credential read is NOT auto-allowed: it reaches the prompt (ask)', async () => {
+  const gateLog = useGateReadings([['id_rsa', { mutates: false, secrets: true, family: 'generic', kind: 'read' }]]);
+
+  test('a credential read is NOT auto-allowed: Jev reads it (secrets, high stakes) and it reaches the prompt', async () => {
     let prompted = false;
     const manager = new PermissionManager(
       async () => { prompted = true; return { approved: false, remember: false }; },
@@ -77,6 +80,8 @@ describe('PermissionManager: shipped credential-read gate (prompt mode)', () => 
     const result = await manager.checkDetailed('read', { path: '/home/alice/.ssh/id_rsa' });
     expect(prompted).toBe(true);
     expect(result.approved).toBe(false);
+    expect(result.reading?.stakes).toBe('high');
+    expect(gateLog.requests.length).toBeGreaterThan(0);
   });
 
   test('an ordinary read is auto-allowed without a prompt', async () => {
@@ -91,6 +96,7 @@ describe('PermissionManager: shipped credential-read gate (prompt mode)', () => 
     const result = await manager.checkDetailed('read', { path: `${WORKSPACE}/src/index.ts` });
     expect(prompted).toBe(false);
     expect(result.approved).toBe(true);
+    expect(gateLog.requests).toHaveLength(0); // a known read-only tool is not read by Jev
   });
 
   test('a workspace-local .env stays auto-allowed', async () => {

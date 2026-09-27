@@ -13,7 +13,7 @@ import type { AgentRecord } from '../tools/agent/index.js';
 /** The narrow slice of PermissionManager the background gate consults. */
 export type BackgroundPermissionManager = Pick<
   PermissionManager,
-  'checkDetailed' | 'check' | 'getBackgroundAgentsMode'
+  'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'passesBoundary'
 >;
 
 export type BackgroundPermissionOutcome =
@@ -29,8 +29,10 @@ export type BackgroundPermissionOutcome =
  * friction; prompt/plan/accept-edits/custom apply as configured, with any ask
  * bubbling through the injected requestPermission handler carrying subagent
  * attribution). The escape-hatch `permissions.backgroundAgents: 'allow-all'`
- * exempts background agents entirely. When no manager is wired the call is left
- * ungated (unchanged legacy behavior for isolated contexts/tests).
+ * exempts background agents from the presets and prompts, never from the
+ * gate's deterministic boundary: a call the boundary refuses goes through the
+ * full gate, which refuses it (or, for a tainted outward call, asks the owner).
+ * When no manager is wired the call is left ungated (isolated contexts/tests).
  */
 export async function gateBackgroundToolCall(
   context: { readonly permissionManager?: BackgroundPermissionManager | undefined },
@@ -51,7 +53,7 @@ export async function gateBackgroundToolCall(
 ): Promise<BackgroundPermissionOutcome> {
   const manager = context.permissionManager;
   if (!manager) return { approved: true };
-  if (manager.getBackgroundAgentsMode() === 'allow-all') return { approved: true };
+  if (manager.getBackgroundAgentsMode() === 'allow-all' && manager.passesBoundary(toolName, args)) return { approved: true };
 
   const attribution: PermissionAttribution = {
     kind: 'background-agent',
@@ -62,7 +64,7 @@ export async function gateBackgroundToolCall(
   if (result.approved) {
     return result.modifiedArgs ? { approved: true, modifiedArgs: result.modifiedArgs } : { approved: true };
   }
-  const source = { reasonCode: result.reasonCode, sourceLayer: result.sourceLayer, userReason: result.userReason };
+  const source = { reasonCode: result.reasonCode, sourceLayer: result.sourceLayer, userReason: result.userReason, detail: result.detail };
   return {
     approved: false,
     error: buildDenialErrorMessage(toolName, source),
