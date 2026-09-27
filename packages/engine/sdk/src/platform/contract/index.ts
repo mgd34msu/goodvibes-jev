@@ -139,6 +139,7 @@ export {
   APPROVAL_REFUSED_LINE,
   ASK_AGAIN_LINE,
   NAME_AN_ATTEMPT_LINE,
+  OWNER_PICK_SITE,
   OWNER_REPLY_SITE,
   PLAN_UNRUNNABLE_LINE,
   REASON_SENTENCES,
@@ -255,6 +256,7 @@ export { STALL_ROUTE_OPTIONS, stallRoute } from './batteries/stall-route.js';
 export { GROUP_JUDGES, groupJudgeDecision } from './batteries/group-judge.js';
 export { DELIVERABLE_JUDGES, deliverableJudgeDecision } from './batteries/deliverable-judge.js';
 export { ownerReply } from './batteries/owner-reply.js';
+export { ownerPick } from './batteries/owner-pick.js';
 export { BEST_OF_N_FIT_INSTRUCTIONS, BEST_OF_N_INSTRUCTIONS, bestOfN } from './batteries/best-of-n.js';
 // Planning (section 3).
 export {

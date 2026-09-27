@@ -4,6 +4,7 @@ import { criterionShape } from './batteries/criterion-shape.js';
 import { criterionTrace } from './batteries/criterion-trace.js';
 import { deliverableJudgeDecision } from './batteries/deliverable-judge.js';
 import { groupJudgeDecision } from './batteries/group-judge.js';
+import { ownerPick } from './batteries/owner-pick.js';
 import { ownerReply } from './batteries/owner-reply.js';
 import { planCoverage } from './batteries/plan-coverage.js';
 import { requestShape } from './batteries/request-shape.js';
@@ -33,6 +34,7 @@ registry.register(stallRoute);
 registry.register(groupJudgeDecision);
 registry.register(deliverableJudgeDecision);
 registry.register(ownerReply);
+registry.register(ownerPick);
 
 // Best-of-N (section 6.2).
 registry.register(bestOfN);

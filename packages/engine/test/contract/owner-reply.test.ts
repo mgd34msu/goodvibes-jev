@@ -151,13 +151,16 @@ const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed'>
   },
   'attempts-undecided': async (reading) => {
     const amended = { value: false };
-    // The selection proposes u1#a0 at confirm: the owner decides.
+    // The selection proposes u1#a0 at confirm: the owner decides. The owner's pick reads the attempt a reply
+    // asks for: u1#a1 for "u1#a1" or "the second one", none for anything else.
     const selection = (context: AnswerContext): unknown => {
       const candidates = context.state['candidates'] as { id: string }[] | undefined;
       if (candidates === undefined) return undefined;
-      if (context.name === 'pick') return choiceAnswer(context.question, 'u1#a0', 0.75);
+      const reply = (context.state['context'] as { reply?: string }).reply;
+      const wanted = reply === undefined ? 'u1#a0' : /u1#a1|second/.test(reply) ? 'u1#a1' : 'none';
+      if (context.name === 'pick') return choiceAnswer(context.question, wanted, reply === undefined ? 0.75 : 0.97);
       const fit = /^fits_(\d+)$/.exec(context.name);
-      return fit === null ? undefined : noulAnswer(candidates[Number(fit[1])]!.id === 'u1#a0' ? 0.95 : 0.05);
+      return fit === null ? undefined : noulAnswer(candidates[Number(fit[1])]!.id === wanted ? 0.97 : 0.03);
     };
     return reach({
       plan: oneUnitPlan(1),
@@ -279,9 +282,19 @@ describe('owner replies (6.3)', () => {
     expect(outcome).toMatchObject({ reading: 'approve', outcome: 'confirm', action: 'asked-again' });
   }, 25_000);
 
-  test('an attempt the reply does not name by id is asked for by id', async () => {
+  test('an attempt asked for by position is read and taken', async () => {
     const s = await SETUPS['attempts-undecided']('amend');
     const outcome = await s.reply('Take the second one.');
+    expect(outcome.action).toBe('amended');
+    await waitFor(() => terminal(s.h, s.contractId), 'the contract to end', 15_000);
+    const done = contractOf(s.h, s.contractId);
+    expect(done.units[0]!.attemptSelection?.pickedId).toBe('u1#a1');
+    expect(done.decisions.find((decision) => decision.action === 'attempts-selected')?.reason).toContain('u1#a1 taken: the owner asked for this attempt');
+  }, 25_000);
+
+  test('a reply that asks for none of the attempts is asked which one to take', async () => {
+    const s = await SETUPS['attempts-undecided']('amend');
+    const outcome = await s.reply('Something else entirely.');
     expect(outcome.action).toBe('refused');
     const question = contractOf(s.h, s.contractId).escalations.at(-1)!.question;
     expect(question.endsWith(`\n${NAME_AN_ATTEMPT_LINE(['u1#a0', 'u1#a1'])}`)).toBe(true);

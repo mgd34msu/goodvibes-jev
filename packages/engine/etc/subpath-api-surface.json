@@ -18720,6 +18720,11 @@
       "text": "OUTPUT_CAP_CHARS = 12000"
     },
     {
+      "name": "OWNER_PICK_SITE",
+      "kind": "const",
+      "text": "OWNER_PICK_SITE = \"contract.owner-pick\""
+    },
+    {
       "name": "OWNER_REPLY_SITE",
       "kind": "const",
       "text": "OWNER_REPLY_SITE = \"contract.owner-reply\""
@@ -20030,6 +20035,11 @@
       "name": "nudgeDeliveryFor",
       "kind": "function",
       "text": "export declare function nudgeDeliveryFor(state: NudgeTargetState): NudgeDelivery | 'respawn';"
+    },
+    {
+      "name": "ownerPick",
+      "kind": "const",
+      "text": "ownerPick: import(\"@goodvibes-jev/judgment\").Selector"
     },
     {
       "name": "ownerRecordUsage",

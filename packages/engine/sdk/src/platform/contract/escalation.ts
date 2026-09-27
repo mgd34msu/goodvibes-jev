@@ -9,7 +9,7 @@
  * | Reading at act | unsettled | stalled, fix-rounds-exhausted | plan-unresolved | writing-unclear | attempts-undecided |
  * |---|---|---|---|---|---|
  * | approve | unshown readings accepted as met; the unit passes | refused: approval cannot pass unmet criteria | the plan as shown is accepted | files may change; planning starts | the proposed attempt is taken |
- * | amend | the planner rewrites the target's criteria as instructed; the target is checked again | same | the planner re-plans with the instruction | whether files may change is read from the reply; planning starts | the attempt the reply names is taken |
+ * | amend | the planner rewrites the target's criteria as instructed; the target is checked again | same | the planner re-plans with the instruction | whether files may change is read from the reply; planning starts | the attempt the reply asks for is read (`contract.owner-pick`) and taken |
  * | reject | the contract is cancelled, "stopped by the owner", failure kind owner-rejected | same | same | same | same |
  *
  * Any other reading, or one below act, asks the same question again with one
@@ -18,11 +18,13 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { OwnerReplyReading } from '../../events/contract.js';
+import { ownerPick } from './batteries/owner-pick.js';
 import { ownerReply } from './batteries/owner-reply.js';
 import { readRequestShape, REQUEST_SHAPE_SITE, saysNoAtAct, saysYesAtAct } from './batteries/request-shape.js';
 import { acceptAttempt } from './best-of-n.js';
 import { emptyJudgmentUsage, meteredPort, type DecidedCheck } from './check.js';
 import { amendTarget } from './amendment.js';
+import { headAndTail } from './evidence.js';
 import { latestSeverity } from './nudge.js';
 import { lastFencedBlock } from './plan-schema.js';
 import { acceptEscalatedPlan, planContract, withOwnerWritingDecision } from './planner.js';
@@ -41,6 +43,10 @@ import { addJudgmentUsage } from './usage.js';
 
 /** The decision site owner replies are logged under. */
 export const OWNER_REPLY_SITE = 'contract.owner-reply';
+/** The decision site the attempt an owner asks for is logged under. */
+export const OWNER_PICK_SITE = 'contract.owner-pick';
+/** Characters of each attempt's answer the owner-pick reading sees. */
+const PICK_ANSWER_CAP_CHARS = 1_000;
 
 // ── The question (built in code, reviewable here) ─────────────────────────────
 
@@ -70,15 +76,15 @@ const APPROVAL_CLAUSES: Readonly<Record<EscalationReason, string>> = {
 export const ASK_AGAIN_LINE = 'I could not tell whether that approves, changes or stops the work.';
 /** Said when approval was given for work whose criteria are not met. */
 export const APPROVAL_REFUSED_LINE = 'Approval cannot pass work whose criteria are not met: say what to change about what is required, or stop the contract.';
-/** Said when an attempt was approved or named but none could be taken from the reply. */
-export const NAME_AN_ATTEMPT_LINE = (candidateIds: readonly string[]): string => `Name the attempt to take by its id: ${candidateIds.join(', ')}.`;
+/** Said when an attempt was approved or asked for but none could be taken from the reply. */
+export const NAME_AN_ATTEMPT_LINE = (candidateIds: readonly string[]): string => `Say which attempt to take: ${candidateIds.join(', ')}.`;
 /** Said when an approved plan cannot run at all. */
 export const PLAN_UNRUNNABLE_LINE = (problems: string): string => `The plan cannot run as it stands (${problems}); change what is required, or stop the contract.`;
 /** Said when the owner's change could not be made into criteria. */
 export const AMENDMENT_FAILED_LINE = (problems: string): string => `That change could not be applied (${problems}); say it another way, or stop the contract.`;
 
 /** Lines the runner adds under a question it asks again; they are dropped before another is added. */
-const ADDED_LINE_PREFIXES = [ASK_AGAIN_LINE, APPROVAL_REFUSED_LINE, 'Name the attempt to take', 'The plan cannot run as it stands', 'That change could not be applied'];
+const ADDED_LINE_PREFIXES = [ASK_AGAIN_LINE, APPROVAL_REFUSED_LINE, 'Say which attempt to take', 'The plan cannot run as it stands', 'That change could not be applied'];
 
 export type OwnerReplyAction = 'approved' | 'amended' | 'stopped' | 'asked-again' | 'refused';
 
@@ -358,10 +364,24 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     return { action };
   }
 
-  /** The one candidate a reply names by id; none when it names none or several. */
-  function namedAttempt(run: ContractRun, escalation: Escalation, text: string): string | undefined {
-    const named = (run.unit(escalation.targetId)?.attemptSelection?.candidateIds ?? []).filter((id) => text.includes(id));
-    return named.length === 1 ? named[0] : undefined;
+  /** The attempt a reply asks for (by id, by position, or by what it did), read with `contract.owner-pick`; none below act. */
+  async function askedAttempt(run: ContractRun, escalation: Escalation, text: string): Promise<{ readonly id: string | undefined; readonly decisionId: string | undefined }> {
+    const unit = run.unit(escalation.targetId);
+    const selection = unit?.attemptSelection;
+    if (unit === undefined || selection === undefined) return { id: undefined, decisionId: undefined };
+    const candidates = selection.candidateIds.map((id, index) => ({
+      id,
+      content: { position: index + 1, answer: headAndTail(unit.attemptUnits?.find((attempt) => attempt.id === id)?.answer ?? '(no answer recorded)', PICK_ANSWER_CAP_CHARS) },
+    }));
+    const usage = emptyJudgmentUsage();
+    try {
+      const read = await ownerPick.select(meteredPort(judgmentPort(OWNER_PICK_SITE), usage), { reply: text, question: escalation.question }, candidates, { site: OWNER_PICK_SITE, signal: run.abort.signal });
+      const taken = read.outcome === 'act' ? read.chosen : undefined;
+      read.recordAction(taken === undefined ? 'no attempt taken: asked again' : `took ${taken}`);
+      return { id: taken, decisionId: read.decisionId };
+    } finally {
+      addJudgmentUsage(run.contract.judgmentUsage, usage);
+    }
   }
 
   async function approve(run: ContractRun, escalation: Escalation, decisionId: string | undefined): Promise<Handled> {
@@ -391,8 +411,10 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
         return { action: 'amended' };
       case 'writing-unclear':
         return amendWriting(run, escalation, text);
-      case 'attempts-undecided':
-        return takeAttempt(run, escalation, namedAttempt(run, escalation, text), 'the owner named this attempt', decisionId, 'amended');
+      case 'attempts-undecided': {
+        const asked = await askedAttempt(run, escalation, text);
+        return takeAttempt(run, escalation, asked.id, 'the owner asked for this attempt', asked.decisionId ?? decisionId, 'amended');
+      }
       case 'unsettled':
       case 'stalled':
       case 'fix-rounds-exhausted':
