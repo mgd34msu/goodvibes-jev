@@ -59,6 +59,9 @@ export function providerFactsState(facts: ProviderFacts): { provider: Record<str
   };
 }
 
+/** The facts an access reading depends on and the battery version that read them. */
+const accessFingerprint = (facts: ProviderFacts): string => `v${catalogProviderAccess.version}:${JSON.stringify(providerFactsState(facts))}`;
+
 interface StoredAccess {
   readonly fingerprint: string;
   readonly access: ProviderAccess | null;
@@ -75,12 +78,12 @@ export class ProviderAccessReadings {
 
   /** Reads every provider whose facts have not been read; returns each provider's access (undefined when unsettled). */
   async readAll(providers: readonly ProviderFacts[], site = 'providers.model-catalog.provider-access'): Promise<ReadonlyMap<string, ProviderAccess | undefined>> {
-    const pending = providers.filter((facts) => this.#entries.get(facts.id)?.fingerprint !== JSON.stringify(providerFactsState(facts)));
+    const pending = providers.filter((facts) => this.#entries.get(facts.id)?.fingerprint !== accessFingerprint(facts));
     await mapLimit(pending, ACCESS_READ_CONCURRENCY, async (facts) => {
       const run = await catalogProviderAccess.run(judgmentPort(site), providerFactsState(facts), { site });
       const access = providerAccessFrom(run.readings);
       run.recordAction(`access:${access ?? 'unsettled'}`);
-      this.#entries.set(facts.id, { fingerprint: JSON.stringify(providerFactsState(facts)), access: access ?? null });
+      this.#entries.set(facts.id, { fingerprint: accessFingerprint(facts), access: access ?? null });
     });
     if (pending.length > 0) this.#save();
     return new Map(providers.map((facts) => [facts.id, this.#entries.get(facts.id)?.access ?? undefined]));

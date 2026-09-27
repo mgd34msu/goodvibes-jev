@@ -2,6 +2,9 @@
  * Unit tests for buildFallbackModelDefinition / ensureConfiguredModelIsRoutable
  *, the pre-catalog fallback registration for the configured model.
  */
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetProviderReadings, readReasoningFamily } from '../sdk/src/platform/routing/provider-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   buildFallbackModelDefinition,
@@ -65,18 +68,25 @@ describe('buildFallbackModelDefinition', () => {
     expect(definition.selectable).toBe(true);
   });
 
-  test('a reasoning-family provider (anthropic/openai/gemini/google) gets a reasoningEffort spec and marks reasoning+multimodal capable', () => {
-    const anthropic = buildFallbackModelDefinition('anthropic', 'claude-x');
-    expect(anthropic.capabilities.reasoning).toBe(true);
-    expect(anthropic.capabilities.multimodal).toBe(true);
-    expect(anthropic.reasoningEffort).toBeDefined();
-
-    const openai = buildFallbackModelDefinition('openai', 'gpt-x');
-    expect(openai.reasoningEffort).toBeDefined();
+  test('a model whose id reads into a documented reasoning family gets that spec and is marked reasoning', async () => {
+    forgetProviderReadings();
+    const previous = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'claude-5', 0.95)).port);
+    try {
+      await readReasoningFamily('claude-x', 'test');
+      const definition = buildFallbackModelDefinition('anthropic', 'claude-x');
+      expect(definition.capabilities.reasoning).toBe(true);
+      expect(definition.reasoningEffort?.source).toBe('family');
+      // Image input is never claimed from a provider's name.
+      expect(definition.capabilities.multimodal).toBe(false);
+      expect(definition.tier).toBeUndefined();
+    } finally {
+      installJudgmentPort(previous);
+      forgetProviderReadings();
+    }
   });
 
-  test('a non-reasoning-family provider gets no reasoningEffort spec and is marked non-reasoning', () => {
-    const definition = buildFallbackModelDefinition('groq', 'llama-x');
+  test('a model whose family has not been read claims no reasoning, levels or image input', () => {
+    const definition = buildFallbackModelDefinition('anthropic', 'unread-model');
     expect(definition.capabilities.reasoning).toBe(false);
     expect(definition.capabilities.multimodal).toBe(false);
     expect(definition.reasoningEffort).toBeUndefined();

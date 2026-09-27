@@ -24,7 +24,7 @@
  */
 import type { ConfigManager } from '../config/manager.js';
 import { inferFallbackContextWindow } from './context-window-fallback.js';
-import { resolveReasoningEffortSpec } from './reasoning-effort-families.js';
+import { findFamilyReasoningEffortSpec } from './reasoning-effort-families.js';
 import type { ModelDefinition } from './registry-types.js';
 import type { ProviderRegistry } from './registry.js';
 
@@ -35,11 +35,11 @@ import type { ProviderRegistry } from './registry.js';
  * `registryKey` is honestly understood to supersede it, never silently merged.
  */
 export function buildFallbackModelDefinition(provider: string, modelId: string): ModelDefinition {
-  const providerLower = provider.toLowerCase();
-  const isReasoningProvider = providerLower.includes('openai')
-    || providerLower.includes('anthropic')
-    || providerLower.includes('gemini')
-    || providerLower.includes('google');
+  // Nothing about this model is published yet, so nothing is claimed from the
+  // provider's name: reasoning and its levels come from the model id's
+  // documented family once routing.reasoning-family has read it, image input
+  // and the capability tier stay unclaimed until the catalog lists the model.
+  const familySpec = findFamilyReasoningEffortSpec(modelId);
 
   return {
     id: modelId,
@@ -50,22 +50,13 @@ export function buildFallbackModelDefinition(provider: string, modelId: string):
     capabilities: {
       toolCalling: true,
       codeEditing: true,
-      reasoning: isReasoningProvider,
-      multimodal: isReasoningProvider,
+      reasoning: familySpec !== undefined && familySpec.kind !== 'unavailable',
+      multimodal: false,
     },
     contextWindow: inferFallbackContextWindow(provider, modelId),
     contextWindowProvenance: 'fallback',
     selectable: true,
-    tier: 'standard',
-    // Which levels this model accepts is a property of the model, not of the
-    // provider it sits behind: a hardcoded fixed level set would offer levels
-    // some models reject and hide levels others accept. The family-aware
-    // resolver answers from the curated family table when the catalog has
-    // not loaded yet, and otherwise returns its own labelled best guess,
-    // which callers treat as "send nothing" rather than as verified levels.
-    ...(isReasoningProvider
-      ? { reasoningEffort: resolveReasoningEffortSpec({ modelId }) }
-      : {}),
+    ...(familySpec ? { reasoningEffort: familySpec } : {}),
   };
 }
 

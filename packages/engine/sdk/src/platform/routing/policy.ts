@@ -37,6 +37,13 @@ export const TIER_FLOOR_FOR_UNSURE_NON_ENGLISH: RouteTier = 'standard';
  */
 export const TIER_READ_SHORTLIST = 24;
 
+/**
+ * How many shortlists the planner reads, one after another, while a tier's
+ * pool is smaller than CHOICE_SHORTLIST. Bounds a first plan over a large
+ * catalog to TIER_READ_SHORTLIST x TIER_READ_ROUNDS readings per tier.
+ */
+export const TIER_READ_ROUNDS = 3;
+
 /** How many same-tier candidates the final model choice weighs at once. */
 export const CHOICE_SHORTLIST = 8;
 

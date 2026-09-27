@@ -80,9 +80,9 @@ interface TierFile {
   readonly entries: Record<string, StoredTier>;
 }
 
-/** The facts a tier depends on; a change to any of them means a new reading. */
+/** The facts a tier depends on and the battery version that read them; a change to either means a new reading. */
 function fingerprint(facts: ModelFacts): string {
-  return JSON.stringify(modelFactsState({ ...facts, registryKey: '' }).model);
+  return `v${modelTier.version}:${JSON.stringify(modelFactsState({ ...facts, registryKey: '' }).model)}`;
 }
 
 /**

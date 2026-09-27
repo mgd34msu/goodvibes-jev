@@ -368,9 +368,6 @@ export async function fetchGeminiModelIds(apiKey: string): Promise<string[]> {
  * provider's own live listing (e.g. a model released today).
  */
 export function buildProviderNativeModelDefinition(providerId: string, modelId: string): ModelDefinition {
-  const lowerProvider = providerId.toLowerCase();
-  const isOpenAI = lowerProvider.includes('openai');
-  const isGemini = lowerProvider.includes('gemini');
   return {
     id: modelId,
     provider: providerId,
@@ -381,14 +378,18 @@ export function buildProviderNativeModelDefinition(providerId: string, modelId: 
       toolCalling: true,
       codeEditing: true,
       reasoning: true,
-      multimodal: isOpenAI || isGemini,
+      // Image input is not published for a model the catalog does not list,
+      // and a provider's name says nothing about one model's input.
+      multimodal: false,
     },
     contextWindow: inferFallbackContextWindow(providerId, modelId),
     contextWindowProvenance: 'fallback',
     selectable: true,
     // Gateways mark no-cost models with a 'free' suffix (e.g. openrouter's
-    // ':free' variants and its 'openrouter/free' router id).
-    tier: /[:/-]free$/i.test(modelId) ? 'free' : 'standard',
+    // ':free' variants and its 'openrouter/free' router id), a fixed id
+    // convention. Any other model carries no capability label until
+    // routing.model-tier reads it.
+    ...(/[:/-]free$/i.test(modelId) ? { tier: 'free' as const } : {}),
     // Gateways expose whatever upstream models they proxy, so the levels come
     // from the curated family table keyed on the model id rather than a fixed
     // list that was wrong for most of them.

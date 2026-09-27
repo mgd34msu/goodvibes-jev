@@ -139,7 +139,7 @@ export class ModelIdentityResolver {
 
   /** The memo key: the query and the exact shortlist it was asked over, so a changed list is asked again. */
   #keyFor(query: IdentityQuery, shortlist: readonly IdentityCandidate[]): string {
-    return [query.provider ?? '', query.id, query.name ?? '', query.family ?? '', query.otherProviderThan ?? '', ...shortlist.map((candidate) => candidate.key)].join('\u0000');
+    return [`v${modelIdentity.version}`, query.provider ?? '', query.id, query.name ?? '', query.family ?? '', query.otherProviderThan ?? '', ...shortlist.map((candidate) => candidate.key)].join('\u0000');
   }
 
   /** The remembered answer: a candidate key, null for "none of them", undefined when not read yet. */

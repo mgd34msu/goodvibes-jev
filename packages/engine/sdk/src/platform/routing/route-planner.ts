@@ -21,8 +21,8 @@ import type { ModelDefinition } from '../providers/registry-types.js';
 import type { ResolvedModelPricing } from '../providers/model-pricing.js';
 import type { ProviderStatus } from '../runtime/store/domains/provider-health.js';
 import { modelChoice } from './batteries/model.js';
-import { modelFactsState, type ModelFacts, type ModelTierStore, type TierRecord } from './model-tiers.js';
-import { CHOICE_SHORTLIST, FALLBACK_ROUTES, TIER_READ_SHORTLIST } from './policy.js';
+import { modelFactsState, type ModelFacts, type ModelTierStore } from './model-tiers.js';
+import { CHOICE_SHORTLIST, FALLBACK_ROUTES, TIER_READ_ROUNDS, TIER_READ_SHORTLIST } from './policy.js';
 import { readRequest, type RequestReading, type RoutingRequest } from './request-reading.js';
 import { tierSearchOrder, type RouteTier } from './tiers.js';
 
@@ -167,15 +167,21 @@ interface TierPool {
   readonly members: readonly ModelFacts[];
 }
 
-/** The models of one tier: every candidate already read into it, then a read shortlist, ordered by the tier's facts. */
+/**
+ * The models of one tier: candidates ordered by the tier's published facts,
+ * read a shortlist at a time (remembered per model) until the tier holds
+ * enough candidates to choose among or the read rounds run out.
+ */
 async function poolFor(deps: RoutePlannerDeps, candidates: readonly ModelFacts[], tier: RouteTier, request: RoutePlanRequest): Promise<TierPool> {
-  const order = shortlistOrder(tier);
-  const sorted = [...candidates].sort(order);
-  const shortlist = sorted.slice(0, TIER_READ_SHORTLIST);
-  const read = await deps.tiers.readMany(shortlist, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}) });
-  const tierOf = (facts: ModelFacts): TierRecord | undefined => read.get(facts.registryKey) ?? deps.tiers.known(facts);
-  const members = sorted.filter((facts) => tierOf(facts)?.tier === tier);
-  return { tier, members };
+  const sorted = [...candidates].sort(shortlistOrder(tier));
+  const inTier = (facts: ModelFacts): boolean => deps.tiers.known(facts)?.tier === tier;
+  for (let round = 0; round < TIER_READ_ROUNDS; round++) {
+    if (sorted.filter(inTier).length >= CHOICE_SHORTLIST) break;
+    const unread = sorted.filter((facts) => deps.tiers.known(facts) === undefined).slice(0, TIER_READ_SHORTLIST);
+    if (unread.length === 0) break;
+    await deps.tiers.readMany(unread, { site: 'routing.route-planner.model-tier', ...(request.signal ? { signal: request.signal } : {}) });
+  }
+  return { tier, members: sorted.filter(inTier) };
 }
 
 function describe(reading: RequestReading, pool: TierPool, pick: Selection, chosen: string, eligible: number): string {
@@ -209,6 +215,12 @@ export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
           site: 'routing.route-planner.choice',
           ...signalOption,
         });
+        // The pick stands when its own fit question reads yes, whatever the
+        // pick's confidence: several same-tier models often fit equally, which
+        // spreads the choice's probability without making any of them wrong,
+        // and the Jev guidance for choosing the best option is to take the most
+        // probable one rather than to threshold it. The reason records the
+        // pick's confidence and outcome for review.
         if (pick.chosen === undefined || pick.chosen === NONE) {
           pick.recordAction(`none-fit:${tier}`);
           continue;

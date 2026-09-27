@@ -31,23 +31,25 @@ const model = (facts: FixtureModel): { model: FixtureModel } => ({ model: facts 
  * facts, composed into a tier in code (modelTierFrom in model-tiers.ts): a
  * frontier flagship is premium, a small or special-purpose model is economy,
  * and a model that reads as neither is standard. State: `{ model }`
- * (modelFactsState). Medium bands: the tier decides which work a model is
- * offered for, and a wrong tier costs quality or money on every route that
- * reads it until the facts change.
+ * (modelFactsState). Low bands: the tier only decides which pool a model is
+ * offered from; routing.model-choice then checks each candidate is strong
+ * enough for the work, and the work itself is checked, so a wrong tier costs
+ * a reroute, not a wrong result. Models newer than the reader's knowledge
+ * read in the 0.6 to 0.75 range, which the low bands act on.
  */
 export const modelTier = defineBattery({
   name: 'routing.model-tier',
-  version: 2,
+  version: 3,
   description: 'Whether a catalog model is a frontier flagship, and whether it is a small or special-purpose model, from its published facts.',
   accuracyFloor: 0.9,
   items: {
     frontier: yesNo(
       'Is `model` a frontier flagship: among the most capable reasoning and coding models available today, the top tier of a leading model family and priced like it, rather than a smaller, cheaper, mid-range or previous-generation model? Being large or open-weight alone does not make a model frontier. Judge from its name, family, price per million tokens and benchmark score (0 to 1, higher is stronger) where given.',
-      MEDIUM.yesNo,
+      LOW.yesNo,
     ),
     small: yesNo(
       'Is `model` a small or lightweight model (roughly 15 billion parameters or fewer, or a variant its name marks as mini, nano, lite, tiny or instant), or a special-purpose model such as an embedding, speech, image or moderation model? A mid-range general model sold as fast or balanced is not small.',
-      MEDIUM.yesNo,
+      LOW.yesNo,
     ),
   },
   fixtures: [
@@ -182,11 +184,11 @@ export const modelChoice = defineSelector({
  */
 export const modelIdentity = defineSelector({
   name: 'routing.model-identity',
-  version: 1,
+  version: 2,
   description: 'Which catalog entry names the same model as a queried model id, or none.',
   accuracyFloor: 0.9,
   instructions: 'Which candidate is the same model as `context.model`: the same weights, possibly served under a different id, a provider or vendor prefix, a date or version snapshot suffix, a "latest" alias or a region decoration? A different size, generation, or variant (mini, lite, flash, pro, turbo, instruct versus thinking) is not the same model.',
-  fitInstructions: 'Is this candidate the same underlying model as `context.model`, and not a different size, generation or variant?',
+  fitInstructions: 'Is this candidate the same underlying model as `context.model`? Ignore provider or vendor prefixes, date or snapshot suffixes, "latest" aliases, region decorations and punctuation (4-5 and 4.5 are the same version); answer no only for a different size, generation or variant.',
   band: MEDIUM.confidence,
   fitBand: MEDIUM.yesNo,
   fixtures: [
