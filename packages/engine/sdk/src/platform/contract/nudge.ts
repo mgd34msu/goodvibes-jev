@@ -41,7 +41,7 @@ export const QUALITY_PROBLEM_SENTENCES: Readonly<Record<QualityItem, string>> = 
 
 /** One fixed sentence per quality item whose reading did not settle: what evidence to show. */
 export const QUALITY_EVIDENCE_SENTENCES: Readonly<Record<QualityItem, string>> = {
-  placeholder: 'Show that no placeholder, stub or TODO code remains where working behaviour is required.',
+  placeholder: 'Show that no placeholder, stub or to-do marker remains where working behaviour is required.',
   tests_weakened: 'Show that no existing test or check was deleted, skipped or loosened.',
   breaks_existing: 'Show that existing behaviour outside this unit still works.',
   out_of_scope: "Show that every changed file serves this unit's goal.",

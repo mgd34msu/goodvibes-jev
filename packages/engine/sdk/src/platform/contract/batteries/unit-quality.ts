@@ -41,10 +41,10 @@ export const unitQuality = defineBattery({
   accuracyFloor: 0.9,
   items: {
     placeholder: yesNo(
-      'Does the change in `diff` leave placeholder, stub, mock or TODO code where `goal` and `brief` require working behaviour?',
+      'Does the change in `diff` leave placeholder, stub, mock or to-do marker code where `goal` and `brief` require working behaviour?',
       UNIT_QUALITY_BAND,
       {
-        true: 'Some code the goal needs to work is a placeholder, stub, mock, hard-coded fake or TODO',
+        true: 'Some code the goal needs to work is a placeholder, stub, mock, hard-coded fake or to-do marker',
         false: 'The code the goal needs is real, working code',
       },
     ),
@@ -103,7 +103,7 @@ export const unitQuality = defineBattery({
       expect: { placeholder: 'no', tests_weakened: 'no', breaks_existing: 'no', out_of_scope: 'no', hidden_failure: 'no', unsupported_claims: 'no' },
     },
     {
-      name: 'the option parses but the list is a TODO',
+      name: 'the option parses but the list is left unfinished',
       state: {
         goal: GOAL,
         brief: BRIEF,
@@ -111,7 +111,7 @@ export const unitQuality = defineBattery({
         diff: [
           '+++ b/src/commands/orders-list.ts',
           "+  .option('--limit <n>', 'print at most n orders')",
-          '+  // TODO: apply options.limit to the list',
+          '+  // not done yet: apply options.limit to the list',
           '   for (const order of orders) print(order);',
         ].join('\n'),
         commands: [],
