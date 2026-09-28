@@ -20,3 +20,12 @@ The vibecheck-jev ledger does not let a completed work record change, so the tas
 | R.6 | `7ee1bcc` | `61fec2c` | Read the attempt an owner asks for with contract.owner-pick |
 | R.7 | `cdde285` | `5af9474` | Let the route selector pick each best-of-N attempt's model |
 | R.8 | `24a119a` | `a024dc2` | Move every consumer to the contract events and show the contract tree in the fleet (contract runner R.8) |
+
+## Recorded hashes that never named a commit
+
+These were written into the ledger by expanding a short hash by hand instead of resolving it with `git rev-parse`. The commit on main is the one the short hash names.
+
+| Task | Recorded hash | Commit on main | Subject |
+|---|---|---|---|
+| J.2 | `040b9b2d0e1e` | `040b9b20994c` | Add the judgment port and the System One transport |
+| R.9 | `a2937977a5e8` | `a293797309d0` | Resume contracts after a restart and carry contract trees in sessions (contract runner R.9) |
