@@ -1,7 +1,7 @@
 /**
  * Why a judgment call failed. Every decision site treats a failure as a
- * failure: there is no heuristic path to fall back to. Outages are handled
- * upstream by the provider failover chain.
+ * failure: there is no heuristic path to fall back to. What a site does when
+ * Jev cannot answer is not yet decided; the error reaches the caller.
  */
 export type JudgmentErrorKind =
   /** The request broke a documented limit and was never sent. */
