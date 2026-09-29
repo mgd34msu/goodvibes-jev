@@ -20,7 +20,8 @@
  * SSRF protections detect (always blocked):
  *   - Private IPv4 ranges (RFC 1918) and link-local metadata (169.254.x.x)
  *   - IPv6 link-local and unique-local ranges
- *   - Cloud metadata endpoints (metadata.google.internal, etc.)
+ *   - The link-local metadata address 169.254.169.254 written as the host;
+ *     a name is checked by the addresses it resolves to (pinned-request.ts)
  *   - DNS rebinding patterns (encoded or obfuscated IP addresses)
  */
 
@@ -100,17 +101,6 @@ const PRIVATE_IPV6_PATTERNS: RegExp[] = [
   /^f[cd][0-9a-f]{2}:/i,
 ];
 
-/** Cloud metadata endpoints. */
-const METADATA_HOSTS: ReadonlySet<string> = new Set([
-  // AWS EC2 Instance Metadata Service
-  'metadata.aws.internal',
-  // GCP metadata server (hostname)
-  'metadata.google.internal',
-  // Azure IMDS hostname
-  'metadata.azure.internal',
-  // Alibaba Cloud ECS metadata
-  'metadata.aliyuncs.internal',
-]);
 
 /** Known localhost aliases. */
 const LOCALHOST_ALIASES: ReadonlySet<string> = new Set([
@@ -182,20 +172,24 @@ function isEncodedIp(host: string): boolean {
 }
 
 /**
- * Returns true if the host matches a cloud metadata endpoint.
+ * Returns true if the host is written as an address in 169.254.0.0/16, the
+ * link-local range that holds the cloud metadata endpoint 169.254.169.254.
+ * A metadata host name is caught by the address it resolves to
+ * (classifyResolvedAddress, checked before every request by
+ * pinned-request.ts), so no list of provider host names is kept.
  */
 function isMetadataHost(host: string): boolean {
-  // Exact match
-  if (METADATA_HOSTS.has(host.toLowerCase())) return true;
-  // 169.254.x.x is the link-local metadata IP (AWS/GCP use 169.254.169.254)
-  return /^169\.254\./.test(host);
+  const octets = host.split('.');
+  return octets.length === 4 && octets[0] === '169' && octets[1] === '254';
 }
 
 /**
  * Returns true if the host is a localhost alias.
  */
 function isLocalhostAlias(host: string): boolean {
-  return LOCALHOST_ALIASES.has(host.toLowerCase());
+  const lower = host.toLowerCase().replace(/\.$/, '');
+  // RFC 6761 reserves `localhost` and every name under `.localhost` for loopback.
+  return LOCALHOST_ALIASES.has(lower) || lower.endsWith('.localhost');
 }
 
 /**
@@ -324,6 +318,57 @@ export function classifyHostTrustTier(
     reason: `host "${host}" is not in any trust list`,
     isSsrf: false,
   };
+}
+
+/** What a resolved address is, when it is one a fetch must not reach by a name. */
+export type ResolvedAddressRange = 'loopback' | 'private' | 'link-local' | 'metadata' | 'unspecified' | 'unique-local';
+
+const ipv4Octets = (address: string): number[] | null => {
+  const parts = address.split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : NaN));
+  return octets.every((octet) => octet >= 0 && octet <= 255) ? octets : null;
+};
+
+/** The IPv4 address an IPv4-mapped IPv6 address (::ffff:a.b.c.d or ::ffff:hhhh:hhhh) carries. */
+function mappedIpv4(address: string): string | null {
+  const lower = address.toLowerCase();
+  if (!lower.startsWith('::ffff:')) return null;
+  const rest = lower.slice(7);
+  if (ipv4Octets(rest)) return rest;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
+  if (!hex) return null;
+  const high = parseInt(hex[1]!, 16);
+  const low = parseInt(hex[2]!, 16);
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+}
+
+/**
+ * The declared range a resolved address falls in, or null for an address a
+ * fetch may reach. The ranges are the address assignments themselves: IPv4
+ * 0.0.0.0/8 (this host), 127.0.0.0/8 (loopback), 10.0.0.0/8, 172.16.0.0/12 and
+ * 192.168.0.0/16 (private), 169.254.0.0/16 (link-local, where 169.254.169.254
+ * is the cloud metadata endpoint); IPv6 :: and ::1, fe80::/10 (link-local),
+ * fc00::/7 (unique-local), and IPv4-mapped addresses by the IPv4 they carry.
+ * Comparing an address with these ranges is arithmetic on the address.
+ */
+export function classifyResolvedAddress(address: string): ResolvedAddressRange | null {
+  const v4 = ipv4Octets(address) ?? (() => { const mapped = mappedIpv4(address); return mapped ? ipv4Octets(mapped) : null; })();
+  if (v4) {
+    const [a, b, c, d] = v4 as [number, number, number, number];
+    if (a === 127) return 'loopback';
+    if (a === 0) return 'unspecified';
+    if (a === 169 && b === 254) return c === 169 && d === 254 ? 'metadata' : 'link-local';
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'private';
+    return null;
+  }
+  const lower = address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]!;
+  if (lower === '::' ) return 'unspecified';
+  if (lower === '::1') return 'loopback';
+  const first = parseInt(lower.split(':')[0] || '0', 16);
+  if ((first & 0xffc0) === 0xfe80) return 'link-local';
+  if ((first & 0xfe00) === 0xfc00) return 'unique-local';
+  return null;
 }
 
 /**

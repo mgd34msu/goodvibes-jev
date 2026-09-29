@@ -312,6 +312,12 @@ function makeAutomationRun(overrides: Partial<AutomationRun> = {}): AutomationRu
   };
 }
 
+// The fetch tool resolves each host and pins the request to a checked address;
+// these tests answer example.test with a public documentation address
+// (203.0.113.10, TEST-NET-3), so the stubbed fetch sees that address in the URL.
+const PUBLIC_ANSWER = '203.0.113.10';
+const publicResolver = async () => [{ address: PUBLIC_ANSWER, family: 4 }];
+
 describe('feature flag safe-default gates', () => {
   useGateReadings([['rm -rf /', { mutates: true, catastrophic: true }]]);
 
@@ -383,7 +389,7 @@ describe('feature flag safe-default gates', () => {
     // Anything aimed elsewhere gets a 404 rather than this test's redirect, so
     // a stray caller fails immediately instead of being pointed at a link-local
     // metadata address.
-    const TARGET = 'https://example.test/redirect';
+    const TARGET = `https://${PUBLIC_ANSWER}/redirect`;
     let calls = 0;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -398,9 +404,9 @@ describe('feature flag safe-default gates', () => {
     try {
       const output = await executeFetchInput(
         {
-          urls: [{ url: TARGET }],
+          urls: [{ url: 'https://example.test/redirect' }],
         },
-        { featureFlags: flags(['fetch-sanitization']) },
+        { featureFlags: flags(['fetch-sanitization']), resolveHost: publicResolver },
       );
 
       const result = output.results?.[0];
@@ -426,7 +432,7 @@ describe('feature flag safe-default gates', () => {
           urls: [{ url: 'https://example.test/page' }],
           sanitize_mode: 'none',
         },
-        { featureFlags: flags(['fetch-sanitization']) },
+        { featureFlags: flags(['fetch-sanitization']), resolveHost: publicResolver },
       );
 
       const result = output.results?.[0];
@@ -457,7 +463,7 @@ describe('feature flag safe-default gates', () => {
           urls: [{ url: 'https://example.test/page' }],
           sanitize_mode: 'none',
         },
-        { featureFlags: flags([]) },
+        { featureFlags: flags([]), resolveHost: publicResolver },
       );
 
       const result = output.results?.[0];

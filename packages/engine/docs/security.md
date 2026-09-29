@@ -276,7 +276,7 @@ The remote fetch proxy has explicit SSRF protection via `resolvePrivateHostFetch
 
 If either check fails, the request is rejected with HTTP 403. Do not enable `allowPrivateHosts` unless your deployment specifically requires internal URL resolution.
 
-The `fetch` tool sanitizes responses by default (`fetch.sanitizeMode`, default `safe-text`). It classifies initial hosts and every redirect target before reading the response, blocks private/link-local/cloud-metadata targets absolutely, gates localhost dev servers behind a one-tap per-project approval (`fetch.allowLocalhost`), applies unknown-host safe-text sanitization, and stops reading once `max_content_length` is reached. Setting `fetch.sanitizeMode` to `none` skips content sanitization only. Host blocking is unaffected.
+The `fetch` tool sanitizes responses by default (`fetch.sanitizeMode`, default `safe-text`). It classifies initial hosts and every redirect target before reading the response, blocks private/link-local/cloud-metadata targets absolutely (by the host as written and, before every hop, by every A and AAAA answer the host resolves to; the request is then sent to the checked address with the written name kept for the Host header, TLS SNI and the certificate check, so a second lookup cannot rebind it, and a name that does not resolve is refused), gates localhost dev servers behind a one-tap per-project approval (`fetch.allowLocalhost`), applies unknown-host safe-text sanitization, and stops reading once `max_content_length` is reached. Setting `fetch.sanitizeMode` to `none` skips content sanitization only. Host blocking is unaffected.
 
 ---
 

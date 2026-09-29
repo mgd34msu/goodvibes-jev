@@ -14,9 +14,10 @@ import {
 } from './trust-tiers.js';
 import { applyExtract, sniffContentType } from './extract.js';
 import { headersForOtherOrigin } from './redirect-headers.js';
+import { pinnedFetch, resolveCheckedAddresses, type HostResolver } from './pinned-request.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { instrumentedFetch, createTimeoutController } from '../../utils/fetch-with-timeout.js';
+import { createTimeoutController } from '../../utils/fetch-with-timeout.js';
 import { recordFetchedPagesAsUntrusted } from './untrusted-ingest.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import { mapWithConcurrency, sleep } from '../../utils/concurrency.js';
@@ -47,6 +48,13 @@ export interface FetchRuntimeDeps {
    * unchanged from before this field existed.
    */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Resolves a host to every A and AAAA answer before each request hop; each
+   * answer is checked against the refused address ranges and the request is
+   * pinned to the checked address (pinned-request.ts). Absent: the system
+   * resolver.
+   */
+  readonly resolveHost?: HostResolver | undefined;
   /**
    * Live read of the per-project localhost approval (fetch.allowLocalhost).
    * When true, fetches to loopback dev servers proceed without an ask.
@@ -284,6 +292,7 @@ async function fetchOneRaw(
   localhostApproved: boolean,
   credentialHeaders: ReadonlySet<string>,
   externalSignal?: AbortSignal | undefined,
+  resolveHost?: HostResolver | undefined,
 ): Promise<Response> {
   const { signal: timeoutSignal, dispose } = createTimeoutController(urlInput.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   const signal = externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal;
@@ -299,6 +308,7 @@ async function fetchOneRaw(
       trustTierConfig,
       localhostApproved,
       credentialHeaders,
+      resolveHost,
     });
   } finally {
     dispose();
@@ -314,6 +324,7 @@ async function fetchWithValidatedRedirects(input: {
   trustTierConfig: TrustTierConfig;
   localhostApproved: boolean;
   credentialHeaders: ReadonlySet<string>;
+  resolveHost?: HostResolver | undefined;
 }): Promise<Response> {
   let currentUrl = input.url;
   let currentMethod = input.method;
@@ -321,13 +332,15 @@ async function fetchWithValidatedRedirects(input: {
   let currentHeaders = { ...input.headers };
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
-    const response = await instrumentedFetch(currentUrl, {
+    // Every hop: resolve the host, check each answer, send to the checked address.
+    const addresses = await resolveCheckedAddresses(currentUrl, { trustTierConfig: input.trustTierConfig, localhostApproved: input.localhostApproved, resolveHost: input.resolveHost });
+    const response = await pinnedFetch(currentUrl, {
       method: currentMethod,
       ...(Object.keys(currentHeaders).length > 0 ? { headers: currentHeaders as HeadersInit } : {}),
       ...(currentBody !== undefined ? { body: currentBody } : {}),
       signal: input.signal,
       redirect: 'manual',
-    } as RequestInit);
+    } as RequestInit, addresses);
 
     if (!isRedirectStatus(response.status)) return response;
 
@@ -536,6 +549,7 @@ async function fetchOne(
       localhostApproved,
       credentialHeaders,
       deps.signal,
+      deps.resolveHost,
     );
 
     const retryOnAuth = urlInput.retry_on_auth ?? (urlInput.service !== undefined);
@@ -555,6 +569,7 @@ async function fetchOne(
           localhostApproved,
           retryCredentialHeaders,
           deps.signal,
+          deps.resolveHost,
         );
       }
     }

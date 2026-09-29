@@ -190,7 +190,7 @@ describe('trust-tier classification of loopback vs private targets', () => {
   });
 
   test('private, metadata, and obfuscated forms stay blocked', () => {
-    for (const host of ['10.1.2.3', '172.16.9.9', '192.168.0.10', '169.254.169.254', 'metadata.google.internal', '0x7f000001', '0177.0.0.1', '2130706433', 'fe80::1', '0.0.0.0']) {
+    for (const host of ['10.1.2.3', '172.16.9.9', '192.168.0.10', '169.254.169.254', '0x7f000001', '0177.0.0.1', '2130706433', 'fe80::1', '0.0.0.0']) {
       const result = classifyHostTrustTier(host);
       expect(`${host}:${result.tier}`).toBe(`${host}:blocked`);
     }
