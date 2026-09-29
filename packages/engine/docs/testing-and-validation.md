@@ -191,6 +191,7 @@ The `./workers` entry is a small Worker bridge for daemon batch routes, Cloudfla
 
 - **contract-artifact-check.** The SDK package artifact exports must match `packages/engine/contracts/artifacts`. Source copies were removed. Implementation code is no longer copied into the SDK package.
 - **error-contract-check.** The public `SDKErrorKind` taxonomy, retryable status list, and consumer-facing error-kind docs must stay aligned. Run it locally with `bun run error:check`. Internal implementation throws are allowed when they are caught and normalized at public transport/daemon boundaries.
+- **Stored Jev readings.** Whether an error doc still presents 'server' as an error kind is a question of meaning read through Jev, so `error:check` stays offline by comparing each checked file with a reading stored for its exact content (etc/stale-server-kind-readings.json). After changing a checked file, run `bun run error-kinds:read` with `TYPESAFE_API_KEY` set and commit the updated readings; only a settled no passes, so a yes or an unsettled reading is fixed by rewording the text.
 - **rn-bundle.** Static bundle scan. Companion surface (React Native, Expo, browser, web, workers) must be safe for Metro, Vite, webpack, and esbuild. Any `Bun.*` identifier or `node:*` import breaks mobile and browser bundlers. (Runtime verification of `./web` under workerd lives in the separate `workers` and `workers-wrangler` lanes above.)
 - **bundle:check.** Prevents accidental bundle size growth. Runs as a step in the
   `validate` job. Each export has a gzip ceiling computed as

@@ -1,5 +1,6 @@
 import { createReadStream, readdirSync, readFileSync, statSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { CHECKED_FILES, loadStaleServerKindReadings, staleServerKindFindings } from './stale-server-kind-readings.ts';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -18,15 +19,6 @@ const requiredKinds = [
   'validation',
   'unknown',
 ] as const;
-
-const staleServerKindPatterns = [
-  /\bcase\s+['"]server['"]/,
-  /\bkind\s*:\s*['"]server['"]/,
-  /\bSDKErrorKind\b[\s\S]{0,240}['"]server['"]/,
-  /validKinds[\s\S]{0,240}['"]server['"]/,
-  /typed\s+['"]server['"]\s+kind/,
-  /use\s+['"]server['"]\s+for/i,
-];
 
 function read(rel: string): string {
   return readFileSync(resolve(repoRoot, rel), 'utf8');
@@ -148,27 +140,17 @@ async function assertRetryContract(): Promise<void> {
   }
 }
 
+/**
+ * The consumer-facing error docs and worker tests must not present 'server'
+ * as an error kind. Whether a file does is read through Jev
+ * (`errors.stale-server-kind`) by `bun run error-kinds:read` and stored per
+ * file content in etc/stale-server-kind-readings.json; this check is offline
+ * and passes only a settled no for each file's current text.
+ */
 function assertNoStaleServerKindDocs(): void {
-  const checkedFiles = [
-    'docs/browser-integration.md',
-    'docs/error-handling.md',
-    'docs/error-kinds.md',
-    'docs/expo-integration.md',
-    'docs/react-native-integration.md',
-    'docs/web-ui-integration.md',
-    'test/workers/SETUP.md',
-    'test/workers/workers.test.ts',
-    'test/workers-wrangler/wrangler.test.ts',
-  ];
+  const findings = staleServerKindFindings(repoRoot, CHECKED_FILES, loadStaleServerKindReadings());
+  if (findings.length > 0) fail(findings.join('\nerror-contract-check: '));
 
-  for (const rel of checkedFiles) {
-    const source = read(rel);
-    for (const pattern of staleServerKindPatterns) {
-      if (pattern.test(source)) {
-        fail(`${relative(repoRoot, resolve(repoRoot, rel))} still documents stale SDKErrorKind 'server'`);
-      }
-    }
-  }
 }
 
 assertErrorKindContract();

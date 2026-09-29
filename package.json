@@ -58,6 +58,7 @@
     "contracts:check": "bun packages/engine/scripts/check-contract-artifacts.ts",
     "credential-scope:check": "bun packages/engine/scripts/check-credential-scope.ts",
     "credential-keys:read": "bun packages/engine/scripts/read-credential-keys.ts",
+    "error-kinds:read": "bun packages/engine/scripts/read-stale-error-kinds.ts",
     "contracts:foundation-io:check": "bun packages/engine/scripts/check-foundation-io-types.ts --check",
     "contracts:foundation-io:coverage": "bun packages/engine/scripts/check-foundation-io-coverage.ts --check",
     "dist:check": "bun packages/engine/scripts/check-dist-freshness.ts",

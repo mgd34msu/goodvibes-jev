@@ -1,0 +1,60 @@
+{
+  "decision": "errors.stale-server-kind@1",
+  "model": "jev-1.13.0",
+  "readings": {
+    "docs/browser-integration.md": {
+      "sha256": "2f5c8f34c4d2c61814ce79e1607e121b9d6db7786f69757a5386562ef33807cf",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.03
+    },
+    "docs/error-handling.md": {
+      "sha256": "1917f05db95c4f65c6d71066f6fe22552a8375b46f1b280b8da40452fdf68466",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "docs/error-kinds.md": {
+      "sha256": "73b03717d3c656a5f6e44351f6408971c03f20f0e22983979283a46eb324a45a",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "docs/expo-integration.md": {
+      "sha256": "205a9ef09fe107127be71d643989711ebe0195ea60f1acfdbc9689e5780bdd20",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "docs/react-native-integration.md": {
+      "sha256": "afb4b44525e31959bd7dafa1b2462b1607c5312f2fe1c075802edbb33ac75a66",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "docs/web-ui-integration.md": {
+      "sha256": "dbc8263cf34f288faf675ed52c52a80b4b363bbc90344a4109c5bd26e77efee2",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "test/workers-wrangler/wrangler.test.ts": {
+      "sha256": "02dbfe149935fb53385dad4c20825867455884168943d0254d990016c0136d61",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "test/workers/SETUP.md": {
+      "sha256": "e8b4c91a9cf063a07a37b1a915bedf4d0d708e1ca050f76e3c0d8df19057106c",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    },
+    "test/workers/workers.test.ts": {
+      "sha256": "716d82c5947c0762fba3c392bf9c028be149e981fe7b9c601f8f52683f586b42",
+      "verdict": "no",
+      "outcome": "act",
+      "probability": 0.02
+    }
+  }
+}
