@@ -19,6 +19,7 @@ import type {
   RequestPermissionResponse,
 } from './protocol.js';
 import type { SubagentInfo, SubagentResult, SubagentTask } from './protocol.js';
+import { permissionOutcomeFor } from './protocol.js';
 import type { PermissionCategory } from '../permissions/manager.js';
 import type { PermissionRequestHandler } from '../permissions/prompt.js';
 import { logger } from '../utils/logger.js';
@@ -408,8 +409,6 @@ export class AcpConnection {
         const category: PermissionCategory = 'delegate';
         const callId = `acp-${this.id}-${Date.now()}`;
         const toolTitle = params.toolCall?.title ?? 'unknown';
-        const approveOptionId = params.options[0]?.optionId ?? 'allow';
-
         return this.requestPermission({
           callId,
           tool: toolTitle,
@@ -420,19 +419,7 @@ export class AcpConnection {
             (params.toolCall?.rawInput as Record<string, unknown>) ?? {},
             category,
           ),
-        }).then(({ approved }) => {
-          if (approved) {
-            return {
-              outcome: {
-                outcome: 'selected',
-                optionId: approveOptionId,
-              },
-            } as RequestPermissionResponse;
-          }
-          return {
-            outcome: { outcome: 'cancelled' },
-          } as RequestPermissionResponse;
-        });
+        }).then((decision) => permissionOutcomeFor(params.options, decision));
       },
 
       /** Handle session update notifications from the subagent. */

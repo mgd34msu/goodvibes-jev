@@ -41,6 +41,18 @@ import type { CompanionChatRouteContext } from './companion-chat-route-types.js'
  * Try to handle a companion chat route. Returns null if the path/method
  * does not match, so the caller can fall through to other route groups.
  */
+/** The path prefix every companion chat route lives under. */
+const COMPANION_CHAT_PATH_PREFIX = '/api/companion/chat/';
+
+/**
+ * Whether a request is addressed to a companion chat route: its pathname is
+ * under /api/companion/chat/. The query string and the host are not part of
+ * the route, so text there never selects this dispatcher.
+ */
+export function isCompanionChatPath(url: URL): boolean {
+  return url.pathname.startsWith(COMPANION_CHAT_PATH_PREFIX);
+}
+
 export async function dispatchCompanionChatRoutes(
   req: Request,
   context: CompanionChatRouteContext,

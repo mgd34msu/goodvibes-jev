@@ -22,7 +22,8 @@ export class LspClient {
   private nextId = 1;
   private pendingRequests: Map<number, PendingRequest> = new Map();
   private readonly notifications: LspNotificationRecord[] = [];
-  private buffer = '';
+  /** Raw stdout bytes not yet framed; Content-Length counts bytes, so framing happens before decoding. */
+  private buffer: Uint8Array = new Uint8Array(0);
   private readLoopRunning = false;
 
   constructor(
@@ -129,7 +130,7 @@ export class LspClient {
       logger.warn('LspClient: shutdown cleanup failed', { err: summarizeError(err) });
     } finally {
       this.proc = null;
-      this.buffer = '';
+      this.buffer = new Uint8Array(0);
       this.notifications.length = 0;
       this.readLoopRunning = false;
     }
@@ -155,7 +156,6 @@ export class LspClient {
     this.readLoopRunning = true;
 
     const proc = this.proc;
-    const decoder = new TextDecoder();
 
     (async () => {
       try {
@@ -163,7 +163,7 @@ export class LspClient {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          this.buffer += decoder.decode(value, { stream: true });
+          this.buffer = concatBytes(this.buffer, value);
           this._processBuffer();
         }
       } catch (err) {
@@ -181,31 +181,9 @@ export class LspClient {
   }
 
   private _processBuffer(): void {
-    while (true) {
-      // Look for the header terminator
-      const headerEnd = this.buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) break;
-
-      const header = this.buffer.slice(0, headerEnd);
-      const contentLengthMatch = header.match(/Content-Length:\s*(\d+)/i);
-      if (!contentLengthMatch) {
-        // Malformed header, skip to next boundary
-        this.buffer = this.buffer.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = parseInt(contentLengthMatch[1]!, 10);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-
-      // Wait for full body
-      if (this.buffer.length < bodyEnd) break;
-
-      const body = this.buffer.slice(bodyStart, bodyEnd);
-      this.buffer = this.buffer.slice(bodyEnd);
-
-      this._dispatchMessage(body);
-    }
+    const { bodies, rest } = takeFrames(this.buffer);
+    this.buffer = rest;
+    for (const body of bodies) this._dispatchMessage(body);
   }
 
   private _dispatchMessage(body: string): void {
@@ -268,36 +246,63 @@ export class LspClient {
 
   /** Parse all complete JSON-RPC messages from a buffer string. Returns [messages, remainingBuffer]. */
   static parseMessages(buffer: string): [unknown[], string] {
+    const { bodies, rest } = takeFrames(new TextEncoder().encode(buffer));
     const messages: unknown[] = [];
-    let remaining = buffer;
-
-    while (true) {
-      const headerEnd = remaining.indexOf('\r\n\r\n');
-      if (headerEnd === -1) break;
-
-      const header = remaining.slice(0, headerEnd);
-      const contentLengthMatch = header.match(/Content-Length:\s*(\d+)/i);
-      if (!contentLengthMatch) {
-        remaining = remaining.slice(headerEnd + 4);
-        continue;
-      }
-
-      const contentLength = parseInt(contentLengthMatch[1]!, 10);
-      const bodyStart = headerEnd + 4;
-      const bodyEnd = bodyStart + contentLength;
-
-      if (remaining.length < bodyEnd) break;
-
-      const body = remaining.slice(bodyStart, bodyEnd);
-      remaining = remaining.slice(bodyEnd);
-
+    for (const body of bodies) {
       try {
         messages.push(JSON.parse(body));
       } catch {
         // skip malformed
       }
     }
-
-    return [messages, remaining];
+    return [messages, new TextDecoder().decode(rest)];
   }
+}
+
+const HEADER_TERMINATOR = [13, 10, 13, 10];
+
+function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  const joined = new Uint8Array(left.length + right.length);
+  joined.set(left, 0);
+  joined.set(right, left.length);
+  return joined;
+}
+
+function indexOfTerminator(bytes: Uint8Array): number {
+  outer: for (let index = 0; index + HEADER_TERMINATOR.length <= bytes.length; index += 1) {
+    for (let offset = 0; offset < HEADER_TERMINATOR.length; offset += 1) {
+      if (bytes[index + offset] !== HEADER_TERMINATOR[offset]) continue outer;
+    }
+    return index;
+  }
+  return -1;
+}
+
+/**
+ * Splits complete Content-Length frames off the front of a byte buffer. The
+ * length is a byte count (LSP base protocol), so the body is cut from the raw
+ * bytes and only then decoded as UTF-8; a body with multi-byte characters is
+ * cut exactly where the header says.
+ */
+function takeFrames(buffer: Uint8Array): { bodies: string[]; rest: Uint8Array } {
+  const decoder = new TextDecoder();
+  const bodies: string[] = [];
+  let rest = buffer;
+  for (;;) {
+    const headerEnd = indexOfTerminator(rest);
+    if (headerEnd === -1) break;
+    const header = decoder.decode(rest.subarray(0, headerEnd));
+    const contentLengthMatch = header.match(/Content-Length:\s*(\d+)/i);
+    const bodyStart = headerEnd + HEADER_TERMINATOR.length;
+    if (!contentLengthMatch) {
+      // Malformed header, skip to the next boundary.
+      rest = rest.subarray(bodyStart);
+      continue;
+    }
+    const bodyEnd = bodyStart + parseInt(contentLengthMatch[1]!, 10);
+    if (rest.length < bodyEnd) break;
+    bodies.push(decoder.decode(rest.subarray(bodyStart, bodyEnd)));
+    rest = rest.subarray(bodyEnd);
+  }
+  return { bodies, rest: rest.slice() };
 }

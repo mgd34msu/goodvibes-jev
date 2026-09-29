@@ -2,7 +2,7 @@ import type { KnowledgeStore } from './store.js';
 import type { KnowledgeIssueRecord, KnowledgeSourceRecord } from './types.js';
 import { emitKnowledgeLintCompleted } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
-import { isSourcePastRefreshWindow, LINT_NAMESPACE } from './shared.js';
+import { getSourceRefreshWindowMs, isSourcePastRefreshWindow, LINT_NAMESPACE } from './shared.js';
 
 export interface KnowledgeLintContext {
   readonly store: KnowledgeStore;
@@ -102,21 +102,4 @@ function issueForSource(
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
-}
-
-function getSourceRefreshWindowMs(source: KnowledgeSourceRecord): number {
-  const connectorKey = source.connectorId === 'url-list' ? 'url-list' : source.connectorId;
-  return {
-    bookmark: 7 * 24 * 60 * 60 * 1000,
-    'bookmark-list': 7 * 24 * 60 * 60 * 1000,
-    history: 14 * 24 * 60 * 60 * 1000,
-    'url-list': 7 * 24 * 60 * 60 * 1000,
-    url: 14 * 24 * 60 * 60 * 1000,
-    repo: 14 * 24 * 60 * 60 * 1000,
-    document: 21 * 24 * 60 * 60 * 1000,
-    image: 21 * 24 * 60 * 60 * 1000,
-    dataset: 30 * 24 * 60 * 60 * 1000,
-    manual: 45 * 24 * 60 * 60 * 1000,
-    other: 30 * 24 * 60 * 60 * 1000,
-  }[connectorKey] ?? 30 * 24 * 60 * 60 * 1000;
 }

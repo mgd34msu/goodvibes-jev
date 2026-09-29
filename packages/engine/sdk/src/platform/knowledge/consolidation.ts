@@ -11,6 +11,7 @@ import {
   DEEP_CONSOLIDATION_AUTOPROMOTE_THRESHOLD,
   LIGHT_CONSOLIDATION_THRESHOLD,
   coerceStringArray,
+  isSourcePastRefreshWindow,
   mergeTags,
   slugify,
   summarizeCompact,
@@ -323,26 +324,4 @@ function inferMemoryClassForCandidate(
     default:
       return 'fact';
   }
-}
-
-function isSourcePastRefreshWindow(source: KnowledgeSourceRecord): boolean {
-  if (!source.lastCrawledAt) return source.status === 'stale';
-  return source.lastCrawledAt < (Date.now() - getSourceRefreshWindowMs(source));
-}
-
-function getSourceRefreshWindowMs(source: KnowledgeSourceRecord): number {
-  const connectorKey = source.connectorId === 'url-list' ? 'url-list' : source.connectorId;
-  return {
-    bookmark: 7 * 24 * 60 * 60 * 1000,
-    'bookmark-list': 7 * 24 * 60 * 60 * 1000,
-    history: 14 * 24 * 60 * 60 * 1000,
-    'url-list': 7 * 24 * 60 * 60 * 1000,
-    url: 14 * 24 * 60 * 60 * 1000,
-    repo: 14 * 24 * 60 * 60 * 1000,
-    document: 21 * 24 * 60 * 60 * 1000,
-    image: 21 * 24 * 60 * 60 * 1000,
-    dataset: 30 * 24 * 60 * 60 * 1000,
-    manual: 45 * 24 * 60 * 60 * 1000,
-    other: 30 * 24 * 60 * 60 * 1000,
-  }[connectorKey] ?? 30 * 24 * 60 * 60 * 1000;
 }

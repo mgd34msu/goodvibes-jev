@@ -8,12 +8,15 @@ import { summarizeError } from '../utils/error-display.js';
 import { finalizeKnowledgeIngestedSource } from './ingest-compile.js';
 import type { KnowledgeIngestContext } from './ingest-context.js';
 import {
-  DAY_MS,
   canonicalizeUri,
   inferSourceTypeFromArtifact,
   isHttpUri,
+  isSourcePastRefreshWindow,
   mergeTags,
 } from './shared.js';
+
+/** One refresh-window table and lookup for the knowledge subsystem (shared.ts); re-exported for ingest.ts. */
+export { getSourceRefreshWindowMs, isSourcePastRefreshWindow } from './shared.js';
 import type {
   KnowledgeBatchIngestResult,
   KnowledgeBookmarkSeed,
@@ -363,25 +366,4 @@ export function pickKnowledgeRefreshCandidates(
     ));
   }
   return sources.filter((source) => isHttpUri(source.sourceUri)).slice(0, max);
-}
-
-export function isSourcePastRefreshWindow(source: KnowledgeSourceRecord): boolean {
-  if (!source.lastCrawledAt) return source.status === 'stale';
-  return source.lastCrawledAt < (Date.now() - getSourceRefreshWindowMs(source));
-}
-
-export function getSourceRefreshWindowMs(source: KnowledgeSourceRecord): number {
-  const connectorKey = source.connectorId === 'url-list' ? 'url-list' : source.connectorId;
-  return {
-    bookmark: 7 * DAY_MS,
-    'bookmark-list': 7 * DAY_MS,
-    'url-list': 7 * DAY_MS,
-    url: 14 * DAY_MS,
-    repo: 14 * DAY_MS,
-    document: 21 * DAY_MS,
-    image: 21 * DAY_MS,
-    dataset: 30 * DAY_MS,
-    manual: 45 * DAY_MS,
-    other: 30 * DAY_MS,
-  }[connectorKey] ?? 30 * DAY_MS;
 }

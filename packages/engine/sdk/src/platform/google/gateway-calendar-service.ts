@@ -43,6 +43,7 @@ import type { GoogleApiFailure, GoogleApiResult, CalendarEventRecord } from './a
 import { openGoogleConnection, type GoogleConnection, type GoogleConnectionSources } from './connection.js';
 import type { GoogleFetchPort } from './oauth-loopback.js';
 import type { GoogleApiFetchPort } from './api-client.js';
+import { grantsCalendarWrite } from './credential-adoption.js';
 
 /** Everything the service needs, all of it injected. */
 export interface GoogleCalendarGatewayServiceOptions {
@@ -227,6 +228,25 @@ export function createGoogleCalendarGatewayService(
     return events;
   }
 
+  /**
+   * Refuses a write when the grant carries no calendar write scope. What the
+   * grant permits is the scope list Google returned on the last token refresh
+   * (credentials from the secret store record none until then), so a token is
+   * obtained first. A refresh that fails decides nothing here: the write call
+   * that follows reports that failure itself.
+   */
+  async function requireCalendarWrite(connection: GoogleConnection): Promise<void> {
+    const token = await connection.tokens.accessToken();
+    if (!token.ok) return;
+    if (!grantsCalendarWrite(connection.tokens.scopes())) {
+      throw new GatewayVerbError(
+        'The connected Google account was not granted a scope that permits writing to the calendar. Re-authorize with the calendar.events scope.',
+        'PERMISSION_DENIED',
+        403,
+      );
+    }
+  }
+
   return {
     async listEvents(input) {
       return (await readEvents(input)).map(toSummary);
@@ -240,14 +260,9 @@ export function createGoogleCalendarGatewayService(
     },
 
     async createEvent(input: CalendarGatewayCreateInput): Promise<CalendarGatewayCreated> {
-      const { client, summary } = await connect();
-      if (!summary.canWriteCalendar) {
-        throw new GatewayVerbError(
-          'The connected Google account was not granted a scope that permits writing to the calendar. Re-authorize with the calendar.events scope.',
-          'PERMISSION_DENIED',
-          403,
-        );
-      }
+      const connection = await connect();
+      await requireCalendarWrite(connection);
+      const { client } = connection;
       const created = unwrap(
         await client.createEvent({
           summary: input.title,
@@ -272,14 +287,9 @@ export function createGoogleCalendarGatewayService(
      * than failing the whole file or silently dropping it.
      */
     async importIcs(icsContent, calendarId): Promise<CalendarGatewayIcsImport> {
-      const { client, summary } = await connect();
-      if (!summary.canWriteCalendar) {
-        throw new GatewayVerbError(
-          'The connected Google account was not granted a scope that permits writing to the calendar. Re-authorize with the calendar.events scope.',
-          'PERMISSION_DENIED',
-          403,
-        );
-      }
+      const connection = await connect();
+      await requireCalendarWrite(connection);
+      const { client } = connection;
       const parsed = parseIcs(icsContent);
       // Somebody else's text, read because the caller asked for it to be
       // imported, recorded before anything is written to a real calendar.

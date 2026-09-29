@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import { loadAcpSdk } from './optional-sdk.js';
 import type { ClientSideConnection } from '@agentclientprotocol/sdk';
 import type { Agent, Client, NewSessionResponse, PromptResponse, RequestPermissionRequest, RequestPermissionResponse, SessionNotification } from './protocol.js';
+import { permissionOutcomeFor } from './protocol.js';
 import type { PermissionRequestHandler } from '../permissions/prompt.js';
 import { analyzePermissionRequest } from '../permissions/analysis.js';
 import { logger } from '../utils/logger.js';
@@ -385,7 +386,6 @@ export class AcpHostService {
     return {
       requestPermission: async (params: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         const toolTitle = params.toolCall?.title ?? 'unknown tool';
-        const approveOptionId = params.options[0]?.optionId ?? 'allow';
         // Waiting-on-human: the row classifies as awaiting-approval while the
         // ask is pending, glyph/count/jump/push inherit from the fleet
         // attention classification.
@@ -394,16 +394,14 @@ export class AcpHostService {
         record.info.pendingPermission = toolTitle;
         const handler = this.deps.requestPermission ?? (async () => ({ approved: false, remember: false }));
         try {
-          const { approved } = await handler({
+          const decision = await handler({
             callId: `acp-host-${record.info.id}-${this.now()}`,
             tool: toolTitle,
             args: (params.toolCall?.rawInput as Record<string, unknown>) ?? {},
             category: 'delegate',
             analysis: analyzePermissionRequest(toolTitle, (params.toolCall?.rawInput as Record<string, unknown>) ?? {}, 'delegate'),
           });
-          return approved
-            ? { outcome: { outcome: 'selected', optionId: approveOptionId } } as RequestPermissionResponse
-            : { outcome: { outcome: 'cancelled' } } as RequestPermissionResponse;
+          return permissionOutcomeFor(params.options, decision);
         } finally {
           if (record.info.state === 'awaiting-approval') {
             record.info.state = priorState === 'awaiting-approval' ? 'prompting' : priorState;

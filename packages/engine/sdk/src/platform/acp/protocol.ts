@@ -5,6 +5,8 @@
  * The SDK host acts as the ACP client; subagents implement the Agent interface.
  */
 
+import type { RequestPermissionResponse } from '@agentclientprotocol/sdk';
+
 // Re-export ACP SDK types
 export type {
   Client,
@@ -83,4 +85,34 @@ export interface SubagentTask {
   model?: string | undefined;
   /** Optional provider override (e.g. "anthropic"). */
   provider?: string | undefined;
+}
+
+/**
+ * The answer to an ACP permission request for the owner's decision: the
+ * option whose declared `kind` matches it. An approval selects allow_once
+ * (allow_always when the decision is remembered), a refusal reject_once
+ * (reject_always when remembered); the other variant of the same decision is
+ * taken when the preferred one is not offered. When the agent offered no
+ * option of the needed kind the request is answered cancelled, so an
+ * approval is never sent as whatever option happens to come first.
+ */
+/** The fields of an ACP PermissionOption this answer reads. */
+export interface AcpPermissionOptionLike {
+  readonly optionId: string;
+  readonly kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always';
+}
+
+export function permissionOutcomeFor(
+  options: readonly AcpPermissionOptionLike[],
+  decision: { readonly approved: boolean; readonly remember?: boolean | undefined; readonly rememberTier?: unknown },
+): RequestPermissionResponse {
+  const remembered = decision.remember === true || decision.rememberTier !== undefined;
+  const kinds: readonly AcpPermissionOptionLike['kind'][] = decision.approved
+    ? (remembered ? ['allow_always', 'allow_once'] : ['allow_once', 'allow_always'])
+    : (remembered ? ['reject_always', 'reject_once'] : ['reject_once', 'reject_always']);
+  for (const kind of kinds) {
+    const option = options.find((candidate) => candidate.kind === kind);
+    if (option) return { outcome: { outcome: 'selected', optionId: option.optionId } };
+  }
+  return { outcome: { outcome: 'cancelled' } };
 }

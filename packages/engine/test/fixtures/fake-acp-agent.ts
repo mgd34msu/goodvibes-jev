@@ -10,6 +10,7 @@
  *                             each prompt streams a chunk then ends the turn.
  *   FAKE_ACP_MODE=permission  first prompt raises a session/request_permission
  *                             to the client, then finishes according to the answer.
+ *   FAKE_ACP_MODE=permission-reject-first  the same, with the reject option listed first.
  *   FAKE_ACP_MODE=bad-handshake  prints garbage and exits nonzero (never speaks ACP).
  *   FAKE_ACP_MODE=hang        reads stdin but never answers initialize (timeout path).
  *   FAKE_ACP_MODE=slow-turn   a prompt streams then waits until cancelled.
@@ -81,16 +82,16 @@ if (mode === 'hang') {
         },
       });
 
-      if (mode === 'permission') {
+      if (mode === 'permission' || mode === 'permission-reject-first') {
+        const allow = { optionId: 'allow', name: 'Allow', kind: 'allow_once' as const };
+        const deny = { optionId: 'deny', name: 'Deny', kind: 'reject_once' as const };
         const response = await this.conn.requestPermission({
           sessionId,
           toolCall: { toolCallId: 'fake-tool-1', title: 'write a file', rawInput: { path: 'x.txt' } },
-          options: [
-            { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
-            { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
-          ],
+          options: mode === 'permission' ? [allow, deny] : [deny, allow],
         });
-        const approved = response.outcome.outcome === 'selected';
+        // Approved only when the client selected the allow option itself.
+        const approved = response.outcome.outcome === 'selected' && response.outcome.optionId === 'allow';
         await this.conn.sessionUpdate({
           sessionId,
           update: {

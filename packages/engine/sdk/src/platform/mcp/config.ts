@@ -67,6 +67,27 @@ function optionalStringRecord(value: unknown): Record<string, string> | undefine
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
+/** The roles and trust modes the MCP permission manager implements; the Records keep them in step with the types. */
+const MCP_SERVER_ROLES = new Set(Object.keys({
+  general: true, docs: true, filesystem: true, git: true, database: true, browser: true, automation: true,
+  ops: true, remote: true,
+} satisfies Record<NonNullable<McpServerConfig['role']>, true>));
+const MCP_TRUST_MODES = new Set(Object.keys({
+  constrained: true, 'ask-on-risk': true, 'allow-all': true, blocked: true,
+} satisfies Record<NonNullable<McpServerConfig['trustMode']>, true>));
+
+/**
+ * A configured role or trust mode, or undefined (the permission manager's
+ * default) when absent. A value the manager does not implement is reported
+ * and treated as absent rather than passed on as an unknown mode.
+ */
+function knownValue<T extends string>(server: string, field: string, value: unknown, known: ReadonlySet<string>): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && known.has(value)) return value as T;
+  logger.warn('MCP server config: unknown value ignored, the default applies', { server, field, value: String(value), known: [...known] });
+  return undefined;
+}
+
 function normalizeServerConfig(name: string, raw: Record<string, unknown>): McpServerConfig | null {
   const command = typeof raw.command === 'string' && raw.command.trim() ? raw.command : undefined;
   const url = typeof raw.url === 'string' && raw.url.trim() ? raw.url : undefined;
@@ -77,8 +98,8 @@ function normalizeServerConfig(name: string, raw: Record<string, unknown>): McpS
     url,
     args: optionalStringArray(raw.args) ?? [],
     env: optionalStringRecord(raw.env),
-    role: typeof raw.role === 'string' ? raw.role as McpServerConfig['role'] : undefined,
-    trustMode: typeof raw.trustMode === 'string' ? raw.trustMode as McpServerConfig['trustMode'] : undefined,
+    role: knownValue<NonNullable<McpServerConfig['role']>>(name, 'role', raw.role, MCP_SERVER_ROLES),
+    trustMode: knownValue<NonNullable<McpServerConfig['trustMode']>>(name, 'trustMode', raw.trustMode, MCP_TRUST_MODES),
     allowedPaths: optionalStringArray(raw.allowedPaths),
     allowedHosts: optionalStringArray(raw.allowedHosts),
   };
@@ -140,7 +161,18 @@ function parseMcpServers(raw: unknown): McpServerConfig[] | null {
     return servers;
   }
 
-  if (isMcpConfig(raw)) return raw.servers.map((server) => ({ ...server }));
+  if (isMcpConfig(raw)) {
+    return raw.servers.map((server) => {
+      const { role, trustMode, ...rest } = server;
+      const knownRole = knownValue<NonNullable<McpServerConfig['role']>>(server.name, 'role', role, MCP_SERVER_ROLES);
+      const knownTrust = knownValue<NonNullable<McpServerConfig['trustMode']>>(server.name, 'trustMode', trustMode, MCP_TRUST_MODES);
+      return {
+        ...rest,
+        ...(knownRole !== undefined ? { role: knownRole } : {}),
+        ...(knownTrust !== undefined ? { trustMode: knownTrust } : {}),
+      };
+    });
+  }
   return null;
 }
 
@@ -163,6 +195,12 @@ function readMcpConfigAtPath(path: string): McpConfig {
 
 function assertServerConfig(server: McpServerConfig): void {
   if (!server.name.trim()) throw new Error('MCP server name is required.');
+  if (server.role !== undefined && !MCP_SERVER_ROLES.has(server.role)) {
+    throw new Error(`MCP server role '${server.role}' is not one of: ${[...MCP_SERVER_ROLES].join(', ')}.`);
+  }
+  if (server.trustMode !== undefined && !MCP_TRUST_MODES.has(server.trustMode)) {
+    throw new Error(`MCP server trustMode '${server.trustMode}' is not one of: ${[...MCP_TRUST_MODES].join(', ')}.`);
+  }
   if (server.name.includes(':') || server.name.includes('/')) {
     throw new Error('MCP server name may not contain ":" or "/".');
   }

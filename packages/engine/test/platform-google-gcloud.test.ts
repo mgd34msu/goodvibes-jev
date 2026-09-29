@@ -197,7 +197,7 @@ describe('listProjects', () => {
 });
 
 describe('selectOrCreateProject', () => {
-  test('reuses an existing project whose id starts with the preferred prefix', async () => {
+  test('reuses an existing project this flow created, <prefix>-<suffix>', async () => {
     const port = fakePort((command, args) => {
       if (args[0] === 'projects' && args[1] === 'list') {
         return okResult(JSON.stringify([{ projectId: 'goodvibes-agent-abc123' }]));
@@ -211,6 +211,19 @@ describe('selectOrCreateProject', () => {
       expect(result.projectId).toBe('goodvibes-agent-abc123');
     }
     expect(port.calls.some((call) => call.args.includes('create'))).toBe(false);
+  });
+
+  test('a project that only starts with the same letters is not reused', async () => {
+    const port = fakePort((command, args) => {
+      if (args[0] === 'projects' && args[1] === 'list') {
+        return okResult(JSON.stringify([{ projectId: 'goodvibes-agentic-prod' }, { projectId: 'goodvibes-agent-prod-1' }]));
+      }
+      if (args[0] === 'projects' && args[1] === 'create') return okResult(JSON.stringify({ done: true }));
+      throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+    });
+    const result = await selectOrCreateProject(port, 'gcloud', { preferredPrefix: 'goodvibes-agent' });
+    expect(result.ok && result.outcome).toBe('created');
+    expect(port.calls.some((call) => call.args.includes('create'))).toBe(true);
   });
 
   test('creates a new project with the preferred prefix when none exists yet', async () => {

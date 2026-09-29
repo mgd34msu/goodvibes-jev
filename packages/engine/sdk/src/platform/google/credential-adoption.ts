@@ -238,6 +238,11 @@ function grants(scopes: readonly string[], allowed: ReadonlySet<string>): boolea
   return scopes.some((scope) => allowed.has(scope));
 }
 
+/** Whether a granted scope list includes one that permits writing to the calendar. */
+export function grantsCalendarWrite(scopes: readonly string[]): boolean {
+  return grants(scopes, CALENDAR_WRITE_SCOPES);
+}
+
 /** Treat a token as expired slightly early so a call never races the clock. */
 const EXPIRY_SKEW_MS = 60_000;
 

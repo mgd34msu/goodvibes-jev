@@ -292,8 +292,8 @@ export interface ProjectSelectFailed {
 export type SelectOrCreateResult = ProjectReused | ProjectCreated | ProjectSelectFailed;
 
 /**
- * Idempotent project selection: reuse an existing project whose id starts
- * with `preferredPrefix`, or create one with a random suffix. Re-running
+ * Idempotent project selection: reuse an existing project this flow created
+ * (`<preferredPrefix>-<suffix>`), or create one with a random suffix. Re-running
  * this after a project already exists never creates a second one.
  */
 export async function selectOrCreateProject(
@@ -303,7 +303,7 @@ export async function selectOrCreateProject(
 ): Promise<SelectOrCreateResult> {
   const existing = await listProjects(port, gcloudPath);
   if (!existing.ok) return existing;
-  const match = existing.projects.find((project) => project.projectId.startsWith(options.preferredPrefix));
+  const match = existing.projects.find((project) => isProjectFromThisFlow(project.projectId, options.preferredPrefix));
   if (match) {
     return { ok: true, outcome: 'reused', projectId: match.projectId };
   }
@@ -326,6 +326,17 @@ export async function selectOrCreateProject(
     };
   }
   return { ok: true, outcome: 'created', projectId };
+}
+
+/**
+ * Whether a project id has the shape this flow creates, `<prefix>-<suffix>`
+ * with a lowercase base-36 suffix (randomSuffix). A project that merely
+ * starts with the same letters (`<prefix>ic`, `<prefix>-prod-1`) is someone
+ * else's and is not reused.
+ */
+function isProjectFromThisFlow(projectId: string, prefix: string): boolean {
+  if (!projectId.startsWith(`${prefix}-`)) return false;
+  return /^[a-z0-9]+$/.test(projectId.slice(prefix.length + 1));
 }
 
 function randomSuffix(): string {

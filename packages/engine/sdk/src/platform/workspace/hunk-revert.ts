@@ -21,8 +21,8 @@
  *      the revert is itself reversible, restore that checkpoint to undo it.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { WorkspaceCheckpoint } from './checkpoint/types.js';
 
 /** Thrown when a hunk cannot be reverse-applied cleanly (stale/drifted/malformed). */
@@ -194,17 +194,37 @@ export function reverseApplyHunk(fileContent: string, hunk: string): RevertHunkR
   };
 }
 
-/** Resolve `relPath` under `root`, refusing any path that escapes the workspace root. */
+/** The real path of `path` when it exists, else the path as given. */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Resolve `relPath` under `root`, refusing any path that escapes the workspace
+ * root. Judged on real paths (the root, and the file or, when it does not
+ * exist yet, its directory), so a symlink inside the workspace that points
+ * outside it is refused too. Returns the real path the read and write use.
+ */
 function resolveInsideRoot(root: string, relPath: string): string {
   if (isAbsolute(relPath)) {
     throw new HunkRevertConflictError(`path must be workspace-relative, got absolute path: ${relPath}`);
   }
-  const resolved = resolve(root, relPath);
-  const rootWithSep = root.endsWith(sep) ? root : root + sep;
-  if (resolved !== root && !resolved.startsWith(rootWithSep)) {
+  const lexical = resolve(root, relPath);
+  let real: string;
+  try {
+    real = realpathSync(lexical);
+  } catch {
+    real = join(realOrSelf(dirname(lexical)), basename(lexical));
+  }
+  const fromRoot = relative(realOrSelf(root), real);
+  if (fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) {
     throw new HunkRevertConflictError(`path escapes the workspace root: ${relPath}`);
   }
-  return resolved;
+  return real;
 }
 
 /** Read a workspace file's content, mapping a missing file to a conflict (the diff is stale). */

@@ -6,7 +6,7 @@
  * orchestrator (snapshot-before-write undo point, conflict-throws-without-write,
  * path-escape refusal).
  */
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -150,6 +150,21 @@ describe('applyHunkRevert / previewHunkRevert (workspace)', () => {
     const preview = previewHunkRevert(root, '../escape.ts', FORWARD_HUNK);
     expect(preview.applies).toBe(false);
     expect(preview.conflict).toContain('escapes the workspace root');
+  });
+
+  test('a symlink inside the workspace pointing outside it is refused and the outside file is untouched', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'hunk-revert-outside-'));
+    try {
+      writeFileSync(join(outside, 'target.ts'), NEW_CONTENT, 'utf8');
+      symlinkSync(join(outside, 'target.ts'), join(root, 'link.ts'));
+      const preview = previewHunkRevert(root, 'link.ts', FORWARD_HUNK);
+      expect(preview.applies).toBe(false);
+      expect(preview.conflict).toContain('escapes the workspace root');
+      await expect(applyHunkRevert(fakeWorkspace(null), 'link.ts', FORWARD_HUNK)).rejects.toBeInstanceOf(HunkRevertConflictError);
+      expect(readFileSync(join(outside, 'target.ts'), 'utf8')).toBe(NEW_CONTENT);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 

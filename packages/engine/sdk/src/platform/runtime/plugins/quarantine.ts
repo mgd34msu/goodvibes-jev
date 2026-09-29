@@ -140,6 +140,21 @@ export class PluginQuarantineEngine {
     return true;
   }
 
+  /**
+   * importRecords, Restore persisted quarantine records (active and lifted),
+   * so a quarantine applied before a restart is still in force after it.
+   * Records with a missing or mismatched plugin name are skipped.
+   */
+  importRecords(records: Readonly<Record<string, QuarantineRecord>>): void {
+    for (const [name, record] of Object.entries(records)) {
+      if (!record || record.pluginName !== name) continue;
+      this.records.set(name, {
+        ...record,
+        revokedCapabilities: Object.freeze([...(record.revokedCapabilities ?? [])]),
+      });
+    }
+  }
+
   /** Returns whether a plugin is currently quarantined (and not lifted). */
   isQuarantined(pluginName: string): boolean {
     const record = this.records.get(pluginName);

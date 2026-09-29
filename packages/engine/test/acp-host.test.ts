@@ -118,6 +118,24 @@ describe('AcpHostService: full round-trip against the real protocol', () => {
     await host.stop(hosted.id);
   }, 30_000);
 
+  test('an approval answers with the allow option by its kind, even when the agent lists reject first', async () => {
+    const decisions = [true, false];
+    const host = new AcpHostService({
+      requestPermission: async () => ({ approved: decisions.shift() ?? false, remember: false }),
+    });
+    const approvedRun = await host.spawnAgent({ agent: fakeAgent('permission-reject-first'), cwd: import.meta.dir });
+    host.prompt(approvedRun.id, 'do the thing');
+    await waitUntil(() => /permission (granted|denied)/.test(host.get(approvedRun.id)?.progress ?? ''));
+    expect(host.get(approvedRun.id)?.progress).toContain('permission granted');
+    await host.stop(approvedRun.id);
+
+    const deniedRun = await host.spawnAgent({ agent: fakeAgent('permission-reject-first'), cwd: import.meta.dir });
+    host.prompt(deniedRun.id, 'do the thing');
+    await waitUntil(() => /permission (granted|denied)/.test(host.get(deniedRun.id)?.progress ?? ''));
+    expect(host.get(deniedRun.id)?.progress).toContain('permission denied');
+    await host.stop(deniedRun.id);
+  }, 30_000);
+
   test('stop lands cleanly on a mid-turn (slow) agent: cancelled, not failed', async () => {
     const host = new AcpHostService({});
     const hosted = await host.spawnAgent({ agent: fakeAgent('slow-turn'), cwd: import.meta.dir });

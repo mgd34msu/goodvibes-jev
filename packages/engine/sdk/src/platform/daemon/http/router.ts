@@ -79,7 +79,7 @@ import { jsonErrorResponse } from './error-response.js';
 import { AppError } from '../../types/errors.js';
 import { VERSION } from '../../version.js';
 import type { CompanionChatManager } from '../../companion/companion-chat-manager.js';
-import { dispatchCompanionChatRoutes } from '../../companion/companion-chat-routes.js';
+import { dispatchCompanionChatRoutes, isCompanionChatPath } from '../../companion/companion-chat-routes.js';
 import { dispatchModelRoutes } from './model-routes.js';
 import { dispatchBatchRoutes } from './batch-routes.js';
 import { dispatchCloudflareRoutes } from './cloudflare-routes.js';
@@ -437,7 +437,7 @@ export class DaemonHttpRouter {
       if (providerResponse) return providerResponse;
     }
 
-    if (this.context.companionChatManager && req.url.includes('/api/companion/chat/')) {
+    if (this.context.companionChatManager && isCompanionChatPath(url)) {
       const gateway = this.context.controlPlaneGateway;
       const chatManager = this.context.companionChatManager;
       const companionResponse = await dispatchCompanionChatRoutes(req, {

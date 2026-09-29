@@ -442,8 +442,9 @@ export class PluginManager {
         if (Object.keys(this.state.trust).length > 0) {
           this.trustStore.importRecords(this.state.trust);
         }
-        // Note: quarantine records are read-only from persistence; active
-        // quarantines take effect when plugins are loaded via PluginLifecycleManager.
+        if (Object.keys(this.state.quarantine).length > 0) {
+          this.quarantineEngine.importRecords(this.state.quarantine);
+        }
       }
     } catch (err) {
       logger.warn(`[plugins] Could not load state: ${summarizeError(err)}`);

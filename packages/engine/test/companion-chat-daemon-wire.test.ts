@@ -15,7 +15,7 @@ import type {
   CompanionLLMProvider,
   CompanionProviderChunk,
 } from '../sdk/src/platform/companion/companion-chat-manager.js';
-import { dispatchCompanionChatRoutes } from '../sdk/src/platform/companion/companion-chat-routes.js';
+import { dispatchCompanionChatRoutes, isCompanionChatPath } from '../sdk/src/platform/companion/companion-chat-routes.js';
 import type { CompanionChatRouteContext } from '../sdk/src/platform/companion/companion-chat-route-types.js';
 import { DaemonHttpRouter } from '../sdk/src/platform/daemon/http/router.js';
 
@@ -466,5 +466,13 @@ describe('companion-chat facade-composition: composition wire assertion', () => 
     expect(sourceText).toMatch(
       /^(?!\s*\/\/).*resolveDefaultProviderModel:\s*options\.resolveDefaultProviderModel,/m,
     );
+  });
+});
+
+describe('companion chat routing reads the pathname', () => {
+  test('a companion chat path is routed there; the same text in the query string or another path is not', () => {
+    expect(isCompanionChatPath(new URL('http://daemon.local/api/companion/chat/sessions'))).toBe(true);
+    expect(isCompanionChatPath(new URL('http://daemon.local/api/sessions?next=/api/companion/chat/sessions'))).toBe(false);
+    expect(isCompanionChatPath(new URL('http://daemon.local/other/api/companion/chat/sessions'))).toBe(false);
   });
 });
