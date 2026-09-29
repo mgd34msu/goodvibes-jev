@@ -98,7 +98,7 @@ export async function permissionPhase(
         callId: call.id,
         tool: call.name,
         args: effectiveArgs,
-        category: context.permissionManager.getCategory(call.name),
+        category: analysis.category ?? context.permissionManager.getCategory(call.name),
         classification: analysis.analysis.classification,
         riskLevel: analysis.analysis.riskLevel,
         summary: analysis.analysis.summary,
@@ -142,6 +142,7 @@ export async function permissionPhase(
       }, {
         callId: call.id,
         tool: call.name,
+        category: analysis.category ?? context.permissionManager.getCategory(call.name),
         approved: analysis.approved,
         source: 'permission-manager',
         sourceLayer: analysis.sourceLayer,

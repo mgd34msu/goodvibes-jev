@@ -1,4 +1,5 @@
 import type { PermissionSimulator } from './simulation.js';
+import { readCallClassification } from '../../gate/reading.js';
 import type { DivergenceType, PermissionDecision, SimulationMode } from './types.js';
 
 export interface PolicySimulationScenario {
@@ -40,12 +41,18 @@ export function buildDefaultPolicySimulationScenarios(): PolicySimulationScenari
   ];
 }
 
-export function runPolicySimulationScenarios(
+/**
+ * Runs each scenario through both policy sets. What each call does is read by
+ * Jev first (all scenarios in parallel), the same reading the gate makes
+ * before its policy layer; a JudgmentError propagates.
+ */
+export async function runPolicySimulationScenarios(
   simulator: PermissionSimulator,
   scenarios: PolicySimulationScenario[] = buildDefaultPolicySimulationScenarios(),
-): PolicySimulationSummary {
-  const results = scenarios.map((scenario) => {
-    const result = simulator.evaluate(scenario.toolName, scenario.args);
+): Promise<PolicySimulationSummary> {
+  const classifications = await Promise.all(scenarios.map((scenario) => readCallClassification(scenario.toolName, scenario.args, 'engine.gate.policy-simulation')));
+  const results = scenarios.map((scenario, index) => {
+    const result = simulator.evaluate(scenario.toolName, scenario.args, classifications[index]!);
     return {
       scenario,
       actualDecision: result.actualDecision,

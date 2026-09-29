@@ -271,7 +271,7 @@ export const REQUIRED_FIELDS_BY_TYPE: {
   STAKES_READ: ['callId', 'tool', 'family', 'stakes', 'mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'uncertain'],
   SESSION_OVERRIDE_EVALUATED: ['callId', 'tool', 'overrideApplied'],
   BOUNDARY_CHECKED: ['callId', 'tool', 'passed', 'checks'],
-  DECISION_EMITTED: ['callId', 'tool', 'approved', 'source'],
+  DECISION_EMITTED: ['callId', 'tool', 'category', 'approved', 'source'],
   PLUGIN_DISCOVERED: ['pluginId', 'path', 'version'],
   PLUGIN_LOADING: ['pluginId', 'path'],
   PLUGIN_LOADED: ['pluginId', 'version', 'capabilities'],
@@ -472,7 +472,7 @@ export const FIXTURE_EVENTS: ReadonlyArray<{ type: string } & Record<string, unk
   { type: 'STAKES_READ', callId: 'c1', tool: 'bash', family: 'shell-read', stakes: 'low', mutates: false, outward: false, secrets: false, irreversible: false, beyondProject: false, weakensSecurity: false, obfuscated: false, uncertain: [] } satisfies GateEvent,
   { type: 'SESSION_OVERRIDE_EVALUATED', callId: 'c1', tool: 'bash', overrideApplied: true } satisfies GateEvent,
   { type: 'BOUNDARY_CHECKED', callId: 'c1', tool: 'bash', passed: true, checks: [{ check: 'catastrophic', result: 'pass' }] } satisfies GateEvent,
-  { type: 'DECISION_EMITTED', callId: 'c1', tool: 'bash', approved: true, source: 'policy' } satisfies GateEvent,
+  { type: 'DECISION_EMITTED', callId: 'c1', tool: 'bash', category: 'execute', approved: true, source: 'policy' } satisfies GateEvent,
   // plugins
   { type: 'PLUGIN_DISCOVERED', pluginId: 'p1', path: '/plugins/p1', version: '1.0.0' } satisfies PluginEvent,
   { type: 'PLUGIN_LOADING', pluginId: 'p1', path: '/plugins/p1' } satisfies PluginEvent,

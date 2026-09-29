@@ -59,6 +59,7 @@ export const GATE_EVENT_FIELD_SPECS: { readonly [T in GateEventType]: readonly F
   PRESET_CHANGED: [str('preset'), str('previousPreset'), str('mode'), str('previousMode')],
   DECISION_EMITTED: [
     ...CALL,
+    str('category'),
     bool('approved'),
     str('source'),
     optStr('sourceLayer'),

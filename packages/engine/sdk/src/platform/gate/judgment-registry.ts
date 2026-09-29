@@ -55,3 +55,35 @@ import { projectTooling } from '../tools/batteries/project-tooling.js';
 
 registry.register(frontendFinding);
 registry.register(projectTooling);
+
+import { exportBreak } from '../tools/batteries/export-break.js';
+import { secretLine } from '../tools/batteries/secret-line.js';
+import { dangerousLine } from '../tools/batteries/dangerous-line.js';
+import { envTemplate } from '../tools/batteries/env-template.js';
+import { testOfSource } from '../tools/batteries/test-of-source.js';
+import { booleanValue } from '../tools/batteries/boolean-value.js';
+import { memoryClass } from '../tools/batteries/memory-class.js';
+import { ownerTerminal } from '../tools/batteries/owner-terminal.js';
+import { pageContent } from '../tools/batteries/page-content.js';
+import { pageSummary } from '../tools/batteries/page-summary.js';
+import { credentialHeader } from '../tools/batteries/credential-header.js';
+import { credentialValue } from '../tools/batteries/credential-value.js';
+import { apiRoutes } from '../tools/batteries/api-routes.js';
+import { outputKeep } from '../tools/batteries/output-keep.js';
+import { healAcceptance } from '../tools/batteries/heal-acceptance.js';
+
+registry.register(exportBreak);
+registry.register(secretLine);
+registry.register(dangerousLine);
+registry.register(envTemplate);
+registry.register(testOfSource);
+registry.register(booleanValue);
+registry.register(memoryClass);
+registry.register(ownerTerminal);
+registry.register(pageContent);
+registry.register(pageSummary);
+registry.register(credentialHeader);
+registry.register(credentialValue);
+registry.register(apiRoutes);
+registry.register(outputKeep);
+registry.register(healAcceptance);

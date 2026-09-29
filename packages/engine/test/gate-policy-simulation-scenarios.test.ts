@@ -1,5 +1,6 @@
 // Ported from goodvibes-agent src/test/runtime/permissions/simulation-scenarios.test.ts.
 import { describe, expect, test } from 'bun:test';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import {
   createPermissionSimulator,
   buildDefaultPolicySimulationScenarios,
@@ -7,6 +8,10 @@ import {
 } from '../sdk/src/platform/runtime/permissions/index.ts';
 
 describe('policy simulation scenarios', () => {
+  // Each scenario is read by Jev (the gate's reading) before the two policy
+  // sets evaluate it; the fake port reads the read scenario as read-only.
+  const readings = useGateReadings([['README.md', { mutates: false }]]);
+
   test('builds a concrete default scenario set', () => {
     const scenarios = buildDefaultPolicySimulationScenarios();
     expect(scenarios.length).toBeGreaterThan(4);
@@ -16,7 +21,7 @@ describe('policy simulation scenarios', () => {
     ]));
   });
 
-  test('runs scenario simulations and returns a bounded summary', () => {
+  test('runs scenario simulations and returns a bounded summary', async () => {
     const simulator = createPermissionSimulator(
       { mode: 'default', rules: [] },
       { mode: 'plan', rules: [] },
@@ -24,7 +29,8 @@ describe('policy simulation scenarios', () => {
       { onWarning: () => {} },
     );
 
-    const summary = runPolicySimulationScenarios(simulator);
+    const summary = await runPolicySimulationScenarios(simulator);
+    expect(readings.requests.length).toBeGreaterThan(0);
     expect(summary.totalScenarios).toBeGreaterThan(4);
     expect(summary.results).toHaveLength(summary.totalScenarios);
     expect(summary.divergentScenarios).toBeGreaterThan(0);

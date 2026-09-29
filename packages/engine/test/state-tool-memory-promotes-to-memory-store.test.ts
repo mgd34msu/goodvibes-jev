@@ -11,7 +11,7 @@
  * record now exists, is retrievable by the passive-injection path, dedups on rewrite, and that the
  * flat-file write is unaffected (and still works with no registry wired).
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { describe, expect, test, afterEach, beforeEach } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,10 +28,32 @@ import {
   buildPerTurnKnowledgeInjection,
   DEFAULT_TURN_KNOWLEDGE_RELEVANCE_FLOOR,
 } from '../sdk/src/platform/agents/turn-knowledge-injection.js';
-import { useMemoryReadings } from './_helpers/memory-readings.ts';
+import { memoryReadingsPort } from './_helpers/memory-readings.ts';
+import { toolReadingsPort, type ToolReadingTable } from './_helpers/tool-readings.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { JudgmentError, type JudgmentPort } from '@goodvibes-jev/judgment';
 
-// Memory search and knowledge ranking read through the judgment port; the fake answers them.
-useMemoryReadings();
+// Memory search and knowledge ranking read through the judgment port, and so
+// does the class a new mirrored record is filed under
+// (engine.tools.memory-class); the fakes answer them. A memory no entry names
+// reads as a fact.
+const CLASS_READINGS: ToolReadingTable = [['dark dashboard theme', { memoryClass: 'constraint' }]];
+
+function statePort(classPort: JudgmentPort = toolReadingsPort(CLASS_READINGS).port): JudgmentPort {
+  const memory = memoryReadingsPort().port;
+  return {
+    model: memory.model,
+    ask: (request) => ('memory_class' in request.questions ? classPort.ask(request) : memory.ask(request)),
+  };
+}
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previousPort = installJudgmentPort(statePort());
+});
+afterEach(() => {
+  installJudgmentPort(previousPort);
+});
 
 const tmpRoots: string[] = [];
 
@@ -93,6 +115,8 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
     // 2. Provenance honesty: reviewState 'fresh' (not stamped reviewed), retrievable confidence,
     //    and a file link back to the flat-file twin.
     expect(rec!.reviewState).toBe('fresh');
+    // The class is the memory-class reading's, not a fixed class.
+    expect(rec!.cls).toBe('constraint');
     expect(rec!.confidence).toBeGreaterThanOrEqual(55);
     expect(rec!.provenance.some((link) => link.kind === 'file' && link.ref.includes('dashboard_prefs'))).toBe(true);
 
@@ -131,6 +155,42 @@ describe('state tool: mode=memory set mirrors into the retrievable memory store'
     expect(forKey).toHaveLength(1);
     // The single record reflects the latest write.
     expect(forKey[0]!.summary).toContain('spacious layout');
+  });
+
+  test('a memory-class reading that escalates files the record as a fact', async () => {
+    const unsure = toolReadingsPort([]).port;
+    installJudgmentPort(statePort({
+      model: unsure.model,
+      async ask(request) {
+        const answered = await unsure.ask(request);
+        const [name] = Object.keys(request.questions);
+        const probabilities = { decision: 0.3, constraint: 0.3, fact: 0.4 };
+        return { ...answered, answers: { [name!]: { type: 'choice', choice: 'fact', confidence: 0.4, probabilities } } as never };
+      },
+    }));
+    const { tool, memoryRegistry } = await makeHarness({ withRegistry: true });
+
+    await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'build_notes', memoryValue: 'Maybe the build is slow on CI sometimes.' });
+
+    const rec = memoryRegistry.getAll().find((r) => r.tags.includes('state-memory:build_notes'));
+    expect(rec?.cls).toBe('fact');
+  });
+
+  test('when Jev cannot read the class, the set fails before anything is written', async () => {
+    installJudgmentPort(statePort({
+      model: 'jev-1.13.0',
+      ask: async () => {
+        throw new JudgmentError('unavailable', 'no answer');
+      },
+    }));
+    const { tool, memoryRegistry, memoryDir } = await makeHarness({ withRegistry: true });
+
+    const result = await tool.execute({ mode: 'memory', memoryAction: 'set', memoryKey: 'owner', memoryValue: 'The billing module is owned by the payments team.' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Memory set failed');
+    expect(existsSync(join(memoryDir, 'owner.json'))).toBe(false);
+    expect(memoryRegistry.getAll().some((r) => r.tags.includes('state-memory:owner'))).toBe(false);
   });
 
   test('with no registry wired, set still writes the flat file and reports retrievable:false (back-compat)', async () => {

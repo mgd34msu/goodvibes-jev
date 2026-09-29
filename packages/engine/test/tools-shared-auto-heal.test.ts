@@ -2,6 +2,16 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ToolLLM } from '@goodvibes-jev/engine/sdk/platform/config';
 import { AutoHealer } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+/** Repairs the heal-acceptance reading accepts; any other change reads as not fixing the errors. */
+const readings = useToolReadings([
+  ["return 'world'; }", { fixesErrors: true, onlyTheFix: true }],
+  ['+fixed content', { fixesErrors: true, onlyTheFix: true }],
+  ['+export const extra = 1;', { fixesErrors: true, onlyTheFix: false }],
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,16 +93,49 @@ describe('AutoHealer: LLM stage (no formatter/linter)', () => {
     expect(result.content).toBe(INVALID_TS);
   });
 
-  test('returns healed=true with method=llm when LLM returns fixed content', async () => {
+  test('returns healed=true with method=llm when the reading accepts the rewrite', async () => {
     const fixedContent = 'export function hello(): string { return \'world\'; }\n';
     const healer = makeHealer(true, async () => fixedContent);
     const result = await healer.heal('test.ts', INVALID_TS, ['Unexpected end of input']);
     expect(result.healed).toBe(true);
     expect(result.content).toBe(fixedContent);
     expect(result.method).toBe('llm');
+    expect(readings.requests).toHaveLength(1);
+    expect(Object.keys(readings.requests[0]?.questions ?? {})).toEqual(['fixes_errors', 'only_the_fix']);
+    const state = readings.requests[0]!.state as { file: string; errors: string[]; change: string };
+    expect(state.errors).toEqual(['Unexpected end of input']);
+    expect(state.change).toContain("-  // missing brace");
   });
 
-  test('returns healed=true with method=llm for non-ts files', async () => {
+  test('a rewrite that parses but changes more than the fix is not accepted', async () => {
+    const healer = makeHealer(true, async () => `${VALID_TS}export const extra = 1;\n`);
+    const result = await healer.heal('test.ts', INVALID_TS, ['Unexpected end of input']);
+    expect(result.healed).toBe(false);
+    expect(result.content).toBe(INVALID_TS);
+    expect(result.warnings?.join('\n')).toContain('not accepted');
+  });
+
+  test('a JavaScript or TypeScript rewrite that does not parse is not asked about', async () => {
+    const healer = makeHealer(true, async () => 'export function hello( {');
+    const result = await healer.heal('test.ts', INVALID_TS, ['Unexpected end of input']);
+    expect(result.healed).toBe(false);
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  test('a JudgmentError propagates instead of being reported as a failed stage', async () => {
+    const previous = installJudgmentPort({
+      model: 'jev-test',
+      ask: async () => { throw new JudgmentError('unavailable', 'overloaded'); },
+    });
+    try {
+      const healer = makeHealer(true, async () => 'fixed content');
+      await expect(healer.heal('notes.txt', 'broken content', ['Error: invalid'])).rejects.toBeInstanceOf(JudgmentError);
+    } finally {
+      installJudgmentPort(previous);
+    }
+  });
+
+  test('returns healed=true with method=llm for non-ts files when the reading accepts it', async () => {
     const fixedContent = 'fixed content';
     const healer = makeHealer(true, async () => fixedContent);
     const result = await healer.heal('test.txt', 'broken content', ['Error: invalid']);

@@ -3,11 +3,17 @@ import { useToolReadings } from './_helpers/tool-readings.ts';
 import { repairToolCall } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
 
-// Jev picks which spare argument fills a missing parameter; these fakes stand
-// in for it. A call no entry names reads as "no spare argument fits".
+// Jev picks which spare argument fills a missing parameter and which boolean a
+// non-literal string means; these fakes stand in for it. A call no entry names
+// reads as "no spare argument fits" and a string no entry names as neither.
 const readings = useToolReadings([
   ['"argument":"pathValue"', { fill: 'pathValue' }],
   ['"argument":"file_path"', { fill: 'file_path' }],
+  ['"value":"yes"', { booleanValue: 'true' }],
+  ['"value":"YES"', { booleanValue: 'true' }],
+  ['"value":"True"', { booleanValue: 'true' }],
+  ['"value":"no"', { booleanValue: 'false' }],
+  ['"value":"off"', { booleanValue: 'false' }],
 ]);
 
 // ---------------------------------------------------------------------------
@@ -299,44 +305,48 @@ describe('Rule 3: string-to-number coercion', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 4: boolean coercion', () => {
-  test('coerces "true" to true', async () => {
-    const result = await repairToolCall('toggle', { enabled: 'true' }, BOOL_SCHEMA);
-    expect(result.repaired).toBe(true);
-    expect(result.fixed['enabled']).toBe(true);
+  test('the JSON literals "true" and "false" coerce in code, asking nothing', async () => {
+    const r1 = await repairToolCall('toggle', { enabled: 'true' }, BOOL_SCHEMA);
+    expect(r1.repaired).toBe(true);
+    expect(r1.fixed['enabled']).toBe(true);
+    const r2 = await repairToolCall('toggle', { enabled: 'false' }, BOOL_SCHEMA);
+    expect(r2.repaired).toBe(true);
+    expect(r2.fixed['enabled']).toBe(false);
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test('coerces "false" to false', async () => {
-    const result = await repairToolCall('toggle', { enabled: 'false' }, BOOL_SCHEMA);
-    expect(result.repaired).toBe(true);
-    expect(result.fixed['enabled']).toBe(false);
-  });
-
-  test('coerces "yes" to true', async () => {
+  test('any other string is read by engine.tools.boolean-value with the parameter name', async () => {
     const result = await repairToolCall('toggle', { enabled: 'yes' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(true);
+    expect(result.repairs).toEqual(["coerced enabled from 'yes' to boolean true"]);
+    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests[0]!.state).toMatchObject({ tool: 'toggle', parameter: 'enabled', value: 'yes' });
   });
 
-  test('coerces "no" to false', async () => {
-    const result = await repairToolCall('toggle', { enabled: 'no' }, BOOL_SCHEMA);
-    expect(result.repaired).toBe(true);
-    expect(result.fixed['enabled']).toBe(false);
+  test('a reading of false coerces to false', async () => {
+    const r1 = await repairToolCall('toggle', { enabled: 'no' }, BOOL_SCHEMA);
+    expect(r1.fixed['enabled']).toBe(false);
+    const r2 = await repairToolCall('toggle', { enabled: 'off' }, BOOL_SCHEMA);
+    expect(r2.fixed['enabled']).toBe(false);
   });
 
-  test('coerces case-insensitive variants (TRUE, YES)', async () => {
-    const r1 = await repairToolCall('toggle', { enabled: 'TRUE' }, BOOL_SCHEMA);
+  test('capitalized spellings are not JSON literals, so they are read too', async () => {
+    const r1 = await repairToolCall('toggle', { enabled: 'True' }, BOOL_SCHEMA);
     expect(r1.fixed['enabled']).toBe(true);
     const r2 = await repairToolCall('toggle', { enabled: 'YES' }, BOOL_SCHEMA);
     expect(r2.fixed['enabled']).toBe(true);
+    expect(readings.requests).toHaveLength(2);
   });
 
   test('leaves actual boolean unchanged', async () => {
     const result = await repairToolCall('toggle', { enabled: true }, BOOL_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['enabled']).toBe(true);
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test('leaves unrecognised string unchanged', async () => {
+  test('a string read as neither is left as sent', async () => {
     const result = await repairToolCall('toggle', { enabled: 'maybe' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['enabled']).toBe('maybe');

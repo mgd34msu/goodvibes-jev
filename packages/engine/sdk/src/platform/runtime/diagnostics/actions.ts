@@ -13,6 +13,7 @@
  *  - Jump to agent: navigates the UI focus to a related agent entry
  *  - Jump to tool call: navigates the UI focus to a related tool call entry
  */
+import { readCallClassification } from '../../gate/reading.js';
 import { logger } from '../../utils/logger.js';
 import type { DeterministicReplayEngine } from '../../core/deterministic-replay.js';
 import type { PermissionSimulator } from '../permissions/simulation.js';
@@ -373,7 +374,7 @@ export class DiagnosticActionDispatcher {
         return this._handleLoadReplay(action.payload);
 
       case 'run-policy-simulation':
-        return this._handlePolicySimulation(action.payload);
+        return await this._handlePolicySimulation(action.payload);
 
       case 'jump-to-task':
         return this._handleJump('task', action.payload.taskId);
@@ -429,9 +430,9 @@ export class DiagnosticActionDispatcher {
     };
   }
 
-  private _handlePolicySimulation(
+  private async _handlePolicySimulation(
     payload: RunPolicySimulationPayload,
-  ): ActionResult {
+  ): Promise<ActionResult> {
     if (!this._simulator) {
       return {
         success: false,
@@ -439,7 +440,9 @@ export class DiagnosticActionDispatcher {
       };
     }
 
-    const result = this._simulator.evaluate(payload.toolName, payload.args);
+    // What the call does is read by Jev, as the gate does; a JudgmentError propagates.
+    const classification = await readCallClassification(payload.toolName, payload.args, 'engine.gate.policy-simulation');
+    const result = this._simulator.evaluate(payload.toolName, payload.args, classification);
 
     const diverged = result.diverged;
     const actual = result.actualDecision.allowed ? 'allowed' : 'denied';

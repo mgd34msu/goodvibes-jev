@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { walk, safeRead, resolvePath } from './shared.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { projectTooling } from '../batteries/project-tooling.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { entryPointView, projectTooling } from '../batteries/project-tooling.js';
+import { inspectApi } from './project-routes.js';
 import type {
   ApiFramework,
   ProjectInfo,
@@ -19,6 +21,8 @@ import type {
   FetchCall,
   ApiSyncResult,
 } from './schema.js';
+
+export { declaredApiFrameworks, inspectApi } from './project-routes.js';
 
 const PROJECT_TOOLING_SITE = 'tools.inspect.project-tooling';
 
@@ -79,6 +83,63 @@ function countSourceFiles(root: string): Record<string, number> {
   return counts;
 }
 
+/** Source file extensions an entry point candidate may have. */
+const SCRIPT_FILE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
+const ENTRY_POINT_CONCURRENCY = 8;
+
+/**
+ * The entry points package.json declares, as the Node package spec defines
+ * them: main, module, browser, every bin target, and every target in
+ * exports (under any condition except `types`, which TypeScript defines as
+ * the path to declaration files, not to a module).
+ */
+function declaredEntryPoints(pkg: Record<string, unknown>): string[] {
+  const targets: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === 'string') targets.push(value);
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) if (key !== 'types') collect(inner);
+    }
+  };
+  for (const field of ['main', 'module', 'browser'] as const) if (typeof pkg[field] === 'string') collect(pkg[field]);
+  collect(pkg.bin);
+  collect(pkg.exports);
+  return [...new Set(targets.map((target) => target.replace(/^\.\//, '')))];
+}
+
+/**
+ * With no declared entry point, the candidates are the source files at the
+ * root and directly in src/, and the source files the scripts name; each is
+ * read by `entry_point` and listed on a yes that acts.
+ */
+async function readEntryPoints(root: string, scripts: Record<string, string>): Promise<string[]> {
+  const isFile = (file: string): boolean => {
+    try {
+      return statSync(join(root, file)).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const listed = (dir: string): string[] => {
+    try {
+      return readdirSync(join(root, dir)).map((name) => (dir ? `${dir}/${name}` : name));
+    } catch {
+      return [];
+    }
+  };
+  const named = Object.values(scripts).flatMap((script) => script.split(/\s+/).map((token) => token.replace(/^['"]|['"]$/g, '').replace(/^\.\//, '')));
+  const candidates = [...new Set([...listed(''), ...listed('src'), ...named])].filter((file) => SCRIPT_FILE.test(file) && isFile(file));
+  const readings = await mapWithConcurrency(candidates, ENTRY_POINT_CONCURRENCY, async (file) => {
+    const run = await projectTooling.run(judgmentPort(PROJECT_TOOLING_SITE), entryPointView(file, safeRead(join(root, file)), scripts), { site: PROJECT_TOOLING_SITE, only: ['entry_point'] });
+    const reading = run.readings.entry_point;
+    const entry = reading.verdict === 'yes' && reading.outcome === 'act';
+    run.recordAction(`${file}: ${entry ? 'entry point' : 'not listed'}`);
+    return entry;
+  });
+  return candidates.filter((_, i) => readings[i]);
+}
+
 const TEST_FRAMEWORK_LABELS: Readonly<Record<string, string | undefined>> = { bun: 'bun:test', node: 'node:test', none: undefined };
 
 /**
@@ -88,7 +149,8 @@ const TEST_FRAMEWORK_LABELS: Readonly<Record<string, string | undefined>> = { bu
  * (several ecosystems, no or conflicting lockfiles, the test runner) is read
  * by `engine.tools.project-tooling` in one request; a reading that does not
  * act leaves the field unknown ('unknown' type, 'none' package manager, no
- * test framework).
+ * test framework). Entry points are the ones package.json declares; with
+ * none declared, each candidate file is read (readEntryPoints).
  */
 export async function detectProject(root: string): Promise<ProjectInfo> {
   const has = (f: string) => existsSync(join(root, f));
@@ -106,6 +168,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   let isMonorepo = false;
   let dependencyNames: string[] = [];
   let declaredManager: PackageManager | undefined;
+  let declaredEntries: string[] = [];
 
   if (has('package.json')) {
     const raw = safeRead(join(root, 'package.json'));
@@ -121,6 +184,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
         dependencyNames = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
         const field = typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : undefined;
         if (field !== undefined && isPackageManager(field)) declaredManager = field;
+        declaredEntries = declaredEntryPoints(pkg);
       } catch {
         // malformed JSON
       }
@@ -166,10 +230,7 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
   }
 
   const hasTypeScript = has('tsconfig.json') || has('tsconfig.base.json');
-  const entryPoints: string[] = [];
-  for (const ep of ['src/index.ts', 'src/index.js', 'index.ts', 'index.js', 'src/main.ts', 'src/main.js', 'main.ts']) {
-    if (has(ep)) entryPoints.push(ep);
-  }
+  const entryPoints = declaredEntries.length > 0 ? declaredEntries : await readEntryPoints(root, scripts);
 
   return {
     type,
@@ -184,164 +245,6 @@ export async function detectProject(root: string): Promise<ProjectInfo> {
     isMonorepo,
     entryPoints,
   };
-}
-
-async function findNextjsAppRoutes(root: string): Promise<ApiRoute[]> {
-  const routes: ApiRoute[] = [];
-  const appDir = join(root, 'app');
-  if (!existsSync(appDir)) return routes;
-
-  const files = await walk(appDir, (p) => p.endsWith('route.ts') || p.endsWith('route.js'));
-  for (const file of files) {
-    const content = safeRead(file);
-    const relFile = relative(root, file);
-    const lines = content.split('\n');
-    const routePath = '/' + relative(join(root, 'app'), file)
-      .replace(/\/route\.[tj]s$/, '')
-      .replace(/\[(.+?)\]/g, ':$1')
-      .replace(/\((.+?)\)\//g, '') || '/';
-
-    const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]!;
-      for (const method of HTTP_METHODS) {
-        if (
-          line.match(new RegExp(`export\\s+(async\\s+)?function\\s+${method}\\b`)) ||
-          line.match(new RegExp(`export\\s+const\\s+${method}\\s*=`))
-        ) {
-          routes.push({ method, path: routePath, file: relFile, line: i + 1 });
-        }
-      }
-    }
-  }
-  return routes;
-}
-
-async function findNextjsPagesRoutes(root: string): Promise<ApiRoute[]> {
-  const routes: ApiRoute[] = [];
-  const apiDir = join(root, 'pages', 'api');
-  if (!existsSync(apiDir)) return routes;
-
-  const files = await walk(apiDir, (p) => /\.[tj]sx?$/.test(p));
-  for (const file of files) {
-    const relFile = relative(root, file);
-    const routePath = '/' + relative(join(root, 'pages'), file)
-      .replace(/\.[tj]sx?$/, '')
-      .replace(/\[(.+?)\]/g, ':$1');
-    routes.push({ method: 'ANY', path: routePath, file: relFile, line: 1 });
-  }
-  return routes;
-}
-
-async function findExpressRoutes(root: string): Promise<ApiRoute[]> {
-  const routes: ApiRoute[] = [];
-  const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
-  const EXPRESS_RE = /(?:router|app|server)\.(get|post|put|delete|patch|options|head)\s*\(\s*['"](.*?)['"]|(?:router|app|server)\.(get|post|put|delete|patch|options|head)\s*\(\s*`(.*?)`/i;
-
-  for (const file of files) {
-    const content = safeRead(file);
-    const relFile = relative(root, file);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const m = EXPRESS_RE.exec(lines[i]!);
-      if (m) {
-        const method = (m[1] || m[3] || 'get').toUpperCase();
-        const path = m[2]! || m[4] || '/';
-        routes.push({ method, path, file: relFile, line: i + 1 });
-      }
-    }
-  }
-  return routes;
-}
-
-async function findFastifyRoutes(root: string): Promise<ApiRoute[]> {
-  const routes: ApiRoute[] = [];
-  const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
-  const FASTIFY_RE = /fastify\.(get|post|put|delete|patch|options|head)\s*\(\s*['"](.*?)['"]|fastify\.(get|post|put|delete|patch|options|head)\s*\(\s*`(.*?)`/i;
-
-  for (const file of files) {
-    const content = safeRead(file);
-    const relFile = relative(root, file);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const m = FASTIFY_RE.exec(lines[i]!);
-      if (m) {
-        const method = (m[1] || m[3] || 'get').toUpperCase();
-        const path = m[2]! || m[4] || '/';
-        routes.push({ method, path, file: relFile, line: i + 1 });
-      }
-    }
-  }
-  return routes;
-}
-
-async function findHonoRoutes(root: string): Promise<ApiRoute[]> {
-  const routes: ApiRoute[] = [];
-  const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
-  const HONO_RE = /app\.(get|post|put|delete|patch|options|head)\s*\(\s*['"](.*?)['"]|app\.(get|post|put|delete|patch|options|head)\s*\(\s*`(.*?)`/i;
-
-  for (const file of files) {
-    const content = safeRead(file);
-    const relFile = relative(root, file);
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const m = HONO_RE.exec(lines[i]!);
-      if (m) {
-        const method = (m[1] || m[3] || 'get').toUpperCase();
-        const path = m[2]! || m[4] || '/';
-        routes.push({ method, path, file: relFile, line: i + 1 });
-      }
-    }
-  }
-  return routes;
-}
-
-type ConcreteFramework = Exclude<ApiFramework, 'auto'>;
-const FRAMEWORK_PACKAGES: ReadonlyArray<readonly [pkg: string, framework: ConcreteFramework]> = [
-  ['next', 'nextjs'],
-  ['fastify', 'fastify'],
-  ['hono', 'hono'],
-  ['express', 'express'],
-];
-
-/** The API frameworks package.json declares as dependencies (facts, no preference among them). */
-export function declaredApiFrameworks(root: string): ConcreteFramework[] {
-  const raw = safeRead(join(root, 'package.json'));
-  if (!raw) return [];
-  try {
-    const pkg = JSON.parse(raw);
-    const all = { ...pkg.dependencies, ...pkg.devDependencies };
-    return FRAMEWORK_PACKAGES.filter(([name]) => all[name]).map(([, framework]) => framework);
-  } catch {
-    return [];
-  }
-}
-
-async function routesFor(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
-  switch (framework) {
-    case 'nextjs':
-      return [...await findNextjsAppRoutes(root), ...await findNextjsPagesRoutes(root)];
-    case 'fastify':
-      return findFastifyRoutes(root);
-    case 'hono':
-      return findHonoRoutes(root);
-    case 'express':
-      return findExpressRoutes(root);
-  }
-}
-
-/**
- * Routes of the given framework, or for 'auto' the routes of every framework
- * package.json declares; with none declared, every scanner runs. Each
- * scanner matches its own framework's route syntax, so nothing is preferred.
- */
-export async function inspectApi(root: string, framework: ApiFramework): Promise<ApiRoute[]> {
-  if (framework !== 'auto') return routesFor(root, framework);
-  const declared = declaredApiFrameworks(root);
-  const frameworks = declared.length > 0 ? declared : FRAMEWORK_PACKAGES.map(([, fw]) => fw);
-  const routes: ApiRoute[] = [];
-  for (const fw of frameworks) routes.push(...await routesFor(root, fw));
-  return routes;
 }
 
 /** A field is a relation when its type names a model declared in the same schema (the Prisma schema grammar). */
@@ -457,22 +360,6 @@ export function generateApiSpec(routes: ApiRoute[], title = 'API', version = '1.
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const method = route.method.toLowerCase();
-    if (method === 'any') {
-      const opId = `get_${openApiPath.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')}`;
-      const parameters: OpenApiParameter[] = params.map((p) => ({
-        name: p,
-        in: 'path',
-        required: true,
-        schema: { type: 'string' },
-      }));
-      paths[openApiPath]['get'] = {
-        operationId: opId,
-        ...(parameters.length ? { parameters } : {}),
-        responses: { '200': { description: 'OK' } },
-      };
-      continue;
-    }
-
     const opId = `${method}_${openApiPath.replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')}`;
     const parameters: OpenApiParameter[] = params.map((p) => ({
       name: p,
@@ -514,7 +401,7 @@ export function validateApiSpec(specContent: string, routes: ApiRoute[]): ApiVal
   const codeRouteMap = new Map<string, Set<string>>();
   for (const route of routes) {
     const methods = codeRouteMap.get(route.path) ?? new Set<string>();
-    if (route.method !== 'ANY') methods.add(route.method);
+    methods.add(route.method);
     codeRouteMap.set(route.path, methods);
   }
 
@@ -558,34 +445,21 @@ function normalizeUrlForMatch(url: string): string {
     .replace(/\/$/, '') || '/';
 }
 
+/**
+ * fetch calls whose URL literal is a path (starts with `/`). By the Fetch
+ * standard a path resolves only against a document's base URL, so such a
+ * call is client code wherever the file sits; the whole project is scanned.
+ */
 async function findFetchCalls(root: string): Promise<FetchCall[]> {
   const calls: FetchCall[] = [];
-  const frontendDirs = ['src/app', 'src/pages', 'app', 'pages'].map((d) => join(root, d));
-  const dirsToScan = frontendDirs.filter(existsSync);
-  if (dirsToScan.length === 0) {
-    dirsToScan.push(join(root, 'src'));
-  }
-
   const FETCH_RE = /fetch\(\s*[`'"](\/[^`'"?#]*)[`'"]/g;
-
-  for (const dir of dirsToScan) {
-    if (!existsSync(dir)) continue;
-    const files = await walk(dir, (p) => /\.[tj]sx?$/.test(p));
-    for (const file of files) {
-      const content = safeRead(file);
-      const relFile = relative(root, file);
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]!;
-        let m: RegExpExecArray | null;
-        const re = new RegExp(FETCH_RE.source, 'g');
-        while ((m = re.exec(line)) !== null) {
-          calls.push({ url: m[1]!, file: relFile, line: i + 1 });
-        }
-      }
-    }
+  const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
+  for (const file of files) {
+    const relFile = relative(root, file);
+    safeRead(file).split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(FETCH_RE)) calls.push({ url: m[1]!, file: relFile, line: i + 1 });
+    });
   }
-
   return calls;
 }
 

@@ -4,7 +4,6 @@ import { KVState } from '../../state/kv-state.js';
 import { ProjectIndex } from '../../state/project-index.js';
 import { ModeManager } from '../../state/mode-manager.js';
 import type { MemoryRegistry } from '../../state/memory-registry.js';
-import type { ProvenanceLink } from '../../state/memory-store.js';
 import { HookDispatcher } from '../../hooks/dispatcher.js';
 import { TelemetryDB } from '../../state/telemetry.js';
 import type { TelemetryFilter } from '../../state/telemetry.js';
@@ -14,6 +13,7 @@ import { STATE_TOOL_SCHEMA } from './schema.js';
 import type { StateInput } from './schema.js';
 import { toRecord } from '../../utils/record-coerce.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { mirrorMemoryRecord, planMemoryMirror } from './memory-mirror.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,60 +38,6 @@ function sanitizeMemoryKey(key: string): string | null {
   if (!key) return null;
   if (!/^[a-zA-Z0-9_-]+$/.test(key)) return null;
   return key;
-}
-
-/**
- * Mirror a `mode=memory action=set` write into a retrievable `memory_records` row so passive
- * per-turn knowledge injection (which only reads `memory_records`, never the flat
- * `.goodvibes/memory/*.json` files) can surface it. This closes the trust gap where a distilled
- * preference lived only as a flat file that retrieval never saw.
- *
- * Deduped per key via a stable `state-memory:<key>` tag, so repeated statements of the same
- * preference UPDATE the single record instead of piling up duplicates. Provenance is a `file` link
- * back to the flat-file twin (honest about where the record came from). The record enters at
- * reviewState 'fresh' with default confidence, visible to retrieval (the confidence>=55 gate) but
- * NOT stamped 'reviewed'/high-trust, so a self-recorded preference cannot inject itself at unearned
- * trust; the existing confidence-floor/review flow governs it from there.
- *
- * Best-effort: returns true when a record was written, false when there is no registry or the write
- * failed, the caller's flat-file write (the source of truth for `mode=memory list/get`) is
- * unaffected either way.
- */
-async function upsertMemoryRecord(
-  memoryRegistry: MemoryRegistry | undefined,
-  safeKey: string,
-  value: string,
-): Promise<boolean> {
-  if (!memoryRegistry) return false;
-  try {
-    const flat = value.replace(/\s+/g, ' ').trim();
-    const summary = flat.length > 160 ? `${flat.slice(0, 157)}...` : (flat || safeKey);
-    const dedupTag = `state-memory:${safeKey}`;
-    const provenance: ProvenanceLink[] = [
-      { kind: 'file', ref: `.goodvibes/memory/${safeKey}.json`, label: `state tool memory (${safeKey})` },
-    ];
-    const existing = memoryRegistry.getAll().find((record) => record.tags.includes(dedupTag));
-    if (existing) {
-      memoryRegistry.update(existing.id, { summary, detail: value, tags: existing.tags });
-    } else {
-      await memoryRegistry.add({
-        scope: 'project',
-        cls: 'fact',
-        summary,
-        detail: value,
-        tags: ['state-memory', dedupTag],
-        provenance,
-        review: { state: 'fresh' },
-      });
-    }
-    return true;
-  } catch (err) {
-    logger.warn('state tool: memory record mirror failed (flat-file write unaffected)', {
-      key: safeKey,
-      error: summarizeError(err),
-    });
-    return false;
-  }
 }
 
 export interface StateToolOptions {
@@ -811,6 +757,8 @@ async function runMemory(
       return { success: false, error: 'memory action "set" requires "memoryValue"' };
     }
     try {
+      // The mirror is planned first: a new record's class is read before anything is written.
+      const plan = await planMemoryMirror(memoryRegistry, safeKey, value);
       mkdirSync(memoryDir, { recursive: true });
       const filePath = join(memoryDir, `${safeKey}.json`);
       // Write as-is; allow caller to pass JSON string or plain text
@@ -818,7 +766,7 @@ async function runMemory(
       // Mirror the write into the retrievable memory store so passive per-turn knowledge injection
       // can surface it. Best-effort and deduped per key, a registry failure never fails the file
       // write, which remains the source of truth for `mode=memory list/get`.
-      const indexed = await upsertMemoryRecord(memoryRegistry, safeKey, value);
+      const indexed = await mirrorMemoryRecord(memoryRegistry, safeKey, value, plan);
       return {
         success: true,
         output: JSON.stringify({ mode: 'memory', action: 'set', key: safeKey, bytes_written: value.length, retrievable: indexed }),

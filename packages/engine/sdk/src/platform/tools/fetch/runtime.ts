@@ -13,6 +13,7 @@ import {
   type TrustTierConfig,
 } from './trust-tiers.js';
 import { applyExtract, sniffContentType } from './extract.js';
+import { headersForOtherOrigin } from './redirect-headers.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { instrumentedFetch, createTimeoutController } from '../../utils/fetch-with-timeout.js';
@@ -236,6 +237,8 @@ interface FetchOneOptions {
 
 interface PreparedFetchRequest {
   headers: Record<string, string>;
+  /** Lower-cased names of the headers the tool set from `auth` or `service`. */
+  credentialHeaders: Set<string>;
   body?: string | FormData | undefined;
 }
 
@@ -279,6 +282,7 @@ async function fetchOneRaw(
   effectiveUrl: string,
   trustTierConfig: TrustTierConfig,
   localhostApproved: boolean,
+  credentialHeaders: ReadonlySet<string>,
   externalSignal?: AbortSignal | undefined,
 ): Promise<Response> {
   const { signal: timeoutSignal, dispose } = createTimeoutController(urlInput.timeout_ms ?? DEFAULT_TIMEOUT_MS);
@@ -294,6 +298,7 @@ async function fetchOneRaw(
       signal,
       trustTierConfig,
       localhostApproved,
+      credentialHeaders,
     });
   } finally {
     dispose();
@@ -308,6 +313,7 @@ async function fetchWithValidatedRedirects(input: {
   signal: AbortSignal;
   trustTierConfig: TrustTierConfig;
   localhostApproved: boolean;
+  credentialHeaders: ReadonlySet<string>;
 }): Promise<Response> {
   let currentUrl = input.url;
   let currentMethod = input.method;
@@ -354,7 +360,7 @@ async function fetchWithValidatedRedirects(input: {
       currentHeaders = removeContentHeaders(currentHeaders);
     }
     if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
-      currentHeaders = removeCredentialHeaders(currentHeaders);
+      currentHeaders = await headersForOtherOrigin(currentHeaders, input.credentialHeaders);
     }
     currentUrl = nextUrl;
   }
@@ -380,45 +386,26 @@ function removeContentHeaders(headers: Record<string, string>): Record<string, s
   );
 }
 
-function removeCredentialHeaders(headers: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(headers).filter(([key]) => {
-      const normalized = key.toLowerCase();
-      return normalized !== 'authorization' && normalized !== 'cookie' && normalized !== 'proxy-authorization';
-    }),
-  );
-}
-
-function prepareFetchHeaders(urlInput: FetchUrlInput): Record<string, string> {
-  const headers: Record<string, string> = { ...(urlInput.headers ?? {}) };
-  if (urlInput.auth) {
-    applyAuthHeaders(headers, urlInput.auth);
-  }
-  return headers;
-}
-
 async function prepareFetchRequest(
   urlInput: FetchUrlInput,
+  extractMode: FetchExtractMode,
   deps: FetchRuntimeDeps,
 ): Promise<PreparedFetchRequest> {
-  const headers = prepareFetchHeaders(urlInput);
-
-  if (!urlInput.auth && urlInput.service) {
-    const serviceHeaders = await deps.serviceRegistry?.resolveAuth(urlInput.service);
-    if (serviceHeaders) {
-      Object.assign(headers, serviceHeaders);
-    }
+  // The credentials the tool adds itself, kept apart so a cross-origin
+  // redirect drops them by where they came from (redirect-headers.ts).
+  const toolHeaders: Record<string, string> = {};
+  if (urlInput.auth) {
+    applyAuthHeaders(toolHeaders, urlInput.auth);
+  } else if (urlInput.service) {
+    Object.assign(toolHeaders, await deps.serviceRegistry?.resolveAuth(urlInput.service) ?? {});
   }
+  const headers: Record<string, string> = { ...(urlInput.headers ?? {}), ...toolHeaders };
+  const credentialHeaders = new Set(Object.keys(toolHeaders).map((name) => name.toLowerCase()));
 
-  try {
-    const effectiveUrl = buildUrl(urlInput.url, urlInput.params);
-    if (/\/api\/|\/v\d+\/|\/graphql/i.test(effectiveUrl)) {
-      if (!Object.keys(headers).some((h) => h.toLowerCase() === 'accept')) {
-        headers['Accept'] = 'application/json';
-      }
-    }
-  } catch {
-    // malformed URL, skip auto-negotiation
+  // The caller's `extract: 'json'` states it wants JSON; Accept is how HTTP
+  // asks the server for it (RFC 9110 §12.5.1). A caller's own Accept wins.
+  if (extractMode === 'json' && !Object.keys(headers).some((h) => h.toLowerCase() === 'accept')) {
+    headers['Accept'] = 'application/json';
   }
 
   const hasContentType = Object.keys(headers).some((k) => k.toLowerCase() === 'content-type');
@@ -451,7 +438,7 @@ async function prepareFetchRequest(
     }
   }
 
-  return { headers, body };
+  return { headers, credentialHeaders, body };
 }
 
 function buildFetchResultBase(
@@ -535,7 +522,7 @@ async function fetchOne(
     }
   }
 
-  const { headers, body: requestBody } = await prepareFetchRequest(urlInput, deps);
+  const { headers, credentialHeaders, body: requestBody } = await prepareFetchRequest(urlInput, extractMode, deps);
   const startTime = performance.now();
 
   try {
@@ -547,6 +534,7 @@ async function fetchOne(
       effectiveUrl,
       trustTierConfig,
       localhostApproved,
+      credentialHeaders,
       deps.signal,
     );
 
@@ -556,6 +544,7 @@ async function fetchOne(
       if (refreshedHeaders) {
         const retryHeaders = { ...headers };
         Object.assign(retryHeaders, refreshedHeaders);
+        const retryCredentialHeaders = new Set([...credentialHeaders, ...Object.keys(refreshedHeaders).map((name) => name.toLowerCase())]);
         response = await fetchOneRaw(
           urlInput,
           retryHeaders,
@@ -564,6 +553,7 @@ async function fetchOne(
           effectiveUrl,
           trustTierConfig,
           localhostApproved,
+          retryCredentialHeaders,
           deps.signal,
         );
       }
@@ -609,7 +599,7 @@ async function fetchOne(
     }
 
     if (verbosity !== 'minimal') {
-      const extracted = applyExtract(rawBody, contentType, extractMode, { selectors: urlInput.selectors });
+      const extracted = await applyExtract(rawBody, contentType, extractMode, { selectors: urlInput.selectors });
       const sanitized = applySanitizer(extracted, effectiveSanitizeMode);
       logger.debug('SANITIZE_MODE_APPLIED', {
         event: 'SANITIZE_MODE_APPLIED',

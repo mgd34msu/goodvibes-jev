@@ -149,6 +149,8 @@ export interface ApiRoute {
   path: string;
   file: string;
   line: number;
+  /** Present when the reading that found the route was uncertain (tools/batteries/api-routes.ts). */
+  reading?: 'uncertain' | undefined;
 }
 
 export interface DbField {
@@ -337,10 +339,17 @@ export interface ZIndexItem {
   context: string;
 }
 
+/** A z-index value set on several lines, kept unless the stacking reading is a no. */
+export interface StackingConflict {
+  values: string[];
+  lines: number[];
+  reading: 'real' | 'uncertain';
+}
+
 export interface StackingInfo {
   file: string;
   zIndexItems: ZIndexItem[];
-  potentialConflicts: Array<{ values: string[]; lines: number[] }>;
+  potentialConflicts: StackingConflict[];
 }
 
 export interface BreakpointUsage {

@@ -6,11 +6,16 @@
  * Each table entry pairs text that appears in a reading's state (its JSON)
  * with what Jev is expected to read about it; the first matching entry
  * answers. With no matching entry: no variable is a credential, no command
- * will prompt, no line is awaiting input, a command failure is lasting, a
- * child failure is `error`, a diff neither breaks callers nor changes
+ * will prompt, no command drives a terminal the platform does not own, no
+ * line is awaiting input, a command failure is lasting, a child failure is
+ * `error`, a diff neither breaks callers nor changes
  * behavior, no spare argument fills a missing parameter, no frontend
  * candidate is an issue, and a project is a Node project on npm with no test
- * runner. Readings are
+ * runner, no file is an entry point, no verb call is a route, a pages/api
+ * handler serves no method, no heal change is accepted, no rerank
+ * candidate is wanted, no line holds what an existence check looks for, a
+ * string sent for a boolean means neither, a memory is a fact, and a changed
+ * export neither rejects old calls nor changes its result. Readings are
  * strong, so every band acts on them. Questions of other batteries (the
  * gate's, which the exec tool also asks) go to the gate helper's port with
  * `gateTable`.
@@ -33,16 +38,37 @@ export interface ToolReading {
   readonly childFailure?: ChildFailureReading;
   readonly breaksCallers?: boolean | 'uncertain';
   readonly changesBehavior?: boolean | 'uncertain';
-  /** For a param-fill selection: the spare argument that fills the missing parameter. */
+  /** For a selection (param-fill, env-template, test-of-source): the candidate id it picks. */
   readonly fill?: string;
   readonly realSecret?: boolean | 'uncertain';
   readonly risky?: boolean | 'uncertain';
+  /** engine.tools.owner-terminal: the command acts on an existing terminal session (acts_on_session), none of them owned (owned_targets). */
+  readonly foreignTerminal?: boolean | 'uncertain';
   readonly severity?: 'high' | 'medium' | 'low';
   /** engine.tools.frontend-finding: the answer to whichever question the analyzer asks. */
   readonly finding?: boolean | 'uncertain';
   readonly projectType?: 'nodejs' | 'rust' | 'python' | 'go' | 'make';
   readonly packageManager?: 'npm' | 'bun' | 'yarn' | 'pnpm';
   readonly testFramework?: string;
+  /** engine.tools.project-tooling entry_point. */
+  readonly entryPoint?: boolean | 'uncertain';
+  /** engine.tools.api-routes: route_registration, and the methods a pages/api handler serves (`serves_*`). */
+  readonly route?: boolean | 'uncertain';
+  readonly serves?: readonly string[];
+  /** engine.tools.heal-acceptance. */
+  readonly fixesErrors?: boolean;
+  readonly onlyTheFix?: boolean;
+  /** engine.tools.output-keep (and any other rerank's `match`): the block or candidate is wanted. */
+  readonly needed?: boolean;
+  /** An existence check over numbered lines (engine.tools.secret-line, dangerous-line): the line matching this entry is the one it finds. */
+  readonly holds?: boolean;
+  /** engine.tools.boolean-value. */
+  readonly booleanValue?: 'true' | 'false' | 'neither';
+  /** engine.tools.memory-class. */
+  readonly memoryClass?: string;
+  /** engine.tools.export-break: a call written for the old declaration is rejected, and callers cannot use the result as before. */
+  readonly inputsBreak?: boolean | 'uncertain';
+  readonly outputBreaks?: boolean | 'uncertain';
 }
 
 /** One recorded request: the state read and the questions asked. */
@@ -65,9 +91,9 @@ function fitCandidate(question: Question): string | undefined {
 }
 
 /** The question names the tools batteries ask. */
-const FINDING_QUESTIONS = new Set(['a11y_violation', 'omits_dependency', 'overflow_problem', 'fixed_size_problem', 'server_only']);
-const TOOL_QUESTIONS = new Set(['credential', 'will_prompt', 'awaiting_input', 'category', 'reason', 'breaks_callers', 'changes_behavior', 'pick', 'real_secret', 'risky', 'severity', 'project_type', 'package_manager', 'test_framework', ...FINDING_QUESTIONS]);
-const isToolQuestion = (name: string): boolean => TOOL_QUESTIONS.has(name) || name.startsWith('fits_');
+const FINDING_QUESTIONS = new Set(['a11y_violation', 'omits_dependency', 'overflow_problem', 'fixed_size_problem', 'server_only', 'stacking_conflict']);
+const TOOL_QUESTIONS = new Set(['credential', 'will_prompt', 'awaiting_input', 'category', 'reason', 'breaks_callers', 'changes_behavior', 'pick', 'real_secret', 'risky', 'acts_on_session', 'owned_targets', 'severity', 'project_type', 'package_manager', 'test_framework', 'entry_point', 'route_registration', 'fixes_errors', 'only_the_fix', 'match', 'where', 'exists', 'boolean_value', 'memory_class', 'inputs_break', 'output_breaks', ...FINDING_QUESTIONS]);
+const isToolQuestion = (name: string): boolean => TOOL_QUESTIONS.has(name) || name.startsWith('fits_') || name.startsWith('serves_');
 
 /**
  * A port answering the tools batteries from `table` and every other question
@@ -93,6 +119,13 @@ export function toolReadingsPort(table: ToolReadingTable = [], gateTable: GateRe
   return { port, requests };
 }
 
+/** The id of the first `id| text` line of an existence state that a `holds` entry matches. */
+function heldLine(table: ToolReadingTable, state: unknown): string | undefined {
+  const lines = typeof state === 'string' ? state.split('\n') : [];
+  const held = lines.find((line) => table.some(([match, reading]) => reading.holds === true && line.includes(match)));
+  return held?.slice(0, held.indexOf('|'));
+}
+
 function toolAnswers(table: ToolReadingTable) {
   return fakePort((name: string, question: Question, state: unknown) => {
     const text = JSON.stringify(state);
@@ -108,11 +141,25 @@ function toolAnswers(table: ToolReadingTable) {
       case 'pick': return choiceAnswer(question, reading.fill ?? 'none', 0.95);
       case 'real_secret': return noul(reading.realSecret);
       case 'risky': return noul(reading.risky);
+      case 'acts_on_session': return noul(reading.foreignTerminal);
+      case 'owned_targets': return noul(reading.foreignTerminal === 'uncertain' ? 'uncertain' : reading.foreignTerminal !== true);
       case 'severity': return choiceAnswer(question, reading.severity ?? 'low', 0.95);
       case 'project_type': return choiceAnswer(question, reading.projectType ?? 'nodejs', 0.95);
       case 'package_manager': return choiceAnswer(question, reading.packageManager ?? 'npm', 0.95);
       case 'test_framework': return choiceAnswer(question, reading.testFramework ?? 'none', 0.95);
+      case 'entry_point': return noul(reading.entryPoint);
+      case 'route_registration': return noul(reading.route);
+      case 'fixes_errors': return noul(reading.fixesErrors);
+      case 'only_the_fix': return noul(reading.onlyTheFix);
+      case 'match': return noul(reading.needed);
+      case 'exists': return noul(heldLine(table, state) !== undefined);
+      case 'where': return choiceAnswer(question, heldLine(table, state) ?? Object.keys(question.criteria as object)[0]!, 0.95);
+      case 'boolean_value': return choiceAnswer(question, reading.booleanValue ?? 'neither', 0.95);
+      case 'memory_class': return choiceAnswer(question, reading.memoryClass ?? 'fact', 0.95);
+      case 'inputs_break': return noul(reading.inputsBreak);
+      case 'output_breaks': return noul(reading.outputBreaks);
       default:
+        if (name.startsWith('serves_')) return noul(reading.serves?.includes(name.slice('serves_'.length).toUpperCase()) ?? false);
         if (FINDING_QUESTIONS.has(name)) return noul(reading.finding);
         if (name.startsWith('fits_')) return noul(reading.fill !== undefined && fitCandidate(question) === reading.fill);
         throw new Error(`tool-readings: no answer for question ${name}`);

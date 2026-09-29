@@ -71,30 +71,40 @@ function makeManager(mode: PermissionMode, promptApproves = false) {
 // ── evaluator mode matrix ────────────────────────────────────────────────────
 
 describe('LayeredPolicyEvaluator mode matrix', () => {
+  // The classification is what the gate's Jev reading says the call does
+  // (gate/reading.ts classificationFromReading); the evaluator no longer
+  // guesses it from the tool name.
   test('plan mode allows reads and denies write/exec/delegate', () => {
     const e = new LayeredPolicyEvaluator({ mode: 'plan' });
-    expect(e.evaluate('read', { path: 'a.ts' }).allowed).toBe(true);
-    expect(e.evaluate('write', { path: 'a.ts' }).allowed).toBe(false);
-    expect(e.evaluate('write', { path: 'a.ts' }).reason).toBe('MODE_DENY_PLAN');
-    expect(e.evaluate('exec', { command: 'ls' }).allowed).toBe(false);
-    expect(e.evaluate('agent', {}).allowed).toBe(false); // escalation blocked
+    expect(e.evaluate('read', { path: 'a.ts' }, 'read').allowed).toBe(true);
+    expect(e.evaluate('write', { path: 'a.ts' }, 'write').allowed).toBe(false);
+    expect(e.evaluate('write', { path: 'a.ts' }, 'write').reason).toBe('MODE_DENY_PLAN');
+    expect(e.evaluate('exec', { command: 'ls' }, 'read').allowed).toBe(true); // a read-only command reads
+    expect(e.evaluate('exec', { command: 'rm x' }, 'destructive').allowed).toBe(false);
+    expect(e.evaluate('agent', {}, 'escalation').allowed).toBe(false);
   });
 
-  test('accept-edits auto-approves write/edit but still gates exec', () => {
+  test('accept-edits auto-approves the engine file tools but still gates exec', () => {
     const e = new LayeredPolicyEvaluator({ mode: 'accept-edits', defaultEffect: 'deny' });
-    const w = e.evaluate('write', { path: 'a.ts' });
+    const w = e.evaluate('write', { path: 'a.ts' }, 'write');
     expect(w.allowed).toBe(true);
     expect(w.reason).toBe('MODE_ALLOW_ACCEPT_EDITS');
-    expect(e.evaluate('edit', { path: 'a.ts' }).allowed).toBe(true);
-    // exec classifies as write but is NOT a write/edit tool name → not auto-approved.
-    expect(e.evaluate('exec', { command: 'rm x' }).allowed).toBe(false);
+    expect(e.evaluate('edit', { path: 'a.ts' }, 'write').allowed).toBe(true);
+    // A shell command that writes is not one of the engine's file tools.
+    expect(e.evaluate('exec', { command: 'rm x' }, 'write').allowed).toBe(false);
   });
 
   test('allow-all approves everything; default gates writes', () => {
-    expect(new LayeredPolicyEvaluator({ mode: 'allow-all' }).evaluate('exec', { command: 'x' }).allowed).toBe(true);
+    expect(new LayeredPolicyEvaluator({ mode: 'allow-all' }).evaluate('exec', { command: 'x' }, 'write').allowed).toBe(true);
     const def = new LayeredPolicyEvaluator({ mode: 'default', defaultEffect: 'deny' });
-    expect(def.evaluate('read', {}).allowed).toBe(true);
-    expect(def.evaluate('write', { path: 'a' }).allowed).toBe(false);
+    expect(def.evaluate('read', {}, 'read').allowed).toBe(true);
+    expect(def.evaluate('write', { path: 'a' }, 'write').allowed).toBe(false);
+  });
+
+  test('a call named like no built-in tool is classified by its reading, not its name', () => {
+    const e = new LayeredPolicyEvaluator({ mode: 'plan' });
+    expect(e.evaluate('curl', { url: 'https://example.com' }, 'read').allowed).toBe(true);
+    expect(e.evaluate('notes_sync', { text: 'x' }, 'network').allowed).toBe(false);
   });
 });
 

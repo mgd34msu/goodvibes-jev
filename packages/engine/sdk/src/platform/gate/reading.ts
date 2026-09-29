@@ -13,6 +13,7 @@ import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
 import { sideEffect, type SideEffectKind } from './batteries/side-effect.js';
 import { boundaryReading } from './batteries/boundary.js';
 import type { PermissionCategory } from '../permissions/types.js';
+import type { CommandClassification } from '../runtime/permissions/types.js';
 
 /** The yes/no facts behind a call's stakes. */
 export interface GateFacts {
@@ -168,6 +169,32 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
       edge.recordAction(action);
     },
   };
+}
+
+/** Risk families whose calls hand work to another agent, runner or server. */
+const DELEGATING_FAMILIES: ReadonlySet<GateRiskFamily> = new Set(['agent-spawn', 'delegation', 'remote-dispatch', 'mcp-escalation']);
+
+/**
+ * The policy evaluator's classification of a call, from the gate's reading:
+ * delegation by its risk family, then network when it reaches outside this
+ * machine, destructive when it changes something that cannot be undone,
+ * write when it changes anything, else read. It replaces the evaluator's
+ * tool-name lists, which guessed what a tool does from what it is called.
+ */
+export function classificationFromReading(reading: Pick<GateReading, 'family' | 'outward' | 'mutates' | 'irreversible'>): CommandClassification {
+  if (DELEGATING_FAMILIES.has(reading.family)) return 'escalation';
+  if (reading.outward) return 'network';
+  if (reading.mutates) return reading.irreversible ? 'destructive' : 'write';
+  return 'read';
+}
+
+/**
+ * Reads a call through the gate's batteries and returns its evaluator
+ * classification, for policy simulation and preflight, which evaluate a call
+ * outside the gate. A JudgmentError propagates.
+ */
+export async function readCallClassification(toolName: string, args: Record<string, unknown>, site: string = GATE_SITE): Promise<CommandClassification> {
+  return classificationFromReading(await readToolCall({ toolName, args, askObfuscated: shellCommandsIn(args).length > 0 }, site));
 }
 
 /** The permission category a side-effect kind maps to (fetch-like network reads stay read, as the fetch tool is). */

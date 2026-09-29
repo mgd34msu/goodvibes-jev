@@ -233,7 +233,7 @@ describe('provenance in PermissionDecision (integration)', () => {
       provenance,
     );
 
-    const decision = evaluator.evaluate('read', { path: '/tmp/foo.txt' });
+    const decision = evaluator.evaluate('read', { path: '/tmp/foo.txt' }, 'read');
     expect(decision.policyBundleId).toBe('int-1');
     expect(decision.signatureStatus).toBe('valid');
     expect(decision.provenanceSource).toBe('local-file');
@@ -241,7 +241,7 @@ describe('provenance in PermissionDecision (integration)', () => {
 
   it('leaves provenance fields undefined when no bundle is loaded', () => {
     const evaluator = createPermissionEvaluator({ mode: 'default' });
-    const decision = evaluator.evaluate('read', { path: '/tmp/foo.txt' });
+    const decision = evaluator.evaluate('read', { path: '/tmp/foo.txt' }, 'read');
     expect(decision.policyBundleId).toBeUndefined();
     expect(decision.signatureStatus).toBeUndefined();
     expect(decision.provenanceSource).toBeUndefined();
@@ -260,7 +260,7 @@ describe('provenance in PermissionDecision (integration)', () => {
       { mode: 'default' },
       result.provenance,
     );
-    const decision = evaluator.evaluate('write', { path: '/tmp/out.txt' });
+    const decision = evaluator.evaluate('write', { path: '/tmp/out.txt' }, 'write');
     expect(decision.signatureStatus).toBe('invalid');
   });
 });

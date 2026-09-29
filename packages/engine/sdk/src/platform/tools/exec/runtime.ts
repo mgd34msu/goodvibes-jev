@@ -46,15 +46,6 @@ const OVERFLOW_SUBDIR = ['.goodvibes', '.overflow'] as const;
 const MAX_EXEC_COMMANDS = 10;
 const MAX_PARALLEL_EXEC_COMMANDS = 3;
 
-const DANGEROUS_PATTERNS = [
-  /rm\s+-[a-zA-Z]*r[a-zA-Z]*f?\s+[\/~]/,
-  /rm\s+-[a-zA-Z]*f[a-zA-Z]*r?\s+[\/~]/,
-  /\bmkfs\b/,
-  /\bdd\b.*\bof=\/dev/,
-  /chmod\s+777\s+\//,
-  /chown\s+.*\s+\//,
-];
-
 function decodeCmd(cmdInput: ExecCommandInput): string {
   if (cmdInput.cmd_base64) {
     return Buffer.from(cmdInput.cmd_base64, 'base64').toString('utf-8');
@@ -111,23 +102,15 @@ function normalizeExecInput(input: ExecInput): ExecInput {
   return { ...input, working_dir: workingDir, commands };
 }
 
-function truncate(
+async function truncate(
   overflowHandler: OverflowHandler,
   s: string,
-  label?: string,
+  label: string,
+  call: string,
   maxChars: number = DEFAULT_MAX_CHARS,
-): { text: string; truncated: boolean } {
-  const result = overflowHandler.handle(s, { maxChars, label });
+): Promise<{ text: string; truncated: boolean }> {
+  const result = await overflowHandler.handle(s, { maxChars, label, call });
   return { text: result.content, truncated: result.overflowRef !== undefined };
-}
-
-function checkDangerous(cmd: string): void {
-  for (const pat of DANGEROUS_PATTERNS) {
-    if (pat.test(cmd)) {
-      logger.info(`[exec] WARNING: Potentially dangerous command detected: ${cmd}`);
-      break;
-    }
-  }
 }
 
 function resolveCwd(cwd: string | undefined, workingDirectory: string): string {
@@ -404,8 +387,8 @@ async function runCommand(
     }
 
     const [stdoutRaw, stderrRaw, exitCode] = procResult!;
-    const stdoutResult = truncate(overflowHandler, stdoutRaw, 'stdout');
-    const stderrResult = truncate(overflowHandler, stderrRaw, 'stderr');
+    const stdoutResult = await truncate(overflowHandler, stdoutRaw, 'stdout', cmdStr);
+    const stderrResult = await truncate(overflowHandler, stderrRaw, 'stderr', cmdStr);
     const duration = Date.now() - startTime;
     const result: ExecCommandResult = {
       cmd: cmdStr,
@@ -547,8 +530,8 @@ async function runCommandWithProgress(
     return [undefined, undefined, undefined] as [void, void, number | undefined];
   });
   const actualExitCode = (ioResult[2] as number | undefined) ?? await proc.exited;
-  const stdoutResult = truncate(overflowHandler, stdoutBuf, 'stdout');
-  const stderrResult = truncate(overflowHandler, stderrBuf, 'stderr');
+  const stdoutResult = await truncate(overflowHandler, stdoutBuf, 'stdout', cmdStr);
+  const stderrResult = await truncate(overflowHandler, stderrBuf, 'stderr', cmdStr);
   const duration = Date.now() - startTime;
   progressFile.append(`# Completed: exit=${actualExitCode} duration=${duration}ms\n`);
 
@@ -630,8 +613,8 @@ async function runUntil(
 
   const exitCode = await proc.exited;
   const duration = Date.now() - startTime;
-  const stdoutResult = truncate(overflowHandler, stdoutBuf, 'stdout');
-  const stderrResult = truncate(overflowHandler, stderrBuf, 'stderr');
+  const stdoutResult = await truncate(overflowHandler, stdoutBuf, 'stdout', cmdStr);
+  const stderrResult = await truncate(overflowHandler, stderrBuf, 'stderr', cmdStr);
   return {
     cmd: cmdStr,
     exit_code: exitCode,
@@ -783,9 +766,8 @@ async function executeResolvedCommand(
       denial_detail: denial,
     };
   }
-  checkDangerous(cmdStr);
 
-  const terminalRefusal = ownerTerminalRefusal(policy, cmdStr);
+  const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr);
   if (terminalRefusal) return terminalRefusal;
   const bgSpecial = handleBgSpecialCommand(processManager, cmdStr);
   if (bgSpecial) return bgSpecial;

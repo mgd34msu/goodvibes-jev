@@ -22,6 +22,10 @@
  * - `server_only` (client boundary, state: a module specifier): can this
  *   module only run on the server? Replaces the three-module list
  *   (server-only, next/headers, next-auth/server).
+ * - `stacking_conflict` (stacking, state: one z-index value and every line
+ *   that sets it): do these elements overlap in one stacking context, so
+ *   their order is left to document order? Replaces reporting every value
+ *   used on more than one line as a potential conflict.
  *
  * Band: low stakes. These are review hints in an inspection report; nothing
  * runs or changes on them. Code reports a candidate unless the reading is a
@@ -33,6 +37,23 @@ import { defineBattery, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 export const FRONTEND_CONTEXT_LINES = 3;
 /** Most lines of a hook call the omits_dependency reading carries. */
 export const MAX_JUDGED_HOOK_LINES = 40;
+
+/** One line that sets a z-index value, with the lines around it. */
+export type ZIndexUse = { line: number; text: string; before: string[]; after: string[] };
+
+/** What the stacking reading sees: the file, one z-index value, and each line that sets it. */
+export function stackingView(file: string, lines: readonly string[], value: string, lineNumbers: readonly number[]): { file: string; value: string; uses: ZIndexUse[] } {
+  return {
+    file,
+    value,
+    uses: lineNumbers.map((line) => ({
+      line,
+      text: lines[line - 1] ?? '',
+      before: lines.slice(Math.max(0, line - 1 - FRONTEND_CONTEXT_LINES), line - 1),
+      after: lines.slice(line, line + FRONTEND_CONTEXT_LINES),
+    })),
+  };
+}
 
 /** What a line reading sees: the file, the candidate line, and the lines around it. */
 export function frontendLineView(file: string, lines: readonly string[], index: number, extra: Record<string, string> = {}): Record<string, string | string[]> {
@@ -49,11 +70,58 @@ const LOW = STAKES_BANDS.low.yesNo;
 const el = (rule: string, line: string, before: string[] = [], after: string[] = []) => ({ file: 'src/components/Card.tsx', rule, line, before, after });
 const hook = (code: string) => ({ file: 'src/components/Search.tsx', code });
 const at = (line: string, before: string[] = [], after: string[] = []) => ({ file: 'src/components/Panel.tsx', line, before, after });
+const stack = (file: string, value: string, content: string, lineNumbers: number[]) => stackingView(file, content.split('\n'), value, lineNumbers);
+
+const MODAL_AND_TOAST = [
+  'export function Page() {',
+  '  return (',
+  '    <>',
+  '      <div className="fixed inset-0 z-50 bg-black/50">',
+  '        <Dialog />',
+  '      </div>',
+  '      <div className="fixed bottom-4 right-4 z-50">',
+  '        <Toast />',
+  '      </div>',
+  '    </>',
+  '  );',
+  '}',
+].join('\n');
+const MOBILE_OR_DESKTOP_NAV = [
+  'export function Navigation({ isMobile }) {',
+  '  if (isMobile) {',
+  '    return <nav className="fixed bottom-0 inset-x-0 z-30">{mobileLinks}</nav>;',
+  '  }',
+  '  return <aside className="sticky top-0 h-screen z-30">{desktopLinks}</aside>;',
+  '}',
+].join('\n');
+const HEADER_AND_DROPDOWN = [
+  '.site-header {',
+  '  position: sticky;',
+  '  top: 0;',
+  '  z-index: 100;',
+  '}',
+  '',
+  '.account-menu {',
+  '  position: absolute;',
+  '  top: 3rem;',
+  '  z-index: 100;',
+  '}',
+].join('\n');
+const TWO_ROUTES = [
+  "// settings/page.tsx and checkout/page.tsx share this file's exports",
+  'export function SettingsPage() {',
+  '  return <aside className="sticky top-0 z-20">{settingsNav}</aside>;',
+  '}',
+  '',
+  'export function CheckoutPage() {',
+  '  return <footer className="sticky bottom-0 z-20">{orderTotal}</footer>;',
+  '}',
+].join('\n');
 
 export const frontendFinding = defineBattery({
   name: 'engine.tools.frontend-finding',
-  version: 1,
-  description: 'Whether a frontend inspection candidate is a real issue: an accessibility violation, a missing hook dependency, an overflow problem, a fixed size that breaks narrow layouts, or a server-only import.',
+  version: 2,
+  description: 'Whether a frontend inspection candidate is a real issue: an accessibility violation, a missing hook dependency, an overflow problem, a fixed size that breaks narrow layouts, a server-only import, or a z-index value shared by overlapping elements.',
   accuracyFloor: 0.85,
   items: {
     a11y_violation: yesNo(
@@ -74,6 +142,10 @@ export const frontendFinding = defineBattery({
     ),
     server_only: yesNo(
       '`module` is the specifier of a JavaScript or TypeScript import in a web app. Can this module only run on the server, so importing it into a client component or browser bundle fails or leaks server code (for example Node built-ins, database drivers, server-only packages, or framework server APIs such as request headers and cookies)?',
+      LOW,
+    ),
+    stacking_conflict: yesNo(
+      '`value` is a z-index value that `file` sets on more than one element; `uses` lists each line that sets it, with the lines `before` and `after` it. Do two or more of these elements overlap on screen in the same stacking context, so that which one paints on top is left to their order in the document rather than set by different z-index values? Elements that are never on screen together (on different pages, routes or screens) or never overlap, and elements in separate stacking contexts, do not conflict.',
       LOW,
     ),
   },
@@ -120,5 +192,9 @@ export const frontendFinding = defineBattery({
     { name: 'react', state: { module: 'react' }, expect: { server_only: 'no' } },
     { name: 'next link', state: { module: 'next/link' }, expect: { server_only: 'no' } },
     { name: 'date library', state: { module: 'date-fns' }, expect: { server_only: 'no' } },
+    { name: 'modal overlay and toast share z-50', state: stack('src/app/page.tsx', 'z-50', MODAL_AND_TOAST, [4, 7]), expect: { stacking_conflict: 'yes' } },
+    { name: 'sticky header and dropdown share z-index 100', state: stack('src/styles/layout.css', 'z-index: 100', HEADER_AND_DROPDOWN, [4, 10]), expect: { stacking_conflict: 'yes' } },
+    { name: 'mobile or desktop navigation, never both', state: stack('src/components/Navigation.tsx', 'z-30', MOBILE_OR_DESKTOP_NAV, [3, 5]), expect: { stacking_conflict: 'no' } },
+    { name: 'sticky bars on two different pages', state: stack('src/app/shared.tsx', 'z-20', TWO_ROUTES, [3, 7]), expect: { stacking_conflict: 'no' } },
   ],
 });

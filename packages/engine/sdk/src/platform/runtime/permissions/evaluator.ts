@@ -27,38 +27,14 @@ import { evaluateModeConstraintRule } from './rules/mode-constraint.js';
 
 // ── Tool classification ──────────────────────────────────────────────────────────
 
-const READ_TOOLS: ReadonlySet<string> = new Set([
-  'read', 'find', 'fetch', 'analyze', 'inspect', 'state', 'registry',
-]);
-
-const WRITE_TOOLS: ReadonlySet<string> = new Set([
-  'write', 'edit',
-]);
-
-const NETWORK_TOOLS: ReadonlySet<string> = new Set([
-  'fetch', 'http', 'request', 'curl',
-]);
-
-const ESCALATION_TOOLS: ReadonlySet<string> = new Set([
-  'agent', 'delegate', 'workflow', 'mcp',
-]);
-
 /**
- * classifyTool, Returns the classification of a tool call by the tool's
- * built-in nature: the read tool reads, write and edit write, the agent and
- * workflow tools delegate. It looks only at which built-in tool is called,
- * never at arguments, and owner-authored mode-constraint rules filter on it.
- * What a particular call does is read by Jev in the gate, which runs before
- * this evaluator; there is no safety layer here.
+ * The engine's own file-editing tools. Accept-edits mode approves these by
+ * id: they are tools the engine defines, whose only effect is editing the
+ * files their arguments name, so the id settles what the mode covers. What
+ * any other call does is read by Jev in the gate, and reaches this evaluator
+ * as the call's classification (gate/reading.ts classificationFromReading).
  */
-function classifyTool(toolName: string): CommandClassification {
-  if (NETWORK_TOOLS.has(toolName)) return 'network';
-  if (ESCALATION_TOOLS.has(toolName)) return 'escalation';
-  if (WRITE_TOOLS.has(toolName)) return 'write';
-  if (READ_TOOLS.has(toolName)) return 'read';
-  // exec-class tools are treated as 'write' (potentially destructive) by default
-  return 'write';
-}
+const FILE_EDIT_TOOLS: ReadonlySet<string> = new Set(['write', 'edit']);
 
 // ── Mode constraint evaluation ──────────────────────────────────────────────────
 
@@ -117,12 +93,11 @@ function evaluateModeLayer(
       break;
 
     case 'accept-edits':
-      // Accept-edits auto-approves only genuine file write/edit tools by name.
-      // exec classifies as 'write' here too, so gate on WRITE_TOOLS membership
-      // rather than classification, exec, network, and escalation then impose
-      // no mode-level constraint and fall through to the policy/default layers
-      // so they are still gated.
-      if (WRITE_TOOLS.has(toolName)) {
+      // Accept-edits auto-approves only the engine's file-editing tools. A
+      // shell command can read as 'write' too, so the mode keys on the tool id
+      // rather than the classification; everything else falls through to the
+      // policy and default layers and is still gated.
+      if (FILE_EDIT_TOOLS.has(toolName)) {
         return {
           deny: false,
           allow: true,
@@ -267,7 +242,7 @@ function dispatchPolicyRule(
  * Usage:
  * ```ts
  * const evaluator = new LayeredPolicyEvaluator({ mode: 'default', rules: [] });
- * const decision = evaluator.evaluate('write', { path: '/tmp/out.txt' });
+ * const decision = evaluator.evaluate('write', { path: '/tmp/out.txt' }, 'write');
  * ```
  */
 export class LayeredPolicyEvaluator {
@@ -300,13 +275,15 @@ export class LayeredPolicyEvaluator {
    *
    * @param toolName, The tool name being called.
    * @param args    , The arguments passed to the tool.
+   * @param classification, What the call does, from the gate's Jev reading
+   *   (gate/reading.ts classificationFromReading or readCallClassification).
    */
   evaluate(
     toolName: string,
     args: Record<string, unknown>,
+    classification: CommandClassification,
   ): PermissionDecision {
     const trace: EvaluationStep[] = [];
-    const classification = classifyTool(toolName);
 
     // ── Layer 2: Mode constraints ───────────────────────────────────
     const modeResult = evaluateModeLayer(this.mode, toolName, classification);

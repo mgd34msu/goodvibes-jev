@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 import { walkDir } from '../../utils/walk-dir.js';
 import type { AnalyzeInput, JsonObject, DiffStatFile } from './types.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -142,9 +142,9 @@ export function summarizeAnalyzeResult(mode: AnalyzeInput['mode'], result: Recor
         envFileCount: Array.isArray(env.files_found) ? env.files_found.length : 0,
         permissionFindingCount: Array.isArray(permissions.findings) ? permissions.findings.length : 0,
         topSecretFindings: sampleArray<Record<string, unknown>>(secrets.findings).map((finding) => ({
-          pattern: finding.pattern ?? null,
           file: finding.file ?? null,
           line: finding.line ?? null,
+          reading: finding.reading ?? null,
         })),
       };
     }
@@ -325,42 +325,54 @@ export function isBreakingUpgrade(current: string, latest: string): boolean {
   return latestMajor > currentMajor;
 }
 
-export function parseEnvKeys(content: string): Set<string> {
-  const keys = new Set<string>();
+/** The variables an env file sets, each mapped to whether its value is blank (empty or an empty quoted string). */
+export function parseEnvVariables(content: string): Map<string, boolean> {
+  const variables = new Map<string, boolean>();
   for (const line of content.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
     const eqIdx = trimmed.indexOf('=');
     if (eqIdx > 0) {
-      keys.add(trimmed.slice(0, eqIdx).trim());
+      const value = trimmed.slice(eqIdx + 1).trim();
+      variables.set(trimmed.slice(0, eqIdx).trim(), value === '' || value === '""' || value === "''");
     }
   }
-  return keys;
+  return variables;
 }
 
-export function testCandidates(sourceFile: string, projectRoot: string): string[] {
-  const rel = relative(projectRoot, resolve(projectRoot, sourceFile));
-  const candidates: string[] = [];
-
-  const noExt = rel.replace(/\.[^.]+$/, '');
-  const basename = noExt.split('/').pop() ?? noExt;
-  const dir = noExt.split('/').slice(0, -1).join('/');
-  const extensions = ['.test.ts', '.test.tsx', '.test.js', '.spec.ts', '.spec.tsx', '.spec.js'];
-
-  for (const ext of extensions) {
-    candidates.push(join(projectRoot, noExt + ext));
-    if (dir) {
-      candidates.push(join(projectRoot, dir, '__tests__', basename + ext));
-    } else {
-      candidates.push(join(projectRoot, '__tests__', basename + ext));
-    }
-    candidates.push(join(projectRoot, 'test', noExt.replace('src/', '') + ext));
-    candidates.push(join(projectRoot, 'test', basename + ext));
-    if (rel.startsWith('src/')) {
-      const withoutSrc = rel.replace(/^src\//, '').replace(/\.[^.]+$/, '');
-      candidates.push(join(projectRoot, 'src', 'test', withoutSrc + ext));
-    }
+/**
+ * The module specifiers a JavaScript or TypeScript file imports, with the
+ * 1-based line each starts on: `from '...'` of an import or export
+ * (single-line or multi-line), a side-effect `import '...'`, a dynamic
+ * `import('...')`, and `require('...')`.
+ */
+export function importSpecifiers(content: string): Array<{ specifier: string; line: number }> {
+  const pattern = /\bfrom\s*['"]([^'"\n]+)['"]|\bimport\s*\(?\s*['"]([^'"\n]+)['"]|\brequire\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g;
+  const found: Array<{ specifier: string; line: number }> = [];
+  for (const match of content.matchAll(pattern)) {
+    const specifier = match[1] ?? match[2] ?? match[3];
+    if (specifier) found.push({ specifier, line: content.slice(0, match.index).split('\n').length });
   }
+  return found;
+}
 
-  return [...new Set(candidates)];
+const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+/** TypeScript sources a compiled-extension specifier names (`./a.js` is written for `./a.ts`). */
+const TS_SOURCE_FOR: Record<string, readonly string[]> = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
+
+const isFile = (path: string): boolean => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+
+/**
+ * The file a relative specifier imported from `fromFile` names, by Node and
+ * TypeScript resolution: the path itself, the path with a source extension,
+ * the TypeScript source of a compiled-extension path, or the directory's
+ * index file. Null for a package specifier or a path that names no file.
+ */
+export function resolveRelativeImport(fromFile: string, specifier: string): string | null {
+  if (!specifier.startsWith('.')) return null;
+  const base = resolve(dirname(fromFile), specifier);
+  const compiled = extname(base);
+  const tsSources = (TS_SOURCE_FOR[compiled] ?? []).map((ext) => base.slice(0, -compiled.length) + ext);
+  const tried = [base, ...SOURCE_EXTENSIONS.map((ext) => base + ext), ...tsSources, ...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`))];
+  return tried.find(isFile) ?? null;
 }

@@ -25,9 +25,14 @@ import type { ToolRegistry } from '../registry.js';
 import { CloudflareControlPlaneManager } from '../../cloudflare/manager.js';
 import type { CloudflareComponentSelection } from '../../cloudflare/types.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { SETUP_INTENT_CONTRACT_PROMPT } from '../../runtime/setup-contract.js';
+import { isCredentialConfigKey, redactConfigValue, redactObjectByPath } from './credential-redaction.js';
 
 type JsonRecord = Record<string, unknown>;
+
+/** Settings redacted at once; a value a key does not settle is a Jev reading (credential-redaction.ts). */
+const REDACTION_CONCURRENCY = 8;
 
 export const GOODVIBES_RUNTIME_AWARENESS_PROMPT = [
   'You are running inside a GoodVibes host surface such as the TUI, daemon, companion app, Home Assistant, ntfy, Slack, or another configured client.',
@@ -113,13 +118,13 @@ export function createGoodVibesContextTool(deps: GoodVibesRuntimeToolDeps): Tool
         case 'config_get':
           return ok(await buildConfigSnapshot(deps, args));
         case 'config_schema':
-          return ok(buildConfigSchema(deps, args));
+          return ok(await buildConfigSchema(deps, args));
         case 'integrations':
           return ok(await buildIntegrationSnapshot(deps, args));
         case 'tools':
           return ok(buildToolSnapshot(deps, args));
         case 'cloudflare_status':
-          return ok({ cloudflare: redactCloudflareStatus(await createCloudflareManager(deps).describeStatus()) });
+          return ok({ cloudflare: await redactCloudflareStatus(await createCloudflareManager(deps).describeStatus()) });
         case 'cloudflare_token_requirements':
           return ok({
             cloudflare: createCloudflareManager(deps).tokenRequirements({
@@ -174,7 +179,7 @@ export function createGoodVibesSettingsTool(
         return { success: false, error: `Unknown config key: ${key || '<missing>'}` };
       }
       const before = await readRoutedConfigValue(deps.configManager, key, routing);
-      const previous = before.available ? redactConfigValue(key, before.value) : { unavailable: true };
+      const previous = before.available ? await redactConfigValue(key, before.value) : { unavailable: true };
 
       if (args.mode === 'reset') {
         return await resetRoutedSetting(deps.configManager, key, previous, routing);
@@ -182,7 +187,7 @@ export function createGoodVibesSettingsTool(
       if (args.mode !== 'set') {
         return { success: false, error: `Unknown goodvibes_settings mode: ${String(args.mode)}` };
       }
-      if (isSensitiveConfigKey(key) && rejectsRawSecretValue(args.value)) {
+      if (rejectsRawSecretValue(args.value) && await isCredentialConfigKey(key)) {
         return {
           success: false,
           error: `Refusing to persist a raw credential in ${key}. Store it as a GoodVibes secret and set this key to a goodvibes:// secret reference.`,
@@ -204,7 +209,7 @@ export function createGoodVibesSettingsTool(
         key,
         action: 'set',
         previous,
-        current: redactConfigValue(key, applied.value),
+        current: await redactConfigValue(key, applied.value),
         // Name the exact store. A host reading a different root will not see it.
         persistedTo: applied.persistedTo,
         appliedBy: applied.appliedBy,
@@ -251,7 +256,7 @@ async function resetRoutedSetting(
       key,
       action: 'reset',
       previous,
-      current: redactConfigValue(key, applied.value),
+      current: await redactConfigValue(key, applied.value, setting.default),
       persistedTo: applied.persistedTo,
       appliedBy: applied.appliedBy,
       owner: applied.scope,
@@ -264,7 +269,7 @@ async function resetRoutedSetting(
     key,
     action: 'reset',
     previous,
-    current: redactConfigValue(key, configManager.get(key)),
+    current: await redactConfigValue(key, configManager.get(key)),
     persistedTo: localStorePathForKey(configManager, key),
     appliedBy: 'local',
     owner: configKeyScope(key),
@@ -307,7 +312,7 @@ async function buildRuntimeSummary(deps: GoodVibesRuntimeToolDeps): Promise<Json
     },
     integrations: {
       channels: channels.value ?? channels.error,
-      cloudflare: cloudflareStatus.value ? redactCloudflareStatus(cloudflareStatus.value) : { error: cloudflareStatus.error },
+      cloudflare: cloudflareStatus.value ? await redactCloudflareStatus(cloudflareStatus.value) : { error: cloudflareStatus.error },
       batch: {
         mode: deps.configManager.get('batch.mode'),
         queueBackend: deps.configManager.get('batch.queueBackend'),
@@ -344,7 +349,7 @@ async function buildConfigSnapshot(deps: GoodVibesRuntimeToolDeps, args: JsonRec
     deps.configRouting ?? {},
   );
   const includeSchema = args.includeSchema !== false;
-  const settings = schema.map((setting, index) => describeSetting(setting, reads[index]!, includeSchema));
+  const settings = await mapWithConcurrency(schema, REDACTION_CONCURRENCY, (setting, index) => describeSetting(setting, reads[index]!, includeSchema));
   const unreachable = reads.filter((read): read is Extract<ConfigReadResult, { available: false }> => !read.available);
   return {
     settings,
@@ -357,17 +362,17 @@ async function buildConfigSnapshot(deps: GoodVibesRuntimeToolDeps, args: JsonRec
           },
         }
       : {}),
-    redaction: 'Values whose key or content looks like a credential are redacted. Raw secrets are never returned.',
+    redaction: 'Values whose key holds a credential, or that read as credential material themselves, are redacted. Raw secrets are never returned.',
   };
 }
 
-function buildConfigSchema(deps: GoodVibesRuntimeToolDeps, args: JsonRecord): JsonRecord {
+async function buildConfigSchema(deps: GoodVibesRuntimeToolDeps, args: JsonRecord): Promise<JsonRecord> {
   return {
-    settings: selectSchema(deps.configManager.getSchema(), args).map((setting) => ({
+    settings: await mapWithConcurrency(selectSchema(deps.configManager.getSchema(), args), REDACTION_CONCURRENCY, async (setting) => ({
       key: setting.key,
       category: setting.key.split('.')[0],
       type: setting.type,
-      default: redactConfigValue(setting.key, setting.default),
+      default: await redactConfigValue(setting.key, setting.default, setting.default),
       description: setting.description,
       ...(setting.enumValues ? { enumValues: setting.enumValues } : {}),
     })),
@@ -391,8 +396,8 @@ async function buildIntegrationSnapshot(deps: GoodVibesRuntimeToolDeps, args: Js
   return {
     channels,
     services,
-    cloudflare: redactCloudflareStatus(await createCloudflareManager(deps).describeStatus()),
-    configuredSurfaces: listSurfaceConfig(deps.configManager),
+    cloudflare: await redactCloudflareStatus(await createCloudflareManager(deps).describeStatus()),
+    configuredSurfaces: await listSurfaceConfig(deps.configManager),
   };
 }
 
@@ -414,7 +419,7 @@ function buildToolSnapshot(deps: GoodVibesRuntimeToolDeps, args: JsonRecord): Js
   return { tools, returned: tools.length, total: deps.toolRegistry.list().length };
 }
 
-function describeSetting(setting: ConfigSetting, read: ConfigReadResult, includeSchema: boolean): JsonRecord {
+async function describeSetting(setting: ConfigSetting, read: ConfigReadResult, includeSchema: boolean): Promise<JsonRecord> {
   if (!read.available) {
     return {
       key: setting.key,
@@ -429,7 +434,7 @@ function describeSetting(setting: ConfigSetting, read: ConfigReadResult, include
   return {
     key: setting.key,
     category: setting.key.split('.')[0],
-    value: redactConfigValue(setting.key, value),
+    value: await redactConfigValue(setting.key, value, setting.default),
     configured: !valuesEqual(value, setting.default),
     // Which store answered. Two surfaces disagreeing about one key is not a
     // mystery when every value says where it came from.
@@ -439,7 +444,7 @@ function describeSetting(setting: ConfigSetting, read: ConfigReadResult, include
     ...(includeSchema
       ? {
           type: setting.type,
-          default: redactConfigValue(setting.key, setting.default),
+          default: await redactConfigValue(setting.key, setting.default, setting.default),
           description: setting.description,
           ...(setting.enumValues ? { enumValues: setting.enumValues } : {}),
         }
@@ -463,17 +468,19 @@ function listConfigCategories(schema: readonly ConfigSetting[]): string[] {
   return [...new Set(schema.map((setting) => setting.key.split('.')[0]!))].sort();
 }
 
-function listSurfaceConfig(configManager: ConfigManager): JsonRecord[] {
+async function listSurfaceConfig(configManager: ConfigManager): Promise<JsonRecord[]> {
   const surfaces = new Map<string, JsonRecord>();
-  for (const setting of configManager.getSchema()) {
+  const fields = configManager.getSchema().flatMap((setting) => {
     const match = /^surfaces\.([^.]+)\.(.+)$/.exec(setting.key);
-    if (!match) continue;
-    const [, surface, field] = match;
-    const entry = surfaces.get(surface!) ?? { surface, settings: {} };
-    const settings = entry.settings as JsonRecord;
-    if (field !== undefined) { settings[field] = redactConfigValue(setting.key, configManager.get(setting.key)); }
-    surfaces.set(surface!, entry);
-  }
+    return match ? [{ setting, surface: match[1]!, field: match[2]! }] : [];
+  });
+  const values = await mapWithConcurrency(fields, REDACTION_CONCURRENCY, ({ setting }) =>
+    redactConfigValue(setting.key, configManager.get(setting.key), setting.default));
+  fields.forEach(({ surface, field }, index) => {
+    const entry = surfaces.get(surface) ?? { surface, settings: {} };
+    (entry.settings as JsonRecord)[field] = values[index];
+    surfaces.set(surface, entry);
+  });
   return [...surfaces.values()].sort((a, b) => String(a.surface).localeCompare(String(b.surface)));
 }
 
@@ -503,43 +510,12 @@ function createCloudflareManager(deps: GoodVibesRuntimeToolDeps): CloudflareCont
   });
 }
 
-function redactCloudflareStatus(status: unknown): JsonRecord {
+async function redactCloudflareStatus(status: unknown): Promise<JsonRecord> {
   const record = status && typeof status === 'object' ? status as JsonRecord : {};
   return {
     ...record,
-    config: redactObjectByPath('cloudflare', record.config),
+    config: await redactObjectByPath('cloudflare', record.config),
   };
-}
-
-function redactObjectByPath(prefix: string, value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.map((entry, index) => redactObjectByPath(`${prefix}.${index}`, entry));
-  const out: JsonRecord = {};
-  for (const [key, entry] of Object.entries(value as JsonRecord)) {
-    out[key] = redactConfigValue(`${prefix}.${key}`, entry);
-  }
-  return out;
-}
-
-function redactConfigValue(key: string, value: unknown): unknown {
-  if (!isSensitiveConfigKey(key) && !looksLikeSecretValue(value)) return value;
-  if (value === null || value === undefined || value === '') {
-    return { redacted: true, configured: false };
-  }
-  return {
-    redacted: true,
-    configured: true,
-    source: typeof value === 'string' && value.startsWith('goodvibes://') ? 'goodvibes-secret-ref' : 'credential-like-value',
-  };
-}
-
-function isSensitiveConfigKey(key: string): boolean {
-  return /(api[_-]?key|token|secret|password|passwd|private[_-]?key|authorization|credential|accessToken|botToken|appToken|signingSecret|webhookSecret)/i.test(key);
-}
-
-function looksLikeSecretValue(value: unknown): boolean {
-  if (typeof value !== 'string') return false;
-  return /\b(Bearer\s+[A-Za-z0-9._-]{12,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{12,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/.test(value);
 }
 
 function rejectsRawSecretValue(value: unknown): boolean {

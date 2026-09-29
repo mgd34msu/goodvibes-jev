@@ -1,14 +1,11 @@
 /**
  * `engine.tools.secret-finding`: analyze mode `security` (scope secrets)
- * finds candidate lines with shape patterns (a key prefix, a
- * token/secret/password/api_key assignment of a quoted literal, an AWS access
- * key id, a PEM private key header); this reading decides whether a candidate
- * is a real credential committed to the source. It replaces reporting every
- * pattern match as a finding, which listed placeholders, examples, test
- * fixtures and documentation alongside real keys.
- *
- * The patterns stay only as the shortlist (they choose which lines are read,
- * never what is reported).
+ * finds candidate lines with the `engine.tools.secret-line` existence check
+ * over each block of a file's lines (analyze/scan-lines.ts); this reading
+ * decides whether a candidate is a real credential committed to the source.
+ * It replaces reporting every pattern match as a finding, which listed
+ * placeholders, examples, test fixtures and documentation alongside real
+ * keys.
  *
  * Band: medium stakes. A wrong no hides a committed secret from the report; a
  * wrong yes sends someone to check a harmless line. Code reports a candidate

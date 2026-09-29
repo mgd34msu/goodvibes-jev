@@ -41,9 +41,6 @@ export interface SafetyCheckResult {
   steps: EvaluationStep[];
 }
 
-/** Tool names that accept shell commands. */
-const EXEC_CLASS_TOOLS: ReadonlySet<string> = new Set(['exec', 'bash', 'sh', 'run']);
-
 /** The path-like string arguments of a call. */
 function pathArgs(args: Record<string, unknown>): string[] {
   return ['path', 'file', 'file_path', 'target', 'destination', 'source']
@@ -53,18 +50,20 @@ function pathArgs(args: Record<string, unknown>): string[] {
 
 /**
  * Runs the safety check for one call: a NUL byte in any path argument, then
- * the catastrophic reading of every shell command it carries. A command whose
+ * the catastrophic reading of every shell command it carries (the `command`,
+ * `cmd` or `commands` arguments, whatever the tool is called: which tools run
+ * shell commands is not a closed set the engine defines, so the arguments
+ * decide, not a list of tool names). A command whose
  * reading is uncertain is blocked here, because nothing in this check can ask
  * the owner (inside the gate the same reading sends the call to the owner).
  */
-export async function runSafetyChecks(toolName: string, args: Record<string, unknown>): Promise<SafetyCheckResult> {
+export async function runSafetyChecks(args: Record<string, unknown>): Promise<SafetyCheckResult> {
   const steps: EvaluationStep[] = [];
   const nul = pathArgs(args).find((path) => path.includes('\0'));
   steps.push({ layer: 'safety', check: 'path-nul-byte', matched: nul !== undefined, ...(nul !== undefined ? { detail: 'a path argument contains a NUL byte' } : {}) });
   if (nul !== undefined) {
     return { blocked: true, reason: 'SAFETY_DENY_PATH_ESCAPE', detail: 'a path argument contains a NUL byte, so the path named is not the path that would be opened', steps };
   }
-  if (!EXEC_CLASS_TOOLS.has(toolName)) return { blocked: false, steps };
   for (const command of shellCommandsIn(args)) {
     const { verdict } = await readCatastrophic(command, 'engine.gate.safety-check');
     const blocked = verdict !== 'no';

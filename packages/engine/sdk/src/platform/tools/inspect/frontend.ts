@@ -12,8 +12,6 @@ import type {
   OverflowIssue,
   SizingInfo,
   SizingItem,
-  StackingInfo,
-  ZIndexItem,
   ResponsiveInfo,
   BreakpointUsage,
   EventsInfo,
@@ -24,7 +22,7 @@ import type {
   ErrorBoundaryInfo,
 } from './schema.js';
 
-export { inspectAccessibility, inspectClientBoundary, inspectHooks, inspectOverflow, inspectSizing } from './frontend-readings.js';
+export { inspectAccessibility, inspectClientBoundary, inspectHooks, inspectOverflow, inspectSizing, inspectStacking } from './frontend-readings.js';
 
 export function inspectComponents(content: string): ComponentInfo[] {
   const components: ComponentInfo[] = [];
@@ -183,37 +181,6 @@ export function inspectRenderTriggers(content: string, file: string): RenderTrig
     if (/(?:React\.memo|\bmemo)\s*\(/.test(line)) triggers.push({ kind: 'memo_boundary', name: 'memo', line: ln });
   }
   return { file, triggers, count: triggers.length };
-}
-
-export function inspectStacking(content: string, file: string): StackingInfo {
-  const lines = content.split('\n');
-  const zIndexItems: ZIndexItem[] = [];
-  const tailwindZRe = /-?z-(\d+|auto)\b/g;
-  const cssZRe = /z-index\s*:\s*(-?\d+)/g;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const ln = i + 1;
-    let m: RegExpExecArray | null;
-    tailwindZRe.lastIndex = 0;
-    while ((m = tailwindZRe.exec(line)) !== null) {
-      zIndexItems.push({ line: ln, value: m[0], context: line.trim().slice(0, 60) });
-    }
-    cssZRe.lastIndex = 0;
-    while ((m = cssZRe.exec(line)) !== null) {
-      zIndexItems.push({ line: ln, value: m[0], context: line.trim().slice(0, 60) });
-    }
-  }
-  const byValue = new Map<string, number[]>();
-  for (const item of zIndexItems) {
-    const existing = byValue.get(item.value) ?? [];
-    existing.push(item.line);
-    byValue.set(item.value, existing);
-  }
-  const potentialConflicts: Array<{ values: string[]; lines: number[] }> = [];
-  for (const [val, lineNums] of byValue) {
-    if (lineNums.length > 1) potentialConflicts.push({ values: [val], lines: lineNums });
-  }
-  return { file, zIndexItems, potentialConflicts };
 }
 
 export function inspectResponsive(content: string, file: string): ResponsiveInfo {

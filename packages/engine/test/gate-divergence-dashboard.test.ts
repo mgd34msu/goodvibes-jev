@@ -71,11 +71,11 @@ function drive(
 ) {
   for (let i = 0; i < diverging; i++) {
     // write tool, actual allows /tmp/ writes, simulated denies them
-    sim.evaluate('write', { path: `/tmp/file-${i}.txt` });
+    sim.evaluate('write', { path: `/tmp/file-${i}.txt` }, 'write');
   }
   for (let i = diverging; i < total; i++) {
     // read tool, both evaluators allow it with the same managed rule
-    sim.evaluate('read', { path: `/tmp/file-${i}.txt` });
+    sim.evaluate('read', { path: `/tmp/file-${i}.txt` }, 'read');
   }
 }
 

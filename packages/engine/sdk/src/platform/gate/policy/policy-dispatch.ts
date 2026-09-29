@@ -155,7 +155,7 @@ async function handleSimulate(args: string[], context: PolicyCommandContext): Pr
   context.print('[policy] Use `/policy diff` to compare rules. When ready, run `/policy promote` to enforce (requires gate passing).');
   const report = simulator.getDivergenceReport();
   const gateResult = dashboard.checkEnforceGate();
-  const scenarioSummary = runPolicySimulationScenarios(simulator);
+  const scenarioSummary = await runPolicySimulationScenarios(simulator);
   registry.attachSimulationReport(report, gateResult);
   policyState.recordSimulationSummary(scenarioSummary);
   const candidate2 = registry.getCandidate();

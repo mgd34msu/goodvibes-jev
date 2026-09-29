@@ -26,6 +26,11 @@ import {
   readRoutedConfigValue,
   readRoutedConfigValues,
 } from '../sdk/src/platform/tools/goodvibes-runtime/config-routing.js';
+import { useConfigReadings } from './_helpers/config-readings.ts';
+
+// A stated value the tool reports back is read for credential material
+// (engine.tools.credential-value); none of these values reads as one.
+useConfigReadings({});
 
 const roots: string[] = [];
 function home(): string {

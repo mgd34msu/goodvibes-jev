@@ -303,6 +303,9 @@ function parsesAsJson(trimmed: string): boolean {
  *
  * @param result - The raw tool result to enforce limits on.
  * @param policy - The policy to apply (obtain via `getPolicy`).
+ * @param call - The tool call that produced the result (name and arguments);
+ * a spilled output shows the parts `engine.tools.output-keep` ranks highest
+ * against it.
  * Under a `summary` truncation mode the output's kind is read by
  * `engine.runtime.output-kind`; a missing judgment port propagates.
  *
@@ -313,6 +316,7 @@ export async function applyOutputPolicy(
   result: ToolResult,
   policy: ToolOutputPolicy,
   overflowHandler: OverflowHandler,
+  call: string,
 ): Promise<{ result: ToolResultWithAudit; audit: OutputPolicyResult }> {
   const output = typeof result.output === 'string' ? result.output : '';
   const encoder = new TextEncoder();
@@ -338,11 +342,12 @@ export async function applyOutputPolicy(
   // Over limit, enforce according to spillMode
   switch (policy.spillMode) {
     case 'file': {
-      const overflowResult = overflowHandler.handle(output, {
+      const overflowResult = await overflowHandler.handle(output, {
         // Convert bytes to a conservative char estimate (worst-case 4 bytes per
         // UTF-8 char). The overflow handler works in chars, not bytes.
         maxChars: Math.floor(policy.maxBytes / 4),
         label: policy.toolClass,
+        call,
       });
       result.output = overflowResult.content;
       const actionTaken: OutputPolicyResult['actionTaken'] = overflowResult.overflowRef

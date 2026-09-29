@@ -49,6 +49,7 @@ describe('output policy', () => {
       { callId: 'call-1', success: true, output: original },
       policy,
       makeOverflowHandler(),
+      'read {}',
     );
 
     expect(audit.actionTaken).toBe('truncated');
@@ -64,7 +65,7 @@ describe('output policy', () => {
     const samples: string[] = [];
     installJudgmentPort(kindPort('xml', 0.95, samples));
     const original = `<html><body>${'<p>row</p>'.repeat(1000)}</body></html>`;
-    const { result } = await applyOutputPolicy({ callId: 'call-2', success: true, output: original }, policy, makeOverflowHandler());
+    const { result } = await applyOutputPolicy({ callId: 'call-2', success: true, output: original }, policy, makeOverflowHandler(), 'read {}');
     expect(result.output).toContain('xml');
     expect(samples).toHaveLength(1);
     expect(samples[0]!.startsWith('<html><body>')).toBe(true);
@@ -74,13 +75,13 @@ describe('output policy', () => {
 
   test('a reading that does not settle names the kind unknown', async () => {
     installJudgmentPort(kindPort('text', 0.3, []));
-    const { result } = await applyOutputPolicy({ callId: 'call-3', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler());
+    const { result } = await applyOutputPolicy({ callId: 'call-3', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler(), 'read {}');
     expect(result.output).toContain('unknown');
   });
 
   test('a summary with no judgment port throws', async () => {
     await expect(
-      applyOutputPolicy({ callId: 'call-4', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler()),
+      applyOutputPolicy({ callId: 'call-4', success: true, output: 'line\n'.repeat(500) }, policy, makeOverflowHandler(), 'read {}'),
     ).rejects.toBeInstanceOf(JudgmentPortMissingError);
   });
 });

@@ -1,3 +1,5 @@
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import type { Tool, ToolCall } from '../../../types/tools.js';
 import type { ToolRuntimeContext } from '../context.js';
 import type { PhaseResult, ToolExecutionRecord } from '../types.js';
@@ -77,7 +79,7 @@ export async function mapOutputPhase(
     // Apply output policy enforcement after auto-repair annotation
     const toolClass = resolveToolClass(tool);
     const policy = getPolicy(toolClass);
-    const auditedResult = await applyOutputPolicy(record.result, policy, _context.overflowHandler!);
+    const auditedResult = await applyOutputPolicy(record.result, policy, _context.overflowHandler!, `${call.name} ${JSON.stringify(call.arguments)}`);
     record.result = auditedResult.result;
 
     // Surface spill backend in phase metadata when overflow occurred
@@ -89,7 +91,11 @@ export async function mapOutputPhase(
       ...(spillBackend ? { spillBackend } : {}),
     };
   } catch (err) {
-    // Mapping problems pass through the original result with a visible warning.
+    // A Jev reading that could not be made (the overflow's output-keep rank)
+    // propagates: what the call shows the model is decided by that reading,
+    // and no fallback is decided for it.
+    if (err instanceof JudgmentError || err instanceof JudgmentPortMissingError) throw err;
+    // Other mapping problems pass through the original result with a visible warning.
     const message = summarizeError(err);
     const warning = `Output mapping warning: ${message}`;
     attachVisibleToolWarning(record.result, warning);

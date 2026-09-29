@@ -8,10 +8,10 @@
  *     composition that REQUIRES the boundary may run a command given the plan
  *     the sandbox layer resolved, and whether an omitted posture changes
  *     anything (it must not).
- *  2. The owner-terminal guard (exec/owner-terminal-guard.ts), pure, in
- *     benign/malicious pairs per the guard discipline: for every refusal there
- *     is a neighbouring command that must still be allowed, so the guard cannot
- *     pass by refusing everything.
+ *  2. The owner-terminal guard (exec/owner-terminal-guard.ts): what it does
+ *     with Jev's reading of the command. The benign/malicious pairs (for every
+ *     refusal a neighbouring command that must still be allowed) are the
+ *     calibration fixtures of engine.tools.owner-terminal.
  *  3. The exec tool end to end, a real `createExecTool` under each posture,
  *     because the decision functions being right is not the same claim as the
  *     tool consulting them on every path (foreground, retried, background).
@@ -36,9 +36,11 @@ import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
 import { useToolReadings } from './_helpers/tool-readings.ts';
 
-// The tools batteries exec reads (credential names, prompts, retries) and,
-// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
-useToolReadings([], EXEC_GATE_TABLE);
+// The tools batteries exec reads (credential names, prompts, retries, the
+// owner-terminal reading) and, forwarded with EXEC_GATE_TABLE, the gate's
+// questions, in one fake port. Typing into the owner's `main` session reads as
+// driving a terminal the platform does not own; nothing else does.
+useToolReadings([['tmux send-keys -t main', { foreignTerminal: true }]], EXEC_GATE_TABLE);
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -115,143 +117,51 @@ describe('decideExecContainment', () => {
   });
 });
 
-// ── 2. The owner-terminal guard, in benign/malicious pairs ──────────────────
+// ── 2. The owner-terminal guard ─────────────────────────────────────────────
+//
+// What a command does to a terminal is Jev's reading (engine.tools.owner-terminal,
+// whose calibration fixtures hold the benign/malicious pairs: wrappers, full
+// paths, screen, id targets, inverted -a, reading verbs, the platform's own
+// sessions). Pinned here: what the guard does with each reading.
 
 describe('decideOwnerTerminalAccess', () => {
-  const judge = (command: string, guard: OwnerTerminalGuard = ENFORCED) =>
-    decideOwnerTerminalAccess(command, guard);
+  const log = useToolReadings([
+    ['send-keys -t main', { foreignTerminal: true }],
+    ['tmux attach', { foreignTerminal: 'uncertain' }],
+  ], EXEC_GATE_TABLE);
 
-  test('off (and omitted) is a no-op: the same command that refuses when enforced runs', () => {
-    expect(judge('tmux send-keys -t main "ls" Enter', { posture: 'off' }).allowed).toBe(true);
-    expect(decideOwnerTerminalAccess('tmux send-keys -t main "ls" Enter', undefined).allowed).toBe(true);
-    expect(judge('tmux send-keys -t main "ls" Enter').allowed).toBe(false);
+  test('off, or no posture at all: nothing is read and every command is allowed', async () => {
+    expect((await decideOwnerTerminalAccess('tmux send-keys -t main "ls" Enter', { posture: 'off' })).allowed).toBe(true);
+    expect((await decideOwnerTerminalAccess('tmux send-keys -t main "ls" Enter', undefined)).allowed).toBe(true);
+    expect(log.requests).toHaveLength(0);
   });
 
-  describe('driving a session', () => {
-    test('MALICIOUS: send-keys into the owner\'s pane is refused, naming the rule', () => {
-      const decision = judge('tmux send-keys -t main "goodvibes-agent" Enter');
-      expect(decision.allowed).toBe(false);
-      expect(decision.refusal).toContain('owner\'s terminal is untouchable');
-      expect(decision.refusal).toContain('did not create');
-    });
-
-    test('BENIGN: send-keys into a session this platform named is allowed', () => {
-      expect(judge(`tmux send-keys -t ${PLATFORM_TMUX_SESSION_PREFIX}build "bun test" Enter`).allowed).toBe(true);
-    });
-
-    test('BENIGN: a window/pane inside a platform session is still the platform\'s', () => {
-      expect(judge(`tmux send-keys -t ${PLATFORM_TMUX_SESSION_PREFIX}build:0.1 "ls" Enter`).allowed).toBe(true);
-    });
-
-    test('MALICIOUS: a bare pane id proves nothing about who created it → refused', () => {
-      expect(judge('tmux send-keys -t %3 C-c').allowed).toBe(false);
-      expect(judge('tmux send-keys -t @2 C-c').allowed).toBe(false);
-      expect(judge('tmux send-keys -t $1 C-c').allowed).toBe(false);
-    });
-
-    test('MALICIOUS: no target at all acts on the server\'s current session → refused', () => {
-      expect(judge('tmux send-keys "rm -rf build" Enter').allowed).toBe(false);
-      expect(judge('tmux kill-server').allowed).toBe(false);
-    });
+  test('a command read as driving a terminal the platform does not own is refused, naming the rule', async () => {
+    const decision = await decideOwnerTerminalAccess('tmux send-keys -t main "goodvibes-agent" Enter', ENFORCED);
+    expect(decision.allowed).toBe(false);
+    expect(decision.refusal).toContain('read as changing or sending input to a terminal session');
+    expect(decision.refusal).toContain('owner\'s terminal is untouchable');
+    expect(decision.refusal).toContain(PLATFORM_TMUX_SESSION_PREFIX);
   });
 
-  describe('killing and resizing', () => {
-    test('MALICIOUS: kill-session / kill-pane / resize-pane on the owner\'s are refused', () => {
-      expect(judge('tmux kill-session -t main').allowed).toBe(false);
-      expect(judge('tmux kill-pane -t work:1.0').allowed).toBe(false);
-      expect(judge('tmux resize-pane -t main -D 10').allowed).toBe(false);
-      expect(judge('tmux respawn-pane -k -t main').allowed).toBe(false);
-      expect(judge('tmux rename-session -t main scratch').allowed).toBe(false);
-    });
-
-    test('BENIGN: the same verbs against the platform\'s own session are allowed', () => {
-      expect(judge(`tmux kill-session -t ${PLATFORM_TMUX_SESSION_PREFIX}build`).allowed).toBe(true);
-      expect(judge(`tmux resize-pane -t ${PLATFORM_TMUX_SESSION_PREFIX}build -D 10`).allowed).toBe(true);
-    });
-
-    test('MALICIOUS: `-a` inverts the target: an owned name does not make it safe', () => {
-      // `kill-session -a -t goodvibes-build` kills every OTHER session on the
-      // server. It reads as a command about the platform's own session.
-      const decision = judge(`tmux kill-session -a -t ${PLATFORM_TMUX_SESSION_PREFIX}build`);
-      expect(decision.allowed).toBe(false);
-      expect(decision.refusal).toContain('everything EXCEPT its target');
-    });
-
-    test('MALICIOUS: a swap/join SOURCE is a target too', () => {
-      expect(judge(`tmux swap-pane -s main -t ${PLATFORM_TMUX_SESSION_PREFIX}build`).allowed).toBe(false);
-      expect(judge(`tmux join-pane -s main:1 -t ${PLATFORM_TMUX_SESSION_PREFIX}build`).allowed).toBe(false);
-    });
-
-    test('BENIGN: source and target both ours is allowed', () => {
-      const p = PLATFORM_TMUX_SESSION_PREFIX;
-      expect(judge(`tmux swap-pane -s ${p}a -t ${p}b`).allowed).toBe(true);
-    });
+  test('a reading that does not act refuses too: doubt never reaches the owner\'s shell', async () => {
+    const decision = await decideOwnerTerminalAccess('tmux attach', ENFORCED);
+    expect(decision.allowed).toBe(false);
+    expect(decision.refusal).toContain('could not be read as leaving the owner\'s terminal sessions alone');
   });
 
-  describe('creating the platform\'s own sessions', () => {
-    test('BENIGN: a detached new session is not the owner\'s terminal', () => {
-      expect(judge(`tmux new-session -d -s ${PLATFORM_TMUX_SESSION_PREFIX}build bun test`).allowed).toBe(true);
-      expect(judge('tmux new-session -d').allowed).toBe(true);
-    });
-
-    test('BENIGN: -s on a plain create is the NEW name, not a target: any name is fine', () => {
-      // Refusing this would refuse a command that touches nothing: without -A,
-      // an already-taken name is a tmux error, not an attach.
-      expect(judge('tmux new-session -d -s build bun test').allowed).toBe(true);
-    });
-
-    test('MALICIOUS: -t on new-session GROUPS with an existing session → refused', () => {
-      expect(judge('tmux new-session -d -t main').allowed).toBe(false);
-    });
-
-    test('MALICIOUS: -A can land on an EXISTING session, so a foreign name is refused', () => {
-      expect(judge('tmux new-session -A -s main').allowed).toBe(false);
-    });
-
-    test('BENIGN: -A on the platform\'s own name is allowed', () => {
-      expect(judge(`tmux new-session -A -s ${PLATFORM_TMUX_SESSION_PREFIX}build`).allowed).toBe(true);
-    });
-
-    test('MALICIOUS: attaching to the owner\'s session is refused', () => {
-      expect(judge('tmux attach-session -t main').allowed).toBe(false);
-      expect(judge('tmux attach -t main').allowed).toBe(false);
-    });
-
-    test('MALICIOUS: bare `tmux` attaches to whatever the server has → refused', () => {
-      expect(judge('tmux').allowed).toBe(false);
-    });
+  test('a command read as leaving the owner\'s terminal alone runs', async () => {
+    expect((await decideOwnerTerminalAccess(`tmux send-keys -t ${PLATFORM_TMUX_SESSION_PREFIX}build "bun test" Enter`, ENFORCED)).allowed).toBe(true);
   });
 
-  describe('reading is not touching', () => {
-    test('BENIGN: the observation verbs the fleet view already runs stay allowed', () => {
-      expect(judge('tmux list-sessions').allowed).toBe(true);
-      expect(judge("tmux list-panes -a -F '#{pane_tty} #{pane_id}'").allowed).toBe(true);
-      expect(judge('tmux has-session -t main').allowed).toBe(true);
-      expect(judge('tmux capture-pane -p -t main').allowed).toBe(true);
-    });
-  });
-
-  describe('the ways round it', () => {
-    test('MALICIOUS: a server-socket flag does not hide the verb', () => {
-      expect(judge('tmux -L sock send-keys -t main "ls" Enter').allowed).toBe(false);
-      expect(judge('tmux -S /tmp/s send-keys -t main "ls" Enter').allowed).toBe(false);
-    });
-
-    test('MALICIOUS: hiding it in a compound command is still found', () => {
-      expect(judge('echo hi && tmux send-keys -t main "ls" Enter').allowed).toBe(false);
-      expect(judge('true; tmux kill-session -t main').allowed).toBe(false);
-    });
-
-    test('BENIGN: a command that merely mentions tmux is not a tmux invocation', () => {
-      expect(judge('grep -r tmux ~/.config').allowed).toBe(true);
-      expect(judge('echo "tmux send-keys -t main"').allowed).toBe(true);
-    });
-
-    test('BENIGN: a composition may register extra session names it owns', () => {
-      const guard: OwnerTerminalGuard = { posture: 'enforced', ownedSessionNames: ['ci-runner'] };
-      expect(decideOwnerTerminalAccess('tmux send-keys -t ci-runner "bun test" Enter', guard).allowed).toBe(true);
-      expect(decideOwnerTerminalAccess('tmux send-keys -t main "bun test" Enter', guard).allowed).toBe(false);
-    });
+  test('the reading sees the raw command and the sessions the composition owns', async () => {
+    const guard: OwnerTerminalGuard = { posture: 'enforced', ownedSessionNames: ['ci-runner'] };
+    await decideOwnerTerminalAccess('sh -c \'tmux send-keys -t ci-runner "bun test" Enter\'', guard);
+    const asked = log.requests.find((request) => request.questions && 'acts_on_session' in request.questions);
+    const state = asked?.state as { command: string; owned_sessions: string };
+    expect(state.command).toBe('sh -c \'tmux send-keys -t ci-runner "bun test" Enter\'');
+    expect(state.owned_sessions).toContain(`begins with "${PLATFORM_TMUX_SESSION_PREFIX}"`);
+    expect(state.owned_sessions).toContain('named exactly ci-runner');
   });
 });
 

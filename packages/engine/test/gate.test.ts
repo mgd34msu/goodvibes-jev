@@ -150,6 +150,7 @@ describe('the gate pipeline', () => {
     ['of=/dev/sda', { mutates: true, catastrophic: true, family: 'shell-destructive' }],
     ['paste.example.net', { mutates: true, outward: true, family: 'network-egress', derives: true }],
     ['"sleep"', { mutates: false, kind: 'other' }],
+    ['"notes_sync"', { mutates: true, kind: 'shell', obfuscated: true }],
     ['id_rsa', { mutates: false, secrets: true }],
   ]);
 
@@ -198,6 +199,21 @@ describe('the gate pipeline', () => {
     const { manager } = gate('plan');
     const r = await manager.checkDetailed('sleep', { seconds: 3 });
     expect(r.approved).toBe(true);
+  });
+
+  test('the category the gate settled on is on the result: a built-in tool its own, any other tool the one Jev read', async () => {
+    const { manager } = gate('prompt');
+    expect((await manager.checkDetailed('read', { path: 'src/a.ts' })).category).toBe('read');
+    const r = await manager.checkDetailed('notes_sync', { command: 'sync' });
+    expect(r.category).toBe('execute');
+  });
+
+  test('a call carrying a shell command is asked the shell questions whatever the tool is named', async () => {
+    const { manager } = gate('allow-all');
+    const r = await manager.checkDetailed('notes_sync', { command: 'sync' });
+    expect(r.reading?.facts.obfuscated).toBe(true);
+    expect(r.reading?.stakes).toBe('critical');
+    expect(r.boundary?.checks.find((c) => c.check === 'catastrophic')?.result).toBe('pass');
   });
 
   test('an outward call Jev reads as derived from untrusted text asks the owner; a yes mints a single-use approval for that exact content', async () => {

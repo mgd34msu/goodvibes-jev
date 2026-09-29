@@ -1,18 +1,24 @@
 /**
  * The analyze modes whose findings are read by Jev: `security` (secrets,
- * env files, world-writable files) and `permissions` (dangerous calls). Shape
- * patterns only shortlist candidate lines; `engine.tools.secret-finding` and
- * `engine.tools.dangerous-call` decide what is reported and how severe it is.
- * The env-file list and the world-writable mode bit are facts about the file
- * system (a file exists, a permission bit is set), reported as they are.
+ * env files, world-writable files) and `permissions` (dangerous calls). Each
+ * file's lines are read in blocks by an existence check
+ * (`engine.tools.secret-line`, `engine.tools.dangerous-line`; see
+ * scan-lines.ts) that finds the lines to look at; `engine.tools.secret-finding`
+ * and `engine.tools.dangerous-call` then decide what is reported and how
+ * severe it is. The env-file list and the world-writable mode bit are facts
+ * about the file system (a file exists, a permission bit is set), reported as
+ * they are.
  */
 import { stat } from 'node:fs/promises';
 import { relative } from 'node:path';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import type { YesNoReading } from '@goodvibes-jev/judgment';
+import type { Existence, YesNoReading } from '@goodvibes-jev/judgment';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { scanCandidateView, secretFinding } from '../batteries/secret-finding.js';
 import { dangerousCall, type DangerSeverity } from '../batteries/dangerous-call.js';
+import { secretLine, secretLineQuery } from '../batteries/secret-line.js';
+import { dangerousLine, dangerousLineQuery } from '../batteries/dangerous-line.js';
+import { findScanLines, scanBlocks } from './scan-lines.js';
 import type { AnalyzeInput } from './types.js';
 import {
   MAX_SCAN_FILES,
@@ -23,21 +29,11 @@ import {
   resolveScanRoot,
 } from './shared.js';
 
-/**
- * Shape patterns that choose which lines the secret reading looks at (the
- * shortlist). They never decide what is reported: every candidate is read by
- * `engine.tools.secret-finding`.
- */
-const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
-  { name: 'api_key_prefix', regex: /['"](?:sk-|pk_|ak_|AKIA)[a-zA-Z0-9]{20,}['"]/ },
-  { name: 'token_assignment', regex: /(?:token|secret|password|api_key)\s*[:=]\s*['"][^'"]{8,}['"]/i },
-  { name: 'aws_access_key', regex: /AKIA[0-9A-Z]{16}/ },
-  { name: 'private_key', regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/ },
-];
-
 const SECRET_SITE = 'tools.analyze.secret-finding';
 const DANGER_SITE = 'tools.analyze.dangerous-call';
-/** Candidates read at once during a scan. */
+const SECRET_LINE_SITE = 'tools.analyze.secret-line';
+const DANGER_LINE_SITE = 'tools.analyze.dangerous-line';
+/** Blocks and candidates read at once during a scan. */
 const SCAN_READ_CONCURRENCY = 8;
 
 /** How a reported finding's reading stands: a yes, or a reading that is neither yes nor no. */
@@ -53,9 +49,22 @@ interface ScanCandidate {
   readonly file: string;
   readonly lines: readonly string[];
   readonly index: number;
-  readonly pattern: string;
-  readonly match: string;
 }
+
+interface ScannedFile {
+  readonly file: string;
+  readonly lines: readonly string[];
+}
+
+/** The candidate lines of every file: the lines the existence check finds in each block. */
+async function scanCandidates(files: readonly ScannedFile[], existence: Existence, site: string, query: (file: string) => string): Promise<ScanCandidate[]> {
+  const blocks = files.flatMap((scanned) => scanBlocks(scanned.lines).map((block) => ({ scanned, block })));
+  const found = await mapWithConcurrency(blocks, SCAN_READ_CONCURRENCY, ({ scanned, block }) => findScanLines(existence, site, query(scanned.file), block));
+  return blocks.flatMap(({ scanned }, index) => found[index]!.map((line) => ({ file: scanned.file, lines: scanned.lines, index: line })));
+}
+
+/** The matched line as the report shows it. */
+const matchText = (candidate: ScanCandidate, max: number): string => (candidate.lines[candidate.index] ?? '').trim().slice(0, max);
 
 export async function runSecurity(
   input: AnalyzeInput,
@@ -66,19 +75,12 @@ export async function runSecurity(
   const scanRoot = resolveScanRoot(input, projectRoot);
 
   if (scope === 'secrets' || scope === 'all') {
-    const candidates: ScanCandidate[] = [];
-    const files = await collectTextFiles(scanRoot);
-
-    for (const file of files) {
+    const scanned: ScannedFile[] = [];
+    for (const file of await collectTextFiles(scanRoot)) {
       const content = await readTextFile(file);
-      if (content === null) continue;
-
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const hit = SECRET_PATTERNS.map(({ name, regex }) => ({ name, m: (lines[i] ?? '').match(regex) })).find(({ m }) => m !== null);
-        if (hit?.m) candidates.push({ file: relative(projectRoot, file), lines, index: i, pattern: hit.name, match: hit.m[0].slice(0, 60) });
-      }
+      if (content !== null) scanned.push({ file: relative(projectRoot, file), lines: content.split('\n') });
     }
+    const candidates = await scanCandidates(scanned, secretLine, SECRET_LINE_SITE, secretLineQuery);
 
     const readings = await mapWithConcurrency(candidates, SCAN_READ_CONCURRENCY, async (candidate) => {
       const run = await secretFinding.run(judgmentPort(SECRET_SITE), scanCandidateView(candidate.file, candidate.lines, candidate.index), { site: SECRET_SITE });
@@ -90,7 +92,7 @@ export async function runSecurity(
       const reading = readings[index]!;
       return reading === 'dismissed'
         ? []
-        : [{ file: candidate.file, line: candidate.index + 1, pattern: candidate.pattern, match: candidate.match, reading }];
+        : [{ file: candidate.file, line: candidate.index + 1, match: matchText(candidate, 60), reading }];
     });
 
     results.secrets = { findings, count: findings.length, dismissed: candidates.length - findings.length };
@@ -121,22 +123,6 @@ export async function runSecurity(
   return results;
 }
 
-/**
- * Call-shape patterns that choose which lines the danger reading looks at
- * (the shortlist). Whether a match is risky and how severe it is are read by
- * `engine.tools.dangerous-call`, never assigned per pattern.
- */
-const DANGEROUS_PATTERNS: Array<{ name: string; regex: RegExp }> = [
-  { name: 'eval', regex: /\beval\s*\(/ },
-  { name: 'new_Function', regex: /\bnew\s+Function\s*\(/ },
-  { name: 'child_process_exec', regex: /\bexec\s*\(|\bexecSync\s*\(|\bspawn\s*\(/ },
-  { name: 'fs_chmod_777', regex: /chmod\s*\([^)]*0?777/ },
-  { name: 'dangerouslySetInnerHTML', regex: /dangerouslySetInnerHTML/ },
-  { name: 'document_write', regex: /\bdocument\.write\s*\(/ },
-  { name: 'innerHTML_assign', regex: /\.innerHTML\s*=(?!=)/ },
-  { name: 'unsafe_regex', regex: /new\s+RegExp\s*\(\s*[^"'`]/ },
-];
-
 export async function runPermissions(
   input: AnalyzeInput,
   projectRoot: string,
@@ -144,7 +130,7 @@ export async function runPermissions(
   const scanRoot = resolveScanRoot(input, projectRoot);
   const deadline = Date.now() + MAX_SCAN_MS;
   const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
-  const candidates: ScanCandidate[] = [];
+  const scanned: ScannedFile[] = [];
 
   for (const file of files) {
     if (Date.now() > deadline) break;
@@ -154,15 +140,9 @@ export async function runPermissions(
     } catch {
       continue;
     }
-
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const hit = DANGEROUS_PATTERNS.find(({ regex }) => regex.test(lines[i] ?? ''));
-      if (hit) {
-        candidates.push({ file: relative(projectRoot, file), lines, index: i, pattern: hit.name, match: (lines[i] ?? '').trim().slice(0, 100) });
-      }
-    }
+    scanned.push({ file: relative(projectRoot, file), lines: content.split('\n') });
   }
+  const candidates = await scanCandidates(scanned, dangerousLine, DANGER_LINE_SITE, dangerousLineQuery);
 
   const readings = await mapWithConcurrency(candidates, SCAN_READ_CONCURRENCY, async (candidate) => {
     const run = await dangerousCall.run(judgmentPort(DANGER_SITE), scanCandidateView(candidate.file, candidate.lines, candidate.index), { site: DANGER_SITE });
@@ -176,7 +156,7 @@ export async function runPermissions(
     const { reading, severity } = readings[index]!;
     return reading === 'dismissed'
       ? []
-      : [{ file: candidate.file, line: candidate.index + 1, pattern: candidate.pattern, severity, reading, match: candidate.match }];
+      : [{ file: candidate.file, line: candidate.index + 1, severity, reading, match: matchText(candidate, 100) }];
   });
 
   const byFile: Record<string, number> = {};

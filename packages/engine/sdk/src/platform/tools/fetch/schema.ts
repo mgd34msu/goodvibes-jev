@@ -63,14 +63,14 @@ export const FETCH_TOOL_SCHEMA = {
             description:
               'Extraction mode for this URL. Overrides the global extract.'
               + ' raw: raw response body; text: plain text, strips HTML tags;'
-              + ' json: parse and format JSON; markdown: convert HTML to markdown;'
+              + ' json: ask for JSON (Accept: application/json unless headers set Accept), parse and format it; markdown: convert HTML to markdown;'
               + ' readable: extract main content, strip nav/sidebar/footer;'
               + ' code_blocks: extract <pre>/<code> blocks;'
               + ' links: extract all URLs; metadata: extract title/og-tags;'
               + ' structured: extract text of elements matching CSS selectors (requires selectors field);'
               + ' tables: parse <table> elements into JSON arrays;'
               + ' pdf: extract text from PDF responses;'
-              + ' summary: extractive summary (first paragraph + headings).',
+              + ' summary: extractive summary (the paragraph that says what the page is about + headings).',
           },
           selectors: {
             type: 'array',

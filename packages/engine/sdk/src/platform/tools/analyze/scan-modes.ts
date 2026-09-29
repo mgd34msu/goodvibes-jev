@@ -1,7 +1,12 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, type Dirent } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { CodeIntelligence } from '../../intelligence/facade.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import type { Candidate } from '@goodvibes-jev/judgment';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { envTemplate, envTemplateCandidate, envTemplateContext } from '../batteries/env-template.js';
+import { TEST_CANDIDATES_PER_READING, testOfSource, testOfSourceCandidate, testOfSourceContext } from '../batteries/test-of-source.js';
 import type { AnalyzeInput, ExportedSymbol } from './types.js';
 
 export { runPermissions, runSecurity } from './scan-findings.js';
@@ -13,11 +18,12 @@ import {
   collectTextFiles,
   escapeRegex,
   findEntryPoint,
-  parseEnvKeys,
+  importSpecifiers,
+  parseEnvVariables,
   readJsonFile,
   readTextFile,
+  resolveRelativeImport,
   resolveScanRoot,
-  testCandidates,
   validatePath,
 } from './shared.js';
 
@@ -151,32 +157,12 @@ async function buildDepGraph(
     }
 
     const imports: string[] = [];
-    const fileDir = dirname(file);
-    const lines = content.split('\n');
-    const specs: string[] = [];
-    for (const line of lines) {
-      const importMatch = line.match(/(?:import|export)\s.*?from\s+['"]([^'"]+)['"]/);
-      if (importMatch?.[1]) specs.push(importMatch[1]!);
-      const requireMatch = line.match(/require\(['"]([^'"]+)['"]\)/);
-      if (requireMatch?.[1]) specs.push(requireMatch[1]!);
-    }
-
-    for (const spec of specs) {
-      if (!spec) continue;
-      if (spec.startsWith('.')) {
-        const base = resolve(fileDir, spec);
-        let resolved = base;
-        if (!existsSync(resolved)) {
-          for (const ext of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js']) {
-            if (existsSync(base + ext)) {
-              resolved = base + ext;
-              break;
-            }
-          }
-        }
+    for (const { specifier } of importSpecifiers(content)) {
+      if (specifier.startsWith('.')) {
+        const resolved = resolveRelativeImport(file, specifier) ?? resolve(dirname(file), specifier);
         imports.push(relative(projectRoot, resolved));
       } else {
-        imports.push(spec);
+        imports.push(specifier);
       }
     }
 
@@ -536,20 +522,31 @@ function generateUnifiedDiff(filename: string, before: string, after: string): s
   return header + hunks.join('\n');
 }
 
+const ENV_TEMPLATE_SITE = 'tools.analyze.env-template';
+const TEST_OF_SOURCE_SITE = 'tools.analyze.test-of-source';
+/** Importer groups read at once when a source has more importers than one selection takes. */
+const TEST_GROUP_CONCURRENCY = 4;
+
 export async function runEnvAudit(
   _input: AnalyzeInput,
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const ENV_FILENAMES = ['.env', '.env.example', '.env.local', '.env.production', '.env.development', '.env.test'];
-  const found: Array<{ name: string; keys: string[] }> = [];
+  // The dotenv convention names its files `.env` and `.env.<suffix>`; every such file at the root is audited.
+  let rootEntries: Dirent[] = [];
+  try {
+    rootEntries = readdirSync(projectRoot, { withFileTypes: true });
+  } catch {
+    rootEntries = [];
+  }
+  const envNames = rootEntries.filter((entry) => entry.isFile() && (entry.name === '.env' || entry.name.startsWith('.env.'))).map((entry) => entry.name).sort();
+  const found: Array<{ name: string; keys: string[]; variables: Array<{ key: string; blank: boolean }> }> = [];
 
-  for (const name of ENV_FILENAMES) {
+  for (const name of envNames) {
     const p = join(projectRoot, name);
-    if (!existsSync(p)) continue;
     try {
       const content = await Bun.file(p).text();
-      const keys = Array.from(parseEnvKeys(content)).sort();
-      found.push({ name, keys });
+      const variables = [...parseEnvVariables(content)].map(([key, blank]) => ({ key, blank })).sort((a, b) => a.key.localeCompare(b.key));
+      found.push({ name, keys: variables.map(({ key }) => key), variables });
     } catch {
       continue;
     }
@@ -559,13 +556,26 @@ export async function runEnvAudit(
     return { files: [], missing: [], extra: [], message: 'No .env files found' };
   }
 
-  const reference = found.find((f) => f.name === '.env.example') ?? found[0];
-  const referenceKeys = new Set(reference?.keys ?? []);
+  // Which file, if any, is the template listing every expected variable is read by `engine.tools.env-template`.
+  const selection = await envTemplate.select(
+    judgmentPort(ENV_TEMPLATE_SITE),
+    envTemplateContext(found.map(({ name }) => name)),
+    found.map(({ name, variables }) => envTemplateCandidate(name, variables)),
+    { site: ENV_TEMPLATE_SITE },
+  );
+  const reference = selection.outcome === 'escalate' ? undefined : found.find((f) => f.name === selection.chosen);
+  selection.recordAction(reference ? `compared against ${reference.name}` : 'compared nothing');
+  const files = found.map((f) => ({ name: f.name, key_count: f.keys.length }));
+  if (!reference) {
+    return { files, reference: null, missing: [], extra: [], message: 'No env file reads as a template of the expected variables; nothing to compare against' };
+  }
+
+  const referenceKeys = new Set(reference.keys);
   const missing: Array<{ key: string; present_in: string; missing_from: string[] }> = [];
   const extra: Array<{ key: string; only_in: string }> = [];
 
   for (const file of found) {
-    if (file.name === reference?.name) continue;
+    if (file.name === reference.name) continue;
     const fileKeys = new Set(file.keys);
 
     for (const key of referenceKeys) {
@@ -574,7 +584,7 @@ export async function runEnvAudit(
         if (existing) {
           existing.missing_from.push(file.name);
         } else {
-          missing.push({ key, present_in: reference?.name ?? '', missing_from: [file.name] });
+          missing.push({ key, present_in: reference.name, missing_from: [file.name] });
         }
       }
     }
@@ -586,12 +596,43 @@ export async function runEnvAudit(
     }
   }
 
-  return {
-    files: found.map((f) => ({ name: f.name, key_count: f.keys.length })),
-    reference: reference?.name ?? '',
-    missing,
-    extra,
-  };
+  return { files, reference: reference.name, missing, extra };
+}
+
+/** Each project file's relative imports, resolved to the files they name. */
+async function resolvedImports(files: readonly string[]): Promise<Array<{ file: string; lines: string[]; imports: Array<{ target: string; line: number }> }>> {
+  const read: Array<{ file: string; lines: string[]; imports: Array<{ target: string; line: number }> }> = [];
+  for (const file of files) {
+    const content = await readTextFile(file);
+    if (content === null) continue;
+    const imports = importSpecifiers(content).flatMap(({ specifier, line }) => {
+      const target = resolveRelativeImport(file, specifier);
+      return target ? [{ target, line }] : [];
+    });
+    if (imports.length > 0) read.push({ file, lines: content.split('\n'), imports });
+  }
+  return read;
+}
+
+/**
+ * Which importer of `source` is its test, read by `engine.tools.test-of-source`
+ * over groups of at most TEST_CANDIDATES_PER_READING importers; with more
+ * groups than one, each group's pick goes on to a selection among the picks.
+ * A pick counts when it acts or confirms.
+ */
+async function pickTestOf(source: string, candidates: readonly Candidate[]): Promise<{ test: string | null; uncertain: boolean }> {
+  let round = [...candidates];
+  for (;;) {
+    const groups: Candidate[][] = [];
+    for (let start = 0; start < round.length; start += TEST_CANDIDATES_PER_READING) groups.push(round.slice(start, start + TEST_CANDIDATES_PER_READING));
+    const picks = await mapWithConcurrency(groups, TEST_GROUP_CONCURRENCY, (group) =>
+      testOfSource.select(judgmentPort(TEST_OF_SOURCE_SITE), testOfSourceContext(source), group, { site: TEST_OF_SOURCE_SITE }));
+    const counted = picks.map((pick) => (pick.chosen !== undefined && pick.outcome !== 'escalate' ? pick.chosen : undefined));
+    picks.forEach((pick, index) => pick.recordAction(counted[index] !== undefined ? `picked ${counted[index]}` : 'picked none'));
+    if (groups.length === 1) return { test: counted[0] ?? null, uncertain: counted[0] === undefined && picks[0]!.chosen !== undefined };
+    round = round.filter((candidate) => counted.includes(candidate.id));
+    if (round.length === 0) return { test: null, uncertain: false };
+  }
 }
 
 export async function runTestFind(
@@ -604,24 +645,23 @@ export async function runTestFind(
     return { error: 'test_find mode requires at least one file in files[]' };
   }
 
-  const mappings: Array<{ source: string; test: string | null; exists: boolean; candidates_checked: number }> = [];
+  // Every project file is read for its imports, so a test is found wherever it lives.
+  const importing = await resolvedImports(await collectTextFiles(projectRoot, Number.POSITIVE_INFINITY));
+  const mappings: Array<{ source: string; test: string | null; exists: boolean; candidates_checked: number; reading?: 'uncertain' }> = [];
 
   for (const srcFile of sourceFiles) {
-    const candidates = testCandidates(srcFile, projectRoot);
-    let foundTest: string | null = null;
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        foundTest = relative(projectRoot, candidate);
-        break;
-      }
-    }
-
+    const source = resolve(projectRoot, srcFile);
+    const candidates = importing.flatMap(({ file, lines, imports }) => {
+      const importLines = imports.filter(({ target }) => target === source).map(({ line }) => lines[line - 1] ?? '');
+      return file !== source && importLines.length > 0 ? [testOfSourceCandidate(relative(projectRoot, file), importLines, lines)] : [];
+    });
+    const { test, uncertain } = candidates.length === 0 ? { test: null, uncertain: false } : await pickTestOf(relative(projectRoot, source), candidates);
     mappings.push({
       source: srcFile,
-      test: foundTest,
-      exists: foundTest !== null,
+      test,
+      exists: test !== null,
       candidates_checked: candidates.length,
+      ...(uncertain ? { reading: 'uncertain' as const } : {}),
     });
   }
 

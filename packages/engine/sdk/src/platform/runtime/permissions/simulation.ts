@@ -107,7 +107,7 @@ function accumulateStats(
  *   { mode: 'default', rules: candidateRules },
  *   'warn-on-divergence',
  * );
- * const result = simulator.evaluate('write', { path: '/tmp/out.txt' });
+ * const result = simulator.evaluate('write', { path: '/tmp/out.txt' }, 'write');
  * if (result.diverged) {
  *   console.warn('divergence:', result.divergenceType);
  * }
@@ -163,18 +163,20 @@ export class PermissionSimulator {
    *
    * @param toolName, The tool name being evaluated.
    * @param args    , The arguments passed to the tool.
+   * @param classification, What the call does, from the gate's Jev reading.
    */
   evaluate(
     toolName: string,
     args: Record<string, unknown>,
+    classification: CommandClassification,
   ): SimulationResult {
     // Enforcement gate, checked before evaluation in enforce mode
     if (this.simulationMode === 'enforce') {
       this.assertDivergenceGate();
     }
 
-    const actualDecision = this.actual.evaluate(toolName, args);
-    const simulatedDecision = this.simulated.evaluate(toolName, args);
+    const actualDecision = this.actual.evaluate(toolName, args, classification);
+    const simulatedDecision = this.simulated.evaluate(toolName, args, classification);
 
     const diverged =
       actualDecision.allowed !== simulatedDecision.allowed ||
@@ -182,7 +184,7 @@ export class PermissionSimulator {
       actualDecision.sourceLayer !== simulatedDecision.sourceLayer;
 
     const commandPrefix = extractCommandPrefix(args);
-    const toolClass = actualDecision.classification ?? 'write';
+    const toolClass = actualDecision.classification ?? classification;
 
     // ── Bookkeeping ────────────────────────────────────────────────────
     this.totalEvals += 1;

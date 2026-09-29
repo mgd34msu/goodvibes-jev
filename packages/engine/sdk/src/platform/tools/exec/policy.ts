@@ -50,8 +50,8 @@ export function containmentRefusal(
 }
 
 /** The owner-terminal verdict for one command, or null when it may run. */
-export function ownerTerminalRefusal(policy: ExecRunPolicy, cmdStr: string): ExecCommandResult | null {
-  const decision = decideOwnerTerminalAccess(cmdStr, policy.ownerTerminal);
+export async function ownerTerminalRefusal(policy: ExecRunPolicy, cmdStr: string): Promise<ExecCommandResult | null> {
+  const decision = await decideOwnerTerminalAccess(cmdStr, policy.ownerTerminal);
   if (decision.allowed) return null;
   return refusedResult(cmdStr, decision.refusal ?? "Command refused: the owner's terminal is untouchable.");
 }

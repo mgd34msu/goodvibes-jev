@@ -4,6 +4,8 @@
  * McpPermissionManager tracks trust levels and per-tool allow/deny overrides
  * for every registered MCP server.
  */
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import type {
   McpTrustLevel,
   McpTrustMode,
@@ -94,11 +96,42 @@ function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClas
   }
 }
 
+/**
+ * The path as the file system will resolve it: `..` and `.` segments removed
+ * and symlinks followed for the part of the path that exists, so a request
+ * for `/allowed/../elsewhere` or a link out of an allowed directory is judged
+ * by where it lands, not by how it is spelled.
+ */
+function realPathOf(path: string): string {
+  const absolute = resolve(path);
+  let existing = absolute;
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync.native(existing), ...rest);
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return absolute;
+      rest.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+/**
+ * Whether the call's path lies inside one of the owner's allowed directories.
+ * Containment is a path-component comparison of real paths, so `/allowed-2`
+ * is not inside `/allowed`.
+ */
 function pathInScope(allowedPaths: string[], args: Record<string, unknown>): boolean {
   if (allowedPaths.length === 0) return true;
   const raw = typeof args['path'] === 'string' ? args['path'] : typeof args['file'] === 'string' ? args['file'] : '';
   if (!raw) return true;
-  return allowedPaths.some((prefix) => raw.startsWith(prefix));
+  const target = realPathOf(raw);
+  return allowedPaths.some((allowed) => {
+    const root = realPathOf(allowed);
+    return target === root || target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+  });
 }
 
 function hostInScope(allowedHosts: string[], args: Record<string, unknown>): boolean {

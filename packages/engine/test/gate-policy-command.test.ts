@@ -7,6 +7,7 @@
 // hands the engine: the panel opener, the working-directory getter the
 // simulation reads, and the config and MCP getters the preflight reads.
 import { describe, expect, test } from 'bun:test';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import type { GoodVibesConfig } from '../sdk/src/platform/config/schema-types.ts';
 import { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 import { runPolicyCommand, type PolicyFrontDoorContext } from '../sdk/src/platform/gate/policy/policy-command.ts';
@@ -43,6 +44,8 @@ describe('/policy record-trend', () => {
 });
 
 describe('/policy front door and dispatch', () => {
+  // /policy simulate reads each sample scenario through the gate's batteries.
+  useGateReadings();
   test('no arguments opens the panel when the surface has one, and prints usage when it does not', async () => {
     let opened = 0;
     const out: string[] = [];

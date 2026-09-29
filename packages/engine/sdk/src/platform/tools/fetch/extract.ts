@@ -1,4 +1,5 @@
 import type { FetchExtractMode } from './schema.js';
+import { readReadable, readSummary } from './page-reading.js';
 
 const HTML_SELECTOR_TAG_RE = /^[a-z][a-z0-9-]*$/i;
 const HTML_SELECTOR_ATTRIBUTE_RE = /^[a-z0-9_-]+$/i;
@@ -57,17 +58,6 @@ function htmlToMarkdown(html: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-function extractReadable(html: string): string {
-  const stripped = html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
-    .replace(/<aside[\s\S]*?<\/aside>/gi, '')
-    .replace(/<header[\s\S]*?<\/header>/gi, '')
-    .replace(/<footer[\s\S]*?<\/footer>/gi, '');
-  return stripHtml(stripped);
 }
 
 function extractCodeBlocks(html: string): string {
@@ -234,44 +224,6 @@ function extractMetadata(html: string): string {
   return JSON.stringify(result, null, 2);
 }
 
-function extractSummary(body: string, contentType: string): string {
-  const isHtml = /text\/html/i.test(contentType);
-  if (!isHtml) {
-    const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-    return paragraphs.slice(0, 2).join('\n\n');
-  }
-
-  const parts: string[] = [];
-
-  const headingM = body.match(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/i);
-  if (headingM) {
-    parts.push(stripHtml(headingM[1]!).trim());
-  }
-
-  const paraM = body.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-  if (paraM) {
-    const text = stripHtml(paraM[1]!).trim();
-    if (text) parts.push(text);
-  }
-
-  const headingRe = /<h([1-6])[^>]*>([\s\S]*?)<\/h[1-6]>/gi;
-  let hm: RegExpExecArray | null;
-  const headings: string[] = [];
-  while ((hm = headingRe.exec(body)) !== null) {
-    const level = parseInt(hm[1]!, 10);
-    const text = stripHtml(hm[2]!).trim();
-    if (text && !parts.includes(text)) {
-      headings.push(`${'#'.repeat(level)} ${text}`);
-    }
-  }
-
-  if (headings.length > 0) {
-    parts.push('\nHeadings:\n' + headings.join('\n'));
-  }
-
-  return parts.join('\n\n') || extractReadable(body).slice(0, 500);
-}
-
 /** Whether the whole body is JSON by the JSON grammar, not by its first character. */
 function parsesAsJson(body: string): boolean {
   try {
@@ -299,12 +251,16 @@ export function sniffContentType(contentType: string, body: string): string {
   return contentType;
 }
 
-export function applyExtract(
+/**
+ * The body in the requested extract mode. `readable` and `summary` are read
+ * by Jev (page-reading.ts); every other mode follows the format's grammar.
+ */
+export async function applyExtract(
   body: string,
   contentType: string,
   mode: FetchExtractMode,
   opts?: { selectors?: string[] | undefined } | undefined,
-): string {
+): Promise<string> {
   const effectiveContentType = sniffContentType(contentType, body);
   const isHtml = /text\/html/i.test(effectiveContentType);
 
@@ -322,7 +278,7 @@ export function applyExtract(
     case 'markdown':
       return isHtml ? htmlToMarkdown(body) : body;
     case 'readable':
-      return isHtml ? extractReadable(body) : body;
+      return isHtml ? readReadable(body) : body;
     case 'code_blocks':
       return isHtml ? extractCodeBlocks(body) : body;
     case 'links':
@@ -343,7 +299,7 @@ export function applyExtract(
       });
     }
     case 'summary':
-      return extractSummary(body, effectiveContentType);
+      return readSummary(body, isHtml);
     default:
       return body;
   }

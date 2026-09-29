@@ -2,20 +2,21 @@
  * The frontend analyzers whose findings are read by Jev
  * (`engine.tools.frontend-finding`, tools/batteries/frontend-finding.ts).
  * Code finds each candidate from syntax (an element start, a hook call, an
- * overflow or fixed-size utility, an import specifier); the reading decides
+ * overflow or fixed-size utility, an import specifier, a z-index value set on
+ * more than one line); the reading decides
  * whether it is an issue. A candidate is reported unless the reading is a
  * no, so an uncertain one is shown with `reading: 'uncertain'`.
  */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { frontendFinding, frontendLineView, MAX_JUDGED_HOOK_LINES } from '../batteries/frontend-finding.js';
-import type { A11yIssue, ClientBoundaryInfo, HookDep, HooksInfo, OverflowInfo, OverflowIssue, SizingInfo, SizingItem } from './schema.js';
+import { frontendFinding, frontendLineView, MAX_JUDGED_HOOK_LINES, stackingView } from '../batteries/frontend-finding.js';
+import type { A11yIssue, ClientBoundaryInfo, HookDep, HooksInfo, OverflowInfo, OverflowIssue, SizingInfo, SizingItem, StackingConflict, StackingInfo, ZIndexItem } from './schema.js';
 
 const SITE = 'tools.inspect.frontend-finding';
 const READ_CONCURRENCY = 8;
 
-type Question = 'a11y_violation' | 'omits_dependency' | 'overflow_problem' | 'fixed_size_problem' | 'server_only';
+type Question = 'a11y_violation' | 'omits_dependency' | 'overflow_problem' | 'fixed_size_problem' | 'server_only' | 'stacking_conflict';
 export type FindingReading = 'real' | 'uncertain';
 
 /** A yes is real, a no dismisses, anything else is shown as uncertain. */
@@ -159,6 +160,49 @@ export async function inspectSizing(content: string, file: string): Promise<Sizi
   const flaggedLines = new Set(fixedLines.filter((_, i) => readings[i] !== 'dismissed'));
   for (const item of items) item.flagged = item.kind === 'fixed_px' && flaggedLines.has(item.line);
   return { file, items, hardcodedCount: items.filter((item) => item.flagged).length };
+}
+
+// ── Stacking ──────────────────────────────────────────────────────────────────
+
+/**
+ * The z-index a matched value sets: Tailwind's z-N utility sets N and -z-N
+ * sets -N (Tailwind's scale), and a CSS declaration sets its number, so z-50
+ * and `z-index: 50` are the same value.
+ */
+function zIndexOf(match: string): string {
+  const css = /z-index\s*:\s*(-?\d+)/.exec(match);
+  if (css) return css[1]!;
+  const utility = /^(-?)z-(\d+|auto)$/.exec(match)!;
+  return utility[2] === 'auto' ? 'auto' : `${utility[1]}${utility[2]}`;
+}
+
+/**
+ * Every z-index utility and declaration in the file is listed (syntax). Each
+ * value set on more than one line is read by `stacking_conflict` with every
+ * line that sets it; it is a conflict unless the reading is a no.
+ */
+export async function inspectStacking(content: string, file: string): Promise<StackingInfo> {
+  const lines = content.split('\n');
+  const zIndexItems: ZIndexItem[] = [];
+  lines.forEach((line, index) => {
+    for (const m of line.matchAll(/-?z-(?:\d+|auto)\b/g)) zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
+    for (const m of line.matchAll(/z-index\s*:\s*-?\d+/g)) zIndexItems.push({ line: index + 1, value: m[0], context: line.trim().slice(0, 60) });
+  });
+  const byIndex = new Map<string, { values: Set<string>; lines: Set<number> }>();
+  for (const item of zIndexItems) {
+    const group = byIndex.get(zIndexOf(item.value)) ?? { values: new Set(), lines: new Set() };
+    group.values.add(item.value);
+    group.lines.add(item.line);
+    byIndex.set(zIndexOf(item.value), group);
+  }
+  const shared = [...byIndex.values()].filter((group) => group.lines.size > 1).map((group) => ({ values: [...group.values], lines: [...group.lines] }));
+  const readings = await mapWithConcurrency(shared, READ_CONCURRENCY, ({ values, lines: lineNumbers }) =>
+    read('stacking_conflict', stackingView(file, lines, values.join(' / '), lineNumbers)));
+  const potentialConflicts: StackingConflict[] = shared.flatMap((group, i) => {
+    const reading = readings[i]!;
+    return reading === 'dismissed' ? [] : [{ ...group, reading }];
+  });
+  return { file, zIndexItems, potentialConflicts };
 }
 
 // ── Client boundary ───────────────────────────────────────────────────────────

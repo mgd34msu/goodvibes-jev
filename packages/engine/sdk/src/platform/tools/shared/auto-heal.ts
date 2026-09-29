@@ -9,7 +9,11 @@
  * Design constraints:
  *   - Returns {healed: false, content: originalContent} with warnings whenever
  *     repair cannot safely produce validated replacement content
- *   - Each stage checks if errors are resolved before proceeding to the next
+ *   - Each stage's change is accepted only when `engine.tools.heal-acceptance`
+ *     reads that it fixes the listed errors (and, for the model's whole-file
+ *     rewrite, that it changes nothing else); otherwise the next stage runs
+ *   - A JudgmentError (or a missing judgment port) propagates to the caller;
+ *     every other failure is caught and reported as a warning
  *   - Uses Bun.which() to detect available tools at runtime
  */
 
@@ -17,10 +21,16 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ToolLLM } from '../../config/tool-llm.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { unifiedDiff } from '../../state/file-cache.js';
+import { healAcceptance, MAX_JUDGED_CHANGE_CHARS } from '../batteries/heal-acceptance.js';
+
+const HEAL_ACCEPTANCE_SITE = 'tools.auto-heal.acceptance';
 
 /** Result of an auto-heal attempt. */
 export interface HealResult {
@@ -28,6 +38,11 @@ export interface HealResult {
   content: string;
   method?: 'formatter' | 'linter' | 'llm' | undefined;
   warnings?: string[] | undefined;
+}
+
+/** Jev could not answer, or no judgment port is installed: the heal cannot decide and the caller is told. */
+function isJudgmentFailure(error: unknown): boolean {
+  return error instanceof JudgmentError || error instanceof JudgmentPortMissingError;
 }
 
 function addWarning(warnings: string[], message: string, error?: unknown): void {
@@ -75,12 +90,12 @@ export class AutoHealer {
       let result: HealResult = { healed: false, content };
       try {
         // Stage 1: Formatter
-        const formatterResult = await this._tryFormatter(tmpFile, content, errors, warnings);
+        const formatterResult = await this._tryFormatter(filePath, tmpFile, content, errors, warnings);
         if (formatterResult.healed) {
           result = formatterResult;
         } else {
           // Stage 2: Linter fix
-          const linterResult = await this._tryLinter(tmpFile, formatterResult.content, errors, warnings);
+          const linterResult = await this._tryLinter(filePath, tmpFile, formatterResult.content, errors, warnings);
           if (linterResult.healed) {
             result = linterResult;
           } else {
@@ -101,6 +116,7 @@ export class AutoHealer {
 
       return warnings.length > 0 ? { ...result, warnings } : result;
     } catch (err) {
+      if (isJudgmentFailure(err)) throw err;
       logger.warn('AutoHealer.heal: unexpected error', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal failed unexpectedly', err);
       return { healed: false, content, warnings };
@@ -111,6 +127,7 @@ export class AutoHealer {
    * Stage 1: Try formatting with prettier or biome.
    */
   private async _tryFormatter(
+    filePath: string,
     tmpFile: string,
     content: string,
     errors: string[],
@@ -152,9 +169,7 @@ export class AutoHealer {
         return { healed: false, content };
       }
 
-      // Check if errors appear resolved (heuristic: no syntax errors after format)
-      const resolved = await this._errorsResolved(tmpFile, errors, warnings);
-      if (resolved) {
+      if (await this._accepted(filePath, content, formatted, errors, 'formatter', warnings)) {
         logger.debug('AutoHealer: errors resolved by formatter');
         return { healed: true, content: formatted, method: 'formatter' };
       }
@@ -162,6 +177,7 @@ export class AutoHealer {
       // Formatter ran but errors remain, pass updated content to next stage
       return { healed: false, content: formatted };
     } catch (err) {
+      if (isJudgmentFailure(err)) throw err;
       logger.warn('AutoHealer: formatter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal formatter stage failed; continuing to later repair stages', err);
       return { healed: false, content };
@@ -172,6 +188,7 @@ export class AutoHealer {
    * Stage 2: Try linter fix with eslint.
    */
   private async _tryLinter(
+    filePath: string,
     tmpFile: string,
     content: string,
     errors: string[],
@@ -200,14 +217,14 @@ export class AutoHealer {
         return { healed: false, content };
       }
 
-      const resolved = await this._errorsResolved(tmpFile, errors, warnings);
-      if (resolved) {
+      if (await this._accepted(filePath, content, fixed, errors, 'linter', warnings)) {
         logger.debug('AutoHealer: errors resolved by linter');
         return { healed: true, content: fixed, method: 'linter' };
       }
 
       return { healed: false, content: fixed };
     } catch (err) {
+      if (isJudgmentFailure(err)) throw err;
       logger.warn('AutoHealer: linter stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal linter stage failed; continuing to LLM repair', err);
       return { healed: false, content };
@@ -252,27 +269,16 @@ export class AutoHealer {
         return { healed: false, content };
       }
 
-      // Verify the LLM fix actually resolves errors
-      const llmTmpFile = join(tmpdir(), `auto-heal-llm-${randomBytes(6).toString('hex')}${extname(filePath) || '.txt'}`);
-      try {
-        writeFileSync(llmTmpFile, response, 'utf-8');
-        const resolved = await this._errorsResolved(llmTmpFile, errors, warnings);
-        if (!resolved) {
-          logger.debug('AutoHealer: LLM response did not resolve errors');
-          addWarning(warnings, 'Auto-heal LLM response did not resolve validation errors');
-          return { healed: false, content };
-        }
-      } finally {
-        try {
-          if (existsSync(llmTmpFile)) unlinkSync(llmTmpFile);
-        } catch (cleanupErr) {
-          addWarning(warnings, `Auto-heal cleanup failed for temporary LLM file '${llmTmpFile}'`, cleanupErr);
-        }
+      if (!(await this._accepted(filePath, content, response, errors, 'llm', warnings))) {
+        logger.debug('AutoHealer: LLM response was not accepted as the repair');
+        addWarning(warnings, 'Auto-heal LLM response was not accepted: it does not fix the validation errors, or it changes more than the fix');
+        return { healed: false, content };
       }
 
       logger.debug('AutoHealer: errors resolved by LLM');
       return { healed: true, content: response, method: 'llm' };
     } catch (err) {
+      if (isJudgmentFailure(err)) throw err;
       logger.warn('AutoHealer: LLM stage failed', { error: summarizeError(err) });
       addWarning(warnings, 'Auto-heal LLM stage failed', err);
       return { healed: false, content };
@@ -280,35 +286,43 @@ export class AutoHealer {
   }
 
   /**
-   * Heuristic check: attempt to parse/validate a temp file to see if errors are resolved.
-   *
-   * For JS/TS files: uses Bun's built-in transpiler to check for syntax errors.
-   * For other files: assumes resolved if formatter/linter succeeded (conservative).
+   * Whether a stage's output is accepted as the repair. A JavaScript or
+   * TypeScript result that Bun's parser rejects is not a repaired file (the
+   * grammar settles it). Otherwise the change from the stage's input is read
+   * by `engine.tools.heal-acceptance`: `fixes_errors` for every stage, and
+   * `only_the_fix` for the model's whole-file rewrite. It is accepted only
+   * when every reading is a yes that acts. A change too large to read whole
+   * is not accepted.
    */
-  private async _errorsResolved(tmpFile: string, _errors: string[], warnings: string[]): Promise<boolean> {
-    try {
-      const ext = extname(tmpFile).toLowerCase();
-      const isJsTs = ['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext);
-
-      if (!isJsTs) {
-        // For non-JS/TS: trust the formatter/linter exit code
-        return true;
-      }
-
-      // For JS/TS: attempt transpile with Bun to catch syntax errors
-      const content = readFileSync(tmpFile, 'utf-8');
+  private async _accepted(
+    filePath: string,
+    before: string,
+    after: string,
+    errors: string[],
+    stage: NonNullable<HealResult['method']>,
+    warnings: string[],
+  ): Promise<boolean> {
+    const ext = extname(filePath).toLowerCase();
+    if (['.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs'].includes(ext)) {
       const loader = (ext === '.mjs' || ext === '.cjs') ? 'js' : ext.slice(1) as 'ts' | 'tsx' | 'js' | 'jsx';
-      const transpiler = new Bun.Transpiler({ loader });
-
       try {
-        transpiler.transformSync(content);
-        return true;
+        new Bun.Transpiler({ loader }).transformSync(after);
       } catch {
         return false;
       }
-    } catch (err) {
-      addWarning(warnings, `Auto-heal could not verify repaired content in '${tmpFile}'`, err);
+    }
+    const change = unifiedDiff(before, after, filePath);
+    if (change.length > MAX_JUDGED_CHANGE_CHARS) {
+      addWarning(warnings, `Auto-heal ${stage} change to '${filePath}' is ${change.length} characters, too large to check whole; not applied`);
       return false;
     }
+    const asked = stage === 'llm' ? (['fixes_errors', 'only_the_fix'] as const) : (['fixes_errors'] as const);
+    const run = await healAcceptance.run(judgmentPort(HEAL_ACCEPTANCE_SITE), { file: filePath, errors, change }, { site: HEAL_ACCEPTANCE_SITE, only: [...asked] });
+    const accepted = asked.every((question) => {
+      const reading = run.readings[question];
+      return reading?.verdict === 'yes' && reading.outcome === 'act';
+    });
+    run.recordAction(`${stage} ${accepted ? 'accepted' : 'not accepted'}`);
+    return accepted;
   }
 }

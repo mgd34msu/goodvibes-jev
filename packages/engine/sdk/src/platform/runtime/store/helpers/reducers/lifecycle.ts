@@ -35,13 +35,6 @@ function permissionMachineStateForEvent(
   }
 }
 
-function inferPermissionCategory(toolName: string): PermissionCategory {
-  if (toolName === 'agent' || toolName === 'delegate') return 'delegate';
-  if (toolName === 'write' || toolName === 'edit' || toolName === 'apply_patch') return 'write';
-  if (toolName === 'exec' || toolName === 'precision_exec' || toolName === 'bash') return 'execute';
-  return 'read';
-}
-
 export function updateSessionState(
   domain: SessionDomainState,
   event: CompactionEvent,
@@ -109,7 +102,8 @@ export function updatePermissionState(
         lastDecision: {
           callId: event.callId,
           toolName: event.tool,
-          category: inferPermissionCategory(event.tool),
+          // The category the gate settled on, carried on the event (not guessed from the tool name).
+          category: event.category as PermissionCategory,
           machineState: 'decision_emitted',
           outcome: event.approved ? 'approved' : 'denied',
           reason: (event.reasonCode as PermissionDecision['reason']) ?? (event.approved ? 'user_approved' : 'user_denied'),

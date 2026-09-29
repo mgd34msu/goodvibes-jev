@@ -17,8 +17,13 @@ import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
 import { MAX_JUDGED_DIFF_CHARS, semanticDiff, semanticDiffView } from '../batteries/semantic-diff.js';
+import { exportBreak, exportBreakView } from '../batteries/export-break.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
 
 const SEMANTIC_DIFF_SITE = 'tools.analyze.semantic-diff';
+const EXPORT_BREAK_SITE = 'tools.analyze.export-break';
+/** Changed exports read at once during a breaking-change check. */
+const EXPORT_READ_CONCURRENCY = 8;
 
 // 1.2 s, warm `git status` cache response budget; keeps the semantic-diff summary probe non-blocking
 const GIT_PROBE_TIMEOUT_MS = 1200;
@@ -40,6 +45,20 @@ export function semanticDiffRisk(readings: {
   if (present(readings.breaks_callers)) return 'high';
   if (present(readings.changes_behavior)) return 'medium';
   return 'low';
+}
+
+/**
+ * Whether a changed export breaks its callers, composed from the two facts
+ * Jev read about it (tools/batteries/export-break.ts): either yes is
+ * breaking, both no is safe, anything else is uncertain.
+ */
+export function exportBreakVerdict(readings: {
+  readonly inputs_break: YesNoReading;
+  readonly output_breaks: YesNoReading;
+}): 'breaking' | 'safe' | 'uncertain' {
+  const facts = [readings.inputs_break.verdict, readings.output_breaks.verdict];
+  if (facts.includes('yes')) return 'breaking';
+  return facts.every((verdict) => verdict === 'no') ? 'safe' : 'uncertain';
 }
 
 /** Summary prose built from the readings when the helper model wrote none. */
@@ -188,32 +207,36 @@ export async function runBreaking(
   }
 
   const { before: beforeSigs, after: afterSigs } = extractSignaturesFromDiff(fullDiff);
-  const breaking_changes: Array<{ name: string; before: string; after: string; reason: string }> = [];
+  const breaking_changes: Array<{ name: string; before: string; after: string; reason: string; reading?: 'uncertain' }> = [];
   const additions: Array<{ name: string; signature: string }> = [];
   const safe_modifications: Array<{ name: string; before: string; after: string }> = [];
+  const changed: Array<{ name: string; before: string; after: string }> = [];
 
   for (const [name, sig] of beforeSigs) {
-    if (!afterSigs.has(name)) {
-      breaking_changes.push({
-        name,
-        before: sig,
-        after: '(removed)',
-        reason: 'export removed',
-      });
+    const newSig = afterSigs.get(name);
+    if (newSig === undefined) {
+      // The name is gone from the diff, so every caller that names it must change.
+      breaking_changes.push({ name, before: sig, after: '(removed)', reason: 'export removed' });
+    } else if (sig === newSig) {
+      safe_modifications.push({ name, before: sig, after: newSig });
     } else {
-      const newSig = afterSigs.get(name)!;
-      if (sig !== newSig) {
-        breaking_changes.push({
-          name,
-          before: sig,
-          after: newSig,
-          reason: 'signature changed',
-        });
-      } else {
-        safe_modifications.push({ name, before: sig, after: newSig });
-      }
+      changed.push({ name, before: sig, after: newSig });
     }
   }
+
+  // Whether a changed declaration breaks its callers is read per export; safe is listed as safe, anything else as breaking.
+  const verdicts = await mapWithConcurrency(changed, EXPORT_READ_CONCURRENCY, async (change) => {
+    const run = await exportBreak.run(judgmentPort(EXPORT_BREAK_SITE), exportBreakView(change.name, change.before, change.after), { site: EXPORT_BREAK_SITE });
+    const verdict = exportBreakVerdict(run.readings);
+    run.recordAction(`listed as ${verdict}`);
+    return verdict;
+  });
+  changed.forEach((change, index) => {
+    const verdict = verdicts[index]!;
+    if (verdict === 'safe') safe_modifications.push(change);
+    else if (verdict === 'breaking') breaking_changes.push({ ...change, reason: 'callers must change' });
+    else breaking_changes.push({ ...change, reason: 'callers may have to change', reading: 'uncertain' });
+  });
 
   for (const [name, sig] of afterSigs) {
     if (!beforeSigs.has(name)) {

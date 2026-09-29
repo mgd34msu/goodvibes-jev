@@ -1952,6 +1952,7 @@ export type GateEvent =
     type: 'DECISION_EMITTED';
     callId: string;
     tool: string;
+    category: string;
     approved: boolean;
     source: string;
     sourceLayer?: string | undefined;

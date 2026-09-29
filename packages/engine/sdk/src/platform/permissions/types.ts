@@ -122,4 +122,9 @@ export interface PermissionCheckResult {
   readonly preset?: GatePresetRecord | undefined;
   /** Why the gate refused, in words the asking agent can act on. */
   readonly detail?: string | undefined;
+  /**
+   * The category the gate settled on: a built-in tool's own category, or, for
+   * any other tool, the one Jev read from what the call does.
+   */
+  readonly category?: PermissionCategory | undefined;
 }

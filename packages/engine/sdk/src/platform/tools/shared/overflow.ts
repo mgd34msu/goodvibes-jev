@@ -4,6 +4,8 @@ import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import type { FeatureFlagReader } from '../../runtime/feature-flags/index.js';
 import { isFeatureGateEnabled } from '../../runtime/feature-flags/index.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { outputBlockView, outputKeep } from '../batteries/output-keep.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -84,6 +86,8 @@ export interface OverflowResult {
 export interface OverflowOptions {
   maxChars?: number | undefined;
   label?: string | undefined;
+  /** The tool call that produced the content (for example the command line); the parts shown are chosen against it. */
+  call: string;
 }
 
 // ─── File Backend ────────────────────────────────────────────────────────────
@@ -371,19 +375,74 @@ export interface OverflowHandlerConfig {
   featureFlags?: FeatureFlagReader | undefined;
 }
 
+// ─── Keeping what the call needs ─────────────────────────────────────────────
+
+const OUTPUT_KEEP_SITE = 'tools.overflow.output-keep';
+
+/** The kept output is chosen in blocks of about this fraction of the budget. */
+const BLOCKS_PER_BUDGET = 8;
+
 /**
- * headAndTail, keeps the first 20% and last 80% of `budget` characters from
- * `content`, joined by a marker, instead of a head-only slice. The tail is
- * weighted heavier because the most useful part of a long tool output (e.g.
- * a failing test run's summary) is almost always at the end.
+ * Cuts `content` into consecutive blocks of at most `blockChars` characters,
+ * at line breaks; a line longer than a block is cut into block-sized pieces.
+ * Joined in order, the blocks are the content.
  */
-function headAndTail(content: string, budget: number): string {
-  const headChars = Math.floor(budget * 0.2);
-  const tailChars = budget - headChars;
-  const head = content.slice(0, headChars);
-  const tail = content.slice(-tailChars);
-  const skipped = content.length - headChars - tailChars;
-  return `${head}\n[... ${skipped} chars omitted ...]\n${tail}`;
+export function outputBlocks(content: string, blockChars: number): Array<{ start: number; text: string }> {
+  const blocks: Array<{ start: number; text: string }> = [];
+  let start = 0;
+  let current = '';
+  const flush = (): void => {
+    if (current.length === 0) return;
+    blocks.push({ start, text: current });
+    start += current.length;
+    current = '';
+  };
+  for (const line of content.split(/(?<=\n)/)) {
+    if (current.length + line.length > blockChars) flush();
+    if (line.length <= blockChars) {
+      current += line;
+      continue;
+    }
+    for (let at = 0; at < line.length; at += blockChars) {
+      current = line.slice(at, at + blockChars);
+      flush();
+    }
+  }
+  flush();
+  return blocks;
+}
+
+/**
+ * The parts of `content` to show within `budget` characters. The blocks are
+ * ranked by `engine.tools.output-keep` against `call` (the tool call that
+ * produced the output); the best that fit the budget are kept and shown in
+ * their original order, with a marker where blocks were left out.
+ */
+export async function keepForCall(content: string, budget: number, call: string): Promise<string> {
+  const blocks = outputBlocks(content, Math.max(1, Math.floor(budget / BLOCKS_PER_BUDGET)));
+  const candidates = blocks.map((block, index) => ({ id: String(index), content: outputBlockView(block.start, block.text, content.length) }));
+  const { ranked } = await outputKeep.rerank(judgmentPort(OUTPUT_KEEP_SITE), call, candidates, { site: OUTPUT_KEEP_SITE });
+  const kept = new Set<number>();
+  let used = 0;
+  for (const { id } of ranked) {
+    const size = blocks[Number(id)]!.text.length;
+    if (used + size > budget) continue;
+    kept.add(Number(id));
+    used += size;
+  }
+  let shown = '';
+  let omitted = 0;
+  blocks.forEach((block, index) => {
+    if (!kept.has(index)) {
+      omitted += block.text.length;
+      return;
+    }
+    if (omitted > 0) shown += `\n[... ${omitted} chars omitted ...]\n`;
+    omitted = 0;
+    shown += block.text;
+  });
+  if (omitted > 0) shown += `\n[... ${omitted} chars omitted ...]`;
+  return shown;
 }
 
 // ─── OverflowHandler ────────────────────────────────────────────────────────
@@ -397,7 +456,8 @@ function headAndTail(content: string, budget: number): string {
  *   `ledger:{filename}`
  *   `diagnostics:{filename}`
  *
- * Never throws, on write failure, returns truncated content without ref.
+ * A backend write failure returns the kept content without a ref; a
+ * JudgmentError from the keep reading propagates.
  */
 export class OverflowHandler {
   private readonly backend: SpillBackend;
@@ -435,16 +495,17 @@ export class OverflowHandler {
   /**
    * Handle potentially large content.
    * Returns unchanged content if within limit.
-   * On overflow: delegates to active backend and returns typed ref.
+   * On overflow: delegates to active backend, shows the parts keepForCall
+   * chooses for `options.call`, and returns a typed ref to the full output.
    */
-  handle(content: string, options?: OverflowOptions): OverflowResult {
-    const maxChars = options?.maxChars ?? DEFAULT_MAX_CHARS;
+  async handle(content: string, options: OverflowOptions): Promise<OverflowResult> {
+    const maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
 
     if (content.length <= maxChars) {
       return { content };
     }
 
-    const label = this.sanitizeLabel(options?.label ?? 'output');
+    const label = this.sanitizeLabel(options.label ?? 'output');
     const filename = `${Date.now()}-${label}.txt`;
 
     let entry: SpillEntry | null;
@@ -455,11 +516,7 @@ export class OverflowHandler {
       entry = null;
     }
 
-    // Keep head + tail rather than head-only: test runners (bun test, vitest,
-    // jest) print their failure summary at the very end of output, so a
-    // head-only truncation silently drops the actually-informative part of a
-    // long failing run.
-    const kept = headAndTail(content, maxChars);
+    const kept = await keepForCall(content, maxChars, options.call);
 
     if (!entry) {
       return {

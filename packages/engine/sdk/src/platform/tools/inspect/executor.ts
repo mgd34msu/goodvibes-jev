@@ -140,7 +140,7 @@ export async function executeInspectMode(
       case 'stacking': {
         const file = readRequiredFile(projectRoot, input.file, 'stacking', 'File not found');
         if ('success' in file) return file;
-        return createInspectSuccess(inspectStacking(file.content, input.file!), format, input.mode);
+        return createInspectSuccess(await inspectStacking(file.content, input.file!), format, input.mode);
       }
 
       case 'responsive': {

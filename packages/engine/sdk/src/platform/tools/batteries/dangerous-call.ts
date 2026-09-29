@@ -1,16 +1,13 @@
 /**
  * `engine.tools.dangerous-call`: analyze mode `permissions` finds candidate
- * lines with call-shape patterns (eval, new Function, exec/execSync/spawn,
- * chmod 777, dangerouslySetInnerHTML, document.write, innerHTML assignment,
- * new RegExp over a non-literal); these readings decide whether the matched
- * call is actually risky where it stands (`risky`) and how severe it is
- * (`severity`), in one request. They replace reporting every match with a
- * severity hand-assigned per pattern (eval, exec and chmod high; HTML sinks
- * medium; RegExp low), which reported `regex.exec(` and a constant
- * `innerHTML = ''` the same as code that runs or injects outside input.
- *
- * The patterns stay only as the shortlist (they choose which lines are read,
- * never what is reported or how severe it is).
+ * lines with the `engine.tools.dangerous-line` existence check over each
+ * block of a file's lines (analyze/scan-lines.ts); these readings decide
+ * whether the call on a candidate line is actually risky where it stands
+ * (`risky`) and how severe it is (`severity`), in one request. They replace
+ * reporting every call-shape match with a severity hand-assigned per pattern
+ * (eval, exec and chmod high; HTML sinks medium; RegExp low), which reported
+ * `regex.exec(` and a constant `innerHTML = ''` the same as code that runs or
+ * injects outside input.
  *
  * Band: medium stakes. A wrong no hides a risky call from the report. Code
  * reports a candidate unless `risky` is a no (uncertain ones are listed as

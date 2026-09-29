@@ -3,8 +3,10 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { paramFill, paramFillCandidate, paramFillContext } from './batteries/param-fill.js';
+import { booleanValue, booleanValueView } from './batteries/boolean-value.js';
 
 const PARAM_FILL_SITE = 'tools.auto-repair.param-fill';
+const BOOLEAN_VALUE_SITE = 'tools.auto-repair.boolean-value';
 
 /** Result of a tool call repair attempt. */
 export interface RepairResult {
@@ -25,11 +27,12 @@ export interface RepairResult {
  * with repaired=false.
  *
  * Design: the format repairs never throw; a failure there returns the
- * original arguments with a warning. Filling a missing required parameter
- * from a spare argument is a reading (`engine.tools.param-fill`), and a
- * JudgmentError from it propagates. Calls that are already correct pass
- * through unchanged, and a call with no missing required string parameter
- * asks nothing.
+ * original arguments with a warning. Reading which boolean a non-literal
+ * string means (`engine.tools.boolean-value`) and filling a missing required
+ * parameter from a spare argument (`engine.tools.param-fill`) are readings,
+ * and a JudgmentError from either propagates. Calls that are already correct
+ * pass through unchanged, and a call with no such string and no missing
+ * required string parameter asks nothing.
  */
 export async function repairToolCall(
   toolName: string,
@@ -38,6 +41,7 @@ export async function repairToolCall(
 ): Promise<RepairResult> {
   let fixed: Record<string, unknown>;
   const repairs: string[] = [];
+  const booleanStrings: Array<{ key: string; value: string }> = [];
   const params = schema.parameters as Record<string, unknown> | undefined;
   const declared = params?.properties;
   const properties = (declared !== null && typeof declared === 'object' ? declared : {}) as Record<string, Record<string, unknown>>;
@@ -76,19 +80,17 @@ export async function repairToolCall(
         continue;
       }
 
-      // Rule 4: Boolean coercion
+      // Rule 4: Boolean coercion. The JSON grammar spells the booleans `true`
+      // and `false`, so a string holding exactly one is that boolean; any other
+      // string is read by `engine.tools.boolean-value` after the format repairs.
       if (expectedType === 'boolean' && typeof value === 'string') {
-        const lower = value.toLowerCase();
-        if (lower === 'true' || lower === 'yes') {
-          fixed[key] = true;
-          repairs.push(`coerced ${key} from '${value}' to boolean true`);
-          continue;
+        if (value === 'true' || value === 'false') {
+          fixed[key] = value === 'true';
+          repairs.push(`coerced ${key} from '${value}' to boolean ${value}`);
+        } else {
+          booleanStrings.push({ key, value });
         }
-        if (lower === 'false' || lower === 'no') {
-          fixed[key] = false;
-          repairs.push(`coerced ${key} from '${value}' to boolean false`);
-          continue;
-        }
+        continue;
       }
 
       // Rule 5: Enum normalization (case-insensitive match)
@@ -115,6 +117,23 @@ export async function repairToolCall(
       error: summarizeError(err),
     });
     return { repaired: false, original: args, fixed: args, repairs: [], warnings: [warning] };
+  }
+
+  // --- Rule 4, read: which boolean, if any, a non-literal string means ---
+  for (const { key, value } of booleanStrings) {
+    const description = properties[key]?.['description'];
+    const run = await booleanValue.run(
+      judgmentPort(BOOLEAN_VALUE_SITE),
+      booleanValueView(toolName, key, typeof description === 'string' ? description : undefined, value),
+      { site: BOOLEAN_VALUE_SITE },
+    );
+    const reading = run.readings.boolean_value;
+    const meant = reading.outcome === 'act' && reading.choice !== 'neither' ? reading.choice === 'true' : undefined;
+    run.recordAction(meant === undefined ? `left ${key} as sent` : `coerced ${key} to ${meant}`);
+    if (meant !== undefined) {
+      fixed[key] = meant;
+      repairs.push(`coerced ${key} from '${value}' to boolean ${meant}`);
+    }
   }
 
   // --- Rule 2: Missing required string params, filled from a spare argument Jev picks ---

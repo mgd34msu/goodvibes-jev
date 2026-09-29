@@ -12,42 +12,38 @@ import { describe, test, expect } from 'bun:test';
 import { useGateReadings } from './_helpers/gate-readings.ts';
 import { runSafetyChecks } from './_helpers/runtime-seam.ts';
 
-const PATH_TOOLS = ['read', 'write', 'edit', 'find'] as const;
-
 describe('security: the safety check', () => {
   useGateReadings([
     ['mkfs.ext4 /dev/sda1', { mutates: true, catastrophic: true }],
   ]);
 
   describe('a NUL byte in a path is refused', () => {
-    for (const tool of PATH_TOOLS) {
-      for (const nullPath of ['/project/file.ts\0', '/tmp/safe\0/etc/passwd', '\0etc/shadow']) {
-        test(`tool "${tool}" with a NUL byte path is refused`, async () => {
-          const result = await runSafetyChecks(tool, { path: nullPath });
-          expect(result.blocked).toBe(true);
-          expect(result.reason).toBe('SAFETY_DENY_PATH_ESCAPE');
-        });
-      }
+    for (const nullPath of ['/project/file.ts\0', '/tmp/safe\0/etc/passwd', '\0etc/shadow']) {
+      test(`a path argument ${JSON.stringify(nullPath)} is refused`, async () => {
+        const result = await runSafetyChecks({ path: nullPath });
+        expect(result.blocked).toBe(true);
+        expect(result.reason).toBe('SAFETY_DENY_PATH_ESCAPE');
+      });
     }
   });
 
   describe('paths without a NUL byte pass (reaching beyond the project is the stakes reading)', () => {
     for (const path of ['/home/user/project/src/index.ts', './relative/path.ts', '/project/../../etc/passwd']) {
       test(`"${path}" passes`, async () => {
-        expect((await runSafetyChecks('read', { path })).blocked).toBe(false);
+        expect((await runSafetyChecks({ path })).blocked).toBe(false);
       });
     }
   });
 
   describe('shell commands are read for catastrophe', () => {
     test('a command read as catastrophic is refused', async () => {
-      const result = await runSafetyChecks('exec', { command: 'mkfs.ext4 /dev/sda1' });
+      const result = await runSafetyChecks({ command: 'mkfs.ext4 /dev/sda1' });
       expect(result.blocked).toBe(true);
       expect(result.steps.some((step) => step.check === 'catastrophic' && step.matched)).toBe(true);
     });
 
     test('an ordinary command passes', async () => {
-      expect((await runSafetyChecks('exec', { command: 'cat ../../etc/hosts' })).blocked).toBe(false);
+      expect((await runSafetyChecks({ command: 'cat ../../etc/hosts' })).blocked).toBe(false);
     });
   });
 });

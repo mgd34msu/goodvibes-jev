@@ -84,6 +84,8 @@ export type GateEvent =
       type: 'DECISION_EMITTED';
       callId: string;
       tool: string;
+      /** The category the gate settled on (the built-in tool's, or the one Jev read). */
+      category: string;
       approved: boolean;
       source: string;
       sourceLayer?: string | undefined;

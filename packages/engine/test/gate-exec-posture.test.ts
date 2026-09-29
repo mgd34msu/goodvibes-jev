@@ -18,9 +18,11 @@ import { AGENT_OWNER_TERMINAL_GUARD } from '../sdk/src/platform/gate/policy/exec
 import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
 import { useToolReadings } from './_helpers/tool-readings.ts';
 
-// The tools batteries exec reads (credential names, prompts, retries) and,
-// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
-useToolReadings([], EXEC_GATE_TABLE);
+// The tools batteries exec reads (credential names, prompts, retries, the
+// owner-terminal reading) and, forwarded with EXEC_GATE_TABLE, the gate's
+// questions, in one fake port. Typing into the owner's `main` session reads as
+// driving a terminal the platform does not own; listing sessions does not.
+useToolReadings([['tmux send-keys -t main', { foreignTerminal: true }]], EXEC_GATE_TABLE);
 
 /** The line the refusal carries, so a person is told which rule stopped them. */
 const RULE = 'the owner\'s terminal is untouchable';

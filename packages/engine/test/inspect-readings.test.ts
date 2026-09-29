@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { declaredApiFrameworks, detectProject, inspectApi, parsePrismaSchema } from '../sdk/src/platform/tools/inspect/project.ts';
+import { declaredApiFrameworks, detectProject, generateApiSpec, inspectApi, inspectApiSync, parsePrismaSchema, validateApiSpec } from '../sdk/src/platform/tools/inspect/project.ts';
 import {
   inspectAccessibility,
   inspectClientBoundary,
@@ -17,6 +17,7 @@ import {
   inspectOverflow,
   inspectResponsive,
   inspectSizing,
+  inspectStacking,
   inspectTailwind,
 } from '../sdk/src/platform/tools/inspect/frontend.ts';
 import { useToolReadings } from './_helpers/tool-readings.ts';
@@ -29,6 +30,12 @@ const readings = useToolReadings([
   ['"line":"<main className=\\"w-[1200px]\\">"', { finding: true }],
   ['fetchResults(query)', { finding: true }],
   ['"module":"next/headers"', { finding: true }],
+  ['"value":"z-50 / z-index: 50"', { finding: true }],
+  ['"file":"server/app.js"', { entryPoint: true }],
+  ['"file":"src/index.ts"', { entryPoint: 'uncertain' }],
+  [`"line":"app.get('/health', handler);"`, { route: true }],
+  [`"line":"router.post('/login', login);"`, { route: 'uncertain' }],
+  ['"file":"pages/api/cart.ts"', { serves: ['POST', 'DELETE'] }],
 ]);
 
 let root: string;
@@ -77,6 +84,30 @@ describe('detectProject', () => {
     expect(state.sourceFiles['.rs']).toBe(1);
   });
 
+  test('entry points package.json declares are facts: main, bin and exports targets except types', async () => {
+    write('package.json', JSON.stringify({
+      main: './dist/index.js',
+      bin: { tool: './bin/tool.js' },
+      exports: { '.': { types: './dist/index.d.ts', import: './dist/index.js' }, './cli': './dist/cli.js' },
+    }));
+    write('src/index.ts', '');
+    const info = await detectProject(root);
+    expect(info.entryPoints).toEqual(['dist/index.js', 'bin/tool.js', 'dist/cli.js']);
+    expect(readings.requests.flatMap((request) => Object.keys(request.questions ?? {}))).not.toContain('entry_point');
+  });
+
+  test('with no declared entry point, root, src and script-named files are read; only a yes that acts is listed', async () => {
+    write('package.json', JSON.stringify({ scripts: { start: 'node server/app.js' } }));
+    write('server/app.js', "require('http').createServer().listen(3000);\n");
+    write('src/index.ts', 'export const x = 1;\n');
+    write('vite.config.ts', 'export default {};\n');
+    write('README.md', '# app\n');
+    const info = await detectProject(root);
+    expect(info.entryPoints).toEqual(['server/app.js']);
+    const asked = readings.requests.filter((request) => 'entry_point' in (request.questions ?? {})).map((request) => (request.state as { file: string }).file);
+    expect(asked.sort()).toEqual(['server/app.js', 'src/index.ts', 'vite.config.ts']);
+  });
+
   test('a project with no manifest asks nothing', async () => {
     expect((await detectProject(root)).type).toBe('unknown');
     expect(readings.requests).toHaveLength(0);
@@ -102,6 +133,53 @@ describe('inspectApi auto', () => {
   });
 });
 
+describe('route readings', () => {
+  test('verb calls with a path and a handler are read; the receiver name decides nothing', async () => {
+    write('server.ts', [
+      "import express from 'express';",
+      'const app = express();',
+      "app.get('/health', handler);",
+      "router.post('/login', login);",
+      "const users = cache.get('users', { fresh: true });",
+      "const page = params.get('page');",
+    ].join('\n'));
+    const routes = await inspectApi(root, 'express');
+    expect(routes).toEqual([
+      { method: 'GET', path: '/health', file: 'server.ts', line: 3 },
+      { method: 'POST', path: '/login', file: 'server.ts', line: 4, reading: 'uncertain' },
+    ]);
+    const lines = readings.requests.map((request) => (request.state as { line: string; framework: string }));
+    expect(lines.map((state) => state.line)).toEqual(["app.get('/health', handler);", "router.post('/login', login);", "const users = cache.get('users', { fresh: true });"]);
+    expect(lines.every((state) => state.framework === 'express')).toBe(true);
+  });
+
+  test('a pages/api handler is read for all seven methods in one request', async () => {
+    write('pages/api/cart.ts', 'export default function handler(req, res) {}\n');
+    const routes = await inspectApi(root, 'nextjs');
+    expect(routes.map((route) => `${route.method} ${route.path}`)).toEqual(['POST /api/cart', 'DELETE /api/cart']);
+    expect(readings.requests).toHaveLength(1);
+    expect(Object.keys(readings.requests[0]?.questions ?? {})).toEqual(['serves_get', 'serves_post', 'serves_put', 'serves_patch', 'serves_delete', 'serves_head', 'serves_options']);
+  });
+
+  test('api sync finds path fetches in any folder: a path URL only resolves in a document', async () => {
+    write('server.ts', "app.get('/health', handler);\n");
+    write('components/Status.tsx', "const res = await fetch('/health');\nconst other = await fetch('/missing');\n");
+    const sync = await inspectApiSync(root, 'express');
+    expect(sync.fetch_calls.map((call) => `${call.file}:${call.url}`)).toEqual(['components/Status.tsx:/health', 'components/Status.tsx:/missing']);
+    expect(sync.unmatched_fetches.map((call) => call.url)).toEqual(['/missing']);
+  });
+
+  test('the spec and its validation use each route\'s own method', () => {
+    const routes = [
+      { method: 'POST', path: '/api/cart', file: 'pages/api/cart.ts', line: 1 },
+      { method: 'DELETE', path: '/api/cart', file: 'pages/api/cart.ts', line: 1 },
+    ];
+    expect(Object.keys(generateApiSpec(routes).paths['/api/cart'] ?? {})).toEqual(['post', 'delete']);
+    const result = validateApiSpec(JSON.stringify({ paths: { '/api/cart': { get: {} } } }), routes);
+    expect(result.mismatched_methods).toEqual([{ path: '/api/cart', spec_methods: ['GET'], code_methods: ['POST', 'DELETE'] }]);
+  });
+});
+
 describe('frontend readings', () => {
   test('accessibility: every element of a checked kind is read; a no is dismissed', async () => {
     const issues = await inspectAccessibility('<img src={photo} />\n<img\n  src={logo}\n  alt="Logo"\n/>\n<input type="hidden" name="id" />\n', 'Card.tsx');
@@ -121,6 +199,13 @@ describe('frontend readings', () => {
     const sizing = await inspectSizing('<main className="w-[1200px]">\n<Icon className="w-5 h-5" />\n', 'Page.tsx');
     expect(sizing.items.filter((item) => item.flagged).map((item) => item.value)).toEqual(['w-[1200px]']);
     expect(sizing.hardcodedCount).toBe(1);
+  });
+
+  test('stacking: a value shared by lines is read once with every line; z-50 and z-index: 50 are one value', async () => {
+    const info = await inspectStacking('<div className="fixed z-50">\n.toast { z-index: 50; }\n<span className="z-10">\n<b className="z-10 md:z-10">\n<i className="z-20">\n', 'Page.tsx');
+    expect(info.zIndexItems).toHaveLength(6);
+    expect(info.potentialConflicts).toEqual([{ values: ['z-50', 'z-index: 50'], lines: [1, 2], reading: 'real' }]);
+    expect(readings.requests).toHaveLength(2);
   });
 
   test('client boundary: directive after comments, and each import is read once', async () => {

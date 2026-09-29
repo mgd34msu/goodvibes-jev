@@ -4,7 +4,7 @@ import type { PermissionAttribution, PermissionRequestHandler } from './prompt.j
 import { analyzePermissionRequest, withReading } from './analysis.js';
 import { runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
-import { categoryForSideEffectKind, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
+import { categoryForSideEffectKind, classificationFromReading, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
@@ -16,7 +16,7 @@ import type { PolicyRuntimeState } from '../runtime/permissions/policy-runtime.j
 import { LayeredPolicyEvaluator } from '../runtime/permissions/evaluator.js';
 import { exportDecisions } from '../runtime/permissions/decision-otlp.js';
 import type { DecisionOtlpConfig } from '../runtime/permissions/decision-otlp.js';
-import type { PermissionDecision as LayeredPermissionDecision } from '../runtime/permissions/types.js';
+import type { CommandClassification, PermissionDecision as LayeredPermissionDecision } from '../runtime/permissions/types.js';
 import type { FeatureFlagManager } from '../runtime/feature-flags/index.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
@@ -163,9 +163,6 @@ const BOUNDARY_REASON: Readonly<Record<BoundaryCheckName, PermissionDecisionReas
   'outward-effect': 'boundary_outward_effect',
 };
 
-/** Tools that accept shell commands. */
-const EXEC_TOOLS: ReadonlySet<string> = new Set(['exec', 'bash', 'sh', 'run']);
-
 
 const boundaryRecord = (verdict: BoundaryVerdict): GateBoundaryRecord => ({
   passed: verdict.passed,
@@ -275,7 +272,7 @@ export class PermissionManager {
       return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
     }
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode), analysis);
+      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode, reading === null ? 'read' : classificationFromReading(reading)), analysis);
       if (mapped) return done({ ...mapped, ...base });
     }
     let forceAsk = false;
@@ -333,7 +330,7 @@ export class PermissionManager {
       args,
       workingDirectory,
       askKind: TOOL_CATEGORIES[toolName] === undefined,
-      askObfuscated: shellCommandsIn(args).length > 0 && EXEC_TOOLS.has(toolName),
+      askObfuscated: shellCommandsIn(args).length > 0,
     });
   }
 
@@ -474,7 +471,7 @@ export class PermissionManager {
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode), analyzePermissionRequest('read', args, 'read'));
+      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode, 'read'), analyzePermissionRequest('read', args, 'read'));
       if (mapped) return mapped.approved ? 'allow' : 'restricted';
     }
     const preset = presetForMode(mode);
@@ -557,6 +554,7 @@ export class PermissionManager {
     toolName: string,
     args: Record<string, unknown>,
     mode: PermissionConfigSnapshot['permissions']['mode'],
+    classification: CommandClassification,
   ): LayeredPermissionDecision {
     // User-origin rules are evaluated before managed (registry) rules by the
     // evaluator, so a user allow-rule wins over a managed one.
@@ -575,7 +573,7 @@ export class PermissionManager {
       rules,
       defaultEffect: 'deny',
     });
-    const decision = evaluator.evaluate(toolName, args);
+    const decision = evaluator.evaluate(toolName, args, classification);
     this.exportDecisionRecords(evaluator, mode);
     return decision;
   }
@@ -653,7 +651,7 @@ export class PermissionManager {
       preset: result.preset?.preset,
       boundaryRefusedBy: result.boundary?.refusedBy,
     });
-    return result;
+    return { ...result, category };
   }
 
   private async fireHook(

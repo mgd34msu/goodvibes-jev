@@ -140,11 +140,6 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
     ceiling: 854,
     justification: 'daemon HTTP router, pre-split, shrink-only; +5 for the in-process sessionBroker adapter (getInputsSince/markInputDelivered surface-collection delegations); +1 for the detachParticipant adapter delegation; the opt-in same-origin bundle-serving + cross-origin (CORS) seam lives in http/webui-serving.ts, with only the pre-auth dispatch split retained here; +3 for the memoryConsolidation context member + pass-through backing the consolidation-receipts route; +5 for announcing the client build floor on /status (the import plus two option lines handed to createDaemonControlRouteHandlers, and the two-line note explaining why). It belongs at this composition site and nowhere else: /status is the one call every attached client already makes on a timer, so the floor reaches a stale terminal UI or agent within one probe interval without a new endpoint or a contract change. The value, the comparison, and the header name live in control-plane/client-compatibility.ts; the response header itself is set in daemon-sdk/control-routes.ts',
   },
-  // index.ts (tools/state) ~0.84k, tools state store, pre-split, shrink-only
-  'sdk/src/platform/tools/state/index.ts': {
-    ceiling: 838,
-    justification: 'tools state store, pre-split, shrink-only',
-  },
   // scanner.ts (discovery) ~0.84k, discovery scanner, pre-split, shrink-only
   'sdk/src/platform/discovery/scanner.ts': {
     ceiling: 837,
