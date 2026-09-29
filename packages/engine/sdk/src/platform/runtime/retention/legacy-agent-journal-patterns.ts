@@ -3,8 +3,8 @@
  * recognised on disk, shared by append-only-registry.ts's session-journals
  * sweep and session-migration.ts's one-time move.
  *
- * Before agents/session.ts and agents/wrfc-workmap.ts were repointed at
- * sessions/agents/, agent transcripts and WRFC workmaps were written flat into
+ * Before agent journals were repointed at sessions/agents/, agent transcripts
+ * and the retired review loop's workmap journals were written flat into
  * the scoped sessions/ directory, alongside user conversation files. Both the
  * retention sweep (which must never delete a user conversation) and the
  * migration (which must never MOVE a user conversation into sessions/agents/)
@@ -14,7 +14,7 @@
  * Recognition is TWO tests, both of which must pass:
  *
  *  1. Filename shape:
- *     - `<sessionId>_workmap.jsonl`, WrfcWorkmap's legacy path.
+ *     - `<sessionId>_workmap.jsonl`, the retired review loop's workmap path.
  *     - `agent-<8 lowercase hex chars>.jsonl`, AgentSession's legacy path,
  *       matching the id shape `agent-${randomUUID().slice(0, 8)}` minted in
  *       tools/agent/manager.ts.

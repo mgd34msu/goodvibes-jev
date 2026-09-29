@@ -7,7 +7,7 @@ messages surfaced through `conversation.followup.companion` and the runtime
 ## Background
 
 A companion process may inject a message into the operator's live session
-without spawning WRFC or agent work. This is called a companion main-chat
+without spawning agent work or starting a contract. This is called a companion main-chat
 message. The SDK routes these through `POST /api/sessions/:sessionId/messages`
 with `kind: 'message'` in the request body. If `kind` is omitted, the SDK now
 uses the same conversation route. Callers that want agent/task behavior must
@@ -16,7 +16,10 @@ send `kind: 'task'` explicitly.
 The message is not an agent task. It is appended to the target session and
 emitted as `COMPANION_MESSAGE_RECEIVED`; a TUI that wants live companion chat
 delegates that event into `Orchestrator.handleUserInput()`, which starts a
-normal LLM turn in the same path as terminal input.
+normal LLM turn in the same path as terminal input. Like terminal input,
+that turn is read once by the contract intake, which starts a contract only
+when Jev reads the text as work (see
+[Runtime orchestration](./runtime-orchestration.md#turn-loop)).
 
 ## API
 
@@ -42,7 +45,7 @@ below).
   turn.
 - The `kind` field defaults to `'message'` when omitted.
 - `kind: 'task'` explicitly routes through the session broker and can spawn an
-  agent/WRFC continuation.
+  agent continuation or start a contract.
 
 This route does not accept a `'followup'` kind. To steer an already-running
 session instead of starting a new task, use the dedicated follow-up route
@@ -78,7 +81,7 @@ The TUI client should subscribe to `COMPANION_MESSAGE_RECEIVED` on the runtime
 bus and handle it as follows:
 
 1. Filter events: only process events where `envelope.sessionId` matches the active session.
-2. Delegate to the active orchestrator instead of spawning an agent or WRFC chain.
+2. Delegate to the active orchestrator instead of spawning an agent or starting a contract.
 
 ```ts
 // NOTE: runtimeBus and orchestrator are TUI host internals; this pattern applies to
@@ -189,5 +192,5 @@ All companion-chat routes are registered in the live method catalog. Fetch the c
 
 ## Next reads
 
-- [Runtime orchestration](./runtime-orchestration.md): session `kind` routing, the session broker, and how WRFC and agent continuations are spawned.
+- [Runtime orchestration](./runtime-orchestration.md): session `kind` routing, the session broker, the contract intake, and how agent continuations and contracts start.
 - [Companion app patterns](./companion-app-patterns.md): HTTP bootstrap, realtime subscribe, and snapshot-refresh-on-resume for companion surfaces.

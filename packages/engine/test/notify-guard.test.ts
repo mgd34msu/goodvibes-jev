@@ -168,7 +168,7 @@ describe('notifyCompletion suppression', () => {
 
   test('short duration under normal runtime: bell fires, desktop notification does not (below thresholds)', () => {
     delete process.env['NODE_ENV'];
-    notifyCompletion('GoodVibes', 'WRFC chain chain-abcdef cancelled', 6_000);
+    notifyCompletion('GoodVibes', 'Contract ctr-1a2b3c4d cancelled', 6_000);
     expect(writeSpy).toHaveBeenCalledTimes(1);
     expect(spawnSpy).not.toHaveBeenCalled();
   });

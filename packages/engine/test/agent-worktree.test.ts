@@ -22,7 +22,7 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, '.goodvibes', 'sessions', 'internal.json'), '{}\n');
 
     const worktree = new AgentWorktree(root);
-    const { hash } = await worktree.commitWorkingTree('WRFC: commit project changes');
+    const { hash } = await worktree.commitWorkingTree('Contract: commit project changes');
 
     expect(hash).toMatch(/^[0-9a-f]{40}$/);
     const trackedFiles = runGit(root, ['ls-files']);
@@ -30,7 +30,7 @@ describe('AgentWorktree', () => {
     expect(trackedFiles).not.toContain('.goodvibes');
 
     writeFileSync(join(root, '.goodvibes', 'sessions', 'later.json'), '{}\n');
-    await expect(worktree.commitWorkingTree('WRFC: internal only')).resolves.toEqual({ hash: null, skippedIgnored: [] });
+    await expect(worktree.commitWorkingTree('Contract: internal only')).resolves.toEqual({ hash: null, skippedIgnored: [] });
   });
 
   test('commitWorkingTree(message, paths) stages only the given paths, leaving other dirty files uncommitted', async () => {
@@ -41,7 +41,7 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, 'untouched.ts'), 'export const untouched = true;\n');
 
     const worktree = new AgentWorktree(root);
-    const { hash } = await worktree.commitWorkingTree('WRFC: scoped commit', ['touched.ts']);
+    const { hash } = await worktree.commitWorkingTree('Contract: scoped commit', ['touched.ts']);
 
     expect(hash).toMatch(/^[0-9a-f]{40}$/);
     const committedFiles = runGit(root, ['show', '--stat', '--name-only', 'HEAD']);
@@ -59,7 +59,7 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, 'real.ts'), 'export const real = true;\n');
 
     const worktree = new AgentWorktree(root);
-    const { hash } = await worktree.commitWorkingTree('WRFC: scoped commit with bad claim', [
+    const { hash } = await worktree.commitWorkingTree('Contract: scoped commit with bad claim', [
       'real.ts',
       'this/path/was/never/written.ts',
     ]);
@@ -80,7 +80,7 @@ describe('AgentWorktree', () => {
     Bun.spawnSync(['rm', join(root, 'gone.ts')]);
 
     const worktree = new AgentWorktree(root);
-    const { hash } = await worktree.commitWorkingTree('WRFC: scoped deletion', ['gone.ts']);
+    const { hash } = await worktree.commitWorkingTree('Contract: scoped deletion', ['gone.ts']);
 
     expect(hash).toMatch(/^[0-9a-f]{40}$/);
     const trackedFiles = runGit(root, ['ls-files']);
@@ -88,7 +88,7 @@ describe('AgentWorktree', () => {
   });
 
   test('commitWorkingTree(message, paths) commits the deliverable and skips a gitignored path in the same ledger, leaving a clean index', async () => {
-    // Reproduces the WRFC trust defect: the product writes .gitignore (ignoring .goodvibes/) and
+    // Reproduces the scoped-commit trust defect: the product writes .gitignore (ignoring .goodvibes/) and
     // its own bookkeeping under .goodvibes/, so a self-reported ledger mixes a real deliverable
     // with an ignored path. `git add -A -- <deliverable> <ignored>` exits non-zero AFTER staging
     // the deliverable, the ignored path must be filtered out first.
@@ -103,7 +103,7 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, '.goodvibes', 'memory', 'repo_preferences.json'), '{"pref":1}\n');
 
     const worktree = new AgentWorktree(root);
-    const result = await worktree.commitWorkingTree('WRFC: slugify', [
+    const result = await worktree.commitWorkingTree('Contract: slugify', [
       'slugify.ts',
       '.goodvibes/memory/repo_preferences.json',
     ]);
@@ -128,7 +128,7 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, '.goodvibes', 'memory', 'x.json'), '{}\n');
 
     const worktree = new AgentWorktree(root);
-    const result = await worktree.commitWorkingTree('WRFC: only ignored', ['.goodvibes/memory/x.json']);
+    const result = await worktree.commitWorkingTree('Contract: only ignored', ['.goodvibes/memory/x.json']);
 
     expect(result.hash).toBeNull();
     expect(result.skippedIgnored).toEqual(['.goodvibes/memory/x.json']);
@@ -154,7 +154,7 @@ describe('AgentWorktree', () => {
 
     writeFileSync(join(root, 'deliverable.ts'), 'export const d = true;\n');
     const worktree = new AgentWorktree(root);
-    await expect(worktree.commitWorkingTree('WRFC: rejected', ['deliverable.ts'])).rejects.toThrow();
+    await expect(worktree.commitWorkingTree('Contract: rejected', ['deliverable.ts'])).rejects.toThrow();
 
     // Index must be clean despite the failed commit, the staged path was reset.
     expect(runGit(root, ['diff', '--cached', '--name-only']).trim()).toBe('');

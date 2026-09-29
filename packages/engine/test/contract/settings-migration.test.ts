@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConfigManager } from '../../sdk/src/platform/config/manager.js';
+import { CONFIG_SCHEMA, DEFAULT_CONFIG } from '../../sdk/src/platform/config/schema.js';
 import { migrateWrfcSettings, WRFC_SETTING_RENAMES } from '../../sdk/src/platform/config/migrations.js';
 import { applyContractSettingsMigrationPass, runLoadMigrationPasses } from '../../sdk/src/platform/config/manager-migration-passes.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from '../../sdk/src/platform/runtime/feature-announcements.js';
@@ -44,6 +45,12 @@ function tempDir(label: string): string {
 }
 
 describe('migrateWrfcSettings', () => {
+  test('no key the migration moves away from, nor the removed score threshold, is still a setting', () => {
+    const retired = [...WRFC_SETTING_RENAMES.map(([from]) => from), 'wrfc.scoreThreshold'];
+    expect(CONFIG_SCHEMA.filter((entry) => retired.includes(entry.key))).toEqual([]);
+    expect('wrfc' in DEFAULT_CONFIG).toBe(false);
+  });
+
   test('moves every wrfc key and ui.wrfcMessages to its contract successor, values unchanged', () => {
     const result = migrateWrfcSettings(everyWrfcKey());
     expect(result.migrated).toBe(true);

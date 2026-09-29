@@ -27824,7 +27824,7 @@ export type TurnEvent =
     type: 'TOOLS_DONE';
     turnId: string;
 }
-/** Post-processing hooks (WRFC, formatters, etc.) have completed. */
+/** Post-processing hooks (formatters and the like) have completed. */
 | {
     type: 'POST_HOOKS_DONE';
     turnId: string;

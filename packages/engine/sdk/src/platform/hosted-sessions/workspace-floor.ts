@@ -53,7 +53,7 @@
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ClientRuntimeServices } from '../runtime/client-services.js';
-import type { WrfcController } from '../agents/wrfc-controller.js';
+import type { ContractRunner } from '../contract/runner.js';
 import type { HostedExecPostureDecider } from './exec-posture.js';
 
 /**
@@ -64,12 +64,12 @@ export interface HostedWorkspaceFloor {
   /** The client-shape composition every session in this workspace runs on. */
   readonly services: ClientRuntimeServices;
   /**
-   * Review-chain listing for the orchestrator's services bag. Omitted ⇒ this
-   * floor runs no review/fix chains, and the orchestrator is told so by being
-   * handed a listing that reports none, an honest empty answer rather than a
-   * missing dependency.
+   * The workspace's contract runner (contract runner design 10.2): the
+   * session's turns are read by its intake, its agent tool starts contracts
+   * through it, and compaction lists its contracts. A product builds the floor
+   * from `services`, whose composition owns the runner.
    */
-  readonly wrfcController?: Pick<WrfcController, 'listChains'> | undefined;
+  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get' | 'reply' | 'hooks'>;
   /**
    * What a session on this floor may do with exec, decided per session.
    *

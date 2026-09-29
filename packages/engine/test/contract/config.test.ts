@@ -1,7 +1,9 @@
 /**
  * The `contract.*` settings (design 9.1): every key is in the schema with the
- * default the runner uses, `wrfc.*` keys are gone, ConfigManager resolves and
- * validates them, and readContractConfig reads each one with its guards.
+ * default the runner uses, ConfigManager resolves and validates them, and
+ * readContractConfig reads each one with its guards. That the retired review
+ * loop's keys are gone is held by settings-migration.test.ts, beside the
+ * migration that moves them.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
@@ -16,7 +18,6 @@ import {
   type ContractConfig,
   type ContractConfigReader,
 } from '../../sdk/src/platform/contract/index.js';
-import { readWrfcConfig } from '../../sdk/src/platform/agents/wrfc-config.js';
 
 function makeConfigManager(): ConfigManager {
   const configDir = join(tmpdir(), `gv-contract-config-${Date.now()}-${crypto.randomUUID()}`);
@@ -49,13 +50,11 @@ describe('the contract settings in the schema', () => {
     expect(DEFAULT_CONFIG.contract).toEqual({ ...CONTRACT_CONFIG_DEFAULTS, gates: [...CONTRACT_CONFIG_DEFAULTS.gates] });
   });
 
-  test('ui.contractMessages replaces ui.wrfcMessages, and no wrfc setting remains', () => {
+  test('ui.contractMessages chooses where contract messages show', () => {
     const ui = CONFIG_SCHEMA.find((entry) => entry.key === 'ui.contractMessages');
     expect(ui?.type).toBe('enum');
     expect(ui?.default).toBe('both');
     expect(ui?.enumValues).toEqual(['panel', 'conversation', 'both']);
-    expect(CONFIG_SCHEMA.filter((entry) => /wrfc/i.test(entry.key))).toEqual([]);
-    expect('wrfc' in DEFAULT_CONFIG).toBe(false);
   });
 
   test('the enum settings carry exactly their documented values', () => {
@@ -131,28 +130,5 @@ describe('readContractConfig', () => {
     ];
     expect(readContractConfig(reader({}, { gates })).gates).toEqual([{ name: 'test', command: 'bun test', enabled: true }]);
     expect(readContractConfig(reader({}, { gates: 'bun test' })).gates).toEqual(CONTRACT_CONFIG_DEFAULTS.gates);
-  });
-});
-
-describe('the review loop reads the contract settings until it is removed', () => {
-  test('its fields follow their contract successors', () => {
-    const config = readWrfcConfig(reader({
-      maxFixRounds: 2,
-      heartbeatTimeoutMs: 1000,
-      commitScope: 'all',
-      autoCommit: true,
-      transportRetryLimit: 0,
-      transportRetryDelayMs: 10,
-    }, { gates: [{ name: 'test', command: 'bun test', enabled: true }] }));
-    expect(config).toEqual({
-      scoreThreshold: 9.9,
-      maxFixAttempts: 2,
-      autoCommit: true,
-      commitScope: 'all',
-      gates: [{ name: 'test', command: 'bun test', enabled: true }],
-      agentHeartbeatTimeoutMs: 1000,
-      transportRetryLimit: 0,
-      transportRetryDelayMs: 10,
-    });
   });
 });

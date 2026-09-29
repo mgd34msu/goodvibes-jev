@@ -7,24 +7,23 @@
  *  - a fixture gate (`pwd >> log`) records the working directory it ran in;
  *    in worktree mode every recorded cwd is the item's `.goodvibes/.worktrees`
  *    path (the marker "lands in the worktree"), never the shared projectRoot;
- *  - shared mode is unchanged: the same gate runs in the process cwd, not a
- *    per-item worktree;
+ *  - shared mode: the same gate runs in the project root, not a per-item
+ *    worktree;
  *  - a 3-item plan (B dependsOn A, C independent) in worktree mode integrates
  *    in dependency-respecting order, A merges before B, because B cannot even
  *    start (let alone pass and enqueue) until A has passed and enqueued.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted } from '../sdk/src/platform/runtime/emitters/agents.js';
 import { createOrchestrationEngine } from '../sdk/src/platform/orchestration/engine.js';
-import { fromPlanProposal } from '../sdk/src/platform/orchestration/proposal-workstream.js';
-import type { OrchestrationEvent } from '../sdk/src/platform/orchestration/types.js';
+import type { CreateWorkstreamInput } from '../sdk/src/platform/orchestration/engine.js';
+import type { OrchestrationEvent, WorkItemSpec } from '../sdk/src/platform/orchestration/types.js';
 import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestration/phase-runner.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/platform/core/plan-proposal.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { engineerReportOutput, makeRecord } from './_helpers/orchestration-harness.js';
 
@@ -107,13 +106,12 @@ function hasRunningAgentFor(h: Harness, itemId: string): boolean {
   return false;
 }
 
-function proposalItem(o: Partial<ProposalWorkItem> & { id: string; title: string; brief: string }): ProposalWorkItem {
-  return { phaseId: 'p', dependsOn: [], ...o };
-}
-function makeProposal(items: ProposalWorkItem[]): PlanProposal {
+/** A workstream of engineer items: one engineer phase whose capacity is the item count, so independent items run concurrently. */
+function workstreamOf(items: readonly WorkItemSpec[]): CreateWorkstreamInput {
   return {
-    id: 'prop', task: 'goal', strategy: 'cohort', rationale: 'r',
-    phases: [{ id: 'p', title: 'Execute', order: 1 }], workItems: items, createdAt: 1, source: 'planner-agent',
+    title: 'goal',
+    phases: [{ role: 'engineer', capacity: items.length, kind: 'engineer', gate: { scope: 'scoped', gates: [] } }],
+    items,
   };
 }
 
@@ -133,11 +131,11 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
     });
     engine.on((e) => events.push(e));
 
-    const spec = fromPlanProposal(makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'do A' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'do B', dependsOn: ['a'] }),
-      proposalItem({ id: 'c', title: 'C', brief: 'do C' }),
-    ]), makeGateConfig(gateLog));
+    const spec = workstreamOf([
+      { id: 'a', title: 'A', task: 'do A' },
+      { id: 'b', title: 'B', task: 'do B', dependsOn: ['a'] },
+      { id: 'c', title: 'C', task: 'do C' },
+    ]);
     const ws = engine.createWorkstream({ ...spec, isolation: 'worktree' });
     engine.start(ws.id);
 
@@ -182,7 +180,7 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
     rmSync(root, { recursive: true, force: true });
   }, 40_000);
 
-  test('shared mode is unchanged: gates do NOT run in a per-item worktree', async () => {
+  test('shared mode: gates run in the project root, not in a per-item worktree', async () => {
     const root = freshRepo();
     const gateLog = join(root, 'gate-cwds.log');
     const h = makeHarness();
@@ -194,7 +192,7 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
       persist: false,
       skipClaimVerification: true,
     });
-    const spec = fromPlanProposal(makeProposal([proposalItem({ id: 'a', title: 'A', brief: 'do A' })]), makeGateConfig(gateLog));
+    const spec = workstreamOf([{ id: 'a', title: 'A', task: 'do A' }]);
     const ws = engine.createWorkstream(spec); // default: shared isolation
     engine.start(ws.id);
     await waitUntil(() => hasRunningAgentFor(h, 'a'));
@@ -202,8 +200,10 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
     await waitUntil(() => existsSync(gateLog));
 
     const loggedCwds = readFileSync(gateLog, 'utf-8').trim().split('\n').filter(Boolean);
+    expect(loggedCwds.length).toBeGreaterThan(0);
     for (const cwd of loggedCwds) {
       expect(cwd).not.toContain(join('.goodvibes', '.worktrees'));
+      expect([root, realpathSync(root)]).toContain(cwd);
     }
 
     engine.dispose();

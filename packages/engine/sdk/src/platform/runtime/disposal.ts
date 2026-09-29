@@ -109,9 +109,8 @@ export interface RuntimePollerOwners {
    * here, which is the whole reason this list is all-required.
    */
   readonly homeGraphService: { dispose(): void };
-  readonly wrfcController: { dispose(): void };
-  /** Disposing the engine also detaches the orchestration snapshot writer's hourly reap. */
-  readonly orchestrationEngine: { dispose(): void };
+  /** The composed contract runner: disposing it stops the runner (each contract's engine with it) and releases its store's writer and sweep. */
+  readonly contractRunner: { dispose(): void };
   readonly processRegistry: { dispose(): void };
   readonly memoryGovernor: { stop(): void };
   /**
@@ -150,8 +149,7 @@ export function registerRuntimePollers(registry: DisposalRegistry, owners: Runti
   registry.add('knowledge service', () => owners.knowledgeService.dispose());
   registry.add('agent knowledge service', () => owners.agentKnowledgeService.dispose());
   registry.add('home graph service', () => owners.homeGraphService.dispose());
-  registry.add('wrfc controller', () => owners.wrfcController.dispose());
-  registry.add('orchestration engine', () => owners.orchestrationEngine.dispose());
+  registry.add('contract runner', () => owners.contractRunner.dispose());
   registry.add('fleet process registry', () => owners.processRegistry.dispose());
   registry.add('memory governor', () => owners.memoryGovernor.stop());
   registry.add('agent orchestrator tool registries', () => owners.agentOrchestrator.dispose());

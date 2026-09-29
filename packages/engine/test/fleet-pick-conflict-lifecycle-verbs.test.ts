@@ -11,8 +11,6 @@
  *    seed) and stamps the real session id back.
  *  - worktrees.discard actually discards (directory removed, branch KEPT,
  *    dirty state preserved as a commit, honest receipt) over a REAL git repo.
- *  - approveAndLaunchProposal is one confirmed act (proposal → running
- *    workstream), refusing without confirm.
  */
 import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -31,11 +29,9 @@ import { registerWorktreeSetupGatewayMethods } from '../sdk/src/platform/control
 import { WorktreeRegistry } from '../sdk/src/platform/runtime/worktree/registry.ts';
 import {
   createAttemptsCoordinator,
-  approveAndLaunchProposal,
   emptyWorkItemUsage,
 } from '../sdk/src/platform/orchestration/index.ts';
 import type { WorkItem, WorkItemSpec, Workstream } from '../sdk/src/platform/orchestration/types.ts';
-import type { PlanProposal } from '../sdk/src/platform/core/plan-proposal.ts';
 
 const ctx = { context: { principalId: 'op', admin: true } } as const;
 
@@ -238,39 +234,4 @@ describe('worktrees.discard: discard performs its meaning', () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 20_000);
-});
-
-describe('approveAndLaunchProposal: one confirmed act', () => {
-  const proposal: PlanProposal = {
-    id: 'prop-1', task: 'ship the thing', strategy: 'single', rationale: 'one item',
-    phases: [{ id: 'ph-1', title: 'Execute', order: 0 }],
-    workItems: [{ id: 'wi-1', title: 'Ship it', brief: 'do the shipping', phaseId: 'ph-1', dependsOn: [] }],
-    createdAt: 0, source: 'single-item-fallback',
-  } as PlanProposal;
-  const config = { get: () => undefined, getCategory: () => ({}) } as never;
-
-  test('without confirm: structured refusal, nothing created or started', () => {
-    const created: string[] = [];
-    const engine = {
-      createWorkstream: (input: { title: string }) => { created.push(input.title); return { id: 'ws-x' } as Workstream; },
-      start: () => { created.push('started'); },
-    };
-    const refusal = approveAndLaunchProposal(engine as never, proposal, config, {});
-    expect(refusal).toEqual({ launched: false, requiresConfirm: true });
-    expect(created).toHaveLength(0);
-  });
-
-  test('with confirm: assembled, created, and STARTED in one call', () => {
-    const calls: string[] = [];
-    const engine = {
-      createWorkstream: (input: { title: string; items: readonly unknown[] }) => {
-        calls.push(`create:${input.items.length}`);
-        return { id: 'ws-launched' } as Workstream;
-      },
-      start: (id: string) => { calls.push(`start:${id}`); },
-    };
-    const launched = approveAndLaunchProposal(engine as never, proposal, config, { confirm: true });
-    expect(launched).toEqual({ launched: true, workstreamId: 'ws-launched' });
-    expect(calls).toEqual(['create:1', 'start:ws-launched']);
-  });
 });

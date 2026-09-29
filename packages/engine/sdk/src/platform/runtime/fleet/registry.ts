@@ -94,10 +94,9 @@ export interface ProcessRegistryDeps {
   readonly agentManager: Pick<AgentManager, 'list' | 'cancel'> & Partial<Pick<AgentManager, 'wakeWithSteer'>>;
   /**
    * The contract runner: its views become contract, contract-group and
-   * contract-unit nodes, and a contract kill cancels through it. Absent in a
-   * composition that runs no contracts, which then shows no contract nodes.
+   * contract-unit nodes, and a contract kill cancels through it.
    */
-  readonly contractRunner?: Pick<ContractRunner, 'list' | 'cancel'> | undefined;
+  readonly contractRunner: Pick<ContractRunner, 'list' | 'cancel'>;
   readonly processManager: Pick<ProcessManager, 'list' | 'stop' | 'getStatus'>;
   readonly watcherRegistry: Pick<WatcherRegistry, 'list' | 'stopWatcher'>;
   readonly workflow: {
@@ -322,7 +321,7 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
   function assemble(): { capturedAt: number; nodes: ProcessNode[] } {
     const capturedAt = now();
     const agents: AgentRecord[] = deps.agentManager.list();
-    const contracts: readonly ContractView[] = deps.contractRunner?.list({ includeTerminal: true }) ?? [];
+    const contracts: readonly ContractView[] = deps.contractRunner.list({ includeTerminal: true });
     const contractIds = new Set<string>(contracts.map((contract) => contract.id));
     const unitNodeIds = new Set<string>();
     for (const contract of contracts) {
@@ -581,7 +580,7 @@ export function createProcessRegistry(deps: ProcessRegistryDeps): ProcessRegistr
       }
       case 'contract': {
         const contract = node.raw as ContractView;
-        return deps.contractRunner?.cancel(contract.id, 'stopped by the operator') ? [node.id] : [];
+        return deps.contractRunner.cancel(contract.id, 'stopped by the operator') ? [node.id] : [];
       }
       case 'contract-group': {
         // The group's working unit agents. The runner reads an operator

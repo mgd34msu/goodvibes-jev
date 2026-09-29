@@ -67,8 +67,6 @@ export interface AgentRecord extends ProgressBearingRecord {
   routeReason?: string | undefined;
   /** Units a spawn proposed for its contract (a batch-spawn's tasks), carried to the planner. */
   proposedUnits?: AgentInput['proposedUnits'] | undefined;
-  /** Set when this owner agent's chain was created by collapsing a requested fan-out (schema.ts FanoutCollapseInfo). */
-  fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined;
   outsideContract?: boolean | undefined;
   /** Completion report, or reply to a person; see AgentInput.replyStyle. Absent ⇒ 'report'. */
   replyStyle?: 'report' | 'conversational' | undefined;
@@ -102,7 +100,7 @@ export interface AgentRecord extends ProgressBearingRecord {
   executionProtocol: 'direct' | 'gather-plan-apply';
   reviewMode: 'none' | 'contract';
   communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct';
-  /** Appended verbatim to the system prompt when the agent runs. Used by WRFC to inject constraint addenda. */
+  /** Appended verbatim to the system prompt when the agent runs (AgentInput.systemPromptAddendum). */
   systemPromptAddendum?: string | undefined;
   knowledgeInjections?: Array<{
     id: string;

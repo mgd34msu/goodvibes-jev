@@ -36342,7 +36342,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "fleet.snapshot",
         "title": "Fleet Snapshot",
-        "description": "Return a point-in-time capture of every live/completed runtime process (agents, WRFC chains/subtasks, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.",
+        "description": "Return a point-in-time capture of every live/completed runtime process (agents, contracts with their groups and units, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.",
         "category": "fleet",
         "source": "builtin",
         "access": "authenticated",
@@ -61640,7 +61640,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "projectPlanning.workPlan.task.create",
         "title": "Create Project Work Plan Task",
-        "description": "Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or WRFC correlation.",
+        "description": "Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or contract correlation.",
         "category": "knowledge",
         "source": "builtin",
         "access": "admin",
@@ -92774,7 +92774,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "sessions.messages.create",
         "title": "Post Shared Session Message",
-        "description": "Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: \"task\"` to request agent/WRFC task continuation.",
+        "description": "Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: \"task\"` to request agent or contract task continuation.",
         "category": "sessions",
         "source": "builtin",
         "access": "authenticated",

@@ -1,8 +1,8 @@
 /**
  * Contract runner configuration (docs/design/contract-runner.md section 9.1).
  *
- * The `contract.*` settings replace the retired review loop's `wrfc.*` ones;
- * migrateWrfcSettings (migrations.ts) moves an existing file's values across
+ * The `contract.*` settings replace the retired review loop's settings; the
+ * settings migration in migrations.ts moves an existing file's values across
  * once. The runner reads them through platform/contract/config.ts, whose
  * CONTRACT_CONFIG_DEFAULTS holds the same defaults as below.
  *
@@ -19,7 +19,7 @@ export const contractConfigDefaults: { contract: ContractSettings } = {
   contract: {
     autoCommit: true,
     commitScope: 'scoped',
-    // The WRFC defaults, carried over: typecheck and lint gate every unit, build is opt-in.
+    // The defaults carried over from the retired review loop: typecheck and lint gate every unit, build is opt-in.
     gates: [
       { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
       { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },
@@ -46,7 +46,7 @@ export const contractConfigDefaults: { contract: ContractSettings } = {
 };
 
 /**
- * The keys that move from `wrfc.*` (autoCommit, commitScope, maxFixRounds,
+ * The keys that move from the retired review loop's settings (autoCommit, commitScope, maxFixRounds,
  * heartbeatTimeoutMs, the transport retry pair) keep the old validators, so no
  * value migrated from an existing file is refused on its next load.
  */

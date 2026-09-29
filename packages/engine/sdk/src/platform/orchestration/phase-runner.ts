@@ -33,7 +33,7 @@ import { AgentWorktree, type CommitWorkingTreeResult } from '../agents/worktree.
 import { parseCompletionReport, type CompletionReport, type EngineerReport } from '../agents/completion-report.js';
 import { verifyUnitClaims } from '../contract/claims.js';
 import { contractUnitSpawn } from './contract-binding.js';
-import { runWrfcGateChecks } from '../agents/wrfc-gate-runtime.js';
+import { runContractGates } from '../contract/gates.js';
 import { getContractTransportRetryDelayMs, getContractTransportRetryLimit } from '../contract/config.js';
 import { readFailure } from '@goodvibes-jev/engine/errors';
 import { logger } from '../utils/logger.js';
@@ -51,8 +51,8 @@ export type PhaseRunnerAgentManagerLike = Pick<
   'spawn' | 'getStatus' | 'cancel' | 'registerCancellationSignal' | 'releaseCancellationSignal'
 >;
 
-/** Structural pick of AgentWorktree's surface, matches WrfcController's WrfcWorktreeOps injection seam exactly, so the same test doubles work for both. */
-export interface WrfcWorktreeOps {
+/** Structural pick of AgentWorktree's surface: the worktree operations a phase needs (merge, cleanup, commit, head), so tests can pass a stub. */
+export interface WorktreeOps {
   merge(agentId: string): Promise<boolean>;
   cleanup(agentId: string): Promise<void>;
   commitWorkingTree(message: string, paths?: string[]): Promise<CommitWorkingTreeResult>;
@@ -106,7 +106,7 @@ export interface PhaseRunnerDeps {
   readonly runtimeBus: RuntimeEventBus;
   readonly projectRoot: string;
   readonly sessionId: string;
-  readonly createWorktree?: (() => WrfcWorktreeOps) | undefined;
+  readonly createWorktree?: (() => WorktreeOps) | undefined;
   readonly cancellation: CancellationRegistry;
   readonly priceUsage?: ((model: string | undefined, usage: WorkItemUsage) => number | null) | undefined;
   /** Provenance for the same resolution priceUsage prices with, stamped onto the committed usage record at pricing time. */
@@ -250,19 +250,17 @@ async function evaluateGate(
   report: CompletionReport,
   deps: PhaseRunnerDeps,
 ): Promise<GateOutcome> {
-  const results = [...await runWrfcGateChecks({
+  const results = [...await runContractGates({
     configManager: deps.configManager,
-    projectRoot: deps.projectRoot,
+    // Worktree mode: the configured quality gates run INSIDE the item's
+    // isolated worktree, the same tree the claim check reads, so gates
+    // (typecheck, lint, test) see the item's isolated changes. Shared mode runs
+    // them in the project root.
+    cwd: deps.itemWorktree?.path ?? deps.projectRoot,
     runtimeBus: deps.runtimeBus,
     sessionId: deps.sessionId,
-    chainId: workstream.id,
-    // Worktree mode (BIG-3 item 5): run the configured quality gates INSIDE the
-    // item's isolated worktree, the same way the phantom-work guard above
-    // verifies claims against that worktree path. BIG-1 fixed only the phantom
-    // check; without this, gates (typecheck/lint/test) would run against the
-    // shared projectRoot and never see the item's isolated changes. Absent
-    // (shared mode) ⇒ runWrfcGateChecks defaults cwd to projectRoot, unchanged.
-    ...(deps.itemWorktree ? { cwd: deps.itemWorktree.path } : {}),
+    contractId: workstream.id,
+    targetId: workstream.id,
   })];
 
   const ranNames = new Set(results.map((r) => r.gate));
@@ -304,7 +302,7 @@ async function commitPhaseWork(
   item: WorkItem,
   phase: Phase,
   agentId: string,
-  worktree: WrfcWorktreeOps,
+  worktree: WorktreeOps,
   deps: Pick<PhaseRunnerDeps, 'projectRoot' | 'launchDirtySnapshot' | 'itemWorktree'>,
 ): Promise<CommitPhaseWorkResult> {
   if (phase.gate.scope === 'off') {
@@ -406,7 +404,7 @@ async function settleWithoutAgent(
   phase: Phase,
   outcome: ContractUnitOutcome,
   startedAt: number,
-  worktree: WrfcWorktreeOps,
+  worktree: WorktreeOps,
   deps: PhaseRunnerDeps,
 ): Promise<PhaseRunOutcome> {
   const base = { itemId: item.id, phaseId: phase.id, agentId: '', startedAt, usage: usageFromRecord(null, deps.priceUsage, deps.priceProvenance) };

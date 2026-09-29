@@ -49,6 +49,8 @@ export interface StepContext {
 export interface ContractStepsWithReplies extends ContractSteps {
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
+  /** An operator's pick of a unit's attempt (fleet.attempts.pick); closes the unit's attempts-undecided escalation. */
+  operatorPick(run: ContractRun, unitId: string, attemptId: string): Promise<void>;
   /** Judges a group now; a restart stopped it while it was being judged (design 7.2). */
   judgeGroup(run: ContractRun, groupId: string, trigger: CheckTrigger): Promise<void>;
   /** Judges the deliverable now; a restart stopped it while it was being judged. */
@@ -77,6 +79,7 @@ export function createContractSteps(context: StepContext): ContractStepsWithRepl
     groupsPassed: completion.groupsPassed,
     fixGroupPassed: correction.fixGroupPassed,
     reply: escalations.reply,
+    operatorPick: escalations.operatorPick,
     judgeGroup: completion.judgeGroup,
     judgeDeliverable: completion.judgeDeliverable,
     commitDeliverable: completion.commitDeliverable,

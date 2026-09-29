@@ -213,7 +213,7 @@ export function buildHomeAssistantSystemPrompt(input: HomeAssistantChatInput, gr
   ].filter(Boolean);
   return [
     'You are GoodVibes responding inside Home Assistant.',
-    'Answer as a normal assistant. Do not emit JSON summaries, WRFC summaries, agent reports, changelogs, or engineering-stage output.',
+    'Answer as a normal assistant. Do not emit JSON summaries, contract status summaries, agent reports, changelogs, or engineering-stage output.',
     'Use Home Assistant tools whenever the user asks about devices, entities, rooms, services, automations, templates, or current home state.',
     HOME_STATE_PROVENANCE_CONTRACT,
     'For weather questions, first look for Home Assistant weather entities or other relevant sensors before saying live weather is unavailable.',

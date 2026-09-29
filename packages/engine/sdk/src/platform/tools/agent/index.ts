@@ -1,15 +1,14 @@
 import type { Tool } from '../../types/tools.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { AGENT_TOOL_SCHEMA } from './schema.js';
-import type { AgentInput } from './schema.js';
+import type { AgentInput, ProposedUnit } from './schema.js';
 import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentMessageBus } from '../../agents/message-bus.js';
-import type { WrfcController } from '../../agents/wrfc-controller.js';
+import type { ContractRunner, StartedContract } from '../../contract/runner.js';
+import { contractChecks, summarizeCheck, summarizeContract, summarizeContractDecision, summarizeEscalation } from './contract-views.js';
 import { AGENT_TEMPLATES, AgentManager, type AgentRecord } from './manager.js';
 import { evaluateOrchestrationSpawn, ORCHESTRATION_CAP_KEYS } from '../../runtime/orchestration/spawn-policy.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { toRecord } from '../../utils/record-coerce.js';
-import { evaluateWrfcBatchPolicy } from './wrfc-batch-policy.js';
 import {
   buildChildFailureEnvelope,
   isChildFailureTerminal,
@@ -24,21 +23,6 @@ export { cancelAllAgentRuns, type CancellableAgentRuns } from './cancel-all.js';
 // Tool implementation
 // ---------------------------------------------------------------------------
 
-function summarizeWrfcEvent(event: Record<string, unknown>) {
-  return {
-    type: event.event ?? event.type,
-    timestamp: event.ts ?? event.timestamp,
-    status: event.status,
-    action: event.action,
-    reason: event.reason,
-    agentId: event.agentId,
-    role: event.role,
-    score: event.score,
-    gate: event.gate,
-    issueCount: Array.isArray(event.issues) ? event.issues.length : undefined,
-  };
-}
-
 function agentTopology(record: AgentRecord) {
   return {
     parentAgentId: record.parentAgentId ?? null,
@@ -49,19 +33,6 @@ function agentTopology(record: AgentRecord) {
     orchestrationGraphId: record.orchestrationGraphId ?? null,
     orchestrationNodeId: record.orchestrationNodeId ?? null,
     parentNodeId: record.parentNodeId ?? null,
-  };
-}
-
-function agentOrchestrationControl(record: AgentRecord) {
-  const authoritativeWrfcChain = record.contractRole === 'owner' && typeof record.contractId === 'string' && record.contractId.length > 0;
-  return {
-    authoritativeWrfcChain,
-    continueRootSpawning: authoritativeWrfcChain ? false : true,
-    rootSpawnContinuation: authoritativeWrfcChain ? 'stop' : 'allowed',
-    orchestrationStopSignal: authoritativeWrfcChain ? 'wrfc_owner_chain_started' : null,
-    orchestrationInstruction: authoritativeWrfcChain
-      ? 'This WRFC owner chain is authoritative for the deliverable. Do not spawn additional root review/test/verification/fix agents for the same work.'
-      : null,
   };
 }
 
@@ -107,11 +78,26 @@ function agentSummary(record: AgentRecord) {
   };
 }
 
-function agentSpawnSummary(record: AgentRecord) {
+/** The fields a result carries for a contract the call started: read as code by core (contract/intake-route.ts toolResultStartedContract). */
+function startedContractFields(started: StartedContract) {
   return {
-    ...agentSummary(record),
-    ...agentOrchestrationControl(record),
+    contractStarted: true as const,
+    contractId: started.contract.id,
+    ownerAgentId: started.owner.id,
   };
+}
+
+function validateTemplate(
+  template: string | undefined,
+  archetypeLoader: Pick<ArchetypeLoader, 'loadArchetype'>,
+): string | null {
+  if (!template || AGENT_TEMPLATES[template]) return null;
+  // Also allow custom archetypes loaded from .goodvibes/agents/*.md
+  const customArchetype = archetypeLoader.loadArchetype(template);
+  if (!customArchetype || customArchetype.isCustom === false) {
+    return `Unknown template: '${template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`;
+  }
+  return null;
 }
 
 function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInput['tasks']>[number]): AgentInput {
@@ -143,14 +129,43 @@ function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInpu
   };
 }
 
-export function createAgentTool(config: {
-  manager: AgentManager;
-  messageBus: Pick<AgentMessageBus, 'getMessages' | 'send'>;
-  wrfcController?: Pick<WrfcController, 'getWorkmap'> | undefined;
-  archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
-  configManager: Pick<ConfigManager, 'get'>;
-}): Tool {
+/** The ask for a batch's contract: the user's own words when the host attached them, otherwise the tasks listed. */
+function batchAsk(input: AgentInput, units: readonly ProposedUnit[]): string {
+  if (input.authoritativeTask && input.authoritativeTask.trim() !== '') return input.authoritativeTask;
+  return units.map((unit) => `- ${unit.task}`).join('\n');
+}
+
+export interface AgentToolConfig {
+  readonly manager: AgentManager;
+  readonly messageBus: Pick<AgentMessageBus, 'getMessages' | 'send'>;
+  readonly configManager: Pick<ConfigManager, 'get'>;
+  readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
+  /** Starts the contract spawn and batch-spawn hand work to, and answers the contracts and contract-history modes. */
+  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get'>;
+  /** The project a contract started here works in. */
+  readonly projectRoot: string;
+  /** The conversation session a contract started here belongs to, read on each call. */
+  readonly resolveSessionId: () => string;
+}
+
+export function createAgentTool(config: AgentToolConfig): Tool {
   const archetypeLoader = config.archetypeLoader ?? new ArchetypeLoader();
+
+  /**
+   * Starts one contract for work handed to the tool (design 10.3). The unit
+   * leaf refusal runs first, in AgentManager, so it is decided in one place.
+   */
+  function startContract(input: AgentInput, ask: string, proposedUnits: readonly ProposedUnit[]): StartedContract {
+    config.manager.guardContractLeafSpawn(input.parentAgentId);
+    return config.contractRunner.start({
+      ask,
+      sessionId: config.resolveSessionId(),
+      origin: 'agent-tool',
+      projectRoot: config.projectRoot,
+      proposedUnits,
+      ...(input.parentAgentId ? { parentAgentId: input.parentAgentId } : {}),
+    });
+  }
   return {
     definition: AGENT_TOOL_SCHEMA,
 
@@ -168,7 +183,7 @@ export function createAgentTool(config: {
       return { success: false, error: 'Missing required parameter: mode' };
     }
 
-    const validModes = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'wrfc-chains', 'wrfc-history', 'cohort-status', 'cohort-report'];
+    const validModes = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'contracts', 'contract-history', 'cohort-status', 'cohort-report'];
     if (!validModes.includes(input.mode)) {
       return { success: false, error: `Invalid mode: '${input.mode}'. Must be one of: ${validModes.join(', ')}` };
     }
@@ -181,15 +196,33 @@ export function createAgentTool(config: {
           return { success: false, error: 'Missing required parameter for spawn: task' };
         }
 
-        if (input.template && !AGENT_TEMPLATES[input.template]) {
-          // Also allow custom archetypes loaded from .goodvibes/agents/*.md
-          const customArchetype = archetypeLoader.loadArchetype(input.template);
-          if (!customArchetype || customArchetype.isCustom === false) {
-            return {
-              success: false,
-              error: `Unknown template: '${input.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
-            };
+        const templateError = validateTemplate(input.template, archetypeLoader);
+        if (templateError) return { success: false, error: templateError };
+
+        if (!input.outsideContract) {
+          let started: StartedContract;
+          try {
+            started = startContract(
+              input,
+              input.authoritativeTask && input.authoritativeTask.trim() !== '' ? input.authoritativeTask : input.task,
+              [{ task: input.task, ...(input.template ? { template: input.template } : {}) }],
+            );
+          } catch (error) {
+            return { success: false, error: summarizeError(error) };
           }
+          const owner = started.owner;
+          return {
+            success: true,
+            output: JSON.stringify({
+              ...startedContractFields(started),
+              agentId: owner.id,
+              status: 'spawned',
+              template: owner.template,
+              task: owner.task,
+              ...agentExecutionContract(owner),
+              ...agentTopology(owner),
+            }),
+          };
         }
 
         let record;
@@ -213,7 +246,6 @@ export function createAgentTool(config: {
             task: record.task,
             ...agentExecutionContract(record),
             ...agentTopology(record),
-            ...agentOrchestrationControl(record),
           }),
         };
       }
@@ -532,138 +564,90 @@ export function createAgentTool(config: {
         if (input.tasks.length > 20) {
           return { success: false, error: 'batch-spawn limited to 20 tasks per batch.' };
         }
-        if (input.tasks.length === 1) {
-          const taskDef = input.tasks[0]!;
+        for (const taskDef of input.tasks) {
           if (!taskDef.task || typeof taskDef.task !== 'string' || taskDef.task.trim() === '') {
             return { success: false, error: 'Each task in batch-spawn must have a non-empty task string.' };
           }
-          if (taskDef.template && !AGENT_TEMPLATES[taskDef.template]) {
-            const customArchetype = archetypeLoader.loadArchetype(taskDef.template);
-            if (!customArchetype || customArchetype.isCustom === false) {
-              return {
-                success: false,
-                error: `Unknown template: '${taskDef.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
-              };
-            }
-          }
-          let record;
-          try {
-            record = manager.spawn(batchTaskToSpawnInput(input, taskDef));
-          } catch (error) {
-            return {
-              success: false,
-              error: summarizeError(error),
-            };
-          }
-          return {
-            success: true,
-            output: JSON.stringify({
-              agents: [{ ...agentSpawnSummary(record), task: record.task.slice(0, 80) }],
-              count: 1,
-              cohort: input.cohort,
-              skipped: 0,
-              normalizedToSpawn: true,
-              ...agentOrchestrationControl(record),
-            }),
-          };
+          const templateError = validateTemplate(taskDef.template, archetypeLoader);
+          if (templateError) return { success: false, error: templateError };
         }
-        const batchPolicy = evaluateWrfcBatchPolicy(input);
-        if (batchPolicy.kind === 'collapse-to-wrfc') {
-          let record;
-          try {
-            record = manager.spawn(batchPolicy.ownerInput!);
-          } catch (error) {
-            return {
-              success: false,
-              error: `Failed to collapse role-decomposition batch into a WRFC owner chain: ${summarizeError(error)}`,
-            };
+        const spawnInputs = input.tasks.map((taskDef) => batchTaskToSpawnInput(input, taskDef));
+        // Every requester is checked before anything starts, so a refused task never leaves half a batch running.
+        try {
+          for (const requester of new Set([input.parentAgentId, ...spawnInputs.map((spawnInput) => spawnInput.parentAgentId)])) {
+            manager.guardContractLeafSpawn(requester);
           }
-          // Part (a): when a requested fan-out was collapsed, state it plainly for
-          // the host to surface to the user, what was requested, what the guard
-          // did, and why, so the collapse is never a silent, confusing rewrite.
-          const fanout = batchPolicy.ownerInput?.fanoutCollapse;
-          const announcement = fanout
-            ? `Requested ${fanout.requestedShape}; the WRFC topology guard ran them as one reviewed chain instead (${batchPolicy.reason ?? 'topology enforcement'}).`
-            : undefined;
-          return {
-            success: true,
-            output: JSON.stringify({
-              agents: [{ ...agentSpawnSummary(record), task: record.task.slice(0, 80) }],
-              count: 1,
-              cohort: input.cohort,
-              skipped: 0,
-              collapsedToWrfc: true,
-              collapsedTaskCount: input.tasks.length,
-              reason: batchPolicy.reason,
-              ...(announcement ? { announcement } : {}),
-              roleTaskIndexes: batchPolicy.roleTaskIndexes ?? [],
-              compoundTaskIndexes: batchPolicy.compoundTaskIndexes ?? [],
-              scopeMutation: batchPolicy.scopeMutation ?? null,
-              ...agentOrchestrationControl(record),
-            }),
-          };
+        } catch (error) {
+          return { success: false, error: summarizeError(error) };
         }
-        const currentCount = manager.list().filter(a => a.status === 'pending' || a.status === 'running').length;
-        const spawnDecision = evaluateOrchestrationSpawn({
-          configManager: config.configManager,
-          mode: 'manual-batch',
-          activeAgents: currentCount,
-          requestedDepth: 0,
-        });
-        if (!spawnDecision.allowed || spawnDecision.availableSlots === 0) {
-          const boundCap = spawnDecision.boundCap
-            ?? { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
-          return {
-            success: false,
-            error: spawnDecision.reason
-              ?? `agent capacity reached (${currentCount}/${spawnDecision.maxAgents}), cap: ${boundCap.key}=${boundCap.value}. No capacity for batch-spawn.`,
-            output: JSON.stringify({ cap: boundCap }),
-          };
-        }
-        const tasksToSpawn = input.tasks.slice(0, spawnDecision.availableSlots);
-        const skipped = input.tasks.length - tasksToSpawn.length;
+        const outsideInputs = spawnInputs.filter((spawnInput) => spawnInput.outsideContract === true);
+        const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
 
-        const results: ReturnType<typeof agentSpawnSummary>[] = [];
-        for (const taskDef of tasksToSpawn) {
-          if (!taskDef.task || typeof taskDef.task !== 'string' || taskDef.task.trim() === '') {
-            return { success: false, error: 'Each task in batch-spawn must have a non-empty task string.' };
+        const batchOutput: Record<string, unknown> = { cohort: input.cohort };
+        if (contractTasks.length > 0) {
+          const units: ProposedUnit[] = contractTasks.map((taskDef) => ({
+            task: taskDef.task,
+            ...(taskDef.template ?? input.template ? { template: taskDef.template ?? input.template } : {}),
+          }));
+          let started: StartedContract;
+          try {
+            started = startContract(input, batchAsk(input, units), units);
+          } catch (error) {
+            return { success: false, error: summarizeError(error) };
           }
-          // Validate template if provided
-          if (taskDef.template && !AGENT_TEMPLATES[taskDef.template]) {
-            const customArchetype = archetypeLoader.loadArchetype(taskDef.template);
-            if (!customArchetype || customArchetype.isCustom === false) {
-              return {
-                success: false,
-                error: `Unknown template: '${taskDef.template}'. Available: ${Object.keys(AGENT_TEMPLATES).join(', ')}`,
-              };
+          Object.assign(batchOutput, startedContractFields(started), {
+            owner: agentSummary(started.owner),
+            contractTaskCount: contractTasks.length,
+          });
+        }
+
+        const results: ReturnType<typeof agentSummary>[] = [];
+        let skipped = 0;
+        if (outsideInputs.length > 0) {
+          const currentCount = manager.list().filter(a => a.status === 'pending' || a.status === 'running').length;
+          const spawnDecision = evaluateOrchestrationSpawn({
+            configManager: config.configManager,
+            mode: 'manual-batch',
+            activeAgents: currentCount,
+            requestedDepth: 0,
+          });
+          if (!spawnDecision.allowed || spawnDecision.availableSlots === 0) {
+            const boundCap = spawnDecision.boundCap
+              ?? { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
+            const capError = spawnDecision.reason
+              ?? `agent capacity reached (${currentCount}/${spawnDecision.maxAgents}), cap: ${boundCap.key}=${boundCap.value}. No capacity for batch-spawn.`;
+            if (batchOutput.contractStarted !== true) {
+              return { success: false, error: capError, output: JSON.stringify({ cap: boundCap }) };
+            }
+            // The contract already started; the outside-contract tasks found no capacity.
+            skipped = outsideInputs.length;
+            batchOutput.cap = boundCap;
+            batchOutput.capMessage = capError;
+          } else {
+            const toSpawn = outsideInputs.slice(0, spawnDecision.availableSlots);
+            skipped = outsideInputs.length - toSpawn.length;
+            for (const spawnInput of toSpawn) {
+              let record;
+              try {
+                record = manager.spawn(spawnInput);
+              } catch (error) {
+                return { success: false, error: summarizeError(error) };
+              }
+              results.push({ ...agentSummary(record), task: record.task.slice(0, 80) });
+            }
+            batchOutput.maxAgents = spawnDecision.maxAgents;
+            if (skipped > 0) {
+              // The active-agents cap bound: excess tasks were queued/refused. Name
+              // the cap and its value both here and in a human-readable note.
+              batchOutput.cap = { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
+              batchOutput.capMessage =
+                `queued ${skipped} task${skipped === 1 ? '' : 's'}: ${spawnDecision.maxAgents}/${spawnDecision.maxAgents} active, cap: ${ORCHESTRATION_CAP_KEYS.maxActiveAgents}=${spawnDecision.maxAgents}`;
             }
           }
-          const spawnInput = batchTaskToSpawnInput(input, taskDef);
-          let record;
-          try {
-            record = manager.spawn(spawnInput);
-          } catch (error) {
-            return {
-              success: false,
-              error: summarizeError(error),
-            };
-          }
-          results.push({ ...agentSpawnSummary(record), task: taskDef.task.slice(0, 80) });
         }
-        const batchOutput: Record<string, unknown> = {
-          agents: results,
-          count: results.length,
-          cohort: input.cohort,
-          skipped,
-          maxAgents: spawnDecision.maxAgents,
-        };
-        if (skipped > 0) {
-          // The active-agents cap bound: excess tasks were queued/refused. Name
-          // the cap and its value both here and in a human-readable note.
-          batchOutput.cap = { key: ORCHESTRATION_CAP_KEYS.maxActiveAgents, value: spawnDecision.maxAgents };
-          batchOutput.capMessage =
-            `queued ${skipped} task${skipped === 1 ? '' : 's'}: ${spawnDecision.maxAgents}/${spawnDecision.maxAgents} active, cap: ${ORCHESTRATION_CAP_KEYS.maxActiveAgents}=${spawnDecision.maxAgents}`;
-        }
+        batchOutput.agents = results;
+        batchOutput.count = results.length;
+        batchOutput.skipped = skipped;
         return {
           success: true,
           output: JSON.stringify(batchOutput),
@@ -711,61 +695,54 @@ export function createAgentTool(config: {
         return { success: true, output: lines.join('\n') };
       }
 
-      case 'wrfc-chains': {
+      case 'contracts': {
         try {
-          const workmap = config.wrfcController?.getWorkmap();
-          if (!workmap) {
-            return { success: false, error: 'WRFC controller is not configured in this runtime.' };
-          }
-          const chains = workmap.listChains();
+          const contracts = config.contractRunner.list({
+            sessionId: config.resolveSessionId(),
+            includeTerminal: input.includeTerminal ?? true,
+          });
           const detail = input.detail ?? 'summary';
           return {
             success: true,
             output: JSON.stringify({
-              mode: 'wrfc-chains',
+              mode: 'contracts',
               detail,
-              count: chains.length,
-              chains: detail === 'full'
-                ? chains
-                : chains.map((chain) => ({
-                  contractId: chain.contractId,
-                  status: chain.status,
-                  lastScore: chain.lastScore,
-                  task: chain.task,
-                  events: chain.events,
-                })),
+              count: contracts.length,
+              contracts: detail === 'full' ? contracts : contracts.map(summarizeContract),
             }),
           };
         } catch (err) {
-          return { success: false, error: `Failed to list WRFC chains: ${summarizeError(err)}` };
+          return { success: false, error: `Failed to list contracts: ${summarizeError(err)}` };
         }
       }
 
-      case 'wrfc-history': {
+      case 'contract-history': {
         if (!input.contractId) {
-          return { success: false, error: 'wrfc-history requires contractId' };
+          return { success: false, error: 'contract-history requires contractId' };
         }
         try {
-          const workmap = config.wrfcController?.getWorkmap();
-          if (!workmap) {
-            return { success: false, error: 'WRFC controller is not configured in this runtime.' };
+          const contract = config.contractRunner.get(input.contractId);
+          if (!contract) {
+            return { success: false, error: `Unknown contract: '${input.contractId}'` };
           }
-          const events = workmap.read(input.contractId);
           const detail = input.detail ?? 'summary';
+          const checks = contractChecks(contract);
           return {
             success: true,
             output: JSON.stringify({
-              mode: 'wrfc-history',
+              mode: 'contract-history',
               detail,
-              contractId: input.contractId,
-              events: detail === 'full'
-                ? events
-                : events.map((event) => summarizeWrfcEvent(toRecord(event))),
-              count: events.length,
+              contractId: contract.id,
+              status: contract.status,
+              decisions: detail === 'full' ? contract.decisions : contract.decisions.map(summarizeContractDecision),
+              checks: detail === 'full' ? checks : checks.map(summarizeCheck),
+              escalations: detail === 'full'
+                ? contract.escalations
+                : contract.escalations.map(summarizeEscalation),
             }),
           };
         } catch (err) {
-          return { success: false, error: `Failed to get WRFC history: ${summarizeError(err)}` };
+          return { success: false, error: `Failed to read the contract's history: ${summarizeError(err)}` };
         }
       }
 

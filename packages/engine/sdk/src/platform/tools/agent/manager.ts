@@ -1,14 +1,12 @@
 import { ArchetypeLoader } from '../../agents/archetypes.js';
 import { AgentOrchestrator } from '../../agents/orchestrator.js';
 import { AgentMessageBus } from '../../agents/message-bus.js';
-import { WrfcController } from '../../agents/wrfc-controller.js';
+import type { ContractRunner } from '../../contract/runner.js';
 import type { ConfigManager } from '../../config/manager.js';
 import type { ConversationMessageSnapshot } from '../../core/conversation.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
 import {
   emitAgentCancelled,
-  emitAgentProgress,
-  emitAgentRunning,
   emitAgentSpawning,
   emitContractSpawnGuardTriggered,
 } from '../../runtime/emitters/index.js';
@@ -22,12 +20,6 @@ import type { ProviderRegistry } from '../../providers/registry.js';
 import { requireProviderQualifiedModel, normalizeProviderQualifiedModelList } from './model-routing.js';
 import type { AgentRecord } from './record.js';
 import { splitContractBinding, startContractOwner, type ContractOwnerBinding, type ContractUnitBinding } from './contract-binding.js';
-import {
-  resolveAuthoritativeWrfcScope,
-  resolveImplementationToolContract,
-  resolveNarrowedRootSpawnScope,
-} from './wrfc-batch-policy.js';
-import { rootSpawnNeedsWrfcNormalization } from './root-spawn-chain-decision.js';
 
 export type { AgentRecord } from './record.js';
 
@@ -38,7 +30,8 @@ export type AgentExecutor = {
 export interface AgentManagerDependencies {
   readonly archetypeLoader?: Pick<ArchetypeLoader, 'loadArchetype'> | undefined;
   readonly messageBus?: Pick<AgentMessageBus, 'registerAgent'> | undefined;
-  readonly wrfcController?: Pick<WrfcController, 'createChain'> | null | undefined;
+  /** Starts the contract a spawn that is not outside every contract becomes the owner of (design 10.3). */
+  readonly contractRunner?: Pick<ContractRunner, 'startForOwner'> | null | undefined;
   readonly executor?: AgentExecutor | null | undefined;
   readonly configManager?: Pick<ConfigManager, 'get'> | undefined;
   /**
@@ -67,7 +60,7 @@ export const DEFAULT_CONVERSATION_SNAPSHOT_RETENTION = 20;
 
 export const AGENT_TEMPLATES: Record<string, { description: string; defaultTools: string[] }> = {
   orchestrator: {
-    description: 'WRFC coordination and decomposition agent',
+    description: 'Contract owner: represents a contract and carries its answer',
     defaultTools: ['read', 'find', 'analyze', 'inspect', 'registry'],
   },
   planner: {
@@ -105,7 +98,7 @@ export class AgentManager {
   private runtimeBus: RuntimeEventBus | null = null;
   private readonly archetypeLoader: Pick<ArchetypeLoader, 'loadArchetype'>;
   private readonly messageBus: Pick<AgentMessageBus, 'registerAgent'>;
-  private wrfcController: Pick<WrfcController, 'createChain'> | null;
+  private contractRunner: Pick<ContractRunner, 'startForOwner'> | null;
   private executor: AgentExecutor | null;
   private readonly configManager: Pick<ConfigManager, 'get'> | null;
   /**
@@ -151,7 +144,7 @@ export class AgentManager {
     this.archetypeLoader = deps.archetypeLoader ?? new ArchetypeLoader();
     this.messageBus = deps.messageBus ?? new AgentMessageBus();
     this.providerRegistry = deps.providerRegistry ?? null;
-    this.wrfcController = deps.wrfcController ?? null;
+    this.contractRunner = deps.contractRunner ?? null;
     this.executor = deps.executor ?? null;
     this.configManager = deps.configManager ?? null;
     this.conversationSnapshotRetention = deps.conversationSnapshotRetention ?? DEFAULT_CONVERSATION_SNAPSHOT_RETENTION;
@@ -203,94 +196,54 @@ export class AgentManager {
   }
 
   /**
+   * Refuses a spawn requested by a contract leaf (design 10.3): a unit's
+   * sub-agent or the contract planner never spawns agents of its own; the
+   * contract plans sub-work. Emits CONTRACT_SPAWN_GUARD_TRIGGERED and throws.
+   * AgentManager.spawn and the agent tool both call it before anything starts,
+   * so the refusal is decided in this one place.
+   */
+  guardContractLeafSpawn(requesterAgentId: string | undefined): void {
+    if (requesterAgentId === undefined) return;
+    const requester = this.agents.get(requesterAgentId);
+    if (!requester?.contractId || requester.contractRole === 'owner' || requester.contractRole === undefined) return;
+    const reason = requester.contractRole === 'unit'
+      ? 'units are leaves; the contract plans sub-work'
+      : 'the contract planner is read-only; the contract plans sub-work';
+    if (this.runtimeBus) {
+      emitContractSpawnGuardTriggered(this.runtimeBus, {
+        sessionId: 'agent-manager',
+        traceId: `agent-manager:spawn-guard:${requester.id}`,
+        source: 'agent-manager',
+        agentId: requester.id,
+      }, {
+        contractId: requester.contractId,
+        agentId: requester.id,
+        depth: requester.orchestrationDepth + 1,
+        activeAgents: this.list().filter((agent) => agent.status === 'pending' || agent.status === 'running').length,
+        reason,
+      });
+    }
+    throw new Error(reason);
+  }
+
+  /**
    * Spawn an agent. `binding` marks it as a contract unit's sub-agent (the
-   * phase runner passes it for a contract work item): the record carries the
-   * contract, unit and route reason, the turn loop calls the contract hooks for
-   * it, and the spawn never starts a chain of its own.
+   * phase runner passes it for a contract work item) or as a contract's owner
+   * record (the contract runner passes it). A spawn with neither binding and
+   * without `outsideContract` becomes the owner of a new contract through the
+   * composed contract runner's startForOwner, and runs no executor.
    */
   spawn(input: AgentInput, spawnBinding?: ContractUnitBinding | ContractOwnerBinding): AgentRecord {
     const { unit: binding, owner: ownerBinding } = splitContractBinding(spawnBinding);
-    let task = input.task;
+    const task = input.task;
     if (!task || typeof task !== 'string' || task.trim() === '') {
       throw new Error('spawn() requires a non-empty task string');
     }
     if (!this.configManager) {
       throw new Error('AgentManager requires configManager');
     }
-    let template = input.template ?? 'general';
-    let routeReason: string | undefined;
-    const rootReviewRoleTask = rootSpawnNeedsWrfcNormalization(input, task, template);
-    if (rootReviewRoleTask) {
-      routeReason = 'root-review-role-normalized';
-      const scope = resolveAuthoritativeWrfcScope(input, task);
-      const toolContract = input.authoritativeTask || scope.scopeMutation
-        ? resolveImplementationToolContract({
-            tools: input.tools,
-            restrictTools: input.restrictTools,
-            authoritativeTask: scope.task,
-            proposedTask: task,
-            scopeMutation: scope.scopeMutation,
-          })
-        : { tools: input.tools, restrictTools: input.restrictTools, scopeMutation: scope.scopeMutation };
-      input = {
-        ...input,
-        task: scope.task,
-        authoritativeTask: scope.task,
-        tools: toolContract.tools,
-        restrictTools: toolContract.restrictTools,
-        template: 'engineer',
-        reviewMode: 'contract',
-        outsideContract: false,
-        context: [
-          input.context?.trim(),
-          'SDK WRFC topology enforcement normalized this root review/test/verification task into a single owner chain. Review, test, verification, and fix work are lifecycle phases owned by the WRFC controller, not independent root agents.',
-          `Authoritative original ask for this WRFC chain:\n${scope.task}`,
-          toolContract.scopeMutation
-            ? `Scope mutation warning: ${toolContract.scopeMutation.warnings.join(' ')} Model-proposed child scope:\n${toolContract.scopeMutation.proposedTask}`
-            : undefined,
-        ].filter((part): part is string => Boolean(part)).join('\n\n'),
-        successCriteria: [
-          ...(input.successCriteria ?? []),
-          `Satisfy the authoritative WRFC ask exactly: ${scope.task}`,
-          'Do not treat model-invented review/test/design/no-write wording as limiting scope unless it appears in the authoritative ask.',
-          'Keep the work as one WRFC owner chain; review, test, verification, and fix phases must remain lifecycle children.',
-        ],
-      };
-      task = input.task ?? task;
-      template = input.template ?? 'engineer';
-    } else if (!input.parentAgentId) {
-      const scope = resolveNarrowedRootSpawnScope(input, task);
-      const toolContract = input.authoritativeTask || scope.scopeMutation
-        ? resolveImplementationToolContract({
-            tools: input.tools,
-            restrictTools: input.restrictTools,
-            authoritativeTask: scope.task,
-            proposedTask: task,
-            scopeMutation: scope.scopeMutation,
-          })
-        : { tools: input.tools, restrictTools: input.restrictTools, scopeMutation: scope.scopeMutation };
-      if (scope.scopeMutation || toolContract.scopeMutation !== scope.scopeMutation) {
-        input = {
-          ...input,
-          task: scope.task,
-          tools: toolContract.tools,
-          restrictTools: toolContract.restrictTools,
-          context: [
-            input.context?.trim(),
-            toolContract.scopeMutation
-              ? `Scope mutation warning: ${toolContract.scopeMutation.warnings.join(' ')} Model-proposed task:\n${toolContract.scopeMutation.proposedTask}`
-              : undefined,
-            `Authoritative original ask for this agent:\n${scope.task}`,
-          ].filter((part): part is string => Boolean(part)).join('\n\n'),
-          successCriteria: [
-            ...(input.successCriteria ?? []),
-            `Satisfy the authoritative original ask exactly: ${scope.task}`,
-            'Do not treat model-invented design-only or no-write wording as limiting scope unless it appears in the authoritative ask.',
-          ],
-        };
-        task = scope.task;
-      }
-    }
+    this.guardContractLeafSpawn(input.parentAgentId);
+    const template = input.template ?? 'general';
 
     const archetype = this.archetypeLoader.loadArchetype(template);
     const templateDef = AGENT_TEMPLATES[template]! ?? AGENT_TEMPLATES.general;
@@ -309,18 +262,15 @@ export class AgentManager {
     if (input.parentAgentId && !parentRecord) {
       throw new Error(`Unknown parent agent: '${input.parentAgentId}'`);
     }
-    if (parentRecord?.contractId && parentRecord.contractRole !== 'owner') {
-      throw new Error('Contract units cannot spawn nested child agents; units are leaves and the contract plans sub-work.');
-    }
     const orchestrationDepth = parentRecord ? parentRecord.orchestrationDepth + 1 : 0;
     const activeAgents = this.list().filter((agent) => agent.status === 'pending' || agent.status === 'running').length;
-    const isWrfcOwnerChild = Boolean(parentRecord?.contractRole === 'owner' && input.outsideContract);
+    const isContractOwnerChild = Boolean(parentRecord?.contractRole === 'owner' && input.outsideContract);
     const spawnDecision = evaluateOrchestrationSpawn({
       configManager: this.configManager,
-      mode: input.parentAgentId && !isWrfcOwnerChild ? 'recursive-child' : 'manual-batch',
+      mode: input.parentAgentId && !isContractOwnerChild ? 'recursive-child' : 'manual-batch',
       activeAgents,
       requestedDepth: orchestrationDepth,
-      ...(isWrfcOwnerChild ? { overrides: { recursionEnabled: true, maxDepth: 1 } } : {}),
+      ...(isContractOwnerChild ? { overrides: { recursionEnabled: true, maxDepth: 1 } } : {}),
     });
     if (!spawnDecision.allowed) {
       if (this.runtimeBus) {
@@ -369,6 +319,11 @@ export class AgentManager {
       throw new Error('Agent fail routing cannot include fallback models; use ordered-fallbacks to enable model failover.');
     }
 
+    const startsContract = !input.outsideContract && !binding && !ownerBinding;
+    if (startsContract && !this.contractRunner) {
+      throw new Error('No contract runner is composed: a spawn that is not outside every contract starts a contract, and this AgentManager has no contract runner to start it.');
+    }
+
     const id = `agent-${crypto.randomUUID().slice(0, 8)}`;
     const orchestrationGraphId = input.orchestrationGraphId
       ?? parentRecord?.orchestrationGraphId
@@ -398,7 +353,6 @@ export class AgentManager {
       communicationLane,
       systemPromptAddendum: input.systemPromptAddendum,
       proposedUnits: input.proposedUnits,
-      ...(input.fanoutCollapse ? { fanoutCollapse: input.fanoutCollapse } : {}),
       status: 'pending',
       startedAt: Date.now(),
       toolCallCount: 0,
@@ -424,7 +378,7 @@ export class AgentManager {
       ...(parentNodeId ? { parentNodeId } : {}),
       ...(binding ? { contractId: binding.contractId, contractRole: 'unit' as const, contractUnitId: binding.contractUnitId } : {}),
       ...(ownerBinding ? { contractId: ownerBinding.contractId, contractRole: 'owner' as const } : {}),
-      ...(binding?.routeReason ?? routeReason ? { routeReason: binding?.routeReason ?? routeReason } : {}),
+      ...(binding?.routeReason ? { routeReason: binding.routeReason } : {}),
       ...(toolResolution.capabilityCeilingTools ? { capabilityCeilingTools: toolResolution.capabilityCeilingTools } : {}),
       ...(input.successCriteria ? { successCriteria: [...input.successCriteria] } : {}),
       ...(input.requiredEvidence ? { requiredEvidence: [...input.requiredEvidence] } : {}),
@@ -465,42 +419,18 @@ export class AgentManager {
         taskContract,
       });
     }
-    if (record.task === 'Stuck task') {
-      return record;
-    }
-
     if (ownerBinding) return startContractOwner(record, ownerBinding, this.runtimeBus);
 
-    if (!input.outsideContract && !binding) {
+    if (startsContract) {
       try {
-        this.wrfcController?.createChain(record);
-        if (record.contractRole === 'owner') {
-          record.status = 'running';
-          record.progress ??= 'WRFC owner supervising child agents';
-          if (this.runtimeBus) {
-            const ctx = {
-              sessionId: 'agent-manager',
-              traceId: `agent-manager:${id}:wrfc-owner`,
-              source: 'agent-manager',
-              agentId: id,
-            };
-            emitAgentRunning(this.runtimeBus, ctx, {
-              agentId: id,
-              contractId: record.contractId,
-              contractRole: record.contractRole,
-            });
-            emitAgentProgress(this.runtimeBus, ctx, {
-              agentId: id,
-              progress: record.progress,
-              contractId: record.contractId,
-              contractRole: record.contractRole,
-            });
-          }
-          return record;
-        }
+        this.contractRunner!.startForOwner(record);
       } catch (error) {
-        logger.error('Failed to create WRFC chain', { agentId: id, error: summarizeError(error) });
+        record.status = 'failed';
+        record.error = `The contract could not start: ${summarizeError(error)}`;
+        record.completedAt = Date.now();
+        throw error;
       }
+      return record;
     }
 
     if (this.executor) {
@@ -674,7 +604,7 @@ export class AgentManager {
    * Part C6's documented fallback for completed/detached agents).
    *
    * Safe to call even when no source was ever registered for this agentId
-   * (e.g. a WRFC owner agent, which never runs its own turn loop).
+   * (e.g. a contract owner record, which never runs its own turn loop).
    */
   releaseConversationSource(agentId: string): void {
     const source = this.conversationSources.get(agentId);
@@ -791,7 +721,8 @@ export class AgentManager {
     this.executor = executor;
   }
 
-  setWrfcController(wrfcController: Pick<WrfcController, 'createChain'> | null): void {
-    this.wrfcController = wrfcController;
+  /** Composes the contract runner that spawns not outside every contract start through (design 10.3). */
+  setContractRunner(runner: Pick<ContractRunner, 'startForOwner'> | null): void {
+    this.contractRunner = runner;
   }
 }

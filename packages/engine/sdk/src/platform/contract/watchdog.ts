@@ -3,7 +3,7 @@
  * section 4.10).
  *
  * It keeps a last-seen time per agent from the agent events (running,
- * progress, stream deltas, and the terminal three), as WRFC's listeners did.
+ * progress, stream deltas, and the terminal three).
  * When `contract.heartbeatTimeoutMs` is above zero, a timer at a quarter of
  * the timeout (between 50 ms and 5 s) looks for unit agents that are running,
  * not held, and silent past the timeout, and hands each to the runner, which

@@ -154,8 +154,9 @@ describe('whether a hook can reach the agent manager', () => {
 
   /** Register an agent hook and fire its event; the dispatcher's own public path. */
   async function fireAgentHook(services: ReturnType<typeof compose>): Promise<string> {
+    // A one-second hook timeout: the spawned agent's work is not what these tests read, only whether the hook ran.
     services.hookDispatcher.register('Pre:tool:*', {
-      name: 'floor-option-probe', type: 'agent', prompt: 'do a thing',
+      name: 'floor-option-probe', type: 'agent', prompt: 'do a thing', timeout: 1,
     } as never);
     await services.hookDispatcher.fire({
       path: 'Pre:tool:bash', phase: 'Pre', category: 'tool', specific: 'bash',

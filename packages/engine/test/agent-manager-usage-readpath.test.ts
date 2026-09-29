@@ -7,7 +7,7 @@
  * objects from AgentManager.getStatus()/list(), not RuntimeAgent. This test
  * proves two things:
  *
- * 1. The direct (non-WRFC) execution path already works: orchestrator-runner.ts
+ * 1. The direct (outside-contract) execution path already works: orchestrator-runner.ts
  *    mutates `record.usage`/`record.toolCallCount` in place on the exact
  *    AgentRecord object AgentManager stores, so getStatus()/list() already
  *    reflect real numbers once the executor finishes. This test spawns an
@@ -15,9 +15,9 @@
  *    behaviour (accumulate usage, then flip status to 'completed') and
  *    asserts the manager's own read path sees it, no SDK change needed here.
  *
- * 2. The WRFC owner path is covered separately in wrfc-controller.test.ts,
- *    where the owner AgentRecord never runs an LLM turn itself and needs its
- *    usage/toolCallCount populated from its phase children at completion time.
+ * 2. The contract owner path is covered separately in the contract runner's
+ *    tests, where the owner AgentRecord never runs an LLM turn itself and needs
+ *    its usage/toolCallCount rolled up from its units' agents when it settles.
  */
 import { describe, expect, test } from 'bun:test';
 import { AgentManager } from '../sdk/src/platform/tools/agent/manager.js';

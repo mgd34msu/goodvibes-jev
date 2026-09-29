@@ -1095,6 +1095,7 @@ describe('feature flag safe-default gates', () => {
       mode: 'spawn',
       task: 'do work',
       restrictTools: true,
+      outsideContract: true,
     });
     expect(restricted.tools).toEqual([]);
   });

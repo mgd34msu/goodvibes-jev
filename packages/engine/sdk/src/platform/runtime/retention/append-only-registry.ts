@@ -178,8 +178,8 @@ function listReclaimableAutoSessionFiles(sessionsDir: string): string[] {
 export const APPEND_ONLY_STORES: readonly AppendOnlyStoreDescriptor[] = [
   {
     id: 'session-journals',
-    owner: 'session/agent journal (agents/session.ts, agents/wrfc-workmap.ts)',
-    description: 'per-agent transcript journals and WRFC workmaps under the scoped sessions/agents/ directory, plus (this release only) any pre-repoint journal left flat in sessions/ from before agent journals moved out of the user-conversation directory',
+    owner: 'session/agent journal (agents/session.ts)',
+    description: 'per-agent transcript journals, and the workmap journals the retired review loop left, under the scoped sessions/agents/ directory, plus (this release only) any pre-repoint journal left flat in sessions/ from before agent journals moved out of the user-conversation directory',
     policy: DEFAULT_AT_REST_POLICY,
     resolve(roots) {
       if (!roots.workingDirectory) return EMPTY_TARGETS;

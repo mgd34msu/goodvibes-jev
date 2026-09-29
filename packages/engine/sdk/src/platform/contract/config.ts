@@ -57,7 +57,7 @@ export interface ContractConfig {
 export const CONTRACT_CONFIG_DEFAULTS: ContractConfig = {
   autoCommit: true,
   commitScope: 'scoped',
-  // The WRFC defaults, carried over: typecheck and lint gate every unit, build is opt-in.
+  // The defaults carried over from the retired review loop: typecheck and lint gate every unit, build is opt-in.
   gates: [
     { name: 'typecheck', command: 'npx tsc --noEmit', enabled: true },
     { name: 'lint', command: 'npx eslint . --max-warnings 0', enabled: true },

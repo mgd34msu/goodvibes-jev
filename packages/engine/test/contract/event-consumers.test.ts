@@ -247,7 +247,6 @@ describe('surfaces that classify or subscribe', () => {
 
   test('[Contract] messages are the contract kind, and the transcript shows them as contract state', () => {
     expect(classifySystemMessageKind(`[Contract] ${CTR} started: Add a parser`)).toBe('contract');
-    expect(classifySystemMessageKind('[WRFC] Chain started')).toBe('system');
     const [event] = classifyTranscriptMessages([{ role: 'system', content: `[Contract] ${CTR} PASSED` } as never]);
     expect(event?.kind).toBe('contract_state');
   });

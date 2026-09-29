@@ -103,7 +103,7 @@ export interface ConversationGateConfigReader {
   get(key: string): unknown;
   /**
    * `gatedSurfaces` is an array, so it is not a scalar ConfigKey, it is read
-   * through the category, mirroring how wrfc.gates is read.
+   * through the category, mirroring how contract.gates is read.
    *
    * `string`, NOT the literal `'conversationGate'`. `ConfigManager.getCategory`
    * is generic over `keyof GoodVibesConfig`, and `conversationGate` joins that

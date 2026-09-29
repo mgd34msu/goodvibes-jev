@@ -11,8 +11,7 @@
  * and the session write ledger (AgentToolPolicyGuardOptions), and the MCP call
  * route's mode (AgentToolPolicyExplanationOptions).
  *
- * The agent tool's two WRFC-only modes are left out of the allowlist: Jev
- * replaces WRFC.
+ * The agent tool's modes are allowlisted by name.
  */
 import type { Tool } from '../../types/tools.js';
 import type { ToolRegistry } from '../../tools/registry.js';
@@ -58,6 +57,8 @@ const READ_ONLY_AGENT_TOOL_MODES = [
   'plan',
   'wait',
   'message',
+  'contracts',
+  'contract-history',
   'cohort-status',
   'cohort-report',
 ] as const;

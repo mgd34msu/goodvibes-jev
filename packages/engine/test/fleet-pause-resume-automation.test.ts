@@ -15,6 +15,7 @@ const T0 = 1_750_000_000_000;
 function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistryDeps {
   return {
     agentManager: { list: () => [], cancel: () => false },
+    contractRunner: { list: () => [], cancel: () => false },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {

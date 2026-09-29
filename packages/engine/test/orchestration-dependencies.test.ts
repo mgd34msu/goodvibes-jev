@@ -1,7 +1,7 @@
 /**
  * BIG-3 item 2, inter-item dependency gating end-to-end through the engine.
  *
- * A 3-item plan (B dependsOn A, C independent) assembled via fromPlanProposal:
+ * A 3-item plan (B dependsOn A, C independent):
  *  - C and A run concurrently while B sits in 'blocked-dependency' with an
  *    honest 'waiting on: A' reason;
  *  - B claims only after A reaches 'passed'; all three pass.
@@ -15,9 +15,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrationEngine } from '../sdk/src/platform/orchestration/engine.js';
-import { fromPlanProposal } from '../sdk/src/platform/orchestration/proposal-workstream.js';
-import type { OrchestrationEvent } from '../sdk/src/platform/orchestration/types.js';
-import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/platform/core/plan-proposal.js';
+import type { CreateWorkstreamInput } from '../sdk/src/platform/orchestration/engine.js';
+import type { OrchestrationEvent, WorkItemSpec } from '../sdk/src/platform/orchestration/types.js';
 import {
   createOrchestrationHarness,
   engineerReportOutput,
@@ -28,15 +27,12 @@ import {
 
 const cfg = makeFakeConfigManager();
 
-function proposalItem(o: Partial<ProposalWorkItem> & { id: string; title: string; brief: string }): ProposalWorkItem {
-  return { phaseId: 'p', dependsOn: [], ...o };
-}
-
-function makeProposal(items: ProposalWorkItem[]): PlanProposal {
+/** A workstream of engineer items: one engineer phase whose capacity is the item count, so independent items run concurrently. */
+function workstreamOf(items: readonly WorkItemSpec[]): CreateWorkstreamInput {
   return {
-    id: 'prop', task: 'goal', strategy: 'cohort', rationale: 'r',
-    phases: [{ id: 'p', title: 'Execute', order: 1 }],
-    workItems: items, createdAt: 1, source: 'planner-agent', decomposedBy: 'agent',
+    title: 'goal',
+    phases: [{ role: 'engineer', capacity: items.length, kind: 'engineer', gate: { scope: 'scoped', gates: [] } }],
+    items,
   };
 }
 
@@ -77,11 +73,11 @@ describe('dependency gating: concurrency, waiting, release', () => {
     const events: OrchestrationEvent[] = [];
     engine.on((e) => events.push(e));
 
-    const spec = fromPlanProposal(makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'do A' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'do B', dependsOn: ['a'] }),
-      proposalItem({ id: 'c', title: 'C', brief: 'do C' }),
-    ]), cfg);
+    const spec = workstreamOf([
+      { id: 'a', title: 'A', task: 'do A' },
+      { id: 'b', title: 'B', task: 'do B', dependsOn: ['a'] },
+      { id: 'c', title: 'C', task: 'do C' },
+    ]);
     const ws = engine.createWorkstream(spec);
     engine.start(ws.id);
     await flushMicrotasks(20);
@@ -120,10 +116,10 @@ describe('dependency gating: failed dependency + retry recovery', () => {
     const events: OrchestrationEvent[] = [];
     engine.on((e) => events.push(e));
 
-    const spec = fromPlanProposal(makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'do A' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'do B', dependsOn: ['a'] }),
-    ]), cfg);
+    const spec = workstreamOf([
+      { id: 'a', title: 'A', task: 'do A' },
+      { id: 'b', title: 'B', task: 'do B', dependsOn: ['a'] },
+    ]);
     const ws = engine.createWorkstream(spec);
     engine.start(ws.id);
     await flushMicrotasks(20);
@@ -163,11 +159,11 @@ describe('dependency gating: resume preserves the wait', () => {
   test('a blocked-dependency item stays blocked across serialize→import into a fresh engine', async () => {
     const h = createOrchestrationHarness();
     const engine = makeEngine(h);
-    const spec = fromPlanProposal(makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'do A' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'do B', dependsOn: ['a'] }),
-      proposalItem({ id: 'c', title: 'C', brief: 'do C' }),
-    ]), cfg);
+    const spec = workstreamOf([
+      { id: 'a', title: 'A', task: 'do A' },
+      { id: 'b', title: 'B', task: 'do B', dependsOn: ['a'] },
+      { id: 'c', title: 'C', task: 'do C' },
+    ]);
     const ws = engine.createWorkstream(spec);
     engine.start(ws.id);
     await flushMicrotasks(20);

@@ -30,6 +30,8 @@ import {
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import type { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import type { CompactionContext } from '../sdk/src/platform/core/compaction-types.js';
+import { makeContract } from './contract/fixtures.js';
 
 // ---------------------------------------------------------------------------
 // Registry harness (test doubles, mirrors provider-registry-canonical-api.test.ts)
@@ -205,21 +207,27 @@ interface ConversationStub {
   conversation: ConversationManager;
   systemMessages: string[];
   compactCalls: number;
+  /** The compaction context the last compact() call was handed. */
+  lastContext: CompactionContext | undefined;
 }
 
 function makeConversationStub(): ConversationStub {
   const systemMessages: string[] = [];
-  const state = { compactCalls: 0 };
+  const state: { compactCalls: number; lastContext: CompactionContext | undefined } = { compactCalls: 0, lastContext: undefined };
   const conversation = {
     getMessagesForLLM: () => [{ role: 'user', content: 'short message' }],
     addSystemMessage: (msg: string) => { systemMessages.push(msg); },
     replaceMessagesForLLM: () => {},
-    compact: async () => { state.compactCalls += 1; },
+    compact: async (_registry: unknown, _modelId: string, _trigger: string, _provider: string, context?: CompactionContext) => {
+      state.compactCalls += 1;
+      state.lastContext = context;
+    },
   } as unknown as ConversationManager;
   return {
     conversation,
     systemMessages,
     get compactCalls() { return state.compactCalls; },
+    get lastContext() { return state.lastContext; },
   };
 }
 
@@ -241,7 +249,7 @@ function makeSharedDeps(stub: ConversationStub, model: ModelDefinition, config: 
     sessionLineageTracker: { getEntries: () => [], getCompactionCount: () => 0, getOriginalTask: () => null },
     sessionId: 'test-session',
     agentManager: { list: () => [] },
-    wrfcController: { listChains: () => [] },
+    contractRunner: { list: () => [] },
     planManager: null,
     sessionMemoryStore: null,
     runtimeBus: null,
@@ -275,6 +283,26 @@ describe('model-issued compaction warning: preflight', () => {
     expect(cleared).toBe(true);
     expect(stub.systemMessages.some((m) => m.includes('reported its context window is full'))).toBe(true);
     expect(stub.systemMessages.some((m) => m.includes('model_context_window_exceeded'))).toBe(true);
+  });
+
+  test('the compaction context carries the contracts listed for this session, terminal ones included', async () => {
+    const stub = makeConversationStub();
+    const model = makeModel();
+    const contract = makeContract({ sessionId: 'test-session', status: 'passed' });
+    const filters: Parameters<PreflightDeps['contractRunner']['list']>[0][] = [];
+    const deps: PreflightDeps = {
+      ...makeSharedDeps(stub, model, { 'behavior.autoCompactThreshold': 80 }),
+      contractRunner: { list: (filter) => { filters.push(filter); return [contract]; } },
+      isCompacting: false,
+      setIsCompacting: () => {},
+      modelContextWarning: MODEL_WARNING,
+      clearModelContextWarning: () => {},
+    };
+
+    await checkContextWindowPreflight(deps, 'turn-1', model);
+
+    expect(filters).toEqual([{ sessionId: 'test-session', includeTerminal: true }]);
+    expect(stub.lastContext?.contracts).toEqual([contract]);
   });
 
   test('control: low estimated usage without a warning stays ok and compacts nothing', async () => {

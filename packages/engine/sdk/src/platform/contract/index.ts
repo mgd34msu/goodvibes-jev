@@ -54,6 +54,8 @@ export type {
   CriterionVerdict,
   CriterionView,
   DeepReadonly,
+  DraftedPlan,
+  DraftedUnit,
   Escalation,
   EscalationReason,
   EscalationScope,
@@ -67,6 +69,7 @@ export type {
   RequestShape,
   ShapeReading,
   StartContractInput,
+  StartFromPlanInput,
   StatusChange,
   TreeBaseline,
   UnitCheck,
@@ -123,7 +126,7 @@ export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, 
 export { CHANGING_TOOLS, createUnitCheckLoop, queueSessionNudge } from './agent-hooks.js';
 export type { ContractAgentHooks, ContractHoldOutcome, ContractSessionHooks, UnitCheckEscalations, UnitCheckLoop, UnitCheckLoopDeps } from './agent-hooks.js';
 // Running contracts (sections 2.2, 4, 6.1, 7.3 and 7.4).
-export { createContractRunner, filesModified, resolveIsolation } from './runner.js';
+export { AGENT_MANAGER_SESSION_ID, createContractRunner, filesModified, resolveIsolation } from './runner.js';
 export type { ContractRunner, ContractRunnerDeps, StartedContract } from './runner.js';
 // Resume and zombie reaping at startup (section 7.2).
 export { createContractResume, findZombieCause, resumeStatus, resumeStepOf } from './resume.js';
@@ -317,3 +320,20 @@ export {
 } from './planner.js';
 export type { ContractPlannerDeps, EscalatedPlanOutcome, PlanContractInput, PlannerRequestInput, PlanningOutcome, ShapeOutcome } from './planner.js';
 export { registry as contractJudgmentRegistry } from './judgment-registry.js';
+// Entry points (section 10): turn intake, drafted plans, the fleet verbs, the route selector, the external seam.
+export { createContractIntake, describeIntake, openEscalation, toolResultStartedContract } from './intake-route.js';
+export type { ContractIntake, ContractIntakeDeps, TurnIntakeOutcome } from './intake-route.js';
+export { REQUEST_ROUTE_SITE, requestRoute } from './batteries/request-route.js';
+export { checkDraftFidelity, draftSection, numberDraft } from './draft-plan.js';
+export { createContractFleetControls, qualifyId, splitQualifiedId } from './fleet-controls.js';
+export type { ContractConflictItem, ContractFleetControls, ContractFleetControlsDeps } from './fleet-controls.js';
+export { createRoutePlannerContractSelector } from './route.js';
+export { ContractExternalWorkBridge } from './external.js';
+export type {
+  ContractExternalWorkAdapter,
+  ContractExternalWorkHandle,
+  ContractExternalWorkRequest,
+  ContractExternalWorkResult,
+  ContractExternalWorkSnapshot,
+  ContractExternalWorkStatus,
+} from './external.js';

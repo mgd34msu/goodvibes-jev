@@ -36991,7 +36991,7 @@ Drill-in steer of an externally-launched coding-agent session goodvibes only OBS
 
 #### `fleet.snapshot`
 
-Return a point-in-time capture of every live/completed runtime process (agents, WRFC chains/subtasks, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.
+Return a point-in-time capture of every live/completed runtime process (agents, contracts with their groups and units, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.
 
 - Title: `Fleet Snapshot`
 - Source: `builtin`
@@ -62657,7 +62657,7 @@ Return the durable project-scoped work-plan snapshot, including tasks and status
 
 #### `projectPlanning.workPlan.task.create`
 
-Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or WRFC correlation.
+Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or contract correlation.
 
 - Title: `Create Project Work Plan Task`
 - Source: `builtin`
@@ -94601,7 +94601,7 @@ Return shared-session integration state.
 
 #### `sessions.messages.create`
 
-Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: "task"` to request agent/WRFC task continuation.
+Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: "task"` to request agent or contract task continuation.
 
 - Title: `Post Shared Session Message`
 - Source: `builtin`

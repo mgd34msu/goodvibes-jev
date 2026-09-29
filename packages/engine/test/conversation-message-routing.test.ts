@@ -203,7 +203,7 @@ function makeContext(opts: {
 // Part D Tests
 // ---------------------------------------------------------------------------
 
-describe('message routing: kind=message default keeps normal chat out of agent/WRFC routing', () => {
+describe('message routing: kind=message default keeps normal chat out of agent and contract routing', () => {
   test('POST without kind field does not call bindAgent', async () => {
     const sessionId = randomUUID();
     const sessions = new Map([[

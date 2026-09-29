@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readSync, readdirSync, writeFileSy
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import type { AgentRecord } from '../tools/agent/index.js';
-import type { Contract } from '../contract/types.js';
+import type { Contract, ContractView } from '../contract/types.js';
 import type { SessionReturnContextSummary } from '../runtime/session-return-context.js';
 import type { ConversationTitleSource } from '../core/conversation.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -248,7 +248,7 @@ export class SessionManager {
     meta: SessionMeta,
     agentRecords?: AgentRecord[],
     /** The trees of the contracts started in this session, written after the agent records. */
-    contracts?: readonly Contract[],
+    contracts?: readonly ContractView[],
   ): { filePath: string; sanitizedName: string } {
     if (!name || !name.trim()) throw new Error('Session name cannot be empty');
     mkdirSync(this.sessionsDir, { recursive: true });

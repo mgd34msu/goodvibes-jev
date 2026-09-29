@@ -95,6 +95,6 @@ describe('GoodVibes runtime tools', () => {
   test('runtime awareness prompt tells models to inspect harness state', () => {
     const prompt = appendGoodVibesRuntimeAwarenessPrompt('Base prompt');
     expect(prompt).toContain('goodvibes_context');
-    expect(prompt).toContain('Do not spawn agents or WRFC chains');
+    expect(prompt).toContain('Do not spawn agents or start contracts');
   });
 });

@@ -10,7 +10,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
   name: 'agent',
   description:
     'Manages in-process subagents. Modes: spawn (create a new agent task), ' +
-    'batch-spawn (spawn multiple genuinely independent sidecar agents at once from a tasks array; review/test/verification role decomposition and multi-deliverable WRFC work are collapsed to one owner chain), ' +
+    'batch-spawn (hand several tasks over at once: the tasks without outsideContract become the proposed units of one contract, and tasks with outsideContract run as separate agents), ' +
     'status (check agent progress by ID), cancel (stop a running agent), ' +
     'list (show all agents and their status), ' +
     'templates (list available agent templates with default tool sets), ' +
@@ -19,12 +19,14 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
     'plan (execution plan: task + template + tools), ' +
     'wait (returns current status immediately if terminal, or polls up to timeoutMs capped at 5000ms; always non-blocking for the main conversation), ' +
     'message (send a message to an agent), ' +
-    'wrfc-chains (list all WRFC chains in current session with status/scores), ' +
-    'wrfc-history (detailed event history for a specific WRFC chain, reviews, scores, issues, gates), ' +
+    'contracts (list the contracts of the current session with their status, goal, units and criteria met), ' +
+    'contract-history (the decisions, checks and escalations of one contract, by contractId), ' +
     'cohort-status (JSON summary of all agents in a named cohort), ' +
     'cohort-report (markdown table report for all agents in a named cohort).' +
     ' Discovery: use mode=list to see all agents and their status, mode=templates to see available agent templates. ' +
-    'If the user asks for WRFC, agent review, reviewed implementation, review/fix cycles, or test/verify work for one deliverable, call this tool with mode=spawn, template=engineer, reviewMode=contract; do not answer by describing WRFC in prose.',
+    'Work handed to this tool with mode=spawn or batch-spawn runs as a contract: a planner splits it into units, and each unit is checked against its acceptance criteria while it works and told what to fix until it passes. ' +
+    'The result carries contractStarted, contractId and the owner agent id; the owner agent reports the contract\'s answer when it ends. ' +
+    'Set outsideContract only for an agent whose work needs no checks.',
   sideEffects: ['agent', 'workflow', 'state'],
   concurrency: 'serial',
   supportsProgress: true,
@@ -34,17 +36,17 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
     properties: {
       mode: {
         type: 'string',
-        enum: ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'wrfc-chains', 'wrfc-history', 'cohort-status', 'cohort-report'],
+        enum: ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'contracts', 'contract-history', 'cohort-status', 'cohort-report'],
         description: 'Operation mode.',
       },
       // mode: spawn
       task: {
         type: 'string',
-        description: 'Task description for the agent to execute (mode: spawn). For a user request that asks for WRFC/review/test/verify of one deliverable, describe the implementation deliverable itself and use reviewMode=contract; do not spawn reviewer/tester roots. For batch-spawn collapse, the SDK preserves authoritativeTask/task as the original user ask when present.',
+        description: 'Task description (mode: spawn). Without outsideContract it becomes the proposed unit of a new contract; with outsideContract it is the agent\'s own task. Describe the deliverable itself.',
       },
       authoritativeTask: {
         type: 'string',
-        description: 'Exact original user request supplied by the host/orchestrator. The SDK uses this as the authoritative WRFC scope when normalizing review/test role fanout; do not invent or narrow it.',
+        description: 'The user\'s own request, verbatim, supplied by the host. A contract started by this call takes it as its ask; do not invent or narrow it.',
       },
       template: {
         type: 'string',
@@ -131,7 +133,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       reviewMode: {
         type: 'string',
         enum: ['none', 'contract'],
-        description: 'Whether the spawned work is checked as a contract (mode: spawn). Default: contract unless outsideContract is set. Use contract for any requested review/fix cycle, reviewed implementation, test, or verification flow for a single deliverable.',
+        description: 'Whether the agent\'s work is checked (mode: spawn). Default: contract, or none when outsideContract is set. Work without outsideContract always runs as a contract.',
       },
       communicationLane: {
         type: 'string',
@@ -164,7 +166,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       },
       outsideContract: {
         type: 'boolean',
-        description: 'If true, run the agent outside any contract, with no checks on its work, for ordinary implementation/research agents (mode: spawn). A task templated as reviewer/tester/verifier is still normalized into one contract owner.',
+        description: 'If true, run the agent directly, outside any contract, with no checks on its work (mode: spawn, batch-spawn). Default: false, which starts a contract.',
         default: false,
       },
       // mode: batch-spawn
@@ -204,10 +206,10 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
             orchestrationGraphId: { type: 'string', description: 'Graph id to attach the worker to.' },
             orchestrationNodeId: { type: 'string', description: 'Explicit node id for the worker.' },
             parentNodeId: { type: 'string', description: 'Parent node id for the worker.' },
-            outsideContract: { type: 'boolean', description: 'Run outside any contract, with no checks, for ordinary implementation/research agents. Review/test/verify role tasks in a batch are still normalized into one contract owner.' },
+            outsideContract: { type: 'boolean', description: 'Run this task as its own agent outside any contract, with no checks. Default: the batch\'s outsideContract.' },
           },
         },
-        description: 'Array of genuinely independent tasks to spawn as agents (mode: batch-spawn). Max 20. One-task batches are normalized through spawn. Do not place tester/reviewer/verifier role phases here for one deliverable; those are WRFC lifecycle children owned by one owner chain. If reviewMode=contract and multiple implementation deliverables are part of one larger outcome, the SDK collapses them to one compound WRFC owner with concurrent engineer children, per-deliverable review/fix loops, an integrator, and final full-scope review.',
+        description: 'Tasks to hand over at once (mode: batch-spawn). Max 20. The tasks without outsideContract become the proposed units of one contract, whose planner decides the units that run; tasks with outsideContract run as separate agents, up to the active-agent cap.',
       },
       // mode: spawn, batch-spawn, list, cohort-status, cohort-report
       cohort: {
@@ -239,10 +241,15 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
         enum: ['directive', 'status', 'question', 'finding', 'review', 'handoff', 'escalation', 'completion'],
         description: 'Structured communication kind for the message (mode: message). Default: directive.',
       },
-      // mode: wrfc-history
+      // mode: contracts
+      includeTerminal: {
+        type: 'boolean',
+        description: 'Include contracts that already ended (mode: contracts). Default: true.',
+      },
+      // mode: contract-history
       contractId: {
         type: 'string',
-        description: 'Contract ID for wrfc-history mode.',
+        description: 'The contract to read (mode: contract-history).',
       },
     },
   },
@@ -254,25 +261,15 @@ export interface AgentProviderRoutingPolicy {
   fallbackModels?: readonly string[] | undefined;
 }
 
-/**
- * Internal marker recording that a requested multi-agent fan-out was collapsed
- * into a single WRFC owner chain by the topology guard. Set by the collapse
- * guards (wrfc-batch-policy.ts / the TUI wrfc-agent-guard), threaded onto the
- * owner AgentRecord and then the WrfcChain. It lets the controller mechanically
- * recognise, and never fail the review on, the parallelism/spawn-count
- * constraints the collapse itself made unsatisfiable, and lets the host state
- * the collapse plainly to the user. Never set by the model-facing tool call.
- */
-export interface FanoutCollapseInfo {
-  /** How many separate agents the requester asked to fan out into. */
-  readonly requestedAgentCount: number;
-  /** Short human phrase describing the requested shape, for the user-facing announcement. */
-  readonly requestedShape: string;
+/** A unit proposed for a contract: a task and the template it asked for. The contract's planner weighs it. */
+export interface ProposedUnit {
+  readonly task: string;
+  readonly template?: string | undefined;
 }
 
 /** Input shape for the agent tool. */
 export interface AgentInput {
-  mode: 'spawn' | 'batch-spawn' | 'status' | 'cancel' | 'list' | 'templates' | 'get' | 'budget' | 'plan' | 'wait' | 'message' | 'wrfc-chains' | 'wrfc-history' | 'cohort-status' | 'cohort-report';
+  mode: 'spawn' | 'batch-spawn' | 'status' | 'cancel' | 'list' | 'templates' | 'get' | 'budget' | 'plan' | 'wait' | 'message' | 'contracts' | 'contract-history' | 'cohort-status' | 'cohort-report';
   // spawn
   task?: string | undefined;
   authoritativeTask?: string | undefined;
@@ -293,12 +290,10 @@ export interface AgentInput {
    * JSON schema so a model cannot ask for it.
    */
   captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined;
-  /** Internal prompt addendum used by WRFC phase agents. */
+  /** Internal: text appended verbatim to the spawned agent's system prompt. */
   systemPromptAddendum?: string | undefined;
-  /** Internal: units a batch proposed for one contract, carried to its owner. */
-  proposedUnits?: AgentInput['tasks'] | undefined;
-  /** Internal: set by the topology guard when a requested fan-out was collapsed into this owner chain. */
-  fanoutCollapse?: FanoutCollapseInfo | undefined;
+  /** Internal: units proposed for the contract this spawn starts, carried to its owner and weighed by the planner. */
+  proposedUnits?: readonly ProposedUnit[] | undefined;
   successCriteria?: string[] | undefined;
   requiredEvidence?: string[] | undefined;
   writeScope?: string[] | undefined;
@@ -313,9 +308,9 @@ export interface AgentInput {
   /**
    * What the caller wants the agent's final message to LOOK like.
    *
-   * - 'report'         (default) The structured completion report the WRFC
-   *                    controller parses, plus its prose Summary/Changes/
-   *                    Decisions/Issues/Uncertainties sections.
+   * - 'report'         (default) The structured completion report, plus its
+   *                    prose Summary/Changes/Decisions/Issues/Uncertainties
+   *                    sections.
    * - 'conversational' A reply to a person. No completion report, no section
    *                    headings, no template, just the answer.
    *
@@ -369,6 +364,8 @@ export interface AgentInput {
   // message
   message?: string | undefined;
   kind?: 'directive' | 'status' | 'question' | 'finding' | 'review' | 'handoff' | 'escalation' | 'completion' | undefined;
-  // wrfc-history: the contract to read
+  // contracts: whether ended contracts are listed
+  includeTerminal?: boolean | undefined;
+  // contract-history: the contract to read
   contractId?: string | undefined;
 }

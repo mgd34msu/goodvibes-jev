@@ -17,16 +17,22 @@ export interface AgentCompletionRecordView {
   readonly streamingContent?: string | undefined;
   readonly error?: string | undefined;
   readonly contractId?: string | undefined;
+  readonly contractRole?: 'owner' | 'unit' | 'planner' | undefined;
 }
+
+/** Said for a contract member's run that finished with nothing to report. */
+export const CONTRACT_CHECKS_FOLLOW = "The contract's checks will follow.";
 
 /**
  * The answer to send for a finished run.
  *
  * A completed run says what it produced. Nothing produced is silence, the
  * owner ruling is that work with nothing to report says nothing, and an empty
- * body closes the run out without notifying anyone. The one exception is a
- * write-review-fix-confirm chain still in flight, which is a fact the reader is
- * owed because more messages are coming.
+ * body closes the run out without notifying anyone. The one exception is an
+ * agent that worked a contract's unit: the contract's checks and its answer
+ * still follow, a fact the reader is owed because more messages are coming. A
+ * contract's owner record always carries the contract's answer when it
+ * completes, so it never reaches that line.
  *
  * `progress` is deliberately never a fallback: it is a status line
  * ("Turn 3 · Read(src/parse.ts)"), and a status line is not an outcome.
@@ -39,7 +45,7 @@ export function renderAgentCompletionAnswer(record: AgentCompletionRecordView): 
     // runtime regenerates the reply once and then substitutes a plain notice
     // (agents/conversational-reply-recovery.ts), so `answer` is set above.
     const contractId = typeof record.contractId === 'string' ? record.contractId.trim() : '';
-    return contractId ? 'Finished the first pass. Review, fix, and gate updates will follow here.' : '';
+    return contractId && record.contractRole !== 'owner' ? CONTRACT_CHECKS_FOLLOW : '';
   }
   return String(record.error ?? record.status);
 }

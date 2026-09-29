@@ -77,7 +77,7 @@ function buildManager(options?: {
         modelDiscovery: 'skip',
       });
       disposals.push(() => services.dispose());
-      return { services, dispose: (): void => services.dispose() };
+      return { services, contractRunner: services.contractRunner, dispose: (): void => services.dispose() };
     },
     store: new HostedSessionStore(stateDir, {
       maxSessions: 20,
@@ -220,7 +220,7 @@ test('a live session reports the policy that WOULD apply next, read from the set
         workingDir: workspaceRoot, homeDirectory: root, requestApproval: declineEverything, modelDiscovery: 'skip',
       });
       disposals.push(() => services.dispose());
-      return { services, dispose: (): void => services.dispose() };
+      return { services, contractRunner: services.contractRunner, dispose: (): void => services.dispose() };
     },
     store: new HostedSessionStore(stateDir, { maxSessions: 20, maxMessagesPerSession: 100, terminatedRetentionMs: 60_000 }),
     settings: { detachPolicy: () => policy, maxSessions: () => 8 },
@@ -414,7 +414,7 @@ test('a steer queued on the spine reaches the hosted loop, and the participant s
         workingDir: workspaceRoot, homeDirectory: root, requestApproval: declineEverything, modelDiscovery: 'skip',
       });
       disposals.push(() => services.dispose());
-      return { services, dispose: (): void => services.dispose() };
+      return { services, contractRunner: services.contractRunner, dispose: (): void => services.dispose() };
     },
     store: new HostedSessionStore(stateDir, { maxSessions: 20, maxMessagesPerSession: 100, terminatedRetentionMs: 60_000 }),
     settings: { detachPolicy: () => 'survive', maxSessions: () => 8 },

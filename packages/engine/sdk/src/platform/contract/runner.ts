@@ -38,6 +38,7 @@ import { emptyWorkItemUsage, type PriceProvenanceFn } from '../orchestration/typ
 import { emitAgentCancelled, emitAgentCompleted, emitAgentFailed } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
+import { startContractOwner } from '../tools/agent/contract-binding.js';
 import { delegationForbidden } from './batteries/request-shape.js';
 import { createUnitCheckLoop, queueSessionNudge, type ContractSessionHooks } from './agent-hooks.js';
 import { readContractConfig, type ContractConfigReader } from './config.js';
@@ -48,6 +49,8 @@ import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
 import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } from './plan-sync.js';
 import { createContractResume, type ResumeReport } from './resume.js';
+import { numberDraft } from './draft-plan.js';
+import { createContractFleetControls, type ContractFleetControls } from './fleet-controls.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
 import { createContractSteps, type ContractSteps } from './steps.js';
 import type { ContractStore } from './store.js';
@@ -60,6 +63,7 @@ import {
   type ContractRouteSelector,
   type ContractView,
   type StartContractInput,
+  type StartFromPlanInput,
 } from './types.js';
 import { createUnitFailureHandling } from './unit-failures.js';
 import { contractAgentIds, ownerRecordUsage, rollUpContractUsage, type PriceUsageFn } from './usage.js';
@@ -103,9 +107,24 @@ export interface StartedContract {
   readonly owner: AgentRecord;
 }
 
+/** The session a contract gets when an agent spawn starts it with no conversation session (AgentManager's own event session). */
+export const AGENT_MANAGER_SESSION_ID = 'agent-manager';
+
 export interface ContractRunner {
   /** Starts a contract from an ask. Returns at once with the contract and its owner agent record. */
   start(input: StartContractInput): StartedContract;
+  /**
+   * Starts a contract from a plan drafted before it (a launched plan proposal
+   * or workstream draft, design 10.4): the planner keeps the drafted units and
+   * writes their criteria, and every plan check runs.
+   */
+  startFromPlan(input: StartFromPlanInput): StartedContract;
+  /**
+   * AgentManager.spawn's seam for a spawn that is not outside every contract
+   * (design 10.3): the spawned record becomes the owner of a new contract whose
+   * ask is its task. No executor runs for it.
+   */
+  startForOwner(ownerRecord: AgentRecord): StartedContract;
   get(contractId: string): ContractView | null;
   list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined }): ContractView[];
   /** Stops a contract and everything it runs. False when it is unknown or already ended. */
@@ -122,6 +141,8 @@ export interface ContractRunner {
   serializeContract(contractId: string): string | null;
   /** Installed into AgentOrchestrator's tool dependencies and the core turn loop. */
   hooks(): ContractSessionHooks;
+  /** The fleet operator verbs' controller over every running contract's engine, with contract-qualified ids (design 8.3). */
+  fleetControls(): ContractFleetControls;
   on(listener: (event: ContractEvent) => void): () => void;
   dispose(): void;
 }
@@ -342,11 +363,38 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   }
 
   function start(input: StartContractInput): StartedContract {
-    const config = env.config();
     const id = newContractId();
-    const short = id.slice('ctr-'.length);
-    const isolation = resolveIsolation(input.isolation ?? config.isolation, input.projectRoot);
-    const owner = deps.agentManager.spawn(
+    return create(input, id, spawnOwner(input, id), {});
+  }
+
+  function startFromPlan(input: StartFromPlanInput): StartedContract {
+    const { draft, ...rest } = input;
+    const draftPlan = numberDraft(draft);
+    const id = newContractId();
+    return create(rest, id, spawnOwner(rest, id), { draftPlan });
+  }
+
+  function startForOwner(record: AgentRecord): StartedContract {
+    if (record.contractId !== undefined) throw new Error(`agent ${record.id} already belongs to contract ${record.contractId}`);
+    const id = newContractId();
+    record.contractId = id;
+    record.contractRole = 'owner';
+    record.reviewMode = 'contract';
+    startContractOwner(record, { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued` }, deps.runtimeBus);
+    const input: StartContractInput = {
+      ask: record.task,
+      sessionId: AGENT_MANAGER_SESSION_ID,
+      origin: 'agent-tool',
+      projectRoot: record.workingDirectory ?? deps.projectRoot,
+      ...(record.parentAgentId === undefined ? {} : { parentAgentId: record.parentAgentId }),
+      ...(record.proposedUnits === undefined ? {} : { proposedUnits: record.proposedUnits }),
+    };
+    return create(input, id, record, {});
+  }
+
+  /** The owner record parents and surfaces wait on (design 6.5); it runs no executor. */
+  function spawnOwner(input: Omit<StartContractInput, 'proposedUnits'>, id: string): AgentRecord {
+    return deps.agentManager.spawn(
       {
         mode: 'spawn',
         task: input.ask,
@@ -356,6 +404,17 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       },
       { contractId: id, contractRole: 'owner', progress: `Contract ${id}: queued` },
     );
+  }
+
+  function create(
+    input: Omit<StartContractInput, 'proposedUnits'> & Pick<StartContractInput, 'proposedUnits'>,
+    id: string,
+    owner: AgentRecord,
+    extra: Pick<Contract, 'draftPlan'>,
+  ): StartedContract {
+    const config = env.config();
+    const short = id.slice('ctr-'.length);
+    const isolation = resolveIsolation(input.isolation ?? config.isolation, input.projectRoot);
     const contract: Contract = {
       id,
       schemaVersion: CURRENT_CONTRACT_SCHEMA_VERSION,
@@ -383,11 +442,12 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       judgmentUsage: { calls: 0, inputTokens: 0, outputTokens: 0 },
       plannerAgentIds: [],
       ...(input.proposedUnits === undefined ? {} : { proposedUnits: input.proposedUnits }),
+      ...(extra.draftPlan === undefined ? {} : { draftPlan: extra.draftPlan }),
       createdAt: now(),
     };
     const run = newRun(contract);
     deps.store.put(contract);
-    run.decide('created', id, `origin ${input.origin}; ${isolation} isolation`);
+    run.decide('created', id, `origin ${input.origin}; ${isolation} isolation${extra.draftPlan === undefined ? '' : `; ${extra.draftPlan.units.length} drafted units`}`);
     run.emit({ type: 'CONTRACT_CREATED', contractId: id, sessionId: input.sessionId, origin: input.origin, ask: input.ask, ownerAgentId: owner.id });
     if (admitted.size < config.maxActiveContracts) {
       admit(run);
@@ -660,10 +720,17 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     ownerProgress: updateOwnerProgress,
   });
 
+  const fleetControls = createContractFleetControls({
+    runs: () => runs.values(),
+    operatorPick: (run, unitId, attemptId) => steps.operatorPick(run, unitId, attemptId),
+  });
+
   // ── The API ─────────────────────────────────────────────────────────────────
 
   return {
     start,
+    startFromPlan,
+    startForOwner,
     get: (contractId) => {
       const contract = deps.store.get(contractId);
       return contract === null ? null : structuredClone(contract);
@@ -685,6 +752,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
     importContract: (snapshotJson, force = false) => deps.store.importContract(snapshotJson, force),
     serializeContract: (contractId) => deps.store.serialize(contractId),
     hooks: () => checks.hooks,
+    fleetControls: () => fleetControls,
     on,
     dispose: () => {
       if (disposed) return;

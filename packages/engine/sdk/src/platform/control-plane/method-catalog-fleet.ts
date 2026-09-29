@@ -62,7 +62,7 @@ export const builtinGatewayFleetMethodDescriptors: readonly GatewayMethodDescrip
   methodDescriptor({
     id: 'fleet.snapshot',
     title: 'Fleet Snapshot',
-    description: 'Return a point-in-time capture of every live/completed runtime process (agents, WRFC chains/subtasks, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.',
+    description: 'Return a point-in-time capture of every live/completed runtime process (agents, contracts with their groups and units, workflow FSMs/triggers/schedules, watchers, background processes) as a flat, parentId-linked node list. Capped at 2000 nodes (truncated:true + totalCount when the live fleet exceeds the cap), use fleet.list to page through a larger fleet.',
     category: 'fleet',
     scopes: ['read:fleet'],
     transport: ['ws'],

@@ -128,9 +128,9 @@ export async function buildChildFailureEnvelope(
   opts?: { readonly transcriptTail?: readonly ConversationMessageSnapshot[] | undefined },
 ): Promise<ChildFailureEnvelope> {
   const reasonCode = await classifyChildFailureReason(record);
-  // A failed WRFC owner's fullOutput is set to the failure message itself
-  // (completeOwnerAgent), which would merely echo reason.message, treat that as
-  // "no genuine output" so partialOutputs stays honest rather than redundant.
+  // A failed record whose fullOutput is the failure message itself would merely
+  // echo reason.message; treat that as "no genuine output" so partialOutputs
+  // stays honest rather than redundant.
   const lastOutput = record.fullOutput
     && record.fullOutput.trim().length > 0
     && record.fullOutput.trim() !== (record.error ?? '').trim()

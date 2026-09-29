@@ -29,7 +29,7 @@ function baseCtx(overrides: Partial<CompactionContext>): CompactionContext {
     messages: [{ role: 'user', content: 'please do the original task' }],
     sessionMemories: [],
     agents: [],
-    wrfcChains: [],
+    contracts: [],
     activePlan: null,
     lineageEntries: [],
     compactionCount: 0,

@@ -103,7 +103,9 @@ type AgentOrchestratorToolDeps = {
   /** Additional per-tool-execution tap (e.g. CI auto-watch minting); composed with the reindex scheduler, never blocking. */
   readonly toolExecutionObserver?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined;
   /** The contract runner's agent-loop seams (`runner.hooks()`), passed into every run context; see AgentOrchestratorRunContext.contractHooks. */
-  readonly contractHooks?: import('../contract/agent-hooks.js').ContractAgentHooks | undefined;
+  readonly contractHooks: import('../contract/agent-hooks.js').ContractAgentHooks;
+  /** Starts the contracts the agent and workflow tools hand work to (registerAllTools). */
+  readonly contractRunner: Pick<import('../contract/runner.js').ContractRunner, 'start' | 'list' | 'get'>;
   readonly sessionOrchestration: import('../sessions/orchestration/index.js').CrossSessionTaskRegistry;
   readonly archetypeLoader?: import('./archetypes.js').ArchetypeLoader | undefined;
   readonly configManager?: ConfigManager | undefined;
@@ -408,6 +410,8 @@ export class AgentOrchestrator {
         : undefined;
       const registered = registerAllTools(registry, {
         ...this.toolDeps,
+        contractRunner: this.toolDeps.contractRunner,
+        projectRoot: defaultCwd,
         workingDirectory: cwd,
         fileCache: isDefaultCwd ? this.toolDeps.fileCache : undefined,
         projectIndex: isDefaultCwd ? this.toolDeps.projectIndex : undefined,

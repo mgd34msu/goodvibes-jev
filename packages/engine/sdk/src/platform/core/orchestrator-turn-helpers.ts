@@ -14,7 +14,7 @@ import { autoSpawnPendingItems } from './orchestrator-tool-runtime.js';
 import type { ToolCall, ToolResult } from '../types/tools.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import type { ContractSessionHooks } from '../contract/agent-hooks.js';
-import { buildWrfcWorkflowRoutingPrompt, toolResultIndicatesAuthoritativeWrfcChain } from './wrfc-routing.js';
+import { toolResultStartedContract } from '../contract/intake-route.js';
 
 type EmitterContextFactory = (turnId: string) => import('../runtime/emitters/index.js').EmitterContext;
 export type ChatResponseWithReasoning = Awaited<ReturnType<LLMProvider['chat']>> & {
@@ -89,11 +89,6 @@ export function prepareConversationForTurn(
     }
   } else {
     conversation.addUserMessage(content ?? text);
-  }
-
-  const wrfcRoutingPrompt = buildWrfcWorkflowRoutingPrompt(text);
-  if (wrfcRoutingPrompt) {
-    conversation.addSystemMessage(wrfcRoutingPrompt);
   }
 
   const activePlan = planManager?.getActive(sessionId) ?? null;
@@ -204,6 +199,9 @@ export function holdSessionFinalResponse(
   }));
 }
 
+/** Said to the conversation model after its agent tool call started a contract. */
+const CONTRACT_STARTED_NOTE = 'A contract now owns this work: its units are checked against the acceptance criteria while they work, and its answer arrives when every criterion is met. Do not start other agents for the same work; read the contract with the agent tool\'s contracts mode instead.';
+
 function attachAuthoritativeTaskToAgentCalls(toolCalls: readonly ToolCall[], userText: string): ToolCall[] {
   const authoritativeTask = userText.trim();
   if (!authoritativeTask) return [...toolCalls];
@@ -275,7 +273,7 @@ export async function handleToolResponseOutcome(args: {
     const mode = (tc.arguments as Record<string, unknown>).mode;
     return tc.name === 'agent' && (mode === 'spawn' || mode === 'batch-spawn');
   });
-  const spawnedAuthoritativeWrfcChain = spawnedAgents && results.some(toolResultIndicatesAuthoritativeWrfcChain);
+  const startedContract = spawnedAgents && results.some(toolResultStartedContract);
 
   if (spawnedAgents || args.messageQueueLength > 0) {
     if (spawnedAgents) {
@@ -283,10 +281,8 @@ export async function handleToolResponseOutcome(args: {
       const activePlan = planManager?.getActive(args.sessionId) ?? null;
       if (activePlan) {
         const summary = planManager?.getSummary(activePlan) ?? '';
-        if (spawnedAuthoritativeWrfcChain) {
-          args.conversation.addSystemMessage(
-            `A WRFC owner chain is now the authoritative owner for this deliverable. Do not spawn additional root agents for review, testing, verification, or fixing this same work; inspect the WRFC chain status instead. Plan progress: ${summary}.`
-          );
+        if (startedContract) {
+          args.conversation.addSystemMessage(`${CONTRACT_STARTED_NOTE} Plan progress: ${summary}.`);
         } else {
           const nextItems = planManager?.getNextItems(activePlan) ?? [];
           if (nextItems.length > 0) {
@@ -316,10 +312,8 @@ export async function handleToolResponseOutcome(args: {
           }
         }
       } else {
-        if (spawnedAuthoritativeWrfcChain) {
-          args.conversation.addSystemMessage(
-            'A WRFC owner chain is now the authoritative owner for this deliverable. Do not spawn additional root agents for review, testing, verification, or fixing this same work; inspect the WRFC chain status instead.'
-          );
+        if (startedContract) {
+          args.conversation.addSystemMessage(CONTRACT_STARTED_NOTE);
         } else {
           args.conversation.addSystemMessage(
             'You spawned an agent for part of the task. If there are remaining tasks, continue spawning agents now.'

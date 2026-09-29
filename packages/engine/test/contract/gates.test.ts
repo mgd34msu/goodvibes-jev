@@ -1,5 +1,5 @@
 /**
- * Quality gates (contract/gates.ts), moved from the WRFC gate modules: skip
+ * Quality gates (contract/gates.ts): skip
  * detection, command execution with its timeout, the gate runner over
  * `contract.gates` with CONTRACT_GATE_RESULT events, and failing-gate selection.
  */

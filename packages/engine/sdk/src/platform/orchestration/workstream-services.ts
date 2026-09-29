@@ -10,6 +10,13 @@
 // create -> propose -> approve -> launch flow: render the plan before spending
 // anything, the same shape a plan approval step has.
 //
+// Launching an approved draft starts a contract
+// (docs/design/contract-runner.md 10.4): a multi-item draft through
+// `runner.startFromPlan` with the draft's items as the drafted units, a
+// single-item draft through `runner.start` with the item's task as the ask.
+// The draft is a draft of a contract plan; the engine below keeps running and
+// resuming workstreams it already holds, and the surface reads it for status.
+//
 // So WorkstreamDraft is FACADE state, held on this module's instance
 // (constructed once, threaded onto the caller's command context), never a
 // module-level ambient global. Durability is facade-owned too: the facade
@@ -19,7 +26,7 @@
 // is still here to launch afterward. The engine gains no draft concept. A
 // journal write that fails degrades to in-memory-only for that one draft,
 // never a crash, and the store never resurrects a launched draft (its snapshot
-// is removed the moment the engine takes ownership).
+// is removed the moment its contract starts).
 // ---------------------------------------------------------------------------
 
 import {
@@ -28,9 +35,11 @@ import {
   type OrchestrationEngine,
 } from './engine.js';
 export type { OrchestrationEngine } from './engine.js';
-import { fromChainSpec } from './controller-compat.js';
-import { fromPlanProposal } from './proposal-workstream.js';
-import type { WorkstreamIsolation } from './types.js';
+import { draftFromProposal } from './proposal-workstream.js';
+import type { PhaseSpec, WorkItemSpec, WorkstreamIsolation } from './types.js';
+import { getContractCommitScope, type ContractCommitScope } from '../contract/config.js';
+import type { ContractRunner } from '../contract/runner.js';
+import type { DraftedPlan } from '../contract/types.js';
 import { AdaptivePlanner, type PlannerInputs } from '../core/adaptive-planner.js';
 import {
   decomposeGoal,
@@ -53,6 +62,10 @@ export interface WorkstreamServicesDeps {
   readonly adaptivePlanner: AdaptivePlanner;
   readonly runtimeBus: RuntimeEventBus;
   readonly projectRoot: string;
+  /** Starts the contract an approved draft launches as (design 10.4). */
+  readonly contractRunner: Pick<ContractRunner, 'start' | 'startFromPlan'>;
+  /** The session a launched contract belongs to: a fixed id, or read at launch time. */
+  readonly sessionId: string | (() => string);
 }
 
 // WorkstreamDraft + WorkstreamDraftProvenance live in workstream-draft-types.ts
@@ -64,7 +77,7 @@ import type { WorkstreamDraft, WorkstreamDraftProvenance } from './workstream-dr
 /** `ctx.session.workstreamEngine`'s real shape: the live engine plus the draft-proposal bookkeeping the engine itself has no concept of. */
 export interface WorkstreamCommandService {
   readonly engine: OrchestrationEngine;
-  /** Spawn a bounded read-only planning agent to decompose the goal (with automatic heuristic fallback), then hold the draft. Async because the planning agent is real. `isolation` omitted ⇒ the engine's own default ('shared'); see CreateWorkstreamInput.isolation. */
+  /** Spawn a bounded read-only planning agent to decompose the goal (with automatic heuristic fallback), then hold the draft. Async because the planning agent is real. `isolation` omitted ⇒ the launched contract uses the runner's default isolation (StartContractInput.isolation). */
   proposeDraft(task: string, isolation?: WorkstreamIsolation): Promise<WorkstreamDraft>;
   getDraft(id: string): WorkstreamDraft | undefined;
   listDrafts(): WorkstreamDraft[];
@@ -82,8 +95,8 @@ export interface WorkstreamCommandService {
   moveItem(id: string, itemRef: string, toPosition: number): WorkstreamDraft | { error: string } | undefined;
   approveDraft(id: string): WorkstreamDraft | undefined;
   removeDraft(id: string): boolean;
-  /** Materialize an approved draft into a real, running Workstream (engine.createWorkstream + start), then drop the draft. Null when the draft is missing or not approved. */
-  launchDraft(id: string): { workstreamId: string } | null;
+  /** Start an approved draft's contract (a multi-item draft through runner.startFromPlan, a single-item draft through runner.start), then drop the draft. Returns the contract's id and its owner agent's id; null when the draft is missing or not approved. */
+  launchDraft(id: string): { contractId: string; ownerAgentId: string } | null;
 }
 
 export interface WorkstreamServices {
@@ -160,12 +173,38 @@ function toProvenance(result: DecomposeGoalResult): WorkstreamDraftProvenance {
   };
 }
 
+/**
+ * The draft's phase: one engineer phase whose capacity is the item count. It
+ * is what the draft render shows; a launched draft runs as a contract, whose
+ * planner places the units in groups.
+ */
+function draftPhases(commitScope: ContractCommitScope, capacity: number): PhaseSpec[] {
+  return [{ role: 'engineer', capacity: Math.max(1, capacity), kind: 'engineer', gate: { scope: commitScope, gates: [] } }];
+}
+
+/** A multi-item draft's items as a drafted plan: one unit per item, its task the unit's brief. */
+function draftedPlanFromSpec(goal: string, spec: CreateWorkstreamInput): DraftedPlan {
+  return {
+    goal,
+    units: spec.items.map((item, index) => ({
+      id: item.id ?? `item-${index + 1}`,
+      title: item.title,
+      brief: item.task,
+      dependsOn: [...(item.dependsOn ?? [])],
+      ...(item.files !== undefined && item.files.length > 0 ? { files: [...item.files] } : {}),
+      ...(item.attempts !== undefined ? { attempts: item.attempts } : {}),
+    })),
+  };
+}
+
 function createWorkstreamCommandService(
   engine: OrchestrationEngine,
   adaptivePlanner: AdaptivePlanner,
   configManager: Pick<ConfigManager, 'get' | 'getCategory'>,
   agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel'>,
   projectRoot: string,
+  contractRunner: Pick<ContractRunner, 'start' | 'startFromPlan'>,
+  sessionId: string | (() => string),
 ): WorkstreamCommandService {
   const drafts = new Map<string, WorkstreamDraft>();
 
@@ -211,31 +250,45 @@ function createWorkstreamCommandService(
   }
 
   /**
-   * Derive the launchable CreateWorkstreamInput from the decomposition
-   * proposal.
-   *
-   * THE BOUNDARY, stated honestly (and repeated in the draft render):
-   *  - A genuinely MULTI-ITEM proposal (the planning agent decomposed the goal
-   *    into >1 work item) is assembled by fromPlanProposal into the
-   *    REAL multi-item workstream: one engineer-phase item per proposal
-   *    item, inter-item dependencies preserved as scheduling constraints, and
-   *    workstream-level provenance carried. This is the plan the engine runs,
-   *    no flattening.
+   * Derive the draft's spec from the decomposition proposal. The rendered
+   * draft shows THIS spec, and launchDraft builds the contract from it, so the
+   * preview, the edits and the launch are always the same plan.
+   *  - A MULTI-ITEM proposal: one item per proposal item (its brief the item's
+   *    task, dependencies, likely files and attempts carried), checked for
+   *    dangling dependencies and cycles (draftFromProposal throws on either).
    *  - A SINGLE-ITEM proposal (the heuristic single-item path, a gate-decline,
-   *    or an agent that honestly returned one item) keeps the fromChainSpec
-   *    COMPAT path: byte-for-byte the same single engineer-phase chain
-   *    WrfcController.createChain would start. A single item carries no
-   *    dependencies and no multi-item structure, so the proposal mapping would
-   *    add nothing, the compat path is the honest, unchanged choice.
-   *
-   * The rendered draft shows THIS spec, so the proposal preview and the launch
-   * are always the same plan.
+   *    or an agent that returned one item): one item whose task is the goal.
    */
   function buildSpec(task: string, proposal: PlanProposal): CreateWorkstreamInput {
+    const commitScope = getContractCommitScope(configManager);
     if (proposal.workItems.length > 1) {
-      return fromPlanProposal(proposal, configManager);
+      const plan = draftFromProposal(proposal);
+      const items: WorkItemSpec[] = plan.units.map((unit) => ({
+        id: unit.id,
+        title: unit.title,
+        task: unit.brief,
+        ...(unit.dependsOn.length > 0 ? { dependsOn: [...unit.dependsOn] } : {}),
+        ...(unit.files !== undefined ? { files: [...unit.files] } : {}),
+        ...(unit.attempts !== undefined ? { attempts: unit.attempts } : {}),
+      }));
+      return {
+        title: proposal.task,
+        phases: draftPhases(commitScope, items.length),
+        items,
+        provenance: {
+          ...(proposal.decomposedBy ? { decomposedBy: proposal.decomposedBy } : {}),
+          proposalId: proposal.id,
+          strategy: proposal.strategy,
+          ...(proposal.agentCostUsd !== undefined ? { agentCostUsd: proposal.agentCostUsd } : {}),
+          ...(proposal.elapsedMs !== undefined ? { elapsedMs: proposal.elapsedMs } : {}),
+        },
+      };
     }
-    return fromChainSpec({ id: `item-${crypto.randomUUID().slice(0, 8)}`, task }, configManager);
+    return {
+      title: task,
+      phases: draftPhases(commitScope, 1),
+      items: [{ id: `item-${crypto.randomUUID().slice(0, 8)}`, title: task, task }],
+    };
   }
 
   /**
@@ -257,6 +310,27 @@ function createWorkstreamCommandService(
     draft.approved = false;
     store.save(draft);
     return draft;
+  }
+
+  /**
+   * Start an approved draft's contract (design 10.4). A multi-item draft is a
+   * drafted plan: its items become the units (task as brief), the planner
+   * writes only their criteria, and every plan check runs. A single-item draft
+   * is an ask: the item's task starts the contract.
+   */
+  function startDraftContract(draft: WorkstreamDraft): ReturnType<ContractRunner['start']> {
+    const spec = draft.spec;
+    const launch = {
+      sessionId: typeof sessionId === 'function' ? sessionId() : sessionId,
+      origin: 'proposal' as const,
+      projectRoot,
+      ...(spec.isolation !== undefined ? { isolation: spec.isolation } : {}),
+      ...(spec.budget !== undefined ? { budget: spec.budget } : {}),
+    };
+    if (spec.items.length > 1) {
+      return contractRunner.startFromPlan({ ...launch, ask: draft.task, draft: draftedPlanFromSpec(draft.task, spec) });
+    }
+    return contractRunner.start({ ...launch, ask: spec.items[0]?.task ?? draft.task });
   }
 
   return {
@@ -310,11 +384,10 @@ function createWorkstreamCommandService(
     launchDraft(id) {
       const draft = drafts.get(id);
       if (!draft || !draft.approved) return null;
-      const workstream = engine.createWorkstream(draft.spec);
-      engine.start(workstream.id);
+      const started = startDraftContract(draft);
       drafts.delete(id);
-      store.remove(id); // launched: the engine now owns it (its own journal), so drop the draft snapshot
-      return { workstreamId: workstream.id };
+      store.remove(id); // launched: the contract store now owns it, so drop the draft snapshot
+      return { contractId: started.contract.id, ownerAgentId: started.owner.id };
     },
   };
 }
@@ -323,11 +396,10 @@ function createWorkstreamCommandService(
  * Constructs one OrchestrationEngine instance and its command-facing facade.
  * `persist` and `createWorktree` are left at the engine's own defaults:
  * journal-backed snapshots under .goodvibes/orchestration/ (so resumeAllFromDisk
- * below has something to resume) and a plain AgentWorktree(projectRoot) for the
- * (default) `shared`-isolation path. A draft's `isolation: 'worktree'` opts a
- * single workstream into per-item git-worktree isolation
- * (WorktreeIsolationManager, engine-side) instead, the engine, not this facade,
- * owns that lifecycle.
+ * below has something to resume) and a plain AgentWorktree(projectRoot). The
+ * engine keeps the workstreams it already holds (resumed below, read by the
+ * surface's status, kill and insert-phase commands and the fleet); a launched
+ * draft starts a contract instead, and a draft's `isolation` is handed to it.
  */
 export function createWorkstreamServices(deps: WorkstreamServicesDeps): WorkstreamServices {
   const orchestrationEngine = createOrchestrationEngine({
@@ -352,6 +424,8 @@ export function createWorkstreamServices(deps: WorkstreamServicesDeps): Workstre
     deps.configManager,
     deps.agentManager,
     deps.projectRoot,
+    deps.contractRunner,
+    deps.sessionId,
   );
   return { orchestrationEngine, workstreamCommands };
 }

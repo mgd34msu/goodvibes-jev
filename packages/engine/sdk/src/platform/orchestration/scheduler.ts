@@ -51,9 +51,8 @@ export interface PhaseClaim {
  * have terminally failed. Pure (no side effects): the engine's per-tick
  * dependency pre-pass (applyDependencyGates, engine.ts) calls this and applies
  * the state/blockedReason transition. Missing dependency ids (no item in the
- * workstream matches) are ignored here, assembly (fromPlanProposal) already
- * asserts referential integrity, so a dangling id at runtime is treated as
- * "not blocking" rather than an eternal block.
+ * workstream matches) are ignored here: a dangling id at runtime is treated
+ * as "not blocking" rather than an eternal block.
  */
 export interface DependencyStatus {
   /** True when every dependency has reached 'passed' (or there are none). */

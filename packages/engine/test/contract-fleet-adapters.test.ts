@@ -56,6 +56,7 @@ function makeAgent(overrides: Partial<AgentRecord> & { id: string }): AgentRecor
 function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistryDeps {
   return {
     agentManager: { list: () => [], cancel: () => false },
+    contractRunner: { list: () => [], cancel: () => false },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {
@@ -296,15 +297,6 @@ describe('contract fleet: a running contract in the registry', () => {
       priceUsage: (model) => (model === 'priced' ? 0.2 : null),
     }));
     expect(nodeById(registry, 'owner')).toMatchObject({ costUsd: 0.2, costState: 'priced', model: 'priced' });
-    registry.dispose();
-  });
-
-  test('without a contract runner the fleet shows no contract nodes and contract agents are roots', () => {
-    const registry = createProcessRegistry(makeDeps({
-      agentManager: { list: () => [makeAgent({ id: 'eng-1', contractId: 'ctr-run', contractUnitId: 'u1' })], cancel: () => false },
-    }));
-    expect(registry.query({ kinds: ['contract', 'contract-group', 'contract-unit'] }).nodes).toEqual([]);
-    expect(nodeById(registry, 'eng-1').parentId).toBeUndefined();
     registry.dispose();
   });
 });

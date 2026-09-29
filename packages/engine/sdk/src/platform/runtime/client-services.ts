@@ -118,6 +118,9 @@ import { resolveRuntimeFeatureFlags } from './feature-flag-composition.js';
 import { createProviderStack } from './provider-stack.js';
 import type { ProviderModelDiscoveryMode, ProviderRegistryFactory } from './provider-stack.js';
 import { createAgentGraph } from './agent-graph.js';
+import { composeContractRunner, resumeContracts } from './contract-composition.js';
+import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
+import type { ContractRunner } from '../contract/runner.js';
 import { attachConfigEmitBridge } from './config/index.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from './feature-announcements.js';
 import type { PolicyRuntimeState } from './permissions/policy-runtime.js';
@@ -215,6 +218,8 @@ export interface ClientRuntimeServices {
   readonly agentManager: AgentManager;
   readonly agentMessageBus: AgentMessageBus;
   readonly agentOrchestrator: AgentOrchestrator;
+  /** The contract runner every spawn that is not outside a contract, and every turn routed to work, goes to (contract-composition.ts). */
+  readonly contractRunner: ContractRunner;
   readonly sessionManager: SessionManager;
   readonly sessionOrchestration: CrossSessionTaskRegistry;
   readonly workflow: WorkflowServices;
@@ -529,7 +534,20 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const contextAccountingHolder = new ContextAccountingHolder();
   const sessionLiveTurnControls = new SessionLiveTurnControlsHolder();
 
+  // This composition hosts no third-party coding agents, so the fleet counts native agents only.
+  const contracts = composeContractRunner({
+    runtimeBus: options.runtimeBus,
+    agentManager: agents.agentManager,
+    agentMessageBus: agents.agentMessageBus,
+    configManager,
+    providerRegistry: providers.providerRegistry,
+    projectRoot: workingDirectory,
+    fleetCapacity: makeRuntimeFleetProbe({ readConfig: (key) => configManager.get(key as never), agentManager: agents.agentManager, acpHost: { list: () => [] } }),
+    runtimeStore: options.runtimeStore,
+  });
   agents.agentOrchestrator.setDependencies({
+    contractRunner: contracts.runner,
+    contractHooks: contracts.runner.hooks(),
     sandboxEscalationHandler: approvalHandlers.sandboxEscalationHandler,
     execPromptAnswerHandler: approvalHandlers.execPromptAnswerHandler,
     localhostFetchApproval: approvalHandlers.localhostFetchApproval,
@@ -573,6 +591,8 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   disposalScope.registry.add('cross-session task registry', () => sessionOrchestration.dispose());
   disposalScope.registry.add('agent orchestrator', () => agents.agentOrchestrator.dispose());
   disposalScope.registry.add('hosted agent runs', () => { cancelAllAgentRuns(agents.agentManager); });
+  disposalScope.registry.add('contract runner', () => contracts.dispose());
+  void resumeContracts(contracts.runner, workingDirectory);
 
   const memoryAccess = options.memory
     ? new MemorySpineClient({
@@ -606,6 +626,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     agentManager: agents.agentManager,
     agentMessageBus: agents.agentMessageBus,
     agentOrchestrator: agents.agentOrchestrator,
+    contractRunner: contracts.runner,
     sessionManager,
     sessionOrchestration,
     workflow,

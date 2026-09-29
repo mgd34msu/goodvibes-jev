@@ -192,6 +192,13 @@ export interface Escalations {
   /** The best-of-N selection did not act (6.2): ask the owner which attempt to take. */
   attemptsUndecided(run: ContractRun, unitId: string, selection: AttemptSelectionRecord): Promise<void>;
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;
+  /**
+   * An operator picked a unit's attempt through `fleet.attempts.pick`: the
+   * unit's open `attempts-undecided` escalation closes, and the attempt is
+   * taken as the owner's pick would be. The caller has checked that the
+   * attempt is one of the unit's passing candidates.
+   */
+  operatorPick(run: ContractRun, unitId: string, attemptId: string): Promise<void>;
 }
 
 export function createEscalations(context: StepContext, rejudge: Rejudge): Escalations {
@@ -475,7 +482,15 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     };
   }
 
-  return { raise, unitAwaitsOwner, attemptsUndecided, reply };
+  async function operatorPick(run: ContractRun, unitId: string, attemptId: string): Promise<void> {
+    for (const escalation of open(run)) {
+      if (escalation.reason === 'attempts-undecided' && escalation.targetId === unitId) escalation.resolvedAt = run.env.now();
+    }
+    resume(run);
+    await acceptAttempt(run, unitId, attemptId, 'picked by the operator (fleet.attempts.pick)');
+  }
+
+  return { raise, unitAwaitsOwner, attemptsUndecided, reply, operatorPick };
 }
 
 /** Criteria of a target that read unmet, and those that read unshown, by id. */

@@ -10,7 +10,7 @@
  */
 import { checkBudget } from './budget.js';
 import { createCancellationRegistry, type CancellationRegistry } from './cancellation.js';
-import type { ContractUnitSettlement, PhaseRunnerAgentManagerLike, WrfcWorktreeOps } from './phase-runner.js';
+import type { ContractUnitSettlement, PhaseRunnerAgentManagerLike, WorktreeOps } from './phase-runner.js';
 import { runPhase } from './phase-runner.js';
 import { snapshotDirtyTree, type DirtyLaunchSnapshot } from './dirty-guard.js';
 import { createWorktreeIsolationManager, type WorktreeIsolationManager } from './worktree-isolation.js';
@@ -75,7 +75,7 @@ export interface OrchestrationEngineDeps {
   /** A subdirectory of the snapshot directory for this engine alone (the contract runner passes the contract id). */
   readonly stateNamespace?: string | undefined;
   readonly sessionId?: string | undefined;
-  readonly createWorktree?: (() => WrfcWorktreeOps) | undefined;
+  readonly createWorktree?: (() => WorktreeOps) | undefined;
   readonly priceUsage?: ((model: string | undefined, usage: WorkItemUsage) => number | null) | undefined;
   /** Provenance for the same resolution priceUsage prices with, stamped onto committed usage records at pricing time. */
   readonly priceProvenance?: PriceProvenanceFn | undefined;
@@ -117,7 +117,7 @@ export interface CreateWorkstreamInput {
    * contrast with `'worktree'` mode.
    */
   readonly isolation?: WorkstreamIsolation | undefined;
-  /** Workstream provenance (set by fromPlanProposal; omitted by compat callers). */
+  /** Workstream provenance (set on a draft built from a multi-item PlanProposal; omitted otherwise). */
   readonly provenance?: WorkstreamProvenance | undefined;
   /** Edge-release policy; 'reviewed-and-merged' also engages the elastic pool. Absent = 'passed' (legacy). */
   readonly releasePolicy?: ReleasePolicy | undefined;

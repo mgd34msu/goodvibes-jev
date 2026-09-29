@@ -79,6 +79,7 @@ function hostedSession(execPosture?: HostedSessionExecPosture, stated: 'floor' |
     workspaceRoot: workspace,
     floor: {
       services,
+      contractRunner: services.contractRunner,
       ...(execPosture !== undefined && stated === 'floor' ? { execPosture: () => execPosture } : {}),
       dispose: (): void => {},
     },

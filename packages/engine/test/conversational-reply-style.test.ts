@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { buildOrchestratorSystemPrompt } from '../sdk/src/platform/agents/orchestrator-prompts.js';
-import { continuationChainOptions } from '../sdk/src/platform/agents/conversation-continuation.js';
+import { continuationContractOptions } from '../sdk/src/platform/agents/conversation-continuation.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 
 function record(overrides: Partial<AgentRecord> = {}): AgentRecord {
@@ -89,20 +89,20 @@ describe('a conversational spawn is asked for a reply, not a report', () => {
 
 describe('the continuation half of the gate pairs the same two decisions', () => {
   test('a channel follow-up gets a conversational reply and no chain', () => {
-    expect(continuationChainOptions({ surfaceKind: 'ntfy', body: 'and what about the tests?' })).toEqual({
+    expect(continuationContractOptions({ surfaceKind: 'ntfy', body: 'and what about the tests?' })).toEqual({
       outsideContract: true,
       replyStyle: 'conversational',
     });
   });
 
   test('authorized work keeps the chain and the report', () => {
-    expect(continuationChainOptions({
+    expect(continuationContractOptions({
       surfaceKind: 'ntfy',
       metadata: { 'goodvibes.workAuthorized': true },
     })).toEqual({});
   });
 
   test('a local surface keeps the chain and the report', () => {
-    expect(continuationChainOptions({ surfaceKind: 'tui' })).toEqual({});
+    expect(continuationContractOptions({ surfaceKind: 'tui' })).toEqual({});
   });
 });

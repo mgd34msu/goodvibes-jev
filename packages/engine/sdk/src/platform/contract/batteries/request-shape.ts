@@ -4,7 +4,8 @@
  * planning. Four yes/no questions about `{ request }`, asked in one request.
  *
  * It replaces the delegation, parallel fan-out, no-write and design-only
- * phrase lists the WRFC routing and batch policy used to guess the same things.
+ * phrase lists the retired review loop's routing and batch policy used to guess
+ * the same things.
  *
  * Bands: a wrong "the user forbids delegation" or "the user forbids writing"
  * costs a slower or read-only contract, while a wrong "no" does work the user

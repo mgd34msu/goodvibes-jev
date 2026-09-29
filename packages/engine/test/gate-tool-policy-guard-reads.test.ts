@@ -1,10 +1,10 @@
 // Ported from the tool policy guard tests in goodvibes-agent
 // src/test/tools/agent.test.ts (the guard hoisted to gate/policy/). The agent
-// test drove the guard through a real agent tool built on the WRFC
-// controller; here a fake agent tool with the same mode enum stands in, since
-// what is under test is the guard's allowlist, not the agent manager. The
-// goodvibes_context wrapper stays with the product and is passed in, and the
-// agent tool's WRFC-only modes are not in the allowlist.
+// test drove the guard through a real agent tool built on the agent manager;
+// here a fake agent tool with the same mode enum stands in, since what is under
+// test is the guard's allowlist, not the agent manager. The goodvibes_context
+// wrapper stays with the product and is passed in, and the agent tool's modes
+// are allowlisted by name.
 // Part two: read, inspect, control, analyze, registry, find, web search,
 // the durable workflow tools, and the product-supplied pieces.
 import { useGateReadings } from './_helpers/gate-readings.ts';
@@ -41,7 +41,7 @@ import {
 } from '../sdk/src/platform/gate/policy/index.ts';
 
 /** The agent tool's own mode enum, as the engine's agent tool declares it. */
-const AGENT_TOOL_MODES = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'wrfc-chains', 'wrfc-history', 'cohort-status', 'cohort-report'] as const;
+const AGENT_TOOL_MODES = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'contracts', 'contract-history', 'cohort-status', 'cohort-report'] as const;
 
 function makeFakeAgentTool(): { readonly tool: Tool; readonly calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];

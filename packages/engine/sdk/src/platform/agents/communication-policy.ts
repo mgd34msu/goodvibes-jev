@@ -5,8 +5,6 @@ export type AgentCommunicationRole =
   | 'planner'
   | 'engineer'
   | 'reviewer'
-  | 'fixer'
-  | 'verifier'
   | 'researcher'
   | 'integrator'
   | 'general';
@@ -51,7 +49,8 @@ function sharesCohort(from: AgentCommunicationMetadata, to: AgentCommunicationMe
   return !!from.cohort && from.cohort === to.cohort;
 }
 
-function sharesWrfc(from: AgentCommunicationMetadata, to: AgentCommunicationMetadata): boolean {
+/** Both agents work units of the same contract. */
+function sharesContract(from: AgentCommunicationMetadata, to: AgentCommunicationMetadata): boolean {
   return !!from.contractId && from.contractId === to.contractId;
 }
 
@@ -84,15 +83,10 @@ export function evaluateCommunicationRoute(input: {
     }
   }
 
-  if (sharesWrfc(from, to)) {
-    if (
-      (from.role === 'reviewer' && ['review', 'finding', 'directive'].includes(kind)) ||
-      (from.role === 'fixer' && ['status', 'question', 'handoff', 'completion'].includes(kind)) ||
-      (from.role === 'engineer' && ['status', 'question', 'handoff', 'completion'].includes(kind)) ||
-      (from.role === 'verifier' && ['finding', 'escalation', 'completion'].includes(kind))
-    ) {
-      return { allowed: true };
-    }
+  // Units of one contract may tell each other where their parts stand; the
+  // contract runner, not a sibling, directs and checks each unit's work.
+  if (sharesContract(from, to) && ['status', 'question', 'handoff', 'completion'].includes(kind)) {
+    return { allowed: true };
   }
 
   if (sharesCohort(from, to) && ['status', 'question', 'finding', 'handoff'].includes(kind)) {

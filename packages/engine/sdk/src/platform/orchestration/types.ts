@@ -234,10 +234,8 @@ export interface WorkItem extends WorkItemContractFields {
    * item is not claimable until EVERY id here refers to an item that has
    * reached 'passed'; until then it sits in 'blocked-dependency' with an
    * honest `blockedReason`. Empty (the common case) ⇒ no dependency gate, the
-   * item is claimable as soon as capacity and budget allow. Populated from a
-   * PlanProposal's resolved `dependsOn` by `fromPlanProposal`
-   * (proposal-workstream.ts); the assembly asserts these reference real items
-   * and form no cycle. JSON-safe (a plain string[]), so it serializes with the
+   * item is claimable as soon as capacity and budget allow. Populated from the
+   * spec's `dependsOn`. JSON-safe (a plain string[]), so it serializes with the
    * work item unchanged.
    */
   dependsOn: string[];
@@ -251,7 +249,7 @@ export interface WorkItem extends WorkItemContractFields {
   allAgentIds: string[];
   /** phaseId -> number of times this item has been routed through that phase. */
   readonly visits: Map<string, number>;
-  /** Deduped touched-path ledger for scoped commits, mirrors WrfcChain.touchedPaths. */
+  /** Deduped touched-path ledger for scoped commits: the paths the item's agents changed. */
   touchedPaths: string[];
   usage: WorkItemUsage;
   /** Separate from `visits`, a transport blip must never eat into the fix-cycle budget. */
@@ -371,9 +369,9 @@ export interface WorkItemSpec extends WorkItemContractFields {
   /**
    * IDs of other items in the SAME workstream this item depends on (BIG-3
    * item 2). Omitted/empty ⇒ no dependency gate. Every id must match another
-   * item's id in the same CreateWorkstreamInput; `fromPlanProposal` asserts
-   * this (and acyclicity) at assembly, and the engine gates the claim path on
-   * it (see the 'blocked-dependency' state doc).
+   * item's id in the same CreateWorkstreamInput (draftFromProposal asserts
+   * this and acyclicity for a plan proposal), and the engine gates the claim
+   * path on it (see the 'blocked-dependency' state doc).
    */
   readonly dependsOn?: readonly string[] | undefined;
   /**
@@ -471,9 +469,9 @@ export interface BudgetCeiling {
 
 /**
  * Workstream-level provenance (BIG-3 item 1), honest, machine-readable record
- * of where a workstream's items came from when it was assembled from an
- * approved PlanProposal by `fromPlanProposal` (proposal-workstream.ts). Absent
- * on workstreams built the compat way (`fromChainSpec`) or authored directly.
+ * of where a workstream's items came from when they were drafted from a
+ * multi-item PlanProposal (workstream-services.ts buildSpec). Absent on a
+ * single-item draft or a workstream authored directly.
  * Carried through serialization and surfaced in status/fleet so a resumed or
  * observed workstream reports its origin without guessing.
  */
@@ -513,9 +511,8 @@ export interface Workstream {
   readonly isolation?: WorkstreamIsolation | undefined;
   /**
    * Where this workstream's items came from (BIG-3 item 1). Set only when the
-   * workstream was assembled from an approved PlanProposal via
-   * `fromPlanProposal`; absent for compat/`fromChainSpec` or hand-authored
-   * workstreams. Persisted and surfaced for honest origin reporting.
+   * items were drafted from a multi-item PlanProposal; absent for a
+   * single-item draft or a hand-authored workstream. Persisted and surfaced for honest origin reporting.
    */
   readonly provenance?: WorkstreamProvenance | undefined;
   /** Edge-release policy (see {@link ReleasePolicy}). Absent = 'passed' (legacy). */

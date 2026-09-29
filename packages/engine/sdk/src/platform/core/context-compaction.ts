@@ -422,7 +422,7 @@ async function runCompaction(
     messageCount: ctx.messages.length,
     tokensBeforeEstimate,
     agentCount: ctx.agents.length,
-    chainCount: ctx.wrfcChains.length,
+    contractCount: ctx.contracts.length,
   });
 
   // ---------------------------------------------------------------------------
@@ -474,19 +474,26 @@ async function runCompaction(
   const memoriesSection = buildSessionMemories([...ctx.sessionMemories]);
   if (memoriesSection) sections.push(memoriesSection);
 
-  // Running agents
-  const runningSection = buildRunningAgents(ctx.agents, ctx.wrfcChains);
+  // Running agents, grouped under their contracts
+  const runningSection = buildRunningAgents(ctx.agents, ctx.contracts);
   if (runningSection) sections.push(runningSection);
 
-  // Completed agent work (rule-based), standalone agents not covered by a WRFC chain
-  const completedSection = buildCompletedAgentWork(ctx.agents, ctx.wrfcChains);
-  if (completedSection) sections.push(completedSection);
-
-  // Agent activity table (rule-based, needed before LLM calls to determine remaining)
-  const { section: activitySection, remainingChains } = buildAgentActivityTable(
-    ctx.wrfcChains,
+  // Agent activity table (rule-based, needed before LLM calls to determine
+  // remaining). Built before completed work, which leaves the contracts that
+  // did not fit to the older-agent summary.
+  const { section: activitySection, remainingContracts } = buildAgentActivityTable(
+    ctx.contracts,
     config.agentActivityBudget,
   );
+
+  // Completed agent work (rule-based): contract and unit answers, and
+  // standalone agents that work for no contract
+  const completedSection = buildCompletedAgentWork(
+    ctx.agents,
+    ctx.contracts,
+    new Set(remainingContracts.map((c) => c.id)),
+  );
+  if (completedSection) sections.push(completedSection);
   if (activitySection) sections.push(activitySection);
 
   // ---------------------------------------------------------------------------
@@ -505,8 +512,8 @@ async function runCompaction(
     ? buildToolResultsPrompt(toolMessages)
     : '';
 
-  const olderPrompt = remainingChains.length > 0
-    ? buildOlderAgentSummaryPrompt(remainingChains)
+  const olderPrompt = remainingContracts.length > 0
+    ? buildOlderAgentSummaryPrompt(remainingContracts)
     : '';
 
   const allUserAssistant = messages.filter(

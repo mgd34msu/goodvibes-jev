@@ -63,7 +63,7 @@ export function isOwnerFacingProgress(audience: ProgressAudience | undefined): b
 /**
  * The minimum a record needs for progress to be set on it. Structural rather
  * than a nominal `AgentRecord` import so this module stays dependency-free and
- * the WRFC controller's own record shapes can use it too.
+ * the contract runner's own record shapes can use it too.
  */
 export interface ProgressBearingRecord {
   progress?: string | undefined;

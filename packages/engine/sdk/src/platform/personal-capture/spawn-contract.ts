@@ -18,9 +18,9 @@
  *
  * ## Why this list and not the default one
  *
- * A conversational turn is not a work chain. `conversation-continuation.ts`
+ * A conversational turn is not contract work. `conversation-continuation.ts`
  * already decides that a channel follow-up gets an answer rather than a
- * write-review-fix-confirm chain, and this list keeps that promise: no `write`,
+ * contract, and this list keeps that promise: no `write`,
  * no `edit`, no `exec`. Nothing here can start a workstream or touch the
  * project tree. What it can do is read, look things up, and record what the
  * owner just said about himself.

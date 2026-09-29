@@ -13,8 +13,8 @@
  *   - Uncertainties: anything the caller should verify
  *
  * so "Hey, are you there?" came back as a filled-in form with `Changes: None`
- * under it. That is an internal contract between an agent and the WRFC
- * controller. It belongs in the transcript and in operator surfaces; on a lock
+ * under it. That report is read by the contract runner, not by the person
+ * who asked. It belongs in the transcript and in operator surfaces; on a lock
  * screen it is paperwork where an answer should be.
  *
  * The source of that shape is fixed too (a conversational spawn no longer asks

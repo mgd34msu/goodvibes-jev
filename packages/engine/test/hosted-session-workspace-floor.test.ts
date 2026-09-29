@@ -17,6 +17,9 @@ import { HostedWorkspaceFloors, type HostedWorkspaceFloor } from '../sdk/src/pla
 import type { ClientRuntimeServices } from '../sdk/src/platform/runtime/client-services.ts';
 
 /** A floor stand-in that records its own construction and disposal. */
+/** The cache tests never run a session on a floor, so no runner method is ever called. */
+const NO_SESSIONS_RUNNER = {} as HostedWorkspaceFloor['contractRunner'];
+
 function makeFactory() {
   const constructed: string[] = [];
   const disposed: string[] = [];
@@ -26,6 +29,7 @@ function makeFactory() {
     constructed.push(workspaceRoot);
     return {
       services: { workingDirectory: workspaceRoot } as unknown as ClientRuntimeServices,
+      contractRunner: NO_SESSIONS_RUNNER,
       dispose: (): void => { disposed.push(workspaceRoot); },
     };
   };
@@ -148,6 +152,7 @@ test('disposing the cache disposes every floor and refuses new ones', async () =
 test('a floor whose disposal throws is dropped from the cache anyway', async () => {
   const floors = new HostedWorkspaceFloors(async ({ workspaceRoot }) => ({
     services: { workingDirectory: workspaceRoot } as unknown as ClientRuntimeServices,
+    contractRunner: NO_SESSIONS_RUNNER,
     dispose: (): void => { throw new Error('a watcher would not let go'); },
   }));
 

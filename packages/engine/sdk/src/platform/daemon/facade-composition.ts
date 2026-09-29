@@ -4,7 +4,7 @@ import { resolveHostBinding } from './host-resolver.js';
 import { composeHostedSessionsForFacade } from './hosted-sessions-composition.js';
 import { WorkProposalStore } from '../agents/work-proposal-store.js';
 import { readConversationGateConfig, type ConversationGateConfigReader } from '../agents/conversation-gate.js';
-import { continuationChainOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
+import { continuationContractOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import { gateSurfaceSpawn, type SurfaceIngressOrigin } from './surface-conversation-gate.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -740,13 +740,13 @@ export function configureDaemonSessionContinuation(options: {
   /**
    * The surface helper holding the conversation-first gate's dependencies. A
    * follow-up in a shared session is the SAME message class the ingress gate
-   * guards, so it gets the same treatment: conversation is answered with the
-   * chain suppressed, and a work-shaped follow-up is PROPOSED over the channel
+   * guards, so it gets the same treatment: conversation is answered outside
+   * every contract, and a work-shaped follow-up is PROPOSED over the channel
    * it arrived on (a Response, reported here as "no agent started").
    *
    * Absent, an embedder that has not wired the gate, still fails closed via
-   * `continuationChainOptions` below. A continuation never opens a chain just
-   * because nobody installed a gate.
+   * `continuationContractOptions` below. A continuation never starts a contract
+   * just because nobody installed a gate.
    */
   readonly surfaceActionHelper?: Pick<DaemonSurfaceActionHelper, 'conversationGateDeps'> | undefined;
   /** Reads `conversationGate.*` so both halves of the gate obey one configuration. */
@@ -773,18 +773,18 @@ export function configureDaemonSessionContinuation(options: {
       : null;
     // Work the owner already confirmed (an agreed proposal, a schedule, a
     // trigger, an on-exit chain) carries the marker and must not be re-asked;
-    // a follow-up typed on a local surface keeps its chain. Everything else is
+    // a follow-up typed on a local surface starts its contract. Everything else is
     // conversation and goes through the gate.
     const escalation = decideContinuationEscalation(input, {
       ...(options.configReader ? { configReader: options.configReader } : {}),
     });
     const label = 'DaemonServer.sharedSessionFollowUp';
     const gateDeps = options.surfaceActionHelper?.conversationGateDeps();
-    const spawned = escalation.startsWorkChain
+    const spawned = escalation.startsContract
       ? options.trySpawnAgent(spawnInput, label, sessionId)
       : gateDeps
         ? gateSurfaceSpawn(gateDeps, origin, spawnInput, label, sessionId)
-        : options.trySpawnAgent({ ...spawnInput, ...continuationChainOptions(input) }, label, sessionId);
+        : options.trySpawnAgent({ ...spawnInput, ...continuationContractOptions(input) }, label, sessionId);
     if (spawned instanceof Response) {
       return null;
     }

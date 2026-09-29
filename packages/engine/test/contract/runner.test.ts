@@ -13,6 +13,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { acquireSharedTree, sharedTreeWaiters } from '../../sdk/src/platform/contract/index.js';
+import { emitAgentCompleted, emitAgentFailed } from '../../sdk/src/platform/runtime/emitters/agents.js';
 import {
   eventsOf,
   makeHarness,
@@ -265,6 +266,41 @@ describe('cancel', () => {
     h.manager.cancel(h.store.get(contract.id)!.units[0]!.agentIds[0]!, 'kill');
     await waitFor(() => terminal(h, contract.id), 'the contract to end');
     expect(h.store.get(contract.id)!.status).toBe('cancelled');
+  });
+
+  test('a completion or failure event for the owner record before the contract ends leaves the owner running and the contract going', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const h = use(makeHarness({
+      plan: oneUnitPlan(1),
+      scripts: { u1: () => [{ tool: true, files: { 'src/csv.ts': 'x\n' }, text: 'wrote the parser', after: () => gate }, { text: 'Parser done.' }] },
+    }));
+    const { contract, owner } = startContract(h);
+    await waitFor(() => h.manager.list().some((record) => record.contractUnitId === 'u1' && record.status === 'running'), 'the unit agent to run');
+    const ctx = { sessionId: 'test', traceId: 'test', source: 'test' };
+    emitAgentCompleted(h.bus, ctx, { agentId: owner.id, durationMs: 1, output: 'too early' });
+    emitAgentFailed(h.bus, ctx, { agentId: owner.id, error: 'too early', durationMs: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.manager.getStatus(owner.id)!.status).toBe('running');
+    expect(h.store.get(contract.id)!.status).toBe('running');
+    release();
+    await waitFor(() => terminal(h, contract.id), 'the contract to end');
+    expect(h.store.get(contract.id)!.status).toBe('passed');
+    expect(h.manager.getStatus(owner.id)!.status).toBe('completed');
+  });
+
+  test("an operator stopping the contract's owner record cancels the contract and its unit agents", async () => {
+    const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: () => [{ text: 'working', stop: { kind: 'hang' } }] } }));
+    const { contract, owner } = startContract(h);
+    await waitFor(() => h.manager.list().some((record) => record.contractUnitId === 'u1' && record.status === 'running'), 'the unit agent to run');
+    h.manager.cancel(owner.id);
+    await waitFor(() => terminal(h, contract.id), 'the contract to end');
+    const done = h.store.get(contract.id)!;
+    expect(done.status).toBe('cancelled');
+    expect(done.error).toBe(`the contract's owner record ${owner.id} was stopped by an operator`);
+    const unitAgent = done.units[0]!.agentIds[0]!;
+    await waitFor(() => h.manager.getStatus(unitAgent)?.status === 'cancelled', 'the unit agent to be stopped');
+    expect(eventsOf(h, 'CONTRACT_CANCELLED')).toHaveLength(1);
   });
 });
 

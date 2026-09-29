@@ -1,4 +1,5 @@
 import type { Tool } from '../../types/tools.js';
+import type { ContractRunner } from '../../contract/runner.js';
 import { workflowSchema } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
@@ -14,19 +15,14 @@ interface WorkflowDefinition {
   description: string;
 }
 
+/**
+ * The definition that is not a tracked state machine: `start` with it hands
+ * the task to a new contract through the contract runner, whose units are
+ * checked against their acceptance criteria while they work.
+ */
+export const CONTRACT_WORKFLOW_DEFINITION = 'contract';
+
 export const WORKFLOW_DEFINITIONS: Readonly<Record<string, WorkflowDefinition>> = Object.freeze(JSON.parse(JSON.stringify({
-  wrfc: {
-    name: 'WRFC Loop',
-    states: ['gather', 'plan', 'apply', 'review', 'revision', 'complete'],
-    transitions: {
-      gather: ['plan'],
-      plan: ['apply'],
-      apply: ['review'],
-      review: ['revision', 'complete'],
-      revision: ['apply'],
-    },
-    description: 'Full work-review-fix cycle',
-  },
   fix_loop: {
     name: 'Fix Loop',
     states: ['apply', 'test', 'verify', 'complete'],
@@ -417,7 +413,16 @@ export function createWorkflowServices(): WorkflowServices {
 // Tool implementation
 // ---------------------------------------------------------------------------
 
-export function createWorkflowTool(services: WorkflowServices): Tool {
+/** What the workflow tool's `contract` definition starts contracts with. */
+export interface WorkflowContractStarter {
+  readonly contractRunner: Pick<ContractRunner, 'start'>;
+  /** The project a contract started here works in. */
+  readonly projectRoot: string;
+  /** The conversation session a contract started here belongs to, read on each call. */
+  readonly resolveSessionId: () => string;
+}
+
+export function createWorkflowTool(services: WorkflowServices, contracts: WorkflowContractStarter): Tool {
   return {
     definition: workflowSchema,
 
@@ -439,6 +444,24 @@ export function createWorkflowTool(services: WorkflowServices): Tool {
           }
           if (!input.task) {
             return { success: false, error: 'mode "start" requires "task"' };
+          }
+          if (input.definition === CONTRACT_WORKFLOW_DEFINITION) {
+            const started = contracts.contractRunner.start({
+              ask: input.task,
+              sessionId: contracts.resolveSessionId(),
+              origin: 'agent-tool',
+              projectRoot: contracts.projectRoot,
+            });
+            return {
+              success: true,
+              output: JSON.stringify({
+                contractStarted: true,
+                contractId: started.contract.id,
+                ownerAgentId: started.owner.id,
+                status: started.contract.status,
+                task: input.task,
+              }),
+            };
           }
           if (!WORKFLOW_DEFINITIONS[input.definition]) {
             return { success: false, error: `Unknown workflow definition: ${input.definition}` };

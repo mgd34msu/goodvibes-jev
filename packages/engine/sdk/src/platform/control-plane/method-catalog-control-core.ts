@@ -509,7 +509,7 @@ export const builtinGatewayControlCoreMethodDescriptors: readonly GatewayMethodD
   methodDescriptor({
     id: 'sessions.messages.create',
     title: 'Post Shared Session Message',
-    description: 'Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: "task"` to request agent/WRFC task continuation.',
+    description: 'Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: "task"` to request agent or contract task continuation.',
     category: 'sessions',
     scopes: ['write:sessions'],
     http: { method: 'POST', path: '/api/sessions/{sessionId}/messages' },

@@ -1,7 +1,7 @@
 # Tool system
 
 The tool system is the daemon-side execution layer used by sessions, agents,
-WRFC chains, and remote surfaces. Tools are registered through
+contracts, and remote surfaces. Tools are registered through
 `registerAllTools()` and guarded by config permissions plus feature-flagged
 contract checks.
 
@@ -21,7 +21,7 @@ For how tool-call arguments are parsed, validated, and dropped when malformed, s
 | `fetch` | Fetch HTTP resources | raw/text/markdown/structured extraction, rate limits, sanitization, trusted hosts |
 | `analyze` | Analyze code and changes | impact, dependencies, dead code, security, diff, preview, upgrade, surface |
 | `inspect` | Inspect project shape | project, API, database, components, layout, accessibility, scaffold |
-| `agent` | Spawn and manage agents | spawn, batch-spawn for independent roots, status, cancel, list, templates, get, budget, plan, wait, message, WRFC, cohorts |
+| `agent` | Spawn and manage agents | spawn, batch-spawn for independent roots, status, cancel, list, templates, get, budget, plan, wait, message, contracts, contract-history, cohorts |
 | `goodvibes_context` | Inspect the current GoodVibes harness safely | runtime summary, redacted config reads/schema, integrations, tool catalog, Cloudflare status/token requirements |
 | `goodvibes_settings` | Change GoodVibes settings through the config manager | set, reset with explicit confirmation; rejects raw credential persistence |
 | `profile` | Record what the owner says about themselves into the owner profile | registered only when profile collaborators are provided; write authority is bound per turn by the composition root, never supplied by the model |
@@ -50,7 +50,7 @@ manager, process manager, agent manager, message bus, workflow services,
 config manager, provider registry, tool LLM resolver, sandbox session registry,
 session orchestration, working directory, and surface root.
 
-Optional collaborators enable web search, MCP, WRFC, remote runners, channel
+Optional collaborators enable web search, MCP, the contract runner, remote runners, channel
 tools, overflow handling, change tracking, service-backed credential
 resolution, and secret-aware integration status.
 
@@ -83,8 +83,8 @@ store credentials through the secret system and set config keys to
 Every SDK-owned turn path adds a small harness-awareness system instruction
 that tells the model to call `goodvibes_context` before answering questions
 about local settings, configured integrations, host capabilities, tools,
-providers, or surfaces. The same instruction tells the model not to spawn
-agents or WRFC chains for ordinary questions or direct environment inspection.
+providers, or surfaces. The same instruction tells the model not to start
+agent work for ordinary questions or direct environment inspection.
 
 The instruction also treats a configuration value the user states (a bot name,
 chat id, token, host, port, model, or path) as a request to set it. The model
@@ -191,16 +191,27 @@ Read/write/edit tools share `FileStateCache`, `ProjectIndex`, and
 `FileUndoManager` instances within a session. Write and edit operations support
 transaction modes so hosts can roll back failed multi-file changes.
 
-## Agent and WRFC integration
+## Agent and contract integration
 
 The `agent` tool can spawn individual agents, spawn batches of independent
 root work, group agents into cohorts, send messages, wait for completion,
-inspect budgets/plans, and inspect WRFC chain history. WRFC chains use
-engineer, reviewer, fixer, integrator, and verifier roles plus a gate phase with
-quality gates and constraint propagation.
+inspect budgets and plans, and inspect contracts.
 
-Batch spawn is not the mechanism for pre-spawning reviewer/tester/fixer roots
-for the same deliverable. If a batch request looks like role decomposition for
-one deliverable, the SDK treats the original user ask as the authoritative WRFC
-scope and runs one owner chain whose children are created by the WRFC
-controller as each phase becomes reviewable.
+- **`spawn` and `batch-spawn`** start a contract through the contract runner
+  unless `outsideContract` is set. The ask is `authoritativeTask` when given,
+  otherwise the parent turn's text; the spawned tasks become the contract's
+  proposed units, which the planner weighs when it writes the plan. The result
+  JSON carries `contractStarted: true`, the contract id and the owner agent id.
+- **`outsideContract: true`** runs an ordinary agent with no contract and no
+  checks.
+- **`contracts`** lists the session's contracts with their status and units.
+- **`contract-history`** shows one contract's events: plan, checks, nudges,
+  escalations and outcome.
+
+A batch is not the way to add reviewer, tester or fixer agents for one
+deliverable. Jev checks every unit's work against its criteria while it runs
+and nudges the unit's agent until the work passes, so the planner folds any
+"tests pass" or "reviewed" requirement into the criteria of the unit that
+does the work. A unit's own agent cannot spawn agents. See
+[Runtime orchestration](./runtime-orchestration.md#contracts) and
+[Contract criteria](./contract-criteria.md).

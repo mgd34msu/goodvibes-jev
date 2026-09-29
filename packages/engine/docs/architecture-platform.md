@@ -12,7 +12,7 @@ This document maps every top-level directory under `packages/engine/sdk/src/plat
 |---|---|
 | `acp/` | Agent Control Protocol: message envelope types, handshake state machine, per-agent connection lifecycle, and `AcpManager` |
 | `adapters/` | Shared adapter helpers and types; concrete platform adapters live under `adapters/<platform>/` (Slack, Discord, Telegram, etc.): see Channel system |
-| `agents/` | Sub-agent orchestration: `AgentOrchestrator`, `AgentMessageBus`, the `WrfcController` chain state machine and all WRFC support files, worktree management, agent archetypes |
+| `agents/` | Sub-agent orchestration: `AgentOrchestrator`, `AgentMessageBus`, worktree management, agent archetypes, and the agent-loop seams (turn end and completion hold) through which the contract runner checks and nudges a unit's agent |
 | `artifacts/` | Ephemeral artifact store: typed blobs (images, files, diffs) produced during agent runs, keyed by artifact ID |
 | `automation/` | Scheduled job engine: job definitions, run records, schedule management, delivery, reconcile loop, and the `AutomationManager` runtime |
 | `batch/` | Opt-in daemon batch queue manager, provider batch adapters, local queueing, and batch job lifecycle helpers |
@@ -28,6 +28,7 @@ This document maps every top-level directory under `packages/engine/sdk/src/plat
 | `cluster/` | LAN leader election so exactly one node consumes each inbound surface; elections are held per surface over a LAN-only protocol that never contacts an external service |
 | `companion/` | Companion-app chat routes and types: bidirectional messaging between companion mobile/web clients and the daemon |
 | `config/` | `ConfigManager`, `SecretsManager`, secret-ref resolution, service registry, API-key management, subscription auth, OAuth local listener, and config schema |
+| `contract/` | The contract runner: plans checked work, runs each unit with one sub-agent on the orchestration engine, has Jev judge the work against its acceptance criteria while it runs and nudges the agent until it passes, then judges groups and the deliverable, commits, persists and resumes contracts; its Jev batteries live in `contract/batteries/`. See [Runtime orchestration](./runtime-orchestration.md#contracts) |
 | `control-plane/` | Control-plane gateway and auth snapshot: operator-level commands, approval broker, conversation-message relay, and web-UI gateway bridge |
 | `core/` | Orchestrator turn loop, `ConversationManager`, `ToolRegistry`, `PermissionManager`, `CompactionManager`, `SessionLineageTracker`: the core agent engine |
 | `daemon/` | HTTP server bootstrap (`DaemonServer`), `api-router`, `http-policy`, and all route-group files (runtime, session, control, channel, knowledge, telemetry, etc.), plus the auto-updater and daemon-receipts modules |
@@ -48,7 +49,7 @@ This document maps every top-level directory under `packages/engine/sdk/src/plat
 | `multimodal/` | Multimodal content service: encodes images and files into provider-specific prompt structures for vision-capable models |
 | `node/` | Runtime capability metadata and Node-like runtime-boundary detection helpers (no Bun globals); backs the public `./platform/node` and `./platform/node/runtime-boundary` subpaths |
 | `occasions/` | Durable facts about dated things in the owner's life (a birthday, an anniversary) that the daemon raises on its own; exports the shapes and pure render helpers a surface needs, not the service or its store |
-| `orchestration/` | Multi-agent workstream engine: phases, gates, work items, budget ceilings, and multi-candidate attempt judging, layered over (not replacing) `agents/wrfc-controller.ts`; see [Runtime orchestration](./runtime-orchestration.md) |
+| `orchestration/` | Multi-agent workstream engine: phases, gates, work items, budget ceilings, best-of-N attempts, the elastic pool and the integration lane; the contract runner runs one engine per contract, one workstream per group; see [Runtime orchestration](./runtime-orchestration.md) |
 | `owner-profile/` | The platform's read model of the person who owns it, backed by one Markdown file at daemon scope (`~/.goodvibes/daemon/owner-profile.md`) |
 | `pairing/` | Companion pairing: token generation, `CompanionConnectionInfo` encoding, QR matrix generation and ASCII rendering, token revocation |
 | `payments/` | Payment decision order, budget pools, approval/veto window state machines, taint gate, and prompt rendering |
@@ -97,7 +98,8 @@ core ─────────────────────────
 agents ─────────────────────────────────────────► core
 agents ─────────────────────────────────────────► acp
 agents ─────────────────────────────────────────► runtime (store, bus)
-agents ─────────────────────────────────────────► orchestration (WRFC fix-phase execution)
+agents ─────────────────────────────────────────► contract (agent-loop hook types)
+contract ───────────────────────────────────────► agents, orchestration, config, git, runtime, judgment
 daemon ─────────────────────────────────────────► core, agents, channels, automation, plugins
 daemon ─────────────────────────────────────────► control-plane, sessions, security
 daemon ─────────────────────────────────────────► knowledge, mcp, media, voice, web-search, cloudflare

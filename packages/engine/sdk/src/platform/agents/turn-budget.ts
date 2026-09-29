@@ -64,7 +64,3 @@ export function formatTurnLimitError(limit: number): string {
   return `Exceeded maximum turn limit (${limit})`;
 }
 
-/** Recognize a turn-budget-exhausted failure from its prose message (compat with the classifier). */
-export function isTurnBudgetExhaustedMessage(message: string): boolean {
-  return /maximum turn limit|max[_ ]?turns/i.test(message);
-}

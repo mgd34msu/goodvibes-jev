@@ -495,7 +495,7 @@ describe('ntfy topic routing', () => {
     expect(calls).toEqual({ authorize: 1, submit: 0, spawn: 0 });
   });
 
-  test('unknown ntfy topics are ignored instead of spawning WRFC work', async () => {
+  test('unknown ntfy topics are ignored instead of starting contract work', async () => {
     const calls = { authorize: 0, submit: 0, spawn: 0 };
     const context = makeRoutingContext({ calls });
 

@@ -2,35 +2,33 @@
  * The owner pasted a flight itinerary into Telegram and got an engineering
  * workflow.
  *
- * Three separate defects produced that, and each has its own describe block
- * below:
+ * Separate defects produced that; the two that live in the agent layer each
+ * have a describe block below:
  *
  * 1. The conversation gate correctly decided "this is conversation" and spawned
- *    with `outsideContract: true` + `replyStyle: 'conversational'`. The
- *    root-spawn normalization then read the CONTINUATION PROMPT, which embeds
- *    the chat transcript, found an earlier assistant sentence ("I'll review the
- *    route, timing, stops"), and forced the chain back on. It then fed itself:
- *    the chain's own reply mentioned "review", so every later turn matched too.
- * 2. What the person received was the chain's bookkeeping, "WRFC chain
- *    wrfc-490aee53 passed (review 10/10); commit skipped: not a git repository"
- *   , instead of an answer.
- * 3. Every assistant message appeared TWICE in the continuation prompt, because
+ *    with `outsideContract: true` + `replyStyle: 'conversational'`, and a
+ *    rewrite of root spawns read the CONTINUATION PROMPT, which embeds the chat
+ *    transcript, found an earlier assistant sentence ("I'll review the route,
+ *    timing, stops"), and forced a checked workflow back on. No spawn is
+ *    rewritten from its wording now: the caller's outsideContract decision is
+ *    the whole decision, and a spawn without it becomes a contract's owner with
+ *    its task untouched.
+ * 2. Every assistant message appeared TWICE in the continuation prompt, because
  *    two different reporters each wrote the same agent's completion into the
  *    shared session.
+ *
+ * (The third defect, the person receiving workflow bookkeeping instead of an
+ * answer, is the contract owner's answer and operator-only status line,
+ * covered in test/contract/runner.test.ts.)
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WrfcController } from '../sdk/src/platform/agents/wrfc-controller.js';
 import { SharedSessionBroker } from '../sdk/src/platform/control-plane/session-broker.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
-import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
-import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.js';
 import { AgentManager, type AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import { createAgentTool } from '../sdk/src/platform/tools/agent/index.js';
-import { renderAgentCompletionAnswer } from '../sdk/src/platform/agents/completion-answer.js';
 import {
   appendSharedSessionMessage,
   buildSharedSessionContinuationTask,
@@ -39,6 +37,7 @@ import {
 } from '../sdk/src/platform/control-plane/session-broker-messages.js';
 import type { SharedSessionMessage, SharedSessionRecord } from '../sdk/src/platform/control-plane/session-types.js';
 import type { ConfigManager } from '../sdk/src/platform/config/index.js';
+import { makeContract } from './contract/fixtures.js';
 
 const disposables = trackDisposables();
 
@@ -57,84 +56,46 @@ const ITINERARY_CONTINUATION_TASK = [
   'Avery: Confirmation #: B79YKY. Departing Thu, Aug 06 2026, 07:55 AM DAL, arrives 09:20 AM MSY.',
 ].join('\n');
 
-function createConfigManager(): Pick<ConfigManager, 'get' | 'getCategory'> {
-  const get = ((key: string): unknown => {
-    if (key === 'contract.maxFixRounds') return 3;
-    if (key === 'contract.autoCommit') return false;
-    if (key === 'agents.maxActive') return 20;
-    return undefined;
-  }) as ConfigManager['get'];
-  const getCategory = ((category: string): unknown => {
-    if (category === 'contract') {
-      return { scoreThreshold: 9.9, maxFixAttempts: 3, autoCommit: false, gates: [] };
-    }
-    return undefined;
-  }) as ConfigManager['getCategory'];
-  return { get, getCategory };
+function createConfigManager(): Pick<ConfigManager, 'get'> {
+  return { get: ((key: string): unknown => (key === 'agents.maxActive' ? 20 : undefined)) as ConfigManager['get'] };
 }
 
 interface Harness {
-  readonly bus: RuntimeEventBus;
   readonly manager: AgentManager;
-  readonly controller: WrfcController;
-  readonly tool: ReturnType<typeof createAgentTool>;
+  /** Every record AgentManager handed to the contract runner's startForOwner. */
+  readonly owned: AgentRecord[];
   readonly runRecords: AgentRecord[];
 }
 
 function createHarness(): Harness {
   const runRecords: AgentRecord[] = [];
-  const bus = new RuntimeEventBus();
-  const messageBus = new AgentMessageBus();
-  const configManager = createConfigManager();
+  const owned: AgentRecord[] = [];
   const manager = new AgentManager({
     archetypeLoader: { loadArchetype: () => null },
-    messageBus,
-    configManager,
+    messageBus: new AgentMessageBus(),
+    configManager: createConfigManager(),
     executor: {
       async runAgent(record) {
         record.status = 'running';
         runRecords.push(record);
       },
     },
+    contractRunner: {
+      startForOwner(record) {
+        owned.push(record);
+        record.contractId = `ctr-${String(owned.length).padStart(8, '0')}`;
+        record.contractRole = 'owner';
+        record.status = 'running';
+        return { contract: makeContract({ id: record.contractId, ask: record.task, ownerAgentId: record.id }), owner: record };
+      },
+    },
   });
-  manager.setRuntimeBus(bus);
-  const controller = new WrfcController(bus, messageBus, {
-    agentManager: manager,
-    configManager,
-    projectRoot: '/tmp/conversation-chain-authority-test',
-    createWorktree: () => ({ merge: async () => true, cleanup: async () => {} }),
-  });
-  manager.setWrfcController(controller);
-  const tool = createAgentTool({
-    manager,
-    messageBus,
-    wrfcController: controller,
-    archetypeLoader: { loadArchetype: () => null },
-    configManager,
-  });
-  return { bus, manager, controller, tool, runRecords };
+  return { manager, owned, runRecords };
 }
 
-async function flushMicrotasks(rounds = 20): Promise<void> {
-  for (let i = 0; i < rounds; i += 1) {
-    await Promise.resolve();
-  }
-}
-
-function emitAgentCompleted(bus: RuntimeEventBus, agentId: string): void {
-  bus.emit(
-    'agents',
-    createEventEnvelope(
-      'AGENT_COMPLETED',
-      { type: 'AGENT_COMPLETED', agentId, durationMs: 0 },
-      { sessionId: 'test', traceId: `test:${agentId}:completed`, source: 'test' },
-    ),
-  );
-}
-
-describe('an explicit no-chain decision outranks a review/test wording match', () => {
-  test('a conversational continuation whose transcript says "review the route" starts no chain', () => {
-    const { manager, controller } = createHarness();
+describe('the caller\'s outsideContract decision outranks what the task text says', () => {
+  test('a conversational continuation whose transcript says "review the route" starts no contract', () => {
+    const { manager, owned, runRecords } = createHarness();
 
     const record = manager.spawn({
       mode: 'spawn',
@@ -143,37 +104,38 @@ describe('an explicit no-chain decision outranks a review/test wording match', (
       replyStyle: 'conversational',
     });
 
-    expect(controller.listChains()).toHaveLength(0);
+    expect(owned).toHaveLength(0);
+    expect(runRecords).toEqual([record]);
     expect(record.contractId).toBeUndefined();
     expect(record.contractRole).toBeUndefined();
     expect(record.routeReason).toBeUndefined();
     // The whole decision survives, not just half of it: the reply must still
     // read as a reply to a person, and the task must not be rewritten into an
-    // authoritative engineering ask.
+    // engineering ask.
     expect(record.replyStyle).toBe('conversational');
     expect(record.outsideContract).toBe(true);
     expect(record.reviewMode).toBe('none');
-    expect(record.template).not.toBe('engineer');
+    expect(record.template).toBe('general');
     expect(record.task).toBe(ITINERARY_CONTINUATION_TASK);
-    expect(record.context ?? '').not.toContain('WRFC topology enforcement');
+    expect(record.context).toBeUndefined();
   });
 
-  test('the same wording still starts a chain when nobody suppressed it', () => {
-    const { manager, controller } = createHarness();
+  test('the same text without the decision becomes a contract owner, its task untouched', () => {
+    const { manager, owned, runRecords } = createHarness();
 
     const record = manager.spawn({ mode: 'spawn', task: ITINERARY_CONTINUATION_TASK });
 
-    expect(controller.listChains()).toHaveLength(1);
+    expect(owned).toEqual([record]);
+    expect(runRecords).toHaveLength(0);
     expect(record.contractRole).toBe('owner');
-    expect(record.routeReason).toBe('root-review-role-normalized');
+    expect(record.task).toBe(ITINERARY_CONTINUATION_TASK);
+    expect(record.template).toBe('general');
+    expect(record.routeReason).toBeUndefined();
   });
 
-  test('a DECLARED reviewer template is still normalized despite the suppression flag', () => {
-    const { manager, controller } = createHarness();
+  test('a declared reviewer template keeps the caller\'s outsideContract decision', () => {
+    const { manager, owned, runRecords } = createHarness();
 
-    // Asking for a root reviewer agent and asking for no chain at the same time
-    // is the role fragmentation the normalization exists to correct. Naming the
-    // role is the caller stating what the agent IS, not a guess about wording.
     const record = manager.spawn({
       mode: 'spawn',
       task: 'Review the implementation for correctness.',
@@ -181,107 +143,11 @@ describe('an explicit no-chain decision outranks a review/test wording match', (
       outsideContract: true,
     });
 
-    expect(controller.listChains()).toHaveLength(1);
-    expect(record.contractRole).toBe('owner');
-    expect(record.template).toBe('engineer');
-    expect(record.outsideContract).toBe(false);
-  });
-
-  test('the orchestration-batch role collapse still fires for a root review task', async () => {
-    const { controller, manager, tool } = createHarness();
-
-    const result = await tool.execute({
-      mode: 'batch-spawn',
-      tasks: [
-        { task: 'Build a simple rate limiter.', template: 'engineer' },
-        { task: 'Review the implementation for correctness.', template: 'general' },
-      ],
-    });
-
-    expect(result.success).toBe(true);
-    const output = JSON.parse(result.output!) as { collapsedToWrfc?: boolean; agents: Array<{ id: string }> };
-    expect(output.collapsedToWrfc).toBe(true);
-    expect(controller.listChains()).toHaveLength(1);
-    expect(manager.list().filter((agent) => !agent.parentAgentId)).toHaveLength(1);
-  });
-});
-
-describe('a finished chain reports its work, not its bookkeeping', () => {
-  test('the reply a surface would send is the answer, and the status line stays operator-only', async () => {
-    const { bus, manager, controller } = createHarness();
-
-    const owner = manager.spawn({ mode: 'spawn', task: 'add a slugify helper' });
-    const chain = controller.listChains()[0]!;
-    expect(chain.ownerAgentId).toBe(owner.id);
-
-    const engineer = manager.getStatus(chain.engineerAgentId!)!;
-    engineer.fullOutput = 'Added the slugify helper and wired it into the exports.';
-    emitAgentCompleted(bus, engineer.id);
-    await flushMicrotasks();
-
-    const reviewer = manager.list().find((record) => controller.phaseRoleOf(record.id) === 'reviewer')!;
-    reviewer.fullOutput = ['```json', JSON.stringify({
-      version: 1,
-      archetype: 'reviewer',
-      summary: 'Review passed.',
-      score: 10,
-      passed: true,
-      dimensions: [],
-      issues: [],
-      constraintFindings: [],
-      acceptanceChecklist: [{ item: 'deliverable meets the task ask', verified: true, evidence: 'exercised in test fixture' }],
-    }), '```'].join('\n');
-    emitAgentCompleted(bus, reviewer.id);
-    await flushMicrotasks(40);
-
-    expect(chain.state).toBe('passed');
-    expect(owner.status).toBe('completed');
-
-    // renderAgentCompletionAnswer is the single rule every surface reply path
-    // runs (daemon/surface-delivery.ts and the client session-dispatch seam both
-    // call it), so asserting it is asserting what the person receives.
-    const reply = renderAgentCompletionAnswer(owner);
-    expect(reply).toBe('Added the slugify helper and wired it into the exports.');
-    expect(reply).not.toContain('WRFC chain');
-    expect(reply).not.toContain('commit skipped');
-    expect(reply).not.toContain('review 10/10');
-
-    // The status line is not lost, it is on the operator-audience progress
-    // field, which the channel delivery path never forwards to a person.
-    expect(owner.progress).toContain(`WRFC chain ${chain.id} passed`);
-    expect(owner.progressAudience).toBe('operator');
-  });
-
-  test('a chain with nothing to show says so in plain words, never in chain identifiers', async () => {
-    const { bus, manager, controller } = createHarness();
-
-    const owner = manager.spawn({ mode: 'spawn', task: 'confirm the deployment is healthy' });
-    const chain = controller.listChains()[0]!;
-    const engineer = manager.getStatus(chain.engineerAgentId!)!;
-    // No output at all from the work phase.
-    engineer.fullOutput = '';
-    emitAgentCompleted(bus, engineer.id);
-    await flushMicrotasks();
-
-    const reviewer = manager.list().find((record) => controller.phaseRoleOf(record.id) === 'reviewer')!;
-    reviewer.fullOutput = ['```json', JSON.stringify({
-      version: 1,
-      archetype: 'reviewer',
-      summary: 'Review passed.',
-      score: 10,
-      passed: true,
-      dimensions: [],
-      issues: [],
-      constraintFindings: [],
-      acceptanceChecklist: [{ item: 'deliverable meets the task ask', verified: true, evidence: 'exercised in test fixture' }],
-    }), '```'].join('\n');
-    emitAgentCompleted(bus, reviewer.id);
-    await flushMicrotasks(40);
-
-    expect(chain.state).toBe('passed');
-    const reply = renderAgentCompletionAnswer(owner);
-    expect(reply).toBe('The work is finished. The full-scope review and the quality gates passed.');
-    expect(reply).not.toContain(chain.id);
+    expect(owned).toHaveLength(0);
+    expect(runRecords).toEqual([record]);
+    expect(record.template).toBe('reviewer');
+    expect(record.contractRole).toBeUndefined();
+    expect(record.reviewMode).toBe('none');
   });
 });
 

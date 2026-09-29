@@ -1,13 +1,11 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * Persistence (see CHANGELOG 0.38.0), mirrors the WrfcController chain seams
- * exactly: serializeChain:323 / deserializeChain:345 (including the
- * future-schemaVersion-reject guard at :364) / importChain:402. Writes to
- * `.goodvibes/orchestration/<workstreamId>.json`, SEPARATE from the TUI's
- * `.goodvibes/tui/wrfc-chains.json` (src/runtime/wrfc-persistence.ts), no
- * path collision. Debounce (250ms) and corrupt-snapshot quarantine
- * (`<path>.unrecognized`) mirror that same TUI module's conventions.
+ * Persistence (see CHANGELOG 0.38.0): serializes a workstream into a
+ * schema-versioned snapshot, rejects a snapshot written by a newer schema, and
+ * imports one back. Writes to `.goodvibes/orchestration/<workstreamId>.json`.
+ * Writes are debounced (250ms) and a snapshot that cannot be read is
+ * quarantined as `<path>.unrecognized` rather than deleted.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -93,7 +91,7 @@ export function deserializeWorkstream(serialized: SerializedWorkstream): Workstr
   return { ...serialized, items: serialized.items.map(deserializeWorkItem) };
 }
 
-/** Mirrors WrfcController.serializeChain: JSON.stringify a schema-versioned envelope. Returns null on serialization failure rather than throwing. */
+/** JSON.stringify a schema-versioned envelope. Returns null on serialization failure rather than throwing. */
 export function serializeWorkstreamSnapshot(workstream: Workstream, completedResults: readonly PhaseResult[]): string | null {
   const snapshot: WorkstreamSnapshot = {
     schemaVersion: CURRENT_WORKSTREAM_SCHEMA_VERSION,
@@ -110,8 +108,8 @@ export function serializeWorkstreamSnapshot(workstream: Workstream, completedRes
 }
 
 /**
- * Mirrors WrfcController.deserializeChain's future-schemaVersion-reject
- * guard: a snapshot written by a newer runtime is rejected (fail closed)
+ * Parses a snapshot. A snapshot written by a newer runtime (a higher
+ * schemaVersion) is rejected (fail closed)
  * rather than partially trusted.
  */
 export function deserializeWorkstreamSnapshot(json: string): WorkstreamSnapshot | null {
@@ -460,8 +458,7 @@ export function reapOrchestrationSnapshots(projectRoot: SnapshotRoot, options?: 
 }
 
 /**
- * Debounced trailing writer (250ms, exactly like wrfc-persistence.ts
- * DEBOUNCE_MS), subscribing to engine lifecycle events. Returns an
+ * Debounced trailing writer (250ms), subscribing to engine lifecycle events. Returns an
  * unsubscribe function that also flushes any pending timers.
  *
  * Also owns the PERIODIC housekeeping pass: an engine can stay attached for

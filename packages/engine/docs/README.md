@@ -42,7 +42,7 @@ release-history source.
 - [Runtime orchestration](./runtime-orchestration.md)
 - [Tool system](./tools.md)
 - [Tool safety](./tool-safety.md)
-- [WRFC constraint propagation](./wrfc-constraint-propagation.md)
+- [Contract criteria](./contract-criteria.md)
 - [Architecture](./architecture.md)
 - [Platform architecture](./architecture-platform.md)
 

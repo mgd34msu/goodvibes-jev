@@ -4,10 +4,10 @@
  * `surface-conversation-gate.ts` guards the first spawn of an inbound channel
  * message. It is not the only way an agent starts: a shared session also has a
  * continuation runner, which the broker calls when a queued follow-up input is
- * ready (SharedSessionBroker.runQueuedFollowUp). That runner spawned with the
- * write-review-fix-confirm controller attached, so a message that the ingress
- * gate had correctly answered conversationally could still become a chain one
- * hop later, with a reviewer, quality gates, and a second agent.
+ * ready (SharedSessionBroker.runQueuedFollowUp). A spawn from that runner that
+ * is not outside every contract starts a contract, so a message that the
+ * ingress gate had correctly answered conversationally could still become
+ * planned, checked contract work one hop later.
  *
  * This module owns the single rule both continuation runners now consult, and
  * it lives in the SDK rather than in one product because the daemon, the TUI
@@ -16,19 +16,19 @@
  *
  * THE RULE, in order:
  *
- * 1. An explicit authorization marker on the input opens a chain. The marker is
- *    written by whatever already confirmed the work, an agreed work proposal,
- *    a schedule, a trigger, an on-exit chain.
+ * 1. An explicit authorization marker on the input starts a contract. The marker
+ *    is written by whatever already confirmed the work, an agreed work
+ *    proposal, a schedule, a trigger, an on-exit chain of commands.
  * 2. A follow-up typed on a LOCAL surface (the terminal UI the operator is
- *    sitting in front of) opens a chain. That is the surface's whole point, and
- *    it is exactly the exemption the ingress gate makes.
- * 3. Everything else is conversation: the follow-up gets a real answer with the
- *    chain suppressed.
+ *    sitting in front of) starts a contract. That is the surface's whole point,
+ *    and it is exactly the exemption the ingress gate makes.
+ * 3. Everything else is conversation: the follow-up gets a real answer, outside
+ *    every contract.
  *
  * Absent, malformed, or unrecognized authorization is NOT authorization. The
  * failure mode of this module is an answer where a workstream was wanted, which
  * the owner can correct with one more message; the opposite failure mode is
- * twenty notifications and a review chain nobody asked for.
+ * twenty notifications and a contract nobody asked for.
  */
 import {
   CONVERSATION_GATE_DEFAULTS,
@@ -47,10 +47,10 @@ import {
  */
 export const WORK_AUTHORIZED_METADATA_KEY = 'goodvibes.workAuthorized';
 
-/** Why a continuation was or was not allowed to open a work chain. */
+/** Why a continuation was or was not allowed to start a contract. */
 export type ContinuationEscalation =
-  | { readonly startsWorkChain: true; readonly reason: 'pre-authorized' | 'local-surface' }
-  | { readonly startsWorkChain: false; readonly reason: 'conversation-first' };
+  | { readonly startsContract: true; readonly reason: 'pre-authorized' | 'local-surface' }
+  | { readonly startsContract: false; readonly reason: 'conversation-first' };
 
 /**
  * The shape this module reads. Deliberately structural and fully optional so
@@ -85,15 +85,14 @@ export function readWorkAuthorization(metadata: Record<string, unknown> | undefi
 }
 
 /**
- * Decide whether a session continuation may open a write-review-fix-confirm
- * chain.
+ * Decide whether a session continuation may start a contract.
  */
 export function decideContinuationEscalation(
   input: ContinuationInputLike | undefined,
   options: ContinuationEscalationOptions = {},
 ): ContinuationEscalation {
   if (readWorkAuthorization(input?.metadata)) {
-    return { startsWorkChain: true, reason: 'pre-authorized' };
+    return { startsContract: true, reason: 'pre-authorized' };
   }
   const config = options.configReader
     ? readConversationGateConfig(options.configReader)
@@ -103,26 +102,26 @@ export function decideContinuationEscalation(
   // its deliberate choice to gate an UNKNOWN surface rather than wave it
   // through.
   return isGatedSurface(config, input?.surfaceKind)
-    ? { startsWorkChain: false, reason: 'conversation-first' }
-    : { startsWorkChain: true, reason: 'local-surface' };
+    ? { startsContract: false, reason: 'conversation-first' }
+    : { startsContract: true, reason: 'local-surface' };
 }
 
 /**
  * The spawn-input fragment implementing the decision. Spreading this into a
  * spawn call is the whole integration:
  *
- *   agentManager.spawn({ mode: 'spawn', task, ...continuationChainOptions(input) })
+ *   agentManager.spawn({ mode: 'spawn', task, ...continuationContractOptions(input) })
  */
-export function continuationChainOptions(
+export function continuationContractOptions(
   input: ContinuationInputLike | undefined,
   options: ContinuationEscalationOptions = {},
 ): { readonly outsideContract?: true; readonly replyStyle?: 'conversational' } {
-  // `replyStyle` rides with the chain decision rather than being a second,
+  // `replyStyle` rides with the contract decision rather than being a second,
   // separately-derived judgement: a continuation that is conversation gets a
   // conversational REPLY, not a completion report addressed to nobody. The
   // ingress gate (daemon/surface-conversation-gate.ts) pairs the same two
   // fields for the first message of a conversation; this is the follow-up half.
-  return decideContinuationEscalation(input, options).startsWorkChain
+  return decideContinuationEscalation(input, options).startsContract
     ? {}
     : { outsideContract: true, replyStyle: 'conversational' };
 }

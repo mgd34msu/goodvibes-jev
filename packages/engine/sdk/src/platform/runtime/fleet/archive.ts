@@ -4,8 +4,8 @@
  * Fleet archive, moves FINISHED process subtrees out of the live fleet view
  * into a session-scoped archive, without touching the source managers.
  *
- * The registry derives nodes live from its sources (AgentManager, WRFC
- * controller, …), which keep finished records for the life of the session,
+ * The registry derives nodes live from its sources (AgentManager, the
+ * contract runner, …), which keep finished records for the life of the session,
  * so terminal agents/swarms otherwise accumulate in the fleet view forever.
  * `withFleetArchive` wraps a ProcessRegistry: `query()`/`subscribe()` hide
  * archived subtrees, `listArchived()` exposes them for a dedicated archive

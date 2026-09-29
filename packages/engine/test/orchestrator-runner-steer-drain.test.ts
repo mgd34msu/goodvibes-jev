@@ -124,7 +124,7 @@ function makeContext(opts: {
 function makeRegistryDeps(record: AgentRecord, messageBus: Pick<AgentMessageBus, 'send'>) {
   return {
     agentManager: { list: () => [record], cancel: () => false },
-    wrfcController: { listChains: () => [] },
+    contractRunner: { list: () => [], cancel: () => false },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {

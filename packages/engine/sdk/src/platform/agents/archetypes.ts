@@ -52,7 +52,7 @@ export interface AgentArchetype {
 const BUILT_IN_ARCHETYPES: AgentArchetype[] = [
   {
     name: 'orchestrator',
-    description: 'WRFC coordination and decomposition agent',
+    description: 'Contract owner: represents a contract and carries its answer',
     tools: ['read', 'find', 'analyze', 'inspect', 'registry'],
     isCustom: false,
     origin: 'builtin',

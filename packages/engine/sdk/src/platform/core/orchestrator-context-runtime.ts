@@ -7,7 +7,7 @@ import type { CompactionContext } from './context-compaction.js';
 import type { SessionMemoryStore } from './session-memory.js';
 import type { SessionLineageTracker } from './session-lineage.js';
 import type { AgentManager } from '../tools/agent/index.js';
-import type { WrfcController } from '../agents/wrfc-controller.js';
+import type { ContractRunner } from '../contract/runner.js';
 import type { ExecutionPlanManager } from './execution-plan.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { emitOpsContextWarning, emitCompactionReceipt } from '../runtime/emitters/index.js';
@@ -112,7 +112,7 @@ type AutoCompactionDeps = {
   sessionMemoryStore: Pick<SessionMemoryStore, 'list'> | null;
   sessionLineageTracker: Pick<SessionLineageTracker, 'getEntries' | 'getCompactionCount' | 'getOriginalTask'>;
   agentManager: Pick<AgentManager, 'list'>;
-  wrfcController: Pick<WrfcController, 'listChains'>;
+  contractRunner: Pick<ContractRunner, 'list'>;
   planManager: Pick<ExecutionPlanManager, 'getActive'> | null;
   sessionId: string;
   /** Returns the standing system instruction chain to re-inject at compaction. */
@@ -142,7 +142,7 @@ function buildAutoCompactionContext(
     sessionMemories: deps.sessionMemoryStore?.list() ?? [],
     lineageEntries: deps.sessionLineageTracker.getEntries(),
     agents: deps.agentManager.list(),
-    wrfcChains: deps.wrfcController.listChains(),
+    contracts: deps.contractRunner.list({ sessionId: deps.sessionId, includeTerminal: true }),
     activePlan: deps.planManager?.getActive(deps.sessionId) ?? null,
     compactionCount: deps.sessionLineageTracker.getCompactionCount(),
     originalTask: deps.sessionLineageTracker.getOriginalTask() ?? undefined,
@@ -165,7 +165,7 @@ export type PreflightDeps = {
   sessionLineageTracker: Pick<SessionLineageTracker, 'getEntries' | 'getCompactionCount' | 'getOriginalTask'>;
   sessionId: string;
   agentManager: Pick<AgentManager, 'list'>;
-  wrfcController: Pick<WrfcController, 'listChains'>;
+  contractRunner: Pick<ContractRunner, 'list'>;
   planManager: Pick<ExecutionPlanManager, 'getActive'> | null;
   sessionMemoryStore: Pick<SessionMemoryStore, 'list'> | null;
   runtimeBus: RuntimeEventBus | null;
@@ -386,7 +386,7 @@ export function emitContextOverflowError(
 export type PostTurnContextDeps = {
   conversation: ConversationManager;
   agentManager: Pick<AgentManager, 'list'>;
-  wrfcController: Pick<WrfcController, 'listChains'>;
+  contractRunner: Pick<ContractRunner, 'list'>;
   planManager: Pick<ExecutionPlanManager, 'getActive'> | null;
   sessionMemoryStore: Pick<SessionMemoryStore, 'list'> | null;
   runtimeBus: RuntimeEventBus | null;

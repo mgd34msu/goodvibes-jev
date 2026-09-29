@@ -56,7 +56,7 @@ import { createWebSearchTool } from './web-search/index.js';
 import { ProcessManager } from './shared/process-manager.js';
 import type { AgentManager } from './agent/index.js';
 import { AgentMessageBus } from '../agents/message-bus.js';
-import type { WrfcController } from '../agents/wrfc-controller.js';
+import { AGENT_MANAGER_SESSION_ID, type ContractRunner } from '../contract/runner.js';
 import type { WebSearchService } from '../web-search/index.js';
 import type { ChannelPluginRegistry } from '../channels/index.js';
 import type { RemoteRunnerRegistry } from '../runtime/remote/index.js';
@@ -278,7 +278,10 @@ export function registerAllTools(
     processManager: ProcessManager;
     agentManager?: AgentManager | undefined;
     agentMessageBus: AgentMessageBus;
-    wrfcController?: WrfcController | undefined;
+    /** Starts the contracts the agent tool and the workflow tool's `contract` definition hand work to. */
+    contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get'>;
+    /** The project a contract started by a tool works in. */
+    projectRoot: string;
     webSearchService?: WebSearchService | undefined;
     channelRegistry?: ChannelPluginRegistry | null | undefined;
     remoteRunnerRegistry?: RemoteRunnerRegistry | undefined;
@@ -419,7 +422,10 @@ export function registerAllTools(
     throw new Error('registerAllTools requires agentManager');
   }
   const agentMessageBus = deps.agentMessageBus;
-  const wrfcController = deps?.wrfcController;
+  // A contract started by a tool belongs to the conversation session; without a
+  // resolver it takes AgentManager's own event session, the one the runner gives
+  // agent-manager spawns.
+  const resolveContractSessionId = deps.resolveSessionId ?? (() => AGENT_MANAGER_SESSION_ID);
   const archetypeLoader = deps?.archetypeLoader;
   const webSearchService = deps?.webSearchService;
   const channelRegistry = deps?.channelRegistry ?? null;
@@ -553,7 +559,9 @@ export function registerAllTools(
     messageBus: agentMessageBus,
     configManager: deps.configManager,
     ...(archetypeLoader ? { archetypeLoader } : {}),
-    ...(wrfcController ? { wrfcController } : {}),
+    contractRunner: deps.contractRunner,
+    projectRoot: deps.projectRoot,
+    resolveSessionId: resolveContractSessionId,
   }));
   // Scoped under the surface (surfaceRoot is required above, so this is
   // always the scoped form); dual-reads the old unscoped .goodvibes/state
@@ -576,7 +584,11 @@ export function registerAllTools(
     modeManager,
     ...(deps.memoryRegistry ? { memoryRegistry: deps.memoryRegistry } : {}),
   }));
-  registerTool(createWorkflowTool(workflowServices));
+  registerTool(createWorkflowTool(workflowServices, {
+    contractRunner: deps.contractRunner,
+    projectRoot: deps.projectRoot,
+    resolveSessionId: resolveContractSessionId,
+  }));
   const fetchConfigManager = deps.configManager;
   registerTool(createFetchTool({
     serviceRegistry: deps.serviceRegistry,

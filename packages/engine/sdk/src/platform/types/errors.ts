@@ -281,18 +281,6 @@ export async function isContextSizeExceededError(err: unknown, site = 'types.err
 }
 
 /**
- * Whether an error message (already reduced to a plain string, e.g. after
- * crossing an event-bus boundary) describes a transient network or
- * transport failure. Prefer {@link isNetworkTransportError} whenever the
- * original error object is still available, since it trusts structured
- * classification before reading any text.
- */
-export async function isTransportFailureMessage(message: string, site = 'types.errors.transport-message'): Promise<boolean> {
-  if (message.trim().length === 0) return false;
-  return (await readFailure({ message }, site)).transientNetwork;
-}
-
-/**
  * Whether the error is a transient network or transport failure (as opposed
  * to a programmer error or a permanent provider rejection).
  *

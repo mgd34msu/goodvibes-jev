@@ -45,14 +45,10 @@ export { AttemptError, attemptItemId, createAttemptsCoordinator } from './attemp
 export type { CreateWorkstreamInput, OrchestrationEngine, OrchestrationEngineDeps } from './engine.js';
 export { createOrchestrationEngine } from './engine.js';
 
-// The fix-phase rework: review findings as a second task source, the
-// dynamic-graph muscles, the elastic pool, and the planned-fix runner.
-export { parseReviewIntoTasks, planFixWorkstream } from './review-task-source.js';
+// The task graph (planned-fix groups), the dynamic-graph operations, and the
+// elastic pool.
 export { planTaskGraph, clusterOf, ELASTIC_PHASE_CAPACITY } from './task-graph.js';
 export type { ExtraEdges, GraphTask, TaskSeverity } from './task-graph.js';
-export type { ReviewTask, ReviewTaskSource, SemanticEdgePlanner } from './review-task-source.js';
-export { createFixWorkstreamRunner } from './fix-workstream-runner.js';
-export type { FixWorkstreamRunner, FixWorkstreamOutcome, FixWorkstreamRunnerDeps } from './fix-workstream-runner.js';
 export { addDependencyEdge, addConflictSerializationEdges, buildGraphSnapshot, detectOrphans, remainingDepths, wouldCreateCycle } from './graph-dynamics.js';
 export type { DependencyGraph, GraphNode } from './graph-dynamics.js';
 export type { EdgeAddResult, WorkstreamGraphSnapshot, GraphNodeSnapshot, GraphEdgeSnapshot, PoolStateSnapshot } from './graph-dynamics.js';
@@ -75,12 +71,10 @@ export {
   writeWorkstreamSnapshot,
 } from './persistence.js';
 
-export { engineerPhases, fromChainSpec } from './controller-compat.js';
+export { approveAndLaunchProposal, draftFromProposal, fromPlanProposal } from './proposal-workstream.js';
+export type { ProposalLaunchInput } from './proposal-workstream.js';
 
-export { fromPlanProposal, approveAndLaunchProposal } from './proposal-workstream.js';
-export type { FromPlanProposalOptions } from './proposal-workstream.js';
-
-export type { PhaseRunnerAgentManagerLike, PhaseRunnerDeps, PhaseRunOutcome, WrfcWorktreeOps } from './phase-runner.js';
+export type { PhaseRunnerAgentManagerLike, PhaseRunnerDeps, PhaseRunOutcome, WorktreeOps } from './phase-runner.js';
 export { runPhase } from './phase-runner.js';
 
 export type { DirtyLaunchSnapshot, ScopedCommitExclusion } from './dirty-guard.js';

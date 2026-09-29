@@ -727,8 +727,8 @@ refinement and maintenance methods cover repair, reindex, reset, and status.
 
 Home Assistant prompt ingress uses isolated remote-chat sessions backed by the
 same daemon chat manager used by companion-app remote chat. It does not use a
-shared TUI session, `SharedSessionBroker`, `AgentManager`, or WRFC
-review/fix chains.
+shared TUI session, `SharedSessionBroker`, `AgentManager`, or the contract
+runner.
 
 ### Home Assistant Assist conversations
 

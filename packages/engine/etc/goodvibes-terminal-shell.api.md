@@ -810,7 +810,7 @@ export interface ProcessRegistryDeps {
     // Warning: (ae-forgotten-export) The symbol "CodeIndexProcessSource" needs to be exported by the entry point index.d.ts
     readonly codeIndexService?: CodeIndexProcessSource | undefined;
     // Warning: (ae-forgotten-export) The symbol "ContractRunner" needs to be exported by the entry point index.d.ts
-    readonly contractRunner?: Pick<ContractRunner, 'list' | 'cancel'> | undefined;
+    readonly contractRunner: Pick<ContractRunner, 'list' | 'cancel'>;
     // Warning: (ae-forgotten-export) The symbol "AgentMessageBus" needs to be exported by the entry point index.d.ts
     readonly messageBus?: Pick<AgentMessageBus, 'send'> | undefined;
     // (undocumented)
@@ -1315,9 +1315,9 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:273:30 - (ae-forgotten-export) The symbol "CheckinSessionView" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:340:5 - (ae-forgotten-export) The symbol "CredentialWriteConfig" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/control-plane/routes/register-gateway-verb-groups.ts:341:5 - (ae-forgotten-export) The symbol "CredentialWriteSecrets" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:104:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
-// sdk/src/platform/runtime/fleet/registry.ts:107:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:103:5 - (ae-forgotten-export) The symbol "WorkflowManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:105:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
+// sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
 // terminal-shell/src/terminal-output-guard.ts:70:3 - (ae-forgotten-export) The symbol "WritableStreamLike" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)

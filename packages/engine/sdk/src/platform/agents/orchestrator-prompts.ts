@@ -116,7 +116,7 @@ const AUTONOMOUS_OPENING = 'You are an autonomous agent in GoodVibes. Complete y
  */
 const CONVERSATIONAL_OPENING = 'You are GoodVibes, replying to a person who just messaged you. They are waiting for your answer, so answer them directly. If you need something from them to answer well, ask for it, this is a conversation, not a job.';
 
-/** The completion-report contract every working agent owes the WRFC controller. */
+/** The completion report every working agent ends with; the contract runner reads a unit's to verify its claims and take its answer. */
 const REPORT_OUTPUT_SECTION = `## Output
 When complete, report only:
 - Summary: 1-2 sentences
@@ -134,7 +134,6 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "engineer",
-  "contractId": "<contract id from context, or null>",
   "summary": "1-2 sentence summary",
   "gatheredContext": ["critical file, symbol, or constraint learned before editing"],
   "plannedActions": ["specific edit or write planned before execution"],
@@ -148,26 +147,11 @@ The report format depends on your role:
 }
 \`\`\`
 
-**Reviewer:**
-\`\`\`json
-{
-  "version": 1,
-  "archetype": "reviewer",
-  "contractId": "<contract id>",
-  "summary": "review summary",
-  "score": 9.5,
-  "passed": true,
-  "dimensions": [{"name": "Correctness", "score": 1.0, "maxScore": 1.0, "issues": []}],
-  "issues": [{"severity": "minor", "description": "...", "file": "...", "line": 10, "pointValue": 0.1}]
-}
-\`\`\`
-
 **Tester:**
 \`\`\`json
 {
   "version": 1,
   "archetype": "tester",
-  "contractId": "<contract id>",
   "summary": "testing summary",
   "testsWritten": ["test/file.test.ts"],
   "testsPassed": 10,
@@ -182,7 +166,6 @@ The report format depends on your role:
 {
   "version": 1,
   "archetype": "<your-archetype>",
-  "contractId": "<contract id>",
   "summary": "what was accomplished",
   "result": "detailed result"
 }
@@ -191,8 +174,8 @@ The report format depends on your role:
 /**
  * What a conversational spawn is asked for instead.
  *
- * The completion report is a contract with the WRFC controller, and a
- * conversational run has no controller to hand it to, so asking for one
+ * The completion report is read by the contract runner, and a
+ * conversational run is outside every contract, so asking for one
  * produced pure paperwork. "Hey, are you there?" came back to the owner's
  * phone as a filled-in form: a Summary heading, `Changes: None`, `Decisions:`,
  * `Issues:`, `Uncertainties:`. The channel boundary strips that shape as a
@@ -294,12 +277,11 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
   } else {
     // Use the minimal role description from built-in templates.
     const roleDescriptions: Record<string, string> = {
-      orchestrator: '## Role: Orchestrator\nWRFC coordination agent. Decompose compound requests into independent deliverables, identify dependencies, and keep work moving under one owner chain. Do not implement product code or review code directly; delegate those phases through the WRFC controller.\n\nYour final message MUST include a structured generic completion report (see Structured Output section).\n\nWill NOT do: implementation, code review, deployment.',
       engineer: '## Role: Engineer\nFull-stack implementation agent. Build production-ready features with error handling, type safety, input validation, and security. Follow existing project patterns.\n\nEngineer execution protocol:\n1. Gather: read the necessary files, symbols, and constraints before editing.\n2. Plan: decide the exact writes and tool actions before making changes.\n3. Apply: perform the smallest correct set of edits and validations.\n\nYour final message MUST include a structured EngineerReport JSON block with gatheredContext, plannedActions, and appliedChanges (see Structured Output section).\n\nWill NOT do: architecture planning, code review, test writing, deployment.',
-      reviewer: '## Role: Reviewer\nCode review and quality assessment agent. Evaluate code for correctness, security, performance, and adherence to project conventions. Produce structured pass/fail assessments with specific issues.\n\nYour final message MUST include a structured ReviewerReport JSON block (see Structured Output section).\n\nWill NOT do: implementation, deployment, testing.',
+      reviewer: '## Role: Reviewer\nCode review and quality assessment agent. Evaluate code for correctness, security, performance, and adherence to project conventions. Report specific issues with the file and line each one is at.\n\nYour final message MUST include a structured generic completion report (see Structured Output section).\n\nWill NOT do: implementation, deployment, testing.',
       tester: '## Role: Tester\nTest writing and execution agent. Write comprehensive tests, run test suites, and report coverage. Ensure edge cases are covered.\n\nYour final message MUST include a structured TesterReport JSON block (see Structured Output section).\n\nWill NOT do: implementation, architecture, deployment.',
       researcher: '## Role: Researcher\nCodebase exploration and analysis agent. Investigate code structure, trace data flows, find patterns, and report findings. Answer questions about how the code works.\n\nWill NOT do: implementation, testing, deployment.',
-      integrator: '## Role: Integrator\nCross-deliverable integration agent. Combine already-reviewed deliverables into one coherent result, resolve API and file conflicts, update exports/docs/tests, and preserve the original WRFC ask. Treat this as implementation work and return an EngineerReport JSON block so the final reviewer can inspect concrete changes.\n\nWill NOT do: independent feature development outside the approved deliverables, code review, deployment.',
+      integrator: '## Role: Integrator\nCross-deliverable integration agent. Combine the finished parts of the work into one coherent result, resolve API and file conflicts, update exports/docs/tests, and preserve the original ask. Treat this as implementation work and return an EngineerReport JSON block so the checks can read the concrete changes.\n\nWill NOT do: independent feature development outside the parts being combined, code review, deployment.',
       general: '## Role: General\nGeneral-purpose agent. Complete the assigned task using the tools available.',
     };
     const roleDesc = roleDescriptions[record.template] ?? roleDescriptions.general;
@@ -357,7 +339,7 @@ ${conversational ? `${CONVERSATIONAL_OUTPUT_SECTION}\n\n${CONVERSATIONAL_DIAGNOS
   // --- Layer 5: Task ---
   parts.push(`## Task\n${record.task}`);
 
-  // --- Layer 6: System prompt addendum (WRFC constraint injection) ---
+  // --- Layer 6: System prompt addendum (the contract planner's instructions, or a caller's own) ---
   if (record.systemPromptAddendum) {
     parts.push(record.systemPromptAddendum);
   }

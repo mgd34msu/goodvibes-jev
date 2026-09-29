@@ -18,9 +18,6 @@
  *     case did not match any entry in the old allowlist).
  *  3. isNetworkTransportError() still returns false for a non-network error that
  *     merely carries similar-looking-but-unrelated fields (no over-retry regression).
- *  4. isTransportFailureMessage() (the message-only fallback used by
- *     WrfcController, which only ever sees a stringified reason) recognizes the
- *     newly added "closed unexpectedly" / bare "socket" wording.
  *
  * The wording is read by the failure-reading battery; the fake port below
  * answers with the reading each message carries. A structured HttpStatusError
@@ -29,21 +26,13 @@
 import { describe, it, expect } from 'bun:test';
 import { HttpStatusError } from '../errors/src/index.js';
 import { createNetworkTransportError } from '../transport-http/src/http-core.js';
-import {
-  isNetworkTransportError,
-  isTransportFailureMessage,
-} from '../sdk/src/platform/types/errors.js';
+import { isNetworkTransportError } from '../sdk/src/platform/types/errors.js';
 import { useFailureReadings } from './_helpers/failure-readings.ts';
 
 const readings = useFailureReadings([
   ['The model refused to produce a tool call', { category: 'bad_request' }],
   ['tool call failed for unrelated reasons', { category: 'unknown' }],
   ['connect ECONNREFUSED', { category: 'network', transientNetwork: true, providerUnusable: true, beforeResponse: true }],
-  ['closed unexpectedly', { category: 'network', transientNetwork: true, beforeResponse: true }],
-  ['socket destroyed before response completed', { category: 'network', transientNetwork: true, beforeResponse: true }],
-  ['getaddrinfo ENOTFOUND', { category: 'network', transientNetwork: true, providerUnusable: true, beforeResponse: true }],
-  ['Review score 5/10 below threshold', { category: 'unknown' }],
-  ['context limit exceeded', { category: 'bad_request', contextExceeded: true }],
 ]);
 
 describe('createNetworkTransportError (transport-http): classification transport-http already gets right', () => {
@@ -100,25 +89,5 @@ describe('isNetworkTransportError: trusts structured classification over message
   it('still falls back to message-substring matching for a plain Error carrying network wording with no structured fields', async () => {
     const err = new Error('connect ECONNREFUSED 127.0.0.1:443');
     expect(await isNetworkTransportError(err)).toBe(true);
-  });
-});
-
-describe('isTransportFailureMessage: message-only fallback used by WrfcController', () => {
-  it('recognizes the newly added "closed unexpectedly" wording', async () => {
-    expect(await isTransportFailureMessage('The socket connection was closed unexpectedly')).toBe(true);
-  });
-
-  it('recognizes bare "socket" wording', async () => {
-    expect(await isTransportFailureMessage('Agent agent-7 failed: socket destroyed before response completed')).toBe(true);
-  });
-
-  it('still recognizes the pre-existing substrings (no regression)', async () => {
-    expect(await isTransportFailureMessage('connect ECONNREFUSED 127.0.0.1:443')).toBe(true);
-    expect(await isTransportFailureMessage('getaddrinfo ENOTFOUND api.example.com')).toBe(true);
-  });
-
-  it('returns false for an ordinary review/logic failure message', async () => {
-    expect(await isTransportFailureMessage('Review score 5/10 below threshold 9.9/10')).toBe(false);
-    expect(await isTransportFailureMessage('LLM error: context limit exceeded')).toBe(false);
   });
 });

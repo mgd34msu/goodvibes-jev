@@ -125,6 +125,8 @@ function turnContext(h: Harness, input: { readonly turnId: string; readonly mode
     recordTurnKnowledgeInjection: () => {},
     nextTurnKnowledgeSequence: () => 1,
     contractHooks: h.runner.hooks(),
+    // Intake is read by its own tests (intake-route.test.ts); here every turn stays a conversation turn.
+    contractIntake: { intake: async () => ({ kind: 'turn' }) },
   };
   return { context, conversation };
 }
@@ -226,5 +228,20 @@ describe('session mode (6.6)', () => {
     await executeOrchestratorTurnLoop(context);
     expect(seen.requests).toBe(1);
     expect(h.runner.hooks().sessionTurn('session-1', 'turn-10')).toBeNull();
+  });
+
+  test('a turn that intake hands to a contract ends before any model call, with the contract line in the conversation', async () => {
+    const h = makeHarness({ plan: oneUnitPlan(1), scripts: {} });
+    harness = h;
+    const seen = { requests: 0 };
+    const { context, conversation } = turnContext(h, { turnId: 'turn-11', model: provider([{ text: 'hello' }], seen), executeToolCalls: writer(h.root) });
+    const intakes: string[] = [];
+    await executeOrchestratorTurnLoop({
+      ...context,
+      contractIntake: { intake: async (turn) => { intakes.push(turn.text); return { kind: 'started', contractId: 'ctr-0000abcd', ownerAgentId: 'agent-owner' }; } },
+    });
+    expect(seen.requests).toBe(0);
+    expect(intakes).toEqual([context.text]);
+    expect(conversation.getMessageSnapshot().some((message) => message.role === 'system' && typeof message.content === 'string' && message.content.includes('[Contract] Contract ctr-0000abcd took this request'))).toBe(true);
   });
 });

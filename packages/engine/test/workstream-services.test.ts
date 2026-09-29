@@ -1,20 +1,12 @@
 // ---------------------------------------------------------------------------
-// workstream-services.test.ts, phase/work-item orchestration engine
+// workstream-services.test.ts, the workstream draft facade
 //
-// Integration test against a REAL OrchestrationEngine (not a fake) on a
-// scratch workspace: create -> approve -> launch drives the engine through
-// its actual engineer pipeline (fromChainSpec's canned single-phase
-// shape) with a stub agent executor, mirroring the SDK's own
-// orchestration-engine.test.ts harness (bus.emit + createEventEnvelope over
-// a fake PhaseRunnerAgentManagerLike) via the public npm surface this TUI
-// consumes (@/runtime/index.ts re-exports RuntimeEventBus/createEventEnvelope
-// from @pellux/goodvibes-sdk/platform/runtime/state, see
-// agents/wrfc-controller.test.ts for the same pattern already in this repo).
-//
-// Command-layer behavior (fake service, no live engine) is covered
-// separately in test/input/workstream-runtime-command.test.ts; this file
-// proves the TUI's OWN wiring (createWorkstreamServices) produces a working
-// engine end to end, not just that the SDK engine works in isolation.
+// Drafts are held, edited, approved, journaled and reloaded by the facade; a
+// launch starts a contract (docs/design/contract-runner.md 10.4). The runner
+// here is a recording fake: a multi-item draft must reach
+// runner.startFromPlan as a drafted plan built from the draft's items, a
+// single-item draft must reach runner.start with the item's task as the ask,
+// and a launch must never create an engine workstream.
 // ---------------------------------------------------------------------------
 
 import { describe, test, expect, afterEach } from 'bun:test';
@@ -23,60 +15,15 @@ import { join } from 'node:path';
 import { AdaptivePlanner } from '../sdk/src/platform/core/index.ts';
 import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestration/index.ts';
 import type { AgentRecord } from '../sdk/src/platform/tools/index.ts';
-import { RuntimeEventBus, createEventEnvelope } from '../sdk/src/platform/runtime/events/index.ts';
+import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import type { ConfigManager } from '../sdk/src/platform/config/index.ts';
 import { configGetStub, configGetCategoryStub } from './_helpers/config-manager-stub.ts';
-import { createWorkstreamServices } from '../sdk/src/platform/orchestration/workstream-services.ts';
+import { createWorkstreamServices, type WorkstreamServicesDeps } from '../sdk/src/platform/orchestration/workstream-services.ts';
+import type { StartedContract } from '../sdk/src/platform/contract/runner.ts';
+import type { StartContractInput, StartFromPlanInput } from '../sdk/src/platform/contract/types.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 
-/**
- * Drains BOTH the microtask queue and at least one real event-loop turn.
- * Plain microtask flushing (a loop of `await Promise.resolve()`) is enough
- * for the SDK's own orchestration-engine.test.ts because its harness passes
- * `createWorktree` (a fully-synchronous-resolving fake). This module does
- * NOT expose a createWorktree override (by design, see this file's header
- * doc: production always gets the engine's real default, a genuine
- * AgentWorktree(projectRoot) using simple-git). Every phase-runner completion
- * unconditionally calls worktree.cleanup(), so even in this scratch,
- * non-git directory (where git-tooling calls fail fast and are swallowed),
- * that failure still round-trips through real subprocess I/O, a macrotask,
- * not a microtask. setImmediate + a short setTimeout let that I/O actually
- * complete before the next assertion.
- */
-async function flushMicrotasks(rounds = 12): Promise<void> {
-  for (let i = 0; i < rounds; i++) await Promise.resolve();
-}
-
-async function flushEngine(): Promise<void> {
-  await flushMicrotasks(20);
-  await new Promise((resolve) => setImmediate(resolve));
-  await flushMicrotasks(20);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  await flushMicrotasks(20);
-}
-
-function engineerReportOutput(summary: string, filesModified: string[] = []): string {
-  return [
-    '```json',
-    JSON.stringify({
-      version: 1,
-      archetype: 'engineer',
-      summary,
-      gatheredContext: [],
-      plannedActions: [],
-      appliedChanges: [summary],
-      filesCreated: [],
-      filesModified,
-      filesDeleted: [],
-      decisions: [],
-      issues: [],
-      uncertainties: [],
-    }),
-    '```',
-  ].join('\n');
-}
-
-/** Mirrors contract/config.ts's getContractCommitScope contract closely enough for fromChainSpec + phase-runner: commitScope 'off' so no commit/git repo is needed, empty gates so runWrfcGateChecks trivially passes. */
+/** A contract config category with commitScope 'off' and no gates, read by the draft's phase and by the engine. */
 function makeConfigManager(decomposition: 'heuristic' | 'agent' = 'heuristic'): Pick<ConfigManager, 'get' | 'getCategory'> {
   const contractCategory = {
     maxFixRounds: 3,
@@ -113,9 +60,8 @@ const PLANNER_DECOMPOSITION_JSON = JSON.stringify({
   ],
 });
 
-function makeAgentManagerHarness(bus: RuntimeEventBus): {
+function makeAgentManagerHarness(): {
   agentManager: PhaseRunnerAgentManagerLike;
-  completeAgent: (agentId: string, output: string) => void;
   spawnedTemplates: string[];
 } {
   const agentStore = new Map<string, AgentRecord>();
@@ -157,22 +103,33 @@ function makeAgentManagerHarness(bus: RuntimeEventBus): {
     releaseCancellationSignal: () => {},
   };
 
-  function completeAgent(agentId: string, output: string): void {
-    const record = agentStore.get(agentId)!;
-    record.status = 'completed';
-    record.fullOutput = output;
-    record.usage = { inputTokens: 10, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 1, turnCount: 1 };
-    bus.emit('agents', createEventEnvelope(
-      'AGENT_COMPLETED',
-      { type: 'AGENT_COMPLETED', agentId, durationMs: 0 },
-      { sessionId: 'test', traceId: 'test', source: 'test' },
-    ));
-  }
-
-  return { agentManager, completeAgent, spawnedTemplates };
+  return { agentManager, spawnedTemplates };
 }
 
-describe('createWorkstreamServices: real engine wiring', () => {
+/** A runner that records every start and startFromPlan call and answers with numbered contract and owner ids. */
+function recordingRunner(): {
+  runner: WorkstreamServicesDeps['contractRunner'];
+  starts: StartContractInput[];
+  planStarts: StartFromPlanInput[];
+} {
+  const starts: StartContractInput[] = [];
+  const planStarts: StartFromPlanInput[] = [];
+  let counter = 0;
+  const started = (): StartedContract => {
+    counter += 1;
+    return { contract: { id: `contract-${counter}` }, owner: { id: `owner-${counter}` } } as unknown as StartedContract;
+  };
+  return {
+    starts,
+    planStarts,
+    runner: {
+      start: (input) => { starts.push(input); return started(); },
+      startFromPlan: (input) => { planStarts.push(input); return started(); },
+    },
+  };
+}
+
+describe('createWorkstreamServices: drafts and contract launch', () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
@@ -187,66 +144,81 @@ describe('createWorkstreamServices: real engine wiring', () => {
     return dir;
   }
 
-  test('create -> approve -> launch drives a real OrchestrationEngine through its engineer phase to "passed"', async () => {
-    const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager, completeAgent } = makeAgentManagerHarness(bus);
-    const { orchestrationEngine, workstreamCommands } = createWorkstreamServices({
+  function makeServices(
+    projectRoot: string,
+    runner: WorkstreamServicesDeps['contractRunner'],
+    options: { decomposition?: 'heuristic' | 'agent'; sessionId?: WorkstreamServicesDeps['sessionId'] } = {},
+  ) {
+    const { agentManager, spawnedTemplates } = makeAgentManagerHarness();
+    const services = createWorkstreamServices({
       agentManager,
-      configManager: makeConfigManager(),
+      configManager: makeConfigManager(options.decomposition ?? 'heuristic'),
       adaptivePlanner: new AdaptivePlanner(),
-      runtimeBus: bus,
+      runtimeBus: new RuntimeEventBus(),
       projectRoot,
+      contractRunner: runner,
+      sessionId: options.sessionId ?? 'session-1',
     });
+    return { ...services, spawnedTemplates };
+  }
 
-    // create, the rendered proposal IS the real launchable spec (see
-    // workstream-services.ts's buildSpec doc): the canned fromChainSpec
-    // engineer pipeline, not a fictional decomposition.
+  test('create -> approve -> launch of a single-item draft starts a contract with the task as the ask', async () => {
+    const projectRoot = makeScratchProjectRoot();
+    const { runner, starts, planStarts } = recordingRunner();
+    const { orchestrationEngine, workstreamCommands } = makeServices(projectRoot, runner);
+
+    // create: the rendered draft is one engineer item whose task is the goal.
     const draft = await workstreamCommands.proposeDraft('ship the demo feature');
     expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer']);
+    expect(draft.spec.items.map((i) => i.task)).toEqual(['ship the demo feature']);
     expect(draft.provenance.kind).toBe('heuristic-configured');
     expect(draft.approved).toBe(false);
 
-    // approve, flips the draft's own boolean; nothing exists in the engine yet.
-    const approved = workstreamCommands.approveDraft(draft.id);
-    expect(approved?.approved).toBe(true);
+    // approve: flips the draft's own boolean; nothing starts yet.
+    expect(workstreamCommands.approveDraft(draft.id)?.approved).toBe(true);
+    expect(starts).toHaveLength(0);
+
+    // launch: runner.start with the item's task; the draft is dropped.
+    const result = workstreamCommands.launchDraft(draft.id);
+    expect(result).toEqual({ contractId: 'contract-1', ownerAgentId: 'owner-1' });
+    expect(starts).toEqual([{ ask: 'ship the demo feature', sessionId: 'session-1', origin: 'proposal', projectRoot }]);
+    expect(planStarts).toHaveLength(0);
+    expect(workstreamCommands.getDraft(draft.id)).toBeUndefined();
+    // A launch never creates an engine workstream.
     expect(orchestrationEngine.listWorkstreams()).toHaveLength(0);
 
-    // launch, NOW engine.createWorkstream + start actually run.
-    const result = workstreamCommands.launchDraft(draft.id);
-    expect(result).not.toBeNull();
-    expect(workstreamCommands.getDraft(draft.id)).toBeUndefined(); // dropped once launched
-    await flushEngine();
+    orchestrationEngine.dispose();
+  });
 
-    const ws = orchestrationEngine.getWorkstream(result!.workstreamId)!;
-    expect(ws).not.toBeNull();
-    expect(ws.items).toHaveLength(1);
-    const item = ws.items[0]!;
-    expect(item.state).toBe('in-phase');
-    expect(item.currentPhaseId).toBe(ws.phases[0]!.id); // engineer phase
-    expect(item.agentId).toBeDefined();
+  test('a single-item draft whose brief was edited launches the edited task; the session id is read at launch', async () => {
+    const projectRoot = makeScratchProjectRoot();
+    const { runner, starts } = recordingRunner();
+    let session = 'session-early';
+    const { orchestrationEngine, workstreamCommands } = makeServices(projectRoot, runner, { sessionId: () => session });
 
-    completeAgent(item.agentId!, engineerReportOutput('implemented the demo feature', ['src/demo.ts']));
-    await flushEngine();
-    expect(item.state).toBe('passed');
+    const draft = await workstreamCommands.proposeDraft('ship the demo feature', 'worktree');
+    const edited = workstreamCommands.editItem(draft.id, '1', 'ship the demo feature with tests');
+    expect(edited && 'error' in edited).toBe(false);
+    workstreamCommands.approveDraft(draft.id);
+    session = 'session-late';
+    workstreamCommands.launchDraft(draft.id);
 
+    expect(starts).toEqual([{
+      ask: 'ship the demo feature with tests',
+      sessionId: 'session-late',
+      origin: 'proposal',
+      projectRoot,
+      isolation: 'worktree',
+    }]);
     orchestrationEngine.dispose();
   });
 
   test('resumeAllFromDisk runs at construction and never throws against an empty .goodvibes/orchestration directory', () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager } = makeAgentManagerHarness(bus);
+    const { runner } = recordingRunner();
     let engine: ReturnType<typeof createWorkstreamServices>['orchestrationEngine'] | undefined;
     expect(() => {
-      const services = createWorkstreamServices({
-        agentManager,
-        configManager: makeConfigManager(),
-        adaptivePlanner: new AdaptivePlanner(),
-        runtimeBus: bus,
-        projectRoot,
-      });
-      engine = services.orchestrationEngine;
+      engine = makeServices(projectRoot, runner).orchestrationEngine;
     }).not.toThrow();
     expect(engine!.listWorkstreams()).toHaveLength(0);
     engine!.dispose();
@@ -254,15 +226,8 @@ describe('createWorkstreamServices: real engine wiring', () => {
 
   test('a rejected draft (edit without re-approval) cannot be launched', async () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager } = makeAgentManagerHarness(bus);
-    const { orchestrationEngine, workstreamCommands } = createWorkstreamServices({
-      agentManager,
-      configManager: makeConfigManager(),
-      adaptivePlanner: new AdaptivePlanner(),
-      runtimeBus: bus,
-      projectRoot,
-    });
+    const { runner, starts, planStarts } = recordingRunner();
+    const { orchestrationEngine, workstreamCommands } = makeServices(projectRoot, runner);
 
     const draft = await workstreamCommands.proposeDraft('original task');
     workstreamCommands.approveDraft(draft.id);
@@ -270,37 +235,31 @@ describe('createWorkstreamServices: real engine wiring', () => {
     expect(workstreamCommands.getDraft(draft.id)!.approved).toBe(false);
 
     expect(workstreamCommands.launchDraft(draft.id)).toBeNull();
-    expect(orchestrationEngine.listWorkstreams()).toHaveLength(0);
+    expect(starts).toHaveLength(0);
+    expect(planStarts).toHaveLength(0);
     orchestrationEngine.dispose();
   });
 
   test('a created draft survives a restart: a second services instance on the same root reloads it', async () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager } = makeAgentManagerHarness(bus);
-    const first = createWorkstreamServices({
-      agentManager, configManager: makeConfigManager(), adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const { runner, starts } = recordingRunner();
+    const first = makeServices(projectRoot, runner);
     const draft = await first.workstreamCommands.proposeDraft('persist me across a restart');
     first.workstreamCommands.approveDraft(draft.id);
     first.orchestrationEngine.dispose();
 
     // "Restart": a brand-new services instance over the SAME project root.
-    const second = createWorkstreamServices({
-      agentManager, configManager: makeConfigManager(), adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const second = makeServices(projectRoot, runner);
     const reloaded = second.workstreamCommands.getDraft(draft.id);
     expect(reloaded).toBeDefined();
     expect(reloaded!.task).toBe('persist me across a restart');
     expect(reloaded!.approved).toBe(true); // approval state persisted too
 
     // And the reloaded, already-approved draft launches straight away.
-    const result = second.workstreamCommands.launchDraft(draft.id);
-    expect(result).not.toBeNull();
+    expect(second.workstreamCommands.launchDraft(draft.id)).not.toBeNull();
+    expect(starts.map((input) => input.ask)).toEqual(['persist me across a restart']);
     // Launched ⇒ its draft snapshot is gone, so a THIRD instance sees nothing.
-    const third = createWorkstreamServices({
-      agentManager, configManager: makeConfigManager(), adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const third = makeServices(projectRoot, runner);
     expect(third.workstreamCommands.getDraft(draft.id)).toBeUndefined();
 
     second.orchestrationEngine.dispose();
@@ -309,18 +268,13 @@ describe('createWorkstreamServices: real engine wiring', () => {
 
   test('a cancelled (removed) draft does not come back after a restart', async () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager } = makeAgentManagerHarness(bus);
-    const first = createWorkstreamServices({
-      agentManager, configManager: makeConfigManager(), adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const { runner } = recordingRunner();
+    const first = makeServices(projectRoot, runner);
     const draft = await first.workstreamCommands.proposeDraft('to be discarded');
     expect(first.workstreamCommands.removeDraft(draft.id)).toBe(true);
     first.orchestrationEngine.dispose();
 
-    const second = createWorkstreamServices({
-      agentManager, configManager: makeConfigManager(), adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const second = makeServices(projectRoot, runner);
     expect(second.workstreamCommands.getDraft(draft.id)).toBeUndefined();
     expect(second.workstreamCommands.listDrafts()).toHaveLength(0);
     second.orchestrationEngine.dispose();
@@ -328,17 +282,8 @@ describe('createWorkstreamServices: real engine wiring', () => {
 
   test('agent decomposition: create spawns a planner agent (fleet pickup) and tags provenance', async () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager, spawnedTemplates } = makeAgentManagerHarness(bus);
-    // Force the agent path (the default config manager above uses 'heuristic').
-    const configManager = makeConfigManager('agent');
-    const { orchestrationEngine, workstreamCommands } = createWorkstreamServices({
-      agentManager,
-      configManager,
-      adaptivePlanner: new AdaptivePlanner(),
-      runtimeBus: bus,
-      projectRoot,
-    });
+    const { runner } = recordingRunner();
+    const { orchestrationEngine, workstreamCommands, spawnedTemplates } = makeServices(projectRoot, runner, { decomposition: 'agent' });
 
     const draft = await workstreamCommands.proposeDraft('build a multi-step feature');
 
@@ -350,10 +295,7 @@ describe('createWorkstreamServices: real engine wiring', () => {
     expect(draft.provenance.itemCount).toBe(2);
     expect(draft.provenance.agentTokens).toBe(420);
 
-    // BIG-3: a genuine MULTI-item proposal maps to the REAL multi-item
-    // workstream (fromPlanProposal), NOT a flattened single compat chain. The
-    // phase template is still the single engineer phase, but there are now two
-    // items and the inter-item dependency is preserved.
+    // A multi-item proposal keeps every item and the dependency between them.
     expect(draft.spec.phases.map((p) => p.role)).toEqual(['engineer']);
     expect(draft.spec.items).toHaveLength(2);
     expect(draft.spec.items.map((i) => i.title)).toEqual(['First item', 'Second item']);
@@ -362,43 +304,37 @@ describe('createWorkstreamServices: real engine wiring', () => {
     const second = draft.spec.items[1]!;
     expect(second.dependsOn).toEqual([first.id!]); // "Second item" after "First item"
     expect(first.dependsOn ?? []).toEqual([]);
-    // Workstream-level provenance carried through the mapping.
     expect(draft.spec.provenance?.decomposedBy).toBe('agent');
 
     orchestrationEngine.dispose();
   });
 
-  test('launch of a multi-item draft passes a dependency-scheduled spec to createWorkstream (spy)', async () => {
+  test('launch of a multi-item draft starts the contract from a drafted plan built from the draft items', async () => {
     const projectRoot = makeScratchProjectRoot();
-    const bus = new RuntimeEventBus();
-    const { agentManager } = makeAgentManagerHarness(bus);
-    const configManager = makeConfigManager('agent');
-    const { orchestrationEngine, workstreamCommands } = createWorkstreamServices({
-      agentManager, configManager, adaptivePlanner: new AdaptivePlanner(), runtimeBus: bus, projectRoot,
-    });
+    const { runner, starts, planStarts } = recordingRunner();
+    const { orchestrationEngine, workstreamCommands } = makeServices(projectRoot, runner, { decomposition: 'agent' });
 
-    // Spy on the exact input launch hands the engine.
-    const created: Array<Parameters<typeof orchestrationEngine.createWorkstream>[0]> = [];
-    const orig = orchestrationEngine.createWorkstream.bind(orchestrationEngine);
-    orchestrationEngine.createWorkstream = (input) => { created.push(input); return orig(input); };
-
-    const draft = await workstreamCommands.proposeDraft('build a multi-step feature');
+    const draft = await workstreamCommands.proposeDraft('build a multi-step feature', 'shared');
+    const [first, second] = draft.spec.items;
     workstreamCommands.approveDraft(draft.id);
-    const result = workstreamCommands.launchDraft(draft.id);
-    expect(result).not.toBeNull();
+    expect(workstreamCommands.launchDraft(draft.id)).toEqual({ contractId: 'contract-1', ownerAgentId: 'owner-1' });
 
-    expect(created).toHaveLength(1);
-    const input = created[0]!;
-    expect(input.items).toHaveLength(2);
-    expect(input.items[1]!.dependsOn).toEqual([input.items[0]!.id!]);
-    expect(input.provenance?.decomposedBy).toBe('agent');
-
-    // And the live engine reflects the dependency: the dependent starts blocked.
-    await flushEngine();
-    const ws = orchestrationEngine.getWorkstream(result!.workstreamId)!;
-    const dependent = ws.items.find((i) => (i.dependsOn?.length ?? 0) > 0)!;
-    expect(dependent.state).toBe('blocked-dependency');
-
+    expect(starts).toHaveLength(0);
+    expect(planStarts).toEqual([{
+      ask: 'build a multi-step feature',
+      sessionId: 'session-1',
+      origin: 'proposal',
+      projectRoot,
+      isolation: 'shared',
+      draft: {
+        goal: 'build a multi-step feature',
+        units: [
+          { id: first!.id!, title: 'First item', brief: 'do the first thing', dependsOn: [] },
+          { id: second!.id!, title: 'Second item', brief: 'do the second thing', dependsOn: [first!.id!] },
+        ],
+      },
+    }]);
+    expect(orchestrationEngine.listWorkstreams()).toHaveLength(0);
     orchestrationEngine.dispose();
   });
 });

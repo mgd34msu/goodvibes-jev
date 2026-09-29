@@ -13,7 +13,7 @@ import { judgmentPort } from './judgment-port.js';
  * What an error's wording says about the failure, read by Jev in place of the
  * regex phrase lists that used to guess it (types/errors.ts inferErrorCategory,
  * isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError,
- * isTransportFailureMessage, isNonTransientProviderFailure; utils/error-display.ts
+ * isNonTransientProviderFailure; utils/error-display.ts
  * inferCategory and inferSource; daemon-sdk error-response.ts inferCategory and
  * inferCategoryFromMessage). Status codes and structured error codes stay code;
  * only the meaning of the message text is read here.

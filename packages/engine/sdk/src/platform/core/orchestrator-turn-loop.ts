@@ -23,6 +23,7 @@ import {
   emitStreamEnd,
   emitStreamRetry,
   emitStreamStart,
+  emitTurnCompleted,
   emitTurnError,
 } from '../runtime/emitters/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -49,7 +50,7 @@ import {
   type ContractSessionHooks,
 } from './orchestrator-turn-helpers.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
-import { buildWrfcWorkflowRoutingPrompt } from './wrfc-routing.js';
+import { describeIntake, type ContractIntake } from '../contract/intake-route.js';
 import { withOpenTierProfileBlock } from '../agents/orchestrator-prompts.js';
 import {
   buildPerTurnKnowledgeInjection,
@@ -217,6 +218,12 @@ export interface OrchestratorTurnLoopContext {
   readonly nextTurnKnowledgeSequence: () => number;
   /** The contract runner's hooks: a session-mode contract's unit is worked, held and nudged in this session's turns (design 6.6). */
   readonly contractHooks?: ContractSessionHooks | undefined;
+  /**
+   * Turn intake (contract runner design 10.3): read once per user turn before
+   * the first model call. A reply to an open escalation goes to the contract,
+   * and work routed to a contract starts one; either way the turn ends there.
+   */
+  readonly contractIntake: ContractIntake;
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
@@ -252,6 +259,20 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   // call (a fresh runTurn() always recomputes from scratch on its own iteration 1).
   let turnKnowledgeBlock: string | null = null;
   const contractSession = bindContractSession(context.contractHooks, context.sessionId, context.turnId);
+
+  // A turn that is a session-mode unit's work is not read again: the runner already owns it.
+  if (contractSession === undefined) {
+    const intake = await context.contractIntake.intake({ text: context.text, sessionId: context.sessionId, signal: context.getAbortSignal() });
+    if (intake.kind !== 'turn') {
+      const line = describeIntake(intake);
+      context.conversation.addSystemMessage(line);
+      if (context.runtimeBus) {
+        emitTurnCompleted(context.runtimeBus, context.emitterContext(context.turnId), { turnId: context.turnId, response: line, stopReason: 'completed' });
+      }
+      context.requestRender();
+      return;
+    }
+  }
 
   while (continueLoop) {
     let streamAccumulated = '';
@@ -370,10 +391,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       knowledgeContextWindow = context.providerRegistry.getContextWindowForModel(model);
     }
     const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(context.getSystemPrompt());
-    const wrfcRoutingPromptForCall = buildWrfcWorkflowRoutingPrompt(context.text);
-    const composedBaseSystemPrompt = wrfcRoutingPromptForCall
-      ? `${baseSystemPromptForCall}\n\n${wrfcRoutingPromptForCall}`
-      : baseSystemPromptForCall;
+    const composedBaseSystemPrompt = baseSystemPromptForCall;
     const contextCompactThreshold = context.configManager.get('agents.contextCompactThreshold')
       ?? DEFAULT_PASSIVE_KNOWLEDGE_INJECTION_CONTEXT_THRESHOLD;
     if (passiveKnowledgeInjectionEnabled && newUserInputThisTurn && context.memoryRegistry) {

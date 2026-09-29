@@ -57,7 +57,8 @@ const POLLER_OWNERS = [
   'runtime/retention/append-only-registry',
   'state/memory-consolidation-scheduler',
   'knowledge/scheduling',
-  'agents/wrfc-controller',
+  'contract/store',
+  'contract/watchdog',
 ] as const;
 
 interface TrackedTimer {

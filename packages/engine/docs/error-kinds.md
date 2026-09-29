@@ -257,21 +257,26 @@ The SDK infers a representative canonical code for each `kind` (via `inferKind` 
 
 ---
 
-## WRFC synthetic critical issues
+## Contract failure kinds and unmet criteria
 
-> These are not `GoodVibesSdkError` error kinds. They are WRFC reviewer-report markers that may appear in review task payloads and can be confused for error kinds.
+> These are not `GoodVibesSdkError` error kinds. They describe how a contract run by the contract runner ended or what its checks read, and can be confused for error kinds.
 
-See [WRFC Constraint Propagation](./wrfc-constraint-propagation.md) for the full constraint lifecycle context.
+A contract that fails emits `CONTRACT_FAILED` on the `contracts` event domain with a `failureKind`, also stored as `Contract.failureKind` (`CONTRACT_FAILURE_KINDS`, `packages/engine/sdk/src/events/contract.ts`):
 
-WRFC chains can produce **synthetic critical issues** when the fixer violates constraint continuity (returning a `constraints[]` array with missing or extra IDs compared to the initial engineer enumeration). These are not `GoodVibesSdkError` instances. They are injected directly into the next review cycle's task payload as `[CRITICAL]` block entries and consumed once.
+| `failureKind` | Meaning |
+|---|---|
+| `transport` | A unit agent failed on a network error and its transport retries (`contract.transportRetryLimit`) were spent |
+| `max_turns` | Declared on the wire with `turnLimit` and `turnLimitSource`. The runner does not end a contract with it: a unit agent that spends its turn budget is checked and woken with a nudge (the `agent-failed` check trigger) |
+| `planning` | The planner agent failed: spawn error, cancel, bound exceeded, or a plan still unparseable after its repairs |
+| `budget` | Declared on the wire. The runner does not end a contract with it: a unit held back by the contract's budget ceiling waits in `blocked` with the engine's reason |
+| `owner-rejected` | The owner stopped the contract in reply to an escalation; recorded on the contract, which ends `cancelled` (`CONTRACT_CANCELLED`, reason "stopped by the owner") rather than failed |
+| `judgment-unavailable` | Jev could not be asked or could not answer: no judgment port was installed, or the endpoint returned an error |
+| `zombie` | At startup the contract's workstream snapshot or worktree was gone |
+| `other` | Anything else; `reason` carries the message |
 
-Synthetic critical issues surface under the reviewer's `issues[]` array with `severity: 'critical'` and a description like:
+The contract's owner agent record fails with the same reason, so `AGENT_FAILED` for the owner carries it too.
 
-```
-Fixer regressed constraint continuity: missing=[c2] extra=[c3]
-```
-
-They do not propagate as thrown errors and are not reachable via the error handler or `SDKObserver.onError`. To observe them, follow the `CONTRACT_CHECKED` event for the review (its criteria and `result`) or read the reviewer's `ReviewerReport` from the chain.
+Unmet acceptance criteria are not failures at all. A check that finds a criterion unmet emits `CONTRACT_CHECKED` with that criterion's `verdict: 'unmet'` and nudges the unit's agent (`CONTRACT_NUDGED`); the work continues until the criterion reads met or the owner decides. None of this is thrown or reaches the error handler or `SDKObserver.onError`. See [Contract criteria](./contract-criteria.md).
 
 ---
 

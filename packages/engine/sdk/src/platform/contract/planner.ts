@@ -19,6 +19,7 @@ import { createRepoMapTool } from '../tools/repo-map/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { delegationForbidden, readRequestShape, REQUEST_SHAPE_SITE, saysYesAtAct, writingUnclear } from './batteries/request-shape.js';
 import { readContractConfig, type ContractConfig, type ContractConfigReader } from './config.js';
+import { checkDraftFidelity, draftSection } from './draft-plan.js';
 import { readCriterionDispositions, runPlanChecks, type CriterionDispositionRuling, type PlanCheckUsage, type PlanVerdict } from './plan-checks.js';
 import {
   effectiveAttempts,
@@ -42,6 +43,7 @@ import {
   type ContractUnit,
   type Criterion,
   type CriterionOrigin,
+  type DraftedPlan,
   type Escalation,
   type EscalationReason,
   type RequestShape,
@@ -142,6 +144,8 @@ export interface PlannerRequestInput {
   readonly shape: RequestShape;
   readonly config: Pick<ContractConfig, 'defaultAttempts' | 'maxUnits'>;
   readonly proposedUnits?: StartContractInput['proposedUnits'];
+  /** A plan drafted before the contract started: the planner keeps its units. */
+  readonly draftPlan?: DraftedPlan | undefined;
   readonly repositoryMap: string;
   readonly ownerInstruction?: string | undefined;
   readonly repair?: { readonly problems: readonly PlanProblem[]; readonly previousPlan: string } | undefined;
@@ -181,6 +185,7 @@ export function buildContractPlannerRequest(input: PlannerRequestInput): string 
     "## The user's request\nEvery contract criterion quotes these words exactly.\n\n<request>\n" + input.ask + '\n</request>',
     '## How the user wants the work done\n' + shapeLines(input.shape, input.config).join('\n'),
   ];
+  if (input.draftPlan !== undefined) sections.push(draftSection(input.draftPlan));
   const proposed = input.proposedUnits ?? [];
   if (proposed.length > 0) {
     sections.push('## Units already proposed\nUse them where they fit; the rules above still apply.\n' + proposed
@@ -431,7 +436,10 @@ async function checkPlanText(context: PlanningContext, output: string, repair: n
   const text = renderContractPlan(plan);
   context.move('checking-plan');
   context.decide('planned', repair === 0 ? 'the planner wrote a plan' : `the planner wrote repair ${repair}`);
-  const codeProblems = validateContractPlan(plan, contract.ask, shape, config);
+  const codeProblems = [
+    ...validateContractPlan(plan, contract.ask, shape, config),
+    ...(contract.draftPlan === undefined ? [] : checkDraftFidelity(plan, contract.draftPlan)),
+  ];
   deps.emit({ type: 'CONTRACT_PLAN_CHECKED', contractId: contract.id, check: 'structure', passed: codeProblems.length === 0, problems: codeProblems, decisionIds: [] });
   if (codeProblems.length > 0) return { plan, text, problems: codeProblems, verdict: undefined };
   const verdict = await runPlanChecks(plan, contract.ask, shape, { signal });
@@ -478,6 +486,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
         shape: contract.shape,
         config: context.config,
         proposedUnits: input.proposedUnits,
+        draftPlan: contract.draftPlan,
         repositoryMap,
         ownerInstruction: input.ownerInstruction,
         previousPlan: input.previousPlan,

@@ -52,7 +52,7 @@ export function attachWsOnlyGatewayVerbHandlers(
 
 /**
  * Build the one shared, archive-aware process registry that aggregates a
- * front-end's runtime managers (agents, WRFC chains, workflows, watchers,
+ * front-end's runtime managers (agents, contracts, workflows, watchers,
  * background processes). Constructed once per composition, not per consumer,
  * so the coalesced tick and the agent-activity side-table are shared, not
  * duplicated. Archive-aware: finished agent/swarm subtrees can be moved out of

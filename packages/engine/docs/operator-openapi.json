@@ -59915,7 +59915,7 @@
       "post": {
         "operationId": "projectPlanning.workPlan.task.create",
         "summary": "Create Project Work Plan Task",
-        "description": "Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or WRFC correlation.",
+        "description": "Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or contract correlation.",
         "tags": [
           "knowledge"
         ],
@@ -89962,7 +89962,7 @@
       "post": {
         "operationId": "sessions.messages.create",
         "summary": "Post Shared Session Message",
-        "description": "Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: \"task\"` to request agent/WRFC task continuation.",
+        "description": "Append a user message to a shared session. Omitted `kind` defaults to `message` conversation routing; send `kind: \"task\"` to request agent or contract task continuation.",
         "tags": [
           "sessions"
         ],

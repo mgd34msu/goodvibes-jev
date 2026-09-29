@@ -66,6 +66,7 @@ import type { SessionLiveTurnControls } from '../control-plane/routes/session-ru
 import type { ModelDefinition } from '../providers/registry.js';
 import { withHostedSessionModel } from './model-route.js';
 import type { HostedWorkspaceFloor } from './workspace-floor.js';
+import { createContractIntake } from '../contract/intake-route.js';
 import { resolveSurfaceDirectory } from '../runtime/surface-root.js';
 import {
   containmentFor,
@@ -206,6 +207,8 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     // Per SESSION: without it every task-tool ref lands in the unowned legacy
     // namespace and owner-existence reaping cannot run.
     resolveSessionId: () => sessionId,
+    contractRunner: options.floor.contractRunner,
+    projectRoot: options.workspaceRoot,
     sandboxSessionRegistry: services.sandboxSessionRegistry,
     workingDirectory: options.workspaceRoot,
     // The session's OWN surface, not the host's. Everything keyed on this,
@@ -261,14 +264,15 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     sessionId,
     services: {
       agentManager: services.agentManager,
-      // No review/fix chains on this floor: an honest empty listing rather than
-      // a missing dependency (see workspace-floor.ts).
-      wrfcController: options.floor.wrfcController ?? { listChains: () => [] },
+      contractRunner: options.floor.contractRunner,
+      contractIntake: createContractIntake({ runner: options.floor.contractRunner, projectRoot: options.workspaceRoot }),
     },
   });
   orchestrator.setCoreServices({
     configManager: services.configManager,
     providerRegistry,
+    // A session-mode contract's unit is this session's own turns (contract runner design 6.6).
+    contractHooks: options.floor.contractRunner.hooks(),
   });
 
   let running = false;

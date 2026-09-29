@@ -76,8 +76,8 @@ describe('start-time retention sweep', () => {
   test('reclaims an over-budget append-only journal file', () => {
     const workingDirectory = tempDir();
     const surfaceRoot = 'tui';
-    // Agent journals live under sessions/agents/ (see agents/session.ts,
-    // agents/wrfc-workmap.ts), the session-journals store sweeps that
+    // Agent journals live under sessions/agents/ (see agents/session.ts), the
+    // session-journals store sweeps that
     // directory wholesale, never the parent sessions/ (user conversations).
     const agentJournalsDir = join(resolveScopedDirectory(workingDirectory, surfaceRoot, 'sessions'), 'agents');
     mkdirSync(agentJournalsDir, { recursive: true });
@@ -169,7 +169,7 @@ describe('start-time retention sweep', () => {
     // Real opening records: classification is name AND first-line content
     // (runtime/retention/legacy-agent-journal-patterns.ts), so these fixtures
     // are the genuine article, an AgentSession session-start record and a
-    // WrfcWorkmap entry, not just correctly-named filler.
+    // workmap entry, not just correctly-named filler.
     writeFileSync(
       legacyAgentJournal,
       JSON.stringify({ type: 'meta', agentId: 'agent-deadbeef', model: 'm', provider: 'p', title: '', timestamp: Date.now() }) + '\n'

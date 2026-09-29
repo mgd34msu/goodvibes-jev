@@ -69,7 +69,7 @@ interface CompletionReportSpan {
  *
  * Mirrors the two extraction strategies agents/completion-report.ts uses to
  * READ the report (fenced ```json block, then brace-counting from `"version"`)
- * so the channel recognises exactly what the WRFC controller recognises.
+ * so the channel recognises exactly what the contract runner recognises.
  */
 function findCompletionReportSpan(text: string): CompletionReportSpan | null {
   const fenced = /```json\s*\n(\{[\s\S]*?\})\s*\n```/.exec(text);
@@ -108,7 +108,7 @@ const MAX_COMPLETION_REPORT_REWRITES = 4;
 /**
  * Replace any agent completion report with the summary it carries.
  *
- * The report is an internal contract between an agent and the WRFC controller.
+ * The report is read by the contract runner, not by the person who asked.
  * It belongs in the transcript, so only the report SPAN is rewritten, prose
  * written around it survives intact.
  *

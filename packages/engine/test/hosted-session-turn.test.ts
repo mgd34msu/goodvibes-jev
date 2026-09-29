@@ -129,7 +129,7 @@ test('a hosted session runs a real turn and the transcript is its own', async ()
   const session = createHostedSessionRuntime({
     sessionId: 'hosted-turn-1',
     workspaceRoot: workspace,
-    floor: { services, dispose: (): void => {} },
+    floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} },
     systemPrompt: 'you are hosted by the daemon',
   });
 
@@ -159,7 +159,7 @@ test('a tool the model calls actually runs, rooted at this session\'s workspace'
   const session = createHostedSessionRuntime({
     sessionId: 'hosted-turn-2',
     workspaceRoot: workspace,
-    floor: { services, dispose: (): void => {} },
+    floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} },
     systemPrompt: 'hosted',
   });
 
@@ -187,7 +187,7 @@ test('turn events reach the runtime bus stamped with this session\'s id', async 
   const session = createHostedSessionRuntime({
     sessionId: 'hosted-turn-3',
     workspaceRoot: workspace,
-    floor: { services, dispose: (): void => {} },
+    floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} },
     systemPrompt: 'hosted',
   });
   await session.submit('go');
@@ -204,7 +204,7 @@ test('the transcript survives the persistence round trip a restart replays', asy
   const first = createHostedSessionRuntime({
     sessionId: 'hosted-turn-4',
     workspaceRoot: workspace,
-    floor: { services, dispose: (): void => {} },
+    floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} },
     systemPrompt: 'hosted',
   });
   await first.submit('the thing to remember');
@@ -214,7 +214,7 @@ test('the transcript survives the persistence round trip a restart replays', asy
   const second = createHostedSessionRuntime({
     sessionId: 'hosted-turn-4',
     workspaceRoot: workspace,
-    floor: { services, dispose: (): void => {} },
+    floor: { services, contractRunner: services.contractRunner, dispose: (): void => {} },
     systemPrompt: 'hosted',
   });
   second.conversation.fromJSON(payload as Parameters<typeof second.conversation.fromJSON>[0]);
@@ -227,7 +227,7 @@ test('the transcript survives the persistence round trip a restart replays', asy
 
 test('two hosted sessions in one workspace keep separate transcripts', async () => {
   answers.push(textAnswer('answer for a'), textAnswer('answer for b'));
-  const floor = { services, dispose: (): void => {} };
+  const floor = { services, contractRunner: services.contractRunner, dispose: (): void => {} };
   const a = createHostedSessionRuntime({ sessionId: 'hosted-a', workspaceRoot: workspace, floor, systemPrompt: 'hosted' });
   const b = createHostedSessionRuntime({ sessionId: 'hosted-b', workspaceRoot: workspace, floor, systemPrompt: 'hosted' });
 

@@ -4,23 +4,27 @@
  * Six collaborators that are only meaningful as a set, so they are built as
  * one: a message bus, the archetype loader, the orchestrator that executes a
  * run, the manager that owns the records, the context-accounting holder, and
- * the WRFC controller. Every one of them holds a reference to at least one
- * other, and two of the links are circular, the orchestrator writes
- * conversation snapshots back through the manager, and the manager drives the
- * WRFC controller which was built from the manager. Assembled anywhere but in
- * one place, a half-wired graph looks correct and silently drops either the
- * snapshot bridge or the review loop.
+ * the contract runner. Every one of them holds a reference to at least one
+ * other, and two of the links are circular: the orchestrator writes
+ * conversation snapshots back through the manager, and the manager hands every
+ * spawn that is not outside a contract to the runner, which was built from the
+ * manager. Assembled anywhere but in one place, a half-wired graph looks
+ * correct and silently drops either the snapshot bridge or the contracts.
  *
  * It is also the graph whose runs `cancelHostedAgentRuns` cancels at disposal:
  * the manager returned here is the one the runtime hands to the SDK's
- * `cancelAllAgentRuns`.
+ * `cancelAllAgentRuns`. `dispose` releases the runner and its store.
  */
 import { join } from 'node:path';
-import { AgentMessageBus, AgentOrchestrator, ArchetypeLoader, WrfcController } from '../agents/index.js';
+import { AgentMessageBus, AgentOrchestrator, ArchetypeLoader } from '../agents/index.js';
+import type { ContractRunner } from '../contract/runner.js';
 import { AgentManager, ContextAccountingHolder } from '../tools/index.js';
 import type { ConfigManager } from '../config/index.js';
 import type { ProviderRegistry } from '../providers/index.js';
+import { composeContractRunner, resumeContracts } from './contract-composition.js';
 import type { RuntimeEventBus } from './events/index.js';
+import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
+import type { RuntimeStore } from './store/index.js';
 
 export interface AgentGraph {
   readonly agentMessageBus: AgentMessageBus;
@@ -28,15 +32,19 @@ export interface AgentGraph {
   readonly agentOrchestrator: AgentOrchestrator;
   readonly agentManager: AgentManager;
   readonly contextAccountingHolder: ContextAccountingHolder;
-  readonly wrfcController: WrfcController;
+  readonly contractRunner: ContractRunner;
+  /** Releases the contract runner and its store. */
+  dispose(): void;
 }
 
-/** Build the agent-execution graph, fully wired in both directions. */
+/** Build the agent-execution graph, fully wired in both directions, and resume the contracts left on disk. */
 export function createAgentGraph(options: {
   readonly runtimeBus: RuntimeEventBus;
   readonly workingDirectory: string;
   readonly configManager: ConfigManager;
   readonly providerRegistry: ProviderRegistry;
+  /** Live provider health for the route planner. */
+  readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
 }): AgentGraph {
   const agentMessageBus = new AgentMessageBus();
   agentMessageBus.setRuntimeBus(options.runtimeBus);
@@ -61,18 +69,25 @@ export function createAgentGraph(options: {
     release: (agentId) => agentManager.releaseConversationSource(agentId),
   });
   agentManager.setRuntimeBus(options.runtimeBus);
-  const wrfcController = new WrfcController(options.runtimeBus, agentMessageBus, {
+  // This graph hosts no third-party coding agents, so the fleet counts native agents only.
+  const composed = composeContractRunner({
+    runtimeBus: options.runtimeBus,
     agentManager,
+    agentMessageBus,
     configManager: options.configManager,
+    providerRegistry: options.providerRegistry,
     projectRoot: options.workingDirectory,
+    fleetCapacity: makeRuntimeFleetProbe({ readConfig: (key) => options.configManager.get(key as never), agentManager, acpHost: { list: () => [] } }),
+    runtimeStore: options.runtimeStore,
   });
-  agentManager.setWrfcController(wrfcController);
+  void resumeContracts(composed.runner, options.workingDirectory);
   return {
     agentMessageBus,
     archetypeLoader,
     agentOrchestrator,
     agentManager,
     contextAccountingHolder,
-    wrfcController,
+    contractRunner: composed.runner,
+    dispose: () => composed.dispose(),
   };
 }

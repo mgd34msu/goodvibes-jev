@@ -218,7 +218,7 @@ export function getBuiltinSetupSchema(surface: ChannelSurface): ChannelSetupSche
           'Configure the integration with the daemon base URL and operator bearer token.',
           'Use /api/homeassistant/conversation for Assist conversation agents that need a final reply in the request/response cycle.',
           'Use /api/homeassistant/conversation/stream only when the integration wants an SSE transport for final/error events.',
-          'Home Assistant-originated prompts use isolated remote chat sessions and do not use shared TUI sessions, agents, or WRFC review/fix chains.',
+          'Home Assistant-originated prompts use isolated remote chat sessions and do not use shared TUI sessions, agents, or contracts.',
           `Send Home Assistant-originated prompts to ${HOME_ASSISTANT_WEBHOOK_PATH} with x-goodvibes-homeassistant-secret or Authorization: Bearer <webhookSecret>.`,
           'Subscribe the Home Assistant integration to the configured GoodVibes event type to update entities and service-call responses.',
           'Use the channel tool catalog endpoints to expose daemon and Home Assistant tools as service actions.',

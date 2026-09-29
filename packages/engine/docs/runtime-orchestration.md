@@ -1,7 +1,7 @@
 # Runtime orchestration
 
 GoodVibes runtime orchestration is the daemon-side loop that turns user input
-into provider calls, tool execution, agent work, workflow events, and persisted
+into provider calls, tool execution, agent work, contract events, and persisted
 session state.
 
 Public API surfaces:
@@ -23,9 +23,24 @@ All SDK-owned turn paths append a small harness-awareness instruction to the
 system prompt. The instruction tells the model to use `goodvibes_context`
 before answering questions about GoodVibes settings, configured integrations,
 host capabilities, surfaces, provider/model state, or available tools. It also
-tells the model not to spawn agents or WRFC chains for ordinary questions,
-environment inspection, or direct research that can be answered in the current
-turn with tools.
+tells the model not to start agent work for ordinary questions, environment
+inspection, or direct research that can be answered in the current turn with
+tools.
+
+Before the model is called, each user turn is read once by the contract
+intake (`createContractIntake`, `contract/intake-route.ts`):
+
+1. **Open escalation.** When one of the session's contracts is waiting on its
+   owner, the turn's text is the owner's reply and goes to `runner.reply` for
+   the newest open escalation. The turn ends there.
+2. **Request route.** Otherwise Jev reads the text with `contract.request-route`
+   (`converse`, `answer` or `contract`). Route `contract` at act starts a
+   contract with the text as its ask, and the turn ends; the answer arrives
+   when the contract's owner record completes. Any other route, or any reading
+   below act, leaves the turn to the conversation model, which may still start
+   a contract through the `agent` tool.
+
+Nothing is injected into the model's prompt by this step.
 
 Important pieces:
 
@@ -53,11 +68,12 @@ from isolated remote sessions:
   the active shared session.
 
 `POST /api/sessions/:id/messages` defaults to normal conversation routing when
-`kind` is omitted. This keeps shared-session messages from becoming agent/WRFC
-work accidentally. Callers must send `kind: "task"` when they intentionally
-want session-broker task continuation and possible agent spawning. See
-[Companion message routing](./companion-message-routing.md) for the full `kind`
-taxonomy (`message` / `task` / `followup`) and the per-kind response shapes.
+`kind` is omitted. This keeps shared-session messages from becoming agent or
+contract work accidentally. Callers must send `kind: "task"` when they
+intentionally want session-broker task continuation and possible agent
+spawning. See [Companion message routing](./companion-message-routing.md) for
+the full `kind` taxonomy (`message` / `task` / `followup`) and the per-kind
+response shapes.
 
 ## Agents
 
@@ -78,111 +94,194 @@ Agent features include:
 - channel reply tracking
 
 The `agent` tool exposes these operations to the LLM when the host registers
-the full tool runtime.
+the full tool runtime. Its `spawn` and `batch-spawn` modes start a contract
+through the runner unless `outsideContract` is set; see [Contracts](#contracts).
 
 ## Archetypes and templates
 
-Agent archetypes describe named worker roles. Built-ins cover roles such as
-orchestrator, engineer, reviewer, tester, researcher, integrator, and general.
+Agent archetypes describe named worker roles. Built-ins cover orchestrator,
+planner, engineer, reviewer, tester, researcher, integrator, and general.
 Project-level markdown files can add or override archetypes with frontmatter
 for name, description, tools, provider, model, and prompt content.
 
 Templates provide reusable agent/task shapes for scheduler, workflow, and
-sub-agent orchestration flows.
+sub-agent orchestration flows. A contract picks a unit's template from its
+role: `engineer` for implement units, `integrator` for integration units,
+`researcher` for research units, and a read-only `general` agent for design
+units. The planner runs as the `planner` template.
 
-## WRFC
+## Contracts
 
-WRFC chains run engineering, review, and fix phases with quality gates. Chain
-states are pending, engineering, integrating, reviewing, fixing, awaiting_gates,
-gating, passed, failed, and committing.
+A contract is the unit of checked work. The contract runner
+(`@goodvibes-jev/engine/sdk/platform/contract`, `createContractRunner` in
+`contract/runner.ts`) plans the work, runs it through sub-agents, and has Jev
+judge it while it runs. It replaces the retired write-review-fix-confirm loop:
+Jev reads the work continuously and nudges the sub-agent instead of running
+separate review and fix agents. The build design is
+`docs/design/contract-runner.md` at the repository root.
 
-Each WRFC request has one authoritative owner chain. The owner stays visible
-and non-terminal until the chain passes, fails, or is cancelled. Engineer,
-reviewer, fixer, integrator, and verifier agents are lifecycle children of that owner;
-they are not sibling root agents and do not independently decide when the chain
-is done. Reviews always evaluate the complete current result against the
-original WRFC ask.
+### Where contracts start
 
-Batch spawning remains valid for genuinely independent deliverables. Role
-fanout for one deliverable, such as `Engineer + Reviewer` or
-`Engineer + Tester`, is normalized into a WRFC owner chain instead of launching
-parallel reviewer/tester roots before there is work to review.
-
-The WRFC controller tracks:
-
-- owner, phase, and child-agent ids
-- engineer, reviewer, fixer, and integrator agent ids
-- review scores and review cycles
-- fix attempts and gate retry depth
-- quality-gate results
-- completion reports
-- propagated constraints
-- synthetic critical issues for constraint-continuity violations
-- subtasks and per-subtask review state for compound chains
-- claim-verification status (`claimsVerified`)
-
-For large tasks, the owner can run a **compound chain**. It decomposes the
-work into `WrfcSubtask` records, each with its own engineer, reviewer, and
-fixer cycle, then spawns an **integrator** to merge the passed subtasks before
-the chain's final full-scope review. Each subtask's `WrfcSubtaskState` tracks
-where it sits in that cycle; this is the authoritative state table, and other
-docs link here.
-
-| Subtask state | What it means |
+| Origin | Entry point |
 | --- | --- |
-| `pending` | Created but no engineer has been spawned for it yet |
-| `engineering` | An engineer agent is implementing the subtask |
-| `reviewing` | A reviewer agent is evaluating the engineer's result |
-| `fixing` | A fixer agent is addressing confirmed review findings |
-| `passed` | The subtask cleared review and waits for the integrator |
-| `failed` | The subtask exhausted its cycle without clearing review | A separate **verifier** role checks
-engineer and fixer self-reports against the actual on-disk changes. The
-`claimsVerified` flag records whether those work claims were confirmed (`false`
-flags phantom work, claimed changes that are not present). These transitions are
-reported on the `contracts` event domain; every event type is listed in the
-[Runtime events reference](./reference-runtime-events.md#named-contract-events).
+| `turn` | The contract intake reads a person's turn as work (see [Turn loop](#turn-loop)) |
+| `agent-tool` | The `agent` tool's `spawn` or `batch-spawn` without `outsideContract`; the tasks become proposed units and the result carries `contractStarted: true` and the contract id |
+| `proposal` | A launched plan proposal or workstream draft, through `runner.startFromPlan`; the drafted units are kept and the planner writes their criteria |
+| `cli`, `hosted`, `external` | Declared for a command-line host, the daemon's contract methods and the external work seam (`ContractExternalWorkAdapter` and `ContractExternalWorkBridge`: `dispatch`, `status`, `cancel`, `result`); no engine code starts a contract with these origins. A turn in a hosted session is read by the same turn intake and starts with origin `turn` |
 
-Constraint propagation is documented in
-[WRFC constraint propagation](./wrfc-constraint-propagation.md).
+A spawn by an `AgentManager` caller that does not set `outsideContract` goes
+through `runner.startForOwner`, which makes the spawned record the contract's
+owner. Conversation-level helpers (the planner, conversation continuations,
+the surface conversation gate) spawn with `outsideContract: true`. A unit's
+own agent cannot spawn agents: units are leaves, and the contract plans
+sub-work.
+
+### Lifecycle
+
+1. **Shape.** Jev reads the request shape (`contract.request-shape`): whether
+   the person forbids delegation or writing, asks for parallel agents, or
+   asks for several attempts.
+2. **Plan.** A read-only planner sub-agent writes the goal, the acceptance
+   criteria with the person's words each comes from, and groups of units.
+   Code checks the plan's structure; Jev checks that each criterion traces to
+   the ask, nothing stated is missing, each criterion is checkable, and no
+   unit narrows its goal. Problems go back to the planner, then to the owner.
+3. **Run.** Each group runs as a workstream on the orchestration engine, one
+   work item per unit, one sub-agent per unit.
+4. **Check and nudge.** While a unit's agent works, and when it tries to
+   finish, Jev reads its work against the unit's criteria and a quality
+   battery. Failing work is held open and the agent is told what is wrong,
+   until every criterion reads met.
+5. **Correct.** When nudging stops making progress, the runner plans a fix
+   group, gives the unit a fresh agent, or asks the owner.
+6. **Finish.** Jev judges each group, then the deliverable. When the
+   deliverable passes, the runner commits the contract's work and delivers
+   the answer.
+
+How criteria move through these steps is covered in
+[Contract criteria](./contract-criteria.md).
+
+### Statuses
+
+| Level | Statuses |
+| --- | --- |
+| Contract | `queued`, `shaping`, `planning`, `checking-plan`, `running`, `judging`, `fixing`, `committing`, `awaiting-owner`, `passed`, `failed`, `cancelled` |
+| Group | `pending`, `blocked`, `running`, `judging`, `fixing`, `awaiting-owner`, `passed`, `failed`, `cancelled` |
+| Unit | `pending`, `blocked`, `running`, `checking`, `held`, `nudged`, `fixing`, `awaiting-owner`, `held-merge`, `passed`, `failed`, `cancelled` |
+
+A unit is `held` while a check runs at its completion point and `nudged` when
+a nudge was delivered and its next turn is awaited. `held-merge` is a passing
+unit whose branch has not yet merged into the contract branch, or a passing
+best-of-N attempt waiting for selection.
+
+### The owner record
+
+Every contract has an owner `AgentRecord` with `contractRole: 'owner'`. It
+runs no executor. Parents and surfaces wait on it as on any agent: its status,
+`fullOutput`, `AGENT_COMPLETED` and `AGENT_FAILED` are the contract's. Unit
+agents carry `contractRole: 'unit'` and `contractUnitId`; the planner carries
+`contractRole: 'planner'`.
+
+When the contract needs a decision (a plan that cannot be repaired, a stalled
+unit, readings that stay unsettled, an undecided best-of-N pick), it moves to
+`awaiting-owner` with a question built in code. The owner's reply, from the
+conversation (the turn intake) or a host calling `runner.reply`, is read with `contract.owner-reply`
+as approve, amend or reject. No reply can pass a criterion that reads unmet.
+
+### Isolation, commit and persistence
+
+- **Isolation.** `contract.isolation` is `auto`, `worktree` or `shared`.
+  Worktree mode runs the contract on branch `contract/<short>` in
+  `.goodvibes/.worktrees/contract/<short>`; each unit works in its own item
+  worktree and merges into the contract branch. Shared mode runs one unit at a
+  time per working tree.
+- **Commit.** When the deliverable passes, `contract.autoCommit` and
+  `contract.commitScope` decide whether the contract's changes are committed,
+  applied as uncommitted changes, or left in place. A commit failure is a
+  warning on a passed contract, never a failure.
+- **Persistence.** Each contract is written to
+  `.goodvibes/contracts/<contractId>.json` (`ContractStore`,
+  `contract/store.ts`). At startup `resumeAll()` imports every unfinished
+  contract; one whose workstream snapshot or worktree is gone is failed as a
+  zombie, and the rest resume at the step they left.
+- **Concurrency.** `contract.maxActiveContracts` (default 6) contracts run at
+  once; the rest wait as `queued`.
+
+### Settings
+
+The runner reads `contract.*` (`config/schema-domain-contract.ts`,
+`contract/config.ts`):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `contract.autoCommit` | `true` | Commit the deliverable when it passes |
+| `contract.commitScope` | `scoped` | `off`, `scoped` (the contract's changes only) or `all` |
+| `contract.gates` | typecheck and lint on, build off | Quality gate commands run at each completion check |
+| `contract.gateTimeoutMs` | `120000` | Timeout per gate |
+| `contract.acceptanceStakes` | `high` | Which declared pass band the judges use: `high` or `critical` |
+| `contract.midRunChecks` | `true` | Check a unit after turns that write, edit or run commands |
+| `contract.evidenceNudgeLimit` | `2` | Unsettled checks before the owner is asked |
+| `contract.stallLimit` | `3` | Consecutive checks without progress that make a stall |
+| `contract.maxNudgesPerUnit` | `12` | Nudge ceiling per unit |
+| `contract.maxFixRounds` | `5` | Fix groups plus fresh agents before the owner decides |
+| `contract.planRepairLimit` | `2` | Planner repairs before the owner decides |
+| `contract.maxUnits` | `64` | Units per plan |
+| `contract.defaultAttempts` | `1` | Attempts per unit without an explicit ask |
+| `contract.maxActiveContracts` | `6` | Contracts running at once |
+| `contract.maxParallelUnits` | `64` | Units running at once in one group (worktree mode) |
+| `contract.isolation` | `auto` | `auto`, `worktree` or `shared` |
+| `contract.heartbeatTimeoutMs` | `0` (off) | Silence before a unit agent is restarted |
+| `contract.transportRetryLimit` | `1` | Fresh agents after a network failure |
+| `contract.transportRetryDelayMs` | `5000` | Wait before that retry |
+| `contract.nudgeTtlMs` | `300000` | Lifetime of a mid-run nudge on the message bus |
+| `ui.contractMessages` | `both` | Where `[Contract]` system messages show: `panel`, `conversation` or `both` |
+
+A settings file that still holds the retired loop's keys is migrated once on
+load (`applyContractSettingsMigrationPass`, `config/manager-migration-passes.ts`):
+each key moves to its `contract.*` counterpart (the heartbeat timeout to
+`contract.heartbeatTimeoutMs`, the fix-attempt limit to `contract.maxFixRounds`,
+the message placement to `ui.contractMessages`), and the old score threshold is
+removed with a migration receipt, since acceptance is now a per-criterion
+reading whose strictness is `contract.acceptanceStakes`.
+
+### Events and fleet
+
+Contracts report on the `contracts` runtime event domain (`CONTRACT_*` types,
+`packages/engine/sdk/src/events/contract.ts`); every type is listed in the
+[Runtime events reference](./reference-runtime-events.md#contracts). The
+fleet shows `contract`, `contract-group` and `contract-unit` nodes, with each
+criterion's latest verdict on the node's check summary. The fleet verbs
+`fleet.graph.get`, `fleet.attempts.*` and `fleet.conflicts.*` take
+contract-qualified ids, `<contractId>:<id>`, because every contract names its
+groups `g1`, `g2` and its units `u1`, `u2`.
 
 ## Orchestration engine
 
-`@goodvibes-jev/engine/sdk/platform/orchestration` is a separate phase/work-item
-pipeline layered over the WRFC chain controller described above, not a
-replacement for it. A workstream holds one or more ordered phases, each with a
-`PhaseKind` that determines the role of the agent serving it. A work item
-advances to its next phase the instant that phase's gate passes, claimed by
-whichever capacity slot is free next, rather than being bound to one reviewer
-for its whole history the way a WRFC chain is.
+`@goodvibes-jev/engine/sdk/platform/orchestration` is the phase/work-item
+pipeline the contract runner runs on: one engine per contract, one workstream
+per contract group, one work item per unit. A workstream holds one or more
+ordered phases, each with a `PhaseKind` that determines the role of the agent
+serving it. A work item advances to its next phase the instant that phase's
+gate passes, claimed by whichever capacity slot is free next.
 
 | Phase kind | What the phase does |
 | --- | --- |
 | `plan` | Decompose or design before implementation begins |
-| `engineer` | Implement the work item |
-| `review` | Evaluate the implementation; served by a general-role agent rather than an engineer |
-| `fix` | Address findings from a review phase |
+| `engineer` | Implement the work item; a contract unit runs as one `engineer` phase |
 | `gate` | Apply a pass/fail quality check; served by a general-role agent |
 | `integrate` | Merge finished work items into the combined result |
 | `custom` | A host-defined phase that fits none of the built-in kinds |
 
-Today the engine's live integration point is the WRFC fix phase. When a
-reviewer finds issues, `planFixWorkstream` turns those findings into a task
-graph and runs it as a workstream through `FixWorkstreamRunner`; a chain
-without a fix-workstream runner wired into its composition fails outright
-rather than degrading silently. A second integration path, `fromChainSpec`,
-can convert a whole WRFC chain into a workstream spec for callers that want
-the engine-backed pipeline directly instead of the standalone chain state
-machine; as of this writing that path is additive and opt-in, and the
-standard chain lifecycle above remains what `/teamwork`, forced-WRFC spawns,
-and built-in archetypes actually run.
+The engine does not judge work. For a contract work item, the phase waits on
+the runner's settlement of the unit, which passes only when Jev reads every
+criterion met.
 
-Beyond the phase pipeline itself, the engine adds capabilities the chain
-controller does not have:
+Beyond the phase pipeline itself, the engine provides:
 
 - **Best-of-N attempts.** A work item declared with `attempts: N` runs N
   independent siblings in isolated worktrees. A passing sibling is held
-  rather than auto-merged; once every sibling in the group finishes, a
-  winner is picked explicitly or proposed by an optional judge model, then
+  rather than auto-merged; once every sibling in the group finishes, Jev
+  selects a winner (`contract.best-of-n`) or the owner picks one, and it is
   merged through the normal integration lane while the other worktrees are
   cleaned up.
 - **Elastic fleet sizing.** A ready task with no available agent spawns one,
@@ -196,13 +295,15 @@ controller does not have:
   can be added while a workstream is running, with orphan detection and
   cycle prevention.
 
-Workstream state is snapshotted for resume across restarts, and drafts (a
+Workstream state is snapshotted for resume across restarts, under
+`.goodvibes/orchestration/<contractId>/` for a contract's engine. Drafts (a
 workstream not yet launched) are held in a capped, swept store so a proposed
-plan can be edited before it runs.
+plan can be edited before it runs; launching a draft starts a contract with
+`runner.startFromPlan`.
 
 ## Runtime events
 
-The runtime bus publishes typed events for turns, sessions, agents, workflows,
+The runtime bus publishes typed events for turns, sessions, agents, contracts,
 tools, communication, providers, routes, state, security, telemetry, and
 integration delivery. Clients consume these through the operator realtime
 transport, control-plane event streams, or surface-specific streams.
@@ -263,8 +364,10 @@ result may do.
 | `Lifecycle` | On lifecycle transitions such as startup and shutdown |
 
 Supported categories are tool, file, git, agent, compact, llm, mcp, config,
-budget, session, workflow, permission, transport, orchestration, and
-communication; each is the event namespace its name says.
+budget, session, contract, permission, transport, and communication; each is
+the event namespace its name says. Contract events fire as
+`Lifecycle:contract:<specific>` (for example `Lifecycle:contract:nudged`), and
+a refused spawn fires `Change:contract:spawn-guard`.
 
 Five runner types execute hooks, differing in where the handler logic lives.
 
@@ -275,8 +378,6 @@ Five runner types execute hooks, differing in where the handler logic lives.
 | `agent` | Spawns a subagent whose task is the prompt template with the event substituted in, waiting up to the hook's timeout |
 | `http` | POSTs the event JSON to a configured URL and parses the response as the hook result |
 | `ts` | Loads a TypeScript module whose default export handles the event in-process |
-- HTTP
-- TypeScript
 
 Pre hooks can allow, deny, ask, modify input, or add context. Hook chains match
 multi-event sequences and fire a configured action when their conditions pass.

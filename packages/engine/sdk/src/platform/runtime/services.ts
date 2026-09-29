@@ -37,10 +37,9 @@ import { MediaProviderRegistry, ensureBuiltinMediaProviders } from '../media/ind
 import { MultimodalService } from '../multimodal/index.js';
 import { cancelAllAgentRuns, type AgentManager } from '../tools/agent/index.js';
 import type { AgentMessageBus } from '../agents/message-bus.js';
-import { WrfcController } from '../agents/wrfc-controller.js';
 import type { AgentOrchestrator } from '../agents/orchestrator.js';
 import type { ArchetypeLoader } from '../agents/archetypes.js';
-import { continuationChainOptions } from '../agents/conversation-continuation.js';
+import { continuationContractOptions } from '../agents/conversation-continuation.js';
 import { PersonalCaptureHolder, conversationalTurnSpawnOptions } from '../personal-capture/index.js';
 import { ProcessManager } from '../tools/shared/process-manager.js';
 import { ModeManager } from '../state/mode-manager.js';
@@ -137,9 +136,9 @@ import {
 import { createProcessRegistry, withFleetArchive, attachFleetEmitBridge, type ArchivableProcessRegistry } from './fleet/index.js';
 import { attachConfigEmitBridge } from './config/index.js';
 import { ObservedAgentSource } from './fleet/observed/source.js';
-import { createOrchestrationEngine, type OrchestrationEngine } from '../orchestration/index.js';
-import { createSelectAttemptJudge } from '../contract/best-of-n.js';
-import { createFixWorkstreamRunner } from '../orchestration/fix-workstream-runner.js';
+import type { ContractRunner } from '../contract/runner.js';
+import { composeContractRunner, resumeContracts } from './contract-composition.js';
+import type { SessionSnapshot } from './session-persistence-scope.js';
 import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import {
   CacheRegistry,
@@ -311,9 +310,10 @@ export interface RuntimeServices {
   readonly contextAccountingHolder: ContextAccountingHolder;
   /** Settable holder an interactive consumer binds its Orchestrator into, powering sessions.toolCalls.cancel + sessions.queuedMessages.* (same pattern as contextAccountingHolder). */
   readonly sessionLiveTurnControls: SessionLiveTurnControlsHolder;
-  readonly wrfcController: WrfcController;
-  /** Orchestration engine (alongside wrfcController; controller-compat.ts): opt-in pipeline scheduler, never auto-started. */
-  readonly orchestrationEngine: OrchestrationEngine;
+  /** The contract runner (contract-composition.ts): every spawn that is not outside a contract, every turn routed to work, and the fleet's contract tree go through it. */
+  readonly contractRunner: ContractRunner;
+  /** A session's snapshot for saving, with the trees of the contracts started in the session filled from the runner (contract runner design 7.1). */
+  sessionSnapshot(sessionId: string, conversation: Omit<SessionSnapshot, 'contracts'>): SessionSnapshot;
   readonly processManager: ProcessManager;
   /** Live process registry (fleet aggregation). No dispose seam exists; the unref'd tick runs only while subscribers exist, hosts dispose() themselves. */
   readonly processRegistry: ArchivableProcessRegistry;
@@ -431,13 +431,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     providerRegistry,
     workingDirectory,
   });
-  const wrfcController = new WrfcController(options.runtimeBus, agentMessageBus, {
-    agentManager,
-    configManager,
-    projectRoot: workingDirectory,
-    surfaceRoot,
-  });
-  agentManager.setWrfcController(wrfcController);
   const hookDispatcher = new HookDispatcher({ agentManager, toolLLM, projectRoot: workingDirectory }, hookActivityTracker);
   configManager.attachHookDispatcher(hookDispatcher);
   const hookWorkbench = createHookWorkbench({ hookDispatcher, configManager });
@@ -487,9 +480,9 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     const record = agentManager.spawn({
       mode: 'spawn',
       task,
-      // Conversation first: a follow-up gets an answer, not a review chain,
-      // only the authorization marker or a local surface opens one.
-      ...continuationChainOptions(input, { configReader: configManager }),
+      // Conversation first: a follow-up gets an answer, not a contract; only
+      // the authorization marker or a local surface starts one.
+      ...continuationContractOptions(input, { configReader: configManager }),
       // The tools, the instruction and the bound write authority for a
       // conversational turn. The routing builder sets `restrictTools: true` and
       //, unless the routing intent named tools, no tool list at all, which
@@ -688,7 +681,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     defaultProjectId: projectPlanningProjectIdFromPath(workingDirectory),
     runtimeBus: options.runtimeBus,
   });
-  wrfcController.setWorkPlanService(projectPlanningService);
   const voiceProviders = new VoiceProviderRegistry();
   ensureBuiltinVoiceProviders(voiceProviders, {
     readConfig: (key) => configManager.get(key as never),
@@ -852,7 +844,24 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   });
   // Late-bound CI auto-watch observer (filled by registerGatewayVerbGroups below).
   let ciAutoWatchObserver: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | null = null;
+  // The contract runner, over the project's work plan and execution plans; its
+  // units share the fleet ceiling (fleetCapacityProbe, hoisted below).
+  const contracts = composeContractRunner({
+    runtimeBus: options.runtimeBus,
+    agentManager,
+    agentMessageBus,
+    configManager,
+    providerRegistry,
+    projectRoot: workingDirectory,
+    fleetCapacity: () => fleetCapacityProbe(),
+    runtimeStore: options.runtimeStore,
+    workPlanService: projectPlanningService,
+    planManager,
+  });
+  const contractRunner = contracts.runner;
   agentOrchestrator.setDependencies({
+    contractRunner,
+    contractHooks: contractRunner.hooks(),
     personalCapture,
     sandboxEscalationHandler,
     execPromptAnswerHandler,
@@ -894,19 +903,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // Honest-unpriced dollars + provenance over the ONE pricing resolver (pricing-seams.ts).
   const { priceUsage, priceProvenance } = buildPricingSeams(providerRegistry);
 
-  // Orchestration engine, ships alongside wrfcController, untouched by this change. See the RuntimeServices interface comment.
-  const orchestrationEngine = createOrchestrationEngine({
-    agentManager,
-    configManager,
-    runtimeBus: options.runtimeBus,
-    projectRoot: workingDirectory,
-    priceUsage, priceProvenance, judgeAttempts: createSelectAttemptJudge(), // best-of-N: the contract.best-of-n selector (fleet.attempts.judge); never auto-picks unless opted in
-    fleetCapacity: () => fleetCapacityProbe(),
-    maxItemRetries: 2,
-  });
-  // The planned-fix path (the single-fixer prompt path is GONE): review
-  // findings decompose into dependency-graph workstreams run by the ONE engine.
-  wrfcController.setFixWorkstreamRunner(createFixWorkstreamRunner({ engine: orchestrationEngine }));
 
   // Live process registry, narrow structural deps only, constructed
   // after every source manager exists. See the RuntimeServices interface
@@ -971,6 +967,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
 
   const processRegistry = withFleetArchive(createProcessRegistry({
     agentManager,
+    contractRunner,
     processManager,
     watcherRegistry,
     triggerSupervisor: triggerManager,
@@ -1048,15 +1045,17 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     resetLocalEngineFailureState: () => voiceProviders.get('local')?.resetEngineFailureState?.(),
     admitExpensiveWork: (label) => admitExpensiveWork(label),
   });
-  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: orchestrationEngine, stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
+  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
   // Teardown for every poller started above. RuntimePollerOwners is all-required,
   // so a poller added to this graph later cannot compile without being named here.
   registerRuntimePollers(disposalScope.registry, {
     stopConfigWatch, watcherRegistry, storeSnapshotScheduler, appendOnlyRetentionScheduler,
     memoryConsolidationScheduler, codeIndexReindexScheduler, sessionOrchestration,
-    knowledgeService, agentKnowledgeService, wrfcController, orchestrationEngine, homeGraphService,
+    knowledgeService, agentKnowledgeService, contractRunner: contracts, homeGraphService,
     processRegistry, memoryGovernor, triggerManager, agentOrchestrator, cancelHostedAgentRuns: () => cancelAllAgentRuns(agentManager),
   });
+  // Contracts left on disk resume once the services are up (contract runner design 7.2).
+  void resumeContracts(contractRunner, workingDirectory);
   return {
     workingDirectory,
     homeDirectory,
@@ -1153,8 +1152,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     agentOrchestrator,
     contextAccountingHolder,
     sessionLiveTurnControls,
-    wrfcController,
-    orchestrationEngine,
+    contractRunner,
+    sessionSnapshot: (sessionId, conversation) => ({ ...conversation, contracts: contractRunner.list({ sessionId, includeTerminal: true }) }),
     processManager,
     processRegistry,
     modeManager,
@@ -1188,7 +1187,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
         'hookDispatcher (projectRoot fixed at init)',
         'sandboxSessionRegistry (workingDirectory fixed at init)',
         'agentOrchestrator (workingDirectory fixed at init)',
-        'wrfcController (projectRoot fixed at init)',
+        'contractRunner (projectRoot and contract store fixed at init)',
         'overflowHandler (baseDir fixed at init)',
         'replayEngine (workingDirectory fixed at init)',
         'planManager (workingDirectory fixed at init)',

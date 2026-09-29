@@ -426,19 +426,19 @@ describe('waking a stopped unit agent', () => {
 });
 
 describe('spawn contract binding', () => {
-  test('a bound spawn stamps the unit fields, starts no chain, and announces them on AGENT_SPAWNING', async () => {
+  test('a bound spawn stamps the unit fields, starts no contract, and announces them on AGENT_SPAWNING', async () => {
     const runtimeBus = new RuntimeEventBus();
     const spawning: Array<Extract<AgentEvent, { type: 'AGENT_SPAWNING' }>> = [];
     runtimeBus.onDomain('agents', (envelope) => {
       if (envelope.payload.type === 'AGENT_SPAWNING') spawning.push(envelope.payload);
     });
-    const createChain = { calls: 0 };
+    const startForOwner = { calls: 0 };
     const manager = new AgentManager({
       configManager: { get: () => null } as unknown as Pick<ConfigManager, 'get'>,
       messageBus: { registerAgent() {} },
       archetypeLoader: { loadArchetype: () => null },
       executor: { runAgent: async () => {} },
-      wrfcController: { createChain: () => { createChain.calls += 1; throw new Error('a bound or outside-contract spawn never starts a chain'); } },
+      contractRunner: { startForOwner: () => { startForOwner.calls += 1; throw new Error('a bound or outside-contract spawn never starts a contract'); } },
     });
     manager.setRuntimeBus(runtimeBus);
 
@@ -453,7 +453,7 @@ describe('spawn contract binding', () => {
       routeReason: 'tier: implementation',
       reviewMode: 'contract',
     });
-    expect(createChain.calls).toBe(0);
+    expect(startForOwner.calls).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 0)); // the bus delivers on a microtask
     expect(spawning.at(-1)).toMatchObject({ agentId: bound.id, contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u2' });
 
@@ -461,7 +461,7 @@ describe('spawn contract binding', () => {
     expect(outside.contractId).toBeUndefined();
     expect(outside.contractUnitId).toBeUndefined();
     expect(outside.reviewMode).toBe('none');
-    expect(createChain.calls).toBe(0);
+    expect(startForOwner.calls).toBe(0);
   });
 });
 

@@ -37,7 +37,7 @@ All of these share the same orchestration core, permission system, knowledge sto
 ┌──────▼────────────┐              ┌────────▼─────────────────────────┐
 │   TOOL LAYER      │              │   AGENT SYSTEM (ACP)              │
 │  ToolRegistry     │              │  AgentOrchestrator · AgentManager │
-│  MCP tools        │              │  WRFC Controller · MessageBus     │
+│  MCP tools        │              │  Contract Runner · MessageBus     │
 │  platform tools   │              │  Worktree Manager                 │
 └──────┬────────────┘              └────────┬─────────────────────────┘
        │                                    │
@@ -182,26 +182,29 @@ The Agent Control Protocol (ACP) governs how the orchestrator and sub-agents exc
 - Resolves the correct LLM provider via `resolveProviderForRecord()`, with optional fallback routes
 - Emits structured events on the `RuntimeEventBus` throughout the lifecycle (started, progress, stream delta, completed, failed, cancelled)
 
-### WRFC workflow
+### Contract runner
 
-The Work-Review-Fix-Commit (WRFC) controller (`agents/wrfc-controller.ts`) orchestrates multi-agent quality loops:
+The contract runner (`contract/runner.ts`, subpath `@goodvibes-jev/engine/sdk/platform/contract`) runs all checked multi-agent work. A contract plans the work, runs each unit with one sub-agent, and has Jev judge the work while it runs, nudging the sub-agent until every acceptance criterion reads met. The build design is `docs/design/contract-runner.md` at the repository root.
 
 ```
-pending → engineering → reviewing → fixing → awaiting_gates → gating → passed
-                                    ↑___________↓ (fix cycles)
-                                                              ↓ (gate failure)
-                                                           failed
+queued → shaping → planning → checking-plan → running → judging → committing → passed
+                      ↑____________↓ (plan repair)         ↕
+                                                        fixing (planned-fix group, then judged again)
+
+shaping, checking-plan, running, judging, fixing → awaiting-owner → planning | running | judging | fixing
+any status before passed → failed | cancelled
 ```
 
-- **Owner phase:** a durable owner agent owns the WRFC chain and remains running until the chain passes or fails
-- **Engineering phase:** an engineer child agent performs the task and emits a `CompletionReport`
-- **Reviewing phase:** reviewer agent scores the complete current result against the original WRFC ask; reviews are never narrowed to only the latest fix, touched files, or rewritten functions
-- **Fixing phase:** reviewer findings are turned into a task graph and run as a workstream through the `platform/orchestration` engine's `FixWorkstreamRunner`, bounded by `fixAttempts` and `reviewCycles` limits. That engine is a separate phase/work-item pipeline layered over this chain controller, not a replacement for it; see [Runtime orchestration](./runtime-orchestration.md) for its full contract
-- **Gating phase:** configured quality gates (e.g. `npm run typecheck`, `npm run lint`) are run; failures start another fixer pass inside the same owner-owned chain
-- `WrfcChain` tracks the full lifecycle: owner agent ID, child agent IDs, gate results, review scores, retry attempts, and owner decisions
-- The owner is deliberately narrow: it keeps the chain running until full-scope review and gates pass, fails, or is cancelled. It may optionally select child model/provider routing through the `selectChildRoute` hook, but default routing remains sufficient.
-- `resumeChain()` / `resumeAllActiveChains()` provide idempotent in-process resume hooks. They avoid duplicate child spawns when a phase child is already active and restart pending chains when capacity allows.
-- TUI and other full SDK hosts can use WRFC natively. Limited surfaces and partner apps can use the generic `WrfcExternalWorkAdapter` / `WrfcExternalWorkBridge` translation seam to dispatch, poll, cancel, and normalize externally-owned work without embedding the controller internals.
+- **Shaping:** Jev reads the request shape (`contract.request-shape`): whether delegation or writing is forbidden, and whether parallel agents or several attempts are asked for.
+- **Planning and checking-plan:** a read-only planner sub-agent writes the goal, the acceptance criteria with the person's words each comes from, and groups of units. Code checks the structure; Jev checks that every criterion traces to the ask, nothing stated is missing, each criterion is checkable, and no unit narrows its goal. Problems go back to the planner, then to the owner.
+- **Running:** each group is a workstream on the `platform/orchestration` engine, each unit one work item run by one sub-agent chosen by the route selector. While the agent works and when it tries to finish, Jev reads its work against the unit's criteria and a quality battery; failing work is held open and the agent is nudged with what is wrong. When nudging stalls, the runner plans a fix group, gives the unit a fresh agent, or asks the owner.
+- **Judging:** Jev judges each group when its units pass, then the deliverable when every group passes. A failure becomes a planned-fix group (status `fixing`) and is judged again.
+- **Committing:** the contract's changes are committed or applied as `contract.autoCommit` and `contract.commitScope` say, and the answer goes to the person.
+- **Owner record:** every contract has an owner `AgentRecord` that parents and surfaces wait on; its completion carries the contract's answer.
+- **Persistence and resume:** contracts are written to `.goodvibes/contracts/<contractId>.json`; `resumeAll()` resumes unfinished contracts at startup and fails any whose workstream or worktree is gone.
+- **External seam:** limited surfaces and partner apps use `ContractExternalWorkAdapter` / `ContractExternalWorkBridge` to dispatch, poll, cancel, and read results of contracts without embedding the runner.
+
+The lifecycle, statuses and settings are in [Runtime orchestration](./runtime-orchestration.md#contracts); criteria are in [Contract criteria](./contract-criteria.md).
 
 ### AgentMessageBus
 

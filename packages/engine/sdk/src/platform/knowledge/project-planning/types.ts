@@ -11,7 +11,7 @@ export type ProjectWorkPlanTaskStatus = 'pending' | 'in_progress' | 'blocked' | 
 export type ProjectWorkPlanTaskMutationSource =
   | 'user'
   | 'planning'
-  | 'wrfc'
+  | 'contract'
   | 'agent'
   | 'daemon'
   | 'migration'

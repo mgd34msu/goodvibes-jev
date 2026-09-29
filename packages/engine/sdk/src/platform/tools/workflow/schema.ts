@@ -2,18 +2,18 @@ import type { ToolDefinition } from '../../types/tools.js';
 
 /**
  * JSON Schema for the workflow tool's input.
- * Manages WRFC state machines, automation triggers, and scheduled tasks.
+ * Starts contracts, and manages workflow state machines, automation triggers and scheduled tasks.
  */
 export const workflowSchema: ToolDefinition = {
   name: 'workflow',
   description:
-    'Automation control plumbing, NOT for executing tasks or spawning agents. ' +
-    'To run work, use the agent tool instead. ' +
-    'This tool only manages: triggers (event-driven automations that fire shell commands on hook events), ' +
+    'Automation control plumbing. To run work, use the agent tool instead. ' +
+    'This tool manages: triggers (event-driven automations that fire shell commands on hook events), ' +
     'schedule (recurring background commands on intervals), ' +
     'and workflow state tracking (does not execute anything). ' +
     'Modes: triggers (manage event-driven automations), schedule (manage recurring tasks), ' +
-    'start/status/transition/cancel/list (state tracking only, no execution).',
+    'start/status/transition/cancel/list (state tracking only, no execution), ' +
+    'except start with definition=contract, which hands the task to a new contract whose units are checked against acceptance criteria while they work.',
   sideEffects: ['workflow', 'state'],
   concurrency: 'serial',
   parameters: {
@@ -28,8 +28,8 @@ export const workflowSchema: ToolDefinition = {
       // mode: start
       definition: {
         type: 'string',
-        enum: ['wrfc', 'fix_loop', 'test_then_fix', 'review_only'],
-        description: 'Workflow definition to instantiate (mode: start).',
+        enum: ['contract', 'fix_loop', 'test_then_fix', 'review_only'],
+        description: 'Workflow definition to instantiate (mode: start). contract starts a contract instead of a tracked state machine.',
       },
       task: {
         type: 'string',

@@ -55,7 +55,7 @@ feature.
 ## Work plans
 
 Project work plans are the shared durable task model for TUI, WebUI, APK,
-daemon planning, and WRFC correlation. They replace surface-local task lists
+daemon planning, and contract correlation. They replace surface-local task lists
 when a client needs project-scoped work tracking that survives process restarts
 and is visible across surfaces.
 
@@ -63,7 +63,7 @@ Work-plan task records include a stable task id, title, notes, owner, status,
 priority/order, timestamps, source, tags, an optional parent task id, linked
 artifact/source/node ids, and the origin surface. A set of correlation fields
 ties each visible task back to the machinery that produced or worked it, so
-WRFC children and planning decisions never appear as unrelated work.
+contract units and planning decisions never appear as unrelated work.
 
 | Correlation field | What it links the task to |
 | --- | --- |
@@ -110,9 +110,24 @@ apply deltas instead of polling.
 | `WORK_PLAN_TASK_DELETED` | A task was removed |
 | `WORK_PLAN_SNAPSHOT_INVALIDATED` | A bulk change made cached snapshots stale, such as a reorder or clear-completed |
 
-WRFC and planning integrations should link visible tasks to owner chains and
-phase children through the correlation fields rather than presenting child
-agents as unrelated work.
+The contract runner keeps the work plan in step with each contract
+(`contract/plan-sync.ts`). Each contract gets a task `contract-<contractId>`
+and each of its units a child task `contract-<contractId>-<unitId>`, all with
+`source: 'contract'` and the contract's id in `contractId`. The contract's task
+is `in_progress` from shaping through committing, `pending` while queued, and
+`blocked` while it waits on its owner. Unit statuses map onto task statuses:
+
+| Unit status | Task status |
+| --- | --- |
+| `pending`, `blocked` | `pending` |
+| `running`, `checking`, `held`, `nudged`, `fixing`, `held-merge` | `in_progress` |
+| `awaiting-owner` | `blocked` |
+| `passed` | `done` |
+| `failed` | `failed` |
+| `cancelled` | `cancelled` |
+
+Other planning integrations should likewise link visible tasks through the
+correlation fields rather than presenting child agents as unrelated work.
 
 ## Knowledge spaces
 
@@ -302,7 +317,7 @@ durable tasks.
 | `projectPlanning.language.get` | Return canonical project vocabulary and resolved ambiguity records |
 | `projectPlanning.language.upsert` | Persist vocabulary and ambiguity resolutions without touching live sessions |
 | `projectPlanning.workPlan.snapshot` | Return the durable work-plan snapshot with tasks and status counts |
-| `projectPlanning.workPlan.tasks.list` | List tasks with optional status, owner, parent, or WRFC-chain filters |
+| `projectPlanning.workPlan.tasks.list` | List tasks with optional status, owner, parent, or contract filters |
 | `projectPlanning.workPlan.task.create` | Create a durable work-plan task |
 | `projectPlanning.workPlan.task.get` | Fetch one task by id |
 | `projectPlanning.workPlan.task.update` | Patch a task |
@@ -332,5 +347,5 @@ does not own panel state or conversational transitions.
 
 ## Next reads
 
-- [Runtime orchestration](./runtime-orchestration.md): how WRFC chains and agent work correlate to work-plan tasks.
+- [Runtime orchestration](./runtime-orchestration.md): how contracts and agent work correlate to work-plan tasks.
 - [Automation and watchers](./automation.md): operator-method families for daemon-hosted jobs and schedules.

@@ -1,5 +1,5 @@
 /**
- * AgentTaskAdapter, bridges agent sessions (AgentOrchestrator / WRFC agents)
+ * AgentTaskAdapter, bridges agent sessions (AgentOrchestrator runs, including contract unit agents)
  * into the unified RuntimeTask registry.
  *
  * Each running agent gets a corresponding RuntimeTask of kind 'agent'. The

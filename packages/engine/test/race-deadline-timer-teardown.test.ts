@@ -1,32 +1,21 @@
 /**
  * race-deadline-timer-teardown.test.ts
  *
- * Two timers that were created and then forgotten.
+ * A deadline timer that was created and then forgotten.
  *
  * The losing side of a `Promise.race` is never settled, so a `setTimeout` used
  * as a deadline keeps its handle, and the closure it holds, until the delay
- * finally elapses, even though the result was decided long before. And a
- * one-shot timer held only in a local variable cannot be cancelled by the
- * owner's `dispose()`, because nothing outside that function ever had a
- * reference to it.
- *
- * Both were measured across a full suite run: 65 uncleared 15s lock deadlines,
- * 38 uncancellable WRFC chain-cleanup timers. Neither pins the event loop,
- * they are unref'd, but both retain their closures and both still fire.
+ * finally elapses, even though the result was decided long before. Measured
+ * across a full suite run: 65 uncleared 15s lock deadlines. They do not pin the
+ * event loop, they are unref'd, but they retain their closures and still fire.
  */
 
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 
 import { cancelActiveTurn, type ActiveCompanionTurn } from '../sdk/src/platform/companion/companion-chat-turn-control.ts';
-import { WrfcController } from '../sdk/src/platform/agents/wrfc-controller.ts';
-import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
-import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.ts';
-import { AgentManager } from '../sdk/src/platform/tools/agent/index.ts';
-import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 
-/** Delays the two subjects use, so an assertion names the timer it means. */
+/** The delay the subject uses, so an assertion names the timer it means. */
 const CANCEL_SETTLE_TIMEOUT_MS = 3_000;
-const CHAIN_CLEANUP_DELAY_MS = 60_000;
 
 const realSetTimeout = globalThis.setTimeout;
 const realClearTimeout = globalThis.clearTimeout;
@@ -75,29 +64,4 @@ test('cancelActiveTurn clears its settle deadline when the turn settles first', 
   expect(result.cancelled).toBe(true);
   expect(result.partialPersisted).toBe(true);
   expect(pending.get(CANCEL_SETTLE_TIMEOUT_MS) ?? 0).toBe(0);
-});
-
-test('WrfcController.dispose() cancels a pending chain-cleanup timer', () => {
-  const bus = new RuntimeEventBus();
-  const controller = new WrfcController(bus, new AgentMessageBus(), {
-    agentManager: new AgentManager(),
-    configManager: new ConfigManager({ workingDir: '/tmp', homeDir: '/tmp', surfaceRoot: 'goodvibes' }),
-    projectRoot: '/tmp/wrfc-timer-teardown',
-    createWorktree: () => ({ merge: async () => true, cleanup: async () => {} }),
-  });
-
-  // scheduleChainCleanup is private by design, it is an internal reaction to a
-  // chain reaching a terminal state. What is under test is purely who owns the
-  // handle it creates, so the test reaches it directly rather than driving a
-  // whole chain to completion to provoke one setTimeout.
-  const schedule = (controller as unknown as {
-    scheduleChainCleanup(chain: { id: string; state: string }): void;
-  }).scheduleChainCleanup.bind(controller);
-
-  schedule({ id: 'chain-a', state: 'complete' });
-  schedule({ id: 'chain-b', state: 'failed' });
-  expect(pending.get(CHAIN_CLEANUP_DELAY_MS) ?? 0).toBe(2);
-
-  controller.dispose();
-  expect(pending.get(CHAIN_CLEANUP_DELAY_MS) ?? 0).toBe(0);
 });

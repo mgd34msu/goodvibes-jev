@@ -2,7 +2,7 @@
 
 /**
  * Agents domain state, tracks all spawned agent sessions including
- * subagents, WRFC chain agents, and orchestrator agents.
+ * subagents, contract owners and unit agents, and orchestrator agents.
  */
 
 import type { AgentUsage } from '../../../../events/agents.js';
@@ -23,7 +23,6 @@ export type AgentRole =
   | 'orchestrator'
   | 'engineer'
   | 'reviewer'
-  | 'fixer'
   | 'integrator'
   | 'gatekeeper'
   | 'subagent'

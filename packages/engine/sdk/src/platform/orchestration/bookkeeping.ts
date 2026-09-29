@@ -11,9 +11,8 @@
  *   A bookkeeping failure surfaces as a WARNING on a PASSED item, never as an
  *   item failure, UNLESS it belongs to the NEGATING SET below.
  *
- * This mirrors SDK fc2cac0e's "keep a green chain green": a fully-passed WRFC
- * chain must not be flipped to FAILED by a non-fatal auto-commit fault. The
- * orchestration engine needs the same rule so a work item can never show
+ * A fully-passed item must not be flipped to FAILED by a non-fatal
+ * auto-commit fault, so a work item can never show
  * `failed` while every one of its phases shows `passed` and its scoped commit
  * landed, the contradictory state this module exists to make unrepresentable.
  *

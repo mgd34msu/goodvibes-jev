@@ -54,6 +54,7 @@ function makeAgent(overrides: Partial<AgentRecord> & { id: string }): AgentRecor
 function makeDeps(overrides: Partial<ProcessRegistryDeps> = {}): ProcessRegistryDeps {
   return {
     agentManager: { list: () => [], cancel: () => false },
+    contractRunner: { list: () => [], cancel: () => false },
     processManager: { list: () => [], stop: () => false, getStatus: () => undefined },
     watcherRegistry: { list: () => [], stopWatcher: () => null },
     workflow: {

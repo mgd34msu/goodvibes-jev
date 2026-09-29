@@ -64,7 +64,7 @@ function writePlanWithItems(store: WorkPlanStore, items: readonly RawItem[], sta
 describe('WorkPlanStore', () => {
   test('persists workspace-scoped work plan items', () => {
     const store = makeStore();
-    const item = store.addItem('Patch WRFC task routing', {
+    const item = store.addItem('Patch contract task routing', {
       owner: 'tui',
       source: 'manual',
       notes: 'Keep visible until verified.',
@@ -79,7 +79,7 @@ describe('WorkPlanStore', () => {
     });
     const plan = reloaded.getActivePlan();
     expect(plan.items).toHaveLength(1);
-    expect(plan.items[0]?.title).toBe('Patch WRFC task routing');
+    expect(plan.items[0]?.title).toBe('Patch contract task routing');
     expect(plan.items[0]?.status).toBe('in_progress');
     expect(plan.items[0]?.owner).toBe('tui');
   });

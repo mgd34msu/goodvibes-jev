@@ -1,12 +1,12 @@
 /**
- * wrfc-fix-graph-round.test.ts, the fix-phase rework's done-when clauses at
- * the engine/planner level (the controller-side clauses are pinned in
- * wrfc-constraint-propagation / wrfc-controller / wrfc-phantom-fixes):
+ * orchestration-graph-round.test.ts, the engine's dependency-graph behaviour
+ * for an elastic workstream (the shape the contract runner's planned-fix
+ * groups run as):
  *
- * - a multi-finding review decomposes into a dependency graph (visible via the
- *   graph snapshot surfaces render);
+ * - a task graph (task-graph.ts planTaskGraph) is visible via the graph
+ *   snapshot surfaces render;
  * - release semantics: a blocker's claimed-done releases NOTHING, only its
- *   review-pass + landed merge releases an edge (test pins this exact case);
+ *   passed state plus a landed merge releases an edge;
  * - a mid-task discovered dependency adds a live edge (and may re-queue);
  * - a seeded cycle and an orphaned task surface as structured outcomes
  *   immediately;
@@ -22,18 +22,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrationEngine } from '../sdk/src/platform/orchestration/engine.js';
-import { parseReviewIntoTasks, planTaskGraph, planFixWorkstream } from '../sdk/src/platform/orchestration/review-task-source.js';
+import { ELASTIC_PHASE_CAPACITY, planTaskGraph, type GraphTask } from '../sdk/src/platform/orchestration/task-graph.js';
 import { dependencySatisfied } from '../sdk/src/platform/orchestration/scheduler.js';
 import { countOwnedActiveAgents, fleetCapacityProbeFrom } from '../sdk/src/platform/runtime/orchestration/fleet-count.js';
 import { migrateFleetMaxSizeRename } from '../sdk/src/platform/config/migrations.js';
 import { applyFleetMaxSizeMigrationPass } from '../sdk/src/platform/config/manager-migration-passes.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import type { OrchestrationEvent, WorkItem, Workstream } from '../sdk/src/platform/orchestration/types.js';
-import type { ReviewerReport } from '../sdk/src/platform/agents/completion-report.js';
 import {
   createOrchestrationHarness,
   engineerReportOutput,
-  reviewerReportOutput,
   flushMicrotasks,
   makeFakeConfigManager,
   type OrchestrationTestHarness,
@@ -45,73 +43,35 @@ let projectRoot: string;
 beforeEach(() => { projectRoot = mkdtempSync(join(tmpdir(), 'fix-graph-')); });
 afterEach(() => { rmSync(projectRoot, { recursive: true, force: true }); });
 
-function multiFindingReview(): ReviewerReport {
-  return {
-    version: 1,
-    archetype: 'reviewer',
-    summary: 'multiple problems',
-    score: 4,
-    passed: false,
-    dimensions: [],
-    issues: [
-      { severity: 'critical', description: 'null deref in parser', file: 'src/parser/core.ts', line: 10, pointValue: 3 },
-      { severity: 'major', description: 'wrong flag name', file: 'src/cli/flags.ts', line: 5, pointValue: 2 },
-      { severity: 'minor', description: 'stale comment in parser', file: 'src/parser/core.ts', line: 99, pointValue: 1 },
-      { severity: 'suggestion', description: 'could rename a variable', pointValue: 0 },
-    ],
-    constraintFindings: [
-      { constraintId: 'c1', satisfied: false, evidence: 'output has 3 columns, task asked for 2', severity: 'major' },
-    ],
-    acceptanceChecklist: [
-      { item: 'writes exactly 2 rows', verified: false, evidence: 'wrote 3' },
-      { item: 'accepts --input flag', verified: true, evidence: 'ran it', howExercised: 'real invocation' },
-    ],
-  };
+/** Four fix tasks: two touch the same parser file, so they serialize most severe first. */
+function fixTasks(): GraphTask[] {
+  return [
+    { id: 't1', title: 'null deref in parser', task: 'fix the null deref', severity: 'critical', files: ['src/parser/core.ts'] },
+    { id: 't2', title: 'wrong flag name', task: 'fix the flag name', severity: 'major', files: ['src/cli/flags.ts'] },
+    { id: 't3', title: 'stale comment in parser', task: 'fix the stale comment', severity: 'minor', files: ['src/parser/core.ts'] },
+    { id: 't4', title: 'writes exactly 2 rows', task: 'make the row count right', severity: 'major', files: [], dependsOn: ['t1', 't2'] },
+  ];
 }
 
-describe('parser/planner: a multi-finding review becomes a dependency graph', () => {
-  test('typed tasks with citations; shared-file + semantic edges; suggestions and verified items excluded', () => {
-    const tasks = parseReviewIntoTasks({ review: multiFindingReview(), originalTask: 'Build the CSV tool' });
-    // 3 findings (suggestion excluded) + 1 unmet constraint + 1 unverified checklist item.
-    expect(tasks).toHaveLength(5);
-    expect(tasks.every((t) => t.description.includes('Build the CSV tool'))).toBe(true);
-    const parserTasks = tasks.filter((t) => t.files.includes('src/parser/core.ts'));
-    expect(parserTasks).toHaveLength(2);
-
-    const { specs, edgeCount } = planTaskGraph(tasks);
-    expect(edgeCount).toBeGreaterThan(0);
-    // Shared-file edge: the minor parser task waits on the critical parser fix.
-    const critical = specs.find((s) => s.title.includes('null deref'))!;
-    const minor = specs.find((s) => s.title.includes('stale comment'))!;
-    expect(minor.dependsOn).toContain(critical.id!);
-    expect(critical.dependsOn ?? []).toHaveLength(0);
-    // Semantic edges: verification tasks wait on every finding fix.
-    const checklist = specs.find((s) => s.title.startsWith('Make verifiable'))!;
-    expect(checklist.dependsOn).toEqual(expect.arrayContaining([critical.id!, minor.id!]));
-    // Clusters derive from file paths.
-    expect(critical.cluster).toBe('src/parser');
-
-    const planned = planFixWorkstream({
-      chainId: 'chain-1', originalTask: 'Build the CSV tool', review: multiFindingReview(), attempt: 1, commitScope: 'scoped',
-    })!;
-    expect(planned.workstream.isolation).toBe('worktree');
-    expect(planned.workstream.releasePolicy).toBe('reviewed-and-merged');
-  });
-
+describe('task graph: visible on surfaces', () => {
   test('the graph is visible on surfaces via the snapshot (nodes, edges, states)', async () => {
     const h = createOrchestrationHarness();
     const engine = createOrchestrationEngine({
       agentManager: h.agentManager, configManager: cfg, runtimeBus: h.bus, projectRoot,
       createWorktree: () => h.worktree, persist: false, skipClaimVerification: true,
     });
-    const planned = planFixWorkstream({
-      chainId: 'chain-g', originalTask: 'Build the CSV tool', review: multiFindingReview(), attempt: 1, commitScope: 'scoped',
-    })!;
+    const { specs } = planTaskGraph(fixTasks());
     // Shared isolation for this harness (no real git); graph shape is identical.
-    const ws = engine.createWorkstream({ ...planned.workstream, isolation: 'shared' });
+    const ws = engine.createWorkstream({
+      title: 'fix graph',
+      isolation: 'shared',
+      releasePolicy: 'reviewed-and-merged',
+      phases: [{ role: 'engineer', capacity: ELASTIC_PHASE_CAPACITY, kind: 'engineer', gate: { scope: 'scoped', gates: [] } }],
+      items: specs,
+    });
     const snapshot = engine.getGraphSnapshot(ws.id)!;
-    expect(snapshot.nodes).toHaveLength(5);
-    expect(snapshot.edges.length).toBeGreaterThan(0);
+    expect(snapshot.nodes).toHaveLength(4);
+    expect(snapshot.edges.length).toBe(3);
     expect(snapshot.nodes.every((n) => typeof n.remainingDepth === 'number')).toBe(true);
     const criticalNode = snapshot.nodes.find((n) => n.title.includes('null deref'))!;
     expect(criticalNode.files).toContain('src/parser/core.ts');

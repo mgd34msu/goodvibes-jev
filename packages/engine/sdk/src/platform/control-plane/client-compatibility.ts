@@ -30,7 +30,7 @@ export const CLIENT_COMPATIBILITY_FLOOR_HEADER = 'X-Goodvibes-Client-Floor';
  * The minimum client build this daemon accepts as a full participant.
  *
  * 1.14.0 is the release in which the conversation-first spawn gate exists at
- * all. A client below it, handed a shared session, will open a review chain
+ * all. A client below it, handed a shared session, will start checked work
  * for a one-word message because its build has no gate to consult, which is
  * exactly the production failure this floor exists to stop repeating.
  *

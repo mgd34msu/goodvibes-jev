@@ -72,6 +72,7 @@ describe('fleet registry: live managers integration', () => {
 
     const registry = createProcessRegistry({
       agentManager,
+      contractRunner: { list: () => [], cancel: () => false },
       processManager,
       watcherRegistry: { list: () => [], stopWatcher: () => null },
       workflow: {
@@ -106,7 +107,7 @@ describe('fleet registry: live managers integration', () => {
       expect(registry.getNode(bgId)?.currentActivity?.text).toBe('fleet-hello');
 
       // Workflow FSM + trigger + schedule from the real managers.
-      const instance = workflow.workflowManager.start('wrfc', 'ship it');
+      const instance = workflow.workflowManager.start('fix_loop', 'ship it');
       const trigger = workflow.triggerManager.add({ event: 'push', action: 'test' });
       workflow.scheduleManager.add('fleet-nightly', '1h', 'true');
 
@@ -149,6 +150,7 @@ describe('fleet registry: live managers integration', () => {
     const workflow = createWorkflowServices();
     const registry = createProcessRegistry({
       agentManager,
+      contractRunner: { list: () => [], cancel: () => false },
       processManager: new ProcessManager(),
       watcherRegistry: { list: () => [], stopWatcher: () => null },
       workflow: {

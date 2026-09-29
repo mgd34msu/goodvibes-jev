@@ -115,6 +115,7 @@ describe('adapters/code-index: registry integration (degrade-to-today)', () => {
     const timers: RegistryTimers = { setInterval: () => 0, clearInterval: () => {} };
     return {
       agentManager: { list: (): AgentRecord[] => [], cancel: () => false } as unknown as Pick<AgentManager, 'list' | 'cancel'>,
+      contractRunner: { list: () => [], cancel: () => false },
       processManager: { list: () => [], stop: () => false, getStatus: () => null } as unknown as Pick<ProcessManager, 'list' | 'stop' | 'getStatus'>,
       watcherRegistry: { list: () => [], stopWatcher: () => null } as unknown as Pick<WatcherRegistry, 'list' | 'stopWatcher'>,
       workflow: {

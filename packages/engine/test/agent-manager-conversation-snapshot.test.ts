@@ -64,7 +64,7 @@ describe('AgentManager: conversation snapshot bridge', () => {
     expect(manager.getConversationSnapshot('ag-done')).toEqual(snap('final content'));
   });
 
-  test('releaseConversationSource is a safe no-op for an agent that never registered a source (e.g. a WRFC owner)', () => {
+  test('releaseConversationSource is a safe no-op for an agent that never registered a source (e.g. a contract owner)', () => {
     const manager = makeManager();
     expect(() => manager.releaseConversationSource('owner-never-ran-a-turn-loop')).not.toThrow();
     expect(manager.getConversationSnapshot('owner-never-ran-a-turn-loop')).toEqual([]);

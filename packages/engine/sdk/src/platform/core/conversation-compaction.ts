@@ -127,7 +127,7 @@ export async function compactConversation(
       extractionProvider: provider,
       sessionMemories: [],
       agents: [],
-      wrfcChains: [],
+      contracts: [],
       activePlan: null,
       lineageEntries: [],
       compactionCount: 0,

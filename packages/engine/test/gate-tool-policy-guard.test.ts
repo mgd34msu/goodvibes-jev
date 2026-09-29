@@ -1,10 +1,10 @@
 // Ported from the tool policy guard tests in goodvibes-agent
 // src/test/tools/agent.test.ts (the guard hoisted to gate/policy/). The agent
-// test drove the guard through a real agent tool built on the WRFC
-// controller; here a fake agent tool with the same mode enum stands in, since
-// what is under test is the guard's allowlist, not the agent manager. The
-// goodvibes_context wrapper stays with the product and is passed in, and the
-// agent tool's WRFC-only modes are not in the allowlist.
+// test drove the guard through a real agent tool built on the agent manager;
+// here a fake agent tool with the same mode enum stands in, since what is under
+// test is the guard's allowlist, not the agent manager. The goodvibes_context
+// wrapper stays with the product and is passed in, and the agent tool's modes
+// are allowlisted by name.
 // Part one: the agent tool, exec, remote, channel, MCP, fetch, state and
 // settings.
 import { describe, expect, test } from 'bun:test';
@@ -40,7 +40,7 @@ import {
 } from '../sdk/src/platform/gate/policy/index.ts';
 
 /** The agent tool's own mode enum, as the engine's agent tool declares it. */
-const AGENT_TOOL_MODES = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'wrfc-chains', 'wrfc-history', 'cohort-status', 'cohort-report'] as const;
+const AGENT_TOOL_MODES = ['spawn', 'batch-spawn', 'status', 'cancel', 'list', 'templates', 'get', 'budget', 'plan', 'wait', 'message', 'contracts', 'contract-history', 'cohort-status', 'cohort-report'] as const;
 
 function makeFakeAgentTool(): { readonly tool: Tool; readonly calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
@@ -212,10 +212,12 @@ describe('the agent tool under the guard', () => {
     expect(calls.map((call) => call.mode)).toEqual(['spawn', 'batch-spawn', 'cancel', 'wait', 'message', 'cohort-report']);
   });
 
-  test('a mode outside the allowlist, including the WRFC-only modes, is refused before the tool runs', async () => {
+  test('a mode outside the allowlist, including an agent tool mode it does not name, is refused before the tool runs', async () => {
     const { tool, calls } = makeFakeAgentTool();
     wrapAgentToolForAgentPolicy(tool);
-    for (const mode of ['wrfc-chains', 'wrfc-history', 'delete-everything']) {
+    const allowed = new Set<string>(AGENT_READ_ONLY_TOOL_MODES);
+    const unlisted = AGENT_TOOL_MODES.filter((mode) => !allowed.has(mode));
+    for (const mode of [...unlisted, 'delete-everything']) {
       const result = await tool.execute({ mode });
       expect(result.success).toBe(false);
       expect(result.error).toBe(AGENT_LOCAL_SPAWN_DENIAL_MESSAGE);
@@ -232,8 +234,10 @@ describe('the agent tool under the guard', () => {
     expect(modeProperty.enum).toEqual([...AGENT_READ_ONLY_TOOL_MODES]);
     expect(modeProperty.enum).toContain('spawn');
     expect(modeProperty.enum).toContain('batch-spawn');
-    expect(modeProperty.enum).not.toContain('wrfc-chains');
-    expect(modeProperty.enum).not.toContain('wrfc-history');
+    // The contract read modes (the renamed chain and history modes of the old guard) are allowed.
+    expect(modeProperty.enum).toContain('contracts');
+    expect(modeProperty.enum).toContain('contract-history');
+    expect(AGENT_READ_ONLY_TOOL_MODES.every((mode) => (AGENT_TOOL_MODES as readonly string[]).includes(mode))).toBe(true);
   });
 
   test('read-only agent inspection modes are left unchanged', () => {

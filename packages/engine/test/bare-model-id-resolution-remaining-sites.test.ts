@@ -223,6 +223,7 @@ describe('tools/agent/manager.ts AgentManager.spawn(): bare model id resolution 
       mode: 'spawn',
       task: 'do work',
       model: 'claude-fable-5',
+      outsideContract: true,
     });
     expect(record.model).toBe('anthropic:claude-fable-5');
   });

@@ -1,10 +1,8 @@
 /**
  * Shared test harness for the orchestration engine.
  *
- * Mirrors test/wrfc-controller.test.ts's harness shape (fake AgentManager
- * driven by real RuntimeEventBus emitters) so the two systems' tests read
- * the same way and exercise the SAME event contract the engine actually
- * listens on (phase-runner.ts's awaitAgentTermination -> runtimeBus.onDomain
+ * A fake AgentManager driven by real RuntimeEventBus emitters, so the tests
+ * exercise the SAME event contract the engine actually listens on (phase-runner.ts's awaitAgentTermination -> runtimeBus.onDomain
  * ('agents', ...)).
  */
 import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
@@ -15,7 +13,7 @@ import {
 } from '../../sdk/src/platform/runtime/emitters/agents.js';
 import type { AgentRecord } from '../../sdk/src/platform/tools/agent/manager.js';
 import type { AgentInput } from '../../sdk/src/platform/tools/agent/schema.js';
-import type { PhaseRunnerAgentManagerLike, WrfcWorktreeOps } from '../../sdk/src/platform/orchestration/index.js';
+import type { PhaseRunnerAgentManagerLike, WorktreeOps } from '../../sdk/src/platform/orchestration/index.js';
 import type { CommitWorkingTreeResult } from '../../sdk/src/platform/agents/worktree.js';
 import type { ConfigManager } from '../../sdk/src/platform/config/index.js';
 
@@ -92,7 +90,7 @@ export function reviewerReportOutput(opts: {
   ].join('\n');
 }
 
-export interface FakeWorktree extends WrfcWorktreeOps {
+export interface FakeWorktree extends WorktreeOps {
   readonly commits: Array<{ message: string; paths: string[] | undefined; agentId?: string }>;
   readonly merges: string[];
   readonly cleanups: string[];

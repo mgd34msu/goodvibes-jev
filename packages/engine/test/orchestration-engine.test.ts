@@ -8,9 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrationEngine, type OrchestrationEngineDeps } from '../sdk/src/platform/orchestration/engine.js';
-import { fromChainSpec } from '../sdk/src/platform/orchestration/controller-compat.js';
 import { loadWorkstreamSnapshot } from '../sdk/src/platform/orchestration/persistence.js';
-import type { PhaseRunnerAgentManagerLike, WrfcWorktreeOps } from '../sdk/src/platform/orchestration/phase-runner.js';
+import type { PhaseRunnerAgentManagerLike, WorktreeOps } from '../sdk/src/platform/orchestration/phase-runner.js';
 import type { OrchestrationEvent, PhaseSpec, WorkItemSpec } from '../sdk/src/platform/orchestration/types.js';
 import { emptyWorkItemUsage, mergeWorkItemUsage } from '../sdk/src/platform/orchestration/types.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
@@ -145,7 +144,7 @@ function makeHarness(projectRoot: string): Harness {
     },
   };
 
-  const createWorktree = (): WrfcWorktreeOps => ({
+  const createWorktree = (): WorktreeOps => ({
     merge: async (agentId) => {
       mergeCalls.push(agentId);
       return true;
@@ -497,7 +496,7 @@ describe('primitive reuse', () => {
 
 describe('dual-outcome: post-gate bookkeeping never contradicts a passed phase', () => {
   /** A worktree whose commit always throws with the given error, exercises the post-gate commit-failure paths. */
-  function throwingWorktree(error: Error): () => WrfcWorktreeOps {
+  function throwingWorktree(error: Error): () => WorktreeOps {
     return () => ({
       merge: async () => true,
       cleanup: async () => { /* no-op */ },
@@ -790,23 +789,5 @@ describe('resume reconciliation: the exact restart-mid-phase blocker', () => {
     expect(freshEngine.importWorkstream(snapshotJson!)).toBe(true);
     expect(events).not.toContain('item-requeued');
     expect(freshEngine.getWorkstream(ws.id)!.items[0]!.state).toBe('awaiting-capacity');
-  });
-});
-
-describe('controller-compat', () => {
-  test('fromChainSpec produces a canned single engineer-phase workstream', () => {
-    const configManager = {
-      get: () => undefined,
-      getCategory: () => ({ commitScope: 'scoped' }),
-    } as unknown as Pick<import('../sdk/src/platform/config/manager.js').ConfigManager, 'get' | 'getCategory'>;
-    const spec = fromChainSpec({ id: 'owner-1', task: 'implement the thing' }, configManager);
-    expect(spec.items).toHaveLength(1);
-    expect(spec.items[0]!.task).toBe('implement the thing');
-    expect(spec.phases).toHaveLength(1);
-    expect(spec.phases[0]!.kind).toBe('engineer');
-
-    const engine = h.makeEngine();
-    const ws = engine.createWorkstream(spec);
-    expect(ws.items[0]!.currentPhaseId).toBe(ws.phases[0]!.id);
   });
 });

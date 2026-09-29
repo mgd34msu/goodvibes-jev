@@ -43,7 +43,7 @@ export function deriveRemoteCapabilities(
       supported: contract?.capabilityCeiling.reviewMode === 'contract' || transportState !== 'disconnected',
       source: contract ? 'contract' : 'connection',
       detail: contract?.capabilityCeiling.reviewMode === 'contract'
-        ? 'review-backed remote flow'
+        ? 'contract-checked remote flow'
         : 'approval continuity available through transport',
     },
     {

@@ -75,7 +75,7 @@ export {
 export type GroupStatus = ContractGroupStatus;
 export type UnitStatus = ContractUnitStatus;
 
-/** The AgentManager surface the runner and the phase runner use (moved from the WRFC config module). */
+/** The AgentManager surface the runner and the phase runner use. */
 export type AgentManagerLike = Pick<AgentManager, 'spawn' | 'getStatus' | 'list' | 'cancel' | 'listByCohort' | 'clear'>;
 
 // ── Ids ────────────────────────────────────────────────────────────────────────
@@ -129,6 +129,31 @@ export interface StartContractInput {
   readonly parentAgentId?: string | undefined;
   readonly budget?: BudgetCeiling | undefined;
   readonly isolation?: 'auto' | 'worktree' | 'shared' | undefined;
+}
+
+/** One unit of a plan drafted before the contract started (a plan proposal or a workstream draft, design 10.4). */
+export interface DraftedUnit {
+  /** `u<n>`, assigned in draft order when the contract starts. */
+  readonly id: string;
+  readonly title: string;
+  /** The unit's brief, kept verbatim by the planner. */
+  readonly brief: string;
+  /** Ids of drafted units this one depends on. */
+  readonly dependsOn: readonly string[];
+  readonly files?: readonly string[] | undefined;
+  /** Best-of-N attempts the draft asked for; absent keeps the configured default. */
+  readonly attempts?: number | undefined;
+}
+
+/** A plan drafted before the contract started: the planner writes only the criteria (and the groups that hold the units); every plan check runs. */
+export interface DraftedPlan {
+  readonly goal: string;
+  readonly units: readonly DraftedUnit[];
+}
+
+/** Starts a contract from a drafted plan (design 2.2 `startFromPlan`). */
+export interface StartFromPlanInput extends Omit<StartContractInput, 'proposedUnits'> {
+  readonly draft: DraftedPlan;
 }
 
 // ── Request shape (design 3.1) ────────────────────────────────────────────────
@@ -378,6 +403,8 @@ export interface Contract {
   sessionMode?: boolean | undefined;
   /** Units an agent-tool batch or AgentInput.proposedUnits proposed; kept so planning that starts again after a restart weighs them too. */
   readonly proposedUnits?: readonly { readonly task: string; readonly template?: string | undefined }[] | undefined;
+  /** The plan drafted before the contract started (startFromPlan): the planner keeps its units and writes their criteria. */
+  readonly draftPlan?: DraftedPlan | undefined;
   /** The whole contract's token and cost ceiling; each group's workstream gets what remains of it when the group starts. */
   readonly budget?: BudgetCeiling | undefined;
   goal: string;

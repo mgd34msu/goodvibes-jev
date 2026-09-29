@@ -129,9 +129,11 @@ barrel, or an explicit `./events/<domain>` subpath for a single domain such as
 
 Supported event domain subpaths are: `agents`, `automation`, `communication`,
 `compaction`, `control-plane`, `deliveries`, `forensics`, `gate`, `knowledge`, `mcp`,
-`ops`, `orchestration`, `planner`, `plugins`, `providers`,
+`ops`, `planner`, `plugins`, `providers`,
 `routes`, `security`, `session`, `surfaces`, `tasks`, `tools`, `transport`,
-`turn`, `ui`, `watchers`, `workflows`, and `workspace`. Event implementation
+`turn`, `ui`, `watchers`, and `workspace`. The `contracts` domain has no
+subpath of its own; its types (`ContractEvent` and the `CONTRACT_*` value
+lists) come from the `./events` barrel. Event implementation
 modules are not exported as deep package subpaths. What each domain carries is
 documented per event in the generated
 [runtime events reference](./reference-runtime-events.md).
@@ -254,7 +256,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 |---|---|---|
 | `platform/acp` | Agent Control Protocol connection and manager APIs | beta |
 | `platform/adapters` | Adapter type contracts | beta |
-| `platform/agents` | Agent orchestration, WRFC, session, and messaging APIs | beta |
+| `platform/agents` | Agent orchestration, session, and messaging APIs | beta |
 | `platform/artifacts` | Artifact store and artifact record types | beta |
 | `platform/automation` | Automation managers, jobs, schedules, routes, and delivery | beta |
 | `platform/batch` | Batch execution manager and types | beta |
@@ -267,6 +269,7 @@ Importing any path not in this table will produce an `ERR_PACKAGE_PATH_NOT_EXPOR
 | `platform/companion` | Companion chat sessions, routes, and persistence | beta |
 | `platform/config` | Config manager, secrets, schema, subscriptions | beta |
 | `platform/payments` | Payment decision order, budget pools, both approval/veto window state machines, taint gate, prompt rendering | beta |
+| `platform/contract` | The contract runner: `createContractRunner`, the contract data model, turn intake (`createContractIntake`), the fleet controls, the external work seam, and the Jev batteries and registry for contract decisions | beta |
 | `platform/control-plane` | Control-plane gateway, method catalog, contracts, and session broker | beta |
 | `platform/core` | Orchestrator, transcript events, execution plan | beta |
 | `platform/daemon` | HTTP server, routes, port-in-use checks | beta |

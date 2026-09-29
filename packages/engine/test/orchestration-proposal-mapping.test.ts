@@ -1,16 +1,19 @@
 /**
- * BIG-3 item 1, PlanProposal → CreateWorkstreamInput assembly
- * (proposal-workstream.ts fromPlanProposal). Proves the honest mapping: one
- * work item per proposal item (title + brief → title/task), the SAME
- * single engineer-phase template fromChainSpec uses (parameterized by
- * capacity), dependencies carried through as item ids, workstream-level
- * provenance, and the assemble-time cycle/dangling assertions.
+ * PlanProposal to contract (proposal-workstream.ts, design 10.4).
+ * draftFromProposal maps one drafted unit per proposal item (title, brief,
+ * dependencies, likely files, attempts) with the proposal's task as the goal,
+ * and refuses a dangling dependency or a cycle. fromPlanProposal and
+ * approveAndLaunchProposal launch it through runner.startFromPlan.
  */
 import { describe, expect, test } from 'bun:test';
-import { fromPlanProposal } from '../sdk/src/platform/orchestration/proposal-workstream.js';
-import { fromChainSpec, engineerPhases } from '../sdk/src/platform/orchestration/controller-compat.js';
+import {
+  approveAndLaunchProposal,
+  draftFromProposal,
+  fromPlanProposal,
+} from '../sdk/src/platform/orchestration/proposal-workstream.js';
 import type { PlanProposal, WorkItem as ProposalWorkItem } from '../sdk/src/platform/core/plan-proposal.js';
-import { makeFakeConfigManager } from './_helpers/orchestration-harness.js';
+import type { ContractRunner, StartedContract } from '../sdk/src/platform/contract/runner.js';
+import type { StartFromPlanInput } from '../sdk/src/platform/contract/types.js';
 
 function proposalItem(overrides: Partial<ProposalWorkItem> & { id: string; title: string; brief: string }): ProposalWorkItem {
   return {
@@ -34,93 +37,52 @@ function makeProposal(items: ProposalWorkItem[], overrides: Partial<PlanProposal
   };
 }
 
-const cfg = makeFakeConfigManager();
+/** A runner that records every startFromPlan call and answers with a fixed contract and owner. */
+function recordingRunner(): { runner: Pick<ContractRunner, 'startFromPlan'>; calls: StartFromPlanInput[] } {
+  const calls: StartFromPlanInput[] = [];
+  return {
+    calls,
+    runner: {
+      startFromPlan(input) {
+        calls.push(input);
+        return { contract: { id: 'contract-1' }, owner: { id: 'agent-owner-1' } } as unknown as StartedContract;
+      },
+    },
+  };
+}
 
-describe('fromPlanProposal: item mapping', () => {
-  test('one work item per proposal item; title + brief become title + task', () => {
-    const proposal = makeProposal([
+const launch = { sessionId: 'session-1', projectRoot: '/repo' } as const;
+
+describe('draftFromProposal: unit mapping', () => {
+  test('one unit per proposal item; title and brief carried verbatim; the task is the goal', () => {
+    const plan = draftFromProposal(makeProposal([
       proposalItem({ id: 'a', title: 'Item A', brief: 'do A carefully' }),
-      proposalItem({ id: 'b', title: 'Item B', brief: 'do B next' }),
+      proposalItem({ id: 'b', title: 'Item B', brief: 'do B next', dependsOn: ['a'] }),
+    ]));
+    expect(plan.goal).toBe('Build the thing');
+    expect(plan.units).toEqual([
+      { id: 'a', title: 'Item A', brief: 'do A carefully', dependsOn: [] },
+      { id: 'b', title: 'Item B', brief: 'do B next', dependsOn: ['a'] },
     ]);
-    const spec = fromPlanProposal(proposal, cfg);
-    expect(spec.items).toHaveLength(2);
-    expect(spec.items[0]).toMatchObject({ id: 'a', title: 'Item A', task: 'do A carefully' });
-    expect(spec.items[1]).toMatchObject({ id: 'b', title: 'Item B', task: 'do B next' });
-    expect(spec.title).toBe('Build the thing');
   });
 
-  test('uses the SAME single engineer-phase template as fromChainSpec, parameterized only by capacity', () => {
-    const proposal = makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'a' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'b' }),
-      proposalItem({ id: 'c', title: 'C', brief: 'c' }),
-    ]);
-    const spec = fromPlanProposal(proposal, cfg);
-    // Default capacity = item count (3), so independent items run concurrently.
-    expect(spec.phases).toEqual(engineerPhases('scoped', 3));
-    // fromChainSpec is the same template at capacity 1, the only difference.
-    const chain = fromChainSpec({ id: 'x', task: 't' }, cfg);
-    expect(chain.phases).toEqual(engineerPhases('scoped', 1));
-    expect(spec.phases.map((p) => p.kind)).toEqual(chain.phases.map((p) => p.kind));
-    expect(spec.phases.map((p) => p.role)).toEqual(chain.phases.map((p) => p.role));
-  });
-
-  test('opts.capacity caps concurrency (clamped to >= 1)', () => {
-    const proposal = makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'a' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'b' }),
-    ]);
-    expect(fromPlanProposal(proposal, cfg, { capacity: 1 }).phases[0]!.capacity).toBe(1);
-    expect(fromPlanProposal(proposal, cfg, { capacity: 0 }).phases[0]!.capacity).toBe(1);
-  });
-
-  test('dependencies carry through as item ids (B dependsOn A)', () => {
-    const proposal = makeProposal([
-      proposalItem({ id: 'a', title: 'A', brief: 'a' }),
-      proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['a'] }),
-      proposalItem({ id: 'c', title: 'C', brief: 'c' }),
-    ]);
-    const spec = fromPlanProposal(proposal, cfg);
-    const b = spec.items.find((i) => i.id === 'b')!;
-    const a = spec.items.find((i) => i.id === 'a')!;
-    const c = spec.items.find((i) => i.id === 'c')!;
-    expect(b.dependsOn).toEqual(['a']);
-    // Independent items omit dependsOn entirely (no empty-array noise).
-    expect(a.dependsOn).toBeUndefined();
-    expect(c.dependsOn).toBeUndefined();
+  test('likely files become the unit files and attempts carry through; empty files are omitted', () => {
+    const plan = draftFromProposal(makeProposal([
+      proposalItem({ id: 'a', title: 'A', brief: 'a', likelyFiles: ['src/a.ts'], attempts: 3 }),
+      proposalItem({ id: 'b', title: 'B', brief: 'b', likelyFiles: [] }),
+    ]));
+    expect(plan.units[0]).toEqual({ id: 'a', title: 'A', brief: 'a', dependsOn: [], files: ['src/a.ts'], attempts: 3 });
+    expect(plan.units[1]).toEqual({ id: 'b', title: 'B', brief: 'b', dependsOn: [] });
   });
 });
 
-describe('fromPlanProposal: provenance', () => {
-  test('carries decomposedBy/proposalId/strategy/cost/elapsed', () => {
-    const proposal = makeProposal(
-      [proposalItem({ id: 'a', title: 'A', brief: 'a' })],
-      { decomposedBy: 'agent', agentCostUsd: 0.42, elapsedMs: 1234 },
-    );
-    const spec = fromPlanProposal(proposal, cfg);
-    expect(spec.provenance).toEqual({
-      decomposedBy: 'agent',
-      proposalId: 'prop-1',
-      strategy: 'cohort',
-      agentCostUsd: 0.42,
-      elapsedMs: 1234,
-    });
-  });
-
-  test('omits absent optional provenance fields (heuristic, no cost)', () => {
-    const proposal = makeProposal([proposalItem({ id: 'a', title: 'A', brief: 'a' })], { decomposedBy: 'heuristic' });
-    const spec = fromPlanProposal(proposal, cfg);
-    expect(spec.provenance).toEqual({ decomposedBy: 'heuristic', proposalId: 'prop-1', strategy: 'cohort' });
-  });
-});
-
-describe('fromPlanProposal: assemble-time assertions (BIG-3 item 2)', () => {
+describe('draftFromProposal: assemble-time assertions', () => {
   test('throws on a dangling dependency id', () => {
     const proposal = makeProposal([
       proposalItem({ id: 'a', title: 'A', brief: 'a' }),
       proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['nonexistent'] }),
     ]);
-    expect(() => fromPlanProposal(proposal, cfg)).toThrow(/unknown item id "nonexistent"/);
+    expect(() => draftFromProposal(proposal)).toThrow(/unknown item id "nonexistent"/);
   });
 
   test('throws on a dependency cycle', () => {
@@ -128,23 +90,73 @@ describe('fromPlanProposal: assemble-time assertions (BIG-3 item 2)', () => {
       proposalItem({ id: 'a', title: 'A', brief: 'a', dependsOn: ['b'] }),
       proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['a'] }),
     ]);
-    expect(() => fromPlanProposal(proposal, cfg)).toThrow(/cycle detected/);
+    expect(() => draftFromProposal(proposal)).toThrow(/cycle detected/);
   });
 
   test('throws on a self-dependency (degenerate cycle)', () => {
     const proposal = makeProposal([proposalItem({ id: 'a', title: 'A', brief: 'a', dependsOn: ['a'] })]);
-    expect(() => fromPlanProposal(proposal, cfg)).toThrow(/cycle detected/);
+    expect(() => draftFromProposal(proposal)).toThrow(/cycle detected/);
   });
 
   test('accepts a valid diamond (D deps B,C; B,C dep A)', () => {
-    const proposal = makeProposal([
+    const plan = draftFromProposal(makeProposal([
       proposalItem({ id: 'a', title: 'A', brief: 'a' }),
       proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['a'] }),
       proposalItem({ id: 'c', title: 'C', brief: 'c', dependsOn: ['a'] }),
       proposalItem({ id: 'd', title: 'D', brief: 'd', dependsOn: ['b', 'c'] }),
+    ]));
+    expect(plan.units.find((unit) => unit.id === 'd')!.dependsOn).toEqual(['b', 'c']);
+  });
+});
+
+describe('fromPlanProposal: launch through the runner', () => {
+  test('starts the drafted plan with origin proposal, the task as the ask, and the launch inputs', () => {
+    const { runner, calls } = recordingRunner();
+    const proposal = makeProposal([
+      proposalItem({ id: 'a', title: 'A', brief: 'a' }),
+      proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['a'] }),
     ]);
-    expect(() => fromPlanProposal(proposal, cfg)).not.toThrow();
-    const spec = fromPlanProposal(proposal, cfg);
-    expect(spec.items.find((i) => i.id === 'd')!.dependsOn).toEqual(['b', 'c']);
+    const started = fromPlanProposal(runner, proposal, { ...launch, isolation: 'worktree', parentAgentId: 'agent-parent' });
+    expect(started.contract.id).toBe('contract-1');
+    expect(calls).toEqual([{
+      ask: 'Build the thing',
+      sessionId: 'session-1',
+      origin: 'proposal',
+      projectRoot: '/repo',
+      draft: draftFromProposal(proposal),
+      isolation: 'worktree',
+      parentAgentId: 'agent-parent',
+    }]);
+  });
+
+  test('a cycle throws before anything starts', () => {
+    const { runner, calls } = recordingRunner();
+    const proposal = makeProposal([
+      proposalItem({ id: 'a', title: 'A', brief: 'a', dependsOn: ['b'] }),
+      proposalItem({ id: 'b', title: 'B', brief: 'b', dependsOn: ['a'] }),
+    ]);
+    expect(() => fromPlanProposal(runner, proposal, launch)).toThrow(/cycle detected/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('approveAndLaunchProposal: one confirmed act', () => {
+  const proposal = makeProposal([proposalItem({ id: 'wi-1', title: 'Ship it', brief: 'do the shipping' })], { task: 'ship the thing' });
+
+  test('without confirm: structured refusal, nothing started', () => {
+    const { runner, calls } = recordingRunner();
+    expect(approveAndLaunchProposal(runner, proposal, launch, {})).toEqual({ launched: false, requiresConfirm: true });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('with confirm: the contract starts in one call and its ids come back', () => {
+    const { runner, calls } = recordingRunner();
+    expect(approveAndLaunchProposal(runner, proposal, launch, { confirm: true })).toEqual({
+      launched: true,
+      contractId: 'contract-1',
+      ownerAgentId: 'agent-owner-1',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.draft).toEqual({ goal: 'ship the thing', units: [{ id: 'wi-1', title: 'Ship it', brief: 'do the shipping', dependsOn: [] }] });
   });
 });

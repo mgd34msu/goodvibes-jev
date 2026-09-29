@@ -64,7 +64,7 @@ describe('WebhookNotifier delivery suppression', () => {
     process.env['NODE_ENV'] = 'production';
     process.env['GOODVIBES_SUPPRESS_NOTIFY'] = '1';
     const notifier = new WebhookNotifier([PUBLIC_URL]);
-    const result = await notifier.send('WRFC chain chain-abcdef cancelled');
+    const result = await notifier.send('Contract ctr-1a2b3c4d cancelled');
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result.delivered).toBe(0);
   });

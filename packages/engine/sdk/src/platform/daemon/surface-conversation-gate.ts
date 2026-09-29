@@ -109,8 +109,8 @@ export function gateSurfaceSpawn(
 
   if (!needsAgreement) {
     // Conversation still gets a real reply, it just must not become a
-    // workstream. Disabling WRFC here is the difference between answering
-    // "Testing" and running engineer -> reviewer -> gates against it.
+    // contract. Keeping the spawn outside every contract is the difference
+    // between answering "Testing" and planning and checking work against it.
     //
     // `replyStyle` carries the SAME decision through to the system prompt. The
     // gate had already classified this as conversation and then spawned an

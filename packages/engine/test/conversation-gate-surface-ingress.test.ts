@@ -7,7 +7,7 @@
  * the ntfy agent topic must produce a conversational reply and no workstream.
  *
  * Covers:
- * - a trivial message: replies, spawns with WRFC disabled, starts no chain
+ * - a trivial message: replies, spawns outside every contract, starts no contract
  * - a work request: proposes and spawns nothing
  * - agreement over the originating channel: starts the work, once
  * - pre-authorized work (schedules/triggers/on-exit, and the raw spawn path):
@@ -27,7 +27,7 @@ const AGENT_TOPIC = 'goodvibes-agent';
 
 interface SpawnCall {
   readonly task: string;
-  readonly wrfcDisabled: boolean;
+  readonly outsideContract: boolean;
   readonly replyStyle?: string | undefined;
   readonly logLabel?: string | undefined;
 }
@@ -109,7 +109,7 @@ function buildHarness(
       agentSeq += 1;
       spawns.push({
         task: input.task,
-        wrfcDisabled: input.outsideContract === true,
+        outsideContract: input.outsideContract === true,
         replyStyle: input.replyStyle,
         logLabel,
       });
@@ -165,20 +165,20 @@ describe('conversation gate at the surface spawn boundary', () => {
     // A reply happens...
     expect(harness.spawns).toHaveLength(1);
     expect(body.outcome).not.toBe('work-proposed');
-    // ...but it is a conversation, not a write-review-fix-confirm chain.
-    expect(harness.spawns[0]!.wrfcDisabled).toBe(true);
+    // ...but it is a conversation, not a contract.
+    expect(harness.spawns[0]!.outsideContract).toBe(true);
     // ...and exactly one agent, not two.
     expect(harness.spawns).toHaveLength(1);
     expect(harness.proposals.listPending()).toHaveLength(0);
   });
 
   test.each(['hey', 'what is the status?', 'thanks!', 'testing 1 2 3'])(
-    'trivial message %p replies conversationally with no chain',
+    'trivial message %p replies conversationally with no contract',
     async (message) => {
       const harness = buildHarness();
       await harness.send(message);
       expect(harness.spawns).toHaveLength(1);
-      expect(harness.spawns[0]!.wrfcDisabled).toBe(true);
+      expect(harness.spawns[0]!.outsideContract).toBe(true);
       expect(harness.proposals.listPending()).toHaveLength(0);
     },
   );
@@ -202,7 +202,7 @@ describe('conversation gate at the surface spawn boundary', () => {
     expect(harness.spawns).toHaveLength(0);
     await harness.send('yes');
     expect(harness.spawns).toHaveLength(1);
-    // Real work keeps the completion report, the WRFC controller parses it.
+    // Real work keeps the completion report, the contract runner reads it.
     expect(harness.spawns[0]!.replyStyle).toBeUndefined();
   });
 
@@ -230,7 +230,7 @@ describe('conversation gate at the surface spawn boundary', () => {
 
     // ...and a later "yes" therefore starts nothing.
     await harness.send('yes');
-    expect(harness.spawns.filter((spawn) => !spawn.wrfcDisabled)).toHaveLength(0);
+    expect(harness.spawns.filter((spawn) => !spawn.outsideContract)).toHaveLength(0);
   });
 
   test('a work request is answerable only after its notice is confirmed', async () => {
@@ -257,14 +257,14 @@ describe('conversation gate at the surface spawn boundary', () => {
 
     await harness.send('yes');
 
-    const workSpawns = harness.spawns.filter((call) => !call.wrfcDisabled);
+    const workSpawns = harness.spawns.filter((call) => !call.outsideContract);
     expect(workSpawns).toHaveLength(1);
     expect(workSpawns[0]!.task).toContain('fix the login bug');
     expect(harness.proposals.listPending()).toHaveLength(0);
 
     // A second "yes" must not start it again.
     await harness.send('yes');
-    expect(harness.spawns.filter((call) => !call.wrfcDisabled)).toHaveLength(1);
+    expect(harness.spawns.filter((call) => !call.outsideContract)).toHaveLength(1);
   });
 
   test('refusing over the channel starts nothing', async () => {
@@ -272,7 +272,7 @@ describe('conversation gate at the surface spawn boundary', () => {
     await harness.send('deploy the worker');
     await harness.send('no, not now');
 
-    expect(harness.spawns.filter((call) => !call.wrfcDisabled)).toHaveLength(0);
+    expect(harness.spawns.filter((call) => !call.outsideContract)).toHaveLength(0);
     expect(harness.proposals.listPending()).toHaveLength(0);
     expect(harness.notices.some((notice) => notice.text.startsWith('Skipped:'))).toBe(true);
   });
@@ -287,7 +287,7 @@ describe('conversation gate at the surface spawn boundary', () => {
     clock.now += 60_001;
 
     await harness.send('yes');
-    expect(harness.spawns.filter((call) => !call.wrfcDisabled)).toHaveLength(0);
+    expect(harness.spawns.filter((call) => !call.outsideContract)).toHaveLength(0);
     expect(harness.proposals.listPending()).toHaveLength(0);
   });
 
@@ -297,7 +297,7 @@ describe('conversation gate at the surface spawn boundary', () => {
     // spawn through the raw path, not the surface adapter context.
     harness.rawSpawn({ task: 'scheduled nightly audit' }, 'AutomationManager');
     expect(harness.spawns).toHaveLength(1);
-    expect(harness.spawns[0]!.wrfcDisabled).toBe(false);
+    expect(harness.spawns[0]!.outsideContract).toBe(false);
     expect(harness.proposals.listPending()).toHaveLength(0);
   });
 
@@ -305,7 +305,7 @@ describe('conversation gate at the surface spawn boundary', () => {
     const harness = buildHarness({ 'conversationGate.mode': 'off' });
     await harness.send('fix the login bug');
     expect(harness.spawns).toHaveLength(1);
-    expect(harness.spawns[0]!.wrfcDisabled).toBe(false);
+    expect(harness.spawns[0]!.outsideContract).toBe(false);
     expect(harness.proposals.listPending()).toHaveLength(0);
   });
 

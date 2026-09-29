@@ -15,7 +15,7 @@
  *  - honest zero-injection: no record clears the relevance floor -> a record with a
  *    `reason` is still produced (retrieval was attempted and is accounted for), but the
  *    sent systemPrompt is unaffected;
- *  - flag disabled: systemPrompt is byte-identical to the base+wrfc prompt and no record
+ *  - flag disabled: systemPrompt is byte-identical to the base prompt and no record
  *    is ever produced;
  *  - a budget override of 0 is a hard no-op even with a matching record and the flag on;
  *  - reuse across tool-continuation iterations of the SAME executeOrchestratorTurnLoop()
@@ -228,6 +228,8 @@ function makeContext(opts: TestContextOverrides): {
     addInjectedKnowledgeIds: (ids) => { for (const id of ids) alreadyInjectedIds.add(id); },
     recordTurnKnowledgeInjection: (record) => { turnInjectionRecords.push(record); },
     nextTurnKnowledgeSequence: () => ++sequence.value,
+    // Intake has its own tests; here every turn stays a conversation turn.
+    contractIntake: { intake: async () => ({ kind: 'turn' }) },
   };
 
   return { context, capturedSystemPrompts, turnInjectionRecords, alreadyInjectedIds, markedFailed };

@@ -4,7 +4,7 @@
  * The per-agent turn ceiling as a real configurable feature: a config default,
  * a per-spawn override, and a policy bound the override cannot exceed (the cap
  * always wins). The resolved budget names its source so a turn-budget-exhausted
- * outcome can report it. Also proves the terminal chain outcome carries the
+ * outcome can report it. Also proves the terminal contract outcome carries the
  * machine-readable 'max_turns' kind + the applied limit/source on the wire, so a
  * consumer never has to regex the prose.
  */
@@ -12,10 +12,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   resolveTurnBudget,
   formatTurnLimitError,
-  isTurnBudgetExhaustedMessage,
   TURN_BUDGET_EXHAUSTED,
 } from '../sdk/src/platform/agents/turn-budget.ts';
-import { emitWrfcChainFailed } from '../sdk/src/platform/agents/wrfc-contract-events.ts';
+import { emitContractEvent } from '../sdk/src/platform/contract/events.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 
 describe('resolveTurnBudget', () => {
@@ -44,11 +43,8 @@ describe('resolveTurnBudget', () => {
 });
 
 describe('turn-budget helpers', () => {
-  test('the prose message is unchanged and recognizable', () => {
+  test('the prose message is unchanged, and the typed outcome names the turn budget', () => {
     expect(formatTurnLimitError(50)).toBe('Exceeded maximum turn limit (50)');
-    expect(isTurnBudgetExhaustedMessage('Exceeded maximum turn limit (50)')).toBe(true);
-    expect(isTurnBudgetExhaustedMessage('max_turns reached')).toBe(true);
-    expect(isTurnBudgetExhaustedMessage('network transport error')).toBe(false);
     expect(TURN_BUDGET_EXHAUSTED).toBe('max_turns');
   });
 });
@@ -59,8 +55,9 @@ describe('CONTRACT_FAILED carries the typed turn-budget outcome on the wire', ()
     const events: Array<{ payload: Record<string, unknown> }> = [];
     bus.onDomain('contracts', (e) => events.push(e as unknown as { payload: Record<string, unknown> }));
 
-    emitWrfcChainFailed(bus, 'session-1', {
-      chainId: 'chain-1',
+    emitContractEvent(bus, 'session-1', {
+      type: 'CONTRACT_FAILED',
+      contractId: 'ctr-1a2b3c4d',
       reason: 'Exceeded maximum turn limit (120)',
       failureKind: 'max_turns',
       membersSettled: true,
@@ -73,7 +70,7 @@ describe('CONTRACT_FAILED carries the typed turn-budget outcome on the wire', ()
     expect(events).toHaveLength(1);
     const payload = events[0]!.payload as Record<string, unknown>;
     expect(payload.type).toBe('CONTRACT_FAILED');
-    expect(payload.contractId).toBe('chain-1');
+    expect(payload.contractId).toBe('ctr-1a2b3c4d');
     expect(payload.failureKind).toBe('max_turns');
     expect(payload.turnLimit).toBe(120);
     expect(payload.turnLimitSource).toBe('spawn-override');

@@ -66,7 +66,7 @@ export interface HandleSharedSessionIntentDeps {
    * Reads `conversationGate.*` for the live-agent handover decision below.
    * Optional: absent means the defaults in conversation-gate.ts, which gate
    * every channel surface and exempt local ones, the safe direction, since
-   * the failure mode of gating is an answer instead of a chain.
+   * the failure mode of gating is an answer instead of a contract.
    */
   readonly conversationGateConfig?: ConversationGateConfigReader | undefined;
 }
@@ -296,10 +296,9 @@ export async function handleSharedSessionIntent(
   // branch returns `continued-live`, and each adapter early-returns on it,
   // BEFORE the conversation gate that guards their spawn path. So a message
   // that would have been proposed if no agent were running was instead injected
-  // as a directive into whatever chain was already running. On a machine with a
+  // as a directive into whatever work was already running. On a machine with a
   // live terminal session that is every inbound message, which is precisely how
-  // "a note over ntfy" turned into a write-review-fix-confirm chain nobody
-  // agreed to.
+  // "a note over ntfy" turned into checked work nobody agreed to.
   //
   // The rule is not invented here: `decideContinuationEscalation` already owns
   // it for the sibling continuation runner. Pre-authorized work (an agreed
@@ -315,7 +314,7 @@ export async function handleSharedSessionIntent(
     deps.conversationGateConfig ? { configReader: deps.conversationGateConfig } : {},
   );
   if (intent !== 'follow-up' && activeAgentId) {
-    if (!handover.startsWorkChain) {
+    if (!handover.startsContract) {
       logger.info('Inbound channel message was not handed to the running agent', {
         sessionId: updatedSession.id,
         surfaceKind: input.surfaceKind ?? 'unknown',
@@ -326,7 +325,7 @@ export async function handleSharedSessionIntent(
     }
     // Only the handover is withheld. Every other decision in this block,
     // notably the steer rejection below, keeps its exact previous behavior.
-    const sent = handover.startsWorkChain
+    const sent = handover.startsContract
       && deps.messageSender.send('orchestrator', activeAgentId, input.body, { kind: 'directive' });
     if (sent) {
       const delivered = updateSharedSessionInput(deps.sessionInputStore(), updatedSession.id, queuedInput.id, (entry) => ({

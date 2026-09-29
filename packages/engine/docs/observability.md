@@ -112,10 +112,10 @@ Available runtime domains:
 | `deliveries` | Outbound delivery tracking |
 | `fleet` | Live process-registry node lifecycle: started, state changed, finished, blocked on user, unblocked |
 | `forensics` | Failure report generated |
+| `gate` | Every tool call through the gate: requested, boundary checked, stakes read, preset evaluated, decision emitted, preset changed |
 | `knowledge` | Knowledge base updates |
 | `mcp` | MCP tool call lifecycle |
 | `ops` | Operator ops plane |
-| `permissions` | Permission requests and decisions |
 | `planner` | AdaptivePlanner decisions |
 | `plugins` | Plugin state changes |
 | `providers` | Provider health transitions |
@@ -768,7 +768,7 @@ feed.contracts.on('CONTRACT_ESCALATED', (event) => {
 });
 ```
 
-A unit passes only when every judged criterion reads met. `CONTRACT_PASSED`, `CONTRACT_FAILED` and `CONTRACT_CANCELLED` end a contract. Every event type and field is listed in the [Runtime events reference](./reference-runtime-events.md#named-contract-events).
+A unit passes only when every judged criterion reads met. `CONTRACT_PASSED`, `CONTRACT_FAILED` and `CONTRACT_CANCELLED` end a contract. Every event type and field is listed in the [Runtime events reference](./reference-runtime-events.md#contracts).
 
 ---
 

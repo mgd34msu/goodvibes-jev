@@ -13,7 +13,7 @@
 import type { ProviderMessage, ContentPart } from '../providers/interface.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import { isActiveAgent } from '../tools/agent/predicates.js';
-import type { WrfcChain } from '../agents/wrfc-types.js';
+import type { ContractAgentRole, ContractStatus, ContractUnitView, ContractView, CriterionView } from '../contract/types.js';
 import type { ExecutionPlan, PlanItem } from './execution-plan.js';
 import type { CompactionSection, CompactionConfig, SessionMemory } from './compaction-types.js';
 import { estimateTokens, IMAGE_TOKEN_ESTIMATE } from './compaction-types.js';
@@ -186,34 +186,115 @@ export function buildCurrentTask(
 }
 
 // ---------------------------------------------------------------------------
+// Contract lookups shared by the agent sections
+// ---------------------------------------------------------------------------
+
+/** Where an agent sits in a contract: the contract, its role there, and the unit it ran. */
+interface ContractAgentRef {
+  readonly contractId: string;
+  readonly role: ContractAgentRole | undefined;
+  readonly unitId: string | undefined;
+}
+
+/** Every unit of a contract, best-of-N attempt units included, each once. */
+function contractUnits(contract: ContractView): ContractUnitView[] {
+  const units: ContractUnitView[] = [];
+  const seen = new Set<string>();
+  const add = (unit: ContractUnitView): void => {
+    if (seen.has(unit.id)) return;
+    seen.add(unit.id);
+    units.push(unit);
+    for (const attempt of unit.attemptUnits ?? []) add(attempt);
+  };
+  for (const unit of contract.units) add(unit);
+  return units;
+}
+
+/**
+ * Index every agent id a contract records (its owner, its planners, and each
+ * unit's agents) to its place in that contract. A planner runs through the
+ * decomposition runner, so its agent record need not carry the contract id;
+ * the contract's own lists are what tie it back.
+ */
+function indexContractAgents(contracts: readonly ContractView[]): Map<string, ContractAgentRef> {
+  const index = new Map<string, ContractAgentRef>();
+  for (const contract of contracts) {
+    index.set(contract.ownerAgentId, { contractId: contract.id, role: 'owner', unitId: undefined });
+    for (const id of contract.plannerAgentIds) {
+      index.set(id, { contractId: contract.id, role: 'planner', unitId: undefined });
+    }
+    for (const unit of contractUnits(contract)) {
+      for (const id of unit.agentIds) index.set(id, { contractId: contract.id, role: 'unit', unitId: unit.id });
+    }
+  }
+  return index;
+}
+
+/** The agent's place in a contract: its own record first, then the contract's lists. */
+function contractRefFor(agent: AgentRecord, index: ReadonlyMap<string, ContractAgentRef>): ContractAgentRef | undefined {
+  const listed = index.get(agent.id);
+  if (!agent.contractId) return listed;
+  const sameContract = listed?.contractId === agent.contractId ? listed : undefined;
+  return {
+    contractId: agent.contractId,
+    role: agent.contractRole ?? sameContract?.role,
+    unitId: agent.contractUnitId ?? sameContract?.unitId,
+  };
+}
+
+/** The contract's goal once planned, else the person's ask, on one line. */
+function contractSubject(contract: ContractView, max: number): string {
+  const subject = contract.goal.trim() || contract.ask;
+  return subject.slice(0, max).replace(/\n/g, ' ');
+}
+
+// ---------------------------------------------------------------------------
 // Running agents
 // ---------------------------------------------------------------------------
 
 /**
- * buildRunningAgents, list agents in running or pending status.
- * Includes WRFC chain ID, agent ID, and task (truncated to 80 chars).
+ * buildRunningAgents, list agents in running or pending status, grouped under
+ * the contract they work for. Each contract line gives its id, status and goal;
+ * each agent line under it gives the agent's role (and unit), agent ID and task
+ * (truncated to 80 chars). Standalone agents (no contract) are listed last.
  * Returns null if no agents are running.
  */
 export function buildRunningAgents(
   agents: AgentRecord[],
-  chains: WrfcChain[],
+  contracts: readonly ContractView[],
 ): CompactionSection | null {
   const active = agents.filter(isActiveAgent);
   if (active.length === 0) return null;
 
-  // Build a map from agent ID to chain ID for quick lookup
-  const agentToChain = new Map<string, string>();
-  for (const chain of chains) {
-    for (const agentId of chain.allAgentIds) {
-      agentToChain.set(agentId, chain.id);
+  const index = indexContractAgents(contracts);
+  const byId = new Map(contracts.map((c) => [c.id, c] as const));
+  const grouped = new Map<string, { ref: ContractAgentRef; agent: AgentRecord }[]>();
+  const standalone: AgentRecord[] = [];
+  for (const agent of active) {
+    const ref = contractRefFor(agent, index);
+    if (!ref) {
+      standalone.push(agent);
+      continue;
     }
+    const group = grouped.get(ref.contractId) ?? [];
+    group.push({ ref, agent });
+    grouped.set(ref.contractId, group);
   }
 
-  const lines = active.map((a) => {
-    const chainId = a.contractId ?? agentToChain.get(a.id) ?? 'no-chain';
-    const task = a.task.slice(0, 80).replace(/\n/g, ' ');
-    return `- ${chainId} | ${a.id} | ${task}`;
-  });
+  const lines: string[] = [];
+  for (const [contractId, members] of grouped) {
+    const contract = byId.get(contractId);
+    lines.push(contract
+      ? `- ${contractId} | ${contract.status} | ${contractSubject(contract, 80)}`
+      : `- ${contractId}`);
+    for (const { ref, agent } of members) {
+      const role = ref.unitId ? `unit ${ref.unitId}` : (ref.role ?? 'agent');
+      lines.push(`  - ${role} | ${agent.id} | ${agent.task.slice(0, 80).replace(/\n/g, ' ')}`);
+    }
+  }
+  for (const agent of standalone) {
+    lines.push(`- no-contract | ${agent.id} | ${agent.task.slice(0, 80).replace(/\n/g, ' ')}`);
+  }
 
   return makeSection('running-agents', '## Currently Running', lines.join('\n'));
 }
@@ -223,45 +304,58 @@ export function buildRunningAgents(
 // ---------------------------------------------------------------------------
 
 /**
- * buildCompletedAgentWork, list standalone (non-WRFC) agents that finished
- * (completed or failed) this session, with a best-effort files-touched summary.
- * Agents that belong to a WRFC chain are excluded, they are already
- * summarized per-chain by buildAgentActivityTable, and listing them again
- * here would double-report the same work.
+ * buildCompletedAgentWork, the finished work of this session:
+ *
+ * - each contract's answer and the answers of its units, for contracts not in
+ *   `olderContractIds` (those are summarized by status line in the older-agent
+ *   summary instead);
+ * - standalone agents (no contract) that finished (completed or failed), with
+ *   a best-effort files-touched summary. An agent that works for a contract is
+ *   reported through that contract's answers, not again here.
  */
 export function buildCompletedAgentWork(
   agents: AgentRecord[],
-  chains: WrfcChain[],
+  contracts: readonly ContractView[],
+  olderContractIds: ReadonlySet<string> = new Set(),
 ): CompactionSection | null {
-  const chainAgentIds = new Set<string>();
-  for (const chain of chains) {
-    for (const id of chain.allAgentIds) chainAgentIds.add(id);
-  }
-  const finished = agents.filter(
-    (a) =>
-      (a.status === 'completed' || a.status === 'failed') &&
-      !a.contractId &&
-      !chainAgentIds.has(a.id),
-  );
-  if (finished.length === 0) return null;
+  const lines: string[] = [];
 
-  const lines = finished.map((a) => {
+  const recent = [...contracts]
+    .filter((c) => !olderContractIds.has(c.id))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  for (const contract of recent) {
+    const answered = contractUnits(contract).filter((u) => u.answer?.trim());
+    const answer = contract.answer?.trim();
+    if (!answer && answered.length === 0) continue;
+    const head = `- [${terminalResult(contract.status)}] ${contract.id} | ${contractSubject(contract, 80)}`;
+    lines.push(answer ? `${head} | ${answer.slice(0, 200).replace(/\n/g, ' ')}` : head);
+    for (const unit of answered) {
+      lines.push(`  - ${unit.id} [${unit.status}] ${unit.title.slice(0, 60).replace(/\n/g, ' ')}: ${unit.answer!.trim().slice(0, 120).replace(/\n/g, ' ')}`);
+    }
+  }
+
+  const index = indexContractAgents(contracts);
+  const finished = agents.filter(
+    (a) => (a.status === 'completed' || a.status === 'failed') && !contractRefFor(a, index),
+  );
+  for (const a of finished) {
     const task = a.task.slice(0, 80).replace(/\n/g, ' ');
     const outcome = a.status === 'completed' ? 'DONE' : 'FAILED';
     const toolNote = `${a.toolCallCount} tool call${a.toolCallCount === 1 ? '' : 's'}`;
     const files = describeAgentFiles(a);
-    return `- [${outcome}] ${a.id} | ${task} | ${toolNote}${files ? ` | ${files}` : ''}`;
-  });
+    lines.push(`- [${outcome}] ${a.id} | ${task} | ${toolNote}${files ? ` | ${files}` : ''}`);
+  }
 
+  if (lines.length === 0) return null;
   return makeSection('completed-agent-work', '## Completed Agent Work', lines.join('\n'));
 }
 
 /**
- * Best-effort files-touched summary for a plain (non-WRFC) agent, parsed
+ * Best-effort files-touched summary for a standalone agent, parsed
  * opportunistically from its raw output. Returns null if no structured
  * completion report was found or it reported no file paths, this is a
- * best-effort signal, not a guarantee (plain agents are not required to
- * emit a completion report the way WRFC engineers are).
+ * best-effort signal, not a guarantee (a standalone agent is not required to
+ * emit a completion report; contract units record their touched paths).
  */
 function describeAgentFiles(agent: AgentRecord): string | null {
   if (!agent.fullOutput) return null;
@@ -413,93 +507,93 @@ export function buildConversationFilterPrompt(
 // ---------------------------------------------------------------------------
 
 /**
- * buildAgentActivityTable, rule-based table from WRFC chain data.
- * One row per chain, most recent first. Skips intermediate reviews/fix cycles.
+ * buildAgentActivityTable, rule-based table from contract data.
+ * One row per contract, most recent first: its id, goal (or ask), result,
+ * units with their status, judged criteria met, and files touched.
  * Stops when adding the next row would exceed the token budget.
  *
  * Returns:
- *   - section: the table section (or null if no chains)
- *   - remainingChains: chains that did not fit in the table (for older summary)
+ *   - section: the table section (or null if no contracts)
+ *   - remainingContracts: contracts that did not fit in the table (for older summary)
  */
 export function buildAgentActivityTable(
-  chains: WrfcChain[],
+  contracts: readonly ContractView[],
   tokenBudget: number,
-): { section: CompactionSection | null; remainingChains: WrfcChain[] } {
-  if (chains.length === 0) {
-    return { section: null, remainingChains: [] };
+): { section: CompactionSection | null; remainingContracts: ContractView[] } {
+  if (contracts.length === 0) {
+    return { section: null, remainingContracts: [] };
   }
 
   // Sort most recent first
-  const sorted = [...chains].sort((a, b) => b.createdAt - a.createdAt);
+  const sorted = [...contracts].sort((a, b) => b.createdAt - a.createdAt);
 
   const header = '## Agent Activity';
   const tableHeader =
-    '| Chain | Task | Scores | Result | Files |\n|-------|------|--------|--------|-------|';
+    '| Contract | Goal | Result | Units | Criteria | Files |\n|----------|------|--------|-------|----------|-------|';
   const rows: string[] = [];
-  const included: WrfcChain[] = [];
-  const remaining: WrfcChain[] = [];
+  const remaining: ContractView[] = [];
 
   let tokensSoFar = estimateTokens(header + '\n' + tableHeader);
 
-  for (const chain of sorted) {
-    const task = chain.task.slice(0, 60).replace(/\n/g, ' ');
-    const scores =
-      chain.reviewScores.length > 0
-        ? chain.reviewScores.map((s) => s.toFixed(1)).join(' → ')
-        : '—';
-    const result = terminalResult(chain.state);
-    const files = describeChainFiles(chain);
-    const row = `| ${chain.id.slice(0, 12)} | ${task} | ${scores} | ${result} | ${files} |`;
+  for (const [idx, contract] of sorted.entries()) {
+    const units = contractUnits(contract);
+    const result = terminalResult(contract.status);
+    const resultCell = result === 'IN_PROGRESS' ? `${result} (${contract.status})` : result;
+    const row = `| ${contract.id} | ${contractSubject(contract, 60)} | ${resultCell} | ${describeUnits(units)} | ${describeCriteria(contract, units)} | ${describeContractFiles(units)} |`;
     const rowTokens = estimateTokens(row + '\n');
 
     if (tokensSoFar + rowTokens > tokenBudget) {
-      remaining.push(chain);
-      // All further chains also go to remaining
-      const idx = sorted.indexOf(chain);
-      remaining.push(...sorted.slice(idx + 1));
+      // This contract and all further ones go to remaining
+      remaining.push(...sorted.slice(idx));
       break;
     }
 
     rows.push(row);
     tokensSoFar += rowTokens;
-    included.push(chain);
   }
 
   if (rows.length === 0) {
-    return { section: null, remainingChains: sorted };
+    return { section: null, remainingContracts: sorted };
   }
 
   const content = tableHeader + '\n' + rows.join('\n');
   const section = makeSection('agent-activity', header, content);
-  return { section, remainingChains: remaining };
+  return { section, remainingContracts: remaining };
 }
 
-/**
- * Compact "N files" summary for a chain's touched-paths ledger, or '—' when
- * absent/empty. Degrades gracefully for legacy chains persisted before
- * `touchedPaths` existed (undefined), this is a cosmetic display gap, not
- * a correctness concern; see `WrfcController.collectChainTouchedPaths()` for
- * the fuller fallback-from-reports reconstruction used by auto-commit.
- */
-function describeChainFiles(chain: WrfcChain): string {
-  const paths = chain.touchedPaths ?? [];
-  if (paths.length === 0) return '—';
-  return `${paths.length} file${paths.length === 1 ? '' : 's'}`;
+/** `u1 passed, u2 running`, the first four units and a count of the rest, or '—' before planning. */
+function describeUnits(units: readonly ContractUnitView[]): string {
+  if (units.length === 0) return '—';
+  const shown = units.slice(0, 4).map((u) => `${u.id} ${u.status}`).join(', ');
+  return units.length > 4 ? `${shown} (+${units.length - 4} more)` : shown;
 }
 
-/** Map WRFC chain state to display result. */
-function terminalResult(state: WrfcChain['state']): string {
-  switch (state) {
+/** `met/judged` over every judged criterion in the contract tree (contract, groups, units), or '—' when none is judged. */
+function describeCriteria(contract: ContractView, units: readonly ContractUnitView[]): string {
+  const criteria: CriterionView[] = [
+    ...contract.criteria,
+    ...contract.groups.flatMap((g) => g.criteria),
+    ...units.flatMap((u) => u.criteria),
+  ].filter((c) => c.disposition === 'judged');
+  if (criteria.length === 0) return '—';
+  const met = criteria.filter((c) => c.status === 'met').length;
+  return `${met}/${criteria.length} met`;
+}
+
+/** Compact "N files" summary over the units' touched paths, or '—' when none. */
+function describeContractFiles(units: readonly ContractUnitView[]): string {
+  const paths = new Set(units.flatMap((u) => u.touchedPaths));
+  if (paths.size === 0) return '—';
+  return `${paths.size} file${paths.size === 1 ? '' : 's'}`;
+}
+
+/** Map a contract status to its display result: the three terminal statuses, else in progress. */
+function terminalResult(status: ContractStatus): string {
+  switch (status) {
     case 'passed': return 'PASSED';
     case 'failed': return 'FAILED';
-    case 'committing': return 'IN_PROGRESS';
-    case 'gating': return 'IN_PROGRESS';
-    case 'awaiting_gates': return 'IN_PROGRESS';
-    case 'reviewing': return 'IN_PROGRESS';
-    case 'fixing': return 'IN_PROGRESS';
-    case 'engineering': return 'IN_PROGRESS';
-    case 'pending': return 'IN_PROGRESS';
-    default: return 'UNKNOWN';
+    case 'cancelled': return 'CANCELLED';
+    default: return 'IN_PROGRESS';
   }
 }
 
@@ -509,12 +603,13 @@ function terminalResult(state: WrfcChain['state']): string {
 
 /**
  * buildOlderAgentSummaryPrompt, build the prompt for LLM-assisted summary of
- * agents that did not fit in the activity table.
+ * the contracts that did not fit in the activity table, each given by its
+ * result and status line (its goal or ask when it has no status line yet).
  *
- * Returns empty string if no older chains.
+ * Returns empty string if no older contracts.
  */
-export function buildOlderAgentSummaryPrompt(olderChains: WrfcChain[]): string {
-  if (olderChains.length === 0) return '';
+export function buildOlderAgentSummaryPrompt(olderContracts: readonly ContractView[]): string {
+  if (olderContracts.length === 0) return '';
 
   const parts: string[] = [
     'Summarize what these agents accomplished in aggregate.',
@@ -524,14 +619,9 @@ export function buildOlderAgentSummaryPrompt(olderChains: WrfcChain[]): string {
     '',
   ];
 
-  for (const chain of olderChains) {
-    const task = chain.task.slice(0, 200).replace(/\n/g, ' ');
-    const scores =
-      chain.reviewScores.length > 0
-        ? chain.reviewScores.map((s) => s.toFixed(1)).join(' → ')
-        : 'no scores';
-    const result = terminalResult(chain.state);
-    parts.push(`- [${result}] ${task} (scores: ${scores})`);
+  for (const contract of olderContracts) {
+    const line = (contract.statusLine?.trim() || contractSubject(contract, 200)).slice(0, 200).replace(/\n/g, ' ');
+    parts.push(`- [${terminalResult(contract.status)}] ${contract.id}: ${line}`);
   }
 
   parts.push('');

@@ -16,8 +16,8 @@
 //     template is unchanged, a brief is WHAT the item does, not HOW the
 //     pipeline runs it.
 //   - removeItem also strips the removed item's id from every other item's
-//     `dependsOn`, so the spec never carries a dangling dependency into
-//     fromPlanProposal's assembly (which would otherwise reject it). It
+//     `dependsOn`, so the spec never carries a dangling dependency into the
+//     plan the draft launches as. It
 //     refuses to remove the last item, a workstream needs at least one.
 //   - moveItem reorders the AUTHORING order (the ordinals shown in the review
 //     and the tie-break when the engine has a free capacity slot and several

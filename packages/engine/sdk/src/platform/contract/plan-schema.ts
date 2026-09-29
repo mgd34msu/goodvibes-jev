@@ -85,6 +85,8 @@ export const PLAN_PROBLEM_CODES = [
   'attempts',
   // Check 8: size.
   'too-many-units',
+  // A drafted plan kept (draft-plan.ts).
+  'draft-changed',
   // Jev checks (plan-checks.ts).
   'untraced', 'uncovered-requirement', 'not-checkable', 'verification-unit', 'role-mismatch', 'narrows',
 ] as const;

@@ -854,7 +854,7 @@ export const builtinGatewayKnowledgeMethodDescriptors: readonly GatewayMethodDes
   methodDescriptor({
     id: 'projectPlanning.workPlan.task.create',
     title: 'Create Project Work Plan Task',
-    description: 'Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or WRFC correlation.',
+    description: 'Create a durable project-scoped work-plan task for TUI, WebUI, APK, daemon planning, or contract correlation.',
     category: 'knowledge',
     access: 'admin',
     scopes: ['write:knowledge'],

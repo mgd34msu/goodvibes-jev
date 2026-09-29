@@ -176,6 +176,13 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
         if (runtime.expectedCancels.delete(agentId)) return;
       }
     }
+    // The owner record is the contract as parents and surfaces see it: stopping it stops the contract.
+    for (const run of deps.runs()) {
+      if (!run.terminal && run.contract.ownerAgentId === agentId) {
+        deps.cancelContract(run, `the contract's owner record ${agentId} was stopped by an operator`);
+        return;
+      }
+    }
     const found = locate(agentId);
     if (found === null) return;
     deps.cancelContract(found.run, `unit ${found.unit.id}'s agent ${agentId} was stopped by an operator`);

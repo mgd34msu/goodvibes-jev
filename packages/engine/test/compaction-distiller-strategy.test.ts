@@ -91,7 +91,7 @@ function distillerContext(
     messages,
     sessionMemories: [],
     agents: [],
-    wrfcChains: [],
+    contracts: [],
     activePlan: null,
     lineageEntries: [],
     compactionCount: 0,

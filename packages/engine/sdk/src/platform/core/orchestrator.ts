@@ -25,13 +25,11 @@ import type { ExecutionPlan, PlanItem } from './execution-plan.js';
 import { estimateConversationTokens } from './context-compaction.js';
 import { SessionLineageTracker } from './session-lineage.js';
 import { EventReplayQueue } from './event-replay.js';
-import {
-  type ConversationFollowUpItem,
-} from './conversation-follow-ups.js';
+import type { ConversationFollowUpItem } from './conversation-follow-ups.js';
 import { OrchestratorFollowUpRuntime } from './orchestrator-follow-up-runtime.js';
 import { ToolCallAbortRegistry, listQueuedMessages, editQueuedMessage, deleteQueuedMessage } from './orchestrator-live-turn.js';
 import { AgentManager } from '../tools/agent/index.js';
-import { WrfcController } from '../agents/wrfc-controller.js';
+import type { ContractIntake, ContractRunner } from '../contract/index.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { CacheHitTracker } from '../providers/cache-strategy.js';
 import { IdempotencyStore } from '../runtime/idempotency/index.js';
@@ -75,10 +73,7 @@ import {
   prepareConversationForTurn,
 } from './orchestrator-turn-helpers.js';
 import { executeOrchestratorTurnLoop } from './orchestrator-turn-loop.js';
-import {
-  recordTurnInjection,
-  type TurnInjectionRecord,
-} from '../agents/turn-knowledge-injection.js';
+import { recordTurnInjection, type TurnInjectionRecord } from '../agents/turn-knowledge-injection.js';
 import type { OrchestratorUsageTotals } from './orchestrator-usage.js';
 
 /** Minimal interface for hook dispatch, allows any hook dispatcher implementation */
@@ -102,7 +97,7 @@ export interface OrchestratorUserInputOptions {
  * Options for constructing an {@link Orchestrator}: the conversation, viewport
  * callbacks, tool registry, permission manager, system-prompt getter, hook
  * dispatcher, flag manager, render callback, runtime bus, and services
- * (agentManager, wrfcController).
+ * (agentManager, contractRunner, contractIntake).
  */
 export interface OrchestratorOptions {
   /** Manages the conversation message history. */
@@ -146,7 +141,9 @@ export interface OrchestratorOptions {
   /** Required runtime service dependencies. */
   services: {
     readonly agentManager: Pick<AgentManager, 'list' | 'spawn'>;
-    readonly wrfcController: Pick<WrfcController, 'listChains'>;
+    readonly contractRunner: Pick<ContractRunner, 'list'>;
+    /** Reads each user turn before the model is called (contract runner design 10.3); built with createContractIntake. */
+    readonly contractIntake: ContractIntake;
   };
 }
 
@@ -215,7 +212,8 @@ export class Orchestrator {
   private detachReplay: (() => void) | null = null;
   private readonly runtimeBus: RuntimeEventBus | null;
   private readonly agentManager: Pick<AgentManager, 'list' | 'spawn'>;
-  private readonly wrfcController: Pick<WrfcController, 'listChains'>;
+  private readonly contractRunner: Pick<ContractRunner, 'list'>;
+  private readonly contractIntake: ContractIntake;
   private coreServices: OrchestratorCoreServices = {};
   private readonly ownedSessionLineageTracker = new SessionLineageTracker();
   private readonly ownedIdempotencyStore = new IdempotencyStore();
@@ -295,7 +293,7 @@ export class Orchestrator {
       : null;
     this.flagManager = flagManager; this.requestRender = requestRender ?? (() => {});
     this.runtimeBus = runtimeBus;
-    this.agentManager = services.agentManager; this.wrfcController = services.wrfcController;
+    this.agentManager = services.agentManager; this.contractRunner = services.contractRunner; this.contractIntake = services.contractIntake;
     this.followUpRuntime = new OrchestratorFollowUpRuntime({
       conversation: this.conversation,
       getViewportHeight: () => this.getViewportHeight(),
@@ -806,6 +804,7 @@ export class Orchestrator {
       addInjectedKnowledgeIds: (ids) => { this.addInjectedKnowledgeIds(ids); },
       recordTurnKnowledgeInjection: (record) => { this.recordTurnKnowledgeInjection(record); },
       nextTurnKnowledgeSequence: () => this.nextTurnKnowledgeSequence(), contractHooks: this.coreServices.contractHooks,
+      contractIntake: this.contractIntake,
     });
   }
 
@@ -818,7 +817,7 @@ export class Orchestrator {
     await handlePostTurnContextMaintenance({
       conversation: this.conversation,
       agentManager: this.agentManager,
-      wrfcController: this.wrfcController,
+      contractRunner: this.contractRunner,
       planManager: this.coreServices.planManager ?? null,
       sessionMemoryStore: this.coreServices.sessionMemoryStore ?? null,
       configManager,
@@ -973,7 +972,7 @@ export class Orchestrator {
       providerRegistry: requireProviderRegistry(this.coreServices),
       sessionId: this.sessionId,
       agentManager: this.agentManager,
-      wrfcController: this.wrfcController,
+      contractRunner: this.contractRunner,
       planManager: this.coreServices.planManager ?? null,
       sessionMemoryStore: this.coreServices.sessionMemoryStore ?? null,
       sessionLineageTracker: getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker),

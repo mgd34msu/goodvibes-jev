@@ -7,7 +7,7 @@
 import type { ProviderMessage } from '../providers/interface.js';
 import type { SessionMemory } from './session-memory.js';
 import type { AgentRecord } from '../tools/agent/index.js';
-import type { WrfcChain } from '../agents/wrfc-types.js';
+import type { ContractView } from '../contract/types.js';
 import type { ExecutionPlan } from './execution-plan.js';
 
 /**
@@ -102,8 +102,8 @@ export interface CompactionContext {
   /** All agent records from AgentManager.list(). */
   agents: AgentRecord[];
 
-  /** All WRFC chains from WrfcController.listChains(). */
-  wrfcChains: WrfcChain[];
+  /** The session's contracts, terminal ones included, from ContractRunner.list(). */
+  contracts: readonly ContractView[];
 
   /** Active execution plan, or null if none. */
   activePlan: ExecutionPlan | null;

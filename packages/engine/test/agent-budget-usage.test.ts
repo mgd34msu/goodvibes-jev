@@ -13,6 +13,10 @@ function toolFor(record: Partial<AgentRecord>) {
     messageBus: { getMessages: () => [], send: () => undefined } as never,
     archetypeLoader: { loadArchetype: () => null },
     configManager: { get: () => undefined } as never,
+    // Budget mode reads only the agent record; no contract is started.
+    contractRunner: { start: () => { throw new Error('not used'); }, list: () => [], get: () => null },
+    projectRoot: '/repo',
+    resolveSessionId: () => 'session-1',
   });
 }
 
