@@ -428,17 +428,21 @@ export class SessionManager {
           }
         }
 
-        // Count message lines: parse each line's type/removed fields only (no full content parse)
-        // Using startsWith anchor to avoid false positives from message content containing these strings
+        // Count the message records that are not removed, from each parsed
+        // record: the fields' order in the line is not fixed (save writes
+        // `type` last), and text inside a record can contain any substring.
         for (const l of lines.slice(1)) {
-          const trimmed = l.trim();
-          if (trimmed.startsWith('{"') && trimmed.includes('"type":"message"')) {
-            // Quick check: is "removed":true near the start of the line (before content)?
-            // Content is always the longest field, so type/removed appear in the first ~50 chars
-            const prefix = trimmed.slice(0, 60);
-            if (!prefix.includes('"removed":true')) {
-              messageCount++;
-            }
+          let record: unknown;
+          try {
+            record = JSON.parse(l);
+          } catch {
+            // A malformed line is not a message; load() skips it the same way.
+            continue;
+          }
+          if (record !== null && typeof record === 'object'
+            && (record as Record<string, unknown>).type === 'message'
+            && (record as Record<string, unknown>).removed !== true) {
+            messageCount++;
           }
         }
       } catch (err: unknown) {
@@ -584,7 +588,7 @@ export class SessionManager {
           } catch (err: unknown) {
             // Malformed line in session during search: skip it.
             logger.warn('SessionManager: malformed line during search', {
-              name,
+              name: session.name,
               error: summarizeError(err),
             });
           }
@@ -596,7 +600,7 @@ export class SessionManager {
       } catch (err: unknown) {
         // Session unreadable during search: skip it.
         logger.warn('SessionManager: unreadable session during search', {
-          name,
+          name: session.name,
           error: summarizeError(err),
         });
       }
