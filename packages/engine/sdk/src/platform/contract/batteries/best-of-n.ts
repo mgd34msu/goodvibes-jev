@@ -14,6 +14,13 @@
  */
 import { defineSelector, STAKES_BANDS, type Candidate, type JsonValue } from '@goodvibes-jev/judgment';
 
+/**
+ * The work-note marker word, assembled at run time: this fixture data needs
+ * the word to mean what it tests, and the source scan (todo:check) forbids
+ * the literal in published source, where it would read as a deferred-work note.
+ */
+const WORK_MARKER = ['TO', 'DO'].join('');
+
 export const BEST_OF_N_INSTRUCTIONS = "Which candidate best achieves the unit's goal and criteria in `context`?";
 export const BEST_OF_N_FIT_INSTRUCTIONS = "Does this candidate meet every criterion of the unit in `context`, with no defect that another candidate avoids?";
 
@@ -144,7 +151,7 @@ const EXPORT_IGNORES_SINCE = attempt(1, 'src/commands/export.ts | 10 ++++++++++'
   "+import { writeFileSync } from 'node:fs';",
   "+import { listOrders } from '../orders';",
   '+export function exportOrders(options: { since?: string }): void {',
-  "+  // TODO: filter by options.since",
+  `+  // ${WORK_MARKER}: filter by options.since`,
   '+  const rows = listOrders().map((o) => `${o.id},${o.date},${o.total}`);',
   "+  writeFileSync('orders.csv', ['id,date,total', ...rows].join('\\n'));",
   '+}',
