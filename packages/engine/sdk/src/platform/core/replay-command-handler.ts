@@ -9,7 +9,8 @@
  *   /replay export <path>   , export replay report to a JSON file
  *
  * The handler delegates to an injected `DeterministicReplayEngine`
- * and an optional ledger reader for run access.
+ * and an optional ledger reader for run access and for the runtime state
+ * snapshot stored when each run started.
  *
  * Returns a human-readable result string to display in the conversation.
  */
@@ -17,6 +18,8 @@
 import type { DeterministicReplayEngine } from './deterministic-replay.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import type { LedgerEntry } from '../runtime/telemetry/exporters/local-ledger.js';
+import type { RuntimeStateSnapshot } from '../runtime/diagnostics/types.js';
 
 export interface ReplayCommandResult {
   /** Human-readable output to show the user. */
@@ -34,16 +37,19 @@ export interface ReplayCommandDeps {
  *
  * @param subcommand - The first word after /replay (e.g. 'load', 'step').
  * @param args       - Remaining tokens.
- * @param ledger     - Optional ledger reader for 'load'. When omitted, the
- *                     handler reports that no ledger is configured.
+ * @param ledger     - Optional ledger reader for 'load' (a LocalLedgerExporter
+ *                     satisfies it). When omitted, the handler reports that
+ *                     no ledger is configured.
  */
 export function handleReplayCommand(
   deps: ReplayCommandDeps,
   subcommand: string,
   args: string[],
   ledger?: {
-    readRunEntries: (runId: string) => import('../runtime/telemetry/exporters/local-ledger.js').LedgerEntry[];
+    readRunEntries: (runId: string) => LedgerEntry[];
     listRunIds: () => string[];
+    /** The runtime state snapshot stored when the run started, or null if none was stored. */
+    readRunSnapshot: (runId: string) => RuntimeStateSnapshot | null;
   },
 ): ReplayCommandResult {
   const engine = deps.replayEngine;
@@ -88,17 +94,22 @@ export function handleReplayCommand(
         };
       }
 
-      // Build a minimal snapshot from the first event's timestamp.
-      // In a fully wired setup the snapshot would be retrieved from a snapshot store.
-      // Here we use an empty-domain snapshot as the baseline; domain state will be
-      // populated incrementally as events are replayed.
-      const syntheticSnapshot: import('../runtime/diagnostics/types.js').RuntimeStateSnapshot = {
+      // The baseline is the runtime state snapshot stored when the run started.
+      // A run recorded before snapshots were stored has none; it replays from
+      // an empty-domain baseline stamped with its first event's time, and the
+      // output says so.
+      const storedSnapshot = ledger.readRunSnapshot(runId);
+      const baseline: RuntimeStateSnapshot = storedSnapshot ?? {
         capturedAt: entries[0]?.ts ?? Date.now(),
         domains: [],
       };
 
-      engine.load(runId, syntheticSnapshot, entries);
-      logger.info('[ReplayCommandHandler] run loaded', { runId, events: entries.length });
+      engine.load(runId, baseline, entries);
+      logger.info('[ReplayCommandHandler] run loaded', {
+        runId,
+        events: entries.length,
+        storedSnapshot: storedSnapshot !== null,
+      });
 
       // At-rest redaction runs at write time, so a recorded run may already carry
       // [REDACTED_*] markers where a secret was masked. Surface that honestly so a
@@ -112,6 +123,9 @@ export function handleReplayCommand(
           `  Events: ${entries.length}`,
           `  First: ${new Date(entries[0]?.ts ?? Date.now()).toISOString()}`,
           `  Last:  ${new Date(entries[entries.length - 1]?.ts ?? Date.now()).toISOString()}`,
+          storedSnapshot
+            ? `  Baseline: state snapshot from run start (${storedSnapshot.domains.length} domain${storedSnapshot.domains.length === 1 ? '' : 's'}, ${new Date(storedSnapshot.capturedAt).toISOString()})`
+            : '  Baseline: empty (this run was recorded before run-start state snapshots were stored)',
           ...(redacted
             ? ['', 'Note: some records were redacted at rest, secrets appear as [REDACTED_*] markers; the content shown is post-redaction.']
             : []),

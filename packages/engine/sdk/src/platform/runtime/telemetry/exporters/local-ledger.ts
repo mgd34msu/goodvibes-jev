@@ -6,11 +6,16 @@
  * structured logger entries.
  *
  * Also provides typed event ledger recording for deterministic replay.
- * Call `recordEvent()` to append a `LedgerEntry` to the ledger file.
+ * Call `recordEvent()` to append a `LedgerEntry` to the ledger file. When a
+ * `captureRunSnapshot` source is configured, the first entry recorded for a
+ * run id also stores the runtime state snapshot taken at that moment in a
+ * sibling `<ledgerFilePath>.snapshots.jsonl` file, which `readRunSnapshot()`
+ * returns as the replay baseline for that run.
  */
 import { appendFileSync, statSync, renameSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
 import type { ReadableSpan, SpanExporter } from '../types.js';
+import type { RuntimeStateSnapshot } from '../../diagnostics/types.js';
 import { summarizeError } from '../../../utils/error-display.js';
 import {
   type AtRestPolicy,
@@ -47,6 +52,27 @@ export interface LocalLedgerConfig {
    * bounded). Wire from config via resolveAtRestPolicy(configManager.get).
    */
   readonly atRestPolicy?: AtRestPolicy | undefined;
+  /**
+   * Source of the runtime state snapshot stored when a run starts, usually a
+   * diagnostics provider's `getStateSnapshot`. It is called once per run id,
+   * on the first `recordEvent()` for that run. When omitted, no snapshots are
+   * stored and replay of those runs starts from an empty baseline.
+   */
+  readonly captureRunSnapshot?: (() => RuntimeStateSnapshot) | undefined;
+}
+
+/** One line of the run snapshot file. */
+interface RunSnapshotRecord {
+  readonly runId: string;
+  readonly snapshot: RuntimeStateSnapshot;
+}
+
+function isRunSnapshotRecord(value: unknown): value is RunSnapshotRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as { runId?: unknown; snapshot?: unknown };
+  if (typeof record.runId !== 'string' || typeof record.snapshot !== 'object' || record.snapshot === null) return false;
+  const snapshot = record.snapshot as { capturedAt?: unknown; domains?: unknown };
+  return typeof snapshot.capturedAt === 'number' && Array.isArray(snapshot.domains);
 }
 
 /**
@@ -88,7 +114,11 @@ export class LocalLedgerExporter implements SpanExporter {
   private readonly filePath: string;
   private readonly maxFileSizeBytes: number;
   private readonly ledgerFilePath: string;
+  private readonly snapshotFilePath: string;
   private readonly atRestPolicy: AtRestPolicy;
+  private readonly captureRunSnapshot: (() => RuntimeStateSnapshot) | undefined;
+  /** Run ids whose start has been handled; loaded from the snapshot file on first use. */
+  private snapshottedRunIds: Set<string> | null = null;
   /** Keep each file's lines in order while their credential spans are read. */
   private readonly spanWriter = new AtRestLineWriter(SPAN_FILE_CREDENTIAL_SITE);
   private readonly ledgerWriter = new AtRestLineWriter(LEDGER_FILE_CREDENTIAL_SITE);
@@ -97,7 +127,9 @@ export class LocalLedgerExporter implements SpanExporter {
     this.filePath = config.filePath;
     this.maxFileSizeBytes = config.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE;
     this.ledgerFilePath = config.ledgerFilePath ?? `${config.filePath}.ledger.jsonl`;
+    this.snapshotFilePath = `${this.ledgerFilePath}.snapshots.jsonl`;
     this.atRestPolicy = config.atRestPolicy ?? DEFAULT_AT_REST_POLICY;
+    this.captureRunSnapshot = config.captureRunSnapshot;
   }
 
   /**
@@ -175,6 +207,7 @@ export class LocalLedgerExporter implements SpanExporter {
    * for the consumer side of this pipeline.
    */
   recordEvent(entry: LedgerEntry): void {
+    this._storeSnapshotIfRunStarts(entry.runId);
     const append = (line: string): void => {
       try {
         appendFileSync(this.ledgerFilePath, `${line}\n`, 'utf8');
@@ -280,6 +313,88 @@ export class LocalLedgerExporter implements SpanExporter {
     return [...seen];
   }
 
+  /**
+   * Read the runtime state snapshot stored when a run started.
+   *
+   * @param runId - The run to look up.
+   * @returns The snapshot, or null when none was stored for the run (the run
+   *   was recorded before snapshots existed, or with no snapshot source).
+   */
+  readRunSnapshot(runId: string): RuntimeStateSnapshot | null {
+    let found: RuntimeStateSnapshot | null = null;
+    for (const record of this._readSnapshotRecords()) {
+      if (record.runId === runId) found = record.snapshot;
+    }
+    return found;
+  }
+
+  /**
+   * On the first entry of a run id with no stored snapshot, capture the
+   * runtime state and queue it ahead of that entry on the ledger writer, so
+   * the snapshot line is written first and gets the same at-rest redaction.
+   * A run is captured at most once: a later event would describe a state
+   * after the run began, so a failed capture is logged and not retried.
+   */
+  private _storeSnapshotIfRunStarts(runId: string): void {
+    if (!this.captureRunSnapshot) return;
+    if (this.snapshottedRunIds === null) {
+      this.snapshottedRunIds = new Set(this._readSnapshotRecords().map((record) => record.runId));
+    }
+    if (this.snapshottedRunIds.has(runId)) return;
+    this.snapshottedRunIds.add(runId);
+
+    let serialized: string;
+    try {
+      const record: RunSnapshotRecord = { runId, snapshot: this.captureRunSnapshot() };
+      serialized = JSON.stringify(record);
+    } catch (err) {
+      logger.warn('[local-ledger] run snapshot capture failed', {
+        error: summarizeError(err),
+        snapshotFilePath: this.snapshotFilePath,
+        runId,
+      });
+      return;
+    }
+    const append = (line: string): void => {
+      try {
+        appendFileSync(this.snapshotFilePath, `${line}\n`, 'utf8');
+      } catch (err) {
+        logger.warn('[local-ledger] run snapshot write failed', {
+          error: summarizeError(err),
+          snapshotFilePath: this.snapshotFilePath,
+          runId,
+        });
+      }
+    };
+    if (this.atRestPolicy.redact) this.ledgerWriter.write(serialized, append);
+    else append(serialized);
+  }
+
+  private _readSnapshotRecords(): RunSnapshotRecord[] {
+    if (!existsSync(this.snapshotFilePath)) return [];
+    let raw: string;
+    try {
+      raw = readFileSync(this.snapshotFilePath, 'utf8');
+    } catch (err) {
+      logger.warn('[local-ledger] run snapshot read failed', {
+        error: summarizeError(err),
+        snapshotFilePath: this.snapshotFilePath,
+      });
+      return [];
+    }
+    const records: RunSnapshotRecord[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (isRunSnapshotRecord(parsed)) records.push(parsed);
+      } catch {
+        // Skip malformed lines, the file may have partial writes.
+      }
+    }
+    return records;
+  }
+
   /** Resolves once every line waiting on a credential span reading is written. */
   async flush(): Promise<void> {
     await Promise.all([this.spanWriter.flush(), this.ledgerWriter.flush()]);
@@ -297,14 +412,14 @@ export class LocalLedgerExporter implements SpanExporter {
   /**
    * Retention enforcement point (called on every export, alongside rotation).
    * Applies the age + total-size caps across the span file, its rotated backup,
-   * and the ledger file, deleting oldest-first. The freshly-written active files
+   * the ledger file and the run snapshot file, deleting oldest-first. The freshly-written active files
    * carry the most recent mtime, so they are only ever reclaimed as a last
    * resort under extreme size pressure, a rotated backup goes first.
    */
   private _enforceRetention(): void {
     try {
       const outcome = enforceFileRetention(
-        [this.filePath, `${this.filePath}.1`, this.ledgerFilePath],
+        [this.filePath, `${this.filePath}.1`, this.ledgerFilePath, this.snapshotFilePath],
         this.atRestPolicy,
       );
       if (outcome.deletedFiles.length > 0) {

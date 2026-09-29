@@ -9,7 +9,7 @@
 // and a launch must never create an engine workstream.
 // ---------------------------------------------------------------------------
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach, beforeEach } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AdaptivePlanner } from '../sdk/src/platform/core/index.ts';
@@ -22,6 +22,10 @@ import { createWorkstreamServices, type WorkstreamServicesDeps } from '../sdk/sr
 import type { StartedContract } from '../sdk/src/platform/contract/runner.ts';
 import type { StartContractInput, StartFromPlanInput } from '../sdk/src/platform/contract/types.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
+import { fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { RemoteRunnerRegistry, RemoteSupervisor } from '../sdk/src/platform/runtime/remote/index.ts';
+import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
 
 /** A contract config category with commitScope 'off' and no gates, read by the draft's phase and by the engine. */
 function makeConfigManager(decomposition: 'heuristic' | 'agent' = 'heuristic'): Pick<ConfigManager, 'get' | 'getCategory'> {
@@ -131,8 +135,16 @@ function recordingRunner(): {
 
 describe('createWorkstreamServices: drafts and contract launch', () => {
   const tempDirs: string[] = [];
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+
+  // Every draft reads the task's risk (routing.request-risk) for the planner:
+  // these tests read it as minor, which leaves the decomposition gate open.
+  beforeEach(() => {
+    previousPort = installJudgmentPort(fakePort((_name, question) => scoreAnswer(question, 1)).port);
+  });
 
   afterEach(() => {
+    installJudgmentPort(previousPort);
     while (tempDirs.length > 0) rmSync(tempDirs.pop()!, { recursive: true, force: true });
   });
 
@@ -158,6 +170,8 @@ describe('createWorkstreamServices: drafts and contract launch', () => {
       projectRoot,
       contractRunner: runner,
       sessionId: options.sessionId ?? 'session-1',
+      remoteSupervisor: new RemoteSupervisor(new RemoteRunnerRegistry({ getStatus: () => null, list: () => [] })),
+      runtimeStore: createRuntimeStore(),
     });
     return { ...services, spawnedTemplates };
   }

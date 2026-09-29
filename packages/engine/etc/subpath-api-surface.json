@@ -23226,7 +23226,7 @@
     {
       "name": "handleReplayCommand",
       "kind": "function",
-      "text": "export declare function handleReplayCommand(deps: ReplayCommandDeps, subcommand: string, args: string[], ledger?: { readRunEntries: (runId: string) => import('../runtime/telemetry/exporters/local-ledger.js').LedgerEntry[]; listRunIds: () => string[]; }): ReplayCommandResult;"
+      "text": "export declare function handleReplayCommand(deps: ReplayCommandDeps, subcommand: string, args: string[], ledger?: { readRunEntries: (runId: string) => LedgerEntry[]; listRunIds: () => string[]; readRunSnapshot: (runId: string) => RuntimeStateSnapshot | null; }): ReplayCommandResult; ;; via LedgerEntry = export interface LedgerEntry { readonly runId: string; readonly rev: number; readonly eventName: string; readonly payload: unknown; readonly ts: number; } ;; RuntimeStateSnapshot = export interface RuntimeStateSnapshot { readonly capturedAt: number; readonly domains: readonly DomainStateEntry[]; readonly issues?: readonly DiagnosticPanelIssue[] | undefined; }"
     },
     {
       "name": "handleToolResponseOutcome",
@@ -36174,10 +36174,12 @@
         "configManager",
         "contractRunner",
         "projectRoot",
+        "remoteSupervisor",
         "runtimeBus",
+        "runtimeStore",
         "sessionId"
       ],
-      "text": "export interface WorkstreamServicesDeps { readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel' | 'registerCancellationSignal' | 'releaseCancellationSignal'>; readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>; readonly adaptivePlanner: AdaptivePlanner; readonly runtimeBus: RuntimeEventBus; readonly projectRoot: string; readonly contractRunner: Pick<ContractRunner, 'start' | 'startFromPlan'>; readonly sessionId: string | (() => string); } ;; via ContractRunner = export interface ContractRunner { start(input: StartContractInput): StartedContract; startFromPlan(input: StartFromPlanInput): StartedContract; startForOwner(ownerRecord: AgentRecord): StartedContract; get(contractId: string): ContractView | null; list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined; }): ContractView[]; cancel(contractId: string, reason: string): boolean; reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>; resumeAll(): Promise<ResumeReport>; importContract(snapshotJson: string, force?: boolean): boolean; serializeContract(contractId: string): string | null; hooks(): ContractSessionHooks; fleetControls(): ContractFleetControls; on(listener: (event: ContractEvent) => void): () => void; dispose(): void; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export interface WorkstreamServicesDeps { readonly agentManager: Pick<AgentManager, 'spawn' | 'getStatus' | 'cancel' | 'registerCancellationSignal' | 'releaseCancellationSignal'>; readonly configManager: Pick<ConfigManager, 'get' | 'getCategory'>; readonly adaptivePlanner: AdaptivePlanner; readonly runtimeBus: RuntimeEventBus; readonly projectRoot: string; readonly contractRunner: Pick<ContractRunner, 'start' | 'startFromPlan'>; readonly sessionId: string | (() => string); readonly remoteSupervisor: Pick<RemoteSupervisor, 'getSnapshot'>; readonly runtimeStore: RuntimeStore; } ;; via ContractRunner = export interface ContractRunner { start(input: StartContractInput): StartedContract; startFromPlan(input: StartFromPlanInput): StartedContract; startForOwner(ownerRecord: AgentRecord): StartedContract; get(contractId: string): ContractView | null; list(filter?: { readonly sessionId?: string | undefined; readonly includeTerminal?: boolean | undefined; }): ContractView[]; cancel(contractId: string, reason: string): boolean; reply(contractId: string, escalationId: string, text: string): Promise<OwnerReplyOutcome>; resumeAll(): Promise<ResumeReport>; importContract(snapshotJson: string, force?: boolean): boolean; serializeContract(contractId: string): string | null; hooks(): ContractSessionHooks; fleetControls(): ContractFleetControls; on(listener: (event: ContractEvent) => void): () => void; dispose(): void; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; RuntimeStore = export type RuntimeStore = StoreApi<RuntimeState>;"
     },
     {
       "name": "WorkstreamSnapshot",
