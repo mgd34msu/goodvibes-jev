@@ -37,8 +37,11 @@ describe('the webhook default target', () => {
       get: async (key: string): Promise<string | null> => (key === 'WEBHOOK_DEFAULT_TARGET' ? 'https://hooks.example.com/services/T0/B0/token123' : null),
       getGlobalHome: () => '/nonexistent-goodvibes-home',
     };
-    const strategy = createWebhookDeliveryStrategy(config, {} as ArtifactStore, secrets);
+    // The delivery resolves the host and pins the request to a checked address;
+    // hooks.example.com answers a public documentation address here.
+    const resolveHost = async () => [{ address: '203.0.113.40', family: 4 }];
+    const strategy = createWebhookDeliveryStrategy(config, {} as ArtifactStore, secrets, { resolveHost });
     await strategy.deliver({ target: { kind: 'webhook' }, body: 'hello' } as never);
-    expect(posted).toEqual(['https://hooks.example.com/services/T0/B0/token123']);
+    expect(posted).toEqual(['https://203.0.113.40/services/T0/B0/token123']);
   });
 });

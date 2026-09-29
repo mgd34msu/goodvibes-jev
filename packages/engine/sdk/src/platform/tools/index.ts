@@ -431,6 +431,8 @@ export function registerAllTools(
   const channelRegistry = deps?.channelRegistry ?? null;
   const remoteRunnerRegistry = deps?.remoteRunnerRegistry;
   const workflowServices = deps.workflowServices;
+  // Scheduled workflow commands get the same credential-env scrub settings as exec.
+  workflowServices.scheduleManager.setCredentialEnvScrub(deps.credentialEnvScrub);
   const mcpRegistry = deps?.mcpRegistry;
   if (!deps?.configManager || !deps?.providerRegistry || !deps?.toolLLM) {
     throw new Error('registerAllTools requires configManager, providerRegistry, and toolLLM');

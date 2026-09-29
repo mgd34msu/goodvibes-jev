@@ -64229,9 +64229,10 @@
         "disable",
         "enable",
         "list",
-        "remove"
+        "remove",
+        "setCredentialEnvScrub"
       ],
-      "text": "export declare class ScheduleManager { private schedules; private timers; private spawnedProcs; add(name: string, interval: string, command: string): ScheduleEntry; remove(name: string): boolean; enable(name: string): boolean; disable(name: string): boolean; list(): ScheduleEntry[]; destroy(): void; private _tick; private _spawnScheduled; private _clearTimer; } ;; via ScheduleEntry = export interface ScheduleEntry { name: string; interval: string; command: string; lastRun?: number | undefined; nextRun?: number | undefined; enabled: boolean; }"
+      "text": "export declare class ScheduleManager { private schedules; private timers; private spawnedProcs; private credentialEnvScrub; setCredentialEnvScrub(config: CredentialEnvScrubConfig | undefined): void; add(name: string, interval: string, command: string): ScheduleEntry; remove(name: string): boolean; enable(name: string): boolean; disable(name: string): boolean; list(): ScheduleEntry[]; destroy(): void; private _tick; private _spawnScheduled; private _clearTimer; } ;; via CredentialEnvScrubConfig = export interface CredentialEnvScrubConfig { readonly enabled?: boolean | undefined; readonly allowlist?: readonly string[] | undefined; } ;; ScheduleEntry = export interface ScheduleEntry { name: string; interval: string; command: string; lastRun?: number | undefined; nextRun?: number | undefined; enabled: boolean; }"
     },
     {
       "name": "SchemaFingerprintMeta",
@@ -66744,6 +66745,11 @@
       "name": "pasteImageFromClipboard",
       "kind": "function",
       "text": "export declare function pasteImageFromClipboard(): { data: string; mediaType: string; } | null;"
+    },
+    {
+      "name": "postToPublicWebhook",
+      "kind": "function",
+      "text": "export declare function postToPublicWebhook(rawUrl: string, init: RequestInit, options?: { readonly resolveHost?: HostResolver | undefined; }): Promise<Response>; ;; via HostResolver = export type HostResolver = (hostname: string) => Promise<readonly ResolvedAddress[]>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
     },
     {
       "name": "readFormattedError",

@@ -5,7 +5,8 @@ import { ServiceRegistry } from '../../config/service-registry.js';
 import { resolveSecretInput } from '../../config/secret-refs.js';
 import { ControlPlaneGateway } from '../../control-plane/gateway.js';
 import { DiscordIntegration, HomeAssistantIntegration, NtfyIntegration, SlackIntegration } from '../../integrations/index.js';
-import { validatePublicWebhookUrl } from '../../utils/url-safety.js';
+import { postToPublicWebhook, validatePublicWebhookUrl } from '../../utils/url-safety.js';
+import type { HostResolver } from '../../tools/fetch/pinned-request.js';
 import { resolveReachableBaseUrl } from '../../utils/reachable-base-url.js';
 import type { ChannelDeliveryStrategy } from './types.js';
 import {
@@ -26,6 +27,8 @@ export function createWebhookDeliveryStrategy(
   configManager: ConfigManager,
   artifactStore: ArtifactStore,
   secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
+  /** Resolves the target host before delivery; the system resolver when absent (utils/url-safety.ts). */
+  options: { readonly resolveHost?: HostResolver | undefined } = {},
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:webhook',
@@ -47,7 +50,8 @@ export function createWebhookDeliveryStrategy(
       const validation = validatePublicWebhookUrl(address);
       if (!validation.ok) throw new Error(validation.error);
       const timeoutMs = Number(configManager.get('surfaces.webhook.timeoutMs') ?? 15_000);
-      const response = await instrumentedFetch(validation.url, {
+      // Resolved, every answer checked, pinned to a checked address (utils/url-safety.ts).
+      const response = await postToPublicWebhook(validation.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -63,7 +67,7 @@ export function createWebhookDeliveryStrategy(
           attachments,
           artifacts: attachments,
         }),
-      });
+      }, options);
       if (!response.ok) {
         throw new HttpStatusError(`HTTP ${response.status}: ${await response.text().catch(() => '')}`, { status: response.status });
       }

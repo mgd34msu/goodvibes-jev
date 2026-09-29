@@ -24,7 +24,7 @@ import type { ServiceRegistry } from '../config/service-registry.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { SlackIntegration, DiscordIntegration, NtfyIntegration } from '../integrations/index.js';
 import { logger } from '../utils/logger.js';
-import { validatePublicWebhookUrl } from '../utils/url-safety.js';
+import { postToPublicWebhook, validatePublicWebhookUrl } from '../utils/url-safety.js';
 import { resolveReachableBaseUrl } from '../utils/reachable-base-url.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import type { PendingSurfaceReply } from './types.js';
@@ -216,7 +216,8 @@ export async function deliverWebhookAgentReply(
   } else if (secret && pending.callbackSignature === 'shared-secret') {
     headers.set('X-Goodvibes-Webhook-Secret', secret);
   }
-  await instrumentedFetch(validation.url, {
+  // Resolved, every answer checked, pinned to a checked address (utils/url-safety.ts).
+  await postToPublicWebhook(validation.url, {
     method: 'POST',
     headers,
     signal: AbortSignal.timeout(timeoutMs),

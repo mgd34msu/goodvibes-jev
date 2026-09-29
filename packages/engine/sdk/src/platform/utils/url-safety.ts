@@ -1,54 +1,31 @@
-/** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
+/**
+ * Public webhook URLs: the checks every webhook callback and delivery target
+ * passes, and the delivery request itself.
+ *
+ * - validatePublicWebhookUrl (at intake): https only, no credentials in the
+ *   URL, and a host that is not a loopback name (`localhost`, `*.localhost`,
+ *   RFC 6761) or an address in a refused range as written. The ranges are the
+ *   fetch tool's (tools/fetch/trust-tiers.ts classifyResolvedAddress), one
+ *   declaration for the engine; a name is not judged by its spelling.
+ * - postToPublicWebhook (at delivery): the same validation, then the host is
+ *   resolved (every A and AAAA answer), every answer is checked against those
+ *   ranges, and the request is sent pinned to a checked address with the
+ *   written name kept for the Host header, TLS SNI and the certificate check
+ *   (tools/fetch/pinned-request.ts), so a name that resolves to a private,
+ *   loopback, link-local or metadata address, or is rebound between the check
+ *   and the connection, is refused. Redirects are not followed: the delivery
+ *   goes to the address that was checked.
+ */
 
 import { isIP } from 'node:net';
-
-function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split('.').map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return false;
-  }
-  const [a, b] = parts as [number, number, number, number];
-  return a === 10
-    || a === 127
-    || (a === 169 && b === 254)
-    || (a === 172 && b >= 16 && b <= 31)
-    || (a === 192 && b === 168)
-    || a === 0
-    || a >= 224;
-}
-
-function mappedIpv4FromIpv6(host: string): string | null {
-  const mappedHex = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
-  if (!mappedHex) return null;
-  const high = Number.parseInt(mappedHex[1]!, 16);
-  const low = Number.parseInt(mappedHex[2]!, 16);
-  if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
-  return [
-    (high >> 8) & 0xff,
-    high & 0xff,
-    (low >> 8) & 0xff,
-    low & 0xff,
-  ].join('.');
-}
+import { classifyResolvedAddress } from '../tools/fetch/trust-tiers.js';
+import { pinnedFetch, resolveCheckedAddresses, type HostResolver } from '../tools/fetch/pinned-request.js';
 
 function isBlockedHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (!host) return true;
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === 'metadata.google.internal') return true;
-  const ipKind = isIP(host);
-  if (ipKind === 4) return isPrivateIpv4(host);
-  if (ipKind === 6) {
-    const mappedIpv4 = mappedIpv4FromIpv6(host);
-    if (mappedIpv4) return isPrivateIpv4(mappedIpv4);
-    return host === '::1'
-      || host.startsWith('fc')
-      || host.startsWith('fd')
-      || host.startsWith('fe80:')
-      || host.startsWith('ff')
-      || host === '::'
-      || host.startsWith('0:');
-  }
+  if (isIP(host)) return classifyResolvedAddress(host) !== null;
   return false;
 }
 
@@ -69,4 +46,24 @@ export function validatePublicWebhookUrl(rawUrl: string): { ok: true; url: strin
     return { ok: false, error: 'Webhook URL host is not allowed' };
   }
   return { ok: true, url: parsed.toString() };
+}
+
+/**
+ * Sends a webhook delivery to a public URL: validated, resolved, every answer
+ * checked, and pinned to a checked address; redirects are returned, not
+ * followed. Throws when the URL or any resolved address is refused.
+ */
+export async function postToPublicWebhook(
+  rawUrl: string,
+  init: RequestInit,
+  options: { readonly resolveHost?: HostResolver | undefined } = {},
+): Promise<Response> {
+  const validation = validatePublicWebhookUrl(rawUrl);
+  if (!validation.ok) throw new Error(validation.error);
+  const addresses = await resolveCheckedAddresses(validation.url, {
+    trustTierConfig: {},
+    localhostApproved: false,
+    resolveHost: options.resolveHost,
+  });
+  return pinnedFetch(validation.url, { ...init, redirect: 'manual' }, addresses);
 }

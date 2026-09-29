@@ -1,5 +1,5 @@
 import type { Tool } from '../../types/tools.js';
-import { resolveCredentialEnvScrub, scrubCredentialEnv } from '../exec/credential-env.js';
+import { resolveCredentialEnvScrub, scrubCredentialEnv, type CredentialEnvScrubConfig, type ResolvedCredentialEnvScrub } from '../exec/credential-env.js';
 import type { ContractRunner } from '../../contract/runner.js';
 import { workflowSchema } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -247,6 +247,17 @@ export class ScheduleManager {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   /** Spawned process handles tracked for cleanup in destroy() */
   private spawnedProcs: Array<{ pid: number; proc: ReturnType<typeof Bun.spawn> }> = [];
+  /** The credential-env scrub settings scheduled commands start with (the exec path's). */
+  private credentialEnvScrub: ResolvedCredentialEnvScrub = resolveCredentialEnvScrub();
+
+  /**
+   * Sets the credential-env scrub settings scheduled commands use: the same
+   * configuration the exec tool reads (registerAllTools passes its
+   * `credentialEnvScrub` to both), so an allowlisted name is kept here too.
+   */
+  setCredentialEnvScrub(config: CredentialEnvScrubConfig | undefined): void {
+    this.credentialEnvScrub = resolveCredentialEnvScrub(config);
+  }
 
   add(name: string, interval: string, command: string): ScheduleEntry {
     // Clear existing timer if re-adding
@@ -350,7 +361,7 @@ export class ScheduleManager {
   private async _spawnScheduled(name: string, command: string, parts: string[]): Promise<void> {
     try {
       const base = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)) as Record<string, string>;
-      const { env } = await scrubCredentialEnv(base, resolveCredentialEnvScrub());
+      const { env } = await scrubCredentialEnv(base, this.credentialEnvScrub);
       const proc = Bun.spawn(parts, {
         env: { ...env, GV_SCHEDULE_NAME: name },
         stdout: 'ignore',

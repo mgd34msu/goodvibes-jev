@@ -321,7 +321,7 @@ export function classifyHostTrustTier(
 }
 
 /** What a resolved address is, when it is one a fetch must not reach by a name. */
-export type ResolvedAddressRange = 'loopback' | 'private' | 'link-local' | 'metadata' | 'unspecified' | 'unique-local';
+export type ResolvedAddressRange = 'loopback' | 'private' | 'link-local' | 'metadata' | 'unspecified' | 'unique-local' | 'multicast';
 
 const ipv4Octets = (address: string): number[] | null => {
   const parts = address.split('.');
@@ -348,8 +348,9 @@ function mappedIpv4(address: string): string | null {
  * fetch may reach. The ranges are the address assignments themselves: IPv4
  * 0.0.0.0/8 (this host), 127.0.0.0/8 (loopback), 10.0.0.0/8, 172.16.0.0/12 and
  * 192.168.0.0/16 (private), 169.254.0.0/16 (link-local, where 169.254.169.254
- * is the cloud metadata endpoint); IPv6 :: and ::1, fe80::/10 (link-local),
- * fc00::/7 (unique-local), and IPv4-mapped addresses by the IPv4 they carry.
+ * is the cloud metadata endpoint), 224.0.0.0/3 (multicast and reserved);
+ * IPv6 :: and ::1, fe80::/10 (link-local), fc00::/7 (unique-local), ff00::/8
+ * (multicast), and IPv4-mapped addresses by the IPv4 they carry.
  * Comparing an address with these ranges is arithmetic on the address.
  */
 export function classifyResolvedAddress(address: string): ResolvedAddressRange | null {
@@ -360,6 +361,7 @@ export function classifyResolvedAddress(address: string): ResolvedAddressRange |
     if (a === 0) return 'unspecified';
     if (a === 169 && b === 254) return c === 169 && d === 254 ? 'metadata' : 'link-local';
     if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'private';
+    if (a >= 224) return 'multicast';
     return null;
   }
   const lower = address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]!;
@@ -368,6 +370,7 @@ export function classifyResolvedAddress(address: string): ResolvedAddressRange |
   const first = parseInt(lower.split(':')[0] || '0', 16);
   if ((first & 0xffc0) === 0xfe80) return 'link-local';
   if ((first & 0xfe00) === 0xfc00) return 'unique-local';
+  if ((first & 0xff00) === 0xff00) return 'multicast';
   return null;
 }
 

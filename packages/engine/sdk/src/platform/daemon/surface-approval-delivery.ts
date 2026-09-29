@@ -17,7 +17,7 @@ import type { ServiceRegistry } from '../config/service-registry.js';
 import type { SharedApprovalRecord } from '../control-plane/index.js';
 import { SlackIntegration, DiscordIntegration, NtfyIntegration } from '../integrations/index.js';
 import { logger } from '../utils/logger.js';
-import { validatePublicWebhookUrl } from '../utils/url-safety.js';
+import { postToPublicWebhook, validatePublicWebhookUrl } from '../utils/url-safety.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 
@@ -173,7 +173,8 @@ export async function deliverWebhookApprovalUpdate(
   if (secret) {
     headers.set('X-Goodvibes-Signature', deps.signWebhookPayload(payload, secret));
   }
-  await instrumentedFetch(validation.url, {
+  // Resolved, every answer checked, pinned to a checked address (utils/url-safety.ts).
+  await postToPublicWebhook(validation.url, {
     method: 'POST',
     headers,
     body: payload,
