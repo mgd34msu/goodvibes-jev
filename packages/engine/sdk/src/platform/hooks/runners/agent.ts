@@ -10,10 +10,16 @@ import { summarizeError } from '../../utils/error-display.js';
  * The hook's `prompt` field (with `$ARGUMENTS` replaced by the event JSON)
  * becomes the agent task description.
  *
- * Since AgentManager currently registers agents synchronously and doesn't
- * execute them in a true background thread, the hook marks the agent as
- * completed immediately and returns a success result.  When real background
- * execution is wired the status polling loop below will take effect.
+ * The spawn runs the work: it is not outside every contract, so
+ * AgentManager.spawn starts a contract through the composed contract runner
+ * (as the agent tool does for a spawn inside a contract) and returns the contract's
+ * owner record. The contract's unit agents run in the background and Jev
+ * checks their work; when the contract ends, the runner settles the owner
+ * record: `completed` with the contract's answer in `fullOutput`, `failed`
+ * with its error, or `cancelled`. The hook polls that record. Its result
+ * carries the answer as `additionalContext`, never the operator progress
+ * line. At the timeout the hook cancels the owner record, which the contract
+ * runner reads as stopping the contract and its unit agents.
  */
 export async function run(
   hook: HookDefinition,
@@ -50,11 +56,7 @@ export async function run(
 
   logger.debug('agent hook: agent spawned', { agentId, event: event.path });
 
-  // Poll for agent completion up to timeoutMs.
-  // Currently AgentManager doesn't execute agents in the background, so after
-  // spawning the agent is in 'pending' state and this loop will time out unless
-  // the record is manually advanced.  When real execution is wired, this loop
-  // will catch the completion/failure transition.
+  // Poll the owner record until the contract settles it or the timeout passes.
   const pollInterval = 100; // ms
   const deadline = Date.now() + timeoutMs;
 
@@ -66,10 +68,10 @@ export async function run(
 
     if (current.status === 'completed') {
       logger.debug('agent hook: agent completed', { agentId });
-      return {
-        ok: true,
-        additionalContext: current.progress,
-      };
+      // The contract's answer; `progress` is only the operator status line.
+      return current.fullOutput
+        ? { ok: true, additionalContext: current.fullOutput }
+        : { ok: true };
     }
 
     if (current.status === 'failed') {
@@ -88,7 +90,7 @@ export async function run(
     });
   }
 
-  // Timed out, cancel the agent and return error
+  // Timed out: cancelling the owner record stops the contract and its unit agents.
   manager.cancel(agentId);
   const timeoutSecs = hook.timeout ?? 60;
   logger.error('agent hook: timed out', { agentId, timeoutSecs });

@@ -36,6 +36,8 @@ import { IdempotencyStore } from '../runtime/idempotency/index.js';
 import { toolFormatTelemetry } from '../runtime/telemetry/tool-format-telemetry.js';
 import { type ReconciliationReason } from './tool-reconciliation.js';
 import type { FeatureFlagManager } from '../runtime/feature-flags/manager.js';
+import type { CompactionManager } from '../runtime/compaction/index.js';
+import { createSessionCompactionManager } from './compaction-lifecycle-route.js';
 import type { RuntimeEventBus, TurnInputOrigin } from '../runtime/events/index.js';
 import { HelperModel } from '../config/helper-model.js';
 import {
@@ -226,6 +228,8 @@ export class Orchestrator {
    */
   private flagManager: FeatureFlagManager | null = null;
 
+  /** This session's compaction lifecycle owner (compaction-lifecycle-route.ts); dispose() releases it. */
+  private readonly compactionManager: CompactionManager | null;
   /**
    * Tracks the last provider response's tool calls within the current turn
    * iteration so the reconciliation pass can detect unresolved calls when
@@ -293,6 +297,7 @@ export class Orchestrator {
       : null;
     this.flagManager = flagManager; this.requestRender = requestRender ?? (() => {});
     this.runtimeBus = runtimeBus;
+    this.compactionManager = createSessionCompactionManager(this.sessionId, runtimeBus, flagManager, () => this.coreServices.providerRegistry);
     this.agentManager = services.agentManager; this.contractRunner = services.contractRunner; this.contractIntake = services.contractIntake;
     this.followUpRuntime = new OrchestratorFollowUpRuntime({
       conversation: this.conversation,
@@ -318,6 +323,9 @@ export class Orchestrator {
       },
     });
   }
+
+  /** This session's CompactionManager, or null when composed without a runtime bus or capability gates. */
+  public getCompactionManager(): CompactionManager | null { return this.compactionManager; }
 
   public setCoreServices(services: OrchestratorCoreServices): void {
     this.coreServices = {
@@ -515,6 +523,7 @@ export class Orchestrator {
       this.detachReplay();
       this.detachReplay = null;
     }
+    this.compactionManager?.dispose();
   }
 
   /**
@@ -815,6 +824,15 @@ export class Orchestrator {
     providerRegistry: ReturnType<typeof requireProviderRegistry>,
   ): Promise<void> {
     await handlePostTurnContextMaintenance({
+      ...this.contextMaintenanceDeps(configManager, providerRegistry),
+      lastWarningBracket: this.lastWarningBracket,
+      setLastWarningBracket: (value) => { this.lastWarningBracket = value; },
+    }, turnId, this.lastInputTokens);
+  }
+
+  /** The session state and compaction seams the preflight and post-turn context maintenance share. */
+  private contextMaintenanceDeps(configManager: ReturnType<typeof requireConfigManager>, providerRegistry: ReturnType<typeof requireProviderRegistry>) {
+    return {
       conversation: this.conversation,
       agentManager: this.agentManager,
       contractRunner: this.contractRunner,
@@ -824,18 +842,17 @@ export class Orchestrator {
       providerRegistry,
       sessionLineageTracker: getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker),
       runtimeBus: this.runtimeBus,
-      emitterContext: (id) => createEmitterContext(this.sessionId, id),
+      emitterContext: (id: string) => createEmitterContext(this.sessionId, id),
       hookDispatcher: this.hookDispatcher,
       sessionId: this.sessionId,
       requestRender: this.requestRender,
       isCompacting: this.isCompacting,
-      setIsCompacting: (value) => { this.setCompacting(value); },
-      lastWarningBracket: this.lastWarningBracket,
-      setLastWarningBracket: (value) => { this.lastWarningBracket = value; },
+      setIsCompacting: (value: boolean) => { this.setCompacting(value); },
       modelContextWarning: this.modelContextWarning,
       clearModelContextWarning: () => { this.modelContextWarning = null; },
       getSystemPrompt: this.getSystemPrompt,
-    }, turnId, this.lastInputTokens);
+      compactionManager: this.compactionManager,
+    };
   }
 
   /** Catch handler: route to abort path or error path. */
@@ -965,24 +982,7 @@ export class Orchestrator {
     model: ModelDefinition,
   ): Promise<'ok' | 'compacted' | 'error'> {
     return checkContextWindowPreflight({
-      conversation: this.conversation,
-      requestRender: this.requestRender,
-      hookDispatcher: this.hookDispatcher,
-      configManager: requireConfigManager(this.coreServices),
-      providerRegistry: requireProviderRegistry(this.coreServices),
-      sessionId: this.sessionId,
-      agentManager: this.agentManager,
-      contractRunner: this.contractRunner,
-      planManager: this.coreServices.planManager ?? null,
-      sessionMemoryStore: this.coreServices.sessionMemoryStore ?? null,
-      sessionLineageTracker: getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker),
-      runtimeBus: this.runtimeBus,
-      emitterContext: (id) => createEmitterContext(this.sessionId, id),
-      isCompacting: this.isCompacting,
-      setIsCompacting: (value) => { this.setCompacting(value); },
-      modelContextWarning: this.modelContextWarning,
-      clearModelContextWarning: () => { this.modelContextWarning = null; },
-      getSystemPrompt: this.getSystemPrompt,
+      ...this.contextMaintenanceDeps(requireConfigManager(this.coreServices), requireProviderRegistry(this.coreServices)),
       getCompactionStrategy: () => resolveCompactionStrategy(
         requireConfigManager(this.coreServices).get('behavior.compactionStrategy'),
         this.flagManager?.isEnabled('compaction-distiller-strategy') ?? false,

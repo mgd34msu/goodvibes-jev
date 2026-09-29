@@ -10,6 +10,10 @@
  * - Create boundary commits with lineage tracking
  * - Emit CompactionEvents at each transition
  * - Expose the resume repair pipeline
+ * - Own the lifecycle of a compaction the session itself runs (`runLifecycle`):
+ *   the orchestrator's conversation compaction goes through the session's
+ *   manager, so every real compaction moves the state machine, emits the
+ *   lifecycle events and leaves a boundary commit
  */
 
 import { logger } from '../../utils/logger.js';
@@ -69,10 +73,28 @@ export interface CompactionManagerOptions {
   bus: RuntimeEventBus;
   /** Capability-gate manager, used to gate on `session-compaction`. */
   flags: FeatureFlagManager;
-  /** Model context window size (tokens). */
-  contextWindow: number;
+  /**
+   * Model context window size (tokens). A function is read at each use, so a
+   * session whose model changes keeps the window of the model in play.
+   */
+  contextWindow: number | (() => number);
   /** Threshold fraction at which compaction is triggered (default: 0.75). */
   thresholdFraction?: number | undefined;
+}
+
+/**
+ * What a compaction the session ran applied, as `runLifecycle` records it in
+ * the boundary commit.
+ */
+export interface SessionCompactionOutcome {
+  /** The conversation as the compaction left it. */
+  messages: ProviderMessage[];
+  /** Estimated tokens after the compaction. */
+  tokensAfter: number;
+  /** Human-readable summary stored with the boundary commit. */
+  summary: string;
+  /** Warnings the compaction reported. */
+  warnings?: string[] | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,8 +118,14 @@ export class CompactionManager {
   private readonly _sessionId: string;
   private readonly _bus: RuntimeEventBus;
   private readonly _flags: FeatureFlagManager;
-  private readonly _contextWindow: number;
+  private readonly _readContextWindow: () => number;
   private readonly _thresholdFraction: number;
+
+  /** Tail of the serialized lifecycle runs (one run at a time per session). */
+  private _runChain: Promise<unknown> = Promise.resolve();
+
+  /** Set by dispose(); a disposed manager starts no run and emits nothing. */
+  private _disposed = false;
 
   /** Current state machine state. */
   private _state: CompactionLifecycleState = 'idle';
@@ -112,7 +140,8 @@ export class CompactionManager {
     this._sessionId = opts.sessionId;
     this._bus = opts.bus;
     this._flags = opts.flags;
-    this._contextWindow = opts.contextWindow;
+    const window = opts.contextWindow;
+    this._readContextWindow = typeof window === 'function' ? window : () => window;
     this._thresholdFraction = opts.thresholdFraction ?? 0.75;
     this._ctx = {
       sessionId: opts.sessionId,
@@ -126,6 +155,16 @@ export class CompactionManager {
   /** Returns the current lifecycle state. */
   get state(): CompactionLifecycleState {
     return this._state;
+  }
+
+  /** True once dispose() has run. */
+  get disposed(): boolean {
+    return this._disposed;
+  }
+
+  /** Model context window in play (tokens). */
+  private get _contextWindow(): number {
+    return this._readContextWindow();
   }
 
   /** Returns the most recent boundary commit, or null. */
@@ -371,6 +410,166 @@ export class CompactionManager {
   }
 
   /**
+   * Runs the lifecycle of a compaction the session itself performs.
+   *
+   * The session decides that it compacts and how (the orchestrator's threshold
+   * and model-warning checks, and the conversation's structured, distiller or
+   * small-window compaction); this manager owns the run's lifecycle: it moves
+   * the state machine idle, checking_threshold, the strategy state,
+   * boundary_commit, done (or failed) and back to idle, emits the matching
+   * COMPACTION_* events on the session's bus, and records a boundary commit
+   * chained to the previous one. Runs are serialized per session.
+   *
+   * `execute` performs the compaction; `outcome` reads what it applied from
+   * its result (null when nothing was applied). A throw from `execute` is a
+   * failed run: COMPACTION_FAILED is emitted and the error is rethrown to the
+   * caller unchanged.
+   *
+   * @returns Whatever `execute` returned.
+   */
+  runLifecycle<T>(opts: {
+    trigger: CompactionTrigger;
+    strategy: CompactionStrategy;
+    messages: readonly ProviderMessage[];
+    tokenCount: number;
+    /** Window used for this run's threshold report; defaults to the manager's. */
+    contextWindow?: number | undefined;
+    /** Threshold (tokens) the session compared against; defaults to window x fraction. */
+    threshold?: number | undefined;
+    execute: () => Promise<T>;
+    outcome: (result: T) => SessionCompactionOutcome | null;
+  }): Promise<T> {
+    if (this._disposed) {
+      return Promise.reject(new Error(`CompactionManager for session ${this._sessionId} is disposed`));
+    }
+    const run = this._runChain.then(() => this._runLifecycle(opts));
+    this._runChain = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Releases the manager with its session: no further run starts, a run still
+   * in flight finishes its compaction without emitting on the session's bus,
+   * and the boundary commit chain is dropped.
+   */
+  dispose(): void {
+    this._disposed = true;
+    this._lastCommit = null;
+  }
+
+  private async _runLifecycle<T>(opts: {
+    trigger: CompactionTrigger;
+    strategy: CompactionStrategy;
+    messages: readonly ProviderMessage[];
+    tokenCount: number;
+    contextWindow?: number | undefined;
+    threshold?: number | undefined;
+    execute: () => Promise<T>;
+    outcome: (result: T) => SessionCompactionOutcome | null;
+  }): Promise<T> {
+    const runStart = Date.now();
+    const { strategy, tokenCount, trigger } = opts;
+    const contextWindow = opts.contextWindow ?? this._contextWindow;
+    const threshold = opts.threshold ?? Math.floor(contextWindow * this._thresholdFraction);
+    const live = (): boolean => !this._disposed;
+
+    if (this._state !== 'idle') this._state = 'idle';
+    this._transition('checking_threshold');
+    if (live()) {
+      emitCompactionCheck(this._bus, this._ctx, { sessionId: this._sessionId, tokenCount, threshold });
+    }
+    this._transition(strategyToState(strategy));
+
+    const fail = (error: string): void => {
+      this._transition('failed');
+      if (live()) emitCompactionFailed(this._bus, this._ctx, { sessionId: this._sessionId, strategy, error });
+      this._transition('idle');
+      logger.warn('[CompactionManager] session compaction failed', { sessionId: this._sessionId, strategy, trigger, error });
+    };
+
+    let result: T;
+    try {
+      result = await opts.execute();
+    } catch (err) {
+      fail(summarizeError(err));
+      throw err;
+    }
+
+    const applied = opts.outcome(result);
+    if (applied === null) {
+      fail('compaction applied no result');
+      return result;
+    }
+
+    if (live()) this._emitStrategyEvent(strategy, opts.messages.length, tokenCount, applied.tokensAfter, contextWindow);
+
+    this._transition('boundary_commit');
+    const commit = createBoundaryCommit({
+      sessionId: this._sessionId,
+      strategyOutput: {
+        messages: applied.messages,
+        tokensAfter: applied.tokensAfter,
+        summary: applied.summary,
+        strategy,
+        durationMs: Date.now() - runStart,
+        warnings: applied.warnings ?? [],
+      },
+      parent: this._lastCommit,
+      tokensBefore: tokenCount,
+    });
+    const commitErrors = validateBoundaryCommit(commit);
+    if (commitErrors.length > 0) {
+      fail(commitErrors.join('; '));
+      return result;
+    }
+    if (live()) {
+      emitCompactionBoundaryCommit(this._bus, this._ctx, { sessionId: this._sessionId, checkpointId: commit.checkpointId });
+      this._lastCommit = commit;
+    }
+
+    this._transition('done');
+    if (live()) {
+      emitCompactionDone(this._bus, this._ctx, {
+        sessionId: this._sessionId,
+        strategy,
+        tokensBefore: tokenCount,
+        tokensAfter: applied.tokensAfter,
+        durationMs: Date.now() - runStart,
+      });
+    }
+    this._transition('idle');
+    return result;
+  }
+
+  /** Emits the strategy-specific lifecycle event for a finished strategy run. */
+  private _emitStrategyEvent(
+    strategy: CompactionStrategy,
+    messageCount: number,
+    tokensBefore: number,
+    tokensAfter: number,
+    contextWindow: number,
+  ): void {
+    switch (strategy) {
+      case 'microcompact':
+        emitCompactionMicrocompact(this._bus, this._ctx, { sessionId: this._sessionId, turnCount: messageCount, tokensBefore, tokensAfter });
+        return;
+      case 'collapse':
+        emitCompactionCollapse(this._bus, this._ctx, { sessionId: this._sessionId, messageCount, tokensBefore, tokensAfter });
+        return;
+      case 'autocompact':
+        emitCompactionAutocompact(this._bus, this._ctx, { sessionId: this._sessionId, strategy: 'autocompact', tokensBefore, tokensAfter });
+        return;
+      case 'reactive':
+        emitCompactionReactive(this._bus, this._ctx, { sessionId: this._sessionId, tokenCount: tokensBefore, limit: contextWindow });
+        return;
+      default: {
+        const _exhaustive: never = strategy;
+        throw new Error(`Unknown compaction strategy: ${_exhaustive}`);
+      }
+    }
+  }
+
+  /**
    * Runs the session resume repair pipeline on the last boundary commit.
    *
    * If no commit exists, returns a result with the original messages and
@@ -443,51 +642,19 @@ export class CompactionManager {
     strategy: CompactionStrategy,
     input: StrategyInput,
   ): Promise<StrategyOutput> {
+    let output: StrategyOutput;
     switch (strategy) {
-      case 'microcompact': {
-        const output = runMicrocompact(input);
-        emitCompactionMicrocompact(this._bus, this._ctx, {
-          sessionId: this._sessionId,
-          turnCount: input.messages.length,
-          tokensBefore: input.tokensBefore,
-          tokensAfter: output.tokensAfter,
-        });
-        return output;
-      }
-      case 'collapse': {
-        const output = await runCollapse(input);
-        emitCompactionCollapse(this._bus, this._ctx, {
-          sessionId: this._sessionId,
-          messageCount: input.messages.length,
-          tokensBefore: input.tokensBefore,
-          tokensAfter: output.tokensAfter,
-        });
-        return output;
-      }
-      case 'autocompact': {
-        const output = runAutocompact(input);
-        emitCompactionAutocompact(this._bus, this._ctx, {
-          sessionId: this._sessionId,
-          strategy: 'autocompact',
-          tokensBefore: input.tokensBefore,
-          tokensAfter: output.tokensAfter,
-        });
-        return output;
-      }
-      case 'reactive': {
-        const output = runReactive(input);
-        emitCompactionReactive(this._bus, this._ctx, {
-          sessionId: this._sessionId,
-          tokenCount: input.tokensBefore,
-          limit: this._contextWindow,
-        });
-        return output;
-      }
+      case 'microcompact': output = runMicrocompact(input); break;
+      case 'collapse': output = await runCollapse(input); break;
+      case 'autocompact': output = runAutocompact(input); break;
+      case 'reactive': output = runReactive(input); break;
       default: {
         const _exhaustive: never = strategy;
         throw new Error(`Unknown compaction strategy: ${_exhaustive}`);
       }
     }
+    this._emitStrategyEvent(strategy, input.messages.length, input.tokensBefore, output.tokensAfter, this._contextWindow);
+    return output;
   }
 
   /**

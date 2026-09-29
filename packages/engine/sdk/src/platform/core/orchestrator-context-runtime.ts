@@ -15,6 +15,8 @@ import type { HookEvent, HookResult } from '../hooks/types.js';
 import type { CompactionReceipt, CompactionStrategyChoice } from './compaction-types.js';
 import { CompactionQualityError } from './compaction-types.js';
 import { summarizeError } from '../utils/error-display.js';
+import { lifecycleStrategyFor, lifecycleTriggerFor, routeConversationCompaction } from './compaction-lifecycle-route.js';
+import type { CompactionLifecycleOwner } from './compaction-lifecycle-route.js';
 
 type EmitterContextFactoryLike = { runtimeBus: RuntimeEventBus | null; emitterContext: EmitterContextFactory; sessionId: string };
 
@@ -177,6 +179,8 @@ export type PreflightDeps = {
   getSystemPrompt?: (() => string) | undefined;
   getActiveSkillFrontmatter?: (() => string | null | undefined) | undefined;
   getCompactionStrategy?: (() => CompactionStrategyChoice) | undefined;
+  /** The session's CompactionManager; each compaction's lifecycle runs through it. */
+  compactionManager?: CompactionLifecycleOwner | null | undefined;
 };
 
 export async function checkContextWindowPreflight(
@@ -263,7 +267,19 @@ export async function checkContextWindowPreflight(
         extractionModelId: model.registryKey,
         extractionProvider: model.provider,
       });
-      const preflightReceipt = await deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, preflightCtx);
+      const preflightReceipt = await routeConversationCompaction(
+        deps.compactionManager,
+        {
+          trigger: lifecycleTriggerFor(forcedByModelWarning),
+          strategy: lifecycleStrategyFor(forcedByModelWarning, false),
+          messages,
+          tokenCount: estimatedTokens,
+          contextWindow,
+          threshold: preflightDecision.thresholdTokens,
+        },
+        deps.conversation,
+        () => deps.conversation.compact(deps.providerRegistry, model.registryKey, 'auto', model.provider, preflightCtx),
+      );
       if (preflightReceipt) emitReceipt(deps, turnId, preflightReceipt);
       deps.conversation.addSystemMessage('Context compacted. Retrying request...');
       if (deps.hookDispatcher) {
@@ -405,6 +421,8 @@ export type PostTurnContextDeps = {
   clearModelContextWarning?: (() => void) | undefined;
   getSystemPrompt?: (() => string) | undefined;
   getActiveSkillFrontmatter?: (() => string | null | undefined) | undefined;
+  /** The session's CompactionManager; each compaction's lifecycle runs through it. */
+  compactionManager?: CompactionLifecycleOwner | null | undefined;
 };
 
 export async function handlePostTurnContextMaintenance(
@@ -490,24 +508,40 @@ export async function handlePostTurnContextMaintenance(
     try {
       const currentMsgs = deps.conversation.getMessagesForLLM();
       const useSmallWindow = maxTokens < SMALL_WINDOW_THRESHOLD;
+      const lifecycleRun = {
+        trigger: lifecycleTriggerFor(forcedByModelWarning),
+        strategy: lifecycleStrategyFor(forcedByModelWarning, useSmallWindow),
+        messages: currentMsgs,
+        tokenCount: totalTokens,
+        contextWindow: maxTokens,
+        threshold: autoDecision.thresholdTokens,
+      };
 
       if (!skipAutoCompact && useSmallWindow) {
         try {
-          const compactedMsgs = compactSmallWindow(currentMsgs, 10);
-          deps.conversation.replaceMessagesForLLM(compactedMsgs);
-          deps.setIsCompacting(false);
-          deps.setLastWarningBracket(0);
           // Small-window keep-last-N is deterministic (not quality-scored); the
           // receipt still fires so this path is never silent either.
-          emitReceipt(deps, turnId, {
-            trigger: 'auto', strategy: 'small-window',
-            tokensBefore: estimateConversationTokens(currentMsgs),
-            tokensAfter: estimateConversationTokens(compactedMsgs),
-            messagesBefore: currentMsgs.length, messagesAfter: compactedMsgs.length,
-            qualityScore: 1, qualityGrade: 'A', lowQuality: false,
-            instructionsReinjected: false, validationPassed: true,
-            sectionsIncluded: [], outcome: 'applied', detail: 'small window: kept last 10 messages',
-          });
+          const smallWindowReceipt = await routeConversationCompaction(
+            deps.compactionManager,
+            lifecycleRun,
+            deps.conversation,
+            async (): Promise<CompactionReceipt> => {
+              const compactedMsgs = compactSmallWindow(currentMsgs, 10);
+              deps.conversation.replaceMessagesForLLM(compactedMsgs);
+              return {
+                trigger: 'auto', strategy: 'small-window',
+                tokensBefore: estimateConversationTokens(currentMsgs),
+                tokensAfter: estimateConversationTokens(compactedMsgs),
+                messagesBefore: currentMsgs.length, messagesAfter: compactedMsgs.length,
+                qualityScore: 1, qualityGrade: 'A', lowQuality: false,
+                instructionsReinjected: false, validationPassed: true,
+                sectionsIncluded: [], outcome: 'applied', detail: 'small window: kept last 10 messages',
+              };
+            },
+          );
+          deps.setIsCompacting(false);
+          deps.setLastWarningBracket(0);
+          if (smallWindowReceipt) emitReceipt(deps, turnId, smallWindowReceipt);
           deps.conversation.addSystemMessage('Context auto-compacted (small window mode). Kept last 10 messages.');
           deps.requestRender();
         } catch (err: unknown) {
@@ -525,12 +559,17 @@ export async function handlePostTurnContextMaintenance(
           extractionModelId: currentModel.registryKey,
           extractionProvider: currentModel.provider,
         });
-        void deps.conversation.compact(
-          deps.providerRegistry,
-          currentModel.registryKey,
-          'auto',
-          currentModel.provider,
-          compactionCtx,
+        void routeConversationCompaction(
+          deps.compactionManager,
+          lifecycleRun,
+          deps.conversation,
+          () => deps.conversation.compact(
+            deps.providerRegistry,
+            currentModel.registryKey,
+            'auto',
+            currentModel.provider,
+            compactionCtx,
+          ),
         ).then((receipt) => {
           deps.setIsCompacting(false);
           deps.setLastWarningBracket(0);
