@@ -20,15 +20,9 @@ import * as relaySurface from '../sdk/src/platform/relay/index.js';
 describe('step-up policy decision', () => {
   test('only bites on mutating relay calls when required', () => {
     // Non-relay, or read-only, or requirement off → always allow.
-    expect(evaluateStepUp({ viaRelay: false, mutating: true, requireStepUp: true, assertionVerified: null }).allow).toBe(true);
-    expect(evaluateStepUp({ viaRelay: true, mutating: false, requireStepUp: true, assertionVerified: null }).allow).toBe(true);
-    expect(evaluateStepUp({ viaRelay: true, mutating: true, requireStepUp: false, assertionVerified: null }).allow).toBe(true);
-  });
-
-  test('fails closed when required and no verifier is wired', () => {
-    const d = evaluateStepUp({ viaRelay: true, mutating: true, requireStepUp: true, assertionVerified: null });
-    expect(d.allow).toBe(false);
-    if (!d.allow) expect(d.code).toBe('step-up-verifier-unavailable');
+    expect(evaluateStepUp({ viaRelay: false, mutating: true, requireStepUp: true, assertionVerified: false }).allow).toBe(true);
+    expect(evaluateStepUp({ viaRelay: true, mutating: false, requireStepUp: true, assertionVerified: false }).allow).toBe(true);
+    expect(evaluateStepUp({ viaRelay: true, mutating: true, requireStepUp: false, assertionVerified: false }).allow).toBe(true);
   });
 
   test('denies when the assertion is absent or invalid, allows when genuinely verified', () => {

@@ -110,7 +110,7 @@ import { mintPairingHandoff, availablePairingOffers, defaultPairingTokenName } f
 
 const offers = availablePairingOffers({
   relayEnabled: true,       // relay.enabled + relay.url configured
-  stepUpAvailable: true,    // a WebAuthn step-up verifier is wired
+  stepUpAvailable: true,    // the daemon runs the WebAuthn step-up service
 });
 
 const handoff = mintPairingHandoff({
@@ -154,8 +154,8 @@ independently declinable:
 - **`relay`.** Acknowledges that the surface may connect through the rendezvous relay for
   off-LAN reach. Available only when the relay is configured; see
   [Zero-knowledge relay](./relay-zero-knowledge.md).
-- **`passkey`.** Registers a WebAuthn credential for relay step-up. Available only when a
-  step-up verifier is wired.
+- **`passkey`.** Registers a WebAuthn credential for relay step-up. Available when the daemon
+  runs the step-up service (the daemon always does).
 
 `pairing.handoff.create` returns the offers actually available on this daemon; a surface
 presents only those. After the device scans and completes its side of each accepted offer, it

@@ -106,6 +106,6 @@ export interface RelayConfig {
   rendezvousId: string;
   /** Human-facing daemon label carried in pairing payloads. */
   label: string;
-  /** Require a recent WebAuthn step-up assertion on mutating relay calls (fails closed until a verifier is wired). */
+  /** Require a recent WebAuthn step-up assertion on mutating relay calls (the daemon's WebAuthn verifier checks it against a registered passkey). */
   requireStepUpForMutations: boolean;
 }

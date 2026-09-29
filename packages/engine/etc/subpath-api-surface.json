@@ -5910,7 +5910,7 @@
     {
       "name": "StepUpDecision",
       "kind": "type",
-      "text": "export type StepUpDecision = { readonly allow: true; } | { readonly allow: false; readonly code: 'step-up-required' | 'step-up-verifier-unavailable'; readonly message: string; };"
+      "text": "export type StepUpDecision = { readonly allow: true; } | { readonly allow: false; readonly code: 'step-up-required'; readonly message: string; };"
     },
     {
       "name": "StepUpEvaluationInput",
@@ -5921,7 +5921,7 @@
         "requireStepUp",
         "viaRelay"
       ],
-      "text": "export interface StepUpEvaluationInput { readonly viaRelay: boolean; readonly mutating: boolean; readonly requireStepUp: boolean; readonly assertionVerified: boolean | null; }"
+      "text": "export interface StepUpEvaluationInput { readonly viaRelay: boolean; readonly mutating: boolean; readonly requireStepUp: boolean; readonly assertionVerified: boolean; }"
     },
     {
       "name": "StepUpSecretStore",
@@ -6079,7 +6079,7 @@
     {
       "name": "buildDaemonRelayReachability",
       "kind": "function",
-      "text": "export declare function buildDaemonRelayReachability(configManager: ConfigManager, secrets: Pick<SecretsManager, 'get' | 'set'>, featureFlags: FeatureFlagReader, dispatch: (req: Request) => Promise<Response | null>, logger: { info(m: string, f?: Record<string, unknown>): void; warn(m: string, f?: Record<string, unknown>): void; }, verifyStepUp?: StepUpAssertionVerifier): RelayReachability; ;; via FeatureFlagReader = export type FeatureFlagReader = Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
+      "text": "export declare function buildDaemonRelayReachability(configManager: ConfigManager, secrets: Pick<SecretsManager, 'get' | 'set'>, featureFlags: FeatureFlagReader, dispatch: (req: Request) => Promise<Response | null>, logger: { info(m: string, f?: Record<string, unknown>): void; warn(m: string, f?: Record<string, unknown>): void; }, verifyStepUp: StepUpAssertionVerifier): RelayReachability; ;; via FeatureFlagReader = export type FeatureFlagReader = Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
     },
     {
       "name": "buildErrorResponseBody",
@@ -42039,7 +42039,7 @@
     {
       "name": "StepUpDecision",
       "kind": "type",
-      "text": "export type StepUpDecision = { readonly allow: true; } | { readonly allow: false; readonly code: 'step-up-required' | 'step-up-verifier-unavailable'; readonly message: string; };"
+      "text": "export type StepUpDecision = { readonly allow: true; } | { readonly allow: false; readonly code: 'step-up-required'; readonly message: string; };"
     },
     {
       "name": "StepUpEvaluationInput",
@@ -42050,7 +42050,7 @@
         "requireStepUp",
         "viaRelay"
       ],
-      "text": "export interface StepUpEvaluationInput { readonly viaRelay: boolean; readonly mutating: boolean; readonly requireStepUp: boolean; readonly assertionVerified: boolean | null; }"
+      "text": "export interface StepUpEvaluationInput { readonly viaRelay: boolean; readonly mutating: boolean; readonly requireStepUp: boolean; readonly assertionVerified: boolean; }"
     },
     {
       "name": "StepUpSecretStore",
@@ -42089,7 +42089,7 @@
     {
       "name": "buildDaemonRelayReachability",
       "kind": "function",
-      "text": "export declare function buildDaemonRelayReachability(configManager: ConfigManager, secrets: Pick<SecretsManager, 'get' | 'set'>, featureFlags: FeatureFlagReader, dispatch: (req: Request) => Promise<Response | null>, logger: { info(m: string, f?: Record<string, unknown>): void; warn(m: string, f?: Record<string, unknown>): void; }, verifyStepUp?: StepUpAssertionVerifier): RelayReachability; ;; via FeatureFlagReader = export type FeatureFlagReader = Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
+      "text": "export declare function buildDaemonRelayReachability(configManager: ConfigManager, secrets: Pick<SecretsManager, 'get' | 'set'>, featureFlags: FeatureFlagReader, dispatch: (req: Request) => Promise<Response | null>, logger: { info(m: string, f?: Record<string, unknown>): void; warn(m: string, f?: Record<string, unknown>): void; }, verifyStepUp: StepUpAssertionVerifier): RelayReachability; ;; via FeatureFlagReader = export type FeatureFlagReader = Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
     },
     {
       "name": "createRelayReachability",

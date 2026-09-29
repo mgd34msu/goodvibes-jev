@@ -21,13 +21,13 @@ import {
 /**
  * Wrap a dispatch so mutating relay calls are gated by the WebAuthn step-up
  * policy. When the requirement is off this returns the dispatch untouched (zero
- * overhead). When on, it fails closed unless a wired verifier genuinely
+ * overhead). When on, it fails closed unless the verifier genuinely
  * confirms a fresh assertion carried in the step-up header.
  */
 function wrapDispatchWithStepUp(
   dispatch: (req: Request) => Promise<Response | null>,
   requireStepUp: boolean,
-  verifier: StepUpAssertionVerifier | undefined,
+  verifier: StepUpAssertionVerifier,
 ): (req: Request) => Promise<Response | null> {
   if (!requireStepUp) return dispatch;
   return async (req) => {
@@ -44,11 +44,9 @@ function wrapDispatchWithStepUp(
     }
     if (viaRelay && mutating) {
       const assertion = req.headers.get(STEP_UP_ASSERTION_HEADER);
-      const verified = !verifier
-        ? null
-        : assertion
-          ? await verifier(assertion, { method: req.method, path: new URL(req.url).pathname })
-          : false;
+      const verified = assertion
+        ? await verifier(assertion, { method: req.method, path: new URL(req.url).pathname })
+        : false;
       const decision = evaluateStepUp({ viaRelay, mutating, requireStepUp: true, assertionVerified: verified });
       if (!decision.allow) {
         return new Response(JSON.stringify({ error: decision.code, message: decision.message }), {
@@ -79,7 +77,7 @@ export function buildDaemonRelayReachability(
   featureFlags: FeatureFlagReader,
   dispatch: (req: Request) => Promise<Response | null>,
   logger: { info(m: string, f?: Record<string, unknown>): void; warn(m: string, f?: Record<string, unknown>): void },
-  verifyStepUp?: StepUpAssertionVerifier,
+  verifyStepUp: StepUpAssertionVerifier,
 ): RelayReachability {
   return createRelayReachability({
     config: {

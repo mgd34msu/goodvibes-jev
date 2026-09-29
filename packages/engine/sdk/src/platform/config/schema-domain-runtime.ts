@@ -614,7 +614,7 @@ export const runtimeSecondaryConfigSettings: ConfigSettingDefinition[] = [
     key: 'relay.requireStepUpForMutations',
     type: 'boolean',
     default: false,
-    description: 'Require a recent WebAuthn step-up assertion on mutating operator calls arriving via relay (fails closed until a verifier is wired)',
+    description: 'Require a recent WebAuthn step-up assertion on mutating operator calls arriving via relay (checked against a passkey registered through pairing or the step-up verbs)',
   },
   {
     key: 'runtime.companionChatLimiter.perSessionLimit',

@@ -5,21 +5,20 @@
 // outside the LAN is a higher-risk path than a call on the trusted LAN, so an
 // operator can require that state-changing calls carry fresh proof of presence.
 //
-// This module ships the POLICY and the verb-metadata signal (mutating vs read).
-// It deliberately does NOT implement WebAuthn assertion verification: a real
-// verification needs a consumer-side ceremony (a credential store, a challenge
-// issued and checked per call). That is an honest deferral, the verifier is an
-// injected dependency, and when the policy requires step-up but no verifier is
-// wired, the decision FAILS CLOSED (deny) rather than silently allowing or
-// faking a pass. Nothing here ever reports an unverified assertion as verified.
+// This module holds the POLICY and the verb-metadata signal (mutating vs read).
+// The WebAuthn verification itself lives in relay/step-up-service.ts (the
+// credential and challenge stores) and relay/step-up-webauthn.ts (the signature
+// check); relay/daemon-wiring.ts always installs that verifier in front of the
+// relay dispatch. A mutating relay call is allowed only when the verifier
+// genuinely confirmed a fresh assertion.
 
 /** Header carrying an opaque WebAuthn step-up assertion on a tunneled request. */
 export const STEP_UP_ASSERTION_HEADER = 'x-goodvibes-stepup-assertion';
 
 /**
- * Verifies a step-up assertion. Returns true only on genuine verification.
- * Consumers wire a real WebAuthn verifier here; until then the policy fails
- * closed. `context` carries the request essentials a verifier binds against.
+ * Verifies a step-up assertion. Returns true only on genuine verification
+ * (StepUpService.createVerifier is the daemon's implementation). `context`
+ * carries the request essentials a verifier binds against.
  */
 export type StepUpAssertionVerifier = (
   assertion: string,
@@ -29,7 +28,7 @@ export type StepUpAssertionVerifier = (
 /** The outcome of a step-up policy evaluation. */
 export type StepUpDecision =
   | { readonly allow: true }
-  | { readonly allow: false; readonly code: 'step-up-required' | 'step-up-verifier-unavailable'; readonly message: string };
+  | { readonly allow: false; readonly code: 'step-up-required'; readonly message: string };
 
 /** Inputs to a step-up evaluation, all already-resolved facts, so this is pure. */
 export interface StepUpEvaluationInput {
@@ -39,11 +38,8 @@ export interface StepUpEvaluationInput {
   readonly mutating: boolean;
   /** Is the step-up requirement switched on? */
   readonly requireStepUp: boolean;
-  /**
-   * Verification result: true = genuinely verified, false = present-but-invalid
-   * or absent, null = no verifier available (fail closed).
-   */
-  readonly assertionVerified: boolean | null;
+  /** Verification result: true = genuinely verified, false = present-but-invalid or absent. */
+  readonly assertionVerified: boolean;
 }
 
 /** HTTP methods that do not change state. */
@@ -70,15 +66,6 @@ export function evaluateStepUp(input: StepUpEvaluationInput): StepUpDecision {
   }
   if (input.assertionVerified === true) {
     return { allow: true };
-  }
-  if (input.assertionVerified === null) {
-    return {
-      allow: false,
-      code: 'step-up-verifier-unavailable',
-      message:
-        'Step-up is required for mutating relay calls but no WebAuthn verifier is configured. '
-        + 'Wire a StepUpAssertionVerifier to enable this control (failing closed until then).',
-    };
   }
   return {
     allow: false,
