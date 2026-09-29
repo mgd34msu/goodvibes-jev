@@ -22,7 +22,11 @@ import {
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
 
-export function createWebhookDeliveryStrategy(configManager: ConfigManager, artifactStore: ArtifactStore): ChannelDeliveryStrategy {
+export function createWebhookDeliveryStrategy(
+  configManager: ConfigManager,
+  artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
+): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:webhook',
     canHandle(request) {
@@ -32,7 +36,13 @@ export function createWebhookDeliveryStrategy(configManager: ConfigManager, arti
       const attachments = await resolveAttachments(request, artifactStore, configManager, 128 * 1024);
       const address = request.target.address
         ?? (typeof request.binding?.metadata.callbackUrl === 'string' ? request.binding.metadata.callbackUrl : undefined)
-        ?? String(configManager.get('surfaces.webhook.defaultTarget') ?? '');
+        // The default target is declared secret-bearing (it can carry its own
+        // token), so it may be a secret reference.
+        ?? await resolveSecretInput(configManager.get('surfaces.webhook.defaultTarget'), {
+          resolveLocalSecret: (key) => secretsManager.get(key),
+          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
+        })
+        ?? '';
       if (!address) throw new Error('Missing webhook delivery target');
       const validation = validatePublicWebhookUrl(address);
       if (!validation.ok) throw new Error(validation.error);
@@ -387,6 +397,7 @@ export function createGoogleChatDeliveryStrategy(
   configManager: ConfigManager,
   serviceRegistry: ServiceRegistry,
   artifactStore: ArtifactStore,
+  secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy {
   return {
     id: 'channel-delivery:google-chat',
@@ -406,7 +417,11 @@ export function createGoogleChatDeliveryStrategy(
         readString(request.binding?.metadata.webhookUrl),
         await serviceRegistry.resolveSecret('google-chat', 'webhookUrl'),
         serviceRegistry.get('google-chat')?.baseUrl,
-        String(configManager.get('surfaces.googleChat.webhookUrl') ?? ''),
+        // Declared secret-bearing: the webhook URL carries its key and token.
+        await resolveSecretInput(configManager.get('surfaces.googleChat.webhookUrl'), {
+          resolveLocalSecret: (key) => secretsManager.get(key),
+          homeDirectory: secretsManager.getGlobalHome?.() ?? undefined,
+        }) ?? '',
         process.env.GOOGLE_CHAT_WEBHOOK_URL,
       );
       if (!webhookUrl) {

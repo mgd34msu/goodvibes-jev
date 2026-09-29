@@ -20,6 +20,17 @@ export interface StoredCredentialKeyReading {
   readonly probability: number;
 }
 
+/**
+ * What the credential-scope gate makes of one stored reading. Only a settled
+ * no (a no whose outcome is act) passes: a yes must be declared, and anything
+ * else (an uncertain reading, or a no too weak to act on) fails closed,
+ * because an undeclared credential is written in the clear.
+ */
+export function credentialReadingStanding(reading: Pick<StoredCredentialKeyReading, 'verdict' | 'outcome'>): 'settled-no' | 'credential' | 'unsettled' {
+  if (reading.verdict === 'no' && reading.outcome === 'act') return 'settled-no';
+  return reading.verdict === 'yes' ? 'credential' : 'unsettled';
+}
+
 export interface CredentialKeyReadings {
   readonly decision: string;
   readonly model: string;

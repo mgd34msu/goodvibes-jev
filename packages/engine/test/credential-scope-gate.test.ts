@@ -148,3 +148,27 @@ export class Thing {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('an undeclared schema key passes only on a settled no', () => {
+  test('a settled no passes, a yes is a credential, and everything else fails closed', async () => {
+    const { credentialReadingStanding } = await import('../scripts/credential-key-readings.ts');
+    expect(credentialReadingStanding({ verdict: 'no', outcome: 'act' })).toBe('settled-no');
+    expect(credentialReadingStanding({ verdict: 'yes', outcome: 'act' })).toBe('credential');
+    expect(credentialReadingStanding({ verdict: 'yes', outcome: 'confirm' })).toBe('credential');
+    // These passed before: the gate failed only on a yes.
+    expect(credentialReadingStanding({ verdict: 'uncertain', outcome: 'escalate' })).toBe('unsettled');
+    expect(credentialReadingStanding({ verdict: 'no', outcome: 'confirm' })).toBe('unsettled');
+  });
+
+  test('every stored reading for an undeclared key is currently a settled no', async () => {
+    const { credentialReadingStanding, loadCredentialKeyReadings, undeclaredSchemaKeys } = await import('../scripts/credential-key-readings.ts');
+    const stored = loadCredentialKeyReadings();
+    const unsettled = undeclaredSchemaKeys()
+      .filter(({ key }) => {
+        const reading = stored?.readings[key];
+        return reading === undefined || credentialReadingStanding(reading) !== 'settled-no';
+      })
+      .map(({ key }) => key);
+    expect(unsettled).toEqual([]);
+  });
+});

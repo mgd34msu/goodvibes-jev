@@ -73,6 +73,10 @@ export const SECRET_BEARING_CONFIG_PATHS: readonly string[] = [
   'surfaces.telegram.botToken',
   'surfaces.telegram.webhookSecret',
   'surfaces.googleChat.verificationToken',
+  // An incoming webhook URL carries its key and token: holding it is posting
+  // rights. Found when the credential-scope gate began failing closed on
+  // unsettled readings (config.credential-key v2).
+  'surfaces.googleChat.webhookUrl',
   'surfaces.signal.token',
   'surfaces.whatsapp.accessToken',
   'surfaces.whatsapp.verifyToken',
@@ -83,6 +87,10 @@ export const SECRET_BEARING_CONFIG_PATHS: readonly string[] = [
   'surfaces.mattermost.botToken',
   'surfaces.matrix.accessToken',
   'surfaces.webhook.secret',
+  // The default reply target is an outbound webhook URL, which commonly
+  // carries its own token; its credential reading could not settle, so it is
+  // declared (config.credential-key v2, fail-closed credential-scope gate).
+  'surfaces.webhook.defaultTarget',
   'surfaces.homeassistant.accessToken',
   'surfaces.homeassistant.webhookSecret',
 

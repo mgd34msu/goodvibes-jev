@@ -72,7 +72,7 @@ wait between attempts to 30 seconds.
 | `cloudflare.durableObjectNamespaceName` | `GoodVibesCoordinator` | Durable Object class/namespace name for edge coordination. |
 | `cloudflare.durableObjectNamespaceId` | empty string | Durable Object namespace id discovered after Worker migration. |
 | `cloudflare.r2BucketName` | `goodvibes-artifacts` | R2 Standard bucket name for optional artifacts. |
-| `cloudflare.secretsStoreName` | `goodvibes` | Cloudflare Secrets Store name managed by optional provisioning. |
+| `cloudflare.secretsStoreName` | `goodvibes` | Name of the Cloudflare Secrets Store that optional provisioning creates and manages. |
 | `cloudflare.secretsStoreId` | empty string | Cloudflare Secrets Store id selected or created by provisioning. |
 | `cloudflare.maxQueueOpsPerDay` | `10 000` | Free-tier-oriented queue operation budget. |
 

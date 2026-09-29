@@ -43,7 +43,7 @@ import {
   findCredentialScopeDeclaration,
 } from '../sdk/src/platform/config/credential-scope-registry.ts';
 import { daemonSecretKeyFor, listDaemonOwnedSecretKeys } from '../sdk/src/platform/config/daemon-secret-keys.ts';
-import { loadCredentialKeyReadings, undeclaredSchemaKeys } from './credential-key-readings.ts';
+import { credentialReadingStanding, loadCredentialKeyReadings, undeclaredSchemaKeys } from './credential-key-readings.ts';
 
 const REPO_ROOT = process.env['CREDENTIAL_SCOPE_ROOT'] ?? resolve(import.meta.dir, '..');
 const DEFAULT_DIRS = ['sdk/src'];
@@ -338,7 +338,8 @@ function checkFile(path: string, constants: ReadonlyMap<string, string>): Findin
  * which stores each reading with the description it was read from in
  * etc/credential-key-readings.json. This check is offline: a key with no
  * stored reading, or whose description changed since, must be read; a key
- * whose reading says credential must be declared.
+ * whose reading is anything but a settled no must be declared (or described
+ * clearly enough to settle).
  */
 function checkDeclarationsCoverCredentials(): Finding[] {
   const file = 'etc/credential-key-readings.json';
@@ -355,14 +356,16 @@ function checkDeclarationsCoverCredentials(): Finding[] {
       });
       continue;
     }
-    if (reading.verdict === 'yes') {
-      findings.push({
-        file: 'sdk/src/platform/config/secret-bearing-config-keys.ts',
-        line: 0,
-        snippet: key,
-        reason: `"${key}" reads as a credential (probability ${reading.probability}, ${reading.outcome}) but is not declared in SECRET_BEARING_CONFIG_PATHS; declare it.`,
-      });
-    }
+    const standing = credentialReadingStanding(reading);
+    if (standing === 'settled-no') continue;
+    findings.push({
+      file: 'sdk/src/platform/config/secret-bearing-config-keys.ts',
+      line: 0,
+      snippet: key,
+      reason: standing === 'credential'
+        ? `"${key}" reads as a credential (probability ${reading.probability}, ${reading.outcome}) but is not declared in SECRET_BEARING_CONFIG_PATHS; declare it.`
+        : `"${key}" has no settled credential reading (${reading.verdict}, probability ${reading.probability}, ${reading.outcome}); declare it in SECRET_BEARING_CONFIG_PATHS if it holds a credential, or make its schema description say what it holds and run \`bun run credential-keys:read\`.`,
+    });
   }
   return findings;
 }

@@ -259,7 +259,7 @@ export const surfaceConfigSettings: ConfigSettingDefinition[] = [
     key: 'surfaces.ntfy.remoteTopic',
     type: 'string',
     default: 'goodvibes-ntfy',
-    description: 'ntfy topic routed to a daemon-owned remote chat session',
+    description: 'Name of the ntfy topic whose messages the daemon routes into its own remote chat session',
   },
   {
     key: 'surfaces.ntfy.token',
@@ -284,7 +284,7 @@ export const surfaceConfigSettings: ConfigSettingDefinition[] = [
     key: 'surfaces.webhook.defaultTarget',
     type: 'string',
     default: '',
-    description: 'Default outbound webhook target URL',
+    description: 'URL the webhook surface posts an agent reply to when the inbound message named no callback URL',
   },
   {
     key: 'surfaces.webhook.timeoutMs',
@@ -409,7 +409,7 @@ export const surfaceConfigSettings: ConfigSettingDefinition[] = [
     key: 'surfaces.googleChat.webhookUrl',
     type: 'string',
     default: '',
-    description: 'Google Chat outbound webhook or app callback URL',
+    description: 'Google Chat outbound webhook or app callback URL; an incoming webhook URL carries its key and token, so anyone holding it can post to the space',
   },
   {
     key: 'surfaces.googleChat.verificationToken',

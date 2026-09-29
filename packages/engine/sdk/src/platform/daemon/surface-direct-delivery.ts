@@ -35,6 +35,8 @@ export interface SurfaceDirectDeliveryDeps {
   readonly agentManager: Pick<AgentManager, 'getStatus'>;
   readonly resolveSlackWebhookUrl: () => Promise<string | null>;
   readonly resolveSlackBotToken: () => Promise<string | null>;
+  /** surfaces.webhook.defaultTarget, resolved when it is a secret reference. */
+  readonly resolveWebhookDefaultTarget: () => Promise<string | null>;
   readonly signWebhookPayload: (body: string, secret: string) => string;
 }
 
@@ -183,7 +185,7 @@ export async function deliverWebhookAgentReply(
   pending: PendingSurfaceReply,
   message: string,
 ): Promise<void> {
-  const callbackUrl = pending.callbackUrl ?? String(deps.configManager.get('surfaces.webhook.defaultTarget') ?? '');
+  const callbackUrl = pending.callbackUrl ?? await deps.resolveWebhookDefaultTarget() ?? '';
   if (!callbackUrl) return;
   const validation = validatePublicWebhookUrl(callbackUrl);
   if (!validation.ok) {

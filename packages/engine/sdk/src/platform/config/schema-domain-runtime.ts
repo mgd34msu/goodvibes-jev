@@ -849,7 +849,7 @@ export const runtimeSecondaryConfigSettings: ConfigSettingDefinition[] = [
     key: 'cloudflare.accessServiceTokenId',
     type: 'string',
     default: '',
-    description: 'Cloudflare Zero Trust Access service token id created for GoodVibes daemon access',
+    description: 'Id of the Cloudflare Zero Trust Access service token created for GoodVibes daemon access: the public half, sent beside the client secret, which is stored separately under cloudflare.accessServiceTokenRef',
   },
   {
     key: 'cloudflare.accessServiceTokenRef',
@@ -891,7 +891,7 @@ export const runtimeSecondaryConfigSettings: ConfigSettingDefinition[] = [
     key: 'cloudflare.secretsStoreName',
     type: 'string',
     default: 'goodvibes',
-    description: 'Cloudflare Secrets Store name managed by optional GoodVibes provisioning',
+    description: 'Name of the Cloudflare Secrets Store that optional GoodVibes provisioning creates and manages (the store holds the secrets; this is its name)',
   },
   {
     key: 'cloudflare.secretsStoreId',

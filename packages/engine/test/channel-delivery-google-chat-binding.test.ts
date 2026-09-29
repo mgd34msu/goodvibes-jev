@@ -69,6 +69,10 @@ function requestWithBindingMetadata(metadata: Record<string, unknown>): ChannelD
   } as unknown as ChannelDeliveryRequest;
 }
 
+/** No local secrets: these cases resolve the webhook URL from the binding, registry or plain config. */
+const tmpdirHome = '/nonexistent-goodvibes-home';
+const noSecrets = { get: async (): Promise<string | null> => null, getGlobalHome: () => tmpdirHome };
+
 describe('google chat delivery resolves the webhook from the route binding', () => {
   let spy: Mock<typeof fetch>;
 
@@ -91,6 +95,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({}),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
 
     const result = await strategy.deliver(requestWithBindingMetadata({ webhookUrl: BINDING_WEBHOOK }));
@@ -106,6 +111,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({}),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
 
     await strategy.deliver(requestWithBindingMetadata({ webhookUrl: BINDING_WEBHOOK }));
@@ -121,6 +127,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({}),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
     const request = {
       ...requestWithBindingMetadata({ webhookUrl: BINDING_WEBHOOK }),
@@ -138,6 +145,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({ 'surfaces.googleChat.webhookUrl': CONFIG_WEBHOOK }),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
 
     await strategy.deliver(requestWithBindingMetadata({ webhookUrl: BINDING_WEBHOOK }));
@@ -151,6 +159,21 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({ 'surfaces.googleChat.webhookUrl': CONFIG_WEBHOOK }),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
+    );
+
+    await strategy.deliver(requestWithBindingMetadata({}));
+
+    expect(String(spy.mock.calls[0]![0])).toBe(CONFIG_WEBHOOK);
+  });
+
+  test('a configured webhook URL stored as a secret reference is resolved', async () => {
+    mockFetch();
+    const strategy = createGoogleChatDeliveryStrategy(
+      fakeConfigManager({ 'surfaces.googleChat.webhookUrl': 'goodvibes://secrets/goodvibes/GOOGLE_CHAT_WEBHOOK_URL' }),
+      fakeServiceRegistry(),
+      fakeArtifactStore,
+      { get: async (key: string): Promise<string | null> => (key === 'GOOGLE_CHAT_WEBHOOK_URL' ? CONFIG_WEBHOOK : null), getGlobalHome: () => tmpdirHome },
     );
 
     await strategy.deliver(requestWithBindingMetadata({}));
@@ -164,6 +187,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({ 'surfaces.googleChat.webhookUrl': CONFIG_WEBHOOK }),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
 
     await strategy.deliver(requestWithBindingMetadata({ webhookUrl: '   ' }));
@@ -177,6 +201,7 @@ describe('google chat delivery resolves the webhook from the route binding', () 
       fakeConfigManager({}),
       fakeServiceRegistry(),
       fakeArtifactStore,
+      noSecrets,
     );
 
     await expect(strategy.deliver(requestWithBindingMetadata({}))).rejects.toThrow('Missing Google Chat webhook URL');

@@ -553,6 +553,7 @@ export class DaemonSurfaceDeliveryHelper {
       agentManager: this.context.agentManager,
       resolveSlackWebhookUrl: () => this.resolveSlackWebhookUrl(),
       resolveSlackBotToken: () => this.resolveSlackBotToken(),
+      resolveWebhookDefaultTarget: () => this.resolveConfigSecret(this.context.configManager.get('surfaces.webhook.defaultTarget')),
       signWebhookPayload: (body, secret) => this.signWebhookPayload(body, secret),
     };
   }

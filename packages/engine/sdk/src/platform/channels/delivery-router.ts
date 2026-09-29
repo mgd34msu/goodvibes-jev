@@ -85,14 +85,14 @@ export function createDefaultChannelDeliveryStrategies(
   secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>,
 ): ChannelDeliveryStrategy[] {
   return [
-    createWebhookDeliveryStrategy(configManager, artifactStore),
+    createWebhookDeliveryStrategy(configManager, artifactStore, secretsManager),
     createSlackDeliveryStrategy(serviceRegistry, configManager, artifactStore, secretsManager),
     createDiscordDeliveryStrategy(serviceRegistry, configManager, artifactStore, secretsManager),
     createNtfyDeliveryStrategy(configManager, serviceRegistry, artifactStore),
     createWebControlPlaneDeliveryStrategy(configManager, artifactStore, getControlPlaneGateway),
     createHomeAssistantDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createTelegramDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
-    createGoogleChatDeliveryStrategy(configManager, serviceRegistry, artifactStore),
+    createGoogleChatDeliveryStrategy(configManager, serviceRegistry, artifactStore, secretsManager),
     createSignalDeliveryStrategy(configManager, serviceRegistry, artifactStore),
     createWhatsAppDeliveryStrategy(configManager, serviceRegistry, artifactStore),
     createTelephonyDeliveryStrategy(configManager, serviceRegistry, artifactStore),

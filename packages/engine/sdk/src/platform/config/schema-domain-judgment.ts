@@ -41,7 +41,7 @@ export const judgmentConfigSettings: ConfigSettingDefinition[] = [
     key: 'judgment.keySource',
     type: 'enum',
     default: 'env',
-    description: 'Where the judgment API key is read: env (TYPESAFE_API_KEY in the process environment) or secret (TYPESAFE_API_KEY in the secret store)',
+    description: 'Which place the judgment API key is read from, env (TYPESAFE_API_KEY in the process environment) or secret (TYPESAFE_API_KEY in the secret store); the setting names the place, not the key',
     enumValues: ['env', 'secret'],
   },
   {

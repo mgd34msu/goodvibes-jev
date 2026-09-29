@@ -32,12 +32,12 @@ export type CredentialKeyState = {
 
 export const credentialKey = defineBattery({
   name: 'config.credential-key',
-  version: 1,
+  version: 2,
   description: 'Whether a config setting holds credential material, from its key and schema description.',
   accuracyFloor: 0.9,
   items: {
     credential: yesNo(
-      'Does the config setting `key`, described by `description`, hold a credential: a password, passphrase, API key, access, refresh or bot token, signing, webhook or client secret, shared secret phrase, private key, or a URL that grants access on its own, or a reference naming such a secret in a secret store? A setting that holds an id, a username, a public key, a file path, a count or budget, a duration, or an on/off switch about credentials is not a credential.',
+      'Does the config setting `key`, described by `description`, hold a credential: a password, passphrase, API key, access, refresh or bot token, signing, webhook or client secret, shared secret phrase, private key, or a URL that grants access on its own, or a reference naming such a secret in a secret store? A setting that holds an id, a username, a public key, a file path, a count or budget, a duration, an on/off switch about credentials, or the address of a server, bridge or service the runtime connects to (which grants nothing without a separate credential) is not a credential; a webhook or feed URL that carries its own key, so that anyone holding it can post or read, is.',
       STAKES_BANDS.high.yesNo,
     ),
   },
@@ -54,5 +54,9 @@ export const credentialKey = defineBattery({
     { name: 'path to a key file', state: { key: 'server.tls.keyFile', description: 'Path to the TLS private key file' }, expect: { credential: 'no' } },
     { name: 'rotation switch', state: { key: 'security.tokenAudit.enabled', description: 'Whether to audit stored tokens for age and warn when one is due for rotation' }, expect: { credential: 'no' } },
     { name: 'secret store name', state: { key: 'hosting.secretsStoreName', description: 'Name of the secrets store to create in the hosting account' }, expect: { credential: 'no' } },
+    { name: 'server base URL', state: { key: 'surfaces.chatbridge.serverUrl', description: 'Chat bridge server base URL used for health checks and delivery' }, expect: { credential: 'no' } },
+    { name: 'homeserver URL', state: { key: 'surfaces.rooms.homeserverUrl', description: 'Rooms homeserver base URL' }, expect: { credential: 'no' } },
+    { name: 'access token id', state: { key: 'hosting.accessServiceTokenId', description: 'Access service token id created for the daemon; the matching secret is stored separately' }, expect: { credential: 'no' } },
+    { name: 'incoming webhook URL with its key', state: { key: 'surfaces.teamchat.webhookUrl', description: 'Team chat incoming webhook URL; the URL carries the key and token, so anyone holding it can post to the space' }, expect: { credential: 'yes' } },
   ],
 });
