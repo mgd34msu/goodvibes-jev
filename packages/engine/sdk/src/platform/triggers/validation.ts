@@ -14,12 +14,14 @@
  */
 
 import type {
+  ComparisonOperator,
   TriggerDefinition,
   TriggerExtract,
   TriggerFireAction,
   TriggerProbe,
   TriggerRule,
   TriggerSpec,
+  WindowAggregate,
 } from './types.js';
 
 export class TriggerDefinitionError extends Error {
@@ -45,6 +47,14 @@ const RULE_KINDS = new Set([
   'correlation',
 ]);
 const ACTION_KINDS = new Set(['agent-turn', 'action-grant']);
+/** The operators rules.ts compare() implements; the Record keeps the list in step with the type. */
+const COMPARISON_OPERATORS = new Set(Object.keys({
+  eq: true, ne: true, lt: true, lte: true, gt: true, gte: true, contains: true, 'not-contains': true, matches: true,
+} satisfies Record<ComparisonOperator, true>));
+/** The aggregates rules.ts aggregate() computes. */
+const WINDOW_AGGREGATES = new Set(Object.keys({
+  min: true, max: true, mean: true, sum: true, count: true, stddev: true,
+} satisfies Record<WindowAggregate, true>));
 
 /**
  * Kinds a caller might reach for to smuggle code in. Named explicitly so the
@@ -258,6 +268,15 @@ export function validateExtract(input: unknown, field = 'extract'): TriggerExtra
   return extract as unknown as TriggerExtract;
 }
 
+/** A string the engine implements; an unknown one would make the rule silently never fire. */
+function requireOneOf(value: unknown, allowed: ReadonlySet<string>, field: string): string {
+  const text = requireString(value, field);
+  if (!allowed.has(text)) {
+    throw new TriggerDefinitionError(field, `must be one of ${[...allowed].join(', ')}`);
+  }
+  return text;
+}
+
 export function validateRule(input: unknown, field = 'rule', depth = 0): TriggerRule {
   if (depth > 4) {
     throw new TriggerDefinitionError(field, 'nests rules too deeply (max 4)');
@@ -273,7 +292,7 @@ export function validateRule(input: unknown, field = 'rule', depth = 0): Trigger
     case 'change':
       break;
     case 'value':
-      requireString(rule.operator, `${field}.operator`);
+      requireOneOf(rule.operator, COMPARISON_OPERATORS, `${field}.operator`);
       if (rule.operand === undefined) {
         throw new TriggerDefinitionError(`${field}.operand`, 'is required');
       }
@@ -309,13 +328,13 @@ export function validateRule(input: unknown, field = 'rule', depth = 0): Trigger
       break;
     case 'rate-of-change':
       requirePositiveInt(rule.windowMs, `${field}.windowMs`, 30 * 24 * 60 * 60 * 1000);
-      requireString(rule.operator, `${field}.operator`);
+      requireOneOf(rule.operator, COMPARISON_OPERATORS, `${field}.operator`);
       requireFiniteNumber(rule.operand, `${field}.operand`);
       break;
     case 'windowed-aggregate':
       requirePositiveInt(rule.windowMs, `${field}.windowMs`, 30 * 24 * 60 * 60 * 1000);
-      requireString(rule.aggregate, `${field}.aggregate`);
-      requireString(rule.operator, `${field}.operator`);
+      requireOneOf(rule.aggregate, WINDOW_AGGREGATES, `${field}.aggregate`);
+      requireOneOf(rule.operator, COMPARISON_OPERATORS, `${field}.operator`);
       requireFiniteNumber(rule.operand, `${field}.operand`);
       if (rule.minSamples !== undefined) requirePositiveInt(rule.minSamples, `${field}.minSamples`, 10_000);
       break;

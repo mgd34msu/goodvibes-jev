@@ -14,6 +14,7 @@
  * without waiting real wall-clock minutes.
  */
 
+import type { FailureTransience } from '../integrations/delivery.js';
 import type { TriggerRecord, TriggerState } from './types.js';
 
 /** The default ladder: 30s, 60s, 5m, 15m, 60m. The last rung repeats. */
@@ -67,23 +68,30 @@ export interface SupervisionOutcome {
   readonly delayMs: number;
   /** True when this failure is the one that opened the breaker. */
   readonly breakerOpened: boolean;
+  /** True when the breaker opened because the failure was read as permanent, not because the budget ran out. */
+  readonly readAsPermanent: boolean;
 }
 
 /**
  * Applies one failure. Increments the strike count, advances one rung, and
- * opens the breaker at the strike limit. Note the ordering: the rung used for
- * THIS delay is the pre-increment rung, so the first failure waits the first
- * ladder entry rather than skipping it.
+ * opens the breaker at the strike limit, or at once when the failure was read
+ * as one a retry cannot clear (`transience.failureClass === 'terminal'`, from
+ * readFailureTransience). The strike limit is the retry budget for failures a
+ * retry may clear. Note the ordering: the rung used for THIS delay is the
+ * pre-increment rung, so the first failure waits the first ladder entry rather
+ * than skipping it.
  */
 export function applyFailure(
   record: Pick<TriggerRecord, 'strikes' | 'backoffRung'>,
   policy: SupervisionPolicy,
   now: number,
+  transience?: Pick<FailureTransience, 'failureClass'>,
 ): SupervisionOutcome {
   const strikes = record.strikes + 1;
   const rung = record.backoffRung;
   const delayMs = backoffDelayFor(policy, rung);
-  const opened = strikes >= policy.breakerStrikes;
+  const permanent = transience?.failureClass === 'terminal';
+  const opened = permanent || strikes >= policy.breakerStrikes;
   return {
     state: opened ? 'circuit-open' : 'backoff',
     strikes,
@@ -91,6 +99,7 @@ export function applyFailure(
     nextCheckAt: opened ? Number.POSITIVE_INFINITY : now + delayMs,
     delayMs,
     breakerOpened: opened,
+    readAsPermanent: permanent,
   };
 }
 

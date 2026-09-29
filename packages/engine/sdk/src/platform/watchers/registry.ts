@@ -5,6 +5,7 @@ import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { WatcherKind, WatcherRecord, WatcherSourceStatus } from '../runtime/store/domains/watchers.js';
 import type { AutomationSourceRecord } from '../automation/sources.js';
 import type { WatcherSourceKind } from '../../events/watchers.js';
+import { readFailureTransience } from '../integrations/delivery.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -557,6 +558,9 @@ export class WatcherRegistry {
       this.persist();
       this.runtimeDispatch?.syncWatcher(failed, 'watchers.failed');
       if (this.runtimeBus) {
+        // Whether the next interval's run can clear this failure is read from
+        // the error, not asserted for every failure.
+        const transience = await readFailureTransience(error, 'watchers.run');
         emitWatcherFailed(this.runtimeBus, {
           sessionId: 'watchers',
           source: 'watcher-registry',
@@ -565,7 +569,7 @@ export class WatcherRegistry {
           watcherId: id,
           sourceKind: toWatcherSourceKind(failed.kind),
           error: failed.lastError ?? 'watcher failed',
-          retryable: true,
+          retryable: transience.failureClass === 'retryable',
         });
       }
     } finally {

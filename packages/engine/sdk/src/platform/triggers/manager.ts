@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { readFailureTransience, type FailureTransience } from '../integrations/delivery.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { runExtract, toObservation } from './extract.js';
@@ -427,7 +428,10 @@ export class TriggerManager {
       const value = runExtract(spec.extract, raw);
       return this.applyObservation(id, value, startedAt, spec);
     } catch (error) {
-      return this.applyCheckFailure(id, summarizeError(error), startedAt, spec);
+      // Whether a retry can clear this failure is read from the error itself;
+      // a failure read as permanent parks the trigger at once.
+      const transience = await readFailureTransience(error, 'triggers.condition-check');
+      return this.applyCheckFailure(id, summarizeError(error), startedAt, spec, transience);
     } finally {
       this.inFlight.delete(id);
     }
@@ -489,17 +493,20 @@ export class TriggerManager {
     error: string,
     startedAt: number,
     spec: ConditionTriggerSpec,
+    transience: FailureTransience,
   ): TriggerRecord | null {
     const record = this.records.get(id);
     if (!record) return null;
     const now = this.now();
-    const outcome = applyFailure(record, this.policy, now);
+    const outcome = applyFailure(record, this.policy, now, transience);
     const run: TriggerRunRecord = {
       at: now,
       outcome: 'failed',
-      detail: outcome.breakerOpened
-        ? `${error}, breaker opened after ${outcome.strikes} consecutive failures; reset it to resume`
-        : `${error}, retrying in ${outcome.delayMs}ms`,
+      detail: outcome.readAsPermanent
+        ? `${error}, breaker opened: a retry cannot clear this failure (${transience.detail}); reset it to resume`
+        : outcome.breakerOpened
+          ? `${error}, breaker opened after ${outcome.strikes} consecutive failures; reset it to resume`
+          : `${error}, retrying in ${outcome.delayMs}ms`,
       durationMs: now - startedAt,
     };
     let next: TriggerRecord = {

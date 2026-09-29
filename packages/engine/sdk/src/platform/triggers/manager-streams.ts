@@ -142,6 +142,8 @@ export function handleStreamExit(owner: StreamOwner, id: string, exitCode: numbe
     owner.persist();
     return;
   }
+  // An exit carries only its code and no wording to read, so it spends the
+  // retry budget like any failure a retry may clear.
   const outcome = applyFailure(record, owner.policy, now);
   owner.records.set(id, {
     ...record,

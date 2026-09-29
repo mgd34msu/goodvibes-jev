@@ -20,6 +20,7 @@ import {
   type TriggerActionExecutor,
   type TriggerValue,
 } from '../sdk/src/platform/triggers/index.ts';
+import { useFailureReadings } from './_helpers/failure-readings.js';
 
 const roots: string[] = [];
 
@@ -152,6 +153,26 @@ describe('a condition check runs probe -> extract -> rule with no model in the l
 });
 
 describe('the manager applies the ladder and the breaker to a failing check', () => {
+  const readings = useFailureReadings([
+    ['ECONNREFUSED', { category: 'network', transientNetwork: true }],
+    ['transient', { category: 'network', transientNetwork: true }],
+    ['404: no metrics endpoint at /metrics', { category: 'not_found' }],
+  ]);
+
+  test('a failure read as one no retry clears parks the trigger on its first strike', async () => {
+    const io = scriptedIo({ throwWith: '404: no metrics endpoint at /metrics' });
+    const clock = { t: 0 };
+    const manager = managerWith(io, new RecordingExecutor(), clock);
+    await manager.create(conditionDefinition());
+
+    await manager.runCheck('queue-depth');
+    const parked = manager.get('queue-depth');
+    expect(parked?.state).toBe('circuit-open');
+    expect(parked?.strikes).toBe(1);
+    expect(parked?.runs.at(-1)?.detail).toContain('a retry cannot clear this failure');
+    expect(readings.requests.length).toBeGreaterThan(0);
+  });
+
   test('consecutive probe failures walk the ladder and then park the trigger', async () => {
     const io = scriptedIo({ throwWith: 'ECONNREFUSED' });
     const clock = { t: 0 };

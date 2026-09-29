@@ -1,3 +1,5 @@
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { hookContractCandidate, hookContractSearch } from './batteries/contract-search.js';
 import type { HookPointContract } from './contracts.js';
 import type { HookChain, HookDefinition, HookType } from './types.js';
 import type {
@@ -53,7 +55,12 @@ export interface HookContractSource {
 }
 
 export interface HookApi {
-  contracts(filter?: string): readonly HookContractRecord[];
+  /**
+   * The hook point contracts, all of them for a blank filter; otherwise the
+   * ones Jev reads as matching what the filter asks for
+   * (`engine.hooks.contract-search`), in catalog order.
+   */
+  contracts(filter?: string): Promise<readonly HookContractRecord[]>;
   dispatcher: {
     listHooks(): Array<{ pattern: string; hook: HookDefinition }>;
     listChains(): HookChain[];
@@ -67,25 +74,23 @@ export interface CreateHookApiOptions {
   readonly listContracts: HookContractSource['listContracts'];
 }
 
-function normalizeFilter(filter: string | undefined): string | null {
-  const value = filter?.trim().toLowerCase();
-  return value && value.length > 0 ? value : null;
-}
+/** Decision site for the contract search. */
+export const HOOK_CONTRACT_SEARCH_SITE = 'hooks.contract-search';
 
 export function createHookApi(options: CreateHookApiOptions): HookApi {
   return {
-    contracts(filter?: string): readonly HookContractRecord[] {
-      const query = normalizeFilter(filter);
+    async contracts(filter?: string): Promise<readonly HookContractRecord[]> {
       const contracts = options.listContracts();
-      if (!query) {
-        return contracts;
-      }
-      return contracts.filter((contract) => (
-        contract.pattern.toLowerCase().includes(query)
-        || contract.description.toLowerCase().includes(query)
-        || contract.authority.toLowerCase().includes(query)
-        || contract.executionMode.toLowerCase().includes(query)
-      ));
+      const query = filter?.trim() ?? '';
+      if (query.length === 0) return contracts;
+      const { ranked } = await hookContractSearch.rerank(
+        judgmentPort(HOOK_CONTRACT_SEARCH_SITE),
+        query,
+        contracts.map(hookContractCandidate),
+        { site: HOOK_CONTRACT_SEARCH_SITE },
+      );
+      const matched = new Set(ranked.filter((entry) => entry.reading.verdict === 'yes').map((entry) => entry.id));
+      return contracts.filter((contract) => matched.has(contract.pattern));
     },
     dispatcher: {
       listHooks(): Array<{ pattern: string; hook: HookDefinition }> {

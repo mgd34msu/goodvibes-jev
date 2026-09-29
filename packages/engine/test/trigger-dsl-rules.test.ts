@@ -105,6 +105,13 @@ describe('the trigger DSL refuses arbitrary code', () => {
       .toThrow(/hysteresis needs a re-arm band/);
     expect(validateRule({ kind: 'threshold', direction: 'above', enter: 90, exit: 80 }).kind).toBe('threshold');
   });
+
+  test('an operator or aggregate the engine does not implement is refused, not stored to never fire', () => {
+    expect(() => validateRule({ kind: 'value', operator: 'equals', operand: 1 })).toThrow('rule.operator');
+    expect(() => validateRule({ kind: 'rate-of-change', windowMs: 1_000, operator: 'above', operand: 1 })).toThrow('rule.operator');
+    expect(() => validateRule({ kind: 'windowed-aggregate', windowMs: 1_000, aggregate: 'median', operator: 'gt', operand: 1 })).toThrow('rule.aggregate');
+    expect(validateRule({ kind: 'windowed-aggregate', windowMs: 1_000, aggregate: 'mean', operator: 'gte', operand: 1 }).kind).toBe('windowed-aggregate');
+  });
 });
 
 describe('extractors', () => {

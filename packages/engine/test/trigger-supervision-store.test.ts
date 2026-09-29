@@ -155,6 +155,17 @@ describe('five-strike breaker', () => {
     expect(isDue(reset, 5_000)).toBe(true);
   });
 
+  test('a failure read as permanent opens the breaker on its first strike; a retryable one walks the ladder', () => {
+    const policy = resolveSupervisionPolicy({});
+    const permanent = applyFailure({ strikes: 0, backoffRung: 0 }, policy, 0, { failureClass: 'terminal' });
+    expect(permanent.breakerOpened).toBe(true);
+    expect(permanent.readAsPermanent).toBe(true);
+    expect(permanent.state).toBe('circuit-open');
+    const retryable = applyFailure({ strikes: 0, backoffRung: 0 }, policy, 0, { failureClass: 'retryable' });
+    expect(retryable.breakerOpened).toBe(false);
+    expect(retryable.state).toBe('backoff');
+  });
+
   test('the breaker strike count is configurable', () => {
     const policy = resolveSupervisionPolicy({ breakerStrikes: 2 });
     expect(applyFailure({ strikes: 1, backoffRung: 0 }, policy, 0).breakerOpened).toBe(true);

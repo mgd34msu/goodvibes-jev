@@ -1,6 +1,6 @@
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import type { HookDefinition, HookResult, HookEvent } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -18,9 +18,18 @@ export async function run(hook: HookDefinition, event: HookEvent, projectRoot: s
     return { ok: false, error: 'ts hook missing "path" field' };
   }
 
-  // Validate path is within the project directory to prevent arbitrary module loading
-  const resolvedPath = resolve(projectRoot, path);
-  if (!resolvedPath.startsWith(projectRoot + '/')) {
+  // The module must live inside the project directory. Compared on real paths,
+  // so a symlink inside the project that points outside it is refused too.
+  let resolvedPath: string;
+  let realRoot: string;
+  try {
+    resolvedPath = realpathSync(resolve(projectRoot, path));
+    realRoot = realpathSync(projectRoot);
+  } catch {
+    return { ok: false, error: `ts hook path '${path}' does not exist` };
+  }
+  const fromRoot = relative(realRoot, resolvedPath);
+  if (fromRoot === '' || fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) {
     return { ok: false, error: `ts hook path '${path}' is outside the project directory` };
   }
 
