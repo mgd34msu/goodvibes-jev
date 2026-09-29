@@ -16,7 +16,7 @@
  *    requiring it refuses nobody who was going to succeed and closes the case
  *    where omitting it meant a removal ran with no gate at all.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +26,11 @@ import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/index.ts';
 import { OccasionStateStore } from '../sdk/src/platform/occasions/state-store.ts';
 import { OccasionsService } from '../sdk/src/platform/occasions/service.ts';
 import { OCCASIONS_DEFAULTS } from '../sdk/src/platform/occasions/policy.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const VERB_IDS = [
   'occasions.list',

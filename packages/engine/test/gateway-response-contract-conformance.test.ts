@@ -42,7 +42,7 @@
  * exercised through a stub would only be asserting the stub's shape, which is
  * why none are here.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,6 +59,11 @@ import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/index.ts';
 import { OccasionStateStore } from '../sdk/src/platform/occasions/state-store.ts';
 import { OccasionsService } from '../sdk/src/platform/occasions/service.ts';
 import { OCCASIONS_DEFAULTS } from '../sdk/src/platform/occasions/policy.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const CONTRACT_METHODS = new Map(
   OPERATOR_CONTRACT.operator.methods.map((method) => [method.id, method] as const),

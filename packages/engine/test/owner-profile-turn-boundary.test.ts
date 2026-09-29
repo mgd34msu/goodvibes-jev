@@ -23,10 +23,11 @@
  * These cases are written against the real ledger and the real gate, with the
  * real `startTurnForOwnerRequest`, so they fail if any of the three drift.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, afterEach } from 'bun:test';
 import {
   UntrustedContentLedger,
   getProcessUntrustedContentLedger,
+  resetProcessUntrustedContentLedgerForTests,
 } from '../sdk/src/platform/security/untrusted-content.ts';
 import { startTurnForOwnerRequest } from '../sdk/src/platform/security/turn-boundary.ts';
 import {
@@ -34,6 +35,9 @@ import {
   evaluateProfileWrite,
 } from '../sdk/src/platform/owner-profile/trust.ts';
 import { useSecurityReadings } from './helpers/security-readings.ts';
+
+// This file reads into the process ledger; leave it empty for the next file.
+afterEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 useSecurityReadings();
 

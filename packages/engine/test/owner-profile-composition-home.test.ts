@@ -19,6 +19,11 @@ import { join } from 'node:path';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import { composeOwnerProfile } from '../sdk/src/platform/control-plane/routes/owner-profile-composition.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 /** The `profile.*` slice the composition reads, with everything at its default. */
 function configFor(overrides: Record<string, unknown> = {}): {

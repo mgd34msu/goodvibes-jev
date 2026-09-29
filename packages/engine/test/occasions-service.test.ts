@@ -11,7 +11,7 @@
  * gated write path, the machine's bookkeeping never lands in it, and nothing
  * unresolved is dropped.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +28,11 @@ import {
   occasionsConfigSettings,
 } from '../sdk/src/platform/config/schema-domain-occasions.ts';
 import type { OccasionNudge } from '../sdk/src/platform/occasions/types.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const dirs: string[] = [];
 function tempDir(): string {

@@ -25,7 +25,7 @@
  * does not await. A stubbed store constructed already-loaded cannot see this
  * bug at all, which is why it survived the round that introduced it.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +36,11 @@ import { openTierContextBlock } from '../sdk/src/platform/owner-profile/context-
 import { registerProfileRedactionValues } from '../sdk/src/platform/utils/redaction.ts';
 import { registerOpenTierContextBlock } from '../sdk/src/platform/owner-profile/context-block.ts';
 import { registerSignupBaseAddressFallback } from '../sdk/src/platform/google/account-registry.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const FIXTURE = [
   "# Avery's profile",

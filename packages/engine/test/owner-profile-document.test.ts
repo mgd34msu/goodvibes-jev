@@ -9,7 +9,7 @@
  * The through-line: there is no input for which the parser drops a line, and no
  * input for which it throws.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,11 @@ import {
   splitProvenanceSuffix,
 } from '../sdk/src/platform/owner-profile/document.ts';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/store.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const dirs: string[] = [];
 function tempDir(): string {

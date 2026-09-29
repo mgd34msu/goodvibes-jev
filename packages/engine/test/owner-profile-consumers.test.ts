@@ -16,7 +16,7 @@
  * Also proves the rows for keys that do not exist on this branch are genuinely
  * inert, and that `security/owner-identity.ts` is deliberately NOT wired.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +43,11 @@ import {
 } from '../sdk/src/platform/security/owner-identity.ts';
 import { registerProfileRedactionValues } from '../sdk/src/platform/utils/redaction.ts';
 import { registerOpenTierContextBlock } from '../sdk/src/platform/owner-profile/context-block.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const FIXTURE = [
   '# Avery\'s profile',

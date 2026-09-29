@@ -34,6 +34,11 @@ import {
 } from '../sdk/src/platform/owner-profile/context-block.ts';
 import { withOpenTierProfileBlock } from '../sdk/src/platform/agents/orchestrator-prompts.ts';
 import { registerSignupBaseAddressFallback } from '../sdk/src/platform/google/account-registry.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const FIXTURE = [
   '# Avery\'s profile',

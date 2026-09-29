@@ -12,7 +12,7 @@
  * the daemon attaches them, so the descriptors, the scopes and the handler
  * wiring are all in the assertion path rather than assumed.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +24,11 @@ import {
   type OwnerProfilePolicy,
 } from '../sdk/src/platform/control-plane/routes/owner-profile-policy.ts';
 import type { ProfileWriteResult } from '../sdk/src/platform/owner-profile/index.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const VERB_IDS = [
   'profile.read',

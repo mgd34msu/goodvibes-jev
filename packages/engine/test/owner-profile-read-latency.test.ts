@@ -14,11 +14,16 @@
  * if someone puts a `stat`, a parse or a lock back on the read path, which is
  * the regression it exists to catch, not a stopwatch contest with the host.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/index.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 const tmpDirs: string[] = [];
 function mkTemp(): string {

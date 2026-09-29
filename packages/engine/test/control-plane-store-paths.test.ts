@@ -6,7 +6,7 @@
  * actually land under the surface-scoped directory rather than the pre-split
  * orphan `~/.goodvibes/control-plane/` a missing surface segment produces.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test, beforeEach } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
@@ -18,6 +18,11 @@ import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { installOccasions } from '../sdk/src/platform/control-plane/routes/occasions-composition.ts';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/index.ts';
 import { WorkspaceRegistrationManager } from '../sdk/src/platform/runtime/workspace-registration.ts';
+import { resetProcessUntrustedContentLedgerForTests } from '../sdk/src/platform/security/untrusted-content.ts';
+
+// Profile writes ask the content-derivation reading whenever the process
+// ledger holds untrusted text; another test file's reads must not reach these.
+beforeEach(() => { resetProcessUntrustedContentLedgerForTests(); });
 
 describe('controlPlaneStorePath', () => {
   test('puts the surface segment between the home root and control-plane', () => {
