@@ -8,39 +8,41 @@
  * controlling terminal (`/dev/tty`), so even piping stdin would not reach them
  *, the child needs a real PTY.
  *
- * APPROACH. Prompt-prone commands (and any command with `interactive: true`)
- * run under a PTY allocated by the host's `script(1)` binary (util-linux on
- * Linux, the BSD variant on macOS). The PTY wrapper is nested INSIDE the
- * sandbox argv, `[...sandboxArgv, script, ...]`, so when the per-command
- * bwrap boundary is active it stays the outermost layer and holds unchanged
- * under the PTY. When output goes quiet on a prompt-shaped tail, the pending
- * prompt text is surfaced through the injected `requestPromptAnswer` seam,
- * wired at the composition root to the SAME approval broker as a permission
- * ask, so every surface's existing approval/attention machinery renders it.
- * The typed answer is written to the PTY and the run continues; the full
- * exchange (prompt, echoed answer, subsequent output) lands in the tool
- * result transcript.
+ * APPROACH. Commands Jev reads as likely to prompt (and any command with
+ * `interactive: true`) run under a PTY allocated by the host's `script(1)`
+ * binary (util-linux on Linux, the BSD variant on macOS). The PTY wrapper is
+ * nested INSIDE the sandbox argv, `[...sandboxArgv, script, ...]`, so when the
+ * per-command bwrap boundary is active it stays the outermost layer and holds
+ * unchanged under the PTY. When output goes quiet on an unterminated last
+ * line and Jev reads that line as a question waiting for an answer, the
+ * pending prompt text is surfaced through the injected `requestPromptAnswer`
+ * seam, wired at the composition root to the SAME approval broker as a
+ * permission ask, so every surface's existing approval/attention machinery
+ * renders it. The typed answer is written to the PTY and the run continues;
+ * the full exchange (prompt, echoed answer, subsequent output) lands in the
+ * tool result transcript.
  *
- * DETECTION LIMITS (honest). There is no in-band signal that a child is
- * blocked reading its terminal, the only observable signals are the output
- * stream and time. Detection is therefore a heuristic: an unterminated final
- * line that looks like a question (ends with `:` or `?`, or carries a
- * `[y/N]` / `(yes/no)` style choice) followed by a quiet window with the
- * process still alive. This misses prompts that do not match the shapes below
- * (a bare `> ` REPL prompt, localized text, full-screen TUIs) and cannot see
- * a no-echo password read that printed nothing. A prompt that is never
- * answered, seam unwired, surface ignored it, or the human walked away,
- * ends in the normal timeout, with the detected prompt text reported on the
- * result (`pending_prompt`) so the failure is diagnosable instead of a silent
- * hang. PTY output merges stderr into stdout by nature; interactive results
- * carry the merged transcript in `stdout` and note `pty: true`.
+ * READINGS. Both decisions are `engine.tools.exec-prompt` readings
+ * (tools/batteries/exec-prompt.ts): `will_prompt` decides whether a command
+ * takes the PTY path when the caller did not say, and `awaiting_input`
+ * decides whether a quiet, unterminated last line is a question. Code only
+ * supplies the structure: a PTY backend exists, the process is alive, output
+ * has been quiet for the window, and the last line has no newline after it.
+ * Each quiet tail is read once. A no-echo password read that printed nothing
+ * leaves no line to read. A prompt that is never answered (seam unwired,
+ * surface ignored it, or the human walked away) ends in the normal timeout,
+ * with the detected prompt text reported on the result (`pending_prompt`) so
+ * the failure is diagnosable instead of a silent hang. PTY output merges
+ * stderr into stdout by nature; interactive results carry the merged
+ * transcript in `stdout` and note `pty: true`.
  */
 
 import { spawnSync } from 'node:child_process';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { sleep } from '../../utils/concurrency.js';
-import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { execPrompt, pendingPromptView } from '../batteries/exec-prompt.js';
 import type { ExecCommandInput, ExecCommandResult } from './schema.js';
 
 // ── Availability (honest, probed, never faked) ───────────────────────────────
@@ -119,55 +121,50 @@ export function buildPtyArgv(availability: PtyAvailability, command: string): st
   return [availability.scriptPath, '-qefc', command, '/dev/null'];
 }
 
-// ── Prompt-shape detection (pure heuristic; see module doc for limits) ───────
+// ── Prompt readings (tools/batteries/exec-prompt.ts) ─────────────────────────
 
-const MAX_PROMPT_TAIL_CHARS = 500;
-
-const PROMPT_TAIL_PATTERNS: readonly RegExp[] = [
-  /[:?]\s*$/, // "Password:", "Are you sure ...?", "Username for 'https://…':"
-  /\[[^\]\n]{1,12}\]\s*$/, // "[y/N]", "[Y/n/a]", "[fingerprint]"
-  /\((?:yes\/no|y\/n)(?:\/[^)\n]{1,20})?\)\s*$/i, // "(yes/no)", "(yes/no/[fingerprint])"
-];
+const WILL_PROMPT_SITE = 'tools.exec.will-prompt';
+const AWAITING_INPUT_SITE = 'tools.exec.awaiting-input';
 
 /**
- * Extract the pending prompt from an output transcript tail, or null when the
- * tail does not look like a prompt. A prompt is an unterminated (no trailing
- * newline) final line of plausible length matching a known question shape.
+ * The unterminated last line of a transcript (no newline after it), or null
+ * when the transcript ends on a newline or the last line is blank. This is
+ * structure only; whether the line is a question is {@link readPendingPrompt}.
  */
-export function findPendingPrompt(transcript: string): string | null {
-  if (transcript.length === 0) return null;
-  if (transcript.endsWith('\n')) return null;
-  const lastNewline = transcript.lastIndexOf('\n');
-  const tail = transcript.slice(lastNewline + 1);
-  const trimmed = tail.trim();
-  if (trimmed.length === 0 || trimmed.length > MAX_PROMPT_TAIL_CHARS) return null;
-  return PROMPT_TAIL_PATTERNS.some((pattern) => pattern.test(trimmed)) ? trimmed : null;
+export function pendingPromptLine(transcript: string): string | null {
+  if (transcript.length === 0 || transcript.endsWith('\n')) return null;
+  const trimmed = transcript.slice(transcript.lastIndexOf('\n') + 1).trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 /**
- * Base commands whose normal operation stops on terminal prompts (host-key
- * confirmations, credential asks). Deliberately small: auto-engaging the PTY
- * merges stderr into stdout for the run, so only commands where a hidden
- * prompt is the dominant failure mode are listed. Anything else opts in with
- * `interactive: true`.
+ * The pending prompt of a quiet transcript, or null. Jev reads whether the
+ * unterminated last line is a question waiting for an answer; any yes
+ * surfaces it, since surfacing it is itself asking the owner.
  */
-const PROMPT_PRONE_BASE_COMMANDS: ReadonlySet<string> = new Set([
-  'ssh',
-  'scp',
-  'sftp',
-  'sudo',
-  'su',
-  'passwd',
-]);
+export async function readPendingPrompt(command: string, transcript: string): Promise<string | null> {
+  const line = pendingPromptLine(transcript);
+  if (line === null) return null;
+  const recentOutput = transcript.slice(0, transcript.lastIndexOf('\n') + 1).slice(-RECENT_OUTPUT_CONTEXT_CHARS);
+  const run = await execPrompt.run(judgmentPort(AWAITING_INPUT_SITE), pendingPromptView(command, line, recentOutput), {
+    site: AWAITING_INPUT_SITE,
+    only: ['awaiting_input'],
+  });
+  const awaiting = run.readings.awaiting_input.verdict === 'yes';
+  run.recordAction(awaiting ? 'surfaced pending prompt' : 'not a prompt');
+  return awaiting ? line : null;
+}
 
-/** Whether any segment of the command has a prompt-prone base command. */
-export function isPromptProneCommand(command: string): boolean {
-  try {
-    const normalized = normalizeCommand(command);
-    return normalized.segments.some((seg) => PROMPT_PRONE_BASE_COMMANDS.has(seg.command));
-  } catch {
-    return false;
-  }
+/**
+ * Whether a command will most likely stop to ask for terminal input, read by
+ * Jev. Only a yes that acts sends the command down the PTY path.
+ */
+export async function readWillPrompt(command: string): Promise<boolean> {
+  const run = await execPrompt.run(judgmentPort(WILL_PROMPT_SITE), { command }, { site: WILL_PROMPT_SITE, only: ['will_prompt'] });
+  const reading = run.readings.will_prompt;
+  const willPrompt = reading.verdict === 'yes' && reading.outcome === 'act';
+  run.recordAction(willPrompt ? 'ran under a PTY' : 'ran on pipes');
+  return willPrompt;
 }
 
 // ── The interaction runtime (seam wired at the composition root) ─────────────
@@ -203,7 +200,7 @@ export interface ExecInteractionRuntime {
    * be answered.
    */
   readonly requestPromptAnswer?: ((ask: ExecPromptAsk) => Promise<ExecPromptAnswer>) | undefined;
-  /** Quiet window before a prompt-shaped tail counts as pending. Default 1200ms. */
+  /** Quiet window before an unterminated last line is read as a possible prompt. Default 1200ms. */
   readonly quietWindowMs?: number | undefined;
 }
 
@@ -213,19 +210,20 @@ const RECENT_OUTPUT_CONTEXT_CHARS = 2000;
 
 /**
  * Whether this command should take the PTY path: explicit `interactive: true`,
- * or a prompt-prone base command, in both cases only when the host actually
- * has a PTY backend (never faked; unavailable → the unchanged pipe path).
+ * or, when the caller did not say, a `will_prompt` reading that acts; in both
+ * cases only when the host actually has a PTY backend (never faked;
+ * unavailable means the unchanged pipe path, and nothing is read).
  */
-export function shouldRunInteractive(
+export async function shouldRunInteractive(
   interaction: ExecInteractionRuntime | null,
   cmdInput: ExecCommandInput,
   cmdStr: string,
-): boolean {
+): Promise<boolean> {
   if (!interaction?.availability.available) return false;
   if (cmdInput.background || cmdInput.until) return false;
   if (cmdInput.interactive === true) return true;
   if (cmdInput.interactive === false) return false;
-  return isPromptProneCommand(cmdStr);
+  return readWillPrompt(cmdStr);
 }
 
 // ── The interactive runner ────────────────────────────────────────────────────
@@ -354,15 +352,28 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
     }
   };
 
-  // The quiet-window watcher: a prompt-shaped unterminated tail + no new
-  // output while the child is still alive → a pending prompt.
+  // The quiet-window watcher: an unterminated last line + no new output
+  // while the child is still alive is read once for whether it is a pending
+  // prompt. A reading taken while new output arrived is stale and ignored.
+  let readAtLength = -1;
+  let judgmentFailure: unknown;
   const watcher = (async (): Promise<void> => {
     while (!exited && !timedOut && !cancelled) {
       await sleep(QUIET_POLL_INTERVAL_MS);
       if (exited || timedOut || cancelled || askInFlight || promptDeclined) continue;
       if (Date.now() - lastDataAt < quietWindowMs) continue;
-      const prompt = findPendingPrompt(transcript);
-      if (!prompt) continue;
+      if (transcript.length === readAtLength || pendingPromptLine(transcript) === null) continue;
+      const readLength = transcript.length;
+      readAtLength = readLength;
+      let prompt: string | null;
+      try {
+        prompt = await readPendingPrompt(cmdStr, transcript);
+      } catch (err: unknown) {
+        judgmentFailure = err;
+        await kill();
+        return;
+      }
+      if (!prompt || transcript.length !== readLength) continue;
       pendingPrompt = prompt;
       if (interaction.requestPromptAnswer && transcript.length !== askedAtLength) {
         askedAtLength = transcript.length;
@@ -382,6 +393,7 @@ export async function runInteractiveCommand(input: InteractiveRunInput): Promise
   // Bounded drain, a PTY grandchild can hold the pipe open past the kill.
   await Promise.race([io.then(() => undefined, () => undefined), sleep(500)]);
   await watcher;
+  if (judgmentFailure !== undefined) throw judgmentFailure;
 
   const duration = Date.now() - startTime;
   const base: ExecCommandResult = {

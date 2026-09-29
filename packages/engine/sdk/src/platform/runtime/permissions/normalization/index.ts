@@ -2,7 +2,9 @@
  * Command normalization pipeline, barrel export and primary entry point.
  *
  * Exposes the normalizeCommand() function and all supporting types.
- * Pipeline: tokenize → segment → classify → NormalizedCommand
+ * Pipeline: tokenize → segment → NormalizedCommand. What a command does is
+ * read by Jev in the gate (gate/reading.ts, gate/batteries); what host access
+ * it needs is readCommandNeeds (classifier.ts).
  */
 
 export type {
@@ -28,48 +30,25 @@ export type {
 export { tokenize } from './tokenizer.js';
 export { segment } from './segmenter.js';
 export { canonicalize } from './canonicalizer.js';
-export { classifySegment, classifyCommand, higherPriority, catastrophicReason } from './classifier.js';
+export { readCommandNeeds, type CommandNeeds } from './classifier.js';
 export { collectCommandNodes, describeNode } from './ast.js';
 export { parseAST, parseCommandAST } from './parser.js';
-export { evaluateSegmentNode, evaluateCommandAST, buildDenialExplanation, asSingleLine, DEFAULT_ALLOWED_CLASSES, ALL_COMMAND_CLASSES } from './verdict.js';
+export { evaluateSegmentNode, evaluateCommandAST, buildDenialExplanation, asSingleLine } from './verdict.js';
 
 import { tokenize } from './tokenizer.js';
 import { segment } from './segmenter.js';
-import { classifyCommand } from './classifier.js';
-import type { NormalizedCommand, CommandClassification } from './types.js';
+import type { NormalizedCommand } from './types.js';
 import { parseCommandAST } from './parser.js';
-import { evaluateCommandAST, DEFAULT_ALLOWED_CLASSES } from './verdict.js';
+import { evaluateCommandAST } from './verdict.js';
 import type { CompoundVerdict } from './verdict.js';
 
-/**
- * Normalizes a raw shell command string and evaluates per-segment verdicts.
- *
- * Uses the Shell AST parser to produce a CompoundVerdict with
- * per-segment classification and denial reasons. Requires the
- * `shell-ast-normalization` gate to be on (permissions.commandParser 'ast'); falls back to
- * `normalizeCommand` when the flag is disabled.
- *
- * @param command        - The raw shell command string to evaluate.
- * @param allowedClasses - Classification tiers to allow (default: read+write+network).
- * @returns A CompoundVerdict with per-segment breakdown.
- */
-export function normalizeCommandWithVerdicts(
-  command: string,
-  allowedClasses: ReadonlySet<CommandClassification> = DEFAULT_ALLOWED_CLASSES,
-): CompoundVerdict {
-  const ast = parseCommandAST(command);
-  return evaluateCommandAST(command, ast, allowedClasses);
+/** The parsed segments of a shell command (the Shell AST). */
+export function normalizeCommandWithVerdicts(command: string): CompoundVerdict {
+  return evaluateCommandAST(command, parseCommandAST(command));
 }
 
+/** The flat segments of a shell command. */
 export function normalizeCommand(command: string): NormalizedCommand {
   const trimmed = command.trim();
-  const tokens = tokenize(trimmed);
-  const segments = segment(tokens);
-  const analysis = classifyCommand(trimmed, segments);
-
-  return {
-    original: command,
-    segments,
-    ...analysis,
-  };
+  return { original: command, segments: segment(tokenize(trimmed)) };
 }

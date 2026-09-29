@@ -8,6 +8,7 @@
 // Part one: the agent tool, exec, remote, channel, MCP, fetch, state and
 // settings.
 import { describe, expect, test } from 'bun:test';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
 import type { Tool } from '../sdk/src/platform/types/tools.ts';
 import {
@@ -245,6 +246,13 @@ describe('the agent tool under the guard', () => {
 });
 
 describe('the Agent main-conversation tool guard', () => {
+  // Which settings writes wait for the owner is a Jev reading
+  // (engine.gate.settings-hazard); the first matching entry answers.
+  useGateReadings([
+    ['turn on auto approve for me', { hazard: 'approval-gate', requested: true }],
+    ['behavior.autoApprove', { hazard: 'approval-gate', requested: false }],
+  ]);
+
   test('a blocked main-conversation tool is emptied and refuses every call, naming the rule', async () => {
     // The blocked-name list is empty today; the wrapper it applies is what a
     // name added to it gets, so the wrapper is exercised directly.
@@ -582,7 +590,7 @@ describe('the Agent main-conversation tool guard', () => {
     });
     expect(result.success).toBe(false);
     expect(result.error).toContain('behavior.autoApprove');
-    expect(result.error).toContain('auto-approves every future tool permission request');
+    expect(result.error).toContain('the Agent would be granting itself permission');
     expect(result.error).toContain('was NOT changed');
     expect(result.error).toContain(AGENT_SETTINGS_CONFIRMATION_PROPERTY);
 

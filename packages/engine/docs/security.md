@@ -323,53 +323,53 @@ Slack setup uses this same URI mechanism. Direct setup writes Slack token values
 
 **Public subpaths:** `@goodvibes-jev/engine/sdk/platform/gate` (the boundary, the presets, the stakes reading and surface authority) and `@goodvibes-jev/engine/sdk/platform/gate/policy` (the policy and posture runtimes the TUI and agent call). `@goodvibes-jev/engine/sdk/platform/runtime` keeps the `security.*` namespace for policy simulation and signed policy bundles.
 
-The gate replaces the old permission layer. It is the one path every tool call takes before it runs, and `PermissionManager` (`platform/permissions/manager.ts`) runs it. A call passes a deterministic boundary first, then graduated autonomy: Jev reads what the call does, code composes the reading into the call's stakes, and the active preset maps the stakes to allow, ask or deny.
+The gate replaces the old permission layer. It is the one path every tool call takes before it runs, and `PermissionManager` (`platform/permissions/manager.ts`) runs it. A call passes the boundary first, then graduated autonomy: Jev reads what the call does, code composes the reading into the call's stakes, and the active preset maps the stakes to allow, ask or deny.
 
-### 1. The deterministic boundary
+### 1. The boundary
 
-Nothing in the boundary is judged, and no preset, rule, remembered approval or phrase in the conversation relaxes it (`platform/gate/boundary.ts`):
+The boundary runs on Jev's reading of the call (step 3 below asks every question in one round) and before any explicit rule or preset; no preset, remembered approval or phrase in the conversation relaxes it (`platform/gate/boundary.ts`). Each check was read for what it actually decides, and its disposition follows from that, not from being a security check:
 
-| Check | What it refuses | Reason code |
-|---|---|---|
-| Catastrophic commands | Any shell segment on the frozen catastrophic list: root deletion, raw disk writes, filesystem creation over a device, fork bombs. The list only grows with the owner's explicit approval. The exec tool repeats the same check at run time. | `boundary_catastrophic` |
-| Surface authority | A call that changes anything, made for a turn whose input came from an input-only surface (email, webhooks and any undeclared surface). Command surfaces are declared in `gate/surface-authority.ts`; each turn's surface is scoped to that turn's async work (`security/turn-boundary.ts`). | `boundary_surface_authority` |
-| Card-shape scanner | An outward call whose arguments carry card-shaped content. The refusal names positions and kinds, never digits. | `boundary_card_shapes` |
-| Outward-effect check | An outward call made after untrusted content entered the turn, when what it sends derives from what was read (`security/untrusted-content.ts`). | `boundary_outward_effect` |
+| Check | What it decides | Disposition and why | Reason code |
+|---|---|---|---|
+| Catastrophic command | Whether a shell command would destroy the machine or the user's data wholesale. | **Jev** (`engine.gate.boundary`, `catastrophic`). It is a judgment about what a command does; the old frozen list only knew the spellings someone wrote down (`find / -delete` and `rm -rf ~/*` walked past it). A yes refuses outright; an uncertain reading makes the call critical stakes, so every preset asks. The exec tool repeats the gate's verdict at run time, and refuses an uncertain one when no gate read it. | `boundary_catastrophic` |
+| Surface authority | Whether the surface the turn's instruction came from can direct work. | **Code** (the owner's per-surface declarations, `gate/surface-authority.ts`). What it depends on is who can write to the surface in this deployment (who holds the bot token, who can mail the address), which no text in the call shows; the owner declared it, and an undeclared surface is input-only. Whether the call is consequential is Jev's reading (`mutates`, `outward`). | `boundary_surface_authority` |
+| Card details | Whether an outward call carries a person's payment card details. | **Jev** (`engine.gate.boundary`, `cardDetails`). A checksum cannot tell a card from an order number and misses a card written in words or split across fields. A yes refuses; an uncertain reading is refused unless the owner approves the exact call. | `boundary_card_details` |
+| Outward-effect taint | Whether what an outward call sends derives from untrusted text read this turn. | **Jev over a recorded fact.** That the turn read untrusted text is the untrusted-content ledger's record (what happened). Whether the call's content derives from it is `engine.gate.outward-taint`, replacing the shared-word and shared-character overlap counts. When the ledger kept no text there is nothing to read, and the owner is asked. | `boundary_outward_effect` |
+| Trust-gated approval | Whether an owner approval clears a card-uncertain or taint refusal. | **Code.** The approval is minted only from the prompt the owner answered for this call; the check is that it names this action, that its fingerprint equals the fingerprint of the exact content being sent, and that its five minutes have not passed. Hash equality and a clock comparison decide nothing; the owner's answer is the decision. | `owner_approved_outward` |
 
-Which calls are outward is code's answer (the channel and remote tools, a fetch that sends a body or a writing method, a shell command the parser classifies as network) united with Jev's `outward` reading. Jev can add a call to the outward checks, never take one out.
-
-**Trust-gated approval.** The only thing that clears an outward-effect refusal is the owner answering the gate's prompt for that exact call. The answer mints a single-use owner approval bound to the call's content (`security/owner-approval.ts`, five-minute lifetime) and the check runs again with it; the decision reports `owner_approved_outward`. It is never remembered as a rule.
+Which calls are outward is Jev's `outward` reading alone; there is no fixed tool list.
 
 ### 2. Explicit owner decisions
 
-After the boundary, decisions the owner made explicitly stand as given, with no reading:
+After the boundary, decisions the owner made explicitly stand as given:
 
 1. **`behavior.autoApprove`** (`config_policy` / `config_allow`): the owner's opt-out of the presets and prompts. It never bypasses the boundary.
-2. **Policy as code**, when the `permissions-policy-engine` feature is on: user and managed policy rules (`managed_policy`) and the policy engine's safety layer (`safety_check`, deny only). The evaluator's own mode layer is not consulted.
+2. **Policy as code**, when the `permissions-policy-engine` feature is on: user and managed policy rules (`managed_policy`). Matching a rule the owner wrote carries out the owner's decision. The evaluator's mode layer is not consulted, and it has no safety layer: its old destructive-prefix, dangerous-pattern, path-traversal and SQL lists decided what a call does by spelling, and those questions are the gate's readings now.
 3. **The custom preset's per-tool settings** (`permissions.tools.*`): `allow`, `deny`, or `prompt` (always ask).
 4. **Remembered approvals**: the session cache (`session_override`) and durable rules (`user_rule`). A remembered allow does not carry a change into the plan preset.
 
-Known read-only built-in tools (read, find, analyze, inspect, state, registry and the other `read`-category tools except `fetch`) then run without a reading, except a read of a well-known credential store, which is read by Jev like any side-effecting call.
+A call to a built-in read-only tool (read, find, analyze, inspect, state, registry and the other `read`-category tools except `fetch`) is asked one question, whether it touches secret or credential material (`secrets`); a no runs it with no further reading, a yes gives it the full reading, where it is at least high stakes. There is no shipped list of credential paths: a list decided every unlisted path by omission. Search, list and map tools ask the same question, through `PermissionManager.readAccess`, for each file whose content they are about to surface.
 
 ### 3. The stakes reading
 
-Jev reads every other call through two batteries asked in parallel (`platform/gate/batteries`), each question narrow and read through a band scaled to its stakes:
+Jev reads every other call through three batteries asked in parallel (`platform/gate/batteries`), each question narrow and read through a band scaled to its stakes:
 
 | Battery | Questions |
 |---|---|
 | `engine.gate.side-effect` | Does the call change state (`mutates`)? Does it send data or cause an effect outside this machine (`outward`)? Does it read, print, send or embed secrets (`secrets`)? For a shell command: is it written to hide what it does (`obfuscated`)? For an unknown tool: what kind of action is it (`kind`)? |
 | `engine.gate.risk-family` | Which risk family is it (the closed set the approval brief and checklists use)? Is its effect hard to undo (`irreversible`)? Does it reach beyond the project (`beyondProject`)? Does it loosen a security boundary (`weakensSecurity`)? |
+| `engine.gate.boundary` | For a shell command: would it destroy the machine or the user's data wholesale (`catastrophic`)? Does the call carry payment card details (`cardDetails`)? |
 
 Code composes the facts into stakes (`gate/reading.ts`, `stakesFromFacts`). A fact whose reading is uncertain counts as true, so doubt raises the stakes and never lowers them:
 
 | Stakes | When |
 |---|---|
-| `critical` | Loosens a security boundary; is written to hide what it does; is hard to undo and reaches beyond the project or outside the machine; or sends secrets out |
+| `critical` | Loosens a security boundary; is written to hide what it does; might be catastrophic (an uncertain boundary reading); is hard to undo and reaches beyond the project or outside the machine; or sends secrets out |
 | `high` | Hard to undo, touches secrets, reaches beyond the project, or goes outside the machine |
 | `medium` | Changes something |
 | `low` | Changes nothing |
 
-The stakes become the analysis `riskLevel`; the family, the facts, the side effects and the blast radius ride on the analysis and the decision (`reading`), and the tool pipeline emits them as `STAKES_READ` on the `gate` event domain. A failure of the judgment port fails the call; there is no heuristic fallback, and outage handling is the provider failover chain behind the port.
+The stakes become the analysis `riskLevel`; the family, the facts, the side effects and the blast radius ride on the analysis and the decision (`reading`), and the tool pipeline emits them as `STAKES_READ` on the `gate` event domain. When Jev cannot answer, the judgment port's error propagates and the call fails; no heuristic stands in.
 
 ### 4. Presets over the stakes table
 
@@ -389,11 +389,11 @@ Background agents follow the same gate. The escape hatch `permissions.background
 
 ### Sandbox escalations
 
-A sandboxed command that needs host access asks the owner through the same approval broker. With `sandbox.judgment` set to annotate or auto-approve, the `engine.gate.sandbox-advisory` battery reads whether the command shows a risk the owner should see; the reading annotates the ask, and only in the opt-in auto-approve mode does a confident looks-safe reading approve it. It never denies and never touches the catastrophic list.
+What host access a sandboxed command needs (the network, host privileges) is Jev's reading, `engine.gate.sandbox-needs`, replacing the shell classifier's fixed binary and subcommand sets and the package-install table. The network is opened inside the sandbox only for a command read as needing it whose base command the owner's egress allowlist names (matching the owner's list carries out the owner's setting). A sandboxed command that needs host access asks the owner through the same approval broker. With `sandbox.judgment` set to annotate or auto-approve, the `engine.gate.sandbox-advisory` battery reads whether the command shows a risk the owner should see; the reading annotates the ask, and only in the opt-in auto-approve mode does a confident looks-safe reading approve it. It never denies and never touches the catastrophic list.
 
 ### MCP tool calls
 
-`McpPermissionManager` reads each MCP call's capability class through the side-effect battery's `capability` question; the role, scope and trust-mode rules that consume it stay code. A server whose trust mode is `blocked`, or whose schema is quarantined, is refused before any reading.
+`McpPermissionManager` reads each MCP call's capability class through the side-effect battery's `capability` question; the role, scope and trust-mode rules that consume it stay code. A server whose trust mode is `blocked` (the owner's setting), or whose schema is quarantined, is refused before any reading.
 
 `checkDetailed()` returns a `PermissionCheckResult` with `approved`, `persisted`, `sourceLayer`, `reasonCode`, the `analysis`, and when present the `boundary` checks, the `reading`, the `preset` decision and a `detail` explaining a refusal.
 

@@ -1,6 +1,10 @@
 import type { ToolDefinition } from '../types/tools.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { paramFill, paramFillCandidate, paramFillContext } from './batteries/param-fill.js';
+
+const PARAM_FILL_SITE = 'tools.auto-repair.param-fill';
 
 /** Result of a tool call repair attempt. */
 export interface RepairResult {
@@ -20,22 +24,27 @@ export interface RepairResult {
  * If no repairs are needed (or repair is impossible), returns the original unchanged
  * with repaired=false.
  *
- * Design: never throws, always returns a result. Premium models that send
- * correct calls pass through unchanged (zero overhead).
+ * Design: the format repairs never throw; a failure there returns the
+ * original arguments with a warning. Filling a missing required parameter
+ * from a spare argument is a reading (`engine.tools.param-fill`), and a
+ * JudgmentError from it propagates. Calls that are already correct pass
+ * through unchanged, and a call with no missing required string parameter
+ * asks nothing.
  */
-export function repairToolCall(
+export async function repairToolCall(
   toolName: string,
   args: Record<string, unknown>,
   schema: ToolDefinition,
-): RepairResult {
+): Promise<RepairResult> {
   let fixed: Record<string, unknown>;
   const repairs: string[] = [];
+  const params = schema.parameters as Record<string, unknown> | undefined;
+  const declared = params?.properties;
+  const properties = (declared !== null && typeof declared === 'object' ? declared : {}) as Record<string, Record<string, unknown>>;
+  const required = (Array.isArray(params?.required) ? params.required : []).filter((key): key is string => typeof key === 'string');
 
   try {
     fixed = structuredClone(args);
-    const params = schema.parameters as Record<string, unknown> | undefined;
-    const properties = (params?.properties ?? {}) as Record<string, Record<string, unknown>>;
-    const required = (params?.required ?? []) as string[];
 
     // --- Rule 1: Missing `mode` on agent tool ---
     if (toolName === 'agent' && fixed['mode'] === undefined) {
@@ -98,30 +107,6 @@ export function repairToolCall(
       }
     }
 
-    // --- Rule 2: Missing required string params, attempt to fill from present params ---
-    for (const requiredKey of required) {
-      if (requiredKey in fixed) {
-        continue; // already present
-      }
-
-      const targetSchema = properties[requiredKey]!;
-      if (!targetSchema) continue;
-
-      const targetType = targetSchema['type'] as string | undefined;
-      if (targetType !== 'string') {
-        continue; // only attempt string params
-      }
-
-      // Look for a non-required param with the same value type whose value could fill it
-      const candidate = _findStringCandidate(requiredKey, fixed, properties, required);
-      if (candidate !== null) {
-        fixed[requiredKey] = candidate.value;
-        delete fixed[candidate.sourceKey];
-        repairs.push(
-          `filled missing required param '${requiredKey}' from non-required param '${candidate.sourceKey}'`,
-        );
-      }
-    }
   } catch (err) {
     // Never let repair logic crash the caller
     const warning = `Auto-repair skipped for tool '${toolName}': ${summarizeError(err)}`;
@@ -130,6 +115,21 @@ export function repairToolCall(
       error: summarizeError(err),
     });
     return { repaired: false, original: args, fixed: args, repairs: [], warnings: [warning] };
+  }
+
+  // --- Rule 2: Missing required string params, filled from a spare argument Jev picks ---
+  for (const requiredKey of required) {
+    if (requiredKey in fixed) continue;
+    const targetSchema = properties[requiredKey];
+    if (targetSchema?.['type'] !== 'string') continue; // only string params
+    const candidate = await _pickStringCandidate(toolName, schema, requiredKey, fixed, properties, required);
+    if (candidate !== null) {
+      fixed[requiredKey] = candidate.value;
+      delete fixed[candidate.sourceKey];
+      repairs.push(
+        `filled missing required param '${requiredKey}' from non-required param '${candidate.sourceKey}'`,
+      );
+    }
   }
 
   const repaired = repairs.length > 0;
@@ -149,62 +149,56 @@ export function repairToolCall(
 // ---------------------------------------------------------------------------
 
 /**
- * Rule 1: Infer the `mode` value for the agent tool from the supplied args.
+ * Rule 1: the agent tool's `mode`, when the arguments settle it. `task` and
+ * `template` are fields of spawn mode only (agent/schema.ts), so a call that
+ * carries either is a spawn. Nothing else settles it: `agentId` belongs to
+ * seven modes (status, cancel, get, budget, plan, wait, message) and an empty
+ * call names none, so those calls are left without a mode and fail on it.
  */
 function _inferAgentMode(args: Record<string, unknown>): string | null {
   const hasTask = typeof args['task'] === 'string' && args['task'].length > 0;
   const hasTemplate = typeof args['template'] === 'string';
-  const hasAgentId = typeof args['agentId'] === 'string' && args['agentId'].length > 0;
-  const isEmpty =
-    Object.keys(args).length === 0 ||
-    Object.values(args).every((v) => v === undefined || v === null || v === '');
-
-  if (isEmpty) {
-    return 'list';
-  }
-  if (hasTask || hasTemplate) {
-    return 'spawn';
-  }
-  if (hasAgentId) {
-    return 'status';
-  }
-
-  return null;
+  return hasTask || hasTemplate ? 'spawn' : null;
 }
 
 /**
- * Rule 2: Find a non-required string-typed param present in `args` whose
- * value could serve as the value for the missing `targetKey`.
- *
- * Prefers params whose name is semantically related to the target.
+ * Rule 2: which spare argument, if any, holds the value meant for the missing
+ * required string parameter `targetKey`. Code offers the spare arguments that
+ * could type-check as it (present, non-empty strings the schema does not
+ * require and types as a string or does not declare); the
+ * `engine.tools.param-fill` selection picks one or none. Only a pick that
+ * acts fills the parameter; anything else leaves it missing, so the call
+ * fails on it as it would have without repair.
  */
-function _findStringCandidate(
+async function _pickStringCandidate(
+  toolName: string,
+  schema: ToolDefinition,
   targetKey: string,
   args: Record<string, unknown>,
   properties: Record<string, Record<string, unknown>>,
   required: string[],
-): { sourceKey: string; value: string } | null {
-  const nonRequiredStringArgs = Object.entries(args).filter(([key, value]) => {
-    if (required.includes(key)) return false; // skip required params
+): Promise<{ sourceKey: string; value: string } | null> {
+  const spare = Object.entries(args).filter(([key, value]) => {
+    if (required.includes(key)) return false;
     if (typeof value !== 'string' || value.length === 0) return false;
     const propType = properties[key]?.['type'];
-    // Accept if property schema says 'string' or schema doesn't define the key
     return propType === 'string' || propType === undefined;
   }) as [string, string][];
+  if (spare.length === 0) return null;
 
-  if (nonRequiredStringArgs.length === 0) return null;
-
-  // Prefer a candidate whose key name overlaps with the target key
-  const targetLower = targetKey.toLowerCase();
-  const preferred = nonRequiredStringArgs.find(
-    ([key]) =>
-      key.toLowerCase().includes(targetLower) || targetLower.includes(key.toLowerCase()),
+  const describe = (key: string): string | undefined => {
+    const description = properties[key]?.['description'];
+    return typeof description === 'string' ? description : undefined;
+  };
+  const selection = await paramFill.select(
+    judgmentPort(PARAM_FILL_SITE),
+    paramFillContext(toolName, schema.description, targetKey, describe(targetKey)),
+    spare.map(([key, value]) => paramFillCandidate(key, value, describe(key))),
+    { site: PARAM_FILL_SITE },
   );
-
-  if (preferred) {
-    return { sourceKey: preferred[0], value: preferred[1] };
-  }
-
-  // No name match found, do not guess; let the call fail normally
-  return null;
+  const filled = selection.chosen !== undefined && selection.outcome === 'act';
+  selection.recordAction(filled ? `filled ${targetKey} from ${selection.chosen}` : `left ${targetKey} missing`);
+  if (!filled) return null;
+  const picked = spare.find(([key]) => key === selection.chosen);
+  return picked ? { sourceKey: picked[0], value: picked[1] } : null;
 }

@@ -296,7 +296,8 @@ export interface HookDep {
   hookKind: 'useEffect' | 'useMemo' | 'useCallback';
   line: number;
   deps: string[];
-  missing: string[];
+  /** Whether the dependency array leaves out a value the callback reads, as Jev read it. */
+  omitsDependency: 'yes' | 'no' | 'uncertain';
 }
 
 export interface HooksInfo {

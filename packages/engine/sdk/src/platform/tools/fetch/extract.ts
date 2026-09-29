@@ -272,6 +272,16 @@ function extractSummary(body: string, contentType: string): string {
   return parts.join('\n\n') || extractReadable(body).slice(0, 500);
 }
 
+/** Whether the whole body is JSON by the JSON grammar, not by its first character. */
+function parsesAsJson(body: string): boolean {
+  try {
+    JSON.parse(body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function sniffContentType(contentType: string, body: string): string {
   const isMissing = !contentType || /application\/octet-stream/i.test(contentType);
   if (!isMissing) return contentType;
@@ -283,7 +293,7 @@ export function sniffContentType(contentType: string, body: string): string {
   if (/^<\?xml/i.test(sample)) {
     return 'application/xml';
   }
-  if (/^[{[]/.test(sample)) {
+  if (/^[{[]/.test(sample) && parsesAsJson(body)) {
     return 'application/json';
   }
   return contentType;

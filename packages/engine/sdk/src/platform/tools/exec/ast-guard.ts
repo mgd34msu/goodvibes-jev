@@ -1,26 +1,27 @@
 /**
- * Shell AST guard for the exec tool.
+ * The exec tool's run-time guard.
  *
- * Integrates the Shell AST normalization pipeline with the exec tool to
- * provide per-segment verdict evaluation and user-facing denial explanations.
+ * Before a command runs, the guard repeats the gate's catastrophic decision:
+ * the gate's boundary reading of this command when the gate read it (the same
+ * process remembers it), or a fresh `engine.gate.boundary` reading when the
+ * exec tool is called without the gate in front of it. A yes refuses; an
+ * uncertain reading lets it run only because the gate already sent it to the
+ * owner at critical stakes (outside the gate there is no owner prompt, so an
+ * uncertain reading refuses there too).
  *
- * When AST command parsing is on (permissions.commandParser 'ast', the default), every exec
- * command is parsed into an AST, evaluated segment-by-segment, and denied
- * with a structured explanation if any segment fails policy.
- *
- * When the flag is disabled, this module falls back to the baseline
- * flat-token segmentation path.
+ * With AST command parsing on (permissions.commandParser 'ast', the default),
+ * the command is also parsed segment by segment, and a command that parses to
+ * no runnable segment is refused: there is nothing to run as written. What a
+ * command does is never decided here by name; the gate reads it.
  *
  * @module tools/exec/ast-guard
  */
 
 import { parseCommandAST } from '../../runtime/permissions/normalization/parser.js';
 import { collectCommandNodes } from '../../runtime/permissions/normalization/ast.js';
-import { evaluateCommandAST, asSingleLine, DEFAULT_ALLOWED_CLASSES } from '../../runtime/permissions/normalization/verdict.js';
-import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
-import { catastrophicCheck } from '../../gate/boundary.js';
+import { evaluateCommandAST, asSingleLine } from '../../runtime/permissions/normalization/verdict.js';
+import { readCatastrophic } from '../../gate/reading.js';
 import type { CompoundVerdict } from '../../runtime/permissions/normalization/verdict.js';
-import type { CommandClassification } from '../../runtime/permissions/normalization/types.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
 
 type FlagManagerLike = Pick<FeatureFlagManager, 'isEnabled'>;
@@ -29,166 +30,50 @@ function isASTNormalizationEnabled(flagManager?: FlagManagerLike | null): boolea
   return flagManager?.isEnabled('shell-ast-normalization') ?? false;
 }
 
-// ── Allowed classification set ─────────────────────────────────────────────────
-
-// DEFAULT_ALLOWED_CLASSES is imported from verdict.ts
-
-// ── Guard result ───────────────────────────────────────────────────────────────
-
-/**
- * The result of an AST guard evaluation for a single exec command.
- */
+/** The result of the run-time guard for one exec command. */
 export interface ASTGuardResult {
-  /** Whether the command is permitted by the AST guard. */
+  /** Whether the command may run. */
   allowed: boolean;
-  /**
-   * Human-readable denial explanation for user display.
-   * Only set when `allowed` is false.
-   */
+  /** Human-readable denial explanation; set only when `allowed` is false. */
   denialMessage?: string | undefined;
-  /**
-   * The full CompoundVerdict, available for upstream audit logging.
-   * Only set when AST normalization is active.
-   */
+  /** The parsed segments, when AST parsing was active. */
   verdict?: CompoundVerdict | undefined;
-  /** Whether AST normalization was active. */
+  /** Whether AST parsing was active. */
   astModeActive: boolean;
 }
 
-// ── Baseline guard ─────────────────────────────────────────────────────────────
-
 /**
- * Evaluates a command using the baseline flat segmentation pipeline.
+ * Guards one shell command before it runs.
  *
- * Catastrophic commands (the gate boundary's frozen list and safety layer,
- * gate/boundary.ts catastrophicCheck) are denied unconditionally. Everything
- * else is gated by `allowedClasses`: the caller decides which classification
- * tiers pass. The exec tool passes every class, because exec risk is decided
- * by the gate (Jev's stakes reading and the active preset) before the call
- * runs, not by a second config-blind gate here.
- *
- * @param command        - The raw shell command string.
- * @param allowedClasses - Classification tiers the caller permits.
- * @returns ASTGuardResult with AST mode disabled.
+ * @param command     - The raw shell command string.
+ * @param flagManager - Feature flags (AST parsing).
  */
-function baselineGuard(
+export async function guardExecCommand(
   command: string,
-  allowedClasses: ReadonlySet<CommandClassification>,
-): ASTGuardResult {
-  // The same catastrophic check the gate's boundary ran before the call was
-  // approved (gate/boundary.ts), repeated at exec time.
-  const catastrophic = catastrophicCheck('exec', { command });
-  if (catastrophic.result === 'refuse') {
+  flagManager?: FlagManagerLike | null,
+): Promise<ASTGuardResult> {
+  const astModeActive = isASTNormalizationEnabled(flagManager);
+  let verdict: CompoundVerdict | undefined;
+  if (astModeActive) {
+    const ast = parseCommandAST(command);
+    if (!collectCommandNodes(ast).some((node) => node.parseError !== undefined)) {
+      verdict = evaluateCommandAST(command, ast);
+      if (!verdict.allowed) return { allowed: false, denialMessage: verdict.denialExplanation, verdict, astModeActive };
+    }
+  }
+  const { verdict: catastrophic, readByGate } = await readCatastrophic(command);
+  if (catastrophic === 'yes' || (catastrophic === 'uncertain' && !readByGate)) {
     return {
       allowed: false,
       denialMessage:
         `Command denied (safety block): "${asSingleLine(command)}"\n` +
-        `Unconditionally blocked destructive command, ${catastrophic.detail}.\n` +
+        `${catastrophic === 'yes' ? 'Read as destroying the machine or the user\'s data wholesale' : 'It could not be read as safe, and no owner was asked'}.\n` +
         `This block is not affected by permission settings.`,
-      astModeActive: false,
+      ...(verdict ? { verdict } : {}),
+      astModeActive,
     };
   }
-
-  const normalized = normalizeCommand(command);
-  const cls = normalized.highestClassification;
-  if (!allowedClasses.has(cls)) {
-    return {
-      allowed: false,
-      denialMessage:
-        `Command denied (command-class policy): "${asSingleLine(command)}"\n` +
-        `Classification: ${cls}\n` +
-        `Classification "${cls}" is not in the caller's allowed set [${[...allowedClasses].join(', ')}].`,
-      astModeActive: false,
-    };
-  }
-
-  return { allowed: true, astModeActive: false };
-}
-
-// ── AST mode guard ─────────────────────────────────────────────────────────────
-
-/**
- * Evaluates a command using the Shell AST pipeline.
- *
- * Parses the command into a ShellNode AST, evaluates each segment
- * independently, and returns a CompoundVerdict.
- *
- * @param command        - The raw shell command string.
- * @param allowedClasses - Classification tiers to allow.
- * @returns ASTGuardResult with full CompoundVerdict attached.
- */
-function astGuard(
-  command: string,
-  allowedClasses: ReadonlySet<CommandClassification>,
-): ASTGuardResult {
-  const ast = parseCommandAST(command);
-
-  // Parser failure → fall back to the baseline matcher. The parser records a
-  // parseError on any command node it could not structure; when present, the
-  // AST is unreliable, so we defer to the baseline flat-segmentation path
-  // rather than trust a degraded tree. This is never a hard error and never a
-  // blanket allow, baselineGuard applies the same frozen catastrophic block
-  // and class gating the non-AST path always has.
-  if (collectCommandNodes(ast).some((node) => node.parseError !== undefined)) {
-    return baselineGuard(command, allowedClasses);
-  }
-
-  const verdict = evaluateCommandAST(command, ast, allowedClasses);
-
-  if (!verdict.allowed) {
-    return {
-      allowed: false,
-      denialMessage: verdict.denialExplanation,
-      verdict,
-      astModeActive: true,
-    };
-  }
-
-  return {
-    allowed: true,
-    verdict,
-    astModeActive: true,
-  };
-}
-
-// ── Public API ─────────────────────────────────────────────────────────────────
-
-/**
- * Evaluates a shell command string through the AST guard.
- *
- * Routes to the AST pipeline when the `shell-ast-normalization` gate
- * is enabled, otherwise falls back to the baseline segmentation path.
- *
- * @param command        - The raw shell command string to evaluate.
- * @param allowedClasses - Classification tiers the caller permits (honored in
- *                         both AST and baseline modes). Callers fronted by the
- *                         permission layer pass ALL_COMMAND_CLASSES so class
- *                         risk is decided by user settings, not this guard.
- * @returns ASTGuardResult with allow/deny decision and optional denial message.
- *
- * @example
- * const result = guardExecCommand('ls /tmp && rm -rf /');
- * if (!result.allowed) {
- *   console.error(result.denialMessage);
- * }
- */
-export async function guardExecCommand(
-  command: string,
-  allowedClasses: ReadonlySet<CommandClassification> = DEFAULT_ALLOWED_CLASSES,
-  flagManager?: FlagManagerLike | null,
-): Promise<ASTGuardResult> {
-  if (isASTNormalizationEnabled(flagManager)) {
-    try {
-      return astGuard(command, allowedClasses);
-    } catch {
-      // Any unexpected fault in the AST path (parser, verdict, or evaluation)
-      // falls back to the baseline matcher rather than surfacing a hard error
-      // or defaulting to allow. The baseline path still enforces the frozen
-      // catastrophic block and the caller's class gating.
-      return baselineGuard(command, allowedClasses);
-    }
-  }
-  return baselineGuard(command, allowedClasses);
+  return { allowed: true, ...(verdict ? { verdict } : {}), astModeActive };
 }
 
 /**
@@ -204,7 +89,6 @@ export function formatDenialResponse(
 ): Record<string, unknown> {
   const segmentDetails = result.verdict?.segments.map((s) => ({
     command: s.command,
-    classification: s.classification,
     allowed: s.allowed,
     reason: s.reason,
   }));

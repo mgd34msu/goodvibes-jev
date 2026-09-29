@@ -10,6 +10,7 @@ import { PluginLifecycleManager } from '../sdk/src/platform/runtime/plugins/mana
 import type { PluginManifestV2 } from '../sdk/src/platform/runtime/plugins/types.js';
 import type { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { logger } from '../sdk/src/platform/utils/logger.js';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 
 const tmpRoots: string[] = [];
 
@@ -122,6 +123,9 @@ function hookEvent() {
 }
 
 describe('plugins/hooks/permissions observability', () => {
+  // The permission manager reads every call through the gate batteries; a fake
+  // port answers them so no test calls the live Jev API.
+  useGateReadings();
   test('quarantine moves active plugins to degraded while keeping them operational and recording reason', async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const runtimeBus = makeRuntimeBus(events);

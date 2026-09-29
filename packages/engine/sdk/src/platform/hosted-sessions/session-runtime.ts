@@ -231,7 +231,7 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     contextAccountingHolder,
     // A file the read tool would gate must not leak its content through a
     // search, the same filter a terminal composition installs.
-    readAccessFilter: (path: string) => services.permissionManager.previewReadAccess(path) === 'allow',
+    readAccessFilter: async (path: string) => (await services.permissionManager.readAccess(path)) === 'allow',
     sandboxEscalationHandler: approvalHandlers.sandboxEscalationHandler,
     execPromptAnswerHandler: approvalHandlers.execPromptAnswerHandler,
     localhostFetchApproval: approvalHandlers.localhostFetchApproval,

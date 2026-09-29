@@ -62,7 +62,7 @@ function describeExec(args: Record<string, unknown>, category: PermissionCategor
   }
   const verdict = normalizeCommandWithVerdicts(command);
   return {
-    classification: verdict.highestClassification,
+    classification: 'shell',
     riskLevel: unreadRisk(category),
     summary: 'Execute shell command',
     reasons: cleanReasons([

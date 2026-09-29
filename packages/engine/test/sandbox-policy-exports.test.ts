@@ -22,6 +22,7 @@ describe('sandbox policy public subpaths', () => {
   test('decideSandboxedExec is exported and relaxes a boundary-safe ask to an allow', () => {
     const decision: SandboxPolicyDecision = decideSandboxedExec({
       command: 'ls -la',
+      needs: { needsNetwork: false, needsPrivilege: false },
       sandboxActive: true,
       egressAllowlist: [],
       baseEffectWhenNotSandboxed: 'ask',
@@ -34,6 +35,7 @@ describe('sandbox policy public subpaths', () => {
   test('decideSandboxedExec names a network escalation instead of auto-allowing', () => {
     const decision = decideSandboxedExec({
       command: 'curl https://example.com',
+      needs: { needsNetwork: true, needsPrivilege: false },
       sandboxActive: true,
       egressAllowlist: [],
       baseEffectWhenNotSandboxed: 'ask',
@@ -45,6 +47,7 @@ describe('sandbox policy public subpaths', () => {
   test('decideSandboxedExec passes the base effect through when the sandbox is inactive', () => {
     const decision = decideSandboxedExec({
       command: 'ls',
+      needs: { needsNetwork: false, needsPrivilege: false },
       sandboxActive: false,
       egressAllowlist: [],
       baseEffectWhenNotSandboxed: 'ask',

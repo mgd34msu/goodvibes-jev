@@ -19,7 +19,11 @@ import {
 } from '../sdk/src/platform/tools/exec/sandbox.js';
 import { decideSandboxedExec } from '../sdk/src/platform/runtime/permissions/sandbox-policy.js';
 import { guardExecCommand } from '../sdk/src/platform/tools/exec/ast-guard.js';
-import { ALL_COMMAND_CLASSES } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
+import { useGateReadings } from './_helpers/gate-readings.ts';
+
+const LOCAL = { needsNetwork: false, needsPrivilege: false } as const;
+const NETWORK = { needsNetwork: true, needsPrivilege: false } as const;
+const PRIVILEGE = { needsNetwork: false, needsPrivilege: true } as const;
 
 const AVAILABLE: SandboxAvailability = {
   available: true,
@@ -120,7 +124,7 @@ describe('buildBwrapArgv', () => {
 // ── Per-command plan resolution ──────────────────────────────────────────────
 
 describe('resolveExecSandboxPlan', () => {
-  const base = { availability: AVAILABLE, featureEnabled: true, workspaceDir: '/w', cwd: '/w' };
+  const base = { availability: AVAILABLE, featureEnabled: true, workspaceDir: '/w', cwd: '/w', needs: LOCAL };
 
   test('feature flag off → not sandboxed, no argv prefix (byte-for-byte path)', () => {
     const plan = resolveExecSandboxPlan({ ...base, featureEnabled: false, config: config(), command: 'ls' });
@@ -146,7 +150,7 @@ describe('resolveExecSandboxPlan', () => {
     expect(plan.boundary).toContain('no sandbox');
   });
 
-  test('active + non-network command → sandboxed, network disabled, unshare-net present', () => {
+  test('active + a command read as needing no network → sandboxed, network disabled, unshare-net present', () => {
     const plan = resolveExecSandboxPlan({ ...base, config: config(), command: 'grep foo file' });
     expect(plan.sandboxed).toBe(true);
     expect(plan.network).toBe('disabled');
@@ -154,15 +158,15 @@ describe('resolveExecSandboxPlan', () => {
     expect(plan.escalationsGranted).toEqual([]);
   });
 
-  test('network command NOT on egress allowlist → sandboxed, network stays disabled', () => {
-    const plan = resolveExecSandboxPlan({ ...base, config: config(), command: 'curl https://example.com' });
+  test('a command read as needing the network, NOT on the egress allowlist → sandboxed, network stays disabled', () => {
+    const plan = resolveExecSandboxPlan({ ...base, needs: NETWORK, config: config(), command: 'curl https://example.com' });
     expect(plan.sandboxed).toBe(true);
     expect(plan.network).toBe('disabled');
     expect(plan.argvPrefix.join(' ')).toContain('--unshare-net');
   });
 
-  test('network command ON egress allowlist → network enabled as a named escalation', () => {
-    const plan = resolveExecSandboxPlan({ ...base, config: config({ egressAllowlist: ['curl'] }), command: 'curl https://example.com' });
+  test('a command read as needing the network, ON the egress allowlist → network enabled as a named escalation', () => {
+    const plan = resolveExecSandboxPlan({ ...base, needs: NETWORK, config: config({ egressAllowlist: ['curl'] }), command: 'curl https://example.com' });
     expect(plan.network).toBe('enabled');
     expect(plan.argvPrefix.join(' ')).not.toContain('--unshare-net');
     expect(plan.escalationsGranted.some((e) => e.includes('network'))).toBe(true);
@@ -180,60 +184,56 @@ describe('resolveExecSandboxPlan', () => {
 
 describe('decideSandboxedExec', () => {
   test('sandbox inactive → returns the base effect unchanged (purely additive)', () => {
-    const d = decideSandboxedExec({ command: 'curl x', sandboxActive: false, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+    const d = decideSandboxedExec({ command: 'curl x', needs: NETWORK, sandboxActive: false, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('ask');
     expect(d.sandboxed).toBe(false);
   });
 
   test('active + boundary-safe command → auto-allow, no escalations', () => {
-    const d = decideSandboxedExec({ command: 'ls -la', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+    const d = decideSandboxedExec({ command: 'ls -la', needs: LOCAL, sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('allow');
     expect(d.escalations).toEqual([]);
   });
 
   test('active + a destructive-but-bounded command → still auto-allow (only workspace is writable)', () => {
-    const d = decideSandboxedExec({ command: 'rm -rf build', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+    const d = decideSandboxedExec({ command: 'rm -rf build', needs: LOCAL, sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('allow');
   });
 
   test('active + network command → ask, naming the network need', () => {
-    const d = decideSandboxedExec({ command: 'curl https://x', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+    const d = decideSandboxedExec({ command: 'curl https://x', needs: NETWORK, sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('ask');
     expect(d.escalations.some((e) => e.includes('network'))).toBe(true);
   });
 
   test('active + host-privilege escalation → ask, naming it', () => {
-    const d = decideSandboxedExec({ command: 'sudo systemctl restart x', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+    const d = decideSandboxedExec({ command: 'sudo systemctl restart x', needs: PRIVILEGE, sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('ask');
     expect(d.escalations.some((e) => e.includes('escalation'))).toBe(true);
   });
 
-  test('active + package install → ask, naming the network (install) need', () => {
-    const d = decideSandboxedExec({ command: 'npm install lodash', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+  test('active + a network command on the egress allowlist → ask, saying it is granted inside once approved', () => {
+    const d = decideSandboxedExec({ command: 'npm install lodash', needs: NETWORK, sandboxActive: true, egressAllowlist: ['npm'], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect).toBe('ask');
-    expect(d.escalations.some((e) => e.includes('package install'))).toBe(true);
+    expect(d.escalations.some((e) => e.includes('on egress allowlist'))).toBe(true);
   });
 });
 
-// ── Frozen catastrophic block is unaffected by the sandbox ───────────────────
+// ── The catastrophic check is unaffected by the sandbox ──────────────────────
 
-describe('the frozen catastrophic block stays unconditional (sandbox never buys it an allow)', () => {
-  test('rm -rf / is denied at exec time regardless of sandbox activity', async () => {
-    const result = await guardExecCommand('rm -rf /', ALL_COMMAND_CLASSES);
-    expect(result.allowed).toBe(false);
+describe('the catastrophic check stays in force (a sandbox never buys it an allow)', () => {
+  useGateReadings([
+    ['"rm -rf /"', { mutates: true, catastrophic: true }],
+    [':(){', { mutates: true, catastrophic: true }],
+  ]);
+
+  test('a command read as catastrophic is denied at exec time regardless of sandbox activity', async () => {
+    expect((await guardExecCommand('rm -rf /')).allowed).toBe(false);
+    expect((await guardExecCommand(':(){ :|:& };:')).allowed).toBe(false);
   });
 
-  test('a fork bomb is denied at exec time regardless of sandbox activity', async () => {
-    const result = await guardExecCommand(':(){ :|:& };:', ALL_COMMAND_CLASSES);
-    expect(result.allowed).toBe(false);
-  });
-
-  test('the sandbox policy does not reach into the catastrophic block: it only relaxes ask→allow', () => {
-    // decideSandboxedExec classifies rm -rf / as boundary-safe destructive and
-    // would allow it, but that allow is harmless precisely because the exec-time
-    // catastrophic block (asserted above) is independent and unconditional. The
-    // policy can never turn a deny into an allow.
-    const d = decideSandboxedExec({ command: 'rm -rf /', sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
+  test('the sandbox policy only ever relaxes ask to allow; it never decides catastrophe', () => {
+    const d = decideSandboxedExec({ command: 'rm -rf /', needs: LOCAL, sandboxActive: true, egressAllowlist: [], baseEffectWhenNotSandboxed: 'ask' });
     expect(d.effect === 'allow' || d.effect === 'ask').toBe(true);
   });
 });

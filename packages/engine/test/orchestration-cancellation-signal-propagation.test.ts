@@ -18,6 +18,12 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.js';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.js';
 import { createFetchTool } from '../sdk/src/platform/tools/fetch/runtime.js';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// The tools batteries exec reads (credential names, prompts, retries) and,
+// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
+useToolReadings([], EXEC_GATE_TABLE);
 
 function tempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));

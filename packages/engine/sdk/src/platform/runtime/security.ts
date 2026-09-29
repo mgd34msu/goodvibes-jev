@@ -36,18 +36,17 @@ export type { PermissionAuditEntry } from './permissions/policy-runtime.js';
 export {
   buildDenialExplanation,
   canonicalize,
-  classifyCommand,
-  classifySegment,
   collectCommandNodes,
   evaluateCommandAST,
   evaluateSegmentNode,
-  higherPriority,
   parseAST,
   parseCommandAST,
+  readCommandNeeds,
   tokenize,
 } from './permissions/normalization/index.js';
 export type {
   CommandClassification,
+  CommandNeeds,
   CommandNode,
   CommandSegment,
   CommandToken,

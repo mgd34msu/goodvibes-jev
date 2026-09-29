@@ -1,47 +1,51 @@
 /**
- * The gate's deterministic boundary: the checks every tool call passes before
- * any reading or preset is consulted. Nothing here is judged; each check is a
- * fixed list, a declared table or a ledger comparison, and no preset, rule or
- * remembered approval can relax it.
+ * The gate's boundary: the checks every call passes before explicit owner
+ * rules or a preset are consulted. No preset, remembered approval or phrase in
+ * the conversation relaxes it. Each check was read for what it actually
+ * decides (owner ruling 2026-09-27), and its disposition follows from that:
  *
- * 1. Catastrophic commands: the frozen catastrophic list
- *    (normalization/classifier.ts catastrophicReason: root deletion, raw disk
- *    writes, filesystem creation over a device, fork bombs).
- * 2. Surface authority: a call that changes anything, made on behalf of an
- *    input-only surface, is refused (gate/surface-authority.ts).
- * 3. Card-shape scanner: an outward call whose arguments carry card-shaped
- *    content is refused (security/card-shapes.ts). Card details are entered
- *    at a local terminal or the web UI, never sent by a tool.
- * 4. Outward-effect check: an outward call made after untrusted content
- *    entered the turn is refused unless the content it sends does not derive
- *    from what was read (security/untrusted-content.ts evaluateOutwardEffect).
- * 5. Trust-gated approval: the one thing that clears check 4 is an owner
- *    approval minted from a prompt the owner answered, bound to the exact
- *    content, single use and short-lived (security/owner-approval.ts). The
- *    gate asks for it (permissions/manager.ts); a remembered rule, a preset
- *    or a phrase in the conversation cannot stand in for it.
+ * 1. Catastrophic commands (Jev). Whether a shell command would destroy the
+ *    machine or the user's data wholesale is a judgment about what the command
+ *    does; the old frozen list only knew the spellings someone wrote down.
+ *    `engine.gate.boundary` `catastrophic`: a yes refuses; an uncertain
+ *    reading lets the call through to the presets at critical stakes, so every
+ *    preset asks the owner.
+ * 2. Surface authority (code, table from gate/surface-authority.ts). What it
+ *    decides is who can write to the surface the turn's instruction came from,
+ *    and that is a fact about the deployment (who holds the Telegram bot, who
+ *    can mail the address), not something any text in the call shows; the
+ *    owner declared it per surface, and an undeclared surface is input-only.
+ *    Whether the call is consequential (changes state or reaches outside the
+ *    machine) is Jev's reading (`mutates`, `outward`), not the tool's category.
+ * 3. Card details (Jev). Whether an outward call carries a person's payment
+ *    card details is a reading (`engine.gate.boundary` `cardDetails`); a
+ *    checksum cannot tell a card from an order number and misses a card written
+ *    in words or split across fields. A yes refuses; an uncertain reading is
+ *    refused unless the owner, shown the call, approves it.
+ * 4. Outward-effect taint (Jev, over a recorded fact). Whether the turn read
+ *    untrusted text is a record the untrusted-content ledger holds (code: it is
+ *    what happened, not an interpretation). Whether what the call sends derives
+ *    from that text is `engine.gate.outward-taint`. When the ledger kept no text
+ *    there is nothing to read, and the owner is asked.
+ * 5. Trust-gated approval (code). A refusal from 3 (uncertain) or 4 is
+ *    cleared only by an owner approval minted from the prompt the owner
+ *    answered for this call: the check is that the approval names this action,
+ *    that its fingerprint equals the fingerprint of the exact content being
+ *    sent, and that its five minutes have not passed (security/owner-approval.ts).
+ *    Hash equality and a clock comparison decide nothing; the owner's answer is
+ *    the decision.
  *
- * Which calls are outward: a fixed tool list plus shell commands the
- * deterministic classifier marks as network, united with the calls Jev reads
- * as outward (gate/reading.ts). Jev can only add calls to the outward checks,
- * never take one out.
+ * Which calls are outward is Jev's `outward` reading alone.
  */
-import { normalizeCommand } from '../runtime/permissions/normalization/index.js';
-import { catastrophicReason } from '../runtime/permissions/normalization/classifier.js';
-import { extractCommandArgs } from '../runtime/permissions/rules/prefix.js';
-import { detectCardShapes, hasRefusableCardShapes, renderCardShapeRefusal } from '../security/card-shapes.js';
-import {
-  evaluateOutwardEffect,
-  getProcessUntrustedContentLedger,
-  type OutwardEffectDecision,
-  type UntrustedContentLedger,
-} from '../security/untrusted-content.js';
-import type { OwnerApproval } from '../security/owner-approval.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { checkOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
+import { getProcessUntrustedContentLedger, type UntrustedContentLedger } from '../security/untrusted-content.js';
+import { outwardTaint } from './batteries/outward-taint.js';
+import { readingArguments, type GateReading } from './reading.js';
 import { effectPermittedForProvenance, type AgentEffect } from './surface-authority.js';
-import type { PermissionCategory } from '../permissions/types.js';
 
 /** The boundary's checks, in the order they run. */
-export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-shapes' | 'outward-effect';
+export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';
 
 export interface BoundaryCheck {
   readonly check: BoundaryCheckName;
@@ -58,51 +62,11 @@ export type BoundaryVerdict =
       readonly refusedBy: BoundaryCheckName;
       readonly reason: string;
       readonly fix?: string | undefined;
-      /** Set for an outward-effect refusal: an owner approval over this content clears it. */
+      /** Set when an owner approval over this exact content clears the refusal. */
       readonly approvable?: { readonly action: string; readonly content: Readonly<Record<string, string>> } | undefined;
     };
 
-/** Tools that accept shell commands. */
-const EXEC_TOOLS: ReadonlySet<string> = new Set(['exec', 'bash', 'sh', 'run']);
-
-/** Tools whose every call leaves the machine: messages, remote work. */
-const OUTWARD_TOOLS: ReadonlySet<string> = new Set(['channel', 'remote', 'remote_trigger']);
-
-const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
-
-/** The shell commands a call carries, for exec-class tools only. */
-export function shellCommandsOf(toolName: string, args: Record<string, unknown>): string[] {
-  return EXEC_TOOLS.has(toolName) ? extractCommandArgs(args) : [];
-}
-
-/** Whether a fetch call sends a body or uses a writing method. */
-function fetchSendsData(args: Record<string, unknown>): boolean {
-  const urls = Array.isArray(args['urls']) ? args['urls'] : [args];
-  return urls.some((entry) => {
-    if (!entry || typeof entry !== 'object') return false;
-    const record = entry as Record<string, unknown>;
-    const method = typeof record['method'] === 'string' ? record['method'].toUpperCase() : 'GET';
-    return !READ_METHODS.has(method) || record['body'] !== undefined || record['body_base64'] !== undefined || record['body_data'] !== undefined;
-  });
-}
-
-/**
- * Whether code alone knows this call is outward: a tool on the fixed outward
- * list, a fetch that sends data, or a shell command classified as network.
- */
-export function isOutwardByCode(toolName: string, args: Record<string, unknown>): boolean {
-  if (OUTWARD_TOOLS.has(toolName)) return true;
-  if (toolName === 'fetch') return fetchSendsData(args);
-  return shellCommandsOf(toolName, args).some((command) => {
-    try {
-      return normalizeCommand(command).classifications.includes('network');
-    } catch {
-      return false;
-    }
-  });
-}
-
-/** Every string value in the arguments, keyed by its path, for the card and taint checks. */
+/** Every string value in the arguments, keyed by its path: the content an approval is bound to. */
 export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Record<string, string> {
   const fields: Record<string, string> = {};
   for (const [key, value] of Object.entries(args)) {
@@ -117,65 +81,75 @@ export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Reco
   return fields;
 }
 
-/**
- * The catastrophic-command check: the frozen catastrophic list
- * (normalization/classifier.ts catastrophicReason) over every segment of every
- * shell command the call carries. The list is frozen by the owner's doctrine:
- * it never grows without the owner's explicit approval, so the boundary adds
- * nothing to it. (The policy engine's safety layer, safety-checks.ts, still
- * runs inside the policy-as-code evaluator when that feature is on.)
- */
-export function catastrophicCheck(toolName: string, args: Record<string, unknown>): BoundaryCheck {
-  for (const command of shellCommandsOf(toolName, args)) {
-    const segments = (() => {
-      try {
-        return normalizeCommand(command).segments;
-      } catch {
-        return [];
-      }
-    })();
-    for (const segment of segments) {
-      const reason = catastrophicReason(segment);
-      if (reason !== null) return { check: 'catastrophic', result: 'refuse', detail: reason };
-    }
-  }
-  return { check: 'catastrophic', result: 'pass' };
-}
-
-const EFFECT_FOR_CATEGORY: Readonly<Record<PermissionCategory, AgentEffect>> = {
-  read: 'read',
-  write: 'write',
-  execute: 'exec',
-  delegate: 'exec',
-};
-
 export interface BoundaryInput {
   readonly toolName: string;
   readonly args: Record<string, unknown>;
-  readonly category: PermissionCategory;
+  /** Jev's reading of the call; null for a known read-only tool the gate did not read. */
+  readonly reading: GateReading | null;
   /** The surface the turn's instruction came from; absent means the local owner session. */
   readonly surfaceId?: string | undefined;
-  /** Whether the call is outward: code's answer united with Jev's reading. */
-  readonly outward: boolean;
   /** The untrusted-content ledger; the process ledger when absent. */
   readonly ledger?: UntrustedContentLedger | undefined;
   /** An owner approval the gate minted from an answered prompt for this call. */
   readonly approval?: OwnerApproval | null | undefined;
 }
 
-const OWNER_REMEDY = { gesture: 'answer the approval prompt the gate shows you for this call' };
+/** The effect a call has, for surface authority: Jev's reading, or a read for a known read-only tool. */
+function effectOf(reading: GateReading | null): AgentEffect {
+  if (reading === null) return 'read';
+  if (reading.outward) return 'send';
+  return reading.mutates ? 'write' : 'read';
+}
 
-function outwardCheck(input: BoundaryInput, content: Record<string, string>): { check: BoundaryCheck; decision: OutwardEffectDecision } {
-  const decision = evaluateOutwardEffect({
-    request: { toolName: input.toolName, action: `tool:${input.toolName}`, description: `this ${input.toolName} call` },
-    ledger: input.ledger ?? getProcessUntrustedContentLedger(),
-    approval: input.approval ?? null,
-    content,
-    ownerRemedy: OWNER_REMEDY,
-  });
+/** The most recent untrusted sources one taint reading carries. */
+const MAX_UNTRUSTED_SOURCES = 8;
+
+/** Most characters of untrusted text one taint reading carries per source. */
+const MAX_UNTRUSTED_CHARS = 6_000;
+
+const clip = (text: string): string => (text.length <= MAX_UNTRUSTED_CHARS ? text : `${text.slice(0, MAX_UNTRUSTED_CHARS)} [${text.length - MAX_UNTRUSTED_CHARS} more characters]`);
+
+const APPROVAL_FIX = 'The owner can approve this exact call in the prompt the gate shows; nothing typed into the conversation clears it.';
+
+/** The outward-effect check: the ledger's record, then Jev's reading of derivation. */
+async function outwardCheck(input: BoundaryInput, content: Record<string, string>): Promise<BoundaryCheck & { approvable: boolean; reason?: string }> {
+  const ledger = input.ledger ?? getProcessUntrustedContentLedger();
+  const origins = ledger.originsThisTurn();
+  if (origins.length === 0) return { check: 'outward-effect', result: 'pass', detail: 'nothing untrusted read this turn', approvable: false };
+  const action = `tool:${input.toolName}`;
+  const cleared = (): boolean => checkOwnerApproval({ approval: input.approval, action, contentInQuestion: content, clearingContentTaint: true }).authorized;
+  const sources = ledger.taintSourcesThisTurn();
+  if (sources.length === 0) {
+    if (cleared()) return { check: 'outward-effect', result: 'pass', detail: 'owner approved this exact content', approvable: false };
+    return {
+      check: 'outward-effect',
+      result: 'refuse',
+      detail: `read ${origins.join(', ')}; no text kept to compare`,
+      approvable: true,
+      reason: `This turn read ${origins.join(', ')}, and none of that text was kept, so whether this ${input.toolName} call repeats it cannot be read. It needs the owner.`,
+    };
+  }
+  const site = 'engine.gate.outward-taint';
+  const run = await outwardTaint.run(judgmentPort(site), {
+    untrusted: sources.slice(-MAX_UNTRUSTED_SOURCES).map((source) => `${source.surface} ${source.origin}: ${clip(source.text)}`),
+    outgoing: { tool: input.toolName, ...(readingArguments(input.args) as Record<string, never>) },
+  }, { site });
+  const verdict = run.readings.derives.verdict;
+  if (verdict === 'no') {
+    run.recordAction('pass');
+    return { check: 'outward-effect', result: 'pass', detail: 'does not derive from untrusted text', approvable: false };
+  }
+  if (cleared()) {
+    run.recordAction('owner-approved');
+    return { check: 'outward-effect', result: 'pass', detail: 'owner approved this exact content', approvable: false };
+  }
+  run.recordAction(`refuse:${verdict}`);
   return {
-    check: { check: 'outward-effect', result: decision.allowed ? 'pass' : 'refuse', detail: decision.reason ?? undefined },
-    decision,
+    check: 'outward-effect',
+    result: 'refuse',
+    detail: verdict === 'yes' ? `derives from ${origins.join(', ')}` : `may derive from ${origins.join(', ')}`,
+    approvable: true,
+    reason: `What this ${input.toolName} call sends ${verdict === 'yes' ? 'repeats or acts on' : 'may repeat or act on'} text read this turn from ${origins.join(', ')}, which anyone can write.`,
   };
 }
 
@@ -183,48 +157,56 @@ function outwardCheck(input: BoundaryInput, content: Record<string, string>): { 
  * Runs the boundary over one call. The first refusal stops the run; the
  * checks list records every check that ran and those it skipped.
  */
-export function runBoundary(input: BoundaryInput): BoundaryVerdict {
+export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict> {
   const checks: BoundaryCheck[] = [];
   const refuse = (check: BoundaryCheck, reason: string, extra: Partial<Extract<BoundaryVerdict, { passed: false }>> = {}): BoundaryVerdict => {
     checks.push(check);
     return { passed: false, checks, refusedBy: check.check, reason, ...extra };
   };
+  const reading = input.reading;
+  const action = `tool:${input.toolName}`;
 
-  const catastrophic = catastrophicCheck(input.toolName, input.args);
-  if (catastrophic.result === 'refuse') {
-    return refuse(catastrophic, `Unconditionally blocked: ${catastrophic.detail}. This block is not affected by any preset, rule or approval.`);
+  const catastrophic = reading?.boundary.catastrophic;
+  if (catastrophic === 'yes') {
+    return refuse({ check: 'catastrophic', result: 'refuse', detail: 'read as destroying the machine or the user\'s data wholesale' }, 'Refused: this command reads as destroying the machine or the user\'s data wholesale. No preset, rule or approval runs it.');
   }
-  checks.push(catastrophic);
+  checks.push(catastrophic === undefined
+    ? { check: 'catastrophic', result: 'skipped' }
+    : { check: 'catastrophic', result: 'pass', ...(catastrophic === 'uncertain' ? { detail: 'uncertain: critical stakes, the owner is asked' } : {}) });
 
+  const effect = effectOf(reading);
   if (input.surfaceId !== undefined) {
-    const effect = effectPermittedForProvenance(EFFECT_FOR_CATEGORY[input.category], { surfaceId: input.surfaceId });
-    if (!effect.allowed) {
-      return refuse({ check: 'surface-authority', result: 'refuse', detail: input.surfaceId }, effect.problem, { fix: effect.fix });
+    const permitted = effectPermittedForProvenance(effect, { surfaceId: input.surfaceId });
+    if (!permitted.allowed) {
+      return refuse({ check: 'surface-authority', result: 'refuse', detail: input.surfaceId }, permitted.problem, { fix: permitted.fix });
     }
     checks.push({ check: 'surface-authority', result: 'pass', detail: input.surfaceId });
   } else {
     checks.push({ check: 'surface-authority', result: 'pass', detail: 'local owner session' });
   }
 
-  if (!input.outward) {
-    checks.push({ check: 'card-shapes', result: 'skipped' }, { check: 'outward-effect', result: 'skipped' });
+  if (reading === null || !reading.outward) {
+    checks.push({ check: 'card-details', result: 'skipped' }, { check: 'outward-effect', result: 'skipped' });
     return { passed: true, checks };
   }
 
   const content = stringFieldsOf(input.args);
-  const findings = Object.values(content).flatMap((value) => [...detectCardShapes(value)]);
-  if (hasRefusableCardShapes(findings)) {
-    return refuse({ check: 'card-shapes', result: 'refuse', detail: `${findings.length} card-shaped span(s)` }, renderCardShapeRefusal(findings));
+  const card = reading.boundary.cardDetails;
+  if (card === 'yes') {
+    return refuse({ check: 'card-details', result: 'refuse', detail: 'carries payment card details' }, 'Refused: this call would send payment card details. Card details are entered at a local terminal or in the web UI, never sent by a tool.');
   }
-  checks.push({ check: 'card-shapes', result: 'pass' });
+  if (card === 'uncertain' && !checkOwnerApproval({ approval: input.approval, action, contentInQuestion: content, clearingContentTaint: true }).authorized) {
+    return refuse({ check: 'card-details', result: 'refuse', detail: 'may carry payment card details' }, `This ${input.toolName} call may carry payment card details.`, { fix: APPROVAL_FIX, approvable: { action, content } });
+  }
+  checks.push({ check: 'card-details', result: 'pass', ...(card === 'uncertain' ? { detail: 'owner approved this exact content' } : {}) });
 
-  const outward = outwardCheck(input, content);
-  if (!outward.decision.allowed) {
-    return refuse(outward.check, outward.decision.reason ?? 'outward effect refused', {
-      fix: outward.decision.fix ?? undefined,
-      approvable: { action: `tool:${input.toolName}`, content },
+  const outward = await outwardCheck(input, content);
+  if (outward.result === 'refuse') {
+    return refuse({ check: 'outward-effect', result: 'refuse', detail: outward.detail }, outward.reason ?? 'outward effect refused', {
+      fix: APPROVAL_FIX,
+      ...(outward.approvable ? { approvable: { action, content } } : {}),
     });
   }
-  checks.push(outward.check);
+  checks.push({ check: 'outward-effect', result: 'pass', detail: outward.detail });
   return { passed: true, checks };
 }

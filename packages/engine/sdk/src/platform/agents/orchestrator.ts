@@ -123,7 +123,7 @@ type AgentOrchestratorToolDeps = {
    * permission enforcement existed.
    */
   readonly permissionManager?:
-    | Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'previewReadAccess' | 'passesBoundary'>
+    | Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'>
     | undefined;
   /**
    * Settable holder for the context_accounting tool's session source. Threaded
@@ -399,12 +399,12 @@ export class AgentOrchestrator {
       const isDefaultCwd = cwd === defaultCwd;
       // Read-side deny enforcement for search/list/map tools: give them the same
       // per-file read decision the read tool gets, so a file the read tool would
-      // gate (e.g. the shipped credential-read defaults) never leaks its content
+      // hold behind an ask (a read Jev reads as touching secrets) never leaks its content
       // through grep/glob/repo_map. Reads live config each call, so mode changes
       // apply immediately. Absent a permission manager, tools default to allow-all.
       const permissionManager = this.toolDeps.permissionManager;
       const readAccessFilter = permissionManager
-        ? (absolutePath: string): boolean => permissionManager.previewReadAccess(absolutePath) === 'allow'
+        ? async (absolutePath: string): Promise<boolean> => (await permissionManager.readAccess(absolutePath)) === 'allow'
         : undefined;
       const registered = registerAllTools(registry, {
         ...this.toolDeps,

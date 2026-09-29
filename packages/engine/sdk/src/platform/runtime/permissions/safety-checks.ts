@@ -1,91 +1,37 @@
 /**
- * Runtime permissions safety checks.
+ * The bypass-immune safety check for one tool call, as the public
+ * `security.runSafetyChecks` API runs it.
  *
- * These checks run first and always, regardless of mode, session overrides,
- * or policy rules. They cannot be disabled by configuration.
+ * This module used to hold four lists the policy engine ran before every
+ * rule: destructive command prefixes, dangerous shell patterns (curl piped to
+ * a shell, writes to /etc/passwd, history clearing...), path-traversal
+ * indicators and destructive SQL shapes. Each was read for what it decides:
+ *
+ * - Destructive prefixes and dangerous patterns decided "would this command
+ *   destroy data or weaken the machine", a judgment made by spelling. It is now
+ *   Jev's: the gate's boundary reading (`catastrophic`, refused outright) and
+ *   stakes reading (`irreversible`, `weakensSecurity`, `obfuscated`, which make
+ *   a call critical so every preset asks the owner). Here the catastrophic
+ *   question is asked for each shell command the call carries.
+ * - Path traversal (`/../../`) decided "is reaching outside the project an
+ *   attack"; whether a call reaching beyond the project matters is the stakes
+ *   reading's `beyondProject`, so the indicator list is gone. A NUL byte in a
+ *   path stays code: the operating system truncates a path at NUL, so the path
+ *   the call names is not the path that would be opened. That is how paths
+ *   are passed, not a reading of intent.
+ * - Destructive SQL fired on the tool named `query`, which in this engine
+ *   records open questions and takes no SQL, and on hypothetical `db`/`sql`
+ *   tools no composition registers. It decided nothing real and is gone; a
+ *   shell command running SQL is read by the gate like any other command.
+ *
+ * The gate runs its readings before the policy evaluator, so the evaluator no
+ * longer carries a safety layer of its own.
  */
-
-import type {
-  CommandClassification,
-  DecisionReason,
-  EvaluationStep,
-} from './types.js';
-
-// ── Dangerous prefix patterns ────────────────────────────────────────────────
-
-/**
- * Shell command prefixes that are unconditionally dangerous.
- * Matched against the first string argument of exec-class tools.
- */
-const DESTRUCTIVE_PREFIXES: readonly string[] = [
-  // Recursive root deletion
-  'rm -rf /',
-  'rm -fr /',
-  'rm --no-preserve-root',
-  // Disk destruction
-  'dd if=/dev/',
-  'mkfs',
-  'shred',
-  'wipefs',
-  // Privileged escalation
-  'chmod 777 /',
-  'chmod -R 777 /',
-  // Fork bomb patterns
-  ':(){ :|:&};:',
-  // /dev/null / disk overwrite
-  '> /dev/sda',
-  '> /dev/hda',
-];
-
-/**
- * SQL DML patterns that are unconditionally dangerous.
- * Matched case-insensitively against the first string argument of db-class tools.
- */
-const DESTRUCTIVE_SQL_PATTERNS: readonly RegExp[] = [
-  /^\s*DROP\s+TABLE\b/i,
-  /^\s*DROP\s+DATABASE\b/i,
-  /^\s*TRUNCATE\b/i,
-  /^\s*DELETE\s+FROM\s+\w+\s*;?\s*$/i, // DELETE without WHERE
-];
-
-/**
- * Known dangerous command patterns matched against the full command string.
- */
-const DANGEROUS_PATTERNS: readonly RegExp[] = [
-  // Writing to /etc/passwd or /etc/shadow
-  /\/etc\/(passwd|shadow|sudoers)/,
-  // Cron injection
-  /\/etc\/cron/,
-  // SSH key manipulation
-  /\.ssh\/(authorized_keys|known_hosts)/,
-  // Bash history clear
-  /history\s+-[cw]/,
-  // iptables flush
-  /iptables\s+-F/,
-  // Base64-encoded shell
-  /base64\s+.*\|.*sh/,
-  // Curl-pipe-bash
-  /curl\s+.*\|\s*(ba)?sh/,
-  // Wget-pipe-bash
-  /wget\s+.*\|\s*(ba)?sh/,
-];
-
-/**
- * Path segments that indicate a path escape attempt.
- * Checked against normalized path arguments.
- */
-const PATH_ESCAPE_INDICATORS: readonly string[] = [
-  // Traversal to root or parent-of-root
-  '/../../../',
-  '/../../',
-  // Null byte injection
-  '\0',
-];
-
-// ── Safety check result ───────────────────────────────────────────────────────────
+import { readCatastrophic, shellCommandsIn } from '../../gate/reading.js';
+import type { DecisionReason, EvaluationStep } from './types.js';
 
 export interface SafetyCheckResult {
-  /** Whether the call is blocked by a safety check. */
+  /** Whether the call is blocked. */
   blocked: boolean;
   /** Reason code if blocked (always a SAFETY_* code). */
   reason?: DecisionReason | undefined;
@@ -93,229 +39,44 @@ export interface SafetyCheckResult {
   detail?: string | undefined;
   /** Steps added to the trace during evaluation (one per check run). */
   steps: EvaluationStep[];
-  /** Semantic classification if determined by the safety layer. */
-  classification?: CommandClassification | undefined;
 }
 
-// ── Exec-class tool detection ──────────────────────────────────────────────────
+/** Tool names that accept shell commands. */
+const EXEC_CLASS_TOOLS: ReadonlySet<string> = new Set(['exec', 'bash', 'sh', 'run']);
 
-/** Tool names that accept shell commands as their primary argument. */
-const EXEC_CLASS_TOOLS: ReadonlySet<string> = new Set([
-  'exec',
-  'bash',
-  'sh',
-  'run',
-]);
-
-/** Tool names that accept file paths as their primary argument. */
-const PATH_CLASS_TOOLS: ReadonlySet<string> = new Set([
-  'read',
-  'write',
-  'edit',
-  'find',
-]);
-
-/** Tool names that accept SQL as their primary argument. */
-const DB_CLASS_TOOLS: ReadonlySet<string> = new Set([
-  'db',
-  'query',
-  'sql',
-]);
-
-// ── Argument extraction helpers ─────────────────────────────────────────────────
-
-/** Extracts the primary string argument (command, path, query, etc.) from args. */
-function extractPrimaryArg(args: Record<string, unknown>): string | null {
-  const candidates = ['command', 'cmd', 'path', 'query', 'sql', 'script'];
-  for (const key of candidates) {
-    if (typeof args[key]! === 'string') return args[key]! as string;
-  }
-  // Otherwise use the first string value.
-  for (const value of Object.values(args)) {
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return null;
-}
-
-// ── Individual safety checks ──────────────────────────────────────────────────
-
-/**
- * Checks whether the command string starts with a known destructive prefix.
- * Only applied to exec-class tools.
- */
-function checkDestructivePrefix(
-  toolName: string,
-  primaryArg: string | null,
-): { blocked: boolean; detail?: string } {
-  if (!EXEC_CLASS_TOOLS.has(toolName) || primaryArg === null) {
-    return { blocked: false };
-  }
-  const normalized = primaryArg.trim().toLowerCase();
-  for (const prefix of DESTRUCTIVE_PREFIXES) {
-    if (normalized.startsWith(prefix.toLowerCase())) {
-      return { blocked: true, detail: `Command starts with destructive prefix: "${prefix}"` };
-    }
-  }
-  return { blocked: false };
+/** The path-like string arguments of a call. */
+function pathArgs(args: Record<string, unknown>): string[] {
+  return ['path', 'file', 'file_path', 'target', 'destination', 'source']
+    .map((key) => args[key])
+    .filter((value): value is string => typeof value === 'string');
 }
 
 /**
- * Checks whether the command matches known dangerous shell patterns.
- * Applied to exec-class tools.
+ * Runs the safety check for one call: a NUL byte in any path argument, then
+ * the catastrophic reading of every shell command it carries. A command whose
+ * reading is uncertain is blocked here, because nothing in this check can ask
+ * the owner (inside the gate the same reading sends the call to the owner).
  */
-function checkDangerousPattern(
-  toolName: string,
-  primaryArg: string | null,
-): { blocked: boolean; detail?: string } {
-  if (!EXEC_CLASS_TOOLS.has(toolName) || primaryArg === null) {
-    return { blocked: false };
-  }
-  for (const pattern of DANGEROUS_PATTERNS) {
-    if (pattern.test(primaryArg)) {
-      return { blocked: true, detail: `Command matches dangerous pattern: ${pattern.source}` };
-    }
-  }
-  return { blocked: false };
-}
-
-/**
- * Checks whether a path argument attempts to escape safe boundaries.
- * Applied to path-class tools.
- */
-function checkPathEscape(
-  toolName: string,
-  args: Record<string, unknown>,
-): { blocked: boolean; detail?: string } {
-  if (!PATH_CLASS_TOOLS.has(toolName)) return { blocked: false };
-
-  const pathArgs = Object.entries(args)
-    .filter(([, v]) => typeof v === 'string')
-    .map(([, v]) => v as string);
-
-  for (const pathArg of pathArgs) {
-    for (const indicator of PATH_ESCAPE_INDICATORS) {
-      if (pathArg.includes(indicator)) {
-        return { blocked: true, detail: `Path argument contains escape indicator: "${indicator}"` };
-      }
-    }
-    // Null byte check applies to all strings
-    if (pathArg.includes('\0')) {
-      return { blocked: true, detail: 'Path argument contains null byte (injection attempt)' };
-    }
-  }
-  return { blocked: false };
-}
-
-/**
- * Checks for destructive SQL patterns.
- * Applied to db-class tools.
- */
-function checkDestructiveSQL(
-  toolName: string,
-  primaryArg: string | null,
-): { blocked: boolean; detail?: string } {
-  if (!DB_CLASS_TOOLS.has(toolName) || primaryArg === null) {
-    return { blocked: false };
-  }
-  for (const pattern of DESTRUCTIVE_SQL_PATTERNS) {
-    if (pattern.test(primaryArg)) {
-      return { blocked: true, detail: `SQL matches destructive pattern: ${pattern.source}` };
-    }
-  }
-  return { blocked: false };
-}
-
-// ── Public API ───────────────────────────────────────────────────────────────────
-
-/**
- * runSafetyChecks, Executes all bypass-immune safety checks for a tool call.
- *
- * Returns a SafetyCheckResult with `blocked: false` if all checks pass,
- * or `blocked: true` with a SAFETY_* reason code and trace step if any check fires.
- *
- * These checks cannot be bypassed by any policy rule, mode, or session override.
- *
- * @param toolName , The tool being called.
- * @param args     , Arguments passed to the tool.
- */
-export function runSafetyChecks(
-  toolName: string,
-  args: Record<string, unknown>,
-): SafetyCheckResult {
+export async function runSafetyChecks(toolName: string, args: Record<string, unknown>): Promise<SafetyCheckResult> {
   const steps: EvaluationStep[] = [];
-  const primaryArg = extractPrimaryArg(args);
-
-  //, Check 1: Destructive prefix
-  const prefixResult = checkDestructivePrefix(toolName, primaryArg);
-  steps.push({
-    layer: 'safety',
-    check: 'destructive-prefix',
-    matched: prefixResult.blocked,
-    detail: prefixResult.detail,
-  });
-  if (prefixResult.blocked) {
-    return {
-      blocked: true,
-      reason: 'SAFETY_DENY_DESTRUCTIVE_PREFIX',
-      detail: prefixResult.detail,
-      steps,
-      classification: 'destructive',
-    };
+  const nul = pathArgs(args).find((path) => path.includes('\0'));
+  steps.push({ layer: 'safety', check: 'path-nul-byte', matched: nul !== undefined, ...(nul !== undefined ? { detail: 'a path argument contains a NUL byte' } : {}) });
+  if (nul !== undefined) {
+    return { blocked: true, reason: 'SAFETY_DENY_PATH_ESCAPE', detail: 'a path argument contains a NUL byte, so the path named is not the path that would be opened', steps };
   }
-
-  //, Check 2: Dangerous shell pattern
-  const patternResult = checkDangerousPattern(toolName, primaryArg);
-  steps.push({
-    layer: 'safety',
-    check: 'dangerous-pattern',
-    matched: patternResult.blocked,
-    detail: patternResult.detail,
-  });
-  if (patternResult.blocked) {
-    return {
-      blocked: true,
-      reason: 'SAFETY_DENY_DANGEROUS_PATTERN',
-      detail: patternResult.detail,
-      steps,
-      classification: 'destructive',
-    };
+  if (!EXEC_CLASS_TOOLS.has(toolName)) return { blocked: false, steps };
+  for (const command of shellCommandsIn(args)) {
+    const { verdict } = await readCatastrophic(command, 'engine.gate.safety-check');
+    const blocked = verdict !== 'no';
+    steps.push({ layer: 'safety', check: 'catastrophic', matched: blocked, detail: `Jev reading: ${verdict}` });
+    if (blocked) {
+      return {
+        blocked: true,
+        reason: 'SAFETY_DENY_DESTRUCTIVE_PREFIX',
+        detail: verdict === 'yes' ? 'read as destroying the machine or the user\'s data wholesale' : 'could not be read as safe',
+        steps,
+      };
+    }
   }
-
-  //, Check 3: Path escape
-  const pathResult = checkPathEscape(toolName, args);
-  steps.push({
-    layer: 'safety',
-    check: 'path-escape',
-    matched: pathResult.blocked,
-    detail: pathResult.detail,
-  });
-  if (pathResult.blocked) {
-    return {
-      blocked: true,
-      reason: 'SAFETY_DENY_PATH_ESCAPE',
-      detail: pathResult.detail,
-      steps,
-      classification: 'escalation',
-    };
-  }
-
-  //, Check 4: Destructive SQL
-  const sqlResult = checkDestructiveSQL(toolName, primaryArg);
-  steps.push({
-    layer: 'safety',
-    check: 'destructive-sql',
-    matched: sqlResult.blocked,
-    detail: sqlResult.detail,
-  });
-  if (sqlResult.blocked) {
-    return {
-      blocked: true,
-      reason: 'SAFETY_DENY_DANGEROUS_SQL',
-      detail: sqlResult.detail,
-      steps,
-      classification: 'destructive',
-    };
-  }
-
   return { blocked: false, steps };
 }

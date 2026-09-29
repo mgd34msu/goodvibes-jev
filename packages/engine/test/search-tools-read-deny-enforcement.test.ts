@@ -1,24 +1,24 @@
 /**
  * search-tools-read-deny-enforcement.test.ts
  *
- * The shipped credential deny-read defaults gate the read tool. This suite pins
- * that search / list / map tools (find content = grep, find files = glob, and
- * repo_map) honor the SAME per-file read decision, so a file whose read is
+ * A read Jev reads as touching secrets is high stakes and is held behind an ask
+ * in the normal preset. This suite pins that search / list / map tools (find
+ * content = grep, find files = glob, and repo_map) honor the SAME per-file read
+ * decision, so a file whose read is
  * restricted never leaks its CONTENT through a search, while path-only listings
  * still show the path marked access-restricted.
  *
  * Coverage:
- *   1. PermissionManager.previewReadAccess: a shipped-credential path is
- *      restricted in prompt mode and allowed in allow-all mode (permission
- *      settings stay the sole authority; the credential default is overridable).
+ *   1. PermissionManager.readAccess: a path Jev reads as touching secrets is
+ *      restricted in the normal preset and allowed in auto (which runs high
+ *      stakes); an ordinary file is allowed.
  *   2. find content mode: a restricted file's match text is excluded and the
  *      withheld count is surfaced; allow-all returns it.
  *   3. find files mode: a restricted file's path is listed but flagged
  *      access_restricted, with the withheld count surfaced.
  *   4. repo_map: a restricted file keeps its ranked path but its exported
  *      symbols are withheld and the line is flagged.
- *   5. The frozen catastrophic exec block is untouched, and the credential
- *      defaults are ordinary overridable managed rules (not that frozen list).
+ *   5. The exec guard's catastrophic reading is independent of read access.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -27,12 +27,11 @@ import { join } from 'node:path';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
 import type { PermissionMode } from '../sdk/src/platform/config/schema.js';
-import { SHIPPED_CREDENTIAL_READ_RULES } from '../sdk/src/platform/permissions/credential-read-defaults.js';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { createFindTool } from '../sdk/src/platform/tools/find/executor.js';
 import { createRepoMapTool } from '../sdk/src/platform/tools/repo-map/index.js';
 import type { ReadAccessFilter } from '../sdk/src/platform/tools/shared/read-access.js';
 import { guardExecCommand } from '../sdk/src/platform/tools/exec/ast-guard.js';
-import { ALL_COMMAND_CLASSES } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
 
 // ── PermissionManager harness ────────────────────────────────────────────────
 
@@ -65,16 +64,22 @@ function makeManager(mode: PermissionMode): PermissionManager {
 const CREDENTIAL_PATH = '/home/someone/.ssh/id_rsa';
 const NORMAL_PATH = '/home/someone/project/src/index.ts';
 
-describe('previewReadAccess: the read decision search tools reuse', () => {
-  test('prompt mode restricts a shipped-credential path but allows a normal file', () => {
+describe('readAccess: the read decision search tools reuse', () => {
+  useGateReadings([['id_rsa', { mutates: false, secrets: true }], ['"rm -rf /"', { mutates: true, catastrophic: true }]]);
+
+  test('the normal preset restricts a path Jev reads as touching secrets but allows a normal file', async () => {
     const manager = makeManager('prompt');
-    expect(manager.previewReadAccess(CREDENTIAL_PATH)).toBe('restricted');
-    expect(manager.previewReadAccess(NORMAL_PATH)).toBe('allow');
+    expect(await manager.readAccess(CREDENTIAL_PATH)).toBe('restricted');
+    expect(await manager.readAccess(NORMAL_PATH)).toBe('allow');
   });
 
-  test('allow-all mode returns the credential path (permission settings are the sole authority)', () => {
+  test('the auto preset returns the credential path (it runs high-stakes calls)', async () => {
     const manager = makeManager('allow-all');
-    expect(manager.previewReadAccess(CREDENTIAL_PATH)).toBe('allow');
+    expect(await manager.readAccess(CREDENTIAL_PATH)).toBe('allow');
+  });
+
+  test('the exec guard\'s catastrophic reading is independent of read access', async () => {
+    expect((await guardExecCommand('rm -rf /')).allowed).toBe(false);
   });
 });
 
@@ -93,7 +98,7 @@ afterAll(() => {
 });
 
 /** Restrict any file whose absolute path ends with `secret.txt`. */
-const restrictSecret: ReadAccessFilter = (abs) => !abs.endsWith('secret.txt');
+const restrictSecret: ReadAccessFilter = async (abs) => !abs.endsWith('secret.txt');
 
 async function runFind(tool: ReturnType<typeof createFindTool>, query: Record<string, unknown>): Promise<Record<string, unknown>> {
   const res = await tool.execute({ queries: [{ id: 'q', ...query }] });
@@ -160,7 +165,7 @@ describe('repo_map: restricted file keeps its path but withholds exports', () =>
   });
 
   test('restricted file is flagged and its exported symbols are withheld', async () => {
-    const restrictCore: ReadAccessFilter = (abs) => !abs.endsWith(join('src', 'core.ts'));
+    const restrictCore: ReadAccessFilter = async (abs) => !abs.endsWith(join('src', 'core.ts'));
     const tool = createRepoMapTool({ projectRoot: mapRoot, readAccessFilter: restrictCore });
     const res = await tool.execute({});
     expect(res.success).toBe(true);
@@ -177,21 +182,5 @@ describe('repo_map: restricted file keeps its path but withholds exports', () =>
     const output = res.output as string;
     expect(output).toContain('exports: core');
     expect(output).not.toContain('[access-restricted]');
-  });
-});
-
-// ── frozen catastrophic block is untouched ───────────────────────────────────
-
-describe('the frozen catastrophic exec block is untouched', () => {
-  test('rm -rf / stays unconditionally denied even with all command classes permitted', async () => {
-    const result = await guardExecCommand('rm -rf /', ALL_COMMAND_CLASSES);
-    expect(result.allowed).toBe(false);
-  });
-
-  test('the credential read defaults are ordinary overridable managed deny rules', () => {
-    for (const rule of SHIPPED_CREDENTIAL_READ_RULES) {
-      expect(rule.origin).toBe('managed');
-      expect(rule.effect).toBe('deny');
-    }
   });
 });

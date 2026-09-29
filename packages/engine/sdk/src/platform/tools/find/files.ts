@@ -15,7 +15,7 @@ import {
 } from './shared.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
-import { accessRestrictedNote, type ReadAccessFilter } from '../shared/read-access.js';
+import { accessRestrictedNote, partitionByReadAccess, type ReadAccessFilter } from '../shared/read-access.js';
 
 export async function executeFilesQuery(
   query: FilesQuery,
@@ -139,7 +139,7 @@ export async function executeFilesQuery(
   // are marked, not dropped, except has_content, which cannot be verified
   // without reading, so restricted entries are excluded from that content query.
   const restrictedPaths = new Set<string>(
-    readAccessFilter ? entries.filter((e) => !readAccessFilter(e.path)).map((e) => e.path) : [],
+    (await partitionByReadAccess(entries, (e) => e.path, readAccessFilter)).restricted.map((e) => e.path),
   );
 
   if (hasContentRegex) {

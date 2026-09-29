@@ -10,6 +10,13 @@ import type { FileStateCache } from '../sdk/src/platform/state/file-cache.ts';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+
+// One port for both: the tools batteries (no variable is a credential) and,
+// forwarded with EXEC_GATE_TABLE, the gate's questions exec asks.
+useToolReadings([], EXEC_GATE_TABLE);
 
 function tempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -109,8 +116,8 @@ describe('tool side-effect observability', () => {
     expect(output.cwd).toBe(root);
   });
 
-  test('auto-repair returns warning metadata instead of throwing on clone failures', () => {
-    const result = repairToolCall(
+  test('auto-repair returns warning metadata instead of throwing on clone failures', async () => {
+    const result = await repairToolCall(
       'example',
       { callback: () => undefined },
       {

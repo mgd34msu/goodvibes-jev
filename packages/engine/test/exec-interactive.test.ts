@@ -7,7 +7,7 @@
  *   - honest PTY availability detection (pure, never faked)
  *   - PTY argv construction and its composition INSIDE the sandbox argv
  *     (the boundary stays the outermost layer under the PTY)
- *   - prompt-shape detection heuristics and their stated limits
+ *   - the prompt readings (will a command prompt; is a quiet line a question)
  *   - the live answer path: a scripted child that prompts on /dev/tty (a
  *     prompt a pipe could never answer) completes through the brokered answer
  *   - a never-answered prompt times out with the prompt text on the result
@@ -23,8 +23,8 @@ import {
   detectPtyAvailability,
   probePtyHost,
   buildPtyArgv,
-  findPendingPrompt,
-  isPromptProneCommand,
+  pendingPromptLine,
+  readPendingPrompt,
   shouldRunInteractive,
   runInteractiveCommand,
   type ExecInteractionRuntime,
@@ -41,6 +41,18 @@ import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/pr
 import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// Jev reads whether a command will prompt and whether a quiet last line is a
+// question; these fakes stand in for it. Anything unlisted reads as no.
+const readings = useToolReadings([
+  ['"lastLine":"Continue? [y/n]:"', { awaitingInput: true }],
+  ['"lastLine":"First name:"', { awaitingInput: true }],
+  ['"lastLine":"Last name:"', { awaitingInput: true }],
+  ['"lastLine":"Password:"', { awaitingInput: true }],
+  ['"lastLine":"Overwrite? [y/N]"', { awaitingInput: true }],
+  ['{"command":"ssh h"}', { willPrompt: true }],
+]);
 
 const LIVE_PTY = detectPtyAvailability(probePtyHost());
 const LIVE_SANDBOX = detectSandboxAvailability(probeSandboxHost());
@@ -129,65 +141,70 @@ describe('buildPtyArgv', () => {
   });
 });
 
-// ── Prompt-shape detection (heuristic; limits stated in the module doc) ─────
+// ── Prompt readings (tools/batteries/exec-prompt.ts) ─────────────────────────
 
-describe('findPendingPrompt', () => {
-  test('detects colon-terminated credential asks', () => {
-    expect(findPendingPrompt('some output\nPassword: ')).toBe('Password:');
-    expect(findPendingPrompt("Username for 'https://github.com':")).toBe("Username for 'https://github.com':");
+describe('pendingPromptLine', () => {
+  test('is the unterminated last line, trimmed', () => {
+    expect(pendingPromptLine('some output\nPassword: ')).toBe('Password:');
+    expect(pendingPromptLine("Username for 'https://github.com':")).toBe("Username for 'https://github.com':");
   });
 
-  test('detects question and bracket-choice prompts', () => {
-    expect(findPendingPrompt('Are you sure you want to continue connecting (yes/no/[fingerprint])? '))
-      .toContain('continue connecting');
-    expect(findPendingPrompt('Overwrite? [y/N]')).toBe('Overwrite? [y/N]');
-  });
-
-  test('a newline-terminated tail is not a prompt (the line completed)', () => {
-    expect(findPendingPrompt('Password:\n')).toBeNull();
-    expect(findPendingPrompt('building...\ndone\n')).toBeNull();
-  });
-
-  test('ordinary trailing output is not a prompt', () => {
-    expect(findPendingPrompt('compiling module 3 of 7')).toBeNull();
-    expect(findPendingPrompt('')).toBeNull();
-  });
-
-  test('an absurdly long tail is not a prompt (bounded heuristic)', () => {
-    expect(findPendingPrompt(`${'x'.repeat(600)}:`)).toBeNull();
+  test('a newline-terminated or blank tail has no pending line, and nothing is read', () => {
+    expect(pendingPromptLine('Password:\n')).toBeNull();
+    expect(pendingPromptLine('building...\ndone\n')).toBeNull();
+    expect(pendingPromptLine('')).toBeNull();
+    expect(pendingPromptLine('output\n   ')).toBeNull();
   });
 });
 
-describe('isPromptProneCommand / shouldRunInteractive', () => {
-  test('ssh/scp/sudo are prompt-prone; ls/git are not', () => {
-    expect(isPromptProneCommand('ssh host uptime')).toBe(true);
-    expect(isPromptProneCommand('scp f host:/tmp/')).toBe(true);
-    expect(isPromptProneCommand('sudo apt update')).toBe(true);
-    expect(isPromptProneCommand('ls -la')).toBe(false);
-    expect(isPromptProneCommand('git status')).toBe(false);
+describe('readPendingPrompt', () => {
+  test('a line Jev reads as awaiting input is the pending prompt', async () => {
+    expect(await readPendingPrompt('sudo true', 'some output\nPassword: ')).toBe('Password:');
+    expect(await readPendingPrompt('rm -i x', 'Overwrite? [y/N]')).toBe('Overwrite? [y/N]');
   });
 
-  test('explicit interactive:true engages; interactive:false vetoes auto-engagement', () => {
+  test('a line Jev reads as not awaiting input is not a prompt, however it ends', async () => {
+    expect(await readPendingPrompt('bun run build', 'Bundling entry points:')).toBeNull();
+    expect(await readPendingPrompt('make', 'compiling module 3 of 7')).toBeNull();
+  });
+
+  test('the reading carries the command, the line and the output before it', async () => {
+    await readPendingPrompt('sudo true', 'checking\nPassword: ');
+    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests[0]!.state).toEqual({ command: 'sudo true', lastLine: 'Password:', recentOutput: 'checking\n' });
+  });
+
+  test('a completed line is never read', async () => {
+    expect(await readPendingPrompt('sudo true', 'Password:\n')).toBeNull();
+    expect(readings.requests).toHaveLength(0);
+  });
+});
+
+describe('shouldRunInteractive', () => {
+  test('explicit interactive:true engages; interactive:false vetoes; otherwise the will_prompt reading decides', async () => {
     const avail: ExecInteractionRuntime = {
       availability: { available: true, backend: 'script', scriptPath: '/usr/bin/script', flavor: 'util-linux', reason: 't' },
     };
-    expect(shouldRunInteractive(avail, { cmd: 'ls', interactive: true }, 'ls')).toBe(true);
-    expect(shouldRunInteractive(avail, { cmd: 'ssh h', interactive: false }, 'ssh h')).toBe(false);
-    expect(shouldRunInteractive(avail, { cmd: 'ssh h' }, 'ssh h')).toBe(true);
-    expect(shouldRunInteractive(avail, { cmd: 'ls' }, 'ls')).toBe(false);
+    expect(await shouldRunInteractive(avail, { cmd: 'ls', interactive: true }, 'ls')).toBe(true);
+    expect(await shouldRunInteractive(avail, { cmd: 'ssh h', interactive: false }, 'ssh h')).toBe(false);
+    expect(readings.requests).toHaveLength(0);
+    expect(await shouldRunInteractive(avail, { cmd: 'ssh h' }, 'ssh h')).toBe(true);
+    expect(await shouldRunInteractive(avail, { cmd: 'ls' }, 'ls')).toBe(false);
+    expect(readings.requests).toHaveLength(2);
   });
 
-  test('never engages without an available PTY backend, and never for background/until', () => {
+  test('never engages or reads without an available PTY backend, and never for background/until', async () => {
     const unavailable: ExecInteractionRuntime = {
       availability: { available: false, backend: 'none', reason: 'no script' },
     };
-    expect(shouldRunInteractive(unavailable, { cmd: 'ssh h', interactive: true }, 'ssh h')).toBe(false);
-    expect(shouldRunInteractive(null, { cmd: 'ssh h' }, 'ssh h')).toBe(false);
+    expect(await shouldRunInteractive(unavailable, { cmd: 'ssh h', interactive: true }, 'ssh h')).toBe(false);
+    expect(await shouldRunInteractive(null, { cmd: 'ssh h' }, 'ssh h')).toBe(false);
     const avail: ExecInteractionRuntime = {
       availability: { available: true, backend: 'script', scriptPath: '/usr/bin/script', flavor: 'util-linux', reason: 't' },
     };
-    expect(shouldRunInteractive(avail, { cmd: 'ssh h', background: true }, 'ssh h')).toBe(false);
-    expect(shouldRunInteractive(avail, { cmd: 'ssh h', until: { pattern: 'x' } }, 'ssh h')).toBe(false);
+    expect(await shouldRunInteractive(avail, { cmd: 'ssh h', background: true }, 'ssh h')).toBe(false);
+    expect(await shouldRunInteractive(avail, { cmd: 'ssh h', until: { pattern: 'x' } }, 'ssh h')).toBe(false);
+    expect(readings.requests).toHaveLength(0);
   });
 });
 

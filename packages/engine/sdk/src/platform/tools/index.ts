@@ -339,7 +339,7 @@ export function registerAllTools(
     /**
      * Per-file read-permission decision shared with search / list / map tools
      * (find, repo_map). Wired at the composition root to
-     * PermissionManager.previewReadAccess so a file the read tool would gate
+     * PermissionManager.readAccess so a file the read tool would gate
      * never leaks its content through a search. Omitted → all files allowed.
      */
     readAccessFilter?: import('./shared/read-access.js').ReadAccessFilter | undefined;

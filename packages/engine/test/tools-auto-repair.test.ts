@@ -1,6 +1,14 @@
 import { describe, test, expect } from 'bun:test';
+import { useToolReadings } from './_helpers/tool-readings.ts';
 import { repairToolCall } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ToolDefinition } from '@goodvibes-jev/engine/sdk/platform/types';
+
+// Jev picks which spare argument fills a missing parameter; these fakes stand
+// in for it. A call no entry names reads as "no spare argument fits".
+const readings = useToolReadings([
+  ['"argument":"pathValue"', { fill: 'pathValue' }],
+  ['"argument":"file_path"', { fill: 'file_path' }],
+]);
 
 // ---------------------------------------------------------------------------
 // Test schema helpers
@@ -80,46 +88,46 @@ const ENUM_SCHEMA: ToolDefinition = {
 // ---------------------------------------------------------------------------
 
 describe('Rule 1: infer agent mode', () => {
-  test('infers spawn when task is present', () => {
-    const result = repairToolCall('agent', { task: 'Write a test' }, AGENT_SCHEMA);
+  test('infers spawn when task is present', async () => {
+    const result = await repairToolCall('agent', { task: 'Write a test' }, AGENT_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['mode']).toBe('spawn');
     expect(result.repairs).toHaveLength(1);
     expect(result.repairs[0]).toContain('spawn');
   });
 
-  test('infers spawn when template is present (no task)', () => {
-    const result = repairToolCall('agent', { template: 'engineer' }, AGENT_SCHEMA);
+  test('infers spawn when template is present (no task)', async () => {
+    const result = await repairToolCall('agent', { template: 'engineer' }, AGENT_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['mode']).toBe('spawn');
   });
 
-  test('infers spawn when both task and template are present', () => {
-    const result = repairToolCall('agent', { task: 'Build it', template: 'engineer' }, AGENT_SCHEMA);
+  test('infers spawn when both task and template are present', async () => {
+    const result = await repairToolCall('agent', { task: 'Build it', template: 'engineer' }, AGENT_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['mode']).toBe('spawn');
   });
 
-  test('infers status when only agentId is present', () => {
-    const result = repairToolCall('agent', { agentId: 'abc-123' }, AGENT_SCHEMA);
-    expect(result.repaired).toBe(true);
-    expect(result.fixed['mode']).toBe('status');
+  test('does not guess a mode from agentId alone (seven modes take it)', async () => {
+    const result = await repairToolCall('agent', { agentId: 'abc-123' }, AGENT_SCHEMA);
+    expect(result.repaired).toBe(false);
+    expect(result.fixed['mode']).toBeUndefined();
   });
 
-  test('infers list for empty args object', () => {
-    const result = repairToolCall('agent', {}, AGENT_SCHEMA);
-    expect(result.repaired).toBe(true);
-    expect(result.fixed['mode']).toBe('list');
+  test('does not guess a mode for an empty call', async () => {
+    const result = await repairToolCall('agent', {}, AGENT_SCHEMA);
+    expect(result.repaired).toBe(false);
+    expect(result.fixed['mode']).toBeUndefined();
   });
 
-  test('does not overwrite mode when already present', () => {
-    const result = repairToolCall('agent', { mode: 'cancel', agentId: 'abc-123' }, AGENT_SCHEMA);
+  test('does not overwrite mode when already present', async () => {
+    const result = await repairToolCall('agent', { mode: 'cancel', agentId: 'abc-123' }, AGENT_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['mode']).toBe('cancel');
   });
 
-  test('does not infer mode for non-agent tools', () => {
-    const result = repairToolCall('read', { task: 'Build it' }, STRING_SCHEMA);
+  test('does not infer mode for non-agent tools', async () => {
+    const result = await repairToolCall('read', { task: 'Build it' }, STRING_SCHEMA);
     // 'task' is not in STRING_SCHEMA, no mode inference attempted
     expect(result.fixed['mode']).toBeUndefined();
   });
@@ -130,9 +138,8 @@ describe('Rule 1: infer agent mode', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 2: fill missing required string params', () => {
-  test('fills missing required path from non-required encoding when names match target', () => {
-    // Provide a non-required param with a path-like name
-    const result = repairToolCall(
+  test('fills missing required path from the spare argument Jev picks', async () => {
+    const result = await repairToolCall(
       'read',
       { pathValue: '/etc/hosts' },
       {
@@ -143,7 +150,7 @@ describe('Rule 2: fill missing required string params', () => {
           required: ['path'],
           properties: {
             path: { type: 'string' },
-            pathValue: { type: 'string' }, // non-required, name overlaps 'path'
+            pathValue: { type: 'string' },
           },
         },
       },
@@ -153,9 +160,8 @@ describe('Rule 2: fill missing required string params', () => {
     expect(result.repairs[0]).toContain('pathValue');
   });
 
-  test('does not fill missing required path from non-required string with no name overlap', () => {
-    // 'encoding' has no name overlap with 'path', generic fallback removed
-    const result = repairToolCall(
+  test('does not fill when Jev picks no spare argument', async () => {
+    const result = await repairToolCall(
       'read',
       { encoding: '/etc/hosts' },
       STRING_SCHEMA,
@@ -164,8 +170,8 @@ describe('Rule 2: fill missing required string params', () => {
     expect(result.fixed['path']).toBeUndefined();
   });
 
-  test('removes source key from fixed after copying to missing required param', () => {
-    const result = repairToolCall(
+  test('removes source key from fixed after copying to missing required param', async () => {
+    const result = await repairToolCall(
       'read',
       { pathValue: '/etc/hosts' },
       {
@@ -189,14 +195,15 @@ describe('Rule 2: fill missing required string params', () => {
     expect(result.original['pathValue']).toBe('/etc/hosts');
   });
 
-  test('does not fill when no non-required string args present', () => {
-    const result = repairToolCall('read', {}, STRING_SCHEMA);
-    // No candidates available, missing path stays missing
+  test('does not fill when no non-required string args present', async () => {
+    const result = await repairToolCall('read', {}, STRING_SCHEMA);
+    // No candidates available: nothing is read, missing path stays missing
+    expect(readings.requests).toHaveLength(0);
     expect(result.fixed['path']).toBeUndefined();
     expect(result.repaired).toBe(false);
   });
 
-  test('does not fill required param from another required param', () => {
+  test('does not fill required param from another required param', async () => {
     const schema: ToolDefinition = {
       name: 'copy',
       description: 'Copy a file.',
@@ -210,8 +217,30 @@ describe('Rule 2: fill missing required string params', () => {
       },
     };
     // Both required, should not fill dst from src
-    const result = repairToolCall('copy', { src: '/a/b' }, schema);
+    const result = await repairToolCall('copy', { src: '/a/b' }, schema);
     expect(result.fixed['dst']).toBeUndefined();
+  });
+});
+
+describe('Rule 2: the param-fill reading', () => {
+  test('a pick with no name overlap is still filled when Jev picks it', async () => {
+    const result = await repairToolCall('read', { file_path: 'src/a.ts', encoding: 'utf-8' }, {
+      name: 'read',
+      description: 'Read a file.',
+      parameters: { type: 'object', required: ['path'], properties: { path: { type: 'string' }, encoding: { type: 'string' } } },
+    });
+    expect(result.fixed['path']).toBe('src/a.ts');
+    expect(result.fixed['file_path']).toBeUndefined();
+    expect(result.fixed['encoding']).toBe('utf-8');
+  });
+
+  test('the selection offers only spare non-empty strings, with the tool and parameter as context', async () => {
+    await repairToolCall('read', { encoding: 'utf-8', empty: '', count: 3 }, STRING_SCHEMA);
+    expect(readings.requests).toHaveLength(1);
+    const state = readings.requests[0]!.state as { context: { tool: string; missingParameter: string }; candidates: Array<{ id: string }> };
+    expect(state.context.tool).toBe('read');
+    expect(state.context.missingParameter).toBe('path');
+    expect(state.candidates.map((candidate) => candidate.id)).toEqual(['encoding']);
   });
 });
 
@@ -220,46 +249,46 @@ describe('Rule 2: fill missing required string params', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 3: string-to-number coercion', () => {
-  test('coerces numeric string to number', () => {
-    const result = repairToolCall('wait', { duration: '30000' }, NUMBER_SCHEMA);
+  test('coerces numeric string to number', async () => {
+    const result = await repairToolCall('wait', { duration: '30000' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['duration']).toBe(30000);
     expect(typeof result.fixed['duration']).toBe('number');
     expect(result.repairs[0]).toContain('30000');
   });
 
-  test('coerces zero string', () => {
-    const result = repairToolCall('wait', { duration: '0' }, NUMBER_SCHEMA);
+  test('coerces zero string', async () => {
+    const result = await repairToolCall('wait', { duration: '0' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['duration']).toBe(0);
   });
 
-  test('coerces float string', () => {
-    const result = repairToolCall('wait', { duration: '1.5' }, NUMBER_SCHEMA);
+  test('coerces float string', async () => {
+    const result = await repairToolCall('wait', { duration: '1.5' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['duration']).toBe(1.5);
   });
 
-  test('does not coerce non-numeric string', () => {
-    const result = repairToolCall('wait', { duration: 'forever' }, NUMBER_SCHEMA);
+  test('does not coerce non-numeric string', async () => {
+    const result = await repairToolCall('wait', { duration: 'forever' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['duration']).toBe('forever');
   });
 
-  test('leaves actual number unchanged', () => {
-    const result = repairToolCall('wait', { duration: 5000 }, NUMBER_SCHEMA);
+  test('leaves actual number unchanged', async () => {
+    const result = await repairToolCall('wait', { duration: 5000 }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['duration']).toBe(5000);
   });
 
-  test('does not coerce empty string to 0', () => {
-    const result = repairToolCall('wait', { duration: '' }, NUMBER_SCHEMA);
+  test('does not coerce empty string to 0', async () => {
+    const result = await repairToolCall('wait', { duration: '' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['duration']).toBe('');
   });
 
-  test('does not coerce whitespace-only string to 0', () => {
-    const result = repairToolCall('wait', { duration: '   ' }, NUMBER_SCHEMA);
+  test('does not coerce whitespace-only string to 0', async () => {
+    const result = await repairToolCall('wait', { duration: '   ' }, NUMBER_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['duration']).toBe('   ');
   });
@@ -270,45 +299,45 @@ describe('Rule 3: string-to-number coercion', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 4: boolean coercion', () => {
-  test('coerces "true" to true', () => {
-    const result = repairToolCall('toggle', { enabled: 'true' }, BOOL_SCHEMA);
+  test('coerces "true" to true', async () => {
+    const result = await repairToolCall('toggle', { enabled: 'true' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(true);
   });
 
-  test('coerces "false" to false', () => {
-    const result = repairToolCall('toggle', { enabled: 'false' }, BOOL_SCHEMA);
+  test('coerces "false" to false', async () => {
+    const result = await repairToolCall('toggle', { enabled: 'false' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(false);
   });
 
-  test('coerces "yes" to true', () => {
-    const result = repairToolCall('toggle', { enabled: 'yes' }, BOOL_SCHEMA);
+  test('coerces "yes" to true', async () => {
+    const result = await repairToolCall('toggle', { enabled: 'yes' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(true);
   });
 
-  test('coerces "no" to false', () => {
-    const result = repairToolCall('toggle', { enabled: 'no' }, BOOL_SCHEMA);
+  test('coerces "no" to false', async () => {
+    const result = await repairToolCall('toggle', { enabled: 'no' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['enabled']).toBe(false);
   });
 
-  test('coerces case-insensitive variants (TRUE, YES)', () => {
-    const r1 = repairToolCall('toggle', { enabled: 'TRUE' }, BOOL_SCHEMA);
+  test('coerces case-insensitive variants (TRUE, YES)', async () => {
+    const r1 = await repairToolCall('toggle', { enabled: 'TRUE' }, BOOL_SCHEMA);
     expect(r1.fixed['enabled']).toBe(true);
-    const r2 = repairToolCall('toggle', { enabled: 'YES' }, BOOL_SCHEMA);
+    const r2 = await repairToolCall('toggle', { enabled: 'YES' }, BOOL_SCHEMA);
     expect(r2.fixed['enabled']).toBe(true);
   });
 
-  test('leaves actual boolean unchanged', () => {
-    const result = repairToolCall('toggle', { enabled: true }, BOOL_SCHEMA);
+  test('leaves actual boolean unchanged', async () => {
+    const result = await repairToolCall('toggle', { enabled: true }, BOOL_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['enabled']).toBe(true);
   });
 
-  test('leaves unrecognised string unchanged', () => {
-    const result = repairToolCall('toggle', { enabled: 'maybe' }, BOOL_SCHEMA);
+  test('leaves unrecognised string unchanged', async () => {
+    const result = await repairToolCall('toggle', { enabled: 'maybe' }, BOOL_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['enabled']).toBe('maybe');
   });
@@ -319,32 +348,32 @@ describe('Rule 4: boolean coercion', () => {
 // ---------------------------------------------------------------------------
 
 describe('Rule 5: enum normalization', () => {
-  test('normalizes wrong-case enum value', () => {
-    const result = repairToolCall('set_level', { level: 'Debug' }, ENUM_SCHEMA);
+  test('normalizes wrong-case enum value', async () => {
+    const result = await repairToolCall('set_level', { level: 'Debug' }, ENUM_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['level']).toBe('debug');
   });
 
-  test('normalizes all-caps enum value', () => {
-    const result = repairToolCall('set_level', { level: 'ERROR' }, ENUM_SCHEMA);
+  test('normalizes all-caps enum value', async () => {
+    const result = await repairToolCall('set_level', { level: 'ERROR' }, ENUM_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['level']).toBe('error');
   });
 
-  test('normalizes agent mode enum (Spawn -> spawn)', () => {
-    const result = repairToolCall('agent', { mode: 'Spawn', task: 'Do it' }, AGENT_SCHEMA);
+  test('normalizes agent mode enum (Spawn -> spawn)', async () => {
+    const result = await repairToolCall('agent', { mode: 'Spawn', task: 'Do it' }, AGENT_SCHEMA);
     expect(result.repaired).toBe(true);
     expect(result.fixed['mode']).toBe('spawn');
   });
 
-  test('leaves exact enum value unchanged', () => {
-    const result = repairToolCall('set_level', { level: 'warn' }, ENUM_SCHEMA);
+  test('leaves exact enum value unchanged', async () => {
+    const result = await repairToolCall('set_level', { level: 'warn' }, ENUM_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.fixed['level']).toBe('warn');
   });
 
-  test('does not normalize completely wrong enum value', () => {
-    const result = repairToolCall('set_level', { level: 'verbose' }, ENUM_SCHEMA);
+  test('does not normalize completely wrong enum value', async () => {
+    const result = await repairToolCall('set_level', { level: 'verbose' }, ENUM_SCHEMA);
     // 'verbose' not in enum, case-insensitive still no match -> unchanged
     expect(result.repaired).toBe(false);
     expect(result.fixed['level']).toBe('verbose');
@@ -356,24 +385,24 @@ describe('Rule 5: enum normalization', () => {
 // ---------------------------------------------------------------------------
 
 describe('RepairResult contract', () => {
-  test('original is always preserved unchanged', () => {
+  test('original is always preserved unchanged', async () => {
     const args = { duration: '5000' };
-    const result = repairToolCall('wait', args, NUMBER_SCHEMA);
+    const result = await repairToolCall('wait', args, NUMBER_SCHEMA);
     expect(result.original).toEqual({ duration: '5000' });
     expect(result.fixed['duration']).toBe(5000);
   });
 
-  test('returns repaired=false and fixed===original when nothing to fix', () => {
+  test('returns repaired=false and fixed===original when nothing to fix', async () => {
     const args = { duration: 5000 };
-    const result = repairToolCall('wait', args, NUMBER_SCHEMA);
+    const result = await repairToolCall('wait', args, NUMBER_SCHEMA);
     expect(result.repaired).toBe(false);
     expect(result.repairs).toHaveLength(0);
     expect(result.fixed).toEqual(args);
   });
 
-  test('repairs array lists all fixes when multiple repairs apply', () => {
+  test('repairs array lists all fixes when multiple repairs apply', async () => {
     // duration: string number + agent mode missing
-    const result = repairToolCall(
+    const result = await repairToolCall(
       'agent',
       { task: 'Do work', timeoutMs: '30000', outsideContract: 'true' },
       AGENT_SCHEMA,
@@ -386,7 +415,7 @@ describe('RepairResult contract', () => {
     expect(result.fixed['outsideContract']).toBe(true);
   });
 
-  test('structuredClone protects nested objects from mutation', () => {
+  test('structuredClone protects nested objects from mutation', async () => {
     const nested = { meta: { retries: 3 } };
     const schema: ToolDefinition = {
       name: 'task',
@@ -400,22 +429,20 @@ describe('RepairResult contract', () => {
         },
       },
     };
-    const result = repairToolCall('task', { duration: '1000', config: nested }, schema);
+    const result = await repairToolCall('task', { duration: '1000', config: nested }, schema);
     // Mutate the fixed copy, original must not be affected
     (result.fixed['config'] as Record<string, unknown>)['extra'] = true;
     expect((nested as Record<string, unknown>)['extra']).toBeUndefined();
   });
 
-  test('never throws on garbage input', () => {
+  test('never throws on garbage input', async () => {
     const schema: ToolDefinition = {
       name: 'bad',
       description: 'Bad schema.',
       parameters: { type: 'object' }, // no properties, no required
     };
-    expect(() => repairToolCall('bad', {}, schema)).not.toThrow();
+    expect(await repairToolCall('bad', {}, schema)).toBeDefined();
     // Also with null-ish values in args
-    expect(() =>
-      repairToolCall('bad', { a: null, b: undefined } as Record<string, unknown>, schema),
-    ).not.toThrow();
+    expect(await repairToolCall('bad', { a: null, b: undefined } as Record<string, unknown>, schema)).toBeDefined();
   });
 });

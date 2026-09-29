@@ -7,6 +7,7 @@
 // agent tool's WRFC-only modes are not in the allowlist.
 // Part two: read, inspect, control, analyze, registry, find, web search,
 // the durable workflow tools, and the product-supplied pieces.
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.ts';
 import type { Tool } from '../sdk/src/platform/types/tools.ts';
@@ -308,6 +309,18 @@ function getRecordProperty(record: Record<string, unknown>, key: string): Record
   return value as Record<string, unknown>;
 }
 
+// Which reads touch secret or credential material is a Jev reading
+// (engine.gate.side-effect `secrets`); these paths read as yes, every other
+// path as no. A hidden directory alone is not a secret.
+useGateReadings([
+  ['.ssh/', { mutates: false, secrets: true }],
+  ['id_rsa', { mutates: false, secrets: true }],
+  ['.env', { mutates: false, secrets: true }],
+  ['api-token.txt', { mutates: false, secrets: true }],
+  ['credentials.json', { mutates: false, secrets: true }],
+  ['service.pem', { mutates: false, secrets: true }],
+]);
+
 describe('the Agent main-conversation tool guard: read and inspection tools', () => {
   test('Agent runtime guard narrows read to bounded non-secret project files', async () => {
     const registry = new ToolRegistry();
@@ -345,7 +358,6 @@ describe('the Agent main-conversation tool guard: read and inspection tools', ()
     }));
     const blockedInputs: ReadonlyArray<Record<string, unknown>> = [
       { files: [{ path: '.env' }] },
-      { files: [{ path: 'src/.hidden/config.ts' }] },
       { files: [{ path: 'secrets/api-token.txt' }] },
       { files: [{ path: 'config/credentials.json' }] },
       { files: [{ path: 'keys/service.pem' }] },
@@ -698,23 +710,20 @@ describe('the Agent main-conversation tool guard: read and inspection tools', ()
     expect(wrapped).toEqual(['goodvibes_context']);
   });
 
-  test('a hidden path this session wrote is readable only when the product passes its write ledger', async () => {
-    const written = '/home/u/.goodvibes-screen.png';
-    for (const [ledger, allowed] of [[undefined, false], [(path: string) => path === written, true]] as const) {
-      const registry = new ToolRegistry();
-      registry.register(makeFakeAgentTool().tool);
-      registry.register(makeReadTool());
-      installAgentToolPolicyGuard(registry, ledger ? { wasWrittenInSession: ledger } : {});
-      const result = await registry.execute('call-read-written', 'read', { files: [{ path: written }] });
-      expect(result.success).toBe(allowed);
-    }
-    // A credential store stays blocked even when the session wrote it.
-    expect(isBlockedReadPath('/home/u/.ssh/config', () => true)).toBe(true);
+  test('a read Jev reads as touching secrets is refused; an ordinary hidden file is not', async () => {
+    const registry = new ToolRegistry();
+    registry.register(makeFakeAgentTool().tool);
+    registry.register(makeReadTool());
+    installAgentToolPolicyGuard(registry, {});
+    expect((await registry.execute('call-read-hidden', 'read', { files: [{ path: '/home/u/.goodvibes-screen.png' }] })).success).toBe(true);
+    expect((await registry.execute('call-read-secret', 'read', { files: [{ path: '/home/u/.ssh/config' }] })).success).toBe(false);
+    expect(await isBlockedReadPath('/home/u/.ssh/config')).toBe(true);
+    expect(await isBlockedReadPath('/home/u/project/README.md')).toBe(false);
   });
 
-  test('the mcp explanation lists the call mode only when the product says its route is installed', () => {
-    expect(explainAgentToolPolicyInvocation('mcp', { mode: 'call' }).status).toBe('denied');
-    const withRoute = explainAgentToolPolicyInvocation('mcp', { mode: 'call' }, { mcpCallMode: 'call' });
+  test('the mcp explanation lists the call mode only when the product says its route is installed', async () => {
+    expect((await explainAgentToolPolicyInvocation('mcp', { mode: 'call' })).status).toBe('denied');
+    const withRoute = await explainAgentToolPolicyInvocation('mcp', { mode: 'call' }, { mcpCallMode: 'call' });
     expect(withRoute.status).toBe('allowed');
     expect(withRoute.allowedModes).toEqual([...AGENT_READ_ONLY_MCP_TOOL_MODES, 'call']);
   });

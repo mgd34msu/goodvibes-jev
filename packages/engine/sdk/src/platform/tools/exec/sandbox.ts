@@ -25,6 +25,7 @@
  * boundary is not a licence for a catastrophic command.
  */
 
+import { readCommandNeeds, type CommandNeeds } from '../../runtime/permissions/normalization/index.js';
 import { spawnSync } from 'node:child_process';
 import { normalizeCommand } from '../../runtime/permissions/normalization/index.js';
 import { decideSandboxedExec } from '../../runtime/permissions/sandbox-policy.js';
@@ -219,9 +220,11 @@ export interface ResolveSandboxPlanInput {
   readonly workspaceDir: string;
   readonly cwd: string;
   readonly homeDir?: string | undefined;
+  /** What host access the command needs, read by Jev (readCommandNeeds). */
+  readonly needs: CommandNeeds;
 }
 
-/** The base command names of a shell command (for egress-allowlist matching). */
+/** The base command names of a shell command, for matching the owner's egress allowlist. */
 function commandBaseNames(command: string): string[] {
   try {
     const normalized = normalizeCommand(command);
@@ -239,6 +242,9 @@ function egressAllowed(command: string, egressAllowlist: readonly string[]): boo
 }
 
 const NOT_SANDBOXED_ARGV: string[] = [];
+
+/** Needs for a command the sandbox will not wrap: nothing to open, nothing read. */
+const NO_NEEDS: CommandNeeds = { needsNetwork: false, needsPrivilege: false };
 
 /**
  * Resolve the per-command sandbox plan. When the capability gate is off, the config
@@ -269,15 +275,7 @@ export function resolveExecSandboxPlan(input: ResolveSandboxPlanInput): ExecSand
     };
   }
 
-  const classifications = (() => {
-    try {
-      return normalizeCommand(input.command).classifications;
-    } catch {
-      return [] as ReturnType<typeof normalizeCommand>['classifications'];
-    }
-  })();
-  const wantsNetwork = classifications.includes('network');
-  const networkEnabled = wantsNetwork && egressAllowed(input.command, input.config.egressAllowlist);
+  const networkEnabled = input.needs.needsNetwork && egressAllowed(input.command, input.config.egressAllowlist);
 
   const escalationsGranted: string[] = [];
   if (networkEnabled) {
@@ -349,14 +347,17 @@ export interface ExecSandboxRuntime {
  * when there is no sandbox wiring at all, so the caller can skip both the argv
  * wrapping and the result metadata entirely (byte-for-byte today's behavior).
  */
-export function resolveRuntimeSandboxPlan(
+export async function resolveRuntimeSandboxPlan(
   sandbox: ExecSandboxRuntime | null,
   command: string,
   workspaceDir: string,
   cwd: string,
-): ExecSandboxPlan | null {
+): Promise<ExecSandboxPlan | null> {
   if (!sandbox) return null;
+  const active = sandbox.featureEnabled && sandbox.config.enabled && sandbox.availability.available;
+  const needs = active ? await readCommandNeeds(command, workspaceDir) : NO_NEEDS;
   return resolveExecSandboxPlan({
+    needs,
     config: sandbox.config,
     availability: sandbox.availability,
     featureEnabled: sandbox.featureEnabled,
@@ -393,6 +394,7 @@ export async function brokerSandboxEscalation(
   if (!sandbox?.requestEscalation) return reportContainedRun();
   const decision = decideSandboxedExec({
     command,
+    needs: await readCommandNeeds(command, workingDirectory),
     sandboxActive: true,
     egressAllowlist: sandbox.config.egressAllowlist,
     baseEffectWhenNotSandboxed: 'ask',

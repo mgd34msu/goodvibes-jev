@@ -33,6 +33,12 @@ import type { ExecSandboxPlan } from '../sdk/src/platform/tools/exec/sandbox.ts'
 import { createExecTool } from '../sdk/src/platform/tools/exec/index.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// The tools batteries exec reads (credential names, prompts, retries) and,
+// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
+useToolReadings([], EXEC_GATE_TABLE);
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

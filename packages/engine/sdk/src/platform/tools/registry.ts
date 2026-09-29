@@ -124,7 +124,7 @@ export class ToolRegistry {
     try {
       // Attempt to repair malformed args before execution.
       // Premium models that send correct calls pass through unchanged.
-      const repairResult = repairToolCall(name, args, tool.definition);
+      const repairResult = await repairToolCall(name, args, tool.definition);
       const effectiveArgs = repairResult.repaired ? repairResult.fixed : args;
 
       const result = await tool.execute(effectiveArgs, opts);

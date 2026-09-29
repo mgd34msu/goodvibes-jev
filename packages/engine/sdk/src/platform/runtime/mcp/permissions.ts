@@ -21,7 +21,7 @@ import type {
 import { logger } from '../../utils/logger.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sideEffect } from '../../gate/batteries/side-effect.js';
-import { readingArguments } from '../../gate/reading.js';
+import { readingArguments, readToolCall } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -45,58 +45,32 @@ function modeFromTrustLevel(level: McpTrustLevel): McpTrustMode {
   }
 }
 
-function riskForCapability(capability: McpCapabilityClass): import('./types.js').McpRiskLevel {
-  switch (capability) {
-    case 'metadata':
-    case 'generic':
-      return 'low';
-    case 'read_fs':
-    case 'network_read':
-      return 'medium';
-    case 'write_fs':
-    case 'exec':
-    case 'network_write':
-    case 'spawn_agent':
-    case 'config_mutation':
-      return 'high';
-    case 'secret_read':
-    case 'system_mutation':
-      return 'critical';
-  }
-}
-
 /**
- * The capability class of an MCP tool call, read by Jev (the side-effect
- * battery's `capability` question) from the server, tool name and arguments.
- * It replaces the keyword match over tool names; a reading that does not
- * reach act is treated as the riskiest plausible class the reading allowed,
- * which the role, scope and trust-mode rules below then apply to as code.
+ * What an MCP tool call is, read by Jev: its capability class
+ * (`engine.gate.side-effect` `capability`) and its stakes (the gate's full
+ * reading, gate/reading.ts), asked together. They replace the keyword match
+ * over tool names and the fixed capability-to-risk table (secret_read
+ * critical, write_fs high...): how much a call risks is what it does with
+ * these arguments, not which bucket its name falls in. A capability reading
+ * that does not reach act counts as incoherent with the server's role, so the
+ * trust-mode rules ask or refuse. The role, scope and trust-mode rules that
+ * consume the readings stay code: they carry out the owner's configuration.
  */
-async function readCapability(serverName: string, toolName: string, args: Record<string, unknown>): Promise<McpCapabilityClass> {
+async function readMcpCall(
+  serverName: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<{ readonly capability: McpCapabilityClass; readonly confident: boolean; readonly riskLevel: import('./types.js').McpRiskLevel }> {
   const site = 'engine.mcp.capability';
-  const run = await sideEffect.run(judgmentPort(site), {
-    server: serverName,
-    tool: toolName,
-    arguments: readingArguments(args),
-  }, { site, only: ['capability'] });
-  const reading = run.readings.capability;
-  const capability = reading.outcome === 'act' ? reading.choice : riskiestCapability(reading.probabilities);
-  run.recordAction(`capability:${capability}`);
-  return capability;
+  const [run, reading] = await Promise.all([
+    sideEffect.run(judgmentPort(site), { server: serverName, tool: toolName, arguments: readingArguments(args) }, { site, only: ['capability'] }),
+    readToolCall({ toolName: `mcp:${serverName}.${toolName}`, args }, site),
+  ]);
+  const capabilityReading = run.readings.capability;
+  run.recordAction(`capability:${capabilityReading.choice}`);
+  reading.recordAction(`stakes:${reading.stakes}`);
+  return { capability: capabilityReading.choice, confident: capabilityReading.outcome === 'act', riskLevel: reading.stakes };
 }
-
-/** Of the classes a reading gives real weight to, the one with the highest risk. */
-function riskiestCapability(probabilities: Readonly<Record<McpCapabilityClass, number>>): McpCapabilityClass {
-  const rank: Readonly<Record<import('./types.js').McpRiskLevel, number>> = { low: 0, medium: 1, high: 2, critical: 3 };
-  const plausible = (Object.keys(probabilities) as McpCapabilityClass[]).filter((capability) => probabilities[capability] >= PLAUSIBLE_CAPABILITY);
-  return plausible.reduce<McpCapabilityClass>(
-    (worst, capability) => (rank[riskForCapability(capability)] > rank[riskForCapability(worst)] ? capability : worst),
-    'generic',
-  );
-}
-
-/** The probability at which a capability class counts as plausible for an uncertain reading. */
-const PLAUSIBLE_CAPABILITY = 0.15;
 
 function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClass): boolean {
   switch (role) {
@@ -497,13 +471,12 @@ export class McpPermissionManager {
       };
     }
 
-    const capability = await readCapability(serverName, toolName, args);
-    const riskLevel = riskForCapability(capability);
+    const { capability, confident, riskLevel } = await readMcpCall(serverName, toolName, args);
     const capabilityAllowed = record.profile.allowedCapabilities.length === 0 || record.profile.allowedCapabilities.includes(capability);
     const coherentRole = roleAllowsCapability(record.profile.role, capability);
     const pathScoped = pathInScope(record.profile.allowedPaths, args);
     const hostScoped = hostInScope(record.profile.allowedHosts, args);
-    const incoherent = !coherentRole || !capabilityAllowed || !pathScoped || !hostScoped;
+    const incoherent = !confident || !coherentRole || !capabilityAllowed || !pathScoped || !hostScoped;
 
     let assessment: McpCoherenceAssessment;
     if (record.profile.mode === 'allow-all') {

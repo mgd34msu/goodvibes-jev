@@ -33,6 +33,11 @@ import {
   type TriggerActionExecutor,
   type TriggerProcessHost,
 } from '../sdk/src/platform/triggers/index.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// Background spawns read which environment variable names are credentials;
+// the fake port reads none as one.
+useToolReadings();
 
 const roots: string[] = [];
 

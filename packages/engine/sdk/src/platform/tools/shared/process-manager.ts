@@ -171,6 +171,16 @@ export class ProcessManager {
     const sigtermGraceMs = opts?.sigterm_grace_ms ?? 5_000;
     const killOnTimeout = opts?.kill_on_timeout ?? true;
 
+    const cleanEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([, v]) => v !== undefined),
+    ) as Record<string, string>;
+    // Scrub credential-bearing vars out of the inherited base env before merging
+    // the caller-supplied env (an explicit opt-in) on top. Without this, the
+    // background spawn would re-introduce every secret from process.env that the
+    // foreground scrub already removed.
+    const scrubbedBase = (await scrubCredentialEnv(cleanEnv, opts?.credentialEnvScrub ?? resolveCredentialEnvScrub())).env;
+    const mergedEnv = { ...scrubbedBase, ...env };
+
     const id = this.newId();
     const entry: BackgroundProcess = {
       id,
@@ -185,16 +195,6 @@ export class ProcessManager {
     };
     this.pruneCompletedProcesses();
     this._processes.set(id, entry);
-
-    const cleanEnv = Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined),
-    ) as Record<string, string>;
-    // Scrub credential-bearing vars out of the inherited base env before merging
-    // the caller-supplied env (an explicit opt-in) on top. Without this, the
-    // background spawn would re-introduce every secret from process.env that the
-    // foreground scrub already removed.
-    const scrubbedBase = scrubCredentialEnv(cleanEnv, opts?.credentialEnvScrub ?? resolveCredentialEnvScrub()).env;
-    const mergedEnv = { ...scrubbedBase, ...env };
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {

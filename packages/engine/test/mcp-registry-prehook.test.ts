@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { McpRegistry } from '../sdk/src/platform/mcp/registry.js';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 
 describe('McpRegistry pre-call hooks', () => {
+  // The MCP permission check reads each call's capability through Jev; a fake
+  // port answers so no test calls the live API.
+  useGateReadings();
   test('blocks tool execution when a pre-call hook returns ok false', async () => {
     const registry = new McpRegistry({
       hookDispatcher: {

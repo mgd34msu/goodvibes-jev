@@ -71,8 +71,6 @@ export type AgentToolPolicyGuardOptions = {
    * contract), applied when the registry holds that tool.
    */
   readonly wrapContextTool?: ((tool: Tool, registry: ToolRegistry) => void) | undefined;
-  /** The product's session write ledger, for the read policy's hidden-name waiver. */
-  readonly wasWrittenInSession?: ((path: string) => boolean) | undefined;
 };
 
 /** What the policy explanation needs to know about the product's MCP call route. */

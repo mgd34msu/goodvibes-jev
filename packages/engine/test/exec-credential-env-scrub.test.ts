@@ -14,14 +14,31 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import {
-  isCredentialEnvName,
+  readCredentialEnvName,
   resolveCredentialEnvScrub,
   scrubCredentialEnv,
 } from '../sdk/src/platform/tools/exec/credential-env.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+import { EXEC_GATE_TABLE, useGateReadings } from './_helpers/gate-readings.ts';
+
+useGateReadings(EXEC_GATE_TABLE);
+
+// Jev reads each variable NAME; these fakes stand in for it. Names no entry
+// matches read as not a credential.
+const CREDENTIAL = { credential: true } as const;
+const readings = useToolReadings([
+  ['"AWS_SECRET_ACCESS_KEY"', CREDENTIAL],
+  ['"AWS_ACCESS_KEY_ID"', CREDENTIAL],
+  ['"GITHUB_TOKEN"', CREDENTIAL],
+  ['"NPM_TOKEN"', CREDENTIAL],
+  ['"OPENAI_API_KEY"', CREDENTIAL],
+  ['"DB_PASSWORD"', CREDENTIAL],
+  ['"SCRUB_TEST_API_KEY"', CREDENTIAL],
+]);
 
 describe('scrubCredentialEnv', () => {
-  test('withholds credential-bearing names, keeps ordinary vars', () => {
-    const { env, withheld } = scrubCredentialEnv(
+  test('withholds the names Jev reads as credentials, keeps the rest', async () => {
+    const { env, withheld } = await scrubCredentialEnv(
       {
         PATH: '/usr/bin',
         HOME: '/home/u',
@@ -42,28 +59,37 @@ describe('scrubCredentialEnv', () => {
     expect(withheld).toEqual(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'DB_PASSWORD', 'GITHUB_TOKEN', 'OPENAI_API_KEY']);
   });
 
-  test('allowlist re-admits a named var', () => {
-    const { env, withheld } = scrubCredentialEnv(
+  test('only names are read, never values', async () => {
+    await scrubCredentialEnv({ GITHUB_TOKEN: 'ght-value-1234', PATH: '/usr/bin' }, resolveCredentialEnvScrub());
+    const sent = JSON.stringify(readings.requests.map((request) => request.state));
+    expect(sent).toContain('GITHUB_TOKEN');
+    expect(sent).not.toContain('ght-value-1234');
+    expect(sent).not.toContain('/usr/bin');
+  });
+
+  test('allowlist re-admits a named var without reading it', async () => {
+    const { env, withheld } = await scrubCredentialEnv(
       { GITHUB_TOKEN: 'ght', NPM_TOKEN: 'npm' },
       resolveCredentialEnvScrub({ allowlist: ['GITHUB_TOKEN'] }),
     );
     expect(env.GITHUB_TOKEN).toBe('ght');
     expect(env.NPM_TOKEN).toBeUndefined();
     expect(withheld).toEqual(['NPM_TOKEN']);
+    expect(JSON.stringify(readings.requests.map((request) => request.state))).not.toContain('GITHUB_TOKEN');
   });
 
-  test('disabled passes env through untouched', () => {
-    const { env, withheld } = scrubCredentialEnv({ GITHUB_TOKEN: 'ght' }, resolveCredentialEnvScrub({ enabled: false }));
+  test('disabled passes env through untouched and reads nothing', async () => {
+    const { env, withheld } = await scrubCredentialEnv({ GITHUB_TOKEN: 'ght' }, resolveCredentialEnvScrub({ enabled: false }));
     expect(env.GITHUB_TOKEN).toBe('ght');
     expect(withheld).toEqual([]);
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test('isCredentialEnvName is case-insensitive and shape-based', () => {
-    expect(isCredentialEnvName('aws_secret_access_key')).toBe(true);
-    expect(isCredentialEnvName('MY_API_KEY')).toBe(true);
-    expect(isCredentialEnvName('GOOGLE_APPLICATION_CREDENTIALS')).toBe(true);
-    expect(isCredentialEnvName('PATH')).toBe(false);
-    expect(isCredentialEnvName('AWS_REGION')).toBe(false);
+  test('each name is read once per process, case-insensitively', async () => {
+    expect(await readCredentialEnvName('GITHUB_TOKEN')).toBe(true);
+    expect(await readCredentialEnvName('github_token')).toBe(true);
+    expect(await readCredentialEnvName('AWS_REGION')).toBe(false);
+    expect(readings.requests).toHaveLength(2);
   });
 });
 

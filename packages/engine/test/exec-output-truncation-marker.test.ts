@@ -20,6 +20,12 @@ import { formatResult, shapeStream } from '../sdk/src/platform/tools/exec/result
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import type { ExecCommandResult } from '../sdk/src/platform/tools/exec/schema.ts';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// The tools batteries exec reads (credential names, prompts, retries) and,
+// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
+useToolReadings([], EXEC_GATE_TABLE);
 
 interface Output {
   stdout?: string;

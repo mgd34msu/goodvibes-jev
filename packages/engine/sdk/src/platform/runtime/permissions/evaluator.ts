@@ -1,7 +1,9 @@
 /**
  * Runtime permissions evaluator.
  *
- * Evaluates tool calls through a layered priority stack. First match wins.
+ * Evaluates owner-authored and managed policy rules (and the mode and session
+ * layers used by policy simulation) through a layered priority stack. First
+ * match wins. The gate (permissions/manager.ts) consults only its rule layer.
  */
 
 import type {
@@ -16,7 +18,6 @@ import type {
 } from './types.js';
 import type { BundleProvenance } from './policy-loader.js';
 
-import { runSafetyChecks } from './safety-checks.js';
 import { DecisionLog } from './decision-log.js';
 import { evaluatePrefixRule } from './rules/prefix.js';
 import { evaluateArgShapeRule } from './rules/arg-shape.js';
@@ -43,9 +44,12 @@ const ESCALATION_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * classifyTool, Returns the semantic classification of a tool call.
- * For exec/execute, we classify based on arg content (destructive check
- * is done in safety layer; here we return 'write' as the baseline).
+ * classifyTool, Returns the classification of a tool call by the tool's
+ * built-in nature: the read tool reads, write and edit write, the agent and
+ * workflow tools delegate. It looks only at which built-in tool is called,
+ * never at arguments, and owner-authored mode-constraint rules filter on it.
+ * What a particular call does is read by Jev in the gate, which runs before
+ * this evaluator; there is no safety layer here.
  */
 function classifyTool(toolName: string): CommandClassification {
   if (NETWORK_TOOLS.has(toolName)) return 'network';
@@ -303,21 +307,6 @@ export class LayeredPolicyEvaluator {
   ): PermissionDecision {
     const trace: EvaluationStep[] = [];
     const classification = classifyTool(toolName);
-
-    // ── Layer 1: Safety checks (bypass-immune) ──────────────────────────
-    const safety = runSafetyChecks(toolName, args);
-    trace.push(...safety.steps);
-    if (safety.blocked) {
-      return this.finalize({
-        allowed: false,
-        reason: safety.reason ?? 'SAFETY_DENY_GUARDRAIL',
-        sourceLayer: 'safety',
-        toolName,
-        args,
-        classification: safety.classification ?? classification,
-        trace,
-      });
-    }
 
     // ── Layer 2: Mode constraints ───────────────────────────────────
     const modeResult = evaluateModeLayer(this.mode, toolName, classification);

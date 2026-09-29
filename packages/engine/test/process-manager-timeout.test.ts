@@ -9,6 +9,11 @@
 import { describe, expect, test } from 'bun:test';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.js';
 import { waitFor } from './_helpers/test-timeout.js';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// Background spawns read which environment variable names are credentials;
+// the fake port reads none as one.
+useToolReadings();
 
 describe('ProcessManager.spawn', () => {
   test('returns process_id and pid', async () => {

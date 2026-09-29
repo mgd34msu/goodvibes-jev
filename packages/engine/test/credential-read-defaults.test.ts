@@ -1,53 +1,18 @@
 /**
  * credential-read-defaults.test.ts
  *
- * Shipped default protection for reads of well-known credential files: a read
- * of a credential store is NOT silently auto-allowed in the default prompt
- * posture, it falls through to the ask/prompt path, while ordinary reads and a
- * workspace-local .env stay auto-allowed. These are ordinary permission-settings
- * defaults (managed rules / a read guard), NOT the frozen exec block.
+ * Whether a read-only tool call touches secret or credential material is
+ * Jev's reading (the side-effect battery's `secrets`), not a shipped path
+ * list. A read that does is read in full (at least high stakes) and reaches
+ * the prompt in the normal preset; one that does not runs; a path is asked
+ * once per process.
  */
 import { describe, expect, test } from 'bun:test';
 import { useGateReadings } from './_helpers/gate-readings.ts';
-import {
-  CREDENTIAL_READ_PATH_PATTERNS,
-  SHIPPED_CREDENTIAL_READ_RULES,
-  matchesShippedCredentialReadPath,
-} from '../sdk/src/platform/permissions/credential-read-defaults.ts';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.ts';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.ts';
 
 const WORKSPACE = '/tmp/gv-cred-read-workspace';
-
-describe('matchesShippedCredentialReadPath', () => {
-  test('matches well-known credential stores', () => {
-    expect(matchesShippedCredentialReadPath('/home/alice/.ssh/id_rsa').matched).toBe(true);
-    expect(matchesShippedCredentialReadPath('/Users/bob/.aws/credentials').matched).toBe(true);
-    expect(matchesShippedCredentialReadPath('/home/c/.config/google-chrome/Default/Login Data').matched).toBe(true);
-    expect(matchesShippedCredentialReadPath('/home/c/.gnupg/secring.gpg').matched).toBe(true);
-  });
-
-  test('does not match ordinary files', () => {
-    expect(matchesShippedCredentialReadPath('/home/alice/project/src/index.ts').matched).toBe(false);
-    expect(matchesShippedCredentialReadPath('/home/alice/README.md').matched).toBe(false);
-  });
-
-  test('.env is gated only OUTSIDE the workspace', () => {
-    expect(matchesShippedCredentialReadPath(`${WORKSPACE}/.env`, { projectRoot: WORKSPACE }).matched).toBe(false);
-    expect(matchesShippedCredentialReadPath('/home/alice/.env', { projectRoot: WORKSPACE }).matched).toBe(true);
-    expect(matchesShippedCredentialReadPath('/home/alice/.env.production', { projectRoot: WORKSPACE }).matched).toBe(true);
-  });
-
-  test('shipped rules are managed deny path-scope rules (not the frozen block)', () => {
-    expect(SHIPPED_CREDENTIAL_READ_RULES.length).toBeGreaterThan(0);
-    for (const rule of SHIPPED_CREDENTIAL_READ_RULES) {
-      expect(rule.origin).toBe('managed');
-      expect(rule.effect).toBe('deny');
-      expect(rule.type).toBe('path-scope');
-    }
-    expect(CREDENTIAL_READ_PATH_PATTERNS.length).toBeGreaterThan(0);
-  });
-});
 
 function makeConfigReader(): PermissionConfigReader {
   return {
@@ -65,8 +30,11 @@ function makePolicyRuntimeState(): Pick<PolicyRuntimeState, 'recordPermissionReq
   };
 }
 
-describe('PermissionManager: shipped credential-read gate (prompt mode)', () => {
-  const gateLog = useGateReadings([['id_rsa', { mutates: false, secrets: true, family: 'generic', kind: 'read' }]]);
+describe('PermissionManager: reads that touch secrets (normal preset)', () => {
+  const gateLog = useGateReadings([
+    ['id_rsa', { mutates: false, secrets: true, family: 'generic', kind: 'read' }],
+    ['hosts.yml', { mutates: false, secrets: true, family: 'generic', kind: 'read' }],
+  ]);
 
   test('a credential read is NOT auto-allowed: Jev reads it (secrets, high stakes) and it reaches the prompt', async () => {
     let prompted = false;
@@ -84,7 +52,7 @@ describe('PermissionManager: shipped credential-read gate (prompt mode)', () => 
     expect(gateLog.requests.length).toBeGreaterThan(0);
   });
 
-  test('an ordinary read is auto-allowed without a prompt', async () => {
+  test('an ordinary read is asked one question and runs without a prompt', async () => {
     let prompted = false;
     const manager = new PermissionManager(
       async () => { prompted = true; return { approved: false, remember: false }; },
@@ -96,20 +64,27 @@ describe('PermissionManager: shipped credential-read gate (prompt mode)', () => 
     const result = await manager.checkDetailed('read', { path: `${WORKSPACE}/src/index.ts` });
     expect(prompted).toBe(false);
     expect(result.approved).toBe(true);
-    expect(gateLog.requests).toHaveLength(0); // a known read-only tool is not read by Jev
+    expect(gateLog.requests).toHaveLength(1); // only the secrets question
+    expect(Object.keys(gateLog.requests[0]!.questions ?? {})).toEqual(['secrets']);
   });
 
-  test('a workspace-local .env stays auto-allowed', async () => {
-    let prompted = false;
+  test('an unlisted credential file is read too, and a path is asked once', async () => {
+    let prompts = 0;
     const manager = new PermissionManager(
-      async () => { prompted = true; return { approved: false, remember: false }; },
+      async () => { prompts += 1; return { approved: false, remember: false }; },
       makeConfigReader(),
       makePolicyRuntimeState(),
       null,
       null,
     );
-    const result = await manager.checkDetailed('read', { path: `${WORKSPACE}/.env` });
-    expect(prompted).toBe(false);
-    expect(result.approved).toBe(true);
+    const path = '/home/alice/.config/gh/hosts.yml';
+    expect((await manager.checkDetailed('read', { path })).approved).toBe(false);
+    expect(prompts).toBe(1);
+    const secretsOnly = () => gateLog.requests.filter((r) => Object.keys(r.questions ?? {}).join() === 'secrets').length;
+    expect(secretsOnly()).toBe(1);
+    // The search filter reads the same path the read tool did: remembered, not asked again.
+    expect(await manager.readAccess(path)).toBe('restricted');
+    expect(await manager.readAccess(path)).toBe('restricted');
+    expect(secretsOnly()).toBe(1);
   });
 });

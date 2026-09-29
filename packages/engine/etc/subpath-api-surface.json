@@ -9280,7 +9280,7 @@
         "setFeatureFlagManager",
         "setRuntimeBus"
       ],
-      "text": "export declare class AgentOrchestrator { private fullRegistries; private ownedProjectIndexes; private fullRegistryChannelVersion; private toolDeps; private featureFlagManager; private runtimeBus; private conversationSink; private cancellationSource; private readonly channelRegistry; private readonly messageBus; constructor(config?: { channelRegistry?: ChannelPluginRegistry | null | undefined; messageBus: import('./message-bus.js').AgentMessageBus; }); setRuntimeBus(runtimeBus: RuntimeEventBus | null): void; setFeatureFlagManager(manager: FeatureFlagManager): void; setConversationSink(sink: AgentConversationSink | null): void; setCancellationSource(source: AgentCancellationSource | null): void; private emitterContext; private emitAgentProgress; private emitAgentStarted; private emitAgentCancelledEvent; private emitAgentFailedEvent; private emitAgentCompletedEvent; private emitStreamDelta; setDependencies(toolDeps: AgentOrchestratorToolDeps): void; dispose(): void; private releaseOwnedProjectIndexes; getToolRegistry(): ToolRegistry; private getFullRegistry; private buildScopedRegistry; private resolveProviderForRecord; private resolveOptimizedProviderRoute; private buildOptimizerRequestProfile; private resolveProviderRouting; private normalizeRequestedModelId; private resolveChatModelId; private resolveFallbackModelRoutes; private createRunContext; runAgent(record: AgentRecord): Promise<void>; } ;; via AgentOrchestratorToolDeps = type AgentOrchestratorToolDeps = { readonly fileCache: FileStateCache; readonly projectIndex: ProjectIndex; readonly workingDirectory: string; readonly surfaceRoot: string; readonly fileUndoManager: import('../state/file-undo.js').FileUndoManager; readonly modeManager: import('../state/mode-manager.js').ModeManager; readonly processManager: import('../tools/shared/process-manager.js').ProcessManager; readonly agentMessageBus: AgentMessageBus; readonly webSearchService?: import('../web-search/index.js').WebSearchService | undefined; readonly channelRegistry?: import('../channels/index.js').ChannelPluginRegistry | null | undefined; readonly remoteRunnerRegistry?: import('../runtime/remote/index.js').RemoteRunnerRegistry | undefined; readonly knowledgeService?: import('../knowledge/index.js').KnowledgeService | undefined; readonly memoryRegistry?: import('../state/index.js').MemoryRegistry | undefined; readonly personalCapture?: import('../personal-capture/index.js').PersonalCaptureHolder | undefined; readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined; readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined; readonly codeIndexReindexScheduler?: Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'> | undefined; readonly toolExecutionObserver?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined; readonly contractHooks?: import('../contract/agent-hooks.js').ContractAgentHooks | undefined; readonly sessionOrchestration: import('../sessions/orchestration/index.js').CrossSessionTaskRegistry; readonly archetypeLoader?: import('./archetypes.js').ArchetypeLoader | undefined; readonly configManager?: ConfigManager | undefined; readonly providerRegistry?: ProviderRegistry | undefined; readonly providerOptimizer?: import('../providers/optimizer.js').ProviderOptimizer | undefined; readonly toolLLM?: ToolLLM | undefined; readonly serviceRegistry?: import('../config/service-registry.js').ServiceRegistry | undefined; readonly secretsManager?: Pick<import('../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome'> | null | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly overflowHandler?: import('../tools/shared/overflow.js').OverflowHandler | undefined; readonly sandboxSessionRegistry: import('../runtime/sandbox/session-registry.js').SandboxSessionRegistry; readonly workflowServices: ReturnType<typeof import('../tools/workflow/index.js').createWorkflowServices>; readonly permissionManager?: Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'previewReadAccess' | 'passesBoundary'> | undefined; readonly contextAccountingHolder?: import('../tools/context-accounting/index.js').ContextAccountingHolder | undefined; readonly sandboxEscalationHandler?: ((input: { readonly command: string; readonly escalations: readonly string[]; readonly boundary: string; readonly policyReasons: readonly string[]; readonly workingDirectory?: string | undefined; }) => Promise<boolean>) | undefined; readonly localhostFetchApproval?: ((input: { url: string; host: string; }) => Promise<boolean>) | undefined; readonly onSandboxedRun?: (() => void) | undefined; readonly execPromptAnswerHandler?: ((ask: import('../tools/exec/interactive.js').ExecPromptAsk) => Promise<import('../tools/exec/interactive.js').ExecPromptAnswer>) | undefined; }; ;; AgentRecord = export interface AgentRecord extends ProgressBearingRecord { id: string; task: string; template: string; model?: string | undefined; provider?: string | undefined; fallbackModels?: string[] | undefined; routing?: AgentInput['routing'] | undefined; executionIntent?: ExecutionIntent | undefined; reasoningEffort?: string | undefined; context?: string | undefined; tools: string[]; captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; terminationKind?: 'interrupt' | 'kill' | undefined; startedAt: number; completedAt?: number | undefined; toolCallCount: number; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens?: number | undefined; llmCallCount: number; turnCount: number; reasoningSummaryCount?: number | undefined; }; error?: string | undefined; maxTurns?: number | undefined; turnBudget?: { limit: number; source: 'default' | 'spawn-override' | 'policy-bound'; } | undefined; failureReason?: string | undefined; fullOutput?: string | undefined; streamingContent?: string | undefined; contractId?: string | undefined; contractRole?: ContractAgentRole | undefined; contractUnitId?: string | undefined; routeReason?: string | undefined; proposedUnits?: AgentInput['proposedUnits'] | undefined; fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined; outsideContract?: boolean | undefined; replyStyle?: 'report' | 'conversational' | undefined; workItemId?: string | undefined; workingDirectory?: string | undefined; cohort?: string | undefined; orchestrationGraphId?: string | undefined; orchestrationNodeId?: string | undefined; orchestrationDepth: number; parentAgentId?: string | undefined; parentNodeId?: string | undefined; capabilityCeilingTools?: string[] | undefined; successCriteria?: string[] | undefined; requiredEvidence?: string[] | undefined; writeScope?: string[] | undefined; executionProtocol: 'direct' | 'gather-plan-apply'; reviewMode: 'none' | 'contract'; communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct'; systemPromptAddendum?: string | undefined; knowledgeInjections?: Array<{ id: string; cls: string; summary: string; reason: string; confidence: number; reviewState: 'fresh' | 'reviewed' | 'stale' | 'contradicted'; }>; turnInjections?: TurnInjectionRecord[] | undefined; resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined; } | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class AgentOrchestrator { private fullRegistries; private ownedProjectIndexes; private fullRegistryChannelVersion; private toolDeps; private featureFlagManager; private runtimeBus; private conversationSink; private cancellationSource; private readonly channelRegistry; private readonly messageBus; constructor(config?: { channelRegistry?: ChannelPluginRegistry | null | undefined; messageBus: import('./message-bus.js').AgentMessageBus; }); setRuntimeBus(runtimeBus: RuntimeEventBus | null): void; setFeatureFlagManager(manager: FeatureFlagManager): void; setConversationSink(sink: AgentConversationSink | null): void; setCancellationSource(source: AgentCancellationSource | null): void; private emitterContext; private emitAgentProgress; private emitAgentStarted; private emitAgentCancelledEvent; private emitAgentFailedEvent; private emitAgentCompletedEvent; private emitStreamDelta; setDependencies(toolDeps: AgentOrchestratorToolDeps): void; dispose(): void; private releaseOwnedProjectIndexes; getToolRegistry(): ToolRegistry; private getFullRegistry; private buildScopedRegistry; private resolveProviderForRecord; private resolveOptimizedProviderRoute; private buildOptimizerRequestProfile; private resolveProviderRouting; private normalizeRequestedModelId; private resolveChatModelId; private resolveFallbackModelRoutes; private createRunContext; runAgent(record: AgentRecord): Promise<void>; } ;; via AgentOrchestratorToolDeps = type AgentOrchestratorToolDeps = { readonly fileCache: FileStateCache; readonly projectIndex: ProjectIndex; readonly workingDirectory: string; readonly surfaceRoot: string; readonly fileUndoManager: import('../state/file-undo.js').FileUndoManager; readonly modeManager: import('../state/mode-manager.js').ModeManager; readonly processManager: import('../tools/shared/process-manager.js').ProcessManager; readonly agentMessageBus: AgentMessageBus; readonly webSearchService?: import('../web-search/index.js').WebSearchService | undefined; readonly channelRegistry?: import('../channels/index.js').ChannelPluginRegistry | null | undefined; readonly remoteRunnerRegistry?: import('../runtime/remote/index.js').RemoteRunnerRegistry | undefined; readonly knowledgeService?: import('../knowledge/index.js').KnowledgeService | undefined; readonly memoryRegistry?: import('../state/index.js').MemoryRegistry | undefined; readonly personalCapture?: import('../personal-capture/index.js').PersonalCaptureHolder | undefined; readonly codeIndex?: import('./turn-knowledge-injection.js').TurnCodeIndexSource | undefined; readonly isCodeInjectionSettingEnabled?: (() => boolean) | undefined; readonly codeIndexReindexScheduler?: Pick<import('../state/code-index-reindex.js').CodeIndexReindexScheduler, 'onToolExecuted'> | undefined; readonly toolExecutionObserver?: ((toolName: string, args: Record<string, unknown>, success: boolean) => void) | undefined; readonly contractHooks?: import('../contract/agent-hooks.js').ContractAgentHooks | undefined; readonly sessionOrchestration: import('../sessions/orchestration/index.js').CrossSessionTaskRegistry; readonly archetypeLoader?: import('./archetypes.js').ArchetypeLoader | undefined; readonly configManager?: ConfigManager | undefined; readonly providerRegistry?: ProviderRegistry | undefined; readonly providerOptimizer?: import('../providers/optimizer.js').ProviderOptimizer | undefined; readonly toolLLM?: ToolLLM | undefined; readonly serviceRegistry?: import('../config/service-registry.js').ServiceRegistry | undefined; readonly secretsManager?: Pick<import('../config/secrets.js').SecretsManager, 'get' | 'set' | 'getGlobalHome'> | null | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly overflowHandler?: import('../tools/shared/overflow.js').OverflowHandler | undefined; readonly sandboxSessionRegistry: import('../runtime/sandbox/session-registry.js').SandboxSessionRegistry; readonly workflowServices: ReturnType<typeof import('../tools/workflow/index.js').createWorkflowServices>; readonly permissionManager?: Pick<import('../permissions/manager.js').PermissionManager, 'checkDetailed' | 'check' | 'getBackgroundAgentsMode' | 'readAccess' | 'passesBoundary'> | undefined; readonly contextAccountingHolder?: import('../tools/context-accounting/index.js').ContextAccountingHolder | undefined; readonly sandboxEscalationHandler?: ((input: { readonly command: string; readonly escalations: readonly string[]; readonly boundary: string; readonly policyReasons: readonly string[]; readonly workingDirectory?: string | undefined; }) => Promise<boolean>) | undefined; readonly localhostFetchApproval?: ((input: { url: string; host: string; }) => Promise<boolean>) | undefined; readonly onSandboxedRun?: (() => void) | undefined; readonly execPromptAnswerHandler?: ((ask: import('../tools/exec/interactive.js').ExecPromptAsk) => Promise<import('../tools/exec/interactive.js').ExecPromptAnswer>) | undefined; }; ;; AgentRecord = export interface AgentRecord extends ProgressBearingRecord { id: string; task: string; template: string; model?: string | undefined; provider?: string | undefined; fallbackModels?: string[] | undefined; routing?: AgentInput['routing'] | undefined; executionIntent?: ExecutionIntent | undefined; reasoningEffort?: string | undefined; context?: string | undefined; tools: string[]; captureAuthority?: import('../../personal-capture/index.js').CaptureAuthorityDecision | undefined; status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'; terminationKind?: 'interrupt' | 'kill' | undefined; startedAt: number; completedAt?: number | undefined; toolCallCount: number; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens?: number | undefined; llmCallCount: number; turnCount: number; reasoningSummaryCount?: number | undefined; }; error?: string | undefined; maxTurns?: number | undefined; turnBudget?: { limit: number; source: 'default' | 'spawn-override' | 'policy-bound'; } | undefined; failureReason?: string | undefined; fullOutput?: string | undefined; streamingContent?: string | undefined; contractId?: string | undefined; contractRole?: ContractAgentRole | undefined; contractUnitId?: string | undefined; routeReason?: string | undefined; proposedUnits?: AgentInput['proposedUnits'] | undefined; fanoutCollapse?: AgentInput['fanoutCollapse'] | undefined; outsideContract?: boolean | undefined; replyStyle?: 'report' | 'conversational' | undefined; workItemId?: string | undefined; workingDirectory?: string | undefined; cohort?: string | undefined; orchestrationGraphId?: string | undefined; orchestrationNodeId?: string | undefined; orchestrationDepth: number; parentAgentId?: string | undefined; parentNodeId?: string | undefined; capabilityCeilingTools?: string[] | undefined; successCriteria?: string[] | undefined; requiredEvidence?: string[] | undefined; writeScope?: string[] | undefined; executionProtocol: 'direct' | 'gather-plan-apply'; reviewMode: 'none' | 'contract'; communicationLane: 'parent-only' | 'parent-and-children' | 'cohort' | 'direct'; systemPromptAddendum?: string | undefined; knowledgeInjections?: Array<{ id: string; cls: string; summary: string; reason: string; confidence: number; reviewState: 'fresh' | 'reviewed' | 'stale' | 'contradicted'; }>; turnInjections?: TurnInjectionRecord[] | undefined; resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined; } | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "AgentOrchestratorRunContext",
@@ -25182,18 +25182,17 @@
     {
       "name": "BoundaryCheckName",
       "kind": "type",
-      "text": "export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-shapes' | 'outward-effect';"
+      "text": "export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
     },
     {
       "name": "BoundaryInput",
       "kind": "interface",
       "required": [
         "args",
-        "category",
-        "outward",
+        "reading",
         "toolName"
       ],
-      "text": "export interface BoundaryInput { readonly toolName: string; readonly args: Record<string, unknown>; readonly category: PermissionCategory; readonly surfaceId?: string | undefined; readonly outward: boolean; readonly ledger?: UntrustedContentLedger | undefined; readonly approval?: OwnerApproval | null | undefined; } ;; via OwnerApproval = export interface OwnerApproval { readonly action: string; readonly grantedAt: string; readonly expiresAt: string; readonly surface: 'owner-direct'; readonly contentFingerprint: string | null; } ;; PermissionCategory = export type PermissionCategory = 'read' | 'write' | 'execute' | 'delegate'; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface BoundaryInput { readonly toolName: string; readonly args: Record<string, unknown>; readonly reading: GateReading | null; readonly surfaceId?: string | undefined; readonly ledger?: UntrustedContentLedger | undefined; readonly approval?: OwnerApproval | null | undefined; } ;; via OwnerApproval = export interface OwnerApproval { readonly action: string; readonly grantedAt: string; readonly expiresAt: string; readonly surface: 'owner-direct'; readonly contentFingerprint: string | null; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "BoundaryVerdict",
@@ -25243,7 +25242,7 @@
     {
       "name": "GateFactName",
       "kind": "type",
-      "text": "export type GateFactName = keyof GateFacts;"
+      "text": "export type GateFactName = Exclude<keyof GateFacts, 'catastrophicUncertain'>; ;; via Exclude = type Exclude<T, U> = T extends U ? never : T;"
     },
     {
       "name": "GateFacts",
@@ -25257,7 +25256,7 @@
         "secrets",
         "weakensSecurity"
       ],
-      "text": "export interface GateFacts { readonly mutates: boolean; readonly outward: boolean; readonly secrets: boolean; readonly irreversible: boolean; readonly beyondProject: boolean; readonly weakensSecurity: boolean; readonly obfuscated: boolean; }"
+      "text": "export interface GateFacts { readonly mutates: boolean; readonly outward: boolean; readonly secrets: boolean; readonly irreversible: boolean; readonly beyondProject: boolean; readonly weakensSecurity: boolean; readonly obfuscated: boolean; readonly catastrophicUncertain?: boolean | undefined; }"
     },
     {
       "name": "GatePreset",
@@ -25281,13 +25280,14 @@
       "name": "GateReading",
       "kind": "interface",
       "required": [
+        "boundary",
         "family",
         "familyConfident",
         "recordAction",
         "stakes",
         "uncertain"
       ],
-      "text": "export interface GateReading extends GateFacts { readonly family: GateRiskFamily; readonly familyConfident: boolean; readonly stakes: Stakes; readonly uncertain: readonly GateFactName[]; readonly kind?: SideEffectKind | undefined; recordAction(action: string): void; } ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
+      "text": "export interface GateReading extends GateFacts { readonly family: GateRiskFamily; readonly familyConfident: boolean; readonly stakes: Stakes; readonly uncertain: readonly GateFactName[]; readonly kind?: SideEffectKind | undefined; readonly boundary: { readonly catastrophic?: YesNoReading['verdict'] | undefined; readonly cardDetails: YesNoReading['verdict']; }; recordAction(action: string): void; } ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical'; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "GateRiskFamily",
@@ -25373,11 +25373,6 @@
       "text": "export declare function assertCanConfirm(surfaceId: string): ConfirmationAuthorityDecision;"
     },
     {
-      "name": "catastrophicCheck",
-      "kind": "function",
-      "text": "export declare function catastrophicCheck(toolName: string, args: Record<string, unknown>): BoundaryCheck; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
-    },
-    {
       "name": "categoryForSideEffectKind",
       "kind": "function",
       "text": "export declare function categoryForSideEffectKind(kind: SideEffectKind): PermissionCategory; ;; via PermissionCategory = export type PermissionCategory = 'read' | 'write' | 'execute' | 'delegate';"
@@ -25393,14 +25388,14 @@
       "text": "export declare function effectPermittedForProvenance(effect: AgentEffect, provenance: ActingProvenance): EffectDecision;"
     },
     {
+      "name": "forgetCatastrophicReadings",
+      "kind": "function",
+      "text": "export declare function forgetCatastrophicReadings(): void;"
+    },
+    {
       "name": "gateJudgmentRegistry",
       "kind": "const",
       "text": "registry: BatteryRegistry"
-    },
-    {
-      "name": "isOutwardByCode",
-      "kind": "function",
-      "text": "export declare function isOutwardByCode(toolName: string, args: Record<string, unknown>): boolean; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "isPlanMode",
@@ -25453,6 +25448,11 @@
       "text": "export declare function raiseStakes(stakes: Stakes): Stakes; ;; via Stakes = export type Stakes = 'low' | 'medium' | 'high' | 'critical';"
     },
     {
+      "name": "readCatastrophic",
+      "kind": "function",
+      "text": "export declare function readCatastrophic(command: string, site?: string): Promise<{ readonly verdict: YesNoReading['verdict']; readonly readByGate: boolean; }>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+    },
+    {
       "name": "readSideEffectKind",
       "kind": "function",
       "text": "export declare function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean; }>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
@@ -25461,6 +25461,11 @@
       "name": "readToolCall",
       "kind": "function",
       "text": "export declare function readToolCall(input: ReadToolCallInput, site?: string): Promise<GateReading>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readTouchesSecrets",
+      "kind": "function",
+      "text": "export declare function readTouchesSecrets(toolName: string, args: Record<string, unknown>, workingDirectory?: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "readingArguments",
@@ -25480,7 +25485,7 @@
     {
       "name": "runBoundary",
       "kind": "function",
-      "text": "export declare function runBoundary(input: BoundaryInput): BoundaryVerdict;"
+      "text": "export declare function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "sandboxAdvisory",
@@ -25488,9 +25493,9 @@
       "text": "sandboxAdvisory: import(\"@goodvibes-jev/judgment\").Battery<{ readonly flagsRisk: import(\"@goodvibes-jev/judgment\").YesNoItem; }>"
     },
     {
-      "name": "shellCommandsOf",
+      "name": "shellCommandsIn",
       "kind": "function",
-      "text": "export declare function shellCommandsOf(toolName: string, args: Record<string, unknown>): string[]; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function shellCommandsIn(args: Record<string, unknown>): string[]; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "sideEffect",
@@ -25538,11 +25543,6 @@
       "name": "AGENT_CHANNEL_ACTION_DENIAL_MESSAGE",
       "kind": "const",
       "text": "AGENT_CHANNEL_ACTION_DENIAL_MESSAGE: string"
-    },
-    {
-      "name": "AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS",
-      "kind": "const",
-      "text": "AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS: readonly ConfirmationRequiredConfigKey[]"
     },
     {
       "name": "AGENT_CONTROL_MUTATION_DENIAL_MESSAGE",
@@ -25839,7 +25839,7 @@
     {
       "name": "AgentToolPolicyGuardOptions",
       "kind": "type",
-      "text": "export type AgentToolPolicyGuardOptions = { readonly getLastUserMessage?: () => string | null; readonly wrapContextTool?: ((tool: Tool, registry: ToolRegistry) => void) | undefined; readonly wasWrittenInSession?: ((path: string) => boolean) | undefined; }; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+      "text": "export type AgentToolPolicyGuardOptions = { readonly getLastUserMessage?: () => string | null; readonly wrapContextTool?: ((tool: Tool, registry: ToolRegistry) => void) | undefined; }; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
     },
     {
       "name": "AgentToolPolicyInvocationExplanation",
@@ -25855,16 +25855,6 @@
       "name": "ConfigProvenanceManager",
       "kind": "type",
       "text": "export type ConfigProvenanceManager = Pick<ConfigManager, 'get' | 'describeConfigKeySource' | 'getConfigPath' | 'getProjectConfigPath'>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
-    },
-    {
-      "name": "ConfirmationRequiredConfigKey",
-      "kind": "interface",
-      "required": [
-        "because",
-        "hazard",
-        "match"
-      ],
-      "text": "export interface ConfirmationRequiredConfigKey { readonly match: string; readonly hazard: 'approval-gate' | 'exec-containment' | 'host-exposure'; readonly because: string; }"
     },
     {
       "name": "EXECUTION_LEDGER_SITE",
@@ -25936,10 +25926,9 @@
       "required": [
         "rows",
         "sessionMode",
-        "sessionModeLabel",
-        "shippedRules"
+        "sessionModeLabel"
       ],
-      "text": "export interface PermissionProvenance { readonly sessionMode: string; readonly sessionModeLabel: string; readonly rows: readonly PermissionProvenanceRow[]; readonly shippedRules: readonly ShippedPolicyRuleRow[]; }"
+      "text": "export interface PermissionProvenance { readonly sessionMode: string; readonly sessionModeLabel: string; readonly rows: readonly PermissionProvenanceRow[]; }"
     },
     {
       "name": "PermissionProvenanceRow",
@@ -26013,36 +26002,19 @@
       "text": "export interface PolicyMcpServerSecurity { readonly name: string; readonly trustMode: PolicyPreflightServer['trustMode']; readonly role: PolicyPreflightServer['role']; readonly allowedPaths: readonly string[]; readonly allowedHosts: readonly string[]; } ;; via PolicyPreflightServer = export interface PolicyPreflightServer { readonly serverName: string; readonly trustMode: McpTrustMode; readonly role: McpServerRole; readonly allowedPaths: readonly string[]; readonly allowedHosts: readonly string[]; }"
     },
     {
-      "name": "ReadPolicyOptions",
-      "kind": "interface",
-      "text": "export interface ReadPolicyOptions { readonly wasWrittenInSession?: SessionWritePredicate | undefined; }"
-    },
-    {
       "name": "RememberedRuleStore",
       "kind": "type",
       "text": "export type RememberedRuleStore = Pick<UserPermissionRuleStore, 'list' | 'delete'>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
-      "name": "SessionWritePredicate",
-      "kind": "type",
-      "text": "export type SessionWritePredicate = (path: string) => boolean;"
+      "name": "SETTINGS_HAZARD_SITE",
+      "kind": "const",
+      "text": "SETTINGS_HAZARD_SITE = \"engine.gate.settings-write\""
     },
     {
       "name": "SettingsToolArgs",
       "kind": "type",
       "text": "export type SettingsToolArgs = { readonly mode?: unknown; readonly key?: unknown; readonly explicitUserRequest?: unknown; readonly [name: string]: unknown; };"
-    },
-    {
-      "name": "ShippedPolicyRuleRow",
-      "kind": "interface",
-      "required": [
-        "description",
-        "effect",
-        "id",
-        "pathPatterns",
-        "toolPattern"
-      ],
-      "text": "export interface ShippedPolicyRuleRow { readonly id: string; readonly effect: 'allow' | 'deny'; readonly description: string; readonly toolPattern: string; readonly pathPatterns: readonly string[]; }"
     },
     {
       "name": "StateToolArgs",
@@ -26067,7 +26039,7 @@
     {
       "name": "describeConfirmationRequiredDenial",
       "kind": "function",
-      "text": "export declare function describeConfirmationRequiredDenial(entry: ConfirmationRequiredConfigKey, key: string): string;"
+      "text": "export declare function describeConfirmationRequiredDenial(hazard: Exclude<SettingsHazard, 'none'>, key: string): string; ;; via Exclude = type Exclude<T, U> = T extends U ? never : T; ;; SettingsHazard = export type SettingsHazard = keyof typeof SETTINGS_HAZARD_OPTIONS;"
     },
     {
       "name": "dispatchPolicyCommand",
@@ -26077,12 +26049,7 @@
     {
       "name": "explainAgentToolPolicyInvocation",
       "kind": "function",
-      "text": "export declare function explainAgentToolPolicyInvocation(toolName: string, args?: Record<string, unknown>, options?: AgentToolPolicyExplanationOptions): AgentToolPolicyInvocationExplanation; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
-    },
-    {
-      "name": "findConfirmationRequiredConfigKey",
-      "kind": "function",
-      "text": "export declare function findConfirmationRequiredConfigKey(key: string): ConfirmationRequiredConfigKey | null;"
+      "text": "export declare function explainAgentToolPolicyInvocation(toolName: string, args?: Record<string, unknown>, options?: AgentToolPolicyExplanationOptions): Promise<AgentToolPolicyInvocationExplanation>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "installAgentToolPolicyGuard",
@@ -26097,7 +26064,7 @@
     {
       "name": "isBlockedReadPath",
       "kind": "function",
-      "text": "export declare function isBlockedReadPath(path: string, wasWrittenInSession?: SessionWritePredicate): boolean;"
+      "text": "export declare function isBlockedReadPath(path: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "normalizeAgentToolInvocationForAgentPolicy",
@@ -26192,7 +26159,7 @@
     {
       "name": "validateReadToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs, wasWrittenInSession?: SessionWritePredicate): string | null; ;; via ReadToolArgs = type ReadToolArgs = { readonly files?: unknown; readonly image_mode?: unknown; readonly max_image_size?: unknown; readonly [key: string]: unknown; };"
+      "text": "export declare function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs): Promise<string | null>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadToolArgs = type ReadToolArgs = { readonly files?: unknown; readonly image_mode?: unknown; readonly max_image_size?: unknown; readonly [key: string]: unknown; };"
     },
     {
       "name": "validateRegistryToolInvocationForAgentPolicy",
@@ -26202,7 +26169,7 @@
     {
       "name": "validateSettingsToolInvocationForAgentPolicy",
       "kind": "function",
-      "text": "export declare function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs): string | null;"
+      "text": "export declare function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs): Promise<string | null>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "validateStateToolInvocationForAgentPolicy",
@@ -26262,7 +26229,7 @@
     {
       "name": "wrapReadToolForAgentPolicy",
       "kind": "function",
-      "text": "export declare function wrapReadToolForAgentPolicy(tool: Tool, options?: ReadPolicyOptions): void; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+      "text": "export declare function wrapReadToolForAgentPolicy(tool: Tool): void; ;; via Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
     },
     {
       "name": "wrapRegistryToolForAgentPolicy",
@@ -38861,24 +38828,6 @@
       "text": "export interface BackgroundAgentAttribution { readonly kind: 'background-agent'; readonly agentId: string; readonly template?: string | undefined; }"
     },
     {
-      "name": "CREDENTIAL_READ_PATH_PATTERNS",
-      "kind": "const",
-      "text": "CREDENTIAL_READ_PATH_PATTERNS: readonly string[]"
-    },
-    {
-      "name": "CredentialReadMatch",
-      "kind": "interface",
-      "required": [
-        "matched"
-      ],
-      "text": "export interface CredentialReadMatch { readonly matched: boolean; readonly pattern?: string | undefined; }"
-    },
-    {
-      "name": "CredentialReadMatchOptions",
-      "kind": "interface",
-      "text": "export interface CredentialReadMatchOptions { readonly projectRoot?: string | undefined; }"
-    },
-    {
       "name": "DenialSource",
       "kind": "interface",
       "required": [
@@ -38923,7 +38872,7 @@
         "checks",
         "passed"
       ],
-      "text": "export interface GateBoundaryRecord { readonly passed: boolean; readonly refusedBy?: BoundaryCheckName | undefined; readonly checks: readonly BoundaryCheck[]; } ;; via BoundaryCheck = export interface BoundaryCheck { readonly check: BoundaryCheckName; readonly result: 'pass' | 'refuse' | 'skipped'; readonly detail?: string | undefined; } ;; BoundaryCheckName = export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-shapes' | 'outward-effect';"
+      "text": "export interface GateBoundaryRecord { readonly passed: boolean; readonly refusedBy?: BoundaryCheckName | undefined; readonly checks: readonly BoundaryCheck[]; } ;; via BoundaryCheck = export interface BoundaryCheck { readonly check: BoundaryCheckName; readonly result: 'pass' | 'refuse' | 'skipped'; readonly detail?: string | undefined; } ;; BoundaryCheckName = export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
     },
     {
       "name": "GateOptions",
@@ -38948,7 +38897,7 @@
         "stakes",
         "uncertain"
       ],
-      "text": "export interface GateReadingRecord { readonly family: GateRiskFamily; readonly stakes: PermissionRiskLevel; readonly facts: Readonly<Record<GateFactName, boolean>>; readonly uncertain: readonly GateFactName[]; } ;; via GateFactName = export type GateFactName = keyof GateFacts; ;; GateRiskFamily = export type GateRiskFamily = keyof typeof RISK_FAMILY_OPTIONS; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface GateReadingRecord { readonly family: GateRiskFamily; readonly stakes: PermissionRiskLevel; readonly facts: Readonly<Record<GateFactName, boolean>>; readonly uncertain: readonly GateFactName[]; } ;; via GateFactName = export type GateFactName = Exclude<keyof GateFacts, 'catastrophicUncertain'>; ;; GateRiskFamily = export type GateRiskFamily = keyof typeof RISK_FAMILY_OPTIONS; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "McpServerAttribution",
@@ -39032,7 +38981,7 @@
     {
       "name": "PermissionDecisionReasonCode",
       "kind": "type",
-      "text": "export type PermissionDecisionReasonCode = 'boundary_catastrophic' | 'boundary_surface_authority' | 'boundary_card_shapes' | 'boundary_outward_effect' | 'preset_allow' | 'preset_deny' | 'owner_approved_outward' | 'config_allow' | 'config_deny' | 'managed_policy_allow' | 'managed_policy_deny' | 'safety_guardrail' | 'mode_allow_all' | 'mode_denied' | 'plan_mode' | 'mode_accept_edits' | 'session_cached_allow' | 'session_cached_deny' | 'user_rule_allow' | 'user_rule_deny' | 'user_approved' | 'user_denied';"
+      "text": "export type PermissionDecisionReasonCode = 'boundary_catastrophic' | 'boundary_surface_authority' | 'boundary_card_details' | 'boundary_outward_effect' | 'preset_allow' | 'preset_deny' | 'owner_approved_outward' | 'config_allow' | 'config_deny' | 'managed_policy_allow' | 'managed_policy_deny' | 'safety_guardrail' | 'mode_allow_all' | 'mode_denied' | 'plan_mode' | 'mode_accept_edits' | 'session_cached_allow' | 'session_cached_deny' | 'user_rule_allow' | 'user_rule_deny' | 'user_approved' | 'user_denied';"
     },
     {
       "name": "PermissionDecisionSource",
@@ -39051,9 +39000,9 @@
         "getMode",
         "getPreset",
         "passesBoundary",
-        "previewReadAccess"
+        "readAccess"
       ],
-      "text": "export declare class PermissionManager { private sessionApprovals; private readonly requestPermission; private readonly configReader; private readonly hookDispatcher; private readonly policyRuntimeState; private readonly featureFlags; private readonly userRuleStore; private readonly gate; constructor(requestPermission: PermissionRequestHandler | undefined, configReader: PermissionConfigReader, policyRuntimeState: Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'>, hookDispatcher?: Pick<HookDispatcher, 'fire'> | null, featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null, userRuleStore?: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null, gate?: GateOptions); check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<boolean>; checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<PermissionCheckResult>; passesBoundary(toolName: string, args: Record<string, unknown>): boolean; private runGateBoundary; private boundaryOutcome; private rememberedDecision; private ask; previewReadAccess(rawPath: string): 'allow' | 'restricted'; getMode(): PermissionMode; getPreset(): GatePreset; getBackgroundAgentsMode(): BackgroundAgentsMode; getCategory(toolName: string, args?: Record<string, unknown>): PermissionCategory; private getApprovalKey; private result; private isGatedCredentialRead; private evaluateRuntimePolicy; private exportDecisionRecords; private mapEvaluatorDecision; private emitAndReturn; private fireHook; } ;; via BackgroundAgentsMode = export type BackgroundAgentsMode = 'inherit' | 'allow-all'; ;; GatePreset = export interface GatePreset { readonly name: GatePresetName; readonly mode: PermissionMode; readonly summary: string; readonly stakes: Readonly<Record<Stakes, GateAction>>; readonly readOnly: boolean; readonly edits?: { readonly families: readonly GateRiskFamily[]; readonly through: Stakes; }; readonly perTool: boolean; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare class PermissionManager { private sessionApprovals; private readonly requestPermission; private readonly configReader; private readonly hookDispatcher; private readonly policyRuntimeState; private readonly featureFlags; private readonly userRuleStore; private readonly gate; constructor(requestPermission: PermissionRequestHandler | undefined, configReader: PermissionConfigReader, policyRuntimeState: Pick<PolicyRuntimeState, 'recordPermissionRequest' | 'recordPermissionDecision' | 'getRegistry'>, hookDispatcher?: Pick<HookDispatcher, 'fire'> | null, featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null, userRuleStore?: Pick<UserPermissionRuleStore, 'rules' | 'add'> | null, gate?: GateOptions); check(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<boolean>; checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<PermissionCheckResult>; private readCall; passesBoundary(toolName: string, args: Record<string, unknown>): Promise<boolean>; private runGateBoundary; private boundaryOutcome; private rememberedDecision; private ask; readAccess(rawPath: string): Promise<'allow' | 'restricted'>; getMode(): PermissionMode; getPreset(): GatePreset; getBackgroundAgentsMode(): BackgroundAgentsMode; getCategory(toolName: string, args?: Record<string, unknown>): PermissionCategory; private getApprovalKey; private result; private evaluateRuntimePolicy; private exportDecisionRecords; private mapEvaluatorDecision; private emitAndReturn; private fireHook; } ;; via BackgroundAgentsMode = export type BackgroundAgentsMode = 'inherit' | 'allow-all'; ;; GatePreset = export interface GatePreset { readonly name: GatePresetName; readonly mode: PermissionMode; readonly summary: string; readonly stakes: Readonly<Record<Stakes, GateAction>>; readonly readOnly: boolean; readonly edits?: { readonly families: readonly GateRiskFamily[]; readonly through: Stakes; }; readonly perTool: boolean; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "PermissionMode",
@@ -39110,6 +39059,11 @@
       "text": "export type PermissionRiskLevel = 'low' | 'medium' | 'high' | 'critical';"
     },
     {
+      "name": "READ_SECRETS_SITE",
+      "kind": "const",
+      "text": "READ_SECRETS_SITE = \"engine.gate.read-secrets\""
+    },
+    {
       "name": "RememberTier",
       "kind": "type",
       "text": "export type RememberTier = 'session' | 'exact' | 'command-class' | 'path' | 'tool';"
@@ -39123,11 +39077,6 @@
         "tier"
       ],
       "text": "export interface RememberTierOption { readonly tier: RememberTier; readonly label: string; readonly detail: string; }"
-    },
-    {
-      "name": "SHIPPED_CREDENTIAL_READ_RULES",
-      "kind": "const",
-      "text": "SHIPPED_CREDENTIAL_READ_RULES: readonly PolicyRule[] ;; via PolicyRule = export type PolicyRule = PrefixRule | ArgShapeRule | PathScopeRule | NetworkScopeRule | ModeConstraintRule;"
     },
     {
       "name": "SandboxEscalationAttribution",
@@ -39204,6 +39153,11 @@
       "text": "export declare function createPermissionConfigReader(configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'>): PermissionConfigReader; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
+      "name": "forgetReadSecrets",
+      "kind": "function",
+      "text": "export declare function forgetReadSecrets(): void;"
+    },
+    {
       "name": "formatPermissionBriefHint",
       "kind": "function",
       "text": "export declare function formatPermissionBriefHint(brief: PermissionApprovalBrief): string;"
@@ -39224,14 +39178,14 @@
       "text": "export declare function matchDurableRules(rules: readonly PolicyRule[], toolName: string, args: Record<string, unknown>, options?: { readonly projectRoot?: string | undefined; }): DurableRuleMatch | null; ;; via PolicyRule = export type PolicyRule = PrefixRule | ArgShapeRule | PathScopeRule | NetworkScopeRule | ModeConstraintRule; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
-      "name": "matchesShippedCredentialReadPath",
+      "name": "readTouchesSecrets",
       "kind": "function",
-      "text": "export declare function matchesShippedCredentialReadPath(rawPath: string, options?: CredentialReadMatchOptions): CredentialReadMatch;"
+      "text": "export declare function readTouchesSecrets(toolName: string, args: Record<string, unknown>, workingDirectory?: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "withReading",
       "kind": "function",
-      "text": "export declare function withReading(analysis: PermissionRequestAnalysis, reading: GateReading, category: PermissionCategory): PermissionRequestAnalysis; ;; via GateReading = export interface GateReading extends GateFacts { readonly family: GateRiskFamily; readonly familyConfident: boolean; readonly stakes: Stakes; readonly uncertain: readonly GateFactName[]; readonly kind?: SideEffectKind | undefined; recordAction(action: string): void; }"
+      "text": "export declare function withReading(analysis: PermissionRequestAnalysis, reading: GateReading, category: PermissionCategory): PermissionRequestAnalysis; ;; via GateReading = export interface GateReading extends GateFacts { readonly family: GateRiskFamily; readonly familyConfident: boolean; readonly stakes: Stakes; readonly uncertain: readonly GateFactName[]; readonly kind?: SideEffectKind | undefined; readonly boundary: { readonly catastrophic?: YesNoReading['verdict'] | undefined; readonly cardDetails: YesNoReading['verdict']; }; recordAction(action: string): void; }"
     }
   ],
   "./platform/personal-capture": [
@@ -43246,7 +43200,7 @@
     {
       "name": "security",
       "kind": "other",
-      "text": "export { buildAuthInspectionSnapshot, inspectProviderAuth, } from './auth/inspection.js'; export type { AuthInspectionSnapshot, ProviderAuthInspection } from './auth/inspection.js'; export { DivergenceDashboard, DivergenceGateError, LayeredPolicyEvaluator, PermissionSimulator, PolicyRegistry, PolicyRuntimeState, buildDefaultPolicySimulationScenarios, buildPermissionRuleSuggestions, buildPolicyPreflightReview, createPermissionEvaluator, createPermissionSimulator, createUnsignedBundle, lintPolicyConfig, loadPolicyBundle, runPolicySimulationScenarios, } from './permissions/index.js'; export type { DivergenceDashboardSnapshot, DivergenceStats, PermissionsConfig, PolicyBundlePayload, PolicyBundleVersion, PolicyDiffResult, PolicyLintFinding, PolicyPreflightReview, PolicyRule, PolicySimulationSummary, } from './permissions/index.js'; export type { PermissionAuditEntry } from './permissions/policy-runtime.js'; export { buildDenialExplanation, canonicalize, classifyCommand, classifySegment, collectCommandNodes, evaluateCommandAST, evaluateSegmentNode, higherPriority, parseAST, parseCommandAST, tokenize, } from './permissions/normalization/index.js'; export type { CommandClassification, CommandNode, CommandSegment, CommandToken, PipeNode, SequenceNode, SubshellNode, } from './permissions/normalization/index.js'; export { PolicySignatureError, canonicalise, runSafetyChecks, signBundle, verifyBundle, } from './permissions/index.js'; export { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, } from './permissions/normalization/tokenizer.js'; export type { BundleProvenance, DecisionReason, DivergenceReport, EnforceGateResult, SignedPolicyBundle, } from './permissions/index.js'; //# sourceMappingURL=security.d.ts.map"
+      "text": "export { buildAuthInspectionSnapshot, inspectProviderAuth, } from './auth/inspection.js'; export type { AuthInspectionSnapshot, ProviderAuthInspection } from './auth/inspection.js'; export { DivergenceDashboard, DivergenceGateError, LayeredPolicyEvaluator, PermissionSimulator, PolicyRegistry, PolicyRuntimeState, buildDefaultPolicySimulationScenarios, buildPermissionRuleSuggestions, buildPolicyPreflightReview, createPermissionEvaluator, createPermissionSimulator, createUnsignedBundle, lintPolicyConfig, loadPolicyBundle, runPolicySimulationScenarios, } from './permissions/index.js'; export type { DivergenceDashboardSnapshot, DivergenceStats, PermissionsConfig, PolicyBundlePayload, PolicyBundleVersion, PolicyDiffResult, PolicyLintFinding, PolicyPreflightReview, PolicyRule, PolicySimulationSummary, } from './permissions/index.js'; export type { PermissionAuditEntry } from './permissions/policy-runtime.js'; export { buildDenialExplanation, canonicalize, collectCommandNodes, evaluateCommandAST, evaluateSegmentNode, parseAST, parseCommandAST, readCommandNeeds, tokenize, } from './permissions/normalization/index.js'; export type { CommandClassification, CommandNeeds, CommandNode, CommandSegment, CommandToken, PipeNode, SequenceNode, SubshellNode, } from './permissions/normalization/index.js'; export { PolicySignatureError, canonicalise, runSafetyChecks, signBundle, verifyBundle, } from './permissions/index.js'; export { MAX_INPUT_LENGTH, MAX_TOKEN_COUNT, } from './permissions/normalization/tokenizer.js'; export type { BundleProvenance, DecisionReason, DivergenceReport, EnforceGateResult, SignedPolicyBundle, } from './permissions/index.js'; //# sourceMappingURL=security.d.ts.map"
     },
     {
       "name": "shell",
@@ -52026,7 +51980,7 @@
         "startedAt",
         "toolName"
       ],
-      "text": "export interface ToolExecutionRecord { callId: string; toolName: string; phases: PhaseResult[]; currentPhase: ToolExecutionPhase; startedAt: number; wallStartedAt?: number | undefined; completedAt?: number | undefined; result?: ToolResult | undefined; cancelled: boolean; cancelledReason?: string | undefined; _updatedArgs?: Record<string, unknown> | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ToolResult = export interface ToolResult { callId: string; success: boolean; output?: string | undefined; error?: string | undefined; warnings?: readonly string[] | undefined; denial?: ToolDenial | undefined; cancelled?: boolean | undefined; }"
+      "text": "export interface ToolExecutionRecord { callId: string; toolName: string; phases: PhaseResult[]; currentPhase: ToolExecutionPhase; startedAt: number; wallStartedAt?: number | undefined; completedAt?: number | undefined; result?: ToolResult | undefined; cancelled: boolean; cancelledReason?: string | undefined; _updatedArgs?: Record<string, unknown> | undefined; _repair?: RepairResult | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; RepairResult = export interface RepairResult { repaired: boolean; original: Record<string, unknown>; fixed: Record<string, unknown>; repairs: string[]; warnings?: string[] | undefined; } ;; ToolResult = export interface ToolResult { callId: string; success: boolean; output?: string | undefined; error?: string | undefined; warnings?: readonly string[] | undefined; denial?: ToolDenial | undefined; cancelled?: boolean | undefined; }"
     },
     {
       "name": "ToolRuntimeContext",
@@ -53228,9 +53182,10 @@
         "baseEffectWhenNotSandboxed",
         "command",
         "egressAllowlist",
+        "needs",
         "sandboxActive"
       ],
-      "text": "export interface SandboxPolicyInput { readonly command: string; readonly sandboxActive: boolean; readonly egressAllowlist: readonly string[]; readonly baseEffectWhenNotSandboxed: SandboxPolicyEffect; }"
+      "text": "export interface SandboxPolicyInput { readonly command: string; readonly sandboxActive: boolean; readonly egressAllowlist: readonly string[]; readonly baseEffectWhenNotSandboxed: SandboxPolicyEffect; readonly needs: CommandNeeds; } ;; via CommandNeeds = export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
     },
     {
       "name": "decideSandboxedExec",
@@ -53576,6 +53531,15 @@
       "name": "CommandClassification",
       "kind": "type",
       "text": "export type CommandClassification = 'read' | 'write' | 'network' | 'destructive' | 'escalation';"
+    },
+    {
+      "name": "CommandNeeds",
+      "kind": "interface",
+      "required": [
+        "needsNetwork",
+        "needsPrivilege"
+      ],
+      "text": "export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
     },
     {
       "name": "CommandNode",
@@ -53939,7 +53903,7 @@
     {
       "name": "buildDenialExplanation",
       "kind": "function",
-      "text": "export declare function buildDenialExplanation(original: string, verdicts: SegmentVerdict[]): string; ;; via SegmentVerdict = export interface SegmentVerdict { raw: string; command: string; classification: CommandClassification; allowed: boolean; reason: string; }"
+      "text": "export declare function buildDenialExplanation(original: string, verdicts: SegmentVerdict[]): string; ;; via SegmentVerdict = export interface SegmentVerdict { raw: string; command: string; allowed: boolean; reason: string; }"
     },
     {
       "name": "buildPermissionRuleSuggestions",
@@ -53960,16 +53924,6 @@
       "name": "canonicalize",
       "kind": "function",
       "text": "export declare function canonicalize(raw: string): string;"
-    },
-    {
-      "name": "classifyCommand",
-      "kind": "function",
-      "text": "export declare function classifyCommand(original: string, segments: CommandSegment[]): Omit<NormalizedCommand, 'original' | 'segments'>; ;; via NormalizedCommand = export interface NormalizedCommand { original: string; segments: CommandSegment[]; classifications: CommandClassification[]; highestClassification: CommandClassification; hasDangerousPatterns: boolean; dangerousPatterns?: string[] | undefined; } ;; Omit = type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;"
-    },
-    {
-      "name": "classifySegment",
-      "kind": "function",
-      "text": "export declare function classifySegment(seg: CommandSegment): CommandClassification;"
     },
     {
       "name": "collectCommandNodes",
@@ -53994,17 +53948,12 @@
     {
       "name": "evaluateCommandAST",
       "kind": "function",
-      "text": "export declare function evaluateCommandAST(original: string, ast: ShellNode, allowedClasses?: ReadonlySet<CommandClassification>): CompoundVerdict; ;; via CompoundVerdict = export interface CompoundVerdict { original: string; allowed: boolean; highestClassification: CommandClassification; segments: SegmentVerdict[]; denialExplanation?: string | undefined; } ;; ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; } ;; ShellNode = export type ShellNode = CommandNode | PipeNode | SequenceNode | SubshellNode;"
+      "text": "export declare function evaluateCommandAST(original: string, ast: ShellNode): CompoundVerdict; ;; via CompoundVerdict = export interface CompoundVerdict { original: string; allowed: boolean; segments: SegmentVerdict[]; denialExplanation?: string | undefined; } ;; ShellNode = export type ShellNode = CommandNode | PipeNode | SequenceNode | SubshellNode;"
     },
     {
       "name": "evaluateSegmentNode",
       "kind": "function",
-      "text": "export declare function evaluateSegmentNode(node: CommandNode, allowedClasses?: ReadonlySet<CommandClassification>): SegmentVerdict; ;; via ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; } ;; SegmentVerdict = export interface SegmentVerdict { raw: string; command: string; classification: CommandClassification; allowed: boolean; reason: string; }"
-    },
-    {
-      "name": "higherPriority",
-      "kind": "function",
-      "text": "export declare function higherPriority(a: CommandClassification, b: CommandClassification): CommandClassification;"
+      "text": "export declare function evaluateSegmentNode(node: CommandNode): SegmentVerdict; ;; via SegmentVerdict = export interface SegmentVerdict { raw: string; command: string; allowed: boolean; reason: string; }"
     },
     {
       "name": "inspectProviderAuth",
@@ -54032,6 +53981,11 @@
       "text": "export declare function parseCommandAST(command: string): ShellNode; ;; via ShellNode = export type ShellNode = CommandNode | PipeNode | SequenceNode | SubshellNode;"
     },
     {
+      "name": "readCommandNeeds",
+      "kind": "function",
+      "text": "export declare function readCommandNeeds(command: string, workspace?: string): Promise<CommandNeeds>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "runPolicySimulationScenarios",
       "kind": "function",
       "text": "export declare function runPolicySimulationScenarios(simulator: PermissionSimulator, scenarios?: PolicySimulationScenario[]): PolicySimulationSummary; ;; via PolicySimulationScenario = export interface PolicySimulationScenario { id: string; label: string; toolName: string; args: Record<string, unknown>; }"
@@ -54039,7 +53993,7 @@
     {
       "name": "runSafetyChecks",
       "kind": "function",
-      "text": "export declare function runSafetyChecks(toolName: string, args: Record<string, unknown>): SafetyCheckResult; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; SafetyCheckResult = export interface SafetyCheckResult { blocked: boolean; reason?: DecisionReason | undefined; detail?: string | undefined; steps: EvaluationStep[]; classification?: CommandClassification | undefined; }"
+      "text": "export declare function runSafetyChecks(toolName: string, args: Record<string, unknown>): Promise<SafetyCheckResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; SafetyCheckResult = export interface SafetyCheckResult { blocked: boolean; reason?: DecisionReason | undefined; detail?: string | undefined; steps: EvaluationStep[]; }"
     },
     {
       "name": "signBundle",
@@ -64389,9 +64343,10 @@
         "config",
         "cwd",
         "featureEnabled",
+        "needs",
         "workspaceDir"
       ],
-      "text": "export interface ResolveSandboxPlanInput { readonly config: ExecSandboxConfig; readonly availability: SandboxAvailability; readonly featureEnabled: boolean; readonly command: string; readonly workspaceDir: string; readonly cwd: string; readonly homeDir?: string | undefined; }"
+      "text": "export interface ResolveSandboxPlanInput { readonly config: ExecSandboxConfig; readonly availability: SandboxAvailability; readonly featureEnabled: boolean; readonly command: string; readonly workspaceDir: string; readonly cwd: string; readonly homeDir?: string | undefined; readonly needs: CommandNeeds; } ;; via CommandNeeds = export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
     },
     {
       "name": "RetentionPolicyConfig",
@@ -64687,7 +64642,7 @@
     {
       "name": "createFindTool",
       "kind": "function",
-      "text": "export declare function createFindTool(projectRoot: string, featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null, runtime?: FindRuntimeService, readAccessFilter?: ReadAccessFilter): Tool; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; ReadAccessFilter = export type ReadAccessFilter = (absolutePath: string) => boolean; ;; Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+      "text": "export declare function createFindTool(projectRoot: string, featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null, runtime?: FindRuntimeService, readAccessFilter?: ReadAccessFilter): Tool; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; ReadAccessFilter = export type ReadAccessFilter = (absolutePath: string) => Promise<boolean>; ;; Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
     },
     {
       "name": "createMcpTool",
@@ -64722,7 +64677,7 @@
     {
       "name": "createRepoMapTool",
       "kind": "function",
-      "text": "export declare function createRepoMapTool(options: { projectRoot: string; readAccessFilter?: ReadAccessFilter; }): Tool; ;; via ReadAccessFilter = export type ReadAccessFilter = (absolutePath: string) => boolean; ;; Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
+      "text": "export declare function createRepoMapTool(options: { projectRoot: string; readAccessFilter?: ReadAccessFilter; }): Tool; ;; via ReadAccessFilter = export type ReadAccessFilter = (absolutePath: string) => Promise<boolean>; ;; Tool = export interface Tool { definition: ToolDefinition; execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<Omit<ToolResult, 'callId'>>; }"
     },
     {
       "name": "createSpillBackend",
@@ -64797,7 +64752,7 @@
     {
       "name": "guardExecCommand",
       "kind": "function",
-      "text": "export declare function guardExecCommand(command: string, allowedClasses?: ReadonlySet<CommandClassification>, flagManager?: FlagManagerLike | null): Promise<ASTGuardResult>; ;; via ASTGuardResult = export interface ASTGuardResult { allowed: boolean; denialMessage?: string | undefined; verdict?: CompoundVerdict | undefined; astModeActive: boolean; } ;; CommandClassification = export type CommandClassification = 'read' | 'write' | 'network' | 'destructive' | 'escalation'; ;; FlagManagerLike = type FlagManagerLike = Pick<FeatureFlagManager, 'isEnabled'>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; }"
+      "text": "export declare function guardExecCommand(command: string, flagManager?: FlagManagerLike | null): Promise<ASTGuardResult>; ;; via ASTGuardResult = export interface ASTGuardResult { allowed: boolean; denialMessage?: string | undefined; verdict?: CompoundVerdict | undefined; astModeActive: boolean; } ;; FlagManagerLike = type FlagManagerLike = Pick<FeatureFlagManager, 'isEnabled'>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "loadSkillByTrigger",
@@ -64847,7 +64802,7 @@
     {
       "name": "repairToolCall",
       "kind": "function",
-      "text": "export declare function repairToolCall(toolName: string, args: Record<string, unknown>, schema: ToolDefinition): RepairResult; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; RepairResult = export interface RepairResult { repaired: boolean; original: Record<string, unknown>; fixed: Record<string, unknown>; repairs: string[]; warnings?: string[] | undefined; } ;; ToolDefinition = export interface ToolDefinition { name: string; description: string; parameters: Record<string, unknown>; sideEffects?: readonly ToolSideEffect[] | undefined; concurrency?: ToolConcurrencyMode | undefined; supportsProgress?: boolean | undefined; supportsStreamingOutput?: boolean | undefined; }"
+      "text": "export declare function repairToolCall(toolName: string, args: Record<string, unknown>, schema: ToolDefinition): Promise<RepairResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; RepairResult = export interface RepairResult { repaired: boolean; original: Record<string, unknown>; fixed: Record<string, unknown>; repairs: string[]; warnings?: string[] | undefined; } ;; ToolDefinition = export interface ToolDefinition { name: string; description: string; parameters: Record<string, unknown>; sideEffects?: readonly ToolSideEffect[] | undefined; concurrency?: ToolConcurrencyMode | undefined; supportsProgress?: boolean | undefined; supportsStreamingOutput?: boolean | undefined; }"
     },
     {
       "name": "resolveRouterDeps",
@@ -64914,9 +64869,10 @@
         "config",
         "cwd",
         "featureEnabled",
+        "needs",
         "workspaceDir"
       ],
-      "text": "export interface ResolveSandboxPlanInput { readonly config: ExecSandboxConfig; readonly availability: SandboxAvailability; readonly featureEnabled: boolean; readonly command: string; readonly workspaceDir: string; readonly cwd: string; readonly homeDir?: string | undefined; }"
+      "text": "export interface ResolveSandboxPlanInput { readonly config: ExecSandboxConfig; readonly availability: SandboxAvailability; readonly featureEnabled: boolean; readonly command: string; readonly workspaceDir: string; readonly cwd: string; readonly homeDir?: string | undefined; readonly needs: CommandNeeds; } ;; via CommandNeeds = export interface CommandNeeds { readonly needsNetwork: boolean; readonly needsPrivilege: boolean; }"
     },
     {
       "name": "SandboxAvailability",
@@ -64983,7 +64939,7 @@
     {
       "name": "resolveRuntimeSandboxPlan",
       "kind": "function",
-      "text": "export declare function resolveRuntimeSandboxPlan(sandbox: ExecSandboxRuntime | null, command: string, workspaceDir: string, cwd: string): ExecSandboxPlan | null;"
+      "text": "export declare function resolveRuntimeSandboxPlan(sandbox: ExecSandboxRuntime | null, command: string, workspaceDir: string, cwd: string): Promise<ExecSandboxPlan | null>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     }
   ],
   "./platform/triggers": [

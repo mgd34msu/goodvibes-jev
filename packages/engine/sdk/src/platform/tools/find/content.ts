@@ -96,20 +96,23 @@ async function executeContentQuery(
     return { error: `Invalid regex: ${summarizeError(e)}` };
   }
 
-  const allCandidateFiles = await collectFilesForSearch(basePath, query.glob, diagnostics);
-  // Read-side deny enforcement: a file whose read is currently restricted never
-  // has its content searched or returned. content mode is a content surface in
+  const files = await collectFilesForSearch(basePath, query.glob, diagnostics);
+  // Read-side deny enforcement: a file whose read the gate would hold behind an
+  // ask never has its content returned. content mode is a content surface in
   // EVERY format (even files_only/locations reveal that the pattern matched a
-  // file), so restricted candidates are dropped from the search set entirely and
-  // their count is surfaced. The cache key is unaffected: it never uses restricted
-  // content, and the filter re-applies on every call.
-  const { allowed: files, restricted: restrictedFiles } = partitionByReadAccess(
-    allCandidateFiles,
-    (f) => f,
-    readAccessFilter,
-  );
-  const restrictedNote = accessRestrictedNote(restrictedFiles.length);
-  if (restrictedNote) addFindWarning(diagnostics, restrictedNote);
+  // file), so the filter is applied to every file the search is about to
+  // report, and the count withheld is surfaced. Only reported files are asked
+  // about, so a search over many candidates does not read each one.
+  let restrictedCount = 0;
+  const onlyReadable = async (reported: readonly string[]): Promise<string[]> => {
+    const { allowed, restricted } = await partitionByReadAccess(reported, (f) => f, readAccessFilter);
+    restrictedCount += restricted.length;
+    return allowed;
+  };
+  const noteRestricted = (): void => {
+    const restrictedNote = accessRestrictedNote(restrictedCount);
+    if (restrictedNote) addFindWarning(diagnostics, restrictedNote);
+  };
 
   if (query.negate) {
     const nonMatchingFiles: string[] = [];
@@ -122,8 +125,10 @@ async function executeContentQuery(
         if (nonMatchingFiles.length >= maxTotal) break;
       }
     }
-    if (format === 'count_only') return withFindWarnings(makeCountResult(nonMatchingFiles.length), diagnostics.warnings);
-    return withFindWarnings(makeFilesResult(nonMatchingFiles, nonMatchingFiles.length), diagnostics.warnings);
+    const reported = await onlyReadable(nonMatchingFiles);
+    noteRestricted();
+    if (format === 'count_only') return withFindWarnings(makeCountResult(reported.length), diagnostics.warnings);
+    return withFindWarnings(makeFilesResult(reported, reported.length), diagnostics.warnings);
   }
 
   const cacheKey: CacheKey = { pattern: rawPattern, glob: query.glob ?? '', path: basePath, flags };
@@ -136,22 +141,6 @@ async function executeContentQuery(
   if (cacheValid && cachedEntry) {
     matchedFiles = cachedEntry.matchedFiles;
     totalMatches = cachedEntry.totalMatches;
-    // A cache entry may have been populated under a more permissive mode; the
-    // filter is the sole authority, so re-apply it and drop any now-restricted
-    // file's content before it can be returned. Rebuild into a fresh Map so the
-    // shared cache entry is never mutated.
-    if (readAccessFilter && Array.from(matchedFiles.keys()).some((f) => !readAccessFilter(f))) {
-      const kept = new Map<string, { content: string; matches: ContentMatch[] }>();
-      let keptMatches = 0;
-      for (const [file, entry] of matchedFiles) {
-        if (readAccessFilter(file)) {
-          kept.set(file, entry);
-          keptMatches += entry.matches.length;
-        }
-      }
-      matchedFiles = kept;
-      totalMatches = keptMatches;
-    }
   } else {
     matchedFiles = new Map<string, { content: string; matches: ContentMatch[] }>();
     totalMatches = 0;
@@ -187,6 +176,26 @@ async function executeContentQuery(
       }
     }
   }
+
+  // The filter is the sole authority over what is reported, for fresh and
+  // cached results alike (a cached entry may predate a mode change); the shared
+  // cache entry itself is never mutated.
+  if (readAccessFilter && matchedFiles.size > 0) {
+    const readable = new Set(await onlyReadable(Array.from(matchedFiles.keys())));
+    if (readable.size < matchedFiles.size) {
+      const kept = new Map<string, { content: string; matches: ContentMatch[] }>();
+      let keptMatches = 0;
+      for (const [file, entry] of matchedFiles) {
+        if (readable.has(file)) {
+          kept.set(file, entry);
+          keptMatches += entry.matches.length;
+        }
+      }
+      matchedFiles = kept;
+      totalMatches = keptMatches;
+    }
+  }
+  noteRestricted();
 
   if (!query.ranked && !query.preview_replace && !query.relationships) {
     const fileMtimesForCache = new Map<string, number>();

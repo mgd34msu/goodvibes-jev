@@ -50,9 +50,9 @@ export interface CommandSegment {
 }
 
 /**
- * The risk classification tier for a command or command segment.
- *
- * Priority order (highest to lowest): destructive > escalation > network > write > read.
+ * The classification tier of a tool call, by the tool's built-in nature (the
+ * policy evaluator's tool table, runtime/permissions/evaluator.ts), which
+ * owner-authored mode-constraint rules can filter on.
  */
 export type CommandClassification =
   | 'read'
@@ -61,21 +61,10 @@ export type CommandClassification =
   | 'destructive'
   | 'escalation';
 
-/**
- * The fully normalised representation of a shell command string,
- * including all segments, classifications, and dangerous-pattern analysis.
- */
+/** The flat segments of a shell command string. */
 export interface NormalizedCommand {
   /** The original, unmodified command string. */
   original: string;
   /** Ordered list of command segments (split on &&, ||, ;, |). */
   segments: CommandSegment[];
-  /** All unique classifications found across all segments. */
-  classifications: CommandClassification[];
-  /** The highest-risk classification among all segments. */
-  highestClassification: CommandClassification;
-  /** True if any dangerous patterns were detected. */
-  hasDangerousPatterns: boolean;
-  /** Descriptions of each dangerous pattern detected, if any. */
-  dangerousPatterns?: string[] | undefined;
 }

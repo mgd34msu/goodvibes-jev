@@ -375,23 +375,21 @@ export function createAgentTool(config: {
           return { success: false, error: `Unknown agent: '${input.agentId}'` };
         }
 
-        // Estimate tokens: each tool call involves ~200 input + ~300 output tokens on average.
-        // Without a live ConversationManager attached to the agent, this is the best estimate
-        // available from the AgentRecord alone.
-        const AVG_INPUT_PER_CALL = 200;
-        const AVG_OUTPUT_PER_CALL = 300;
-        const inputTokens = record.toolCallCount * AVG_INPUT_PER_CALL;
-        const outputTokens = record.toolCallCount * AVG_OUTPUT_PER_CALL;
-
+        // The agent's own recorded usage (orchestrator-runner.ts), never an estimate.
+        const usage = record.usage;
         return {
           success: true,
           output: JSON.stringify({
             agentId: record.id,
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens,
+            inputTokens: usage?.inputTokens ?? 0,
+            outputTokens: usage?.outputTokens ?? 0,
+            cacheReadTokens: usage?.cacheReadTokens ?? 0,
+            cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+            totalTokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+            llmCallCount: usage?.llmCallCount ?? 0,
+            turnCount: usage?.turnCount ?? 0,
             toolCallCount: record.toolCallCount,
-            note: 'Estimated from tool call count. Attach a ConversationManager for precise tracking.',
+            ...(usage === undefined ? { note: 'No model call has been recorded for this agent yet.' } : {}),
           }),
         };
       }

@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, relative } from 'node:path';
 import { walk, safeRead, resolvePath } from './shared.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { projectTooling } from '../batteries/project-tooling.js';
 import type {
   ApiFramework,
   ProjectInfo,
@@ -18,23 +20,83 @@ import type {
   ApiSyncResult,
 } from './schema.js';
 
-export function detectProject(root: string): ProjectInfo {
+const PROJECT_TOOLING_SITE = 'tools.inspect.project-tooling';
+
+/** Build manifests and the ecosystem each one marks. */
+const MANIFESTS: ReadonlyArray<readonly [file: string, type: Exclude<ProjectInfo['type'], 'unknown'>]> = [
+  ['package.json', 'nodejs'],
+  ['Cargo.toml', 'rust'],
+  ['pyproject.toml', 'python'],
+  ['requirements.txt', 'python'],
+  ['go.mod', 'go'],
+  ['Makefile', 'make'],
+];
+
+/** Lockfiles and the one package manager that writes each. */
+const LOCKFILES: ReadonlyArray<readonly [file: string, manager: Exclude<ProjectInfo['packageManager'], 'none'>]> = [
+  ['bun.lockb', 'bun'],
+  ['bun.lock', 'bun'],
+  ['yarn.lock', 'yarn'],
+  ['pnpm-lock.yaml', 'pnpm'],
+  ['package-lock.json', 'npm'],
+];
+
+type PackageManager = Exclude<ProjectInfo['packageManager'], 'none'>;
+const isPackageManager = (value: string): value is PackageManager => value === 'npm' || value === 'bun' || value === 'yarn' || value === 'pnpm';
+
+/** Folders that hold dependencies or build output rather than the project's own source. */
+const SKIPPED_DIRS = new Set(['node_modules', '.git', 'target', 'dist', 'build', 'vendor', '.venv', 'venv', '__pycache__', '.next', 'out', 'coverage']);
+/** The walk that counts source files stops after this many files and this depth. */
+const MAX_COUNTED_FILES = 2_000;
+const MAX_COUNT_DEPTH = 4;
+
+/** Files by extension in a bounded walk of the project (a fact the project-type reading weighs). */
+function countSourceFiles(root: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  let seen = 0;
+  const visit = (dir: string, depth: number): void => {
+    if (depth > MAX_COUNT_DEPTH || seen >= MAX_COUNTED_FILES) return;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (seen >= MAX_COUNTED_FILES) return;
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRS.has(entry.name) && !entry.name.startsWith('.')) visit(join(dir, entry.name), depth + 1);
+      } else if (entry.isFile()) {
+        const ext = extname(entry.name);
+        if (ext) {
+          counts[ext] = (counts[ext] ?? 0) + 1;
+          seen++;
+        }
+      }
+    }
+  };
+  visit(root, 0);
+  return counts;
+}
+
+const TEST_FRAMEWORK_LABELS: Readonly<Record<string, string | undefined>> = { bun: 'bun:test', node: 'node:test', none: undefined };
+
+/**
+ * Inspect a project root. Files settle what they can: one ecosystem among the
+ * manifests present, the package.json `packageManager` field (corepack), or
+ * the only package manager among the lockfiles present. What they leave open
+ * (several ecosystems, no or conflicting lockfiles, the test runner) is read
+ * by `engine.tools.project-tooling` in one request; a reading that does not
+ * act leaves the field unknown ('unknown' type, 'none' package manager, no
+ * test framework).
+ */
+export async function detectProject(root: string): Promise<ProjectInfo> {
   const has = (f: string) => existsSync(join(root, f));
 
-  let type: ProjectInfo['type'] = 'unknown';
-  if (has('package.json')) type = 'nodejs';
-  else if (has('Cargo.toml')) type = 'rust';
-  else if (has('pyproject.toml') || has('requirements.txt')) type = 'python';
-  else if (has('go.mod')) type = 'go';
-  else if (has('Makefile')) type = 'make';
-
-  let packageManager: ProjectInfo['packageManager'] = 'none';
-  if (type === 'nodejs') {
-    if (has('bun.lockb')) packageManager = 'bun';
-    else if (has('yarn.lock')) packageManager = 'yarn';
-    else if (has('pnpm-lock.yaml')) packageManager = 'pnpm';
-    else packageManager = 'npm';
-  }
+  const manifests = MANIFESTS.filter(([file]) => has(file));
+  const types = [...new Set(manifests.map(([, type]) => type))];
+  const lockfiles = LOCKFILES.filter(([file]) => has(file));
+  const lockManagers = [...new Set(lockfiles.map(([, manager]) => manager))];
 
   let name: string | undefined;
   let version: string | undefined;
@@ -42,9 +104,10 @@ export function detectProject(root: string): ProjectInfo {
   let dependencies = 0;
   let devDependencies = 0;
   let isMonorepo = false;
-  let testFramework: string | undefined;
+  let dependencyNames: string[] = [];
+  let declaredManager: PackageManager | undefined;
 
-  if (type === 'nodejs') {
+  if (has('package.json')) {
     const raw = safeRead(join(root, 'package.json'));
     if (raw) {
       try {
@@ -55,21 +118,51 @@ export function detectProject(root: string): ProjectInfo {
         dependencies = Object.keys(pkg.dependencies ?? {}).length;
         devDependencies = Object.keys(pkg.devDependencies ?? {}).length;
         isMonorepo = !!(pkg.workspaces);
-
-        const allDeps: Record<string, string> = {
-          ...pkg.dependencies,
-          ...pkg.devDependencies,
-        };
-        if (allDeps['vitest']) testFramework = 'vitest';
-        else if (allDeps['jest']) testFramework = 'jest';
-        else if (allDeps['bun']) testFramework = 'bun:test';
-        else if (scripts['test']?.includes('bun test')) testFramework = 'bun:test';
-        else if (scripts['test']?.includes('vitest')) testFramework = 'vitest';
-        else if (scripts['test']?.includes('jest')) testFramework = 'jest';
+        dependencyNames = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
+        const field = typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : undefined;
+        if (field !== undefined && isPackageManager(field)) declaredManager = field;
       } catch {
         // malformed JSON
       }
     }
+  }
+
+  const settledType = types.length === 1 ? types[0] : types.length === 0 ? 'unknown' : undefined;
+  const mayBeNode = settledType === 'nodejs' || (settledType === undefined && types.includes('nodejs'));
+  const settledManager = declaredManager ?? (lockManagers.length === 1 ? lockManagers[0] : undefined);
+
+  const asked: Array<'project_type' | 'package_manager' | 'test_framework'> = [];
+  if (settledType === undefined) asked.push('project_type');
+  if (mayBeNode && settledManager === undefined) asked.push('package_manager');
+  if (mayBeNode) asked.push('test_framework');
+
+  let type: ProjectInfo['type'] = settledType ?? 'unknown';
+  let packageManager: ProjectInfo['packageManager'] = settledType === 'nodejs' && settledManager ? settledManager : 'none';
+  let testFramework: string | undefined;
+
+  if (asked.length > 0) {
+    const run = await projectTooling.run(
+      judgmentPort(PROJECT_TOOLING_SITE),
+      {
+        manifests: manifests.map(([file]) => file),
+        lockfiles: lockfiles.map(([file]) => file),
+        scripts,
+        dependencies: dependencyNames,
+        ...(asked.includes('project_type') ? { sourceFiles: countSourceFiles(root) } : {}),
+      },
+      { site: PROJECT_TOOLING_SITE, only: asked },
+    );
+    const r = run.readings;
+    if (r.project_type?.outcome === 'act') type = r.project_type.choice;
+    if (type === 'nodejs') {
+      if (settledManager) packageManager = settledManager;
+      else if (r.package_manager?.outcome === 'act') packageManager = r.package_manager.choice;
+      if (r.test_framework?.outcome === 'act') {
+        const choice = r.test_framework.choice;
+        testFramework = choice in TEST_FRAMEWORK_LABELS ? TEST_FRAMEWORK_LABELS[choice] : choice;
+      }
+    }
+    run.recordAction(`type ${type}, package manager ${packageManager}, test framework ${testFramework ?? 'none'}`);
   }
 
   const hasTypeScript = has('tsconfig.json') || has('tsconfig.base.json');
@@ -203,43 +296,56 @@ async function findHonoRoutes(root: string): Promise<ApiRoute[]> {
   return routes;
 }
 
-export async function detectApiFramework(root: string): Promise<Exclude<ApiFramework, 'auto'>> {
+type ConcreteFramework = Exclude<ApiFramework, 'auto'>;
+const FRAMEWORK_PACKAGES: ReadonlyArray<readonly [pkg: string, framework: ConcreteFramework]> = [
+  ['next', 'nextjs'],
+  ['fastify', 'fastify'],
+  ['hono', 'hono'],
+  ['express', 'express'],
+];
+
+/** The API frameworks package.json declares as dependencies (facts, no preference among them). */
+export function declaredApiFrameworks(root: string): ConcreteFramework[] {
   const raw = safeRead(join(root, 'package.json'));
-  if (raw) {
-    try {
-      const pkg = JSON.parse(raw);
-      const all = { ...pkg.dependencies, ...pkg.devDependencies };
-      if (all['next']) return 'nextjs';
-      if (all['fastify']) return 'fastify';
-      if (all['hono']) return 'hono';
-      if (all['express']) return 'express';
-    } catch {
-      // ignore
-    }
+  if (!raw) return [];
+  try {
+    const pkg = JSON.parse(raw);
+    const all = { ...pkg.dependencies, ...pkg.devDependencies };
+    return FRAMEWORK_PACKAGES.filter(([name]) => all[name]).map(([, framework]) => framework);
+  } catch {
+    return [];
   }
-  return 'express';
 }
 
-export async function inspectApi(root: string, framework: ApiFramework): Promise<ApiRoute[]> {
-  const fw = framework === 'auto' ? await detectApiFramework(root) : framework;
-  switch (fw) {
-    case 'nextjs': {
-      const app = await findNextjsAppRoutes(root);
-      const pages = await findNextjsPagesRoutes(root);
-      return [...app, ...pages];
-    }
-    case 'express':
-      return findExpressRoutes(root);
+async function routesFor(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
+  switch (framework) {
+    case 'nextjs':
+      return [...await findNextjsAppRoutes(root), ...await findNextjsPagesRoutes(root)];
     case 'fastify':
       return findFastifyRoutes(root);
     case 'hono':
       return findHonoRoutes(root);
-    default:
+    case 'express':
       return findExpressRoutes(root);
   }
 }
 
-function parseModelFields(body: string): DbField[] {
+/**
+ * Routes of the given framework, or for 'auto' the routes of every framework
+ * package.json declares; with none declared, every scanner runs. Each
+ * scanner matches its own framework's route syntax, so nothing is preferred.
+ */
+export async function inspectApi(root: string, framework: ApiFramework): Promise<ApiRoute[]> {
+  if (framework !== 'auto') return routesFor(root, framework);
+  const declared = declaredApiFrameworks(root);
+  const frameworks = declared.length > 0 ? declared : FRAMEWORK_PACKAGES.map(([, fw]) => fw);
+  const routes: ApiRoute[] = [];
+  for (const fw of frameworks) routes.push(...await routesFor(root, fw));
+  return routes;
+}
+
+/** A field is a relation when its type names a model declared in the same schema (the Prisma schema grammar). */
+function parseModelFields(body: string, modelNames: ReadonlySet<string>): DbField[] {
   const fields: DbField[] = [];
   const FIELD_RE = /^\s*(\w+)\s+(\w+)(\[\])?([?!])?/;
   for (const line of body.split('\n')) {
@@ -249,7 +355,7 @@ function parseModelFields(body: string): DbField[] {
     if (['@@', '@'].some((p) => name.startsWith(p))) continue;
     const type = m[2]!;
     const isOptional = m[4]! === '?';
-    const isRelation = /^[A-Z]/.test(type);
+    const isRelation = modelNames.has(type);
     fields.push({ name, type, isRelation, isOptional });
   }
   return fields;
@@ -260,10 +366,12 @@ export function parsePrismaSchema(content: string): DatabaseInfo {
   const enums: DbEnum[] = [];
 
   const MODEL_RE = /^model\s+(\w+)\s*\{([^}]*)\}/gm;
-  let m: RegExpExecArray | null;
-  while ((m = MODEL_RE.exec(content)) !== null) {
-    models.push({ name: m[1]!, fields: parseModelFields(m[2]!) });
+  const declared = [...content.matchAll(MODEL_RE)];
+  const modelNames = new Set(declared.map((match) => match[1]!));
+  for (const match of declared) {
+    models.push({ name: match[1]!, fields: parseModelFields(match[2]!, modelNames) });
   }
+  let m: RegExpExecArray | null;
 
   const ENUM_RE = /^enum\s+(\w+)\s*\{([^}]*)\}/gm;
   while ((m = ENUM_RE.exec(content)) !== null) {

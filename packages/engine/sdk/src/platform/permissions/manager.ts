@@ -2,9 +2,9 @@ import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
 import type { PermissionAttribution, PermissionRequestHandler } from './prompt.js';
 import { analyzePermissionRequest, withReading } from './analysis.js';
-import { isOutwardByCode, runBoundary, shellCommandsOf, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
+import { runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
-import { categoryForSideEffectKind, readToolCall, type GateReading } from '../gate/reading.js';
+import { categoryForSideEffectKind, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
@@ -17,10 +17,6 @@ import { LayeredPolicyEvaluator } from '../runtime/permissions/evaluator.js';
 import { exportDecisions } from '../runtime/permissions/decision-otlp.js';
 import type { DecisionOtlpConfig } from '../runtime/permissions/decision-otlp.js';
 import type { PermissionDecision as LayeredPermissionDecision } from '../runtime/permissions/types.js';
-import {
-  SHIPPED_CREDENTIAL_READ_RULES,
-  matchesShippedCredentialReadPath,
-} from './credential-read-defaults.js';
 import type { FeatureFlagManager } from '../runtime/feature-flags/index.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookCategory, HookEventPath, HookPhase } from '../hooks/types.js';
@@ -163,9 +159,12 @@ const isKnownReadOnly = (toolName: string, category: PermissionCategory): boolea
 const BOUNDARY_REASON: Readonly<Record<BoundaryCheckName, PermissionDecisionReasonCode>> = {
   catastrophic: 'boundary_catastrophic',
   'surface-authority': 'boundary_surface_authority',
-  'card-shapes': 'boundary_card_shapes',
+  'card-details': 'boundary_card_details',
   'outward-effect': 'boundary_outward_effect',
 };
+
+/** Tools that accept shell commands. */
+const EXEC_TOOLS: ReadonlySet<string> = new Set(['exec', 'bash', 'sh', 'run']);
 
 
 const boundaryRecord = (verdict: BoundaryVerdict): GateBoundaryRecord => ({
@@ -251,28 +250,34 @@ export class PermissionManager {
     await this.fireHook('Pre:permission:request', 'Pre', 'permission', 'request', { callId, toolName, category, analysis });
     this.policyRuntimeState.recordPermissionRequest({ callId, tool: toolName, category, analysis });
     const done = (result: PermissionCheckResult): PermissionCheckResult => this.emitAndReturn(callId, toolName, category, result);
-
-    // 1. The deterministic boundary.
-    const outwardByCode = isOutwardByCode(toolName, args);
-    let boundary = this.runGateBoundary(toolName, args, category, outwardByCode);
-    if (!boundary.passed) {
-      return done(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, attribution));
-    }
-    const base = { boundary: boundaryRecord(boundary) };
-
-    // 2. The owner's explicit opt-out and explicit rules.
-    if (this.configReader.isAutoApproveEnabled()) {
-      return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
-    }
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     const preset = presetForMode(mode);
 
+    // 1. Jev reads the call (known read-only tools read only whether they touch secrets).
+    const reading = await this.readCall(toolName, args, category);
+    if (reading !== null) {
+      if (reading.kind !== undefined && TOOL_CATEGORIES[toolName] === undefined) category = categoryForSideEffectKind(reading.kind);
+      analysis = withReading(analyzePermissionRequest(toolName, args, category), reading, category);
+    }
+    const read = reading === null ? {} : { reading: readingRecord(reading) };
+
+    // 2. The boundary, on the reading.
+    const boundary = await this.runGateBoundary(toolName, args, reading);
+    if (!boundary.passed) {
+      reading?.recordAction(`boundary:${boundary.refusedBy}`);
+      return done({ ...(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, reading, attribution)), ...read });
+    }
+    const base = { boundary: boundaryRecord(boundary), ...read };
+
+    // 3. The owner's explicit opt-out and explicit rules.
+    if (this.configReader.isAutoApproveEnabled()) {
+      return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+    }
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
       const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy(toolName, args, mode), analysis);
       if (mapped) return done({ ...mapped, ...base });
     }
-
     let forceAsk = false;
     if (preset.perTool && TOOL_CONFIG_KEYS[toolName] !== undefined) {
       const action: PermissionAction = permsConfig?.tools?.[TOOL_CONFIG_KEYS[toolName]!] ?? 'prompt';
@@ -280,7 +285,6 @@ export class PermissionManager {
       if (action === 'deny') return done(this.result(false, false, 'config_policy', 'config_deny', analysis, base));
       forceAsk = true;
     }
-
     const key = this.getApprovalKey(toolName, args);
     const remembered = this.rememberedDecision(key, toolName, args);
     // Plan is read-only: a remembered allow does not carry a change into it.
@@ -288,39 +292,19 @@ export class PermissionManager {
       return done(this.result(remembered.approved, true, remembered.source, remembered.reason, analysis, base));
     }
 
-    // 3. Known read-only tools run; a credential-store read (the shipped
-    //    default list) is read by Jev like any side-effecting call.
-    if (!forceAsk && isKnownReadOnly(toolName, category) && !this.isGatedCredentialRead(category, args)) {
-      return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+    // 4. A known read-only tool that touches no secrets runs.
+    if (reading === null) {
+      if (!forceAsk) return done(this.result(true, false, 'config_policy', 'config_allow', analysis, base));
+      return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, base));
     }
 
-    // 4. Jev reads the call; the preset decides.
-    const reading = await readToolCall({
-      toolName,
-      args,
-      workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
-      askKind: TOOL_CATEGORIES[toolName] === undefined,
-      askObfuscated: shellCommandsOf(toolName, args).length > 0,
-    });
-    if (reading.kind !== undefined && TOOL_CATEGORIES[toolName] === undefined) category = categoryForSideEffectKind(reading.kind);
-    analysis = withReading(analyzePermissionRequest(toolName, args, category), reading, category);
-    const read = { ...base, reading: readingRecord(reading) };
-
-    if (reading.outward && !outwardByCode) {
-      boundary = this.runGateBoundary(toolName, args, category, true);
-      if (!boundary.passed) {
-        reading.recordAction('boundary-refused');
-        return done({ ...(await this.boundaryOutcome(callId, toolName, args, category, analysis, boundary, attribution)), reading: read.reading });
-      }
-      read.boundary = boundaryRecord(boundary);
-    }
-
+    // 5. The preset decides on the stakes.
     const decision = decideByPreset(preset, {
       stakes: reading.stakes,
       family: reading.familyConfident ? reading.family : 'generic',
       changesState: reading.mutates || reading.outward,
     });
-    const withPreset = { ...read, preset: { preset: preset.name, action: forceAsk ? 'ask' as const : decision.action } };
+    const withPreset = { ...base, preset: { preset: preset.name, action: forceAsk ? 'ask' as const : decision.action } };
     reading.recordAction(`preset:${preset.name}:${withPreset.preset.action}`);
     if (!forceAsk && decision.action === 'allow') {
       return done(this.result(true, false, 'stakes_preset', 'preset_allow', analysis, withPreset));
@@ -330,26 +314,44 @@ export class PermissionManager {
       return done(this.result(false, false, planned ? 'runtime_mode' : 'stakes_preset', planned ? 'plan_mode' : 'preset_deny', analysis, withPreset));
     }
 
-    // 5. Ask the owner.
+    // 6. Ask the owner.
     return done(await this.ask(callId, toolName, args, category, analysis, key, attribution, withPreset));
   }
 
   /**
-   * Whether the call passes the deterministic boundary, judged by code alone.
-   * The background-agent escape hatch uses it: exempt from presets and
-   * prompts, never from the boundary.
+   * Jev's reading of a call. A built-in tool that only reads local state is
+   * asked one question, whether it touches secret or credential material
+   * (`secrets`); a no means it runs with no further reading (null). Every other
+   * call gets the full reading: side effects, risk family and the boundary
+   * questions.
    */
-  passesBoundary(toolName: string, args: Record<string, unknown>): boolean {
-    return this.runGateBoundary(toolName, args, this.getCategory(toolName, args), isOutwardByCode(toolName, args)).passed;
+  private async readCall(toolName: string, args: Record<string, unknown>, category: PermissionCategory): Promise<GateReading | null> {
+    const workingDirectory = this.configReader.getWorkingDirectory() ?? undefined;
+    if (isKnownReadOnly(toolName, category) && !(await readTouchesSecrets(toolName, args, workingDirectory))) return null;
+    return readToolCall({
+      toolName,
+      args,
+      workingDirectory,
+      askKind: TOOL_CATEGORIES[toolName] === undefined,
+      askObfuscated: shellCommandsIn(args).length > 0 && EXEC_TOOLS.has(toolName),
+    });
+  }
+
+  /**
+   * Whether the call passes the boundary. The background-agent escape hatch
+   * uses it: exempt from presets and prompts, never from the boundary.
+   */
+  async passesBoundary(toolName: string, args: Record<string, unknown>): Promise<boolean> {
+    const reading = await this.readCall(toolName, args, this.getCategory(toolName, args));
+    return (await this.runGateBoundary(toolName, args, reading)).passed;
   }
 
   /** The boundary over one call, with this gate's surface and ledger. */
-  private runGateBoundary(toolName: string, args: Record<string, unknown>, category: PermissionCategory, outward: boolean, approval?: OwnerApproval | null): BoundaryVerdict {
+  private runGateBoundary(toolName: string, args: Record<string, unknown>, reading: GateReading | null, approval?: OwnerApproval | null): Promise<BoundaryVerdict> {
     return runBoundary({
       toolName,
       args,
-      category,
-      outward,
+      reading,
       surfaceId: this.gate.surfaceOf?.(),
       ledger: this.gate.ledger,
       ...(approval ? { approval } : {}),
@@ -357,10 +359,11 @@ export class PermissionManager {
   }
 
   /**
-   * A boundary refusal. Every check's refusal stands, except a tainted outward
-   * call, which the owner may clear by answering a prompt for this exact call:
-   * the answer mints a single-use owner approval bound to the call's content,
-   * and the outward check is run again with it.
+   * A boundary refusal. It stands, except one marked approvable (an outward
+   * call that may carry card details or may derive from untrusted text), which
+   * the owner may clear by answering a prompt for this exact call: the answer
+   * mints a single-use owner approval bound to the call's content, and the
+   * boundary runs again with it.
    */
   private async boundaryOutcome(
     callId: string,
@@ -369,6 +372,7 @@ export class PermissionManager {
     category: PermissionCategory,
     analysis: PermissionRequestAnalysis,
     verdict: Extract<BoundaryVerdict, { passed: false }>,
+    reading: GateReading | null,
     attribution: PermissionAttribution | undefined,
   ): Promise<PermissionCheckResult> {
     const detail = [verdict.reason, verdict.fix ?? ''].filter((part) => part.length > 0).join(' ');
@@ -379,13 +383,13 @@ export class PermissionManager {
       tool: toolName,
       args,
       category,
-      analysis: { ...analysis, summary: `Outward call after untrusted content: ${analysis.summary}`, reasons: [verdict.reason] },
+      analysis: { ...analysis, summary: `Outward call the owner must see: ${analysis.summary}`, reasons: [verdict.reason] },
       workingDirectory: this.configReader.getWorkingDirectory() ?? undefined,
       ...(attribution ? { attribution } : {}),
     });
     if (!decision.approved) return { ...refused, sourceLayer: 'user_prompt', reasonCode: 'user_denied', userReason: decision.reason };
     const approval = grantOwnerApproval({ action: verdict.approvable.action, surface: 'owner-direct', content: verdict.approvable.content });
-    const cleared = this.runGateBoundary(toolName, args, category, true, approval);
+    const cleared = await this.runGateBoundary(toolName, args, reading, approval);
     if (!cleared.passed) return refused;
     return this.result(true, false, 'user_prompt', 'owner_approved_outward', analysis, { boundary: boundaryRecord(cleared) });
   }
@@ -454,40 +458,32 @@ export class PermissionManager {
   }
 
   /**
-   * previewReadAccess, non-interactive answer to "would a `read` of `path` be
-   * auto-allowed right now, WITHOUT prompting?" Returns 'allow' when it would be
-   * auto-allowed and 'restricted' otherwise (a would-prompt/ask path or an
-   * outright deny). Search / list / map tools call this per candidate file so
-   * their results never surface CONTENT the read tool itself would gate behind
-   * an ask/deny (e.g. the shipped credential-read defaults).
-   *
-   * It runs the SAME layered decision as {@link checkDetailed} up to the ask
-   * boundary, the same mode logic, the same isGatedCredentialRead check (→
-   * matchesShippedCredentialReadPath), and the same policy evaluator + mapping,
-   * so it can never drift from a parallel path matcher. It never prompts, caches,
-   * records, or fires hooks; it is a pure read of current config + rules.
+   * readAccess, the non-interactive answer to "would a `read` of `path` run
+   * right now without asking?" Search, list and map tools call it for each file
+   * they are about to surface, so their results never show content the read
+   * tool itself would hold behind an ask. It follows the same gate: explicit
+   * owner rules (the policy engine, the custom preset's read setting), then Jev's
+   * reading of whether the read touches secrets; a read that does is high
+   * stakes, surfaced only where the preset runs high-stakes calls. It never
+   * prompts, caches decisions, records, or fires hooks.
    */
-  previewReadAccess(rawPath: string): 'allow' | 'restricted' {
+  async readAccess(rawPath: string): Promise<'allow' | 'restricted'> {
     if (typeof rawPath !== 'string' || rawPath.length === 0) return 'allow';
-    const category: PermissionCategory = 'read';
     const args: Record<string, unknown> = { path: rawPath };
     if (this.configReader.isAutoApproveEnabled()) return 'allow';
-
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';
     if (this.featureFlags?.isEnabled('permissions-policy-engine') === true) {
-      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode), analyzePermissionRequest('read', args, category));
+      const mapped = this.mapEvaluatorDecision(this.evaluateRuntimePolicy('read', args, mode), analyzePermissionRequest('read', args, 'read'));
       if (mapped) return mapped.approved ? 'allow' : 'restricted';
     }
-    if (presetForMode(mode).perTool) {
+    const preset = presetForMode(mode);
+    if (preset.perTool) {
       // A read the custom preset would ask about cannot be asked mid-search.
       return (permsConfig?.tools?.[TOOL_CONFIG_KEYS['read']!] ?? 'prompt') === 'allow' ? 'allow' : 'restricted';
     }
-    // Every other preset runs reads. A credential-store read touches secrets,
-    // which the stakes rule puts at high stakes at least; it is surfaced only
-    // where the preset runs high-stakes calls without asking.
-    if (!this.isGatedCredentialRead(category, args)) return 'allow';
-    return presetForMode(mode).stakes.high === 'allow' ? 'allow' : 'restricted';
+    if (!(await readTouchesSecrets('read', args, this.configReader.getWorkingDirectory() ?? undefined))) return 'allow';
+    return preset.stakes.high === 'allow' ? 'allow' : 'restricted';
   }
 
   /**
@@ -557,42 +553,16 @@ export class PermissionManager {
     return { ...extra, approved, persisted, sourceLayer, reasonCode, analysis };
   }
 
-  /**
-   * A read whose path names a well-known credential store, which the shipped
-   * default protects: it must not be SILENTLY auto-allowed. Returns false for
-   * non-read categories and for paths that do not match a credential store. A
-   * user can still override by approving (session cache), switching to allow-all,
-   * or adding a user allow-rule.
-   */
-  private isGatedCredentialRead(
-    category: PermissionCategory,
-    args: Record<string, unknown>,
-  ): boolean {
-    if (category !== 'read') return false;
-    const rawPath =
-      typeof args['path'] === 'string' ? args['path']
-      : typeof args['file_path'] === 'string' ? args['file_path']
-      : typeof args['file'] === 'string' ? args['file']
-      : typeof args['target'] === 'string' ? args['target']
-      : null;
-    if (rawPath === null) return false;
-    return matchesShippedCredentialReadPath(rawPath, {
-      projectRoot: this.configReader.getWorkingDirectory() ?? undefined,
-    }).matched;
-  }
-
   private evaluateRuntimePolicy(
     toolName: string,
     args: Record<string, unknown>,
     mode: PermissionConfigSnapshot['permissions']['mode'],
   ): LayeredPermissionDecision {
-    // Shipped managed credential-read deny rules are appended AFTER the
-    // registry's rules. User-origin rules are evaluated before managed rules by
-    // the evaluator, so a user allow-rule still wins over these defaults.
+    // User-origin rules are evaluated before managed (registry) rules by the
+    // evaluator, so a user allow-rule wins over a managed one.
     const rules = [
       ...(this.userRuleStore?.rules() ?? []),
       ...(this.policyRuntimeState.getRegistry().getCurrent()?.rules ?? []),
-      ...SHIPPED_CREDENTIAL_READ_RULES,
     ];
     const evaluator = new LayeredPolicyEvaluator({
       mode:
@@ -641,8 +611,8 @@ export class PermissionManager {
 
   /**
    * The policy-as-code evaluator's decision, where it is an explicit rule: a
-   * user or managed policy rule, or the safety layer's refusal. Its mode layer
-   * is not consulted; the presets decide on Jev's reading instead.
+   * user or managed policy rule. Its mode layer is not consulted; the presets
+   * decide on Jev's reading instead.
    */
   private mapEvaluatorDecision(
     decision: LayeredPermissionDecision,
@@ -652,9 +622,6 @@ export class PermissionManager {
       return decision.allowed
         ? this.result(true, false, 'managed_policy', 'managed_policy_allow', analysis)
         : this.result(false, false, 'managed_policy', 'managed_policy_deny', analysis);
-    }
-    if (decision.sourceLayer === 'safety' && !decision.allowed) {
-      return this.result(false, false, 'safety_check', 'safety_guardrail', analysis);
     }
     return null;
   }

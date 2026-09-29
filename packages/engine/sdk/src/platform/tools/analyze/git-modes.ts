@@ -14,83 +14,62 @@ import {
   validateGitRefs,
 } from './shared.js';
 import { instrumentedFetch } from '../../utils/fetch-with-timeout.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import type { YesNoReading } from '@goodvibes-jev/judgment';
+import { MAX_JUDGED_DIFF_CHARS, semanticDiff, semanticDiffView } from '../batteries/semantic-diff.js';
 
-// 1.2 s, warm `git status` cache response budget; keeps semantic-diff LLM probe non-blocking
+const SEMANTIC_DIFF_SITE = 'tools.analyze.semantic-diff';
+
+// 1.2 s, warm `git status` cache response budget; keeps the semantic-diff summary probe non-blocking
 const GIT_PROBE_TIMEOUT_MS = 1200;
 
-function parseSemanticDiffResponse(
-  llmResponse: string | null,
-  changedFiles: string[],
-): SemanticDiffSummary {
-  let summary = 'LLM unavailable, diff available in raw_diff field.';
-  let impact: string[] = changedFiles.map((f) => `Changed file: ${f}`);
-  let risk: 'low' | 'medium' | 'high' = 'medium';
+type SemanticDiffRisk = SemanticDiffSummary['risk'];
 
-  if (llmResponse) {
-    try {
-      const cleaned = llmResponse.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim();
-      const parsed = JSON.parse(cleaned) as {
-        summary?: string | undefined;
-        impact?: unknown[] | undefined;
-        risk?: string | undefined;
-      };
-      if (typeof parsed.summary === 'string') summary = parsed.summary;
-      if (Array.isArray(parsed.impact)) {
-        impact = parsed.impact.map((i) => String(i));
-      }
-      if (parsed.risk === 'low' || parsed.risk === 'medium' || parsed.risk === 'high') {
-        risk = parsed.risk;
-      }
-    } catch {
-      summary = llmResponse.slice(0, 500);
-    }
-  }
-
-  return { summary, impact, risk };
+/**
+ * The risk tier, composed from the two facts Jev read about the diff
+ * (tools/batteries/semantic-diff.ts): breaking a caller is high, changing
+ * what existing code does is medium, neither is low. A fact the reading is
+ * not confident is absent (verdict uncertain) counts toward the higher tier,
+ * so doubt shows as risk rather than hiding it.
+ */
+export function semanticDiffRisk(readings: {
+  readonly breaks_callers: YesNoReading;
+  readonly changes_behavior: YesNoReading;
+}): SemanticDiffRisk {
+  const present = (reading: YesNoReading): boolean => reading.verdict !== 'no';
+  if (present(readings.breaks_callers)) return 'high';
+  if (present(readings.changes_behavior)) return 'medium';
+  return 'low';
 }
 
-function buildSemanticDiffFallback(
-  fullDiff: string,
-  changedFiles: string[],
-): SemanticDiffSummary {
-  const hasAsyncShift = /\basync\s+function\b|\bawait\b/.test(fullDiff);
-  const hasExportShift = /^\s*[+-]\s*export\s/m.test(fullDiff);
-  const hasSignatureShift = /^\s*[+-].*\([^)]*\)/m.test(fullDiff);
-  const hasBehaviorShift =
-    /^\s*[+-].*\breturn\b/m.test(fullDiff) ||
-    /^\s*[+-].*\bthrow\b/m.test(fullDiff) ||
-    /^\s*[+-].*\bif\b/m.test(fullDiff);
+/** Summary prose built from the readings when the helper model wrote none. */
+function summaryFromReadings(changedFiles: readonly string[], risk: SemanticDiffRisk): string {
+  const files = changedFiles.length === 0
+    ? 'No changed files were detected in the requested diff.'
+    : changedFiles.length === 1 ? `Changed ${changedFiles[0]}.` : `Changed ${changedFiles.length} files.`;
+  const effect = risk === 'high'
+    ? 'Callers of the changed code may have to change too.'
+    : risk === 'medium'
+      ? 'Existing code behaves differently after this change.'
+      : 'The change neither breaks callers nor changes existing behavior.';
+  return `${files} ${effect}`;
+}
 
-  let risk: 'low' | 'medium' | 'high' = 'low';
-  if (hasExportShift || hasSignatureShift) {
-    risk = 'high';
-  } else if (hasAsyncShift || hasBehaviorShift || changedFiles.length > 1) {
-    risk = 'medium';
+/**
+ * The helper model's summary and impact list. Only the prose is taken from
+ * its reply; the risk tier is never parsed from it.
+ */
+function parseSemanticDiffProse(reply: string): { summary?: string; impact?: string[] } {
+  try {
+    const cleaned = reply.replace(/^```(?:json)?\s*/m, '').replace(/\s*```$/m, '').trim();
+    const parsed = JSON.parse(cleaned) as { summary?: unknown; impact?: unknown };
+    return {
+      ...(typeof parsed.summary === 'string' ? { summary: parsed.summary } : {}),
+      ...(Array.isArray(parsed.impact) ? { impact: parsed.impact.map((item) => String(item)) } : {}),
+    };
+  } catch {
+    return { summary: reply.slice(0, 500) };
   }
-
-  const summaryParts: string[] = [];
-  if (changedFiles.length === 0) {
-    summaryParts.push('No changed files were detected in the requested diff.');
-  } else if (changedFiles.length === 1) {
-    summaryParts.push(`Changed ${changedFiles[0]}.`);
-  } else {
-    summaryParts.push(`Changed ${changedFiles.length} files.`);
-  }
-  if (hasAsyncShift) {
-    summaryParts.push('The diff introduces or expands asynchronous behavior.');
-  }
-  if (hasExportShift || hasSignatureShift) {
-    summaryParts.push('Public callable surfaces or signatures changed.');
-  } else if (hasBehaviorShift) {
-    summaryParts.push('The implementation behavior changed within existing code paths.');
-  }
-
-  const impact = changedFiles.map((file) => `Review downstream callers and tests for ${file}.`);
-  return {
-    summary: summaryParts.join(' ').trim() || 'Diff analyzed without LLM assistance.',
-    impact,
-    risk,
-  };
 }
 
 async function trySemanticDiffLlm(
@@ -276,32 +255,40 @@ export async function runSemanticDiff(
   }
 
   const changedFiles = parseDiffStats(statOutput).map((file) => file.file);
-  const fallback = buildSemanticDiffFallback(fullDiff, changedFiles);
-  const truncatedDiff = truncateDiffAtBoundary(fullDiff, 6000);
+  const range = `${before}..${after}`;
+  const judgedDiff = truncateDiffAtBoundary(fullDiff, MAX_JUDGED_DIFF_CHARS);
+  const run = await semanticDiff.run(
+    judgmentPort(SEMANTIC_DIFF_SITE),
+    semanticDiffView(range, changedFiles, judgedDiff),
+    { site: SEMANTIC_DIFF_SITE },
+  );
+  const risk = semanticDiffRisk(run.readings);
+  run.recordAction(`reported risk ${risk}`);
+
   const prompt =
     `You are a code reviewer. Analyze the following git diff and provide:
 1. A concise summary of what changed and why (2-4 sentences)
 2. Impact analysis: list the downstream functions/modules/callers that may be affected
-3. Risk level: low (pure additions/docs), medium (refactors, optional param changes), or high (API removals, signature changes, behavior changes)
 
-Respond in JSON with fields: summary (string), impact (array of strings), risk ("low"|"medium"|"high")
+Respond in JSON with fields: summary (string), impact (array of strings)
 
-Diff (${before}..${after}):
-${truncatedDiff}`;
+Diff (${range}):
+${truncateDiffAtBoundary(fullDiff, 6000)}`;
 
-  const llmResponse = await trySemanticDiffLlm(toolLLM, prompt);
-  const { summary, impact, risk } = llmResponse
-    ? parseSemanticDiffResponse(llmResponse, changedFiles)
-    : fallback;
-  const source = llmResponse ? 'llm' : 'deterministic_fallback';
+  const reply = await trySemanticDiffLlm(toolLLM, prompt);
+  const prose = reply ? parseSemanticDiffProse(reply) : {};
 
   return {
     before,
     after,
-    summary,
-    impact,
+    summary: prose.summary ?? summaryFromReadings(changedFiles, risk),
+    impact: prose.impact ?? changedFiles.map((file) => `Changed file: ${file}`),
     risk,
-    source,
+    risk_readings: {
+      breaks_callers: run.readings.breaks_callers.verdict,
+      changes_behavior: run.readings.changes_behavior.verdict,
+    },
+    summary_source: prose.summary !== undefined ? 'llm' : 'readings',
     changed_files: changedFiles,
   };
 }

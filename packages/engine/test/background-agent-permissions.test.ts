@@ -8,7 +8,7 @@
  * riding on a brokered ask, structured ToolDenial reaching the subagent result,
  * and the allow-all exemption.
  */
-import { useGateReadings } from './_helpers/gate-readings.ts';
+import { EXEC_GATE_TABLE, useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { PermissionManager, type PermissionConfigReader } from '../sdk/src/platform/permissions/manager.js';
 import type { PolicyRuntimeState } from '../sdk/src/platform/runtime/permissions/policy-runtime.js';
@@ -54,7 +54,7 @@ function makeManager(
 
 const record = { id: 'agent-42', template: 'engineer' } as const;
 
-useGateReadings();
+useGateReadings(EXEC_GATE_TABLE);
 
 // ── mode matrix (inherit) ────────────────────────────────────────────────────
 

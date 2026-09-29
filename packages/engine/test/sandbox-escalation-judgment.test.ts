@@ -12,6 +12,8 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   createSandboxEscalationApprovalHandler,
@@ -169,6 +171,8 @@ describe('sandbox judgment tier', () => {
 // ── exec-runtime wiring: a denied escalation blocks the command (no spawn) ───
 
 describe('exec runtime raises the escalation through the injected seam', () => {
+  useToolReadings([], EXEC_GATE_TABLE);
+
   // Fabricate an available sandbox WITHOUT a real bwrap spawn: a denied
   // escalation returns before any process is spawned, so the fake bwrap path is
   // never executed on any host.

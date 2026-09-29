@@ -172,7 +172,7 @@ export function installAgentToolPolicyGuard(registry: ToolRegistry, options: Age
     if (tool.definition.name === 'exec') {
       wrapExecToolForAgentPolicy(tool);
     } else if (tool.definition.name === 'read') {
-      wrapReadToolForAgentPolicy(tool, { wasWrittenInSession: options.wasWrittenInSession });
+      wrapReadToolForAgentPolicy(tool);
     } else if (tool.definition.name === 'remote') {
       wrapModeRestrictedToolForAgentPolicy(tool, {
         allowedModes: READ_ONLY_REMOTE_TOOL_MODES,
@@ -489,11 +489,11 @@ function explainModeRestrictedAgentPolicy(
   return allowedByAgentPolicy(`Agent policy allows ${mode} for read-only inspection on this tool.`, allowedModes);
 }
 
-export function explainAgentToolPolicyInvocation(
+export async function explainAgentToolPolicyInvocation(
   toolName: string,
   args: Record<string, unknown> = {},
   options: AgentToolPolicyExplanationOptions = {},
-): AgentToolPolicyInvocationExplanation {
+): Promise<AgentToolPolicyInvocationExplanation> {
   if (BLOCKED_MAIN_CONVERSATION_TOOL_NAME_SET.has(toolName)) return deniedByAgentPolicy(LOCAL_CODING_TOOL_DENIAL);
   if (toolName === 'agent') {
     const denied = validateAgentToolInvocationForAgentPolicy(args as AgentToolArgs);
@@ -530,10 +530,10 @@ export function explainAgentToolPolicyInvocation(
     return denied ? deniedByAgentPolicy(denied, READ_ONLY_STATE_TOOL_MODES) : allowedByAgentPolicy('Agent policy allows read-only runtime state inspection.', READ_ONLY_STATE_TOOL_MODES);
   }
   if (toolName === 'goodvibes_settings') {
-    const denied = validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
+    const denied = await validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
     return denied
       ? deniedByAgentPolicy(denied)
-      : allowedByAgentPolicy('Agent policy allows reading and applying settings; a short confirmation-gated list is named in the refusal when it applies.');
+      : allowedByAgentPolicy('Agent policy allows reading and applying settings; a change Jev reads as a hazard needs the user to ask for it, and the refusal names why.');
   }
   if (toolName === 'inspect') {
     const denied = validateInspectToolInvocationForAgentPolicy(args as InspectToolArgs);

@@ -13,11 +13,14 @@ import type { Tool, ToolDefinition, ToolResult } from '../../types/tools.js';
 import { ImportGraph } from '../../intelligence/index.js';
 import { estimateTokens } from '../../core/compaction-types.js';
 import { summarizeError } from '../../utils/error-display.js';
-import { accessRestrictedNote, type ReadAccessFilter } from '../shared/read-access.js';
+import { accessRestrictedNote, partitionByReadAccess, type ReadAccessFilter } from '../shared/read-access.js';
 
 const DEFAULT_BUDGET_TOKENS = 2_000;
 const MIN_BUDGET_TOKENS = 200;
 const MAX_BUDGET_TOKENS = 32_000;
+/** Ranked files whose read access is asked together. */
+const READ_ACCESS_WINDOW = 16;
+
 const MAX_EXPORTS_PER_FILE = 12;
 
 interface RankedFile {
@@ -123,7 +126,7 @@ const REPO_MAP_SCHEMA: Record<string, unknown> = {
 export function createRepoMapTool(options: {
   projectRoot: string;
   /**
-   * Per-file read-permission decision (wired to PermissionManager.previewReadAccess).
+   * Per-file read-permission decision (wired to PermissionManager.readAccess).
    * A restricted file keeps its ranked path line but its exported symbols, which
    * require reading the file, are withheld and the line is flagged.
    */
@@ -174,15 +177,27 @@ export function createRepoMapTool(options: {
       let output = header;
       let included = 0;
       let restrictedCount = 0;
-      for (const file of ranked) {
+      // Read access is asked a window of ranked files at a time (bounded
+      // concurrency), only as far as the token budget reaches.
+      const restrictedFiles = new Set<string>();
+      let asked = 0;
+      let full = false;
+      for (let index = 0; index < ranked.length && !full; index++) {
+        const file = ranked[index]!;
+        if (index >= asked) {
+          const window = ranked.slice(asked, asked + READ_ACCESS_WINDOW);
+          for (const restricted of (await partitionByReadAccess(window, (entry) => resolve(root, entry.rel), readAccessFilter)).restricted) {
+            restrictedFiles.add(restricted.rel);
+          }
+          asked += window.length;
+        }
         const absolute = resolve(root, file.rel);
         let block: string;
-        if (readAccessFilter && !readAccessFilter(absolute)) {
+        if (restrictedFiles.has(file.rel)) {
           // Read-side deny enforcement: keep the ranked path (existence is not a
           // leak) but withhold the exported symbols, which would require reading
           // the file's content.
           block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)}) [access-restricted]`;
-          restrictedCount++;
         } else {
           try {
             const exports = extractTopLevelExports(readFileSync(absolute, 'utf-8')).slice(0, MAX_EXPORTS_PER_FILE);
@@ -192,7 +207,11 @@ export function createRepoMapTool(options: {
             block = `\n  ${file.rel}  (dependents: ${file.dependents}, ${formatBytes(file.bytes)})`;
           }
         }
-        if (estimateTokens(output + block) > budgetTokens) break;
+        if (estimateTokens(output + block) > budgetTokens) {
+          full = true;
+          break;
+        }
+        if (restrictedFiles.has(file.rel)) restrictedCount++;
         output += block;
         included++;
       }

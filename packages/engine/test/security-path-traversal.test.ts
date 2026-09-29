@@ -1,41 +1,29 @@
 /**
- * Security: Path traversal detection.
+ * Security: the public safety check (`security.runSafetyChecks`).
  *
- * Verifies that path escape attempts are detected and blocked
- * at the safety check layer, and that benign paths pass through.
+ * A NUL byte in a path argument is refused in code: the operating system
+ * truncates a path at NUL, so the path a call names is not the path it would
+ * open. Whether a path reaching outside the project matters is the gate's
+ * stakes reading (`beyondProject`), so traversal-looking paths are not refused
+ * here. A shell command is refused when Jev reads it as catastrophic, or when
+ * the reading is uncertain (nothing in this check can ask the owner).
  */
-
 import { describe, test, expect } from 'bun:test';
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { runSafetyChecks } from './_helpers/runtime-seam.ts';
-import { LayeredPolicyEvaluator } from './_helpers/runtime-seam.ts';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const PATH_TOOLS = ['read', 'write', 'edit', 'find'] as const;
 
-function checkPath(toolName: string, path: string) {
-  return runSafetyChecks(toolName, { path });
-}
+describe('security: the safety check', () => {
+  useGateReadings([
+    ['mkfs.ext4 /dev/sda1', { mutates: true, catastrophic: true }],
+  ]);
 
-// ---------------------------------------------------------------------------
-// Path traversal, safety checks
-// ---------------------------------------------------------------------------
-
-describe('security: path traversal', () => {
-  describe('double-dot traversal sequences are blocked', () => {
-    const TRAVERSAL_PATHS = [
-      '/project/../../etc/passwd',
-      '/home/user/../../../etc/shadow',
-      '/../../../root/.ssh/id_rsa',
-      '/var/www/app/../../../../../../etc/passwd',
-    ];
-
+  describe('a NUL byte in a path is refused', () => {
     for (const tool of PATH_TOOLS) {
-      for (const traversalPath of TRAVERSAL_PATHS) {
-        test(`tool "${tool}" with "${traversalPath}" is blocked`, () => {
-          const result = checkPath(tool, traversalPath);
+      for (const nullPath of ['/project/file.ts\0', '/tmp/safe\0/etc/passwd', '\0etc/shadow']) {
+        test(`tool "${tool}" with a NUL byte path is refused`, async () => {
+          const result = await runSafetyChecks(tool, { path: nullPath });
           expect(result.blocked).toBe(true);
           expect(result.reason).toBe('SAFETY_DENY_PATH_ESCAPE');
         });
@@ -43,76 +31,23 @@ describe('security: path traversal', () => {
     }
   });
 
-  describe('null byte injection is blocked', () => {
-    const NULL_BYTE_PATHS = [
-      '/project/file.ts\0',
-      '/tmp/safe\0/etc/passwd',
-      '\0etc/shadow',
-    ];
-
-    for (const tool of PATH_TOOLS) {
-      for (const nullPath of NULL_BYTE_PATHS) {
-        test(`tool "${tool}" with null byte path is blocked`, () => {
-          const result = checkPath(tool, nullPath);
-          expect(result.blocked).toBe(true);
-          expect(result.reason).toBe('SAFETY_DENY_PATH_ESCAPE');
-        });
-      }
-    }
-  });
-
-  describe('benign paths are not blocked', () => {
-    const SAFE_PATHS = [
-      '/home/user/project/src/index.ts',
-      '/tmp/output.txt',
-      './relative/path.ts',
-      'src/components/Button.tsx',
-      '/var/log/app.log',
-    ];
-
-    for (const tool of PATH_TOOLS) {
-      for (const safePath of SAFE_PATHS) {
-        test(`tool "${tool}" with safe path "${safePath}" is not blocked`, () => {
-          const result = checkPath(tool, safePath);
-          expect(result.blocked).toBe(false);
-        });
-      }
-    }
-  });
-
-  describe('path traversal blocked across all modes via evaluator', () => {
-    const MODES = ['default', 'allow-all', 'plan', 'custom'] as const;
-
-    for (const mode of MODES) {
-      test(`mode "${mode}" does not allow path traversal for read tool`, () => {
-        const evaluator = new LayeredPolicyEvaluator({ mode, rules: [] });
-        const decision = evaluator.evaluate('read', { path: '/project/../../etc/passwd' });
-        expect(decision.allowed).toBe(false);
-        expect(decision.sourceLayer).toBe('safety');
-        expect(decision.reason).toBe('SAFETY_DENY_PATH_ESCAPE');
+  describe('paths without a NUL byte pass (reaching beyond the project is the stakes reading)', () => {
+    for (const path of ['/home/user/project/src/index.ts', './relative/path.ts', '/project/../../etc/passwd']) {
+      test(`"${path}" passes`, async () => {
+        expect((await runSafetyChecks('read', { path })).blocked).toBe(false);
       });
     }
   });
 
-  describe('non-path-class tools are not subject to path checks', () => {
-    test('exec tool with traversal-looking arg is not path-escape blocked', () => {
-      // exec is not a path-class tool; its arg is a command, not a path.
-      // The path escape check should not fire (other checks may fire instead).
-      const result = runSafetyChecks('exec', { command: 'cat ../../etc/passwd' });
-      // Should not be blocked by path-escape specifically
-      if (result.blocked) {
-        expect(result.reason).not.toBe('SAFETY_DENY_PATH_ESCAPE');
-      } else {
-        expect(result.blocked).toBe(false);
-      }
-    });
-  });
-
-  describe('classification on path escape', () => {
-    test('path escape classification is "escalation"', () => {
-      const result = runSafetyChecks('read', { path: '/project/../../etc/passwd' });
+  describe('shell commands are read for catastrophe', () => {
+    test('a command read as catastrophic is refused', async () => {
+      const result = await runSafetyChecks('exec', { command: 'mkfs.ext4 /dev/sda1' });
       expect(result.blocked).toBe(true);
-      expect(result.classification).toBe('escalation');
+      expect(result.steps.some((step) => step.check === 'catastrophic' && step.matched)).toBe(true);
+    });
+
+    test('an ordinary command passes', async () => {
+      expect((await runSafetyChecks('exec', { command: 'cat ../../etc/hosts' })).blocked).toBe(false);
     });
   });
 });

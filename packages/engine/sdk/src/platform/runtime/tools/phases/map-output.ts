@@ -1,5 +1,4 @@
 import type { Tool, ToolCall } from '../../../types/tools.js';
-import { repairToolCall } from '../../../tools/auto-repair.js';
 import type { ToolRuntimeContext } from '../context.js';
 import type { PhaseResult, ToolExecutionRecord } from '../types.js';
 import type { PhasedTool } from '../adapter.js';
@@ -13,9 +12,9 @@ import { attachVisibleToolWarning } from './warnings.js';
  *
  * Transforms/annotates the raw tool result before it reaches the LLM:
  *
- * 1. Applies auto-repair annotation: if args were repaired during
- *    execution, prepends a `[Auto-repaired: ...]` note to the output
- *    so the LLM knows what was corrected.
+ * 1. Applies auto-repair annotation: if the execute phase repaired the
+ *    args (`record._repair`), prepends a `[Auto-repaired: ...]` note to the
+ *    output so the LLM knows what was corrected.
  * 2. Applies output policy enforcement: byte limits, truncation, and spill
  *    handling are applied per tool class via `applyOutputPolicy`.
  * 3. No-ops cleanly when there is no result to map (defensive guard).
@@ -59,15 +58,14 @@ export async function mapOutputPhase(
   }
 
   try {
-    // Re-run repair check to determine if the original args were patched
-    const effectiveArgs = record._updatedArgs ?? call.arguments;
-    const repairResult = repairToolCall(call.name, effectiveArgs, tool.definition);
+    // The repair the execute phase applied, if any.
+    const repairResult = record._repair;
 
-    for (const warning of repairResult.warnings ?? []) {
+    for (const warning of repairResult?.warnings ?? []) {
       attachVisibleToolWarning(record.result, warning);
     }
 
-    if (repairResult.repaired) {
+    if (repairResult?.repaired) {
       const repairNote = `[Auto-repaired: ${repairResult.repairs.join(', ')}]`;
       if (typeof record.result.output === 'string') {
         record.result.output = `${repairNote}\n${record.result.output}`;

@@ -1,8 +1,14 @@
 /**
- * settings-write-policy.ts, what the Agent may set, and the very short list of
- * keys that need the user to say so first. Hoisted from the agent
- * (src/tools/agent-settings-write-policy.ts) into the engine gate; the list is
- * a deterministic boundary, kept as code.
+ * settings-write-policy.ts, what the Agent may set, and the writes that need
+ * the user to say so first. Hoisted from the agent
+ * (src/tools/agent-settings-write-policy.ts) into the engine gate.
+ *
+ * Read under the owner ruling of 2026-09-27: the frozen list of eleven key
+ * names decided "is an unattended write of this key a hazard", a judgment made
+ * by name, and a non-empty `explicitUserRequest` decided "did the user ask for
+ * it", which any text satisfied. Both are now the `engine.gate.settings-hazard`
+ * reading (gate/batteries/settings-hazard.ts). The three hazard classes, and
+ * the rule that everything else is set on request, are unchanged.
  *
  * ## What the previous guard was protecting
  *
@@ -32,19 +38,15 @@
  * names the `goodvibes://` reference that would work instead. That protection is
  * value-shaped, not key-shaped, so it belongs there and is not duplicated here.
  *
- * The exposure half becomes {@link AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS}: a
- * short list of keys where an unattended write is itself the hazard. It is
- * modelled on this codebase's frozen catastrophic exec list, a small,
- * enumerated set of genuinely dangerous things, not a general policy, and it
- * covers exactly three classes:
+ * The exposure half becomes the settings-hazard reading: whether an unattended
+ * write is itself the hazard, in exactly three classes:
  *
  *   1. approval gates the Agent would otherwise be granting itself,
  *   2. the exec sandbox that contains what the Agent runs,
  *   3. moving a loopback listener onto the network, or widening who it trusts.
  *
- * Everything else the Agent sets on request. This list must not grow into a
- * general "settings the model shouldn't touch" list; adding to it needs the same
- * deliberate justification as adding to the catastrophic exec list.
+ * Everything else the Agent sets on request. The classes must not grow into a
+ * general "settings the model shouldn't touch" policy.
  *
  * ## Nothing fails silently
  *
@@ -55,116 +57,29 @@
  */
 
 import type { Tool } from '../../types/tools.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { settingsHazard, type SettingsHazard } from '../batteries/settings-hazard.js';
 
-/** Why an unattended write to a key is the hazard, in the user's language. */
-export interface ConfirmationRequiredConfigKey {
-  /** Exact config key, or a `prefix.` ending in a dot to cover a domain. */
-  readonly match: string;
-  /** Which of the three hazard classes this belongs to. */
-  readonly hazard: 'approval-gate' | 'exec-containment' | 'host-exposure';
-  /** Plain-language statement of what the write would do. */
-  readonly because: string;
-}
+/** Why an unattended write in each hazard class is the hazard, in the user's language. */
+const HAZARD_BECAUSE: Readonly<Record<Exclude<SettingsHazard, 'none'>, string>> = {
+  'approval-gate': 'it changes which actions run without asking you, so the Agent would be granting itself permission',
+  'exec-containment': 'it changes the sandbox that contains commands run from here',
+  'host-exposure': 'it changes how this machine is exposed to the network or which hosts are trusted or reachable',
+};
 
-/**
- * The frozen list. Keep it short and keep every entry justifiable on its own.
- *
- * Deliberately NOT here, and why: `surfaces.*` (chat surfaces the user is
- * actively configuring, the whole point), `provider.*` and `display.*`
- * (ordinary preferences), and every credential-shaped key, whose protection is
- * the SDK tool's raw-secret refusal rather than a confirmation prompt.
- */
-export const AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS: readonly ConfirmationRequiredConfigKey[] = Object.freeze([
-  // 1. Approval gates. Writing these is the Agent widening its own permissions.
-  {
-    match: 'behavior.autoApprove',
-    hazard: 'approval-gate',
-    because: 'it auto-approves every future tool permission request, so nothing would ask you again',
-  },
-  {
-    match: 'permissions.mode',
-    hazard: 'approval-gate',
-    because: 'it decides which tool classes run without asking you',
-  },
-  {
-    match: 'permissions.tools.',
-    hazard: 'approval-gate',
-    because: 'it grants or revokes a tool class outright, which changes what runs unattended',
-  },
-  // 2. Exec containment. The sandbox is what bounds commands the Agent runs, and
-  // its backing image and wrapper paths decide what "sandboxed" even means.
-  {
-    match: 'sandbox.',
-    hazard: 'exec-containment',
-    because: 'it controls the sandbox that contains commands run from here, including whether it is on, how escalations are judged, and which image and wrapper back it',
-  },
-  // 3. Host exposure. Moving a loopback listener onto the network, or trusting
-  // remote callers, exposes this machine to everything that can route to it.
-  {
-    match: 'controlPlane.',
-    hazard: 'host-exposure',
-    because: 'it controls the network binding of the control plane and who may reach it',
-  },
-  {
-    match: 'httpListener.',
-    hazard: 'host-exposure',
-    because: 'it controls the network binding of the inbound HTTP listener and who may reach it',
-  },
-  {
-    match: 'web.host',
-    hazard: 'host-exposure',
-    because: 'it controls which interface the web surface binds to',
-  },
-  {
-    match: 'web.hostMode',
-    hazard: 'host-exposure',
-    because: 'it controls which interface the web surface binds to',
-  },
-  {
-    match: 'danger.httpListener',
-    hazard: 'host-exposure',
-    because: 'it opens an inbound webhook listener that accepts external events',
-  },
-  {
-    match: 'fetch.trustedHosts',
-    hazard: 'host-exposure',
-    because: 'trusted hosts relax response sanitization, which is what keeps fetched pages from being read as instructions',
-  },
-  {
-    match: 'fetch.blockedHosts',
-    hazard: 'host-exposure',
-    because: 'it is the list of hosts fetch refuses, so shortening it widens what can be reached',
-  },
-  {
-    match: 'network.remoteFetch.allowPrivateHosts',
-    hazard: 'host-exposure',
-    because: 'it allows fetches to private, localhost, and cloud metadata addresses',
-  },
-]);
-
-/**
- * The gated entry covering `key`, or null. Prefix entries end in `.` and match a
- * whole domain; every other entry is an exact key.
- */
-export function findConfirmationRequiredConfigKey(key: string): ConfirmationRequiredConfigKey | null {
-  const trimmed = key.trim();
-  if (!trimmed) return null;
-  for (const entry of AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS) {
-    if (entry.match.endsWith('.') ? trimmed.startsWith(entry.match) : trimmed === entry.match) return entry;
-  }
-  return null;
-}
+/** The decision site settings-write readings are logged under. */
+export const SETTINGS_HAZARD_SITE = 'engine.gate.settings-write';
 
 /** Parameter carrying the user's own words when a gated key is being set. */
 export const AGENT_SETTINGS_CONFIRMATION_PROPERTY = 'explicitUserRequest';
 
 /** Loud, self-explaining denial. Never returned as, or alongside, a success. */
-export function describeConfirmationRequiredDenial(entry: ConfirmationRequiredConfigKey, key: string): string {
+export function describeConfirmationRequiredDenial(hazard: Exclude<SettingsHazard, 'none'>, key: string): string {
   return [
-    `${key} requires your confirmation because ${entry.because}.`,
+    `${key} requires your confirmation because ${HAZARD_BECAUSE[hazard]}.`,
     'It was NOT changed, and nothing else was written.',
     `To proceed, say so explicitly and the Agent will retry with ${AGENT_SETTINGS_CONFIRMATION_PROPERTY} set to your request`,
-    `(hazard class: ${entry.hazard}).`,
+    `(hazard class: ${hazard}).`,
     'Every other setting can be applied without this step.',
   ].join(' ');
 }
@@ -177,18 +92,34 @@ export type SettingsToolArgs = {
 };
 
 /**
- * Deny a gated write that has no explicit user request behind it. Returns null,
- * meaning "let it through", for every other key, and for reads and resets of
- * keys that are not gated.
+ * Deny a hazardous write that the user's own words do not ask for. Returns
+ * null, meaning "let it through", for a key with no key, a write Jev reads as
+ * no hazard, and a hazardous write whose request asks for it. An uncertain
+ * hazard reading counts as a hazard; an uncertain request reading counts as no
+ * request.
  */
-export function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs): string | null {
+export async function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs): Promise<string | null> {
   const key = typeof args.key === 'string' ? args.key.trim() : '';
   if (!key) return null;
-  const entry = findConfirmationRequiredConfigKey(key);
-  if (!entry) return null;
   const request = args[AGENT_SETTINGS_CONFIRMATION_PROPERTY];
-  if (typeof request === 'string' && request.trim().length > 0) return null;
-  return describeConfirmationRequiredDenial(entry, key);
+  const hasRequest = typeof request === 'string' && request.trim().length > 0;
+  const run = await settingsHazard.run(
+    judgmentPort(SETTINGS_HAZARD_SITE),
+    { key, value: JSON.stringify(args['value'] ?? null), ...(hasRequest ? { request: (request as string).trim() } : {}) },
+    { site: SETTINGS_HAZARD_SITE, only: hasRequest ? ['hazard', 'requested'] : ['hazard'] },
+  );
+  const reading = run.readings.hazard;
+  if (reading.choice === 'none' && reading.outcome === 'act') {
+    run.recordAction('no-hazard');
+    return null;
+  }
+  const hazard: Exclude<SettingsHazard, 'none'> = reading.choice === 'none' ? 'approval-gate' : reading.choice;
+  if (hasRequest && run.readings.requested.verdict === 'yes') {
+    run.recordAction(`requested:${hazard}`);
+    return null;
+  }
+  run.recordAction(`deferred:${hazard}`);
+  return describeConfirmationRequiredDenial(hazard, key);
 }
 
 /** Description the Agent surface shows for `goodvibes_settings`. */
@@ -199,13 +130,13 @@ export const AGENT_SETTINGS_TOOL_DESCRIPTION = [
   'Writes route to the runtime that owns the key, so daemon-owned settings (surfaces.*, control-plane binding, watchers, device pairing, provisioning, retention) land in the daemon config and take effect there,',
   'while Agent-owned settings stay in the Agent config. The value is re-read from that store afterwards, so a write that did not land is reported as a failure rather than as success.',
   'If you cannot tell which key a value belongs to, ask one short question instead of guessing, and never set anything the user did not ask for.',
-  `A short list of keys that turn off approval gates, weaken the exec sandbox, or expose this host to the network needs the user to ask for it first; pass their request in ${AGENT_SETTINGS_CONFIRMATION_PROPERTY} and the refusal will tell you which key and why.`,
+  `Changes that turn off approval gates, weaken the exec sandbox, or expose this host to the network need the user to ask for them first; pass their request in ${AGENT_SETTINGS_CONFIRMATION_PROPERTY} and the refusal will tell you which key and why.`,
   'Raw secrets are refused: store the secret and set the key to a goodvibes:// reference.',
 ].join(' ');
 
 /**
- * Let the Agent read and write settings, gating only
- * {@link AGENT_CONFIRMATION_REQUIRED_CONFIG_KEYS}.
+ * Let the Agent read and write settings, deferring to the user only the writes
+ * the settings-hazard reading finds hazardous.
  *
  * The tool's own parameters are left intact, the previous guard stripped them
  * all, which left the model unable to see that a settings write was even a thing
@@ -221,13 +152,13 @@ export function wrapSettingsToolForAgentPolicy(tool: Tool): void {
     (properties as Record<string, unknown>)[AGENT_SETTINGS_CONFIRMATION_PROPERTY] = {
       type: 'string',
       description:
-        'The user\'s own words asking for this change. Required only for the short list of keys that turn off approval gates, weaken the exec sandbox, or expose this host to the network. Never invent it.',
+        'The user\'s own words asking for this change. Required only for changes that turn off approval gates, weaken the exec sandbox, or expose this host to the network. Never invent it.',
     };
   }
 
   const originalExecute = tool.execute.bind(tool);
   tool.execute = async (args) => {
-    const denial = validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
+    const denial = await validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
     if (denial) return { success: false, error: denial };
     return originalExecute(args);
   };

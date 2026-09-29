@@ -10,7 +10,6 @@ import { guardExecCommand, formatDenialResponse } from './ast-guard.js';
 import { executeFileOperations } from './file-ops.js';
 import { formatResult } from './result-format.js';
 import type { FeatureFlagManager } from '../../runtime/feature-flags/index.js';
-import { ALL_COMMAND_CLASSES } from '../../runtime/permissions/normalization/verdict.js';
 import { mapWithConcurrency, sleep } from '../../utils/concurrency.js';
 import { compileSafeRegExp, safeRegExpTest } from '../../utils/safe-regex.js';
 import {
@@ -38,6 +37,8 @@ import {
   ownerTerminalRefusal,
   type ExecRunPolicy,
 } from './policy.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { execFailureView, execRetry, type ExecFailureCategory } from '../batteries/exec-retry.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const PROGRESS_AUTO_THRESHOLD_MS = 30_000;
@@ -279,7 +280,7 @@ async function runCommand(
   // Per-command sandbox plan: when active, argvPrefix wraps the spawn in a bwrap
   // boundary and the result carries honest sandboxed/boundary/network/escalation
   // metadata; null or not-sandboxed leaves the argv (and result) untouched.
-  const sandboxPlan = resolveRuntimeSandboxPlan(sandbox, cmdStr, workingDirectory, cwd);
+  const sandboxPlan = await resolveRuntimeSandboxPlan(sandbox, cmdStr, workingDirectory, cwd);
   // Containment posture: a composition that REQUIRES the boundary gets a
   // refusal when no boundary was applied, instead of the silent host fallback
   // (policy.ts). `host-allowed`, every existing caller, is unchanged.
@@ -302,7 +303,7 @@ async function runCommand(
   // model-supplied per-command env on top (an explicit per-command opt-in that a
   // withheld var is legitimately wanted). withheld_env reports only names the
   // command did NOT re-provide, by name only, never values.
-  const scrubbed = scrubCredentialEnv(buildCleanEnv(), scrub);
+  const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
   const mergedEnv = { ...scrubbed.env, ...cmdInput.env };
   const withheldEnv = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
   const attachWithheld = (result: ExecCommandResult): ExecCommandResult => {
@@ -315,7 +316,7 @@ async function runCommand(
   // run under a PTY nested INSIDE the sandbox argv (the boundary, when active,
   // wraps the PTY allocation). Detected prompts ride the approval machinery
   // via the interaction seam; the runner + detection live in interactive.ts.
-  if (shouldRunInteractive(interaction, cmdInput, cmdStr)) {
+  if (await shouldRunInteractive(interaction, cmdInput, cmdStr)) {
     return attachWithheld(await runInteractiveCommand({
       cmdStr, cwd, env: mergedEnv, timeoutMs, startTime, sandboxArgv,
       interaction: interaction!, signal,
@@ -657,66 +658,44 @@ function killExecProcess(proc: ReturnType<typeof Bun.spawn>, command: string, re
   }
 }
 
+const EXEC_RETRY_SITE = 'tools.exec.retry';
+
+/** The retry-on categories a caller may list (schema.ts `retry.on`). */
+export type ExecRetryCategory = Exclude<ExecFailureCategory, 'lasting'>;
+
+/** Categories retried when the caller lists none (schema.ts documents this default). */
+const DEFAULT_RETRY_ON: readonly ExecRetryCategory[] = ['network', 'lock', 'busy'];
+
 /**
- * Classify whether a failed exec result is retryable.
- *
- * Retryable: network errors (ECONNRESET, ENOTFOUND, ETIMEDOUT), lock/busy
- * (EBUSY, ENOMEM, ECONNREFUSED), HTTP-gateway-style exit codes (124=timeout,
- * 28=curl timeout). Terminal: permission denied (EACCES), missing binary
- * (ENOENT), syntax errors.
+ * Whether a failed exec result is retried. A timed-out or cancelled run never
+ * is (structure: the caller or an operator stopped it). Otherwise Jev reads
+ * which kind of failure it is (`engine.tools.exec-retry`), and the run is
+ * retried only when that reading acts on a category the caller listed in
+ * `retry.on` (default network, lock, busy). A lasting failure, an unlisted
+ * category, or a reading that does not act returns the failure as it is.
  *
  * @param result - The failed command result.
- * @param allowed - Optional allowlist of error category strings.
+ * @param allowed - The caller's retry-on categories.
  */
-export function isRetryableExecResult(
+export async function isRetryableExecResult(
   result: ExecCommandResult,
-  allowed?: ReadonlyArray<'network' | 'lock' | 'busy' | 'oom'>,
-): boolean {
-  // Timed-out commands are never auto-retried, callers must decide
+  allowed?: ReadonlyArray<ExecRetryCategory>,
+): Promise<boolean> {
   if (result.timed_out) return false;
   // Cancelled commands must never be retried, retrying
   // after an operator/engine kill would defeat the cancellation entirely.
   if (result.cancelled) return false;
 
-  const combined = `${result.stdout}\n${result.stderr}`;
-
-  // Terminal errors, always skip retry
-  const TERMINAL_PATTERNS = [
-    /ENOENT/,           // missing binary / file
-    /EACCES/,           // permission denied
-    /Permission denied/, // shell-level perm error
-    /command not found/, // bash: command not found
-    /syntax error/i,    // shell syntax
-    /No such file or directory/,
-  ];
-  for (const pat of TERMINAL_PATTERNS) {
-    if (pat.test(combined)) return false;
-  }
-
-  // Map error categories to patterns
-  const CATEGORY_PATTERNS: Record<string, RegExp[]> = {
-    network: [/ECONNRESET/, /ENOTFOUND/, /ETIMEDOUT/, /EHOSTUNREACH/, /ENETUNREACH/],
-    lock:    [/ECONNREFUSED/, /EAGAIN/],
-    busy:    [/EBUSY/, /Resource temporarily unavailable/],
-    oom:     [/ENOMEM/, /Cannot allocate memory/, /Out of memory/],
-  };
-
-  const effectiveAllowed = allowed ?? ['network', 'lock', 'busy'];
-
-  for (const category of effectiveAllowed) {
-    const patterns = CATEGORY_PATTERNS[category]! ?? [];
-    for (const pat of patterns) {
-      if (pat.test(combined)) return true;
-    }
-  }
-
-  // Exit code 124 = timeout via `timeout` command; 75 = tempfail (sysexits.h)
-  const retryableExitCodes = [124, 75];
-  if (result.exit_code !== null && retryableExitCodes.includes(result.exit_code)) {
-    return effectiveAllowed.includes('network') || effectiveAllowed.includes('busy');
-  }
-
-  return false;
+  const run = await execRetry.run(
+    judgmentPort(EXEC_RETRY_SITE),
+    execFailureView(result.cmd, result.exit_code, result.stdout, result.stderr),
+    { site: EXEC_RETRY_SITE },
+  );
+  const reading = run.readings.category;
+  const retryOn = allowed ?? DEFAULT_RETRY_ON;
+  const retry = reading.outcome === 'act' && reading.choice !== 'lasting' && retryOn.includes(reading.choice);
+  run.recordAction(retry ? `retried on ${reading.choice}` : `stopped (${reading.choice}, ${reading.outcome})`);
+  return retry;
 }
 
 async function runWithRetry(
@@ -749,7 +728,7 @@ async function runWithRetry(
     }
     if (attempt < maxRetries) {
       // Classify error: if we can determine it's terminal, stop immediately
-      if (!isRetryableExecResult(lastResult, retryOn)) {
+      if (!(await isRetryableExecResult(lastResult, retryOn))) {
         logger.debug('exec: terminal error, not retrying', { cmd: cmdStr, attempt, stderr: lastResult.stderr.slice(0, 200) });
         return { ...lastResult, retries: attempt };
       }
@@ -786,15 +765,12 @@ async function executeResolvedCommand(
   // (the boundary) and 581 with $HOME readable in the background (the host).
   // The boundary never failed, this path never entered it.
   //
-  // The frozen catastrophic block had the same hole: the exec docs call it
-  // unconditional, and on the detached path it did not run at all. Moving the
-  // call here makes that sentence true. The LIST is untouched, this changes
-  // where the existing block runs, never what is on it.
-  //
-  // Class risk (kill/rm/docker/sudo…) remains the permission layer's decision
-  // and was already approved before this runtime runs; ALL_COMMAND_CLASSES
-  // leaves only the catastrophic block active.
-  const guardResult = await guardExecCommand(cmdStr, ALL_COMMAND_CLASSES, featureFlags);
+  // The catastrophic block had the same hole: the exec docs call it
+  // unconditional, and on the detached path it did not run at all. Running the
+  // guard here makes that sentence true. The guard repeats the gate's
+  // catastrophic reading (ast-guard.ts); every other risk was decided by the
+  // gate's stakes reading and preset before this runtime runs.
+  const guardResult = await guardExecCommand(cmdStr, featureFlags);
   if (!guardResult.allowed) {
     const denial = formatDenialResponse(guardResult, cmdStr);
     return {

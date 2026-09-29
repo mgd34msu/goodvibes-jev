@@ -1,14 +1,26 @@
 /**
- * γ1: precision_exec-style retry jitter + retryable classification
+ * precision_exec-style retry jitter + retryable classification
  *
  * Tests:
- * 1. Jittered delays differ between retry attempts
- * 2. Terminal errors (ENOENT, permission denied) do NOT retry
- * 3. Network-like errors DO retry
- * 4. retry.on filter respected
+ * 1. Timed-out and cancelled runs are never retried, and nothing is read
+ * 2. A failure Jev reads as lasting is not retried
+ * 3. A failure in a category the caller lists is retried
+ * 4. retry.on is honoured: an unlisted category is not retried
+ * 5. Jittered delays differ between retry attempts
  */
 import { describe, expect, test } from 'bun:test';
 import { isRetryableExecResult } from '../sdk/src/platform/tools/exec/runtime.js';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// Jev reads which kind of failure a run hit; these fakes stand in for it.
+// Output no entry names reads as a lasting failure.
+const readings = useToolReadings([
+  ['ECONNRESET', { failure: 'network' }],
+  ['ENOTFOUND', { failure: 'network' }],
+  ['index.lock', { failure: 'lock' }],
+  ['EBUSY', { failure: 'busy' }],
+  ['ENOMEM', { failure: 'oom' }],
+]);
 
 function makeResult(overrides: Partial<{
   success: boolean;
@@ -28,74 +40,38 @@ function makeResult(overrides: Partial<{
 }
 
 describe('isRetryableExecResult', () => {
-  test('timed_out is never retryable', () => {
-    const result = makeResult({ timed_out: true, stderr: 'ECONNRESET' });
-    expect(isRetryableExecResult(result)).toBe(false);
+  test('timed_out and cancelled are never retried, and nothing is read', async () => {
+    expect(await isRetryableExecResult(makeResult({ timed_out: true, stderr: 'ECONNRESET' }))).toBe(false);
+    expect(await isRetryableExecResult({ ...makeResult({ stderr: 'ECONNRESET' }), cancelled: true })).toBe(false);
+    expect(readings.requests).toHaveLength(0);
   });
 
-  test('ENOENT is terminal: no retry', () => {
-    const result = makeResult({ stderr: 'spawn ENOENT /usr/bin/nonexistent' });
-    expect(isRetryableExecResult(result)).toBe(false);
+  test('a failure read as lasting is not retried', async () => {
+    expect(await isRetryableExecResult(makeResult({ stderr: 'bash: foobar: command not found' }))).toBe(false);
+    expect(await isRetryableExecResult(makeResult({ stderr: 'EACCES: permission denied' }), ['network', 'lock', 'busy', 'oom'])).toBe(false);
   });
 
-  test('EACCES is terminal: no retry', () => {
-    const result = makeResult({ stderr: 'EACCES: permission denied' });
-    expect(isRetryableExecResult(result)).toBe(false);
+  test('network, lock and busy failures are retried by default', async () => {
+    expect(await isRetryableExecResult(makeResult({ stderr: 'Error: read ECONNRESET' }))).toBe(true);
+    expect(await isRetryableExecResult(makeResult({ stderr: 'getaddrinfo ENOTFOUND registry.npmjs.org' }))).toBe(true);
+    expect(await isRetryableExecResult(makeResult({ stderr: "fatal: Unable to create '.git/index.lock': File exists." }))).toBe(true);
+    expect(await isRetryableExecResult(makeResult({ stderr: 'EBUSY: resource busy or locked' }))).toBe(true);
   });
 
-  test('command not found is terminal: no retry', () => {
-    const result = makeResult({ stderr: 'bash: foobar: command not found' });
-    expect(isRetryableExecResult(result)).toBe(false);
-  });
-
-  test('Permission denied (shell) is terminal: no retry', () => {
-    const result = makeResult({ stderr: '/bin/sh: ./script.sh: Permission denied' });
-    expect(isRetryableExecResult(result)).toBe(false);
-  });
-
-  test('No such file or directory is terminal: no retry', () => {
-    const result = makeResult({ stderr: 'No such file or directory' });
-    expect(isRetryableExecResult(result)).toBe(false);
-  });
-
-  test('ECONNRESET is retryable (network category)', () => {
-    const result = makeResult({ stderr: 'Error: read ECONNRESET' });
-    expect(isRetryableExecResult(result)).toBe(true);
-  });
-
-  test('ENOTFOUND is retryable', () => {
-    const result = makeResult({ stderr: 'getaddrinfo ENOTFOUND registry.npmjs.org' });
-    expect(isRetryableExecResult(result)).toBe(true);
-  });
-
-  test('ETIMEDOUT is retryable', () => {
-    const result = makeResult({ stderr: 'connect ETIMEDOUT 104.16.1.1:443' });
-    expect(isRetryableExecResult(result)).toBe(true);
-  });
-
-  test('EBUSY is retryable (busy category)', () => {
-    const result = makeResult({ stderr: 'EBUSY: resource busy or locked' });
-    expect(isRetryableExecResult(result)).toBe(true);
-  });
-
-  test('ENOMEM is retryable when oom in allowed list', () => {
+  test('oom is retried only when the caller lists it', async () => {
     const result = makeResult({ stderr: 'ENOMEM: Cannot allocate memory' });
-    expect(isRetryableExecResult(result, ['oom'])).toBe(true);
+    expect(await isRetryableExecResult(result)).toBe(false);
+    expect(await isRetryableExecResult(result, ['oom'])).toBe(true);
+    expect(await isRetryableExecResult(result, ['network'])).toBe(false);
   });
 
-  test('ENOMEM is NOT retryable when oom NOT in allowed list', () => {
-    const result = makeResult({ stderr: 'ENOMEM: Cannot allocate memory' });
-    expect(isRetryableExecResult(result, ['network'])).toBe(false);
+  test('retry.on filter: only network allowed: a busy failure is not retried', async () => {
+    expect(await isRetryableExecResult(makeResult({ stderr: 'EBUSY: locked' }), ['network'])).toBe(false);
   });
 
-  test('retry.on filter: only network allowed: EBUSY not retried', () => {
-    const result = makeResult({ stderr: 'EBUSY: locked' });
-    expect(isRetryableExecResult(result, ['network'])).toBe(false);
-  });
-
-  test('plain non-zero exit with no matching pattern: not retryable', () => {
-    const result = makeResult({ exit_code: 1, stderr: 'some other error' });
-    expect(isRetryableExecResult(result)).toBe(false);
+  test('the reading sees the command, exit code and output ends', async () => {
+    await isRetryableExecResult(makeResult({ exit_code: 7, stdout: 'partial', stderr: 'Error: read ECONNRESET' }));
+    expect(readings.requests[0]!.state).toEqual({ command: 'test', exitCode: 7, stderr: 'Error: read ECONNRESET', stdout: 'partial' });
   });
 
   test('jitter: bounded random source can produce varied retry delays', () => {

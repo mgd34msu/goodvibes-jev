@@ -6,13 +6,15 @@ import {
   isChildFailureTerminal,
 } from '../sdk/src/platform/tools/agent/child-failure-envelope.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import { useFailureReadings } from './_helpers/failure-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
 
-// Free-text errors are read by the engine's failure reading; these fakes
-// stand in for Jev. Wording no entry names reads as category unknown.
-const failureReadings = useFailureReadings([
-  ['rate limit exceeded', { category: 'rate_limit', rateLimited: true }],
-  ['API error: status 500', { category: 'service' }],
+// Free-text errors are read by engine.tools.child-failure-reason; these fakes
+// stand in for Jev. Wording no entry names reads as `error`.
+const failureReadings = useToolReadings([
+  ['rate limit exceeded', { childFailure: 'api_error' }],
+  ['API error: status 500', { childFailure: 'api_error' }],
+  ['workstream budget exhausted', { childFailure: 'budget_exhausted' }],
+  ['went silent', { childFailure: 'watchdog_timeout' }],
 ]);
 
 function makeRecord(over: Partial<AgentRecord>): AgentRecord {
@@ -44,8 +46,10 @@ describe('child-failure reason classification', () => {
     expect(failureReadings.requests).toHaveLength(0);
   });
 
-  test('a free-text error is read: a failure Jev places in a category is an API error, anything else an error', async () => {
+  test('a free-text error is read over the closed set of reason codes', async () => {
     expect(await classifyChildFailureReason(makeRecord({ error: 'rate limit exceeded' }))).toBe('api_error');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'workstream budget exhausted: 10 of 10' }))).toBe('budget_exhausted');
+    expect(await classifyChildFailureReason(makeRecord({ error: 'Agent went silent for 90s' }))).toBe('watchdog_timeout');
     expect(await classifyChildFailureReason(makeRecord({ error: 'something odd' }))).toBe('error');
     // An unrecognised failureReason is not a stamped code, so the text is read.
     expect(await classifyChildFailureReason(makeRecord({ error: 'rate limit exceeded', failureReason: 'other' }))).toBe('api_error');

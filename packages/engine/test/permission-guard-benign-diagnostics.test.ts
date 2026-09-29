@@ -12,7 +12,6 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { normalizeCommandWithVerdicts } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
-import { ALL_COMMAND_CLASSES } from '../sdk/src/platform/runtime/permissions/normalization/verdict.js';
 import { parseCommandAST } from '../sdk/src/platform/runtime/permissions/normalization/parser.js';
 import { collectCommandNodes } from '../sdk/src/platform/runtime/permissions/normalization/ast.js';
 import type { CommandNode } from '../sdk/src/platform/runtime/permissions/normalization/ast.js';
@@ -26,7 +25,7 @@ function expectFirst(nodes: CommandNode[]): CommandNode {
 
 /** The exec-time verdict with every class allowed, as the exec tool evaluates it. */
 function verdict(cmd: string) {
-  return { allowed: normalizeCommandWithVerdicts(cmd, ALL_COMMAND_CLASSES).allowed };
+  return { allowed: normalizeCommandWithVerdicts(cmd).allowed };
 }
 
 /** [label, benign command that must pass, malicious neighbour that must not] */
@@ -139,12 +138,8 @@ describe('backtick command-name assembly is parsed whole', () => {
 
 });
 
-describe('the frozen catastrophic block is unchanged', () => {
-  test('rm -rf / is denied', () => {
-    expect(verdict('rm -rf /').allowed).toBe(false);
-  });
-
-  test('a catastrophic command is still denied when it also reads NUL data', () => {
-    expect(verdict(`tr -d '\\0' < f; rm -rf /`).allowed).toBe(false);
+describe('catastrophe is not decided by the verdict', () => {
+  test('rm -rf / parses to a runnable segment; the gate and the exec guard read it', () => {
+    expect(verdict('rm -rf /').allowed).toBe(true);
   });
 });

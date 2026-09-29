@@ -50,6 +50,7 @@ function isolatedPlan(command = 'bluetoothctl devices'): ExecSandboxPlan {
     command,
     workspaceDir: '/w',
     cwd: '/w',
+    needs: { needsNetwork: false, needsPrivilege: false },
   });
 }
 
@@ -122,6 +123,7 @@ describe('buildSandboxNote: names the isolation that actually applies', () => {
       availability: AVAILABLE,
       featureEnabled: true,
       command: 'ls',
+      needs: { needsNetwork: false, needsPrivilege: false },
       workspaceDir: '/w',
       cwd: '/w',
       homeDir: '/home/someone',
@@ -137,6 +139,7 @@ describe('buildSandboxNote: names the isolation that actually applies', () => {
       availability: { ...AVAILABLE, networkIsolationGuaranteed: false },
       featureEnabled: true,
       command: 'ls',
+      needs: { needsNetwork: false, needsPrivilege: false },
       workspaceDir: '/w',
       cwd: '/w',
     });
@@ -151,6 +154,7 @@ describe('buildSandboxNote: names the isolation that actually applies', () => {
       availability: AVAILABLE,
       featureEnabled: true,
       command: 'curl http://127.0.0.1:3421/health',
+      needs: { needsNetwork: true, needsPrivilege: false },
       workspaceDir: '/w',
       cwd: '/w',
     });

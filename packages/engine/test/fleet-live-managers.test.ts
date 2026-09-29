@@ -13,6 +13,11 @@ import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager
 import { createWorkflowServices } from '../sdk/src/platform/tools/workflow/index.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// Background spawns read which environment variable names are credentials;
+// the fake port reads none as one.
+useToolReadings();
 
 async function until(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

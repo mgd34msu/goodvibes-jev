@@ -6,23 +6,19 @@
  * a command that would otherwise prompt ("ask") under prompt mode can auto-allow
  * because it runs entirely inside the OS boundary with no host-access need, or
  * must still surface as an explicit escalation ask that NAMES what it wants
- * (network, host-privilege escalation, a package install that reaches the
- * network). A consumer composes this with its existing decision machinery: when
+ * (network, host-privilege escalation). A consumer composes this with its existing decision machinery: when
  * the base policy would ask an exec, it consults this to see whether the sandbox
  * turns that ask into an allow.
  *
- * FROZEN CATASTROPHIC BLOCK IS UNTOUCHED. This module never inspects, relaxes,
- * or re-implements the unconditional catastrophic block (rm -rf /, dd to a
- * device, mkfs, fork bomb …). That block is enforced independently, at exec
- * time, and stays in force identically inside the sandbox, a boundary never
- * buys a catastrophic command an allow. Doctrine: "permission settings are the
- * sole authority for command-class risk; the exec-layer unconditional block is a
- * frozen catastrophic-only list … that must NEVER expand without the owner's explicit
- * approval." This layer only ever RELAXES an ask to an allow for boundary-safe
- * commands; it can never turn a deny into an allow.
+ * What host access a command needs (network, host privileges) is Jev's reading
+ * (`engine.gate.sandbox-needs`, read by readCommandNeeds and passed in). The
+ * catastrophic check is the gate's and the exec guard's, and stays in force
+ * inside the sandbox: a boundary never buys a catastrophic command an allow.
+ * This layer only ever RELAXES an ask to an allow for commands that need no
+ * host access; it can never turn a deny into an allow.
  */
 
-import { normalizeCommand } from './normalization/index.js';
+import { normalizeCommand, type CommandNeeds } from './normalization/index.js';
 
 export type SandboxPolicyEffect = 'allow' | 'ask';
 
@@ -57,52 +53,28 @@ export interface SandboxPolicyInput {
    * inactive, so this policy is purely additive.
    */
   readonly baseEffectWhenNotSandboxed: SandboxPolicyEffect;
+  /** What host access the command needs, read by Jev (normalization/classifier.ts readCommandNeeds). */
+  readonly needs: CommandNeeds;
 }
 
-/** Package-manager install shapes that reach the network but classify as writes. */
-const PACKAGE_INSTALL: ReadonlyArray<{ readonly cmd: string; readonly subs: ReadonlySet<string> }> = [
-  { cmd: 'npm', subs: new Set(['install', 'i', 'ci', 'add', 'update']) },
-  { cmd: 'pnpm', subs: new Set(['install', 'i', 'add', 'update']) },
-  { cmd: 'yarn', subs: new Set(['install', 'add', 'up']) },
-  { cmd: 'bun', subs: new Set(['install', 'add']) },
-  { cmd: 'pip', subs: new Set(['install']) },
-  { cmd: 'pip3', subs: new Set(['install']) },
-  { cmd: 'apt', subs: new Set(['install']) },
-  { cmd: 'apt-get', subs: new Set(['install']) },
-  { cmd: 'brew', subs: new Set(['install']) },
-  { cmd: 'cargo', subs: new Set(['install', 'add']) },
-  { cmd: 'go', subs: new Set(['install', 'get']) },
-];
-
-interface CommandFacts {
-  readonly classifications: readonly string[];
-  readonly segments: ReadonlyArray<{ command: string; args: string[] }>;
-}
-
-function readCommandFacts(command: string): CommandFacts {
+/** The base command names of a shell command, for matching the owner's egress allowlist. */
+function baseNames(command: string): Set<string> {
   try {
-    const normalized = normalizeCommand(command);
-    return {
-      classifications: normalized.classifications,
-      segments: normalized.segments.map((seg) => ({ command: seg.command, args: seg.args })),
-    };
+    return new Set(normalizeCommand(command).segments.map((seg) => seg.command).filter((name) => name.length > 0));
   } catch {
-    return { classifications: [], segments: [] };
+    return new Set();
   }
 }
 
-function isOnEgressAllowlist(facts: CommandFacts, egressAllowlist: readonly string[]): boolean {
+/**
+ * Whether the owner's egress allowlist names one of the command's base
+ * commands. The list is the owner's setting; matching its names against the
+ * parsed command names carries out that setting and interprets nothing.
+ */
+function isOnEgressAllowlist(command: string, egressAllowlist: readonly string[]): boolean {
   if (egressAllowlist.includes('*')) return true;
-  const bases = new Set(facts.segments.map((s) => s.command));
+  const bases = baseNames(command);
   return egressAllowlist.some((name) => bases.has(name));
-}
-
-function detectsPackageInstall(facts: CommandFacts): boolean {
-  return facts.segments.some((seg) => {
-    const match = PACKAGE_INSTALL.find((p) => p.cmd === seg.command);
-    if (!match) return false;
-    return seg.args.some((arg) => match.subs.has(arg));
-  });
 }
 
 /**
@@ -119,21 +91,15 @@ export function decideSandboxedExec(input: SandboxPolicyInput): SandboxPolicyDec
     };
   }
 
-  const facts = readCommandFacts(input.command);
   const escalations: string[] = [];
-
-  const wantsNetwork = facts.classifications.includes('network');
-  if (wantsNetwork) {
+  if (input.needs.needsNetwork) {
     escalations.push(
-      isOnEgressAllowlist(facts, input.egressAllowlist)
+      isOnEgressAllowlist(input.command, input.egressAllowlist)
         ? 'wants network (on egress allowlist, granted inside the boundary once approved)'
         : 'wants network (not on egress allowlist, denied inside the boundary unless approved)',
     );
-  } else if (detectsPackageInstall(facts)) {
-    escalations.push('wants network (package install)');
   }
-
-  if (facts.classifications.includes('escalation')) {
+  if (input.needs.needsPrivilege) {
     escalations.push('wants host privilege escalation');
   }
 

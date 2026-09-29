@@ -11,6 +11,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, Stakes, YesNoReading } from '@goodvibes-jev/judgment';
 import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
 import { sideEffect, type SideEffectKind } from './batteries/side-effect.js';
+import { boundaryReading } from './batteries/boundary.js';
 import type { PermissionCategory } from '../permissions/types.js';
 
 /** The yes/no facts behind a call's stakes. */
@@ -23,9 +24,14 @@ export interface GateFacts {
   readonly weakensSecurity: boolean;
   /** Asked only for a call that carries a shell command; false otherwise. */
   readonly obfuscated: boolean;
+  /**
+   * The boundary could not tell whether the shell command is catastrophic:
+   * the call is not refused, and it is critical stakes so every preset asks.
+   */
+  readonly catastrophicUncertain?: boolean | undefined;
 }
 
-export type GateFactName = keyof GateFacts;
+export type GateFactName = Exclude<keyof GateFacts, 'catastrophicUncertain'>;
 
 export interface GateReading extends GateFacts {
   readonly family: GateRiskFamily;
@@ -36,19 +42,30 @@ export interface GateReading extends GateFacts {
   readonly uncertain: readonly GateFactName[];
   /** The side-effect kind, when the caller asked for it. */
   readonly kind?: SideEffectKind | undefined;
+  /**
+   * The boundary questions (batteries/boundary.ts), as verdicts: whether the
+   * shell command would destroy the machine or the user's data wholesale
+   * (asked only for a call carrying one), and whether the call carries payment
+   * card details. gate/boundary.ts decides on them.
+   */
+  readonly boundary: {
+    readonly catastrophic?: YesNoReading['verdict'] | undefined;
+    readonly cardDetails: YesNoReading['verdict'];
+  };
   /** Records what the gate did with this reading in the decision log. */
   recordAction(action: string): void;
 }
 
 /**
  * The stakes rule. Critical: loosens a security boundary, is written to hide
- * what it does, or is hard to undo
+ * what it does, might be catastrophic (an uncertain boundary reading), or is
+ * hard to undo
  * and reaches beyond the project or outside the machine, or sends secrets out.
  * High: hard to undo, touches secrets, reaches beyond the project, or goes
  * outside the machine. Medium: changes something. Low: changes nothing.
  */
 export function stakesFromFacts(facts: GateFacts): Stakes {
-  if (facts.weakensSecurity || facts.obfuscated) return 'critical';
+  if (facts.weakensSecurity || facts.obfuscated || facts.catastrophicUncertain) return 'critical';
   if (facts.irreversible && (facts.beyondProject || facts.outward)) return 'critical';
   if (facts.secrets && facts.outward) return 'critical';
   if (facts.irreversible || facts.secrets || facts.beyondProject || facts.outward) return 'high';
@@ -103,7 +120,8 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
   const port = judgmentPort(site);
   const state = readingState(input.toolName, input.args, input.workingDirectory);
   const signal = input.signal === undefined ? {} : { signal: input.signal };
-  const [effect, risk] = await Promise.all([
+  const shell = input.askObfuscated === true;
+  const [effect, risk, edge] = await Promise.all([
     sideEffect.run(port, state, {
       site,
       only: [
@@ -116,7 +134,10 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
       ...signal,
     }),
     riskFamily.run(port, state, { site, ...signal }),
+    boundaryReading.run(port, state, { site, only: shell ? ['catastrophic', 'cardDetails'] : ['cardDetails'], ...signal }),
   ]);
+  const catastrophic = shell ? edge.readings.catastrophic.verdict : undefined;
+  if (catastrophic !== undefined) rememberCatastrophic(input.args, catastrophic);
   const yesNo: Partial<Record<GateFactName, YesNoReading>> = {
     mutates: effect.readings.mutates,
     outward: effect.readings.outward,
@@ -126,7 +147,11 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
     weakensSecurity: risk.readings.weakensSecurity,
     ...(input.askObfuscated ? { obfuscated: effect.readings.obfuscated } : {}),
   };
-  const facts = { obfuscated: false, ...Object.fromEntries(Object.entries(yesNo).map(([name, reading]) => [name, factOf(reading!)])) } as GateFacts;
+  const facts = {
+    obfuscated: false,
+    ...Object.fromEntries(Object.entries(yesNo).map(([name, reading]) => [name, factOf(reading!)])),
+    catastrophicUncertain: catastrophic === 'uncertain',
+  } as GateFacts;
   const uncertain = (Object.keys(yesNo) as GateFactName[]).filter((name) => yesNo[name]!.verdict === 'uncertain');
   const kindReading = input.askKind ? effect.readings.kind : undefined;
   return {
@@ -136,9 +161,11 @@ export async function readToolCall(input: ReadToolCallInput, site: string = GATE
     stakes: stakesFromFacts(facts),
     uncertain,
     ...(kindReading ? { kind: kindReading.choice } : {}),
+    boundary: { catastrophic, cardDetails: edge.readings.cardDetails.verdict },
     recordAction(action) {
       effect.recordAction(action);
       risk.recordAction(action);
+      edge.recordAction(action);
     },
   };
 }
@@ -162,4 +189,55 @@ export function categoryForSideEffectKind(kind: SideEffectKind): PermissionCateg
 export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
   const run = await sideEffect.run(judgmentPort(site), readingState(toolName, args), { site, only: ['kind'] });
   return { kind: run.readings.kind.choice, confident: run.readings.kind.outcome === 'act' };
+}
+
+/** The shell commands a call's arguments carry: a `commands` list of `{ cmd }`, or `command` / `cmd`. */
+export function shellCommandsIn(args: Record<string, unknown>): string[] {
+  const listed = Array.isArray(args['commands'])
+    ? (args['commands'] as unknown[]).flatMap((entry) => (entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>)['cmd'] === 'string' ? [(entry as Record<string, unknown>)['cmd'] as string] : []))
+    : [];
+  if (listed.length > 0) return listed;
+  for (const key of ['command', 'cmd']) if (typeof args[key] === 'string') return [args[key] as string];
+  return [];
+}
+
+/**
+ * The catastrophic verdicts the gate read, by command text, so the exec tool's
+ * run-time check (tools/exec/ast-guard.ts) repeats the gate's decision without
+ * asking again. Bounded: the oldest entry leaves first.
+ */
+const CATASTROPHIC_SEEN = new Map<string, YesNoReading['verdict']>();
+const CATASTROPHIC_SEEN_LIMIT = 256;
+
+function rememberCatastrophic(args: Record<string, unknown>, verdict: YesNoReading['verdict']): void {
+  const commands = shellCommandsIn(args);
+  if (commands.length !== 1) return;
+  CATASTROPHIC_SEEN.delete(commands[0]!);
+  CATASTROPHIC_SEEN.set(commands[0]!, verdict);
+  if (CATASTROPHIC_SEEN.size > CATASTROPHIC_SEEN_LIMIT) CATASTROPHIC_SEEN.delete(CATASTROPHIC_SEEN.keys().next().value!);
+}
+
+/**
+ * Whether one shell command would destroy the machine or the user's data
+ * wholesale: the gate's reading of it when the gate read this command
+ * (`readByGate`), or a fresh `engine.gate.boundary` reading of just that
+ * question, which is not remembered as the gate's.
+ */
+export async function readCatastrophic(
+  command: string,
+  site = 'engine.gate.exec-time',
+): Promise<{ readonly verdict: YesNoReading['verdict']; readonly readByGate: boolean }> {
+  const seen = CATASTROPHIC_SEEN.get(command);
+  if (seen !== undefined) return { verdict: seen, readByGate: true };
+  const run = await boundaryReading.run(judgmentPort(site), readingState('exec', { command }), { site, only: ['catastrophic'] });
+  const verdict = run.readings.catastrophic.verdict;
+  run.recordAction(`exec-time:${verdict}`);
+  return { verdict, readByGate: false };
+}
+
+export { readTouchesSecrets } from '../permissions/credential-read-defaults.js';
+
+/** Forgets the catastrophic verdicts the gate remembered (tests, and a model change). */
+export function forgetCatastrophicReadings(): void {
+  CATASTROPHIC_SEEN.clear();
 }

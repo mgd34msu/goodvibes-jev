@@ -76,10 +76,7 @@ export const stuckTurnPlaybook: Playbook = operations.stuckTurnPlaybook;
 export const LayeredPolicyEvaluator = security.LayeredPolicyEvaluator;
 export type LayeredPolicyEvaluator = InstanceType<typeof security.LayeredPolicyEvaluator>;
 export const runSafetyChecks = security.runSafetyChecks;
-export const classifySegment = security.classifySegment;
-export const classifyCommand = security.classifyCommand;
 export const canonicalize = security.canonicalize;
-export const higherPriority = security.higherPriority;
 export type CommandSegment = Security.CommandSegment;
 
 // Transport seam.

@@ -2,16 +2,17 @@
 //
 // The engine reads each MCP call's capability through Jev (the side-effect
 // battery's `capability` question) instead of a keyword match over tool names,
-// so evaluateToolCall is asynchronous and these tests answer that question
-// with a fake port. The role, scope and trust-mode rules under test stay code.
+// and its stakes through the gate's reading (in place of the fixed
+// capability-to-risk table), so evaluateToolCall is asynchronous and these
+// tests answer those questions with a fake port. The role, scope and trust-mode rules under test stay code.
 import { describe, expect, test } from 'bun:test';
 import { McpPermissionManager } from '../sdk/src/platform/runtime/mcp/index.ts';
 import { useGateReadings } from './_helpers/gate-readings.ts';
 
 const readings = useGateReadings([
-  ['write_file', { capability: 'write_fs' }],
-  ['exec_shell', { capability: 'exec' }],
-  ['read_docs', { capability: 'read_fs' }],
+  ['write_file', { capability: 'write_fs', mutates: true, beyondProject: true }],
+  ['exec_shell', { capability: 'exec', mutates: true, irreversible: true }],
+  ['read_docs', { capability: 'read_fs', mutates: false }],
 ]);
 
 describe('McpPermissionManager coherence evaluation', () => {
@@ -22,7 +23,8 @@ describe('McpPermissionManager coherence evaluation', () => {
     expect(result.allowed).toBe(false);
     expect(result.verdict).toBe('deny');
     expect(result.incoherent).toBe(true);
-    expect(readings.requests).toHaveLength(1);
+    // One capability request plus the gate's three stakes requests, in parallel.
+    expect(readings.requests).toHaveLength(4);
   });
 
   test('ask-on-risk server asks for high-risk coherent request', async () => {
@@ -56,7 +58,7 @@ describe('McpPermissionManager coherence evaluation', () => {
     expect(decisions[0]?.verdict).toBe('deny');
     expect(decisions[0]?.capability).toBe('write_fs');
     expect(decisions[1]?.toolName).toBe('read_docs');
-    expect(decisions[1]?.riskLevel).toBe('medium');
+    expect(decisions[1]?.riskLevel).toBe('low'); // a read the gate reads as changing nothing is low stakes
   });
 
   test('buildAttackPathReview surfaces posture and incoherent decisions', async () => {

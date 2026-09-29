@@ -2,6 +2,10 @@ import { BatteryRegistry } from '@goodvibes-jev/judgment';
 import { riskFamily } from './batteries/risk-family.js';
 import { sandboxAdvisory } from './batteries/sandbox-advisory.js';
 import { sideEffect } from './batteries/side-effect.js';
+import { boundaryReading } from './batteries/boundary.js';
+import { outwardTaint } from './batteries/outward-taint.js';
+import { sandboxNeeds } from './batteries/sandbox-needs.js';
+import { settingsHazard } from './batteries/settings-hazard.js';
 
 /**
  * Every named decision the gate makes, for calibration:
@@ -13,6 +17,10 @@ export const registry = new BatteryRegistry();
 registry.register(riskFamily);
 registry.register(sideEffect);
 registry.register(sandboxAdvisory);
+registry.register(boundaryReading);
+registry.register(outwardTaint);
+registry.register(sandboxNeeds);
+registry.register(settingsHazard);
 
 import { editTarget } from '../tools/batteries/edit-target.js';
 import { contentRank } from '../tools/batteries/content-rank.js';
@@ -21,3 +29,29 @@ import { registryRank } from '../tools/batteries/registry-rank.js';
 registry.register(editTarget);
 registry.register(contentRank);
 registry.register(registryRank);
+
+import { semanticDiff } from '../tools/batteries/semantic-diff.js';
+import { paramFill } from '../tools/batteries/param-fill.js';
+import { execPrompt } from '../tools/batteries/exec-prompt.js';
+import { execRetry } from '../tools/batteries/exec-retry.js';
+import { childFailureReason } from '../tools/batteries/child-failure-reason.js';
+import { credentialEnv } from '../tools/batteries/credential-env.js';
+
+registry.register(semanticDiff);
+registry.register(paramFill);
+registry.register(execPrompt);
+registry.register(execRetry);
+registry.register(childFailureReason);
+registry.register(credentialEnv);
+
+import { secretFinding } from '../tools/batteries/secret-finding.js';
+import { dangerousCall } from '../tools/batteries/dangerous-call.js';
+
+registry.register(secretFinding);
+registry.register(dangerousCall);
+
+import { frontendFinding } from '../tools/batteries/frontend-finding.js';
+import { projectTooling } from '../tools/batteries/project-tooling.js';
+
+registry.register(frontendFinding);
+registry.register(projectTooling);

@@ -17,14 +17,11 @@ import {
   tokenize,
   buildDenialExplanation,
 } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
-import type { CommandClassification } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
-
-const ALLOW_SAFE: ReadonlySet<CommandClassification> = new Set(['read', 'write', 'network']);
 
 const HEREDOC = "NODE_PATH=/tmp node - <<'NODE'\nconsole.log(1); rm -rf /x\nNODE";
 
 function evaluate(command: string) {
-  return evaluateCommandAST(command, parseCommandAST(command), ALLOW_SAFE);
+  return evaluateCommandAST(command, parseCommandAST(command));
 }
 
 describe('denial explanation: first line survives a multi-line command', () => {
@@ -42,18 +39,17 @@ describe('denial explanation: first line survives a multi-line command', () => {
   test('the segment analysis is still reachable after the header', () => {
     const explanation = buildDenialExplanation(HEREDOC, evaluate(HEREDOC).segments);
     expect(explanation).toContain('Segment analysis');
-    expect(explanation).toContain('classification:');
+    expect(explanation).toContain('reason:');
     expect(explanation).toContain('reason:');
   });
 
-  test('a denied multi-line command names a classification and a reason', () => {
-    const command = 'printf "a\nb" && rm -rf /x';
-    const verdict = evaluate(command);
-    expect(verdict.allowed).toBe(false);
-    const explanation = verdict.denialExplanation ?? '';
+  test('a multi-line denial names each segment with its reason', () => {
+    const explanation = buildDenialExplanation('printf "a\nb" && rm -rf /x', [
+      { raw: 'printf "a\nb"', command: 'printf', allowed: true, reason: 'parsed to a runnable command' },
+      { raw: '', command: '', allowed: false, reason: 'no command in this segment' },
+    ]);
     expect(explanation.split('\n')[0]).toContain('Command denied:');
-    expect(explanation).toContain('destructive');
-    expect(explanation).toContain('reason:');
+    expect(explanation).toContain('reason: no command in this segment');
   });
 
   test('the header loses no part of the command it collapses', () => {
@@ -79,9 +75,8 @@ describe('tokenizer: heredoc bodies are data, not shell source', () => {
     expect(commands).not.toContain('rm');
   });
 
-  test('a heredoc carrying destructive-looking text is not denied for it', () => {
-    const verdict = evaluate(HEREDOC);
-    expect(verdict.segments.map((segment) => segment.classification)).not.toContain('destructive');
+  test('a heredoc carrying destructive-looking text is not refused for it', () => {
+    expect(evaluate(HEREDOC).allowed).toBe(true);
   });
 
   test('<<- and unquoted delimiters are recognized', () => {
@@ -91,11 +86,11 @@ describe('tokenizer: heredoc bodies are data, not shell source', () => {
     }
   });
 
-  test('a real command after the heredoc terminator is still classified', () => {
+  test('a real command after the heredoc terminator is still its own segment', () => {
     const command = "cat <<'EOF'\nharmless\nEOF\n; rm -rf /x";
     const commands = collectCommandNodes(parseCommandAST(command)).map((node) => node.command);
     expect(commands).toContain('rm');
-    expect(evaluate(command).allowed).toBe(false);
+    expect(evaluate(command).segments.map((segment) => segment.command)).toContain('rm');
   });
 
   test('an unterminated heredoc consumes the rest of the input', () => {

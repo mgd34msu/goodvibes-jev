@@ -2,14 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   normalizeCommand,
   normalizeCommandWithVerdicts,
-  DEFAULT_ALLOWED_CLASSES,
 } from '../sdk/src/platform/runtime/permissions/normalization/index.js';
 
 describe('platform/runtime/permissions/normalization: smoke', () => {
-  test('DEFAULT_ALLOWED_CLASSES is a non-empty Set', () => {
-    expect(DEFAULT_ALLOWED_CLASSES.size).toBeGreaterThan(0);
-  });
-
   test('normalizeCommand returns an object with original and segments', () => {
     const result = normalizeCommand('ls -la /tmp');
     expect(result.original).toBe('ls -la /tmp');
@@ -21,32 +16,20 @@ describe('platform/runtime/permissions/normalization: smoke', () => {
     const withSpaces = normalizeCommand('  git status  ');
     const withoutSpaces = normalizeCommand('git status');
     expect(withSpaces.segments.length).toBe(withoutSpaces.segments.length);
-    expect(withSpaces.highestClassification).toBe(withoutSpaces.highestClassification);
+    expect(withSpaces.segments.map((s) => s.command)).toEqual(withoutSpaces.segments.map((s) => s.command));
   });
 
-  test('normalizeCommand preserves sequence segments for separate classification', () => {
+  test('normalizeCommand preserves sequence segments', () => {
     const result = normalizeCommand('git status && curl https://example.com');
     expect(result.segments.map((segment) => segment.command)).toEqual(['git', 'curl']);
-    expect(result.classifications).toEqual(expect.arrayContaining(['read', 'network']));
-    expect(result.highestClassification).toBe('network');
   });
 
-  test('normalizeCommandWithVerdicts allows read commands and records the segment reason', () => {
-    const result = normalizeCommandWithVerdicts('ls -la /tmp', DEFAULT_ALLOWED_CLASSES);
+  test('normalizeCommandWithVerdicts records each parsed segment and does not refuse by name', () => {
+    const result = normalizeCommandWithVerdicts('ls -la /tmp && rm -rf /tmp/goodvibes-test');
     expect(result.allowed).toBe(true);
-    expect(result.highestClassification).toBe('read');
-    expect(result.segments).toHaveLength(1);
-    expect(result.segments[0]?.command).toBe('ls');
-    expect(result.segments[0]?.reason).toContain('permitted');
+    expect(result.segments.map((segment) => segment.command)).toEqual(['ls', 'rm']);
+    expect(result.segments[0]?.reason).toContain('runnable');
     expect(result.denialExplanation).toBeUndefined();
-  });
-
-  test('normalizeCommandWithVerdicts denies destructive commands with an explanation', () => {
-    const result = normalizeCommandWithVerdicts('rm -rf /tmp/goodvibes-test', DEFAULT_ALLOWED_CLASSES);
-    expect(result.allowed).toBe(false);
-    expect(result.highestClassification).toBe('destructive');
-    expect(result.segments.some((segment) => segment.classification === 'destructive')).toBe(true);
-    expect(result.denialExplanation).toContain('denied');
   });
 
   test('normalizeCommandWithVerdicts does not refuse a substitution at exec time: obfuscation is the gate reading', () => {

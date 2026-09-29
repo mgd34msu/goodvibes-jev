@@ -22,7 +22,7 @@ export function createFindTool(
   runtime = new FindRuntimeService(),
   /**
    * Per-file read-permission decision, wired at the composition root to
-   * PermissionManager.previewReadAccess. When present, a candidate file whose
+   * PermissionManager.readAccess. When present, a candidate file whose
    * read is currently restricted has its CONTENT withheld from results and is
    * flagged in path listings. Omitted → all files allowed (unchanged behavior).
    */

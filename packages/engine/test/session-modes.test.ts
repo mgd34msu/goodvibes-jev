@@ -103,6 +103,7 @@ describe('LayeredPolicyEvaluator mode matrix', () => {
 describe('gate presets over the stakes table (permissions.mode values keep working)', () => {
   useGateReadings([
     ['"ls"', READ_ONLY],
+    ['rm -rf /"', { mutates: true, irreversible: true, family: 'shell-destructive', catastrophic: true }],
     ['--force', { mutates: true, outward: true, irreversible: true, family: 'shell-destructive' }],
     ['sandbox.mcpIsolation', { mutates: true, weakensSecurity: true, family: 'sandbox-policy-change' }],
   ]);
@@ -157,13 +158,12 @@ describe('gate presets over the stakes table (permissions.mode values keep worki
     expect(prompts).toEqual(['goodvibes_settings']);
   });
 
-  test('the frozen catastrophic list refuses in every preset, before any reading', async () => {
+  test('a command Jev reads as catastrophic is refused at the boundary in every preset, never asked', async () => {
     for (const mode of ['prompt', 'accept-edits', 'plan', 'allow-all'] as const) {
       const { manager, prompts } = makeManager(mode);
       const r = await manager.checkDetailed('exec', { command: 'rm -rf /' });
       expect(r.approved).toBe(false);
       expect(r.reasonCode).toBe('boundary_catastrophic');
-      expect(r.reading).toBeUndefined();
       expect(prompts).toEqual([]);
     }
   });

@@ -53,7 +53,7 @@ export async function gateBackgroundToolCall(
 ): Promise<BackgroundPermissionOutcome> {
   const manager = context.permissionManager;
   if (!manager) return { approved: true };
-  if (manager.getBackgroundAgentsMode() === 'allow-all' && manager.passesBoundary(toolName, args)) return { approved: true };
+  if (manager.getBackgroundAgentsMode() === 'allow-all' && await manager.passesBoundary(toolName, args)) return { approved: true };
 
   const attribution: PermissionAttribution = {
     kind: 'background-agent',

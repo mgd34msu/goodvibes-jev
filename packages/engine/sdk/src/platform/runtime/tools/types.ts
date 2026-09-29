@@ -1,3 +1,4 @@
+import type { RepairResult } from '../../tools/auto-repair.js';
 import type { ToolResult } from '../../types/tools.js';
 import type { FeatureFlagManager } from '../feature-flags/index.js';
 
@@ -108,6 +109,11 @@ export interface ToolExecutionRecord {
    * the original call.arguments when present.
    */
   _updatedArgs?: Record<string, unknown> | undefined;
+  /**
+   * The auto-repair the execute phase applied to the arguments before running
+   * the tool (tools/auto-repair.ts); map-output annotates the result from it.
+   */
+  _repair?: RepairResult | undefined;
 }
 
 /**

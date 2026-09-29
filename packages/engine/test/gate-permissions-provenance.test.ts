@@ -61,20 +61,10 @@ describe('permission provenance', () => {
     expect(text).toContain('origin:');
   });
 
-  test('shipped credential-read rules surface honestly as shipped defaults, not config-key rows', () => {
+  test('reads of secrets are described as the gate\'s reading, not a shipped path list', () => {
     const cm = new ConfigManager({ workingDir: root, homeDir: root, surfaceRoot: 'tui' });
-    const prov = buildPermissionProvenance(cm);
-    expect(prov.shippedRules.length).toBeGreaterThan(0);
-    const rule = prov.shippedRules.find((r) => r.id === 'shipped-credential-read-deny');
-    expect(rule).toBeDefined();
-    expect(rule!.effect).toBe('deny');
-    expect(rule!.pathPatterns.length).toBeGreaterThan(0);
-    // Not a ConfigKey row, no shipped rule id should collide with a PERMISSION_KEYS entry.
-    expect(prov.rows.some((r) => r.key === rule!.id)).toBe(false);
-
-    const text = renderPermissionProvenance(prov);
-    expect(text).toContain('Shipped policy rules');
-    expect(text).toContain('shipped-credential-read-deny');
-    expect(text).toContain('origin: shipped default (SDK-managed policy rule)');
+    const text = renderPermissionProvenance(buildPermissionProvenance(cm));
+    expect(text).toContain('read by Jev for each read, not a shipped path list');
+    expect(text).not.toContain('Shipped policy rules');
   });
 });

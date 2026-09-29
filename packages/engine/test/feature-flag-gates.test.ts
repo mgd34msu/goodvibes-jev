@@ -1,3 +1,4 @@
+import { useGateReadings } from './_helpers/gate-readings.ts';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -312,6 +313,8 @@ function makeAutomationRun(overrides: Partial<AutomationRun> = {}): AutomationRu
 }
 
 describe('feature flag safe-default gates', () => {
+  useGateReadings([['rm -rf /', { mutates: true, catastrophic: true }]]);
+
   test('tool-contract-verification rejects invalid tools when enabled', () => {
     const registry = new ToolRegistry();
 
@@ -504,28 +507,18 @@ describe('feature flag safe-default gates', () => {
     })).toThrow(/Unknown flag in config/);
   });
 
-  /**
-   * The property under test is that AST mode catches command substitution the
-   * flat baseline segmentation misses. The command used to be `echo $(whoami)`,
-   * which is a substitution supplying a VALUE, the same everyday shape as
-   * `curl -H "Bearer $(cat token)"`, which was refused during real debugging.
-   * The classifier now separates reading a value from assembling a command, so
-   * this pins the property with a substitution that decodes rather than reads.
-   */
-  test('shell-ast-normalization parses into per-segment verdicts; both modes keep the catastrophic block', async () => {
+  test('shell-ast-normalization parses into per-segment verdicts; the catastrophic reading applies in both modes', async () => {
     const command = 'echo "$(echo cm0K | base64 -d)"';
-
-    const baseline = await guardExecCommand(command, undefined, flags([]));
-    const ast = await guardExecCommand(command, undefined, flags(['shell-ast-normalization']));
-
+    const baseline = await guardExecCommand(command, flags([]));
+    const ast = await guardExecCommand(command, flags(['shell-ast-normalization']));
     expect(baseline.astModeActive).toBe(false);
     expect(ast.astModeActive).toBe(true);
     expect(ast.verdict?.segments.length).toBeGreaterThan(0);
-    // Obfuscation is the gate's reading now (critical stakes), not an exec-time refusal.
+    // Obfuscation is the gate's reading (critical stakes), not an exec-time refusal.
     expect(baseline.allowed).toBe(true);
     expect(ast.allowed).toBe(true);
     for (const active of [[], ['shell-ast-normalization']]) {
-      expect((await guardExecCommand('ls; rm -rf /', undefined, flags(active))).allowed).toBe(false);
+      expect((await guardExecCommand('ls; rm -rf /', flags(active))).allowed).toBe(false);
     }
   });
 

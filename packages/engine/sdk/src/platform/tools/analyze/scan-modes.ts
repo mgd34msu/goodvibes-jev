@@ -3,6 +3,8 @@ import { stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { CodeIntelligence } from '../../intelligence/facade.js';
 import type { AnalyzeInput, ExportedSymbol } from './types.js';
+
+export { runPermissions, runSecurity } from './scan-findings.js';
 import {
   MAX_SCAN_FILES,
   MAX_SCAN_MS,
@@ -310,73 +312,6 @@ export async function runDeadCode(
   };
 }
 
-const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
-  { name: 'api_key_prefix', regex: /['"](?:sk-|pk_|ak_|AKIA)[a-zA-Z0-9]{20,}['"]/ },
-  { name: 'token_assignment', regex: /(?:token|secret|password|api_key)\s*[:=]\s*['"][^'"]{8,}['"]/i },
-  { name: 'aws_access_key', regex: /AKIA[0-9A-Z]{16}/ },
-  { name: 'private_key', regex: /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/ },
-];
-
-export async function runSecurity(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
-  const scope = input.securityScope ?? 'all';
-  const results: Record<string, unknown> = {};
-  const scanRoot = resolveScanRoot(input, projectRoot);
-
-  if (scope === 'secrets' || scope === 'all') {
-    const findings: Array<{ file: string; line: number; pattern: string; match: string }> = [];
-    const files = await collectTextFiles(scanRoot);
-
-    for (const file of files) {
-      const content = await readTextFile(file);
-      if (content === null) continue;
-
-      const lines = content.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        for (const { name, regex } of SECRET_PATTERNS) {
-          const m = (lines[i] ?? '').match(regex);
-          if (m) {
-            findings.push({
-              file: relative(projectRoot, file),
-              line: i + 1,
-              pattern: name,
-              match: m[0].slice(0, 60),
-            });
-          }
-        }
-      }
-    }
-
-    results.secrets = { findings, count: findings.length };
-  }
-
-  if (scope === 'env' || scope === 'all') {
-    results.env = {
-      files_found: collectExistingPaths(projectRoot, ['.env', '.env.local', '.env.development', '.env.production']),
-    };
-  }
-
-  if (scope === 'permissions' || scope === 'all') {
-    const suspicious: string[] = [];
-    const files = await collectTextFiles(scanRoot);
-    for (const file of files) {
-      try {
-        const info = await stat(file);
-        if ((info.mode & 0o002) !== 0) {
-          suspicious.push(relative(projectRoot, file));
-        }
-      } catch {
-        continue;
-      }
-    }
-    results.permissions = { world_writable: suspicious, count: suspicious.length };
-  }
-
-  return results;
-}
-
 export async function runCoverage(
   _input: AnalyzeInput,
   projectRoot: string,
@@ -599,69 +534,6 @@ function generateUnifiedDiff(filename: string, before: string, after: string): s
   }
 
   return header + hunks.join('\n');
-}
-
-const DANGEROUS_PATTERNS: Array<{ name: string; regex: RegExp; severity: 'high' | 'medium' | 'low' }> = [
-  { name: 'eval', regex: /\beval\s*\(/, severity: 'high' },
-  { name: 'new_Function', regex: /\bnew\s+Function\s*\(/, severity: 'high' },
-  { name: 'child_process_exec', regex: /\bexec\s*\(|\bexecSync\s*\(|\bspawn\s*\(/, severity: 'high' },
-  { name: 'fs_chmod_777', regex: /chmod\s*\([^)]*0?777/, severity: 'high' },
-  { name: 'dangerouslySetInnerHTML', regex: /dangerouslySetInnerHTML/, severity: 'medium' },
-  { name: 'document_write', regex: /\bdocument\.write\s*\(/, severity: 'medium' },
-  { name: 'innerHTML_assign', regex: /\.innerHTML\s*=(?!=)/, severity: 'medium' },
-  { name: 'unsafe_regex', regex: /new\s+RegExp\s*\(\s*[^"'`]/, severity: 'low' },
-];
-
-export async function runPermissions(
-  input: AnalyzeInput,
-  projectRoot: string,
-): Promise<Record<string, unknown>> {
-  const scanRoot = resolveScanRoot(input, projectRoot);
-  const deadline = Date.now() + MAX_SCAN_MS;
-  const files = await collectTextFiles(scanRoot, MAX_SCAN_FILES, deadline);
-  const findings: Array<{ file: string; line: number; pattern: string; severity: string; match: string }> = [];
-
-  for (const file of files) {
-    if (Date.now() > deadline) break;
-    let content: string;
-    try {
-      content = await Bun.file(file).text();
-    } catch {
-      continue;
-    }
-
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      for (const { name, regex, severity } of DANGEROUS_PATTERNS) {
-        const m = (lines[i] ?? '').match(regex);
-        if (m) {
-          findings.push({
-            file: relative(projectRoot, file),
-            line: i + 1,
-            pattern: name,
-            severity,
-            match: (lines[i] ?? '').trim().slice(0, 100),
-          });
-        }
-      }
-    }
-  }
-
-  const byFile: Record<string, number> = {};
-  for (const f of findings) {
-    byFile[f.file] = (byFile[f.file] ?? 0) + 1;
-  }
-
-  return {
-    findings,
-    total: findings.length,
-    files_affected: Object.keys(byFile).length,
-    by_severity: {
-      high: findings.filter((f) => f.severity === 'high').length,
-      medium: findings.filter((f) => f.severity === 'medium').length,
-      low: findings.filter((f) => f.severity === 'low').length,
-    },
-  };
 }
 
 export async function runEnvAudit(

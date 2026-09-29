@@ -8,7 +8,8 @@
 // envelope is assembled ENTIRELY from what the child's own record + transcript
 // actually hold; partialOutputs is whatever the child genuinely produced (its
 // last committed output and a transcript-tail summary), never fabricated.
-import { readFailure } from '@goodvibes-jev/engine/errors';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { childFailureReason, childFailureView } from '../batteries/child-failure-reason.js';
 import type { AgentRecord } from './manager.js';
 import type { ConversationMessageSnapshot } from '../../core/conversation.js';
 
@@ -63,11 +64,14 @@ const STAMPED_REASON_CODES: ReadonlySet<string> = new Set<ChildFailureReasonCode
   'claim_unverified',
 ]);
 
+const CHILD_FAILURE_SITE = 'tools.agent.child-failure-reason';
+
 /**
  * Classify why a child terminated. Cancellation and a stamped
- * `failureReason` are structure and decide in code; only a free-text error
- * (a provider, transport or tool failure) is read, with the engine's failure
- * reading, and any failure it can place in a category is an API error.
+ * `failureReason` are structure and decide in code; a free-text error is
+ * read by `engine.tools.child-failure-reason` over the envelope's closed set
+ * of codes. A reading that does not act is reported as `error`, the code for
+ * a failure the envelope does not place.
  */
 export async function classifyChildFailureReason(
   record: Pick<AgentRecord, 'status' | 'terminationKind' | 'error' | 'failureReason'>,
@@ -80,8 +84,11 @@ export async function classifyChildFailureReason(
   }
   const error = record.error?.trim() ?? '';
   if (error.length === 0) return 'error';
-  const reading = await readFailure({ message: error }, 'tools.agent.child-failure-reason');
-  return reading.category === 'unknown' ? 'error' : 'api_error';
+  const run = await childFailureReason.run(judgmentPort(CHILD_FAILURE_SITE), childFailureView(error), { site: CHILD_FAILURE_SITE });
+  const reading = run.readings.reason;
+  const code: ChildFailureReasonCode = reading.outcome === 'act' ? reading.choice : 'error';
+  run.recordAction(`reported ${code}`);
+  return code;
 }
 
 /** Best-effort, honest lifecycle phase label from what the record records. */

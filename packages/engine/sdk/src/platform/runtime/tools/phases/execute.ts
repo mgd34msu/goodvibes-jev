@@ -2,6 +2,7 @@ import type { Tool, ToolCall, ToolResult } from '../../../types/tools.js';
 import type { ToolRuntimeContext } from '../context.js';
 import type { ExecutorConfig, PhaseResult, ToolExecutionRecord } from '../types.js';
 import { summarizeError } from '../../../utils/error-display.js';
+import { repairToolCall } from '../../../tools/auto-repair.js';
 
 /** Default per-call execution timeout (30 seconds). */
 const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
@@ -15,7 +16,10 @@ const DEFAULT_EXECUTE_TIMEOUT_MS = 30_000;
  * executor can record the failure trace cleanly.
  *
  * The resolved args honour any prehook-modified input stored as
- * `_updatedArgs` on the record.
+ * `_updatedArgs` on the record, then pass through auto-repair
+ * (tools/auto-repair.ts); the repair is kept on the record as `_repair` so
+ * map-output can say what was fixed. A JudgmentError from the repair's
+ * reading propagates rather than becoming a failed phase.
  */
 export async function executePhase(
   call: ToolCall,
@@ -26,7 +30,10 @@ export async function executePhase(
 ): Promise<PhaseResult & { toolResult?: ToolResult }> {
   const start = performance.now();
 
-  const effectiveArgs = record._updatedArgs ?? call.arguments;
+  const requestedArgs = record._updatedArgs ?? call.arguments;
+  const repair = await repairToolCall(call.name, requestedArgs, tool.definition);
+  record._repair = repair;
+  const effectiveArgs = repair.repaired ? repair.fixed : requestedArgs;
 
   // Resolve timeout: per-phase override → budget → default
   let timeoutMs =

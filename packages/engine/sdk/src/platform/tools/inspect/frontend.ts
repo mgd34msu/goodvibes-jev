@@ -24,6 +24,8 @@ import type {
   ErrorBoundaryInfo,
 } from './schema.js';
 
+export { inspectAccessibility, inspectClientBoundary, inspectHooks, inspectOverflow, inspectSizing } from './frontend-readings.js';
+
 export function inspectComponents(content: string): ComponentInfo[] {
   const components: ComponentInfo[] = [];
   const lines = content.split('\n');
@@ -142,64 +144,6 @@ export function inspectLayout(content: string, file: string): LayoutInfo {
   return { file, displays, flex, grid, sizing, overflow };
 }
 
-export function inspectAccessibility(content: string): A11yIssue[] {
-  const issues: A11yIssue[] = [];
-  const lines = content.split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const lineNo = i + 1;
-
-    if (/<img\b(?![^>]*\balt=)/i.test(line)) {
-      issues.push({
-        line: lineNo,
-        code: 'img-alt',
-        message: 'img element is missing an alt attribute',
-        wcag: 'WCAG 1.1.1 (Level A)',
-      });
-    }
-
-    if (/<button\b(?![^>]*(?:aria-label|aria-labelledby|title))/i.test(line)) {
-      const hasContent = />[^<]+<\/button>/i.test(line) || />[^<]+/.test(line);
-      if (!hasContent) {
-        issues.push({
-          line: lineNo,
-          code: 'button-name',
-          message: 'button element may be missing an accessible name',
-          wcag: 'WCAG 4.1.2 (Level A)',
-        });
-      }
-    }
-
-    if (/onClick/.test(line)) {
-      if (/<(?:div|span)\b(?![^>]*\brole=)[^>]*onClick/i.test(line)) {
-        issues.push({
-          line: lineNo,
-          code: 'click-events-have-key-events',
-          message: 'Non-interactive element has onClick without a role attribute',
-          wcag: 'WCAG 4.1.2 (Level A)',
-        });
-      }
-    }
-
-    if (/<input\b/i.test(line) && !/type=['"]hidden['"]/.test(line)) {
-      if (!/<label/i.test(line) && !/aria-label/.test(line) && !/aria-labelledby/.test(line)) {
-        const context = lines.slice(Math.max(0, i - 3), i + 1).join(' ');
-        if (!/<label/i.test(context) && !/aria-label/.test(context)) {
-          issues.push({
-            line: lineNo,
-            code: 'label',
-            message: 'input element may be missing an associated label',
-            wcag: 'WCAG 1.3.1 (Level A)',
-          });
-        }
-      }
-    }
-  }
-
-  return issues;
-}
-
 export function inspectComponentState(content: string, file: string): ComponentStateInfo {
   const lines = content.split('\n');
   const stateVars: StateVar[] = [];
@@ -239,108 +183,6 @@ export function inspectRenderTriggers(content: string, file: string): RenderTrig
     if (/(?:React\.memo|\bmemo)\s*\(/.test(line)) triggers.push({ kind: 'memo_boundary', name: 'memo', line: ln });
   }
   return { file, triggers, count: triggers.length };
-}
-
-export function inspectHooks(content: string, file: string): HooksInfo {
-  const lines = content.split('\n');
-  const hooks: HookDep[] = [];
-  let missingDepsCount = 0;
-  const hookRe = /\b(useEffect|useMemo|useCallback)\s*\(/;
-  const inlineDepsRe = /[},]\s*\[([^\]]*)\]\s*\)/;
-  const skipKeywords = new Set(['useEffect', 'useMemo', 'useCallback', 'return', 'const', 'let', 'var', 'if', 'else', 'for', 'while', 'true', 'false', 'null', 'undefined', 'async', 'await', 'function', 'new', 'this', 'of', 'in', 'console', 'Math', 'JSON', 'Array', 'Object', 'Promise', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'window', 'document', 'fetch', 'NaN', 'Infinity', 'Error', 'RegExp', 'Date', 'Map', 'Set', 'parseInt', 'parseFloat']);
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const hm = hookRe.exec(line);
-    if (!hm) continue;
-    const hookKind = (hm[1] ?? 'useEffect') as 'useEffect' | 'useMemo' | 'useCallback';
-    const ln = i + 1;
-    const body = lines.slice(i, Math.min(i + 30, lines.length)).join('\n');
-    const dm = inlineDepsRe.exec(body);
-    const deps = dm ? (dm[1] ?? '').split(',').map((d) => d.trim()).filter(Boolean) : [];
-    const callbackBody = body.slice(0, body.lastIndexOf(']'));
-    const usedVarsRe = /\b([a-zA-Z_$][\w$]*)\b/g;
-    const usedVars = new Set<string>();
-    let vm: RegExpExecArray | null;
-    while ((vm = usedVarsRe.exec(callbackBody)) !== null) {
-      if (vm[1] && !skipKeywords.has(vm[1]) && vm[1].length > 1) usedVars.add(vm[1]);
-    }
-    const missing = [...usedVars].filter((v) => !deps.includes(v) && /^[a-z]/.test(v)).slice(0, 5);
-    if (missing.length) missingDepsCount++;
-    hooks.push({ hookKind, line: ln, deps, missing });
-  }
-  return { file, hooks, missingDepsCount };
-}
-
-export function inspectOverflow(content: string, file: string): OverflowInfo {
-  const lines = content.split('\n');
-  const issues: OverflowIssue[] = [];
-  const hasHeightRe = /\b(?:h-|max-h-|height)\b/;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const ln = i + 1;
-    if (/\boverflow-hidden\b/.test(line) || /overflow\s*:\s*hidden/.test(line)) {
-      if (!hasHeightRe.test(line)) {
-        issues.push({ line: ln, kind: 'hidden_clip', snippet: line.trim().slice(0, 80) });
-      }
-    } else if (/\b(?:overflow-(?:scroll|auto|y-scroll|y-auto|x-scroll|x-auto))\b/.test(line) || /overflow(?:-y|-x)?\s*:\s*(?:scroll|auto)/.test(line)) {
-      if (!hasHeightRe.test(line)) {
-        issues.push({ line: ln, kind: 'scroll_no_height', snippet: line.trim().slice(0, 80) });
-      }
-    }
-  }
-  return { file, issues, count: issues.length };
-}
-
-export function inspectSizing(content: string, file: string): SizingInfo {
-  const lines = content.split('\n');
-  const items: SizingItem[] = [];
-  let hardcodedCount = 0;
-  const tailwindFixedRe = /\b(?:w|h|min-w|max-w|min-h|max-h)-(\d+)\b/g;
-  const tailwindPctRe = /\b(?:w|h)-(\d+\/\d+|full|screen)\b/g;
-  const tailwindFlexRe = /\bflex-(?:1|auto|none|initial|grow|shrink)\b/g;
-  const tailwindGridRe = /\bgrid-cols-\d+\b/g;
-  const tailwindVpRe = /\b(?:w|h)-(?:screen|lvh|svh|dvh)\b/g;
-  const cssPxRe = /(?:width|height|min-width|max-width|min-height|max-height)\s*:\s*(\d+)px/g;
-  const cssPctRe = /(?:width|height)\s*:\s*(\d+%)/g;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const ln = i + 1;
-    let m: RegExpExecArray | null;
-    tailwindFixedRe.lastIndex = 0;
-    while ((m = tailwindFixedRe.exec(line)) !== null) {
-      const val = parseInt(m[1]!);
-      const flagged = val > 96;
-      if (flagged) hardcodedCount++;
-      items.push({ line: ln, kind: 'fixed_px', value: m[0], flagged });
-    }
-    tailwindPctRe.lastIndex = 0;
-    while ((m = tailwindPctRe.exec(line)) !== null) {
-      items.push({ line: ln, kind: 'percentage', value: m[0], flagged: false });
-    }
-    tailwindFlexRe.lastIndex = 0;
-    while ((m = tailwindFlexRe.exec(line)) !== null) {
-      items.push({ line: ln, kind: 'flex', value: m[0], flagged: false });
-    }
-    tailwindGridRe.lastIndex = 0;
-    while ((m = tailwindGridRe.exec(line)) !== null) {
-      items.push({ line: ln, kind: 'grid', value: m[0], flagged: false });
-    }
-    tailwindVpRe.lastIndex = 0;
-    while ((m = tailwindVpRe.exec(line)) !== null) {
-      items.push({ line: ln, kind: 'viewport', value: m[0], flagged: false });
-    }
-    cssPxRe.lastIndex = 0;
-    while ((m = cssPxRe.exec(line)) !== null) {
-      const flagged = parseInt(m[1]!) > 200;
-      if (flagged) hardcodedCount++;
-      items.push({ line: ln, kind: 'fixed_px', value: m[0], flagged });
-    }
-    cssPctRe.lastIndex = 0;
-    while ((m = cssPctRe.exec(line)) !== null) {
-      items.push({ line: ln, kind: 'percentage', value: m[0], flagged: false });
-    }
-  }
-  return { file, items, hardcodedCount };
 }
 
 export function inspectStacking(content: string, file: string): StackingInfo {
@@ -393,7 +235,11 @@ export function inspectResponsive(content: string, file: string): ResponsiveInfo
     const classes = breakpointMap.get(p)!;
     if (classes.length) breakpoints.push({ prefix: p, count: classes.length, classes: [...new Set(classes)].slice(0, 20) });
   }
-  return { file, breakpoints, hasMobileFirst: (breakpointMap.get('sm')?.length ?? 0) > 0 };
+  // Tailwind is mobile-first: unprefixed utilities target small screens and
+  // breakpoint prefixes add min-width overrides. max-* variants style
+  // downward from a breakpoint, the desktop-first form.
+  const usesDesktopFirst = /(?:^|[\s"'`])max-(?:sm|md|lg|xl|2xl):/.test(content);
+  return { file, breakpoints, hasMobileFirst: breakpoints.length > 0 && !usesDesktopFirst };
 }
 
 export function inspectEvents(content: string, file: string): EventsInfo {
@@ -438,18 +284,19 @@ export function inspectTailwind(content: string, file: string): TailwindInfo {
     { pattern: /\bw-(\d+|\/\w+|full|screen|auto|min|max|fit)\b/g, name: 'width' },
     { pattern: /\bh-(\d+|\/\w+|full|screen|auto|min|max|fit)\b/g, name: 'height' },
   ];
+  // Two utilities of one group on the same element with no variant prefix set
+  // the same CSS property (Tailwind's rule); a prefixed utility such as
+  // md:flex applies at another state or size and does not conflict.
   const classNameRe = /className\s*=\s*["']([^"']+)["']/g;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     let cm: RegExpExecArray | null;
     classNameRe.lastIndex = 0;
     while ((cm = classNameRe.exec(line)) !== null) {
-      const classStr = cm[1]!;
+      const tokens = cm[1]!.split(/\s+/).filter((token) => token.length > 0 && !token.includes(':'));
       for (const { pattern, name } of conflictGroups) {
-        const found: string[] = [];
-        pattern.lastIndex = 0;
-        let mm: RegExpExecArray | null;
-        while ((mm = pattern.exec(classStr)) !== null) found.push(mm[0]);
+        const whole = new RegExp(`^(?:${pattern.source.replace(/^\\b|\\b$/g, '')})$`);
+        const found = tokens.filter((token) => whole.test(token));
         if (found.length > 1) {
           conflicts.push({ line: i + 1, classes: found, reason: `Multiple ${name} classes: ${found.join(', ')}` });
         }
@@ -459,43 +306,33 @@ export function inspectTailwind(content: string, file: string): TailwindInfo {
   return { file, conflicts, count: conflicts.length };
 }
 
-export function inspectClientBoundary(content: string, file: string): ClientBoundaryInfo {
-  const lines = content.split('\n');
-  let directive: 'use client' | 'use server' | null = null;
-  const serverOnlyModules = ['server-only', 'next/headers', 'next-auth/server'];
-  const serverOnlyImports: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed === "'use client';" || trimmed === '"use client";' || trimmed === "'use client'" || trimmed === '"use client"') { directive = 'use client'; break; }
-    if (trimmed === "'use server';" || trimmed === '"use server";' || trimmed === "'use server'" || trimmed === '"use server"') { directive = 'use server'; break; }
-    break;
-  }
-  const importRe = /import\s+[\s\S]*?from\s+['"]([^'"]+)['"]/g;
-  let im: RegExpExecArray | null;
-  while ((im = importRe.exec(content)) !== null) {
-    const imGroup = im[1];
-    if (imGroup && serverOnlyModules.some((mod) => imGroup === mod || imGroup.startsWith(mod + '/'))) serverOnlyImports.push(imGroup);
-  }
-  return { file, directive, importsServerOnly: serverOnlyImports.length > 0, serverOnlyImports };
-}
-
+/**
+ * Error boundaries by React's definition: a class component that defines
+ * static getDerivedStateFromError or componentDidCatch, the ErrorBoundary
+ * component imported from react-error-boundary, or a Next.js App Router
+ * error file. A component is not a boundary because of its name.
+ */
 export function inspectErrorBoundary(content: string, file: string): ErrorBoundaryInfo {
   const boundaryComponents: string[] = [];
-  const coveredRoutes: string[] = [];
-  const errorBoundaryRe = /(?:class\s+(\w*ErrorBoundary\w*)\s+extends|<(\w*ErrorBoundary\w*)|import\s+.*?(\w*ErrorBoundary\w*).*?from)/g;
-  let m: RegExpExecArray | null;
-  while ((m = errorBoundaryRe.exec(content)) !== null) {
-    const name = m[1]! || m[2] || m[3];
-    if (name && !boundaryComponents.includes(name)) boundaryComponents.push(name);
+  const classRe = /class\s+(\w+)\s+extends\s+(?:React\.)?(?:Component|PureComponent)\b/g;
+  const classes = [...content.matchAll(classRe)];
+  classes.forEach((match, index) => {
+    const body = content.slice(match.index!, classes[index + 1]?.index ?? content.length);
+    if (/\bstatic\s+getDerivedStateFromError\s*\(|\bcomponentDidCatch\s*\(/.test(body)) boundaryComponents.push(match[1]!);
+  });
+  const libraryImport = /import\s*\{([^}]*)\}\s*from\s*['"]react-error-boundary['"]/.exec(content);
+  for (const spec of libraryImport?.[1]?.split(',') ?? []) {
+    const [imported, local] = spec.trim().split(/\s+as\s+/);
+    if (imported === 'ErrorBoundary') boundaryComponents.push((local ?? imported).trim());
   }
-  if (/(?:^|[\/\\])error\.[jt]sx?$/.test(file)) boundaryComponents.push('error.tsx (Next.js App Router)');
-  const wrappedRouteRe = /<(?:\w*ErrorBoundary\w*)[^>]*>[\s\S]*?<\/(?:\w*ErrorBoundary\w*)>/g;
-  let wr: RegExpExecArray | null;
-  while ((wr = wrappedRouteRe.exec(content)) !== null) {
-    const routeMatch = /<(\w+)/.exec(wr[0].slice(wr[0].indexOf('>') + 1));
-    if (routeMatch && !coveredRoutes.includes(routeMatch[1]!)) coveredRoutes.push(routeMatch[1]!);
+  if (/(?:^|[\/\\])(?:global-)?error\.[jt]sx?$/.test(file)) boundaryComponents.push('error.tsx (Next.js App Router)');
+  const coveredRoutes: string[] = [];
+  for (const name of boundaryComponents.filter((component) => /^\w+$/.test(component))) {
+    const wrappedRe = new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, 'g');
+    for (const wrapped of content.matchAll(wrappedRe)) {
+      const child = /<(\w+)/.exec(wrapped[1] ?? '')?.[1];
+      if (child && !coveredRoutes.includes(child)) coveredRoutes.push(child);
+    }
   }
   return { file, hasErrorBoundary: boundaryComponents.length > 0, boundaryComponents, coveredRoutes };
 }
-

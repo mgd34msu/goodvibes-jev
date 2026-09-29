@@ -42,7 +42,7 @@ export async function executeInspectMode(
   try {
     switch (input.mode) {
       case 'project':
-        return createInspectSuccess(detectProject(projectRoot), format, input.mode);
+        return createInspectSuccess(await detectProject(projectRoot), format, input.mode);
 
       case 'api': {
         const framework: ApiFramework = (input.framework ?? 'auto') as ApiFramework;
@@ -73,7 +73,7 @@ export async function executeInspectMode(
       case 'accessibility': {
         const file = readRequiredFile(projectRoot, input.file, 'accessibility', 'File not found');
         if ('success' in file) return file;
-        const a11yIssues = inspectAccessibility(file.content);
+        const a11yIssues = await inspectAccessibility(file.content, input.file!);
         return createInspectSuccess({ issues: a11yIssues, count: a11yIssues.length }, format, input.mode);
       }
 
@@ -122,19 +122,19 @@ export async function executeInspectMode(
       case 'hooks': {
         const file = readRequiredFile(projectRoot, input.file, 'hooks', 'File not found');
         if ('success' in file) return file;
-        return createInspectSuccess(inspectHooks(file.content, input.file!), format, input.mode);
+        return createInspectSuccess(await inspectHooks(file.content, input.file!), format, input.mode);
       }
 
       case 'overflow': {
         const file = readRequiredFile(projectRoot, input.file, 'overflow', 'File not found');
         if ('success' in file) return file;
-        return createInspectSuccess(inspectOverflow(file.content, input.file!), format, input.mode);
+        return createInspectSuccess(await inspectOverflow(file.content, input.file!), format, input.mode);
       }
 
       case 'sizing': {
         const file = readRequiredFile(projectRoot, input.file, 'sizing', 'File not found');
         if ('success' in file) return file;
-        return createInspectSuccess(inspectSizing(file.content, input.file!), format, input.mode);
+        return createInspectSuccess(await inspectSizing(file.content, input.file!), format, input.mode);
       }
 
       case 'stacking': {
@@ -164,7 +164,7 @@ export async function executeInspectMode(
       case 'client_boundary': {
         const file = readRequiredFile(projectRoot, input.file, 'client_boundary', 'File not found');
         if ('success' in file) return file;
-        return createInspectSuccess(inspectClientBoundary(file.content, input.file!), format, input.mode);
+        return createInspectSuccess(await inspectClientBoundary(file.content, input.file!), format, input.mode);
       }
 
       case 'error_boundary': {

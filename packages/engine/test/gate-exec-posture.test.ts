@@ -15,6 +15,12 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/index.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import { AGENT_OWNER_TERMINAL_GUARD } from '../sdk/src/platform/gate/policy/exec-posture.ts';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
+import { useToolReadings } from './_helpers/tool-readings.ts';
+
+// The tools batteries exec reads (credential names, prompts, retries) and,
+// forwarded with EXEC_GATE_TABLE, the gate's questions, in one fake port.
+useToolReadings([], EXEC_GATE_TABLE);
 
 /** The line the refusal carries, so a person is told which rule stopped them. */
 const RULE = 'the owner\'s terminal is untouchable';
