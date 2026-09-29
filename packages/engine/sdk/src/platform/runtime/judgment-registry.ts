@@ -47,3 +47,19 @@ registry.register(systemMessagePriority);
 // State: code index.
 import { codeSearchRerank } from '../state/batteries/code-search-rerank.js';
 registry.register(codeSearchRerank);
+
+// Runtime: ecosystem catalog search and review.
+import { catalogSearch } from './ecosystem/batteries/catalog-search.js';
+import { trustNoteCaution } from './ecosystem/batteries/trust-note-caution.js';
+registry.register(catalogSearch);
+registry.register(trustNoteCaution);
+
+// Runtime: model picker.
+
+// Runtime: tool output policy.
+
+// Runtime: settings control plane.
+
+// Runtime: forensics.
+
+// Runtime: observed fleet agents.

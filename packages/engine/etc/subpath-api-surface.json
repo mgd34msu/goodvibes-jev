@@ -45266,6 +45266,28 @@
       "text": "export interface EcosystemCatalogPathOptions { readonly cwd: string; readonly homeDir: string; readonly projectCatalogRoot?: string | undefined; readonly userCatalogRoot?: string | undefined; readonly projectInstallRoot?: string | undefined; readonly userInstallRoot?: string | undefined; }"
     },
     {
+      "name": "EcosystemCatalogReview",
+      "kind": "interface",
+      "required": [
+        "riskLevel"
+      ],
+      "text": "export interface EcosystemCatalogReview extends EcosystemCatalogSourceReview { riskLevel: 'low' | 'medium'; }"
+    },
+    {
+      "name": "EcosystemCatalogSourceReview",
+      "kind": "interface",
+      "required": [
+        "compatibility",
+        "entry",
+        "recommendedScope",
+        "runtimeFit",
+        "sourceExists",
+        "sourceKind",
+        "sourcePath"
+      ],
+      "text": "export interface EcosystemCatalogSourceReview { entry: EcosystemCatalogEntry; sourcePath: string; sourceExists: boolean; sourceKind: 'local-path' | 'remote' | 'unknown'; recommendedScope: 'project' | 'user'; runtimeFit: { status: 'supported' | 'warning'; reasons: readonly string[]; }; compatibility: { status: 'supported' | 'warning'; reasons: readonly string[]; }; }"
+    },
+    {
       "name": "EcosystemEntryKind",
       "kind": "type",
       "text": "export type EcosystemEntryKind = 'plugin' | 'skill' | 'hook-pack' | 'policy-pack';"
@@ -45476,7 +45498,12 @@
     {
       "name": "reviewEcosystemCatalogEntry",
       "kind": "function",
-      "text": "export declare function reviewEcosystemCatalogEntry(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions): { entry: EcosystemCatalogEntry; sourcePath: string; sourceExists: boolean; sourceKind: 'local-path' | 'remote' | 'unknown'; riskLevel: 'low' | 'medium'; recommendedScope: 'project' | 'user'; runtimeFit: { status: 'supported' | 'warning'; reasons: readonly string[]; }; compatibility: { status: 'supported' | 'warning'; reasons: readonly string[]; }; };"
+      "text": "export declare function reviewEcosystemCatalogEntry(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions, run?: { readonly signal?: AbortSignal; }): Promise<EcosystemCatalogReview>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "reviewEcosystemCatalogSource",
+      "kind": "function",
+      "text": "export declare function reviewEcosystemCatalogSource(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions): EcosystemCatalogSourceReview;"
     },
     {
       "name": "rollbackInstalledEcosystemEntry",
@@ -45491,7 +45518,7 @@
     {
       "name": "searchEcosystemCatalog",
       "kind": "function",
-      "text": "export declare function searchEcosystemCatalog(kind: EcosystemEntryKind, query: string, options: EcosystemCatalogPathOptions): EcosystemCatalogEntry[];"
+      "text": "export declare function searchEcosystemCatalog(kind: EcosystemEntryKind, query: string, options: EcosystemCatalogPathOptions, run?: { readonly signal?: AbortSignal; }): Promise<EcosystemCatalogEntry[]>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "serializeMarketplaceIndex",
@@ -54950,6 +54977,28 @@
       "text": "export interface EcosystemCatalogPathOptions { readonly cwd: string; readonly homeDir: string; readonly projectCatalogRoot?: string | undefined; readonly userCatalogRoot?: string | undefined; readonly projectInstallRoot?: string | undefined; readonly userInstallRoot?: string | undefined; }"
     },
     {
+      "name": "EcosystemCatalogReview",
+      "kind": "interface",
+      "required": [
+        "riskLevel"
+      ],
+      "text": "export interface EcosystemCatalogReview extends EcosystemCatalogSourceReview { riskLevel: 'low' | 'medium'; }"
+    },
+    {
+      "name": "EcosystemCatalogSourceReview",
+      "kind": "interface",
+      "required": [
+        "compatibility",
+        "entry",
+        "recommendedScope",
+        "runtimeFit",
+        "sourceExists",
+        "sourceKind",
+        "sourcePath"
+      ],
+      "text": "export interface EcosystemCatalogSourceReview { entry: EcosystemCatalogEntry; sourcePath: string; sourceExists: boolean; sourceKind: 'local-path' | 'remote' | 'unknown'; recommendedScope: 'project' | 'user'; runtimeFit: { status: 'supported' | 'warning'; reasons: readonly string[]; }; compatibility: { status: 'supported' | 'warning'; reasons: readonly string[]; }; }"
+    },
+    {
       "name": "EcosystemEntryKind",
       "kind": "type",
       "text": "export type EcosystemEntryKind = 'plugin' | 'skill' | 'hook-pack' | 'policy-pack';"
@@ -55480,7 +55529,12 @@
     {
       "name": "reviewEcosystemCatalogEntry",
       "kind": "function",
-      "text": "export declare function reviewEcosystemCatalogEntry(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions): { entry: EcosystemCatalogEntry; sourcePath: string; sourceExists: boolean; sourceKind: 'local-path' | 'remote' | 'unknown'; riskLevel: 'low' | 'medium'; recommendedScope: 'project' | 'user'; runtimeFit: { status: 'supported' | 'warning'; reasons: readonly string[]; }; compatibility: { status: 'supported' | 'warning'; reasons: readonly string[]; }; };"
+      "text": "export declare function reviewEcosystemCatalogEntry(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions, run?: { readonly signal?: AbortSignal; }): Promise<EcosystemCatalogReview>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "reviewEcosystemCatalogSource",
+      "kind": "function",
+      "text": "export declare function reviewEcosystemCatalogSource(entry: EcosystemCatalogEntry, options: EcosystemCatalogPathOptions): EcosystemCatalogSourceReview;"
     },
     {
       "name": "reviewWorktreeAttachments",
@@ -55500,7 +55554,7 @@
     {
       "name": "searchEcosystemCatalog",
       "kind": "function",
-      "text": "export declare function searchEcosystemCatalog(kind: EcosystemEntryKind, query: string, options: EcosystemCatalogPathOptions): EcosystemCatalogEntry[];"
+      "text": "export declare function searchEcosystemCatalog(kind: EcosystemEntryKind, query: string, options: EcosystemCatalogPathOptions, run?: { readonly signal?: AbortSignal; }): Promise<EcosystemCatalogEntry[]>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "summarizeWorktreeOwnership",

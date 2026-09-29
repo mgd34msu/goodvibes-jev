@@ -3,6 +3,10 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statS
 import { readJsonFileOrQuarantine, writeJsonFileAtomic } from '../../utils/atomic-json-store.js';
 import { dirname, join, resolve } from 'node:path';
 import { VERSION } from '../../version.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { catalogSearch, catalogSearchEntryView } from './batteries/catalog-search.js';
+import { trustNoteCaution } from './batteries/trust-note-caution.js';
 
 export type EcosystemEntryKind = 'plugin' | 'skill' | 'hook-pack' | 'policy-pack';
 export interface EcosystemCatalogPathOptions {
@@ -353,37 +357,46 @@ export function loadEcosystemCatalog(
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function searchEcosystemCatalog(
+/** (query, entry) readings in flight at once. */
+const SEARCH_CONCURRENCY = 8;
+
+const SEARCH_SITE = 'runtime.ecosystem.catalog-search';
+const TRUST_NOTE_SITE = 'runtime.ecosystem.trust-note-caution';
+
+/**
+ * Catalog entries of `kind` that answer `query`, in name order. A blank
+ * query lists every entry with no reading. Otherwise each entry is read
+ * against the query by `engine.ecosystem.catalog-search`, one request per
+ * entry, and dropped only when read as a strong no: hiding a real match costs
+ * the searcher more than one extra row.
+ */
+export async function searchEcosystemCatalog(
   kind: EcosystemEntryKind,
   query: string,
   options: EcosystemCatalogPathOptions,
-): EcosystemCatalogEntry[] {
-  const normalized = query.trim().toLowerCase();
+  run: { readonly signal?: AbortSignal } = {},
+): Promise<EcosystemCatalogEntry[]> {
+  const trimmed = query.trim();
   const entries = loadEcosystemCatalog(kind, options);
-  if (!normalized) return entries;
-  return entries.filter((entry) => {
-    const haystack = [
-      entry.id,
-      entry.name,
-      entry.summary,
-      entry.source,
-      entry.trustNotes ?? '',
-      entry.installHint ?? '',
-      ...entry.tags,
-    ].join(' ').toLowerCase();
-    return haystack.includes(normalized);
+  if (!trimmed || entries.length === 0) return entries;
+  const port = judgmentPort(SEARCH_SITE);
+  const context = { site: SEARCH_SITE, ...(run.signal ? { signal: run.signal } : {}) };
+  const kept = await mapLimit(entries, SEARCH_CONCURRENCY, async (entry) => {
+    const search = await catalogSearch.run(port, { query: trimmed, entry: catalogSearchEntryView(entry) }, context);
+    const reading = search.readings.wanted;
+    const dropped = reading.verdict === 'no' && reading.outcome === 'act';
+    search.recordAction(dropped ? 'hidden' : 'listed');
+    return !dropped;
   });
+  return entries.filter((_, index) => kept[index]);
 }
 
-export function reviewEcosystemCatalogEntry(
-  entry: EcosystemCatalogEntry,
-  options: EcosystemCatalogPathOptions,
-): {
+/** The path and fit part of a catalog review: code only, no reading. Install uses this. */
+export interface EcosystemCatalogSourceReview {
   entry: EcosystemCatalogEntry;
   sourcePath: string;
   sourceExists: boolean;
   sourceKind: 'local-path' | 'remote' | 'unknown';
-  riskLevel: 'low' | 'medium';
   recommendedScope: 'project' | 'user';
   runtimeFit: {
     status: 'supported' | 'warning';
@@ -393,7 +406,18 @@ export function reviewEcosystemCatalogEntry(
     status: 'supported' | 'warning';
     reasons: readonly string[];
   };
-} {
+}
+
+/** A full catalog review as the review surfaces show it: the source review plus the risk label. */
+export interface EcosystemCatalogReview extends EcosystemCatalogSourceReview {
+  riskLevel: 'low' | 'medium';
+}
+
+/** Where an entry's source resolves, what kind of source it is, and whether it fits this runtime. */
+export function reviewEcosystemCatalogSource(
+  entry: EcosystemCatalogEntry,
+  options: EcosystemCatalogPathOptions,
+): EcosystemCatalogSourceReview {
   const { cwd, homeDir } = options;
   const sourcePath = entry.source.startsWith('/') || entry.source.startsWith('.')
     ? resolve(cwd, entry.source)
@@ -428,10 +452,39 @@ export function reviewEcosystemCatalogEntry(
     sourcePath,
     sourceExists,
     sourceKind,
-    riskLevel: entry.trustNotes || sourceKind === 'remote' ? 'medium' : 'low',
     recommendedScope: entry.kind === 'plugin' ? 'project' : 'user',
     runtimeFit: fit,
     compatibility: fit,
+  };
+}
+
+/**
+ * The review shown before an install. riskLevel is medium for a remote
+ * source (code) or when `engine.ecosystem.trust-note-caution` reads the
+ * entry's trust note as a strong yes. An entry with no trust note, or a
+ * remote one (already medium), takes no reading.
+ */
+export async function reviewEcosystemCatalogEntry(
+  entry: EcosystemCatalogEntry,
+  options: EcosystemCatalogPathOptions,
+  run: { readonly signal?: AbortSignal } = {},
+): Promise<EcosystemCatalogReview> {
+  const source = reviewEcosystemCatalogSource(entry, options);
+  const trustNotes = entry.trustNotes?.trim();
+  let cautioned = false;
+  if (source.sourceKind !== 'remote' && trustNotes) {
+    const caution = await trustNoteCaution.run(
+      judgmentPort(TRUST_NOTE_SITE),
+      { name: entry.name, kind: entry.kind, trustNotes },
+      { site: TRUST_NOTE_SITE, ...(run.signal ? { signal: run.signal } : {}) },
+    );
+    const reading = caution.readings.cautions;
+    cautioned = reading.verdict === 'yes' && reading.outcome === 'act';
+    caution.recordAction(cautioned ? 'risk-medium' : 'risk-low');
+  }
+  return {
+    ...source,
+    riskLevel: source.sourceKind === 'remote' || cautioned ? 'medium' : 'low',
   };
 }
 
@@ -443,7 +496,7 @@ export function installEcosystemCatalogEntry(
   const scope = options.scope ?? 'project';
   const entry = loadEcosystemCatalog(kind, options).find((candidate) => candidate.id === entryId);
   if (!entry) return { ok: false, error: `Unknown curated ${kind} entry: ${entryId}` };
-  const review = reviewEcosystemCatalogEntry(entry, options);
+  const review = reviewEcosystemCatalogSource(entry, options);
   if (review.sourceKind !== 'local-path') {
     return { ok: false, error: `Curated ${kind} entry ${entryId} is not a local path source and cannot be installed directly.` };
   }
