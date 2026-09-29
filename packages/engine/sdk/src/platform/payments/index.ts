@@ -44,8 +44,8 @@ export type {
   SpendRecord,
 } from './budget.js';
 
-export { rankShippingOptions, walkShippingLadder, cheapestOption } from './shipping.js';
-export type { RankedShipping, ShippingLadderResult } from './shipping.js';
+export { readShippingTiers, walkShippingLadder } from './shipping.js';
+export type { ShippingTiers, ShippingLadderResult } from './shipping.js';
 
 export {
   APPROVAL_GATE,
@@ -221,8 +221,9 @@ export type {
   CheckoutOutcome,
 } from './checkout-flow.js';
 
-export { createChannelPaymentNotifier, parsePaymentReply } from './notice-delivery.js';
+export { createChannelPaymentNotifier, readPaymentReply } from './notice-delivery.js';
 export type {
+  PaymentAnswer,
   PaymentNoticeTarget,
   PaymentNoticeRouter,
   PaymentReplySource,
@@ -244,7 +245,6 @@ export {
   correlatePurchaseMail,
   extractConfirmationFacts,
   senderRegistrableDomain,
-  CONFIRMATION_WINDOW_MS,
 } from './order-correlation.js';
 export type { InboundMailFacts, CorrelationResult, ConfirmationFacts } from './order-correlation.js';
 
@@ -259,8 +259,17 @@ export {
 } from './payments-config.js';
 export type { PaymentsConfigReader } from './payments-config.js';
 
-export { createModelMerchantJudge } from './merchant-judge-model.js';
-export type { MerchantJudgeModel } from './merchant-judge-model.js';
+export { createJevMerchantJudge, judgeMerchant } from './merchant-judge-model.js';
+
+export { PaymentReplyInbox } from './reply-inbox.js';
+export type { PaymentReplyOffer } from './reply-inbox.js';
+
+export { registry as paymentsJudgmentRegistry } from './judgment-registry.js';
+
+// The host side: the daemon's card store, purchase ledger, durable budget,
+// approval and checkout-journal stores, address store, notifier and the
+// handler registration that binds them to the payments.* verbs.
+export * from './host/index.js';
 
 // The daemon-side service. Exported because a consumer that cannot construct
 // this cannot use the capability at all: it is what binds the verbs to the

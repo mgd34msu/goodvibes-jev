@@ -115,7 +115,7 @@ describe('the surface a consumer needs to construct the capability', () => {
     expect(typeof surface.PaymentsGatewayServiceImpl).toBe('function');
     // And the pieces a daemon has to build to use it.
     expect(typeof surface.readPaymentsServiceConfig).toBe('function');
-    expect(typeof surface.createModelMerchantJudge).toBe('function');
+    expect(typeof surface.createJevMerchantJudge).toBe('function');
     expect(typeof surface.runCheckout).toBe('function');
     expect(typeof surface.createChannelPaymentNotifier).toBe('function');
   });

@@ -67,6 +67,7 @@
 import { assertCartMatchesRequest, detectRecurringCharge, type RequestedLine } from './cart.js';
 import { checkPaymentGates, type GateInput } from './gates.js';
 import { decidePurchase, type BudgetDraw } from './decide.js';
+import { readShippingTiers } from './shipping.js';
 import { evaluatePaymentTaint, type OwnerOriginIntent } from './taint-gate.js';
 import { extractCheckout, type ExtractedCheckout, type RawCheckoutReading } from './checkout-extraction.js';
 import {
@@ -334,16 +335,18 @@ export async function runCheckout(
   const checkout: ExtractedCheckout = extraction.checkout;
 
   // ── 2. The cart holds what the owner asked for and nothing else ─────────
-  const cartCheck = assertCartMatchesRequest(checkout.lines, request.requestedLines);
+  const cartCheck = await assertCartMatchesRequest(checkout.lines, request.requestedLines);
   if (!cartCheck.ok) return refused('cart-mismatch', cartCheck.reason ?? 'Refused: the cart does not match the request.');
 
   // ── 3. A recurring charge is refused outright ───────────────────────────
-  const recurring = detectRecurringCharge(checkout.orderSummaryText);
+  const recurring = await detectRecurringCharge(checkout.orderSummaryText);
   if (recurring.recurring) {
     return refused('recurring-charge', recurring.reason ?? 'Refused: this checkout sets up a recurring charge.');
   }
 
   // ── 4. The decision, on OUR integers ────────────────────────────────────
+  // Which offered option is each shipping tier is read (shipping.ts); the ladder is arithmetic.
+  const shippingTiers = await readShippingTiers(checkout.shippingOptions, checkout.currency);
   const pools = ledger.snapshot(deps.limits, now(), deps.timezone);
   const decision = decidePurchase({
     quoted: {
@@ -351,7 +354,7 @@ export async function runCheckout(
       taxMinorUnits: checkout.taxMinorUnits,
       mandatoryFeesMinorUnits: checkout.feesMinorUnits,
       currency: checkout.currency,
-      shippingOptions: checkout.shippingOptions,
+      shippingOptions: checkout.shippingOptions, shippingTiers,
     },
     limits: deps.limits,
     pools,

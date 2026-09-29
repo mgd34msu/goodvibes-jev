@@ -94,7 +94,11 @@ export const SHIPPING_TIERS: readonly ShippingTier[] = ['normal', 'fast', 'faste
 
 /** One delivery option as the checkout presented it. */
 export interface ShippingOption {
-  /** The checkout's own label, retained for the audit record only, never rendered in a prompt. */
+  /**
+   * The checkout's own label. Read by Jev, with the cost, to tell which option
+   * is which delivery tier (shipping.ts), and kept for the audit record; never
+   * rendered in a notice.
+   */
   readonly rawLabel: string;
   readonly costMinorUnits: MinorUnits;
 }

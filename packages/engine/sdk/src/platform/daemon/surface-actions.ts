@@ -22,6 +22,8 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { tryResolveApprovalReplyFromChannel, type ApprovalReplyBroker } from './approval-reply.js';
 import { tryResolveWorkProposalReplyFromChannel } from './work-proposal-reply.js';
+import { tryResolvePaymentReplyFromChannel } from './payment-reply.js';
+import { PaymentReplyInbox } from '../payments/reply-inbox.js';
 import { refuseCardShapedIngress, CARD_SHAPES_REFUSED_REASON } from './surface-card-gate.js';
 import {
   deliverProposalNotice,
@@ -94,6 +96,8 @@ interface DaemonSurfaceActionContext {
    * what isolated contexts and older embedders get.
    */
   readonly workProposals?: WorkProposalStore | undefined;
+  /** Purchase windows waiting for the owner's answer; the helper makes its own when absent. */
+  readonly paymentReplies?: PaymentReplyInbox | undefined;
   /**
    * Put one short line on the channel a binding points at, and say whether it
    * got there. The outcome is discriminated rather than boolean so a caller
@@ -114,8 +118,15 @@ export class DaemonSurfaceActionHelper {
   private readonly pendingNtfyChatReplies = new Map<string, PendingNtfyChatReply[]>();
   private ntfyChatReplyUnsubscribers: Array<() => void> = [];
   private ntfyRemoteSessionId: string | null = null;
+  /**
+   * Purchase windows waiting for the owner's answer over a channel, read on
+   * the shared ingress hook below. The payments notifier's reply source.
+   */
+  readonly paymentReplies: PaymentReplyInbox;
 
-  constructor(private readonly context: DaemonSurfaceActionContext) {}
+  constructor(private readonly context: DaemonSurfaceActionContext) {
+    this.paymentReplies = context.paymentReplies ?? new PaymentReplyInbox();
+  }
 
   buildSurfaceAdapterContext(): SurfaceAdapterContext {
     // One cell per inbound message (see SurfaceIngressOrigin). authorizeSurfaceIngress
@@ -228,6 +239,12 @@ export class DaemonSurfaceActionHelper {
       // Report not-allowed so the adapter neither creates a session nor sends
       // a chat turn: the answer has already been acted on.
       return { ...decision, allowed: false, reason: `work-proposal-${proposalReply.action}` };
+    }
+    // An answer to a purchase approval or veto notice, read against the notice
+    // it follows. Consumed the same way: the window already has its answer.
+    const paymentReply = await tryResolvePaymentReplyFromChannel(input, decision, this.paymentReplies);
+    if (paymentReply.consumed) {
+      return { ...decision, allowed: false, reason: `payment-reply-${paymentReply.answer}` };
     }
     const consumed = await tryResolveApprovalReplyFromChannel(input, decision, {
       approvalBroker: this.context.approvalBroker,

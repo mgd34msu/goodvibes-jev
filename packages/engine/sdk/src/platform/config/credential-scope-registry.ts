@@ -182,6 +182,14 @@ export const CREDENTIAL_SCOPE_DECLARATIONS: readonly CredentialScopeDeclaration[
     why: 'A subscribed feed URL grants read access to a calendar the daemon polls on a schedule; the suffix is the name the person gave the subscription.',
   },
 
+  // ── Payments ─────────────────────────────────────────────────────────────
+  {
+    key: 'GOODVIBES_PAYMENTS_CARD_',
+    match: 'prefix',
+    scope: 'daemon-needed',
+    why: 'The daemon types a stored card into the checkout it drives, with no client running; the suffix is the card id and the field (number, expiry, security code, cardholder name).',
+  },
+
   // Model-provider credentials are DERIVED from the provider catalog below
   // rather than listed here, so a new provider brings its key names along.
 

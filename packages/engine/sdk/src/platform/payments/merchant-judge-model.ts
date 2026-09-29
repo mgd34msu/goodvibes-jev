@@ -1,171 +1,89 @@
 /**
- * merchant-judge-model.ts, the judgement, made by a model.
+ * merchant-judge-model.ts, the judgement, read by Jev.
  *
  * ══ The last link in "determine if it is reputable" ═══════════════════════
  *
- * `merchant-recourse.ts` owns the criterion, the policy and the composition
- * rules; it does not make the call. This is the call, and it is deliberately
- * the smallest module in the capability: build a prompt from a constant and one
- * domain, read back a verdict, fail safe.
+ * `merchant-recourse.ts` owns the policy and the composition rules; it does
+ * not make the call. This is the call, and it is deliberately the smallest
+ * module in the capability: one Jev reading over one domain
+ * (`engine.payments.merchant`, batteries/merchant.ts), composed into a
+ * verdict. It replaces a free-form prompt to the configured chat model and a
+ * JSON parse of its answer, whose `confident` flag was the model's own claim
+ * about itself; confidence is now the reading's band.
  *
  * ══ One field goes in, and that is the whole safety argument ══════════════
  *
- * The prompt is assembled from exactly two things: `MERCHANT_RECOURSE_CRITERION`,
- * which ships in this repository, and `input.registrableDomain`, which we
- * computed from a URL that already passed `validateLinkTarget`.
- *
- * Nothing else. No page title, no seller name, no review count, no product
- * description, no "as seen in" strip, no trust badge, no anything the merchant
- * controls. Every one of those is free text written by the party whose
- * trustworthiness is the question, and a judgement made over them is a
- * judgement the attacker writes. A fake storefront's entire investment is in
- * looking legitimate, and that investment lands precisely on the material this
- * module refuses to read.
+ * The reading's state is `input.registrableDomain`, which code computed from
+ * a URL that already passed `validateLinkTarget`, and nothing else. No page
+ * title, no seller name, no review count, no product description, no trust
+ * badge, nothing the merchant controls. Every one of those is free text
+ * written by the party whose trustworthiness is the question, and a judgement
+ * made over them is a judgement the attacker writes.
  *
  * There is a test asserting the port is called with the key set
  * `['registrableDomain']` and nothing more, so widening the input breaks a
  * test rather than quietly widening the attack surface.
  *
- * ══ Every failure is not-major ════════════════════════════════════════════
+ * ══ How the two readings compose ══════════════════════════════════════════
  *
- * Helper disabled, no route configured, a timeout, a malformed answer, prose
- * where JSON was asked for, a verdict word we do not recognise, all resolve to
- * `qualifies: false, confident: false`, which `classifyMerchant` turns into an
- * approval window where silence denies.
+ * The judgement is confident only when both readings act. It qualifies only
+ * when `qualifies` is a yes and the recourse kind names some recourse; a yes
+ * with no recourse named is a contradiction and reads as not confident.
+ * `classifyMerchant` turns anything not confident into an approval window
+ * where silence denies: being unsure about a legitimate small retailer costs
+ * the owner one question, and treating an unjudged domain as established
+ * costs them a silent purchase from a storefront nobody vouched for.
  *
- * That direction is not arbitrary. Being unable to judge a legitimate small
- * retailer costs the owner one question they answer in a second; treating an
- * unjudgeable domain as established costs them a silent purchase from a
- * storefront nobody vouched for. A model outage must never be able to make
- * spending MORE automatic.
+ * An empty domain is not asked about; there is nothing to read.
  */
-import { MERCHANT_RECOURSE_CRITERION } from './merchant-recourse.js';
-import type { MerchantJudgeInput, MerchantJudgePort, MerchantJudgement } from './merchant-recourse.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { merchantReading, merchantView, type RecourseKind } from './batteries/merchant.js';
+import type { MarketplaceKind, MerchantJudgeInput, MerchantJudgePort, MerchantJudgement } from './merchant-recourse.js';
 
-/** The slice of the helper model this needs. Injectable so tests need no provider. */
-export interface MerchantJudgeModel {
-  chat(
-    task: 'intent_classify',
-    prompt: string,
-    options: { readonly maxTokens?: number; readonly systemPrompt?: string },
-  ): Promise<string | null>;
-}
+/** The decision site the merchant reading is logged under. */
+export const MERCHANT_SITE = 'payments.merchant-judge';
 
-/**
- * The answer shape the model is asked for.
- *
- * Small and closed on purpose. A free-text answer would have to be interpreted,
- * and interpreting prose about whether to spend money is exactly the step where
- * a confident-sounding sentence becomes a purchase.
- */
-const RESPONSE_INSTRUCTIONS = [
-  'Answer with a single JSON object and nothing else:',
-  '{"qualifies": true|false, "confident": true|false, "recourse": "<short phrase>", "marketplace": "<optional>"}',
-  '',
-  '"qualifies" is your verdict against the criterion above.',
-  '"confident" is false when you do not recognise the domain well enough to be sure,',
-  'say so rather than guessing, because an unsure answer is treated the same as no.',
-  '"recourse" is a short phrase naming what protection you believe exists, in plain words,',
-  'for a human to read on their phone, for example "established electronics retailer with a returns process"',
-  'or "marketplace with buyer protection". Do not restate the domain.',
-].join('\n');
+/** What the owner reads for each recourse kind, on their phone, in plain words. */
+const RECOURSE_PHRASES: Readonly<Record<RecourseKind, string>> = {
+  retailer: 'an established retailer that stands behind its sales with a returns process',
+  'buyer-protection': 'a marketplace whose buyer protection covers the purchase',
+  'per-seller': 'a marketplace where recourse depends on the individual seller',
+  none: 'no accountable business or buyer protection I can identify',
+};
 
-/** How long an answer may be. A verdict does not need an essay. */
-const MAX_TOKENS = 200;
+const MARKETPLACE_KINDS: Readonly<Record<RecourseKind, MarketplaceKind>> = {
+  retailer: 'none',
+  'buyer-protection': 'buyer-protection',
+  'per-seller': 'per-seller',
+  none: 'none',
+};
 
-function unknownVerdict(recourse: string): MerchantJudgement {
-  return { qualifies: false, confident: false, recourse };
-}
-
-/**
- * Read the model's answer, or refuse to.
- *
- * Tolerates the answer being wrapped in a code fence, which models do
- * routinely, and nothing else. Anything that does not parse into the expected
- * shape is an unknown verdict rather than a salvage attempt.
- */
-function parseVerdict(raw: string): MerchantJudgement | null {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(raw);
-  const body = (fenced?.[1] ?? raw).trim();
-  const start = body.indexOf('{');
-  const end = body.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body.slice(start, end + 1));
-  } catch {
-    return null;
+/** Judge one validated registrable domain through the installed judgment port. */
+export async function judgeMerchant(input: MerchantJudgeInput): Promise<MerchantJudgement> {
+  const domain = input.registrableDomain.trim().toLowerCase();
+  if (domain.length === 0) {
+    return { qualifies: false, confident: false, recourse: 'I could not establish which domain this checkout is on' };
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-  const record = parsed as Record<string, unknown>;
-
-  // `qualifies` must be a real boolean. A string "true", a 1, or a missing
-  // field is not a verdict, it is a model that did not follow the format, and
-  // coercing it would be inventing an answer.
-  if (typeof record['qualifies'] !== 'boolean') return null;
-
-  const recourse = typeof record['recourse'] === 'string' && record['recourse'].trim().length > 0
-    ? record['recourse'].trim().slice(0, 200)
-    : 'no recourse stated';
-
-  const marketplace = typeof record['marketplace'] === 'string' && record['marketplace'].trim().length > 0
-    ? record['marketplace'].trim().slice(0, 40)
-    : undefined;
-
-  return {
-    qualifies: record['qualifies'],
-    // Absent confidence is treated as NOT confident. The safe reading of "the
-    // model did not say" is that it was not sure.
-    confident: record['confident'] === true,
-    recourse,
-    ...(marketplace === undefined ? {} : { marketplace: marketplace as MerchantJudgement['marketplace'] }),
+  const run = await merchantReading.run(judgmentPort(MERCHANT_SITE), merchantView(domain), { site: MERCHANT_SITE });
+  const { qualifies, recourse } = run.readings;
+  const recourseKind = recourse.choice as RecourseKind;
+  const bothAct = qualifies.outcome === 'act' && recourse.outcome === 'act';
+  const contradiction = qualifies.verdict === 'yes' && recourseKind === 'none';
+  const confident = bothAct && !contradiction;
+  const judgement: MerchantJudgement = {
+    qualifies: qualifies.verdict === 'yes' && recourseKind !== 'none',
+    confident,
+    recourse: RECOURSE_PHRASES[recourseKind],
+    // The marketplace kind decides whether the owner's marketplace policy and
+    // the per-seller listing bar apply, so it is taken only from a reading
+    // that acts.
+    ...(recourse.outcome === 'act' ? { marketplace: MARKETPLACE_KINDS[recourseKind] } : {}),
   };
+  run.recordAction(confident ? (judgement.qualifies ? 'qualifies' : 'does not qualify') : 'not confident');
+  return judgement;
 }
 
-/**
- * A judge backed by the helper model.
- *
- * `intent_classify` is the routing task: this IS a classification, one short
- * input, one closed verdict, and it inherits that route's model and limits
- * rather than introducing a payment-specific route the owner would have to
- * configure separately before they could buy anything.
- */
-export function createModelMerchantJudge(model: MerchantJudgeModel): MerchantJudgePort {
-  return {
-    async judge(input: MerchantJudgeInput): Promise<MerchantJudgement> {
-      const domain = input.registrableDomain.trim().toLowerCase();
-      if (domain.length === 0) {
-        return unknownVerdict('I could not establish which domain this checkout is on');
-      }
-
-      let answer: string | null;
-      try {
-        answer = await model.chat(
-          'intent_classify',
-          // The ONLY variable content in this prompt. Everything else is a
-          // constant shipped in this repository.
-          `Domain: ${domain}`,
-          {
-            maxTokens: MAX_TOKENS,
-            systemPrompt: `${MERCHANT_RECOURSE_CRITERION}\n\n${RESPONSE_INSTRUCTIONS}`,
-          },
-        );
-      } catch {
-        // Helper disabled, no route, provider error, timeout. The error is not
-        // surfaced: what matters downstream is that no judgement was available.
-        return unknownVerdict('I could not reach a model to judge this merchant, so I am asking first');
-      }
-
-      if (answer === null || answer.trim().length === 0) {
-        return unknownVerdict('No judgement was available for this merchant, so I am asking first');
-      }
-
-      const verdict = parseVerdict(answer);
-      if (verdict === null) {
-        return unknownVerdict('I could not read a clear judgement about this merchant, so I am asking first');
-      }
-      return verdict;
-    },
-  };
+/** The merchant judge port backed by the Jev reading. */
+export function createJevMerchantJudge(): MerchantJudgePort {
+  return { judge: judgeMerchant };
 }

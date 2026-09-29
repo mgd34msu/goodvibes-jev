@@ -241,6 +241,30 @@ function collectDerivingWrappers(sources: readonly string[]): void {
   }
 }
 
+/**
+ * Functions that mint a key in a DECLARED prefix family.
+ *
+ * `function cardSecretKey(id, field): string { return `GOODVIBES_PAYMENTS_CARD_${...}`; }`
+ * builds every key it returns under one literal prefix, and when the registry
+ * declares that prefix the whole family is classified, which is what "declare
+ * the key family (a prefix declaration)" asks for. Found by reading the body,
+ * so a minter whose literal prefix no declaration covers stays a finding.
+ */
+const PREFIX_MINTERS = new Set<string>();
+
+function collectPrefixMinters(sources: readonly string[]): void {
+  const minter = /function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*:\s*string\s*\{\s*return\s+`([A-Za-z0-9_.:/-]+)\$\{/g;
+  for (const source of sources) {
+    minter.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = minter.exec(source)) !== null) {
+      const literal = match[2]!;
+      const declaration = findCredentialScopeDeclaration(`${literal}x`);
+      if (declaration?.match === 'prefix' && literal.startsWith(declaration.key)) PREFIX_MINTERS.add(match[1]!);
+    }
+  }
+}
+
 /** The function a key expression calls, if it is a call at all. */
 function calledFunction(args: string): string | null {
   const call = /^\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*\(/.exec(args);
@@ -308,7 +332,7 @@ function checkFile(path: string, constants: ReadonlyMap<string, string>): Findin
 
     if (key === null) {
       const callee = calledFunction(args);
-      if (callee !== null && DERIVING_FUNCTIONS.has(callee)) continue;
+      if (callee !== null && (DERIVING_FUNCTIONS.has(callee) || PREFIX_MINTERS.has(callee))) continue;
       if (isPassthroughIdentifier(args)) continue;
       // A computed key with no stated scope, minted right here. This is the
       // per-subscription calendar-feed shape: nobody could classify it and
@@ -421,7 +445,9 @@ function main(): void {
   const files: string[] = [];
   for (const dir of SCAN_DIRS) walk(resolve(REPO_ROOT, dir), files);
 
-  collectDerivingWrappers(files.map((file) => withoutComments(readFileSync(file, 'utf-8'))));
+  const sources = files.map((file) => withoutComments(readFileSync(file, 'utf-8')));
+  collectDerivingWrappers(sources);
+  collectPrefixMinters(sources);
   const constants = buildConstantTable(files);
   const findings = [
     ...files.flatMap((file) => checkFile(file, constants)),

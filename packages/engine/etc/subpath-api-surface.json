@@ -37488,6 +37488,11 @@
       "text": "APPROVAL_GATE: { readonly kind: \"approval\"; readonly silenceMeans: \"denied\"; }"
     },
     {
+      "name": "ATTACHED_PAYMENTS_METHOD_IDS",
+      "kind": "const",
+      "text": "ATTACHED_PAYMENTS_METHOD_IDS: readonly string[]"
+    },
+    {
       "name": "AddressCheck",
       "kind": "interface",
       "required": [
@@ -37545,6 +37550,23 @@
       "name": "ApprovalState",
       "kind": "type",
       "text": "export type ApprovalState = 'pending-dispatch' | 'awaiting-approval' | 'approved' | 'denied-explicit' | 'denied-timeout' | 'denied-undeliverable' | 'void';"
+    },
+    {
+      "name": "ApprovalTakeHit",
+      "kind": "interface",
+      "required": [
+        "approval"
+      ],
+      "text": "export interface ApprovalTakeHit { readonly approval: OwnerApproval; } ;; via OwnerApproval = export interface OwnerApproval { readonly action: string; readonly grantedAt: string; readonly expiresAt: string; readonly surface: 'owner-direct'; readonly contentFingerprint: string | null; }"
+    },
+    {
+      "name": "ApprovalTakeMiss",
+      "kind": "interface",
+      "required": [
+        "approval",
+        "mismatch"
+      ],
+      "text": "export interface ApprovalTakeMiss { readonly approval: null; readonly mismatch: ApprovalMismatch; } ;; via ApprovalMismatch = export type ApprovalMismatch = 'none' | 'different-action' | 'expired' | 'different-content' | 'no-content-binding';"
     },
     {
       "name": "BeginCheckoutInput",
@@ -37643,14 +37665,34 @@
       "text": "CARD_FIELD_NAMES: readonly CardFieldName[]"
     },
     {
-      "name": "CONFIRMATION_WINDOW_MS",
+      "name": "CARD_MATERIAL_FIELDS",
       "kind": "const",
-      "text": "CONFIRMATION_WINDOW_MS: number"
+      "text": "CARD_MATERIAL_FIELDS: readonly [\"number\", \"expiryMonth\", \"expiryYear\", \"cvv\", \"cardholderName\"]"
+    },
+    {
+      "name": "CHECKOUT_APPROVAL_ACTION",
+      "kind": "const",
+      "text": "CHECKOUT_APPROVAL_ACTION = \"payments.checkout.begin\""
     },
     {
       "name": "CVV_PROMPT_TRADEOFF_WARNING",
       "kind": "const",
       "text": "CVV_PROMPT_TRADEOFF_WARNING: string"
+    },
+    {
+      "name": "CardCreateInput",
+      "kind": "interface",
+      "required": [
+        "cardholderName",
+        "cvv",
+        "expiryMonth",
+        "expiryYear",
+        "issuerCapMinorUnits",
+        "kind",
+        "label",
+        "number"
+      ],
+      "text": "export interface CardCreateInput { readonly label: string; readonly kind: 'virtual' | 'real'; readonly number: string; readonly expiryMonth: number; readonly expiryYear: number; readonly cvv: string; readonly cardholderName: string; readonly issuerCapMinorUnits: number | null; }"
     },
     {
       "name": "CardDetailScan",
@@ -37708,6 +37750,11 @@
       "text": "export interface CardMaterial { readonly number: string; readonly expiryMonth: string; readonly expiryYear: string; readonly cvv: string; readonly cardholderName: string; }"
     },
     {
+      "name": "CardMaterialField",
+      "kind": "type",
+      "text": "export type CardMaterialField = (typeof CARD_MATERIAL_FIELDS)[number];"
+    },
+    {
       "name": "CardMaterialRedactor",
       "kind": "class",
       "publicMembers": [
@@ -37746,6 +37793,14 @@
       "text": "export interface CardMetadata { readonly id: string; readonly label: string; readonly brand: string; readonly last4: string; readonly kind: 'virtual' | 'real'; readonly expiryMonth: number; readonly expiryYear: number; readonly issuerCapMinorUnits: MinorUnits | null; readonly addedAt: string; }"
     },
     {
+      "name": "CardStoreUnreadableError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor"
+      ],
+      "text": "export declare class CardStoreUnreadableError extends Error { constructor(filePath: string, reason: string); }"
+    },
+    {
       "name": "CartCheck",
       "kind": "interface",
       "required": [
@@ -37765,6 +37820,15 @@
         "unitMinorUnits"
       ],
       "text": "export interface CartLine { readonly label: string; readonly quantity: number; readonly unitMinorUnits: MinorUnits; }"
+    },
+    {
+      "name": "CatalogHandlerEntry",
+      "kind": "interface",
+      "required": [
+        "handler",
+        "id"
+      ],
+      "text": "export interface CatalogHandlerEntry { readonly id: string; readonly handler: TypedHandler<unknown, unknown>; readonly options?: RegisterHandlerOptions; }"
     },
     {
       "name": "ChannelDelivery",
@@ -37808,6 +37872,20 @@
         "url"
       ],
       "text": "export interface CheckoutChallenge { readonly kind: '3d-secure' | 'captcha' | 'otp' | 'unknown'; readonly step: string; readonly url: string; }"
+    },
+    {
+      "name": "CheckoutComposition",
+      "kind": "interface",
+      "required": [
+        "addresses",
+        "approvals",
+        "journal",
+        "merchantJudge",
+        "notifier",
+        "seam",
+        "untrusted"
+      ],
+      "text": "export interface CheckoutComposition { readonly seam: () => BrowserCheckoutSeam | undefined; readonly addresses: AddressStore; readonly notifier: PaymentNotifier; readonly merchantJudge: MerchantJudgePort; readonly untrusted: UntrustedContentLedger; readonly approvals: DaemonApprovalStore; readonly journal: CheckoutJournal; } ;; via BrowserCheckoutSeam = export interface BrowserCheckoutSeam { readonly cardFieldGuard: CardMaterialRedactor; driverFor(sessionId: string, pageId: string): CheckoutPageDriver; armSubmitApproval(approval: OwnerApproval | null): Promise<void>; }"
     },
     {
       "name": "CheckoutControls",
@@ -37993,9 +38071,67 @@
       "text": "export type CurrencyCode = string & { readonly __currency: unique symbol; };"
     },
     {
+      "name": "CvvHandling",
+      "kind": "type",
+      "text": "export type CvvHandling = 'stored' | 'prompt';"
+    },
+    {
       "name": "DEFAULT_MARKETPLACE_LISTING_THRESHOLDS",
       "kind": "const",
       "text": "DEFAULT_MARKETPLACE_LISTING_THRESHOLDS: MarketplaceListingThresholds"
+    },
+    {
+      "name": "DaemonApprovalStore",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "grant",
+        "pendingCount",
+        "take"
+      ],
+      "text": "export declare class DaemonApprovalStore { private readonly filePath; private readonly now; private approvals; constructor(filePath: string, now?: () => Date); grant(input: { readonly action: string; readonly content: Readonly<Record<string, string | undefined>>; }): OwnerApproval; take(input: { readonly action: string; readonly content: Readonly<Record<string, string | undefined>>; }): ApprovalTakeHit | ApprovalTakeMiss; pendingCount(): number; private sweep; private persist; } ;; via Date = interface Date { toString(): string; toDateString(): string; toTimeString(): string; toLocaleString(): string; toLocaleDateString(): string; toLocaleTimeString(): string; valueOf(): number; getTime(): number; getFullYear(): number; getUTCFullYear(): number; getMonth(): number; getUTCMonth(): number; getDate(): number; getUTCDate(): number; getDay(): number; getUTCDay(): number; getHours(): number; getUTCHours(): number; getMinutes(): number; getUTCMinutes(): number; getSeconds(): number; getUTCSeconds(): number; getMilliseconds(): number; getUTCMilliseconds(): number; getTimezoneOffset(): number; setTime(time: number): number; setMilliseconds(ms: number): number; setUTCMilliseconds(ms: number): number; setSeconds(sec: number, ms?: number): number; setUTCSeconds(sec: number, ms?: number): number; setMinutes(min: number, sec?: number, ms?: number): number; setUTCMinutes(min: number, sec?: number, ms?: number): number; setHours(hours: number, min?: number, sec?: number, ms?: number): number; setUTCHours(hours: number, min?: number, sec?: number, ms?: number): number; setDate(date: number): number; setUTCDate(date: number): number; setMonth(month: number, date?: number): number; setUTCMonth(month: number, date?: number): number; setFullYear(year: number, month?: number, date?: number): number; setUTCFullYear(year: number, month?: number, date?: number): number; toUTCString(): string; toISOString(): string; toJSON(key?: any): string; } ;; OwnerApproval = export interface OwnerApproval { readonly action: string; readonly grantedAt: string; readonly expiresAt: string; readonly surface: 'owner-direct'; readonly contentFingerprint: string | null; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "DaemonCardStore",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "create",
+        "list",
+        "materialComplete",
+        "metadata",
+        "read",
+        "remove"
+      ],
+      "text": "export declare class DaemonCardStore implements CardMaterialStore { private readonly filePath; private readonly secrets; private readonly cvvHandling; private readonly generateId; private readonly now; constructor(options: DaemonCardStoreOptions); list(): readonly CardMetadata[]; metadata(cardId: string): Promise<CardMetadata | null>; materialComplete(cardId: string): Promise<boolean>; read(cardId: string): Promise<CardMaterial | null>; create(input: CardCreateInput): Promise<CardMetadata>; remove(cardId: string): Promise<{ deleted: boolean; secretsCleared: number; }>; private readOrRaise; private dropRow; private suppliesStoredCvv; private fieldValue; private putField; private clearFields; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "DaemonCardStoreOptions",
+      "kind": "interface",
+      "required": [
+        "cvvHandling",
+        "filePath",
+        "secrets"
+      ],
+      "text": "export interface DaemonCardStoreOptions { readonly filePath: string; readonly secrets: PaymentsSecretStore; readonly cvvHandling: () => CvvHandling; readonly generateId?: (() => string) | undefined; readonly now?: (() => Date) | undefined; } ;; via Date = interface Date { toString(): string; toDateString(): string; toTimeString(): string; toLocaleString(): string; toLocaleDateString(): string; toLocaleTimeString(): string; valueOf(): number; getTime(): number; getFullYear(): number; getUTCFullYear(): number; getMonth(): number; getUTCMonth(): number; getDate(): number; getUTCDate(): number; getDay(): number; getUTCDay(): number; getHours(): number; getUTCHours(): number; getMinutes(): number; getUTCMinutes(): number; getSeconds(): number; getUTCSeconds(): number; getMilliseconds(): number; getUTCMilliseconds(): number; getTimezoneOffset(): number; setTime(time: number): number; setMilliseconds(ms: number): number; setUTCMilliseconds(ms: number): number; setSeconds(sec: number, ms?: number): number; setUTCSeconds(sec: number, ms?: number): number; setMinutes(min: number, sec?: number, ms?: number): number; setUTCMinutes(min: number, sec?: number, ms?: number): number; setHours(hours: number, min?: number, sec?: number, ms?: number): number; setUTCHours(hours: number, min?: number, sec?: number, ms?: number): number; setDate(date: number): number; setUTCDate(date: number): number; setMonth(month: number, date?: number): number; setUTCMonth(month: number, date?: number): number; setFullYear(year: number, month?: number, date?: number): number; setUTCFullYear(year: number, month?: number, date?: number): number; toUTCString(): string; toISOString(): string; toJSON(key?: any): string; }"
+    },
+    {
+      "name": "DaemonPurchaseLedger",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "list",
+        "record"
+      ],
+      "text": "export declare class DaemonPurchaseLedger implements PurchaseLedger { private readonly filePath; constructor(options: DaemonPurchaseLedgerOptions); record(entry: PurchaseRecord): Promise<void>; list(query: PurchaseListQuery): { purchases: readonly StoredPurchase[]; total: number; }; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "DaemonPurchaseLedgerOptions",
+      "kind": "interface",
+      "required": [
+        "filePath"
+      ],
+      "text": "export interface DaemonPurchaseLedgerOptions { readonly filePath: string; }"
     },
     {
       "name": "DayKey",
@@ -38018,6 +38154,30 @@
       "name": "DecisionOutcome",
       "kind": "type",
       "text": "export type DecisionOutcome = { readonly kind: 'refuse'; readonly code: RefusalCode; readonly reason: string; } | { readonly kind: 'needs-approval'; readonly draw: BudgetDraw; readonly shipping: ShippingLadderResult; readonly reason: string; } | { readonly kind: 'within-budget'; readonly draw: BudgetDraw; readonly shipping: ShippingLadderResult; };"
+    },
+    {
+      "name": "DurableBudgetLedger",
+      "kind": "class",
+      "publicMembers": [
+        "commit",
+        "constructor",
+        "prune",
+        "release",
+        "reserve",
+        "sweep"
+      ],
+      "text": "export declare class DurableBudgetLedger extends BudgetLedger { private readonly filePath; private persistPending; constructor(filePath: string, now?: () => number); reserve(input: { readonly id: string; readonly itemMinorUnits: number; readonly overageMinorUnits: number; readonly toleranceMinorUnits: number; readonly limits: BudgetLimits; readonly nowMs: number; readonly timezone: string; readonly ttlMs?: number; }): BudgetReservation | null; commit(reservationId: string, atMs: number): SpendRecord | null; release(reservationId: string): boolean; sweep(nowMs: number): readonly BudgetReservation[]; prune(nowMs: number): void; private retryPendingPersist; private persistAfterCommit; private persist; private writeToDisk; }"
+    },
+    {
+      "name": "DurableCheckoutJournal",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "list",
+        "put",
+        "remove"
+      ],
+      "text": "export declare class DurableCheckoutJournal implements CheckoutJournal { private readonly filePath; private readonly records; constructor(filePath: string); put(record: InFlightCheckout): Promise<void>; remove(purchaseId: string): Promise<void>; list(): Promise<readonly InFlightCheckout[]>; private persist; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "ExtractedCheckout",
@@ -38123,6 +38283,33 @@
       "text": "export interface GateRefusal { readonly code: RefusalCode; readonly reason: string; }"
     },
     {
+      "name": "HandlerContextEnvelope",
+      "kind": "interface",
+      "required": [
+        "admin",
+        "authToken",
+        "explicitUserRequest",
+        "principalId",
+        "scopes"
+      ],
+      "text": "export interface HandlerContextEnvelope { readonly principalId: string; readonly admin: boolean; readonly scopes: string[]; readonly explicitUserRequest: boolean; readonly authToken: string; }"
+    },
+    {
+      "name": "HandlerError",
+      "kind": "type",
+      "text": "HandlerError: typeof GatewayVerbError ;; export type HandlerError = GatewayVerbError;"
+    },
+    {
+      "name": "HandlerInvocation",
+      "kind": "interface",
+      "required": [
+        "body",
+        "context",
+        "query"
+      ],
+      "text": "export interface HandlerInvocation<TBody> { readonly body: TBody; readonly query: Record<string, string>; readonly context: HandlerContextEnvelope; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
       "name": "InFlightCheckout",
       "kind": "interface",
       "required": [
@@ -38149,10 +38336,12 @@
       "name": "InboundMailFacts",
       "kind": "interface",
       "required": [
+        "body",
         "receivedAtMs",
-        "senderAddress"
+        "senderAddress",
+        "subject"
       ],
-      "text": "export interface InboundMailFacts { readonly senderAddress: string; readonly receivedAtMs: number; }"
+      "text": "export interface InboundMailFacts { readonly senderAddress: string; readonly receivedAtMs: number; readonly subject: string; readonly body: string; }"
     },
     {
       "name": "InterruptedCheckoutRecovery",
@@ -38183,6 +38372,11 @@
       "name": "MAX_PARSEABLE_MINOR_UNITS",
       "kind": "const",
       "text": "MAX_PARSEABLE_MINOR_UNITS = 1000000000000"
+    },
+    {
+      "name": "MAX_PURCHASE_LIST_LIMIT",
+      "kind": "const",
+      "text": "MAX_PURCHASE_LIST_LIMIT = 500"
     },
     {
       "name": "MAX_RESERVATIONS",
@@ -38258,14 +38452,6 @@
       "text": "export interface MerchantJudgeInput { readonly registrableDomain: string; }"
     },
     {
-      "name": "MerchantJudgeModel",
-      "kind": "interface",
-      "required": [
-        "chat"
-      ],
-      "text": "export interface MerchantJudgeModel { chat(task: 'intent_classify', prompt: string, options: { readonly maxTokens?: number; readonly systemPrompt?: string; }): Promise<string | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
-    },
-    {
       "name": "MerchantJudgePort",
       "kind": "interface",
       "required": [
@@ -38332,6 +38518,11 @@
       "text": "export interface PageIdentity { readonly sessionId: string; readonly pageId: string; }"
     },
     {
+      "name": "PaymentAnswer",
+      "kind": "type",
+      "text": "export type PaymentAnswer = 'approve' | 'deny' | 'acknowledge' | 'object';"
+    },
+    {
       "name": "PaymentBeginResult",
       "kind": "interface",
       "required": [
@@ -38391,12 +38582,28 @@
       "text": "export interface PaymentNotifier { deliver(input: { readonly kind: 'approval' | 'veto' | 'notice'; readonly message: string; }): Promise<readonly ChannelDelivery[]>; awaitAnswer(input: { readonly kind: 'approval' | 'veto'; readonly deadlineMs: number; }): Promise<{ readonly answer: 'approve' | 'deny' | 'acknowledge' | 'object'; readonly channel: CommandAuthorityChannel; } | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "PaymentReplyInbox",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "offer",
+        "pending",
+        "waitForAnswer"
+      ],
+      "text": "export declare class PaymentReplyInbox implements PaymentReplySource { #private; constructor(options?: { readonly now?: () => number; }); waitForAnswer(input: Parameters<PaymentReplySource['waitForAnswer']>[0]): ReturnType<PaymentReplySource['waitForAnswer']>; get pending(): number; offer(channel: CommandAuthorityChannel, text: string): Promise<PaymentReplyOffer>; } ;; via Parameters = type Parameters<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReturnType = type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;"
+    },
+    {
+      "name": "PaymentReplyOffer",
+      "kind": "type",
+      "text": "export type PaymentReplyOffer = { readonly consumed: false; readonly reason: 'no-window' | 'several-windows' | 'not-an-answer'; } | { readonly consumed: true; readonly answer: PaymentAnswer; };"
+    },
+    {
       "name": "PaymentReplySource",
       "kind": "interface",
       "required": [
         "waitForAnswer"
       ],
-      "text": "export interface PaymentReplySource { waitForAnswer(input: { readonly kind: 'approval' | 'veto'; readonly deadlineMs: number; readonly channels: readonly CommandAuthorityChannel[]; }): Promise<{ readonly answer: 'approve' | 'deny' | 'acknowledge' | 'object'; readonly channel: CommandAuthorityChannel; } | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface PaymentReplySource { waitForAnswer(input: { readonly kind: 'approval' | 'veto'; readonly deadlineMs: number; readonly channels: readonly CommandAuthorityChannel[]; readonly notice: string; }): Promise<{ readonly answer: 'approve' | 'deny' | 'acknowledge' | 'object'; readonly channel: CommandAuthorityChannel; } | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "PaymentTaintDecision",
@@ -38429,6 +38636,38 @@
         "recoverInterruptedCheckouts"
       ],
       "text": "export declare class PaymentsGatewayServiceImpl { private readonly deps; private readonly registry; private readonly redactor; constructor(deps: PaymentsServiceDeps); cardFieldGuard(): CardMaterialRedactor; beginCheckout(input: BeginCheckoutInput): Promise<PaymentBeginResult>; recoverInterruptedCheckouts(): Promise<CheckoutRecoverySweep>; private settleInterrupted; private verifyPurchaseRecord; private settleWindowSentence; private runArmingPageCleanup; fillCardIntoCheckout(input: { readonly sessionId: string; readonly pageId: string; readonly targets: readonly { readonly field: string; readonly ref: string; }[]; readonly expirySeparator: string | undefined; readonly twoDigitYear: boolean | undefined; }): Promise<PaymentFillCardResult>; previewReading(reading: RawCheckoutReading): { ok: boolean; reason: string | null; }; private refused; private describe; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "PaymentsHandlerDeps",
+      "kind": "interface",
+      "required": [
+        "budget",
+        "cards",
+        "checkout",
+        "config",
+        "isPaymentsLeader",
+        "purchases"
+      ],
+      "text": "export interface PaymentsHandlerDeps { readonly cards: DaemonCardStore; readonly purchases: DaemonPurchaseLedger; readonly budget: BudgetLedger; readonly config: PaymentsConfigReader; readonly isPaymentsLeader: () => boolean; readonly now?: (() => number) | undefined; readonly checkout: CheckoutComposition; }"
+    },
+    {
+      "name": "PaymentsRegistration",
+      "kind": "interface",
+      "required": [
+        "ready",
+        "unregister"
+      ],
+      "text": "export interface PaymentsRegistration { readonly ready: Promise<void>; readonly unregister: Unregister; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "PaymentsSecretStore",
+      "kind": "interface",
+      "required": [
+        "delete",
+        "get",
+        "set"
+      ],
+      "text": "export interface PaymentsSecretStore { get(key: string): Promise<string | null>; set(key: string, value: string): Promise<void>; delete(key: string): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "PaymentsServiceConfig",
@@ -38515,6 +38754,15 @@
       "text": "export interface PurchaseLedger { record(entry: PurchaseRecord): Promise<void>; has?(purchaseId: string): Promise<boolean>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "PurchaseListQuery",
+      "kind": "interface",
+      "required": [
+        "dayKey",
+        "limit"
+      ],
+      "text": "export interface PurchaseListQuery { readonly limit: number; readonly dayKey: string | undefined; }"
+    },
+    {
       "name": "PurchaseRecord",
       "kind": "interface",
       "required": [
@@ -38572,9 +38820,10 @@
         "itemMinorUnits",
         "mandatoryFeesMinorUnits",
         "shippingOptions",
+        "shippingTiers",
         "taxMinorUnits"
       ],
-      "text": "export interface QuotedTotals { readonly itemMinorUnits: MinorUnits; readonly taxMinorUnits: MinorUnits; readonly mandatoryFeesMinorUnits: MinorUnits; readonly currency: CurrencyCode; readonly shippingOptions: readonly ShippingOption[]; }"
+      "text": "export interface QuotedTotals { readonly itemMinorUnits: MinorUnits; readonly taxMinorUnits: MinorUnits; readonly mandatoryFeesMinorUnits: MinorUnits; readonly currency: CurrencyCode; readonly shippingOptions: readonly ShippingOption[]; readonly shippingTiers: ShippingTiers; }"
     },
     {
       "name": "RECOVERY_IO_TIMEOUT_MS",
@@ -38587,18 +38836,14 @@
       "text": "REDACTED_MARKER = \"[redacted card material]\""
     },
     {
+      "name": "REQUIRE_CONFIRM",
+      "kind": "const",
+      "text": "REQUIRE_CONFIRM = \"REQUIRE_CONFIRM\""
+    },
+    {
       "name": "RESERVATION_TTL_MS",
       "kind": "const",
       "text": "RESERVATION_TTL_MS: number"
-    },
-    {
-      "name": "RankedShipping",
-      "kind": "interface",
-      "required": [
-        "ranked",
-        "tierToOption"
-      ],
-      "text": "export interface RankedShipping { readonly ranked: readonly ShippingOption[]; readonly tierToOption: ReadonlyMap<ShippingTier, ShippingOption>; } ;; via ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
     },
     {
       "name": "RawCheckoutReading",
@@ -38623,16 +38868,20 @@
       "name": "RecurringCheck",
       "kind": "interface",
       "required": [
-        "matched",
         "reason",
         "recurring"
       ],
-      "text": "export interface RecurringCheck { readonly recurring: boolean; readonly matched: readonly string[]; readonly reason: string | null; }"
+      "text": "export interface RecurringCheck { readonly recurring: boolean; readonly reason: string | null; }"
     },
     {
       "name": "RefusalCode",
       "kind": "type",
       "text": "export type RefusalCode = 'disabled' | 'no-card' | 'no-shipping-address' | 'not-owner-request' | 'derived-from-untrusted-content' | 'link-validation-failed' | 'currency-mismatch' | 'recurring-charge' | 'item-budget-exceeded-undeliverable' | 'item-budget-exceeded-denied' | 'item-budget-exceeded-expired' | 'per-purchase-ceiling-exceeded' | 'overage-pool-exhausted' | 'zero-budget' | 'total-changed' | 'challenge-abandoned' | 'submit-not-attempted' | 'cart-mismatch';"
+    },
+    {
+      "name": "RegisterHandlerOptions",
+      "kind": "interface",
+      "text": "export interface RegisterHandlerOptions { readonly confirm?: boolean; }"
     },
     {
       "name": "RequestedLine",
@@ -38706,6 +38955,11 @@
       "text": "export type ShippingTier = 'normal' | 'fast' | 'fastest';"
     },
     {
+      "name": "ShippingTiers",
+      "kind": "type",
+      "text": "export type ShippingTiers = ReadonlyMap<ShippingTier, ShippingOption>; ;; via ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
       "name": "SilenceMeaning",
       "kind": "type",
       "text": "export type SilenceMeaning = 'denied' | 'proceeds';"
@@ -38721,6 +38975,29 @@
         "toleranceMinorUnits"
       ],
       "text": "export interface SpendRecord { readonly purchaseId: string; readonly atMs: number; readonly itemMinorUnits: MinorUnits; readonly overageMinorUnits: MinorUnits; readonly toleranceMinorUnits: MinorUnits; }"
+    },
+    {
+      "name": "StoredPurchase",
+      "kind": "interface",
+      "required": [
+        "merchantDiscovered"
+      ],
+      "text": "export interface StoredPurchase extends PurchaseRecord { readonly merchantDiscovered: boolean; }"
+    },
+    {
+      "name": "TypedHandler",
+      "kind": "type",
+      "text": "export type TypedHandler<TBody, TResult> = (input: HandlerInvocation<TBody>) => Promise<TResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "UNATTACHED_PAYMENTS_METHOD_IDS",
+      "kind": "const",
+      "text": "UNATTACHED_PAYMENTS_METHOD_IDS: readonly { readonly id: string; readonly reason: string; }[]"
+    },
+    {
+      "name": "Unregister",
+      "kind": "type",
+      "text": "export type Unregister = () => void;"
     },
     {
       "name": "VETO_WINDOW",
@@ -38776,7 +39053,17 @@
     {
       "name": "assertCartMatchesRequest",
       "kind": "function",
-      "text": "export declare function assertCartMatchesRequest(cart: readonly CartLine[], requested: readonly RequestedLine[]): CartCheck;"
+      "text": "export declare function assertCartMatchesRequest(cart: readonly CartLine[], requested: readonly RequestedLine[]): Promise<CartCheck>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "assertConfirmed",
+      "kind": "function",
+      "text": "export declare function assertConfirmed(body: unknown, ctx: { readonly explicitUserRequest: boolean; }): void;"
+    },
+    {
+      "name": "cardBrand",
+      "kind": "function",
+      "text": "export declare function cardBrand(digits: string): string;"
     },
     {
       "name": "cardFieldValue",
@@ -38784,9 +39071,14 @@
       "text": "export declare function cardFieldValue(material: CardMaterial, field: CardFieldName, options?: { readonly expirySeparator?: string; readonly twoDigitYear?: boolean; }): string;"
     },
     {
-      "name": "cheapestOption",
+      "name": "cardSecretKey",
       "kind": "function",
-      "text": "export declare function cheapestOption(options: readonly ShippingOption[]): ShippingOption | null;"
+      "text": "export declare function cardSecretKey(cardId: string, field: CardMaterialField): string;"
+    },
+    {
+      "name": "channelBackedPaymentNotifier",
+      "kind": "function",
+      "text": "export declare function channelBackedPaymentNotifier(config: PaymentsConfigReader, router: Pick<ChannelDeliveryRouter, 'deliver'>, replies: PaymentReplySource): PaymentNotifier; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "checkAddress",
@@ -38799,14 +39091,24 @@
       "text": "export declare function checkPaymentGates(input: GateInput): GateRefusal | null;"
     },
     {
+      "name": "checkoutApprovalContent",
+      "kind": "function",
+      "text": "export declare function checkoutApprovalContent(input: { readonly merchantDomain: string; readonly item: string; readonly amount: string | undefined; }): Readonly<Record<string, string | undefined>>; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
       "name": "classifyMerchant",
       "kind": "function",
       "text": "export declare function classifyMerchant(merchant: MerchantIdentity, judge: MerchantJudgePort, policy?: MerchantPolicy): Promise<MerchantVerdict>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "configBackedAddressStore",
+      "kind": "function",
+      "text": "export declare function configBackedAddressStore(config: PaymentsConfigReader): AddressStore;"
+    },
+    {
       "name": "correlatePurchaseMail",
       "kind": "function",
-      "text": "export declare function correlatePurchaseMail(mail: InboundMailFacts, records: readonly PurchaseRecord[], windowMs?: number): CorrelationResult;"
+      "text": "export declare function correlatePurchaseMail(mail: InboundMailFacts, records: readonly PurchaseRecord[]): Promise<CorrelationResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "createBrowserCheckoutDriverFactory",
@@ -38819,9 +39121,9 @@
       "text": "export declare function createChannelPaymentNotifier(deps: ChannelPaymentNotifierDeps): PaymentNotifier;"
     },
     {
-      "name": "createModelMerchantJudge",
+      "name": "createJevMerchantJudge",
       "kind": "function",
-      "text": "export declare function createModelMerchantJudge(model: MerchantJudgeModel): MerchantJudgePort;"
+      "text": "export declare function createJevMerchantJudge(): MerchantJudgePort;"
     },
     {
       "name": "dayKey",
@@ -38856,12 +39158,12 @@
     {
       "name": "detectRecurringCharge",
       "kind": "function",
-      "text": "export declare function detectRecurringCharge(orderSummaryText: string): RecurringCheck;"
+      "text": "export declare function detectRecurringCharge(orderSummaryText: string): Promise<RecurringCheck>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "evaluateCardEntry",
       "kind": "function",
-      "text": "export declare function evaluateCardEntry(input: { readonly surface: string; readonly text: string; readonly expectingCvv?: boolean; }): CardEntryDecision;"
+      "text": "export declare function evaluateCardEntry(input: { readonly surface: string; readonly text: string; readonly expectingCvv?: boolean; }): Promise<CardEntryDecision>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "evaluateMarketplaceListing",
@@ -38881,7 +39183,7 @@
     {
       "name": "extractConfirmationFacts",
       "kind": "function",
-      "text": "export declare function extractConfirmationFacts(body: string): ConfirmationFacts;"
+      "text": "export declare function extractConfirmationFacts(mail: Pick<InboundMailFacts, 'subject' | 'body' | 'receivedAtMs'>): Promise<ConfirmationFacts>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "fillAddresses",
@@ -38934,6 +39236,11 @@
       "text": "export declare function isValidTimezone(timezone: string): boolean;"
     },
     {
+      "name": "judgeMerchant",
+      "kind": "function",
+      "text": "export declare function judgeMerchant(input: MerchantJudgeInput): Promise<MerchantJudgement>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "mayEnterCardDetails",
       "kind": "function",
       "text": "export declare function mayEnterCardDetails(surface: string): boolean;"
@@ -38957,6 +39264,16 @@
       "name": "minorUnitExponent",
       "kind": "function",
       "text": "export declare function minorUnitExponent(currency: string): number;"
+    },
+    {
+      "name": "newCardId",
+      "kind": "function",
+      "text": "export declare function newCardId(): string;"
+    },
+    {
+      "name": "normalizeContext",
+      "kind": "function",
+      "text": "export declare function normalizeContext(c: GatewayMethodInvocationContext | undefined): HandlerContextEnvelope; ;; via GatewayMethodInvocationContext = export interface GatewayMethodInvocationContext { readonly principalId?: string | undefined; readonly principalKind?: 'user' | 'bot' | 'service' | 'token' | 'remote-peer' | undefined; readonly admin?: boolean | undefined; readonly scopes?: readonly string[] | undefined; readonly clientKind?: string | undefined; readonly authToken?: string | undefined; readonly metadata?: Record<string, unknown> | undefined; }"
     },
     {
       "name": "ownerSuppliedText",
@@ -38984,19 +39301,14 @@
       "text": "export declare function parseMinorUnits(raw: string, currency: CurrencyCode | string): MinorUnits | null;"
     },
     {
-      "name": "parsePaymentReply",
-      "kind": "function",
-      "text": "export declare function parsePaymentReply(text: string, kind: 'approval' | 'veto'): 'approve' | 'deny' | 'acknowledge' | 'object' | null;"
-    },
-    {
       "name": "parseQuantity",
       "kind": "function",
       "text": "export declare function parseQuantity(raw: string): number | null;"
     },
     {
-      "name": "rankShippingOptions",
-      "kind": "function",
-      "text": "export declare function rankShippingOptions(options: readonly ShippingOption[]): RankedShipping;"
+      "name": "paymentsJudgmentRegistry",
+      "kind": "const",
+      "text": "registry: BatteryRegistry"
     },
     {
       "name": "readBudgetLimits",
@@ -39029,6 +39341,11 @@
       "text": "export declare function readNotifyChannels(config: PaymentsConfigReader): readonly string[];"
     },
     {
+      "name": "readPaymentReply",
+      "kind": "function",
+      "text": "export declare function readPaymentReply(reply: string, kind: 'approval' | 'veto', notice: string): Promise<PaymentAnswer | null>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "readPaymentsEnabled",
       "kind": "function",
       "text": "export declare function readPaymentsEnabled(config: PaymentsConfigReader): boolean;"
@@ -39039,9 +39356,29 @@
       "text": "export declare function readPaymentsServiceConfig(config: PaymentsConfigReader): PaymentsServiceConfig;"
     },
     {
+      "name": "readShippingTiers",
+      "kind": "function",
+      "text": "export declare function readShippingTiers(options: readonly ShippingOption[], currency: string): Promise<ShippingTiers>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "recoverInterruptedWindow",
       "kind": "function",
       "text": "export declare function recoverInterruptedWindow(input: { readonly deliveries: readonly ChannelDelivery[]; readonly deadlinePassed: boolean; }): WindowRecovery;"
+    },
+    {
+      "name": "registerCatalogHandler",
+      "kind": "function",
+      "text": "export declare function registerCatalogHandler<TBody, TResult>(catalog: GatewayMethodCatalog, methodId: string, handler: TypedHandler<TBody, TResult>, options?: RegisterHandlerOptions): Unregister;"
+    },
+    {
+      "name": "registerCatalogHandlers",
+      "kind": "function",
+      "text": "export declare function registerCatalogHandlers(catalog: GatewayMethodCatalog, entries: readonly CatalogHandlerEntry[]): Unregister;"
+    },
+    {
+      "name": "registerPaymentsMethods",
+      "kind": "function",
+      "text": "export declare function registerPaymentsMethods(catalog: GatewayMethodCatalog, deps: PaymentsHandlerDeps): PaymentsRegistration;"
     },
     {
       "name": "renderApprovalMessage",
@@ -39096,7 +39433,7 @@
     {
       "name": "scanForCardDetails",
       "kind": "function",
-      "text": "export declare function scanForCardDetails(text: string, options?: { readonly expectingCvv?: boolean; }): CardDetailScan;"
+      "text": "export declare function scanForCardDetails(text: string, options?: { readonly expectingCvv?: boolean; }): Promise<CardDetailScan>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "senderRegistrableDomain",
@@ -39116,7 +39453,7 @@
     {
       "name": "walkShippingLadder",
       "kind": "function",
-      "text": "export declare function walkShippingLadder(input: { readonly preferred: ShippingTier; readonly options: readonly ShippingOption[]; readonly fixedUnavoidableMinorUnits: MinorUnits; readonly budgetForOverageMinorUnits: MinorUnits; }): ShippingLadderResult | null;"
+      "text": "export declare function walkShippingLadder(input: { readonly preferred: ShippingTier; readonly tiers: ShippingTiers; readonly fixedUnavoidableMinorUnits: MinorUnits; readonly budgetForOverageMinorUnits: MinorUnits; }): ShippingLadderResult | null;"
     },
     {
       "name": "windowDeadlineMs",

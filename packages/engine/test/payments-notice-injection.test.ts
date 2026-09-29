@@ -29,6 +29,7 @@ import {
 } from '../sdk/src/platform/payments/message.js';
 import { assertCartMatchesRequest, detectRecurringCharge } from '../sdk/src/platform/payments/cart.js';
 import { BudgetLedger, type BudgetLimits } from '../sdk/src/platform/payments/budget.js';
+import { usePaymentsReadings } from './helpers/payments-readings.ts';
 import {
   parseCurrencyCode,
   unsafeOwnerSuppliedTextForTests,
@@ -158,8 +159,10 @@ describe('the notices themselves arrive inert', () => {
 });
 
 describe('refusal reasons carry merchant text and must be inert too', () => {
-  test('an unexpected cart line label cannot inject', () => {
-    const check = assertCartMatchesRequest(
+  usePaymentsReadings();
+
+  test('an unexpected cart line label cannot inject', async () => {
+    const check = await assertCartMatchesRequest(
       [
         { label: 'Burr coffee grinder', quantity: 1, unitMinorUnits: 12_000 },
         { label: ATTACK, quantity: 1, unitMinorUnits: 800 },
@@ -170,16 +173,15 @@ describe('refusal reasons carry merchant text and must be inert too', () => {
     expectInert(check.reason ?? '');
   });
 
-  test('recurring-charge evidence lifted off the page cannot inject', () => {
-    // The payload has to land INSIDE a capturing pattern to be a real case.
-    // The trial-then-charge detector spans arbitrary text between "then" and
-    // "per month", so the merchant controls what gets quoted back.
+  test('a recurring-charge refusal quotes nothing off the page', async () => {
+    // The order summary is the merchant's text. The refusal used to quote the
+    // matched fragments back; it now quotes nothing, so a payload in the
+    // summary has no way into the message.
     const summary = 'Free trial, then [A](http://e.co) per month';
-    const check = detectRecurringCharge(summary);
+    const check = await detectRecurringCharge(summary);
     expect(check.recurring).toBe(true);
-    expect(check.matched.some((hit) => hit.includes('e.co'))).toBe(true);
-    // …and the reason built from it is still inert.
     expectInert(check.reason ?? '');
+    expect(check.reason ?? '').not.toContain('e.co');
     expect(check.reason ?? '').not.toMatch(/\[[^\]]*\]\([^)]*\)/);
   });
 });

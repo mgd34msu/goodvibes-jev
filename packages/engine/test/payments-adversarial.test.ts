@@ -31,7 +31,7 @@ import {
 } from '../sdk/src/platform/payments/windows.js';
 import { BudgetLedger, type BudgetLimits } from '../sdk/src/platform/payments/budget.js';
 import { decidePurchase } from '../sdk/src/platform/payments/decide.js';
-import { walkShippingLadder } from '../sdk/src/platform/payments/shipping.js';
+import { readShippingTiers, walkShippingLadder, type ShippingTiers } from '../sdk/src/platform/payments/shipping.js';
 import { checkPaymentGates } from '../sdk/src/platform/payments/gates.js';
 import { assertCartMatchesRequest, detectRecurringCharge } from '../sdk/src/platform/payments/cart.js';
 import { dayKey } from '../sdk/src/platform/payments/day.js';
@@ -48,9 +48,9 @@ import {
   unsafeOwnerSuppliedTextForTests,
   type CurrencyCode,
 } from '../sdk/src/platform/payments/types.js';
-import { useSecurityReadings } from './helpers/security-readings.ts';
+import { usePaymentsReadings, withPaymentsReadings } from './helpers/payments-readings.ts';
 
-useSecurityReadings();
+const readings = usePaymentsReadings();
 
 const USD = parseCurrencyCode('USD') as CurrencyCode;
 
@@ -425,11 +425,12 @@ describe('the shipping ladder steps down one rung at a time', () => {
     { rawLabel: 'Express', costMinorUnits: 900 },
     { rawLabel: 'Overnight', costMinorUnits: 1_500 },
   ];
+  const tiers: ShippingTiers = new Map([['normal', options[0]!], ['fast', options[1]!], ['fastest', options[2]!]]);
 
   test('it takes the preferred tier when the pool covers it', () => {
     const result = walkShippingLadder({
       preferred: 'fastest',
-      options,
+      tiers,
       fixedUnavoidableMinorUnits: 0,
       budgetForOverageMinorUnits: 2_000,
     });
@@ -442,7 +443,7 @@ describe('the shipping ladder steps down one rung at a time', () => {
     // option; a jump to the cheapest would silently downgrade him further.
     const result = walkShippingLadder({
       preferred: 'fastest',
-      options,
+      tiers,
       fixedUnavoidableMinorUnits: 0,
       budgetForOverageMinorUnits: 900,
     });
@@ -459,7 +460,7 @@ describe('the shipping ladder steps down one rung at a time', () => {
   test('it stops at the cheapest and reports the step-down that got there', () => {
     const result = walkShippingLadder({
       preferred: 'fastest',
-      options,
+      tiers,
       fixedUnavoidableMinorUnits: 0,
       budgetForOverageMinorUnits: 500,
     });
@@ -471,7 +472,7 @@ describe('the shipping ladder steps down one rung at a time', () => {
   test('nothing fits even at the cheapest rung', () => {
     const result = walkShippingLadder({
       preferred: 'normal',
-      options,
+      tiers,
       fixedUnavoidableMinorUnits: 0,
       budgetForOverageMinorUnits: 100,
     });
@@ -481,17 +482,91 @@ describe('the shipping ladder steps down one rung at a time', () => {
   test('tax and mandatory fees are part of what must fit', () => {
     const result = walkShippingLadder({
       preferred: 'fastest',
-      options,
+      tiers,
       fixedUnavoidableMinorUnits: 1_000,
       budgetForOverageMinorUnits: 1_600,
     });
     expect(result?.tier).toBe('normal');
   });
+
+  test('a tier that was not read is stepped past', () => {
+    const noFast: ShippingTiers = new Map([['normal', options[0]!], ['fastest', options[2]!]]);
+    const result = walkShippingLadder({
+      preferred: 'fastest',
+      tiers: noFast,
+      fixedUnavoidableMinorUnits: 0,
+      budgetForOverageMinorUnits: 900,
+    });
+    expect(result?.tier).toBe('normal');
+    expect(result?.rungsTried).toBe(2);
+  });
+});
+
+describe('which offered option is each tier is read, not taken from the price order', () => {
+  test('one option is every tier, and nothing is asked', async () => {
+    const only = { rawLabel: 'Standard', costMinorUnits: 500 };
+    const read = await readShippingTiers([only], 'USD');
+    expect([...read.values()]).toEqual([only, only, only]);
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  test('a pricier add-on is not taken for speed', async () => {
+    const offered = [
+      { rawLabel: 'Standard', costMinorUnits: 400 },
+      { rawLabel: 'Standard with signature', costMinorUnits: 900 },
+      { rawLabel: 'Express 1-2 days', costMinorUnits: 1_500 },
+    ];
+    const read = await withPaymentsReadings({
+      shipping: (tier, shown) => {
+        const index = shown.findIndex((option) => (tier === 'standard' ? option.label === 'Standard' : option.label.startsWith('Express')));
+        return index === -1 ? null : index;
+      },
+    }, () => readShippingTiers(offered, 'USD'));
+    expect(read.get('normal')?.rawLabel).toBe('Standard');
+    expect(read.get('fastest')?.rawLabel).toBe('Express 1-2 days');
+    // Nothing between standard and fastest reads as faster: fast is the fastest.
+    expect(read.get('fast')?.rawLabel).toBe('Express 1-2 days');
+  });
+
+  test('when no option is faster than standard there is no fast or fastest tier', async () => {
+    const offered = [
+      { rawLabel: 'Ground', costMinorUnits: 0 },
+      { rawLabel: 'Ground + insurance', costMinorUnits: 350 },
+    ];
+    const read = await withPaymentsReadings({ shipping: (tier) => (tier === 'standard' ? 0 : null) }, () => readShippingTiers(offered, 'USD'));
+    expect(read.get('normal')?.rawLabel).toBe('Ground');
+    expect(read.has('fast')).toBe(false);
+    expect(read.has('fastest')).toBe(false);
+  });
+
+  test('a fast reading that does not act leaves fast out rather than taking the fastest', async () => {
+    const offered = [
+      { rawLabel: 'Standard', costMinorUnits: 499 },
+      { rawLabel: 'Two-day', costMinorUnits: 1_299 },
+      { rawLabel: 'Overnight', costMinorUnits: 2_999 },
+    ];
+    const read = await withPaymentsReadings({ shipping: (tier) => (tier === 'standard' ? 0 : tier === 'fastest' ? 2 : 'unsure') }, () => readShippingTiers(offered, 'USD'));
+    expect(read.get('normal')?.rawLabel).toBe('Standard');
+    expect(read.get('fastest')?.rawLabel).toBe('Overnight');
+    expect(read.has('fast')).toBe(false);
+  });
+
+  test('the fast reading is asked only over the options between standard and fastest', async () => {
+    const offered = [
+      { rawLabel: 'Economy', costMinorUnits: 299 },
+      { rawLabel: 'Priority', costMinorUnits: 799 },
+      { rawLabel: 'Overnight', costMinorUnits: 1_999 },
+    ];
+    await readShippingTiers(offered, 'USD');
+    const fast = readings.requests.find((request) => request.context?.battery === 'engine.payments.shipping-fast');
+    const labels = (fast?.state as { candidates: { content: { label: string } }[] }).candidates.map((candidate) => candidate.content.label);
+    expect(labels).toEqual(['Priority']);
+  });
 });
 
 describe('no filler item is ever added', () => {
-  test('an extra line the owner did not ask for aborts the purchase', () => {
-    const check = assertCartMatchesRequest(
+  test('an extra line the owner did not ask for aborts the purchase', async () => {
+    const check = await assertCartMatchesRequest(
       [
         { label: 'Burr coffee grinder', quantity: 1, unitMinorUnits: 12_000 },
         { label: 'Coffee filters 100ct', quantity: 1, unitMinorUnits: 800 },
@@ -503,20 +578,37 @@ describe('no filler item is ever added', () => {
     expect(check.reason).toContain('free shipping');
   });
 
-  test('inflating the quantity of a requested item is caught too', () => {
-    const check = assertCartMatchesRequest(
+  test('inflating the quantity of a requested item is caught too', async () => {
+    const check = await assertCartMatchesRequest(
       [{ label: 'Burr coffee grinder', quantity: 3, unitMinorUnits: 12_000 }],
       [{ label: 'burr coffee grinder', quantity: 1 }],
     );
     expect(check.ok).toBe(false);
   });
 
-  test('an exact match passes', () => {
-    const check = assertCartMatchesRequest(
+  test('a line the reading takes as the requested item passes', async () => {
+    const check = await assertCartMatchesRequest(
       [{ label: 'Burr coffee grinder', quantity: 1, unitMinorUnits: 12_000 }],
       [{ label: 'burr coffee grinder', quantity: 1 }],
     );
     expect(check.ok).toBe(true);
+  });
+
+  test('the merchant\'s own name for the item passes when the reading says it is that item', async () => {
+    const check = await withPaymentsReadings({ cartLine: (cart) => (cart.startsWith('Baratza') ? 0 : null) }, () => assertCartMatchesRequest(
+      [{ label: 'Baratza Encore Conical Burr Coffee Grinder (ZCG485)', quantity: 1, unitMinorUnits: 14_900 }],
+      [{ label: 'burr coffee grinder', quantity: 1 }],
+    ));
+    expect(check.ok).toBe(true);
+  });
+
+  test('a line the reading is unsure about is a line the owner did not ask for', async () => {
+    const check = await withPaymentsReadings({ cartLine: () => null }, () => assertCartMatchesRequest(
+      [{ label: 'Burr coffee grinder', quantity: 1, unitMinorUnits: 12_000 }],
+      [{ label: 'burr coffee grinder', quantity: 1 }],
+    ));
+    expect(check.ok).toBe(false);
+    expect(check.missing).toHaveLength(1);
   });
 
   test('there is no free-shipping-threshold logic anywhere in the payments module', async () => {
@@ -663,12 +755,13 @@ describe('the decision order', () => {
     { rawLabel: 'Express', costMinorUnits: 900 },
     { rawLabel: 'Overnight', costMinorUnits: 1_500 },
   ];
+  const shippingTiers: ShippingTiers = new Map([['normal', shippingOptions[0]!], ['fast', shippingOptions[1]!], ['fastest', shippingOptions[2]!]]);
 
   test('an in-budget purchase needs no approval', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 5_000, taxMinorUnits: 400, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits, pools: poolsFor(new BudgetLedger()), budgetCurrency: USD, preferredTier: 'normal',
     });
@@ -679,7 +772,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 9_500, taxMinorUnits: 400, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits: { ...limits, perPurchaseCeiling: { enabled: false, minorUnits: 0 } },
       pools: (() => {
@@ -701,7 +794,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 9_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       // Fits the daily budget of 10,000 but exceeds the 8,000 ceiling.
       limits, pools: poolsFor(new BudgetLedger()), budgetCurrency: USD, preferredTier: 'normal',
@@ -722,7 +815,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 3_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits, pools: ledger.snapshot(limits, nowMs, 'UTC'),
       budgetCurrency: USD, preferredTier: 'fastest',
@@ -745,7 +838,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 3_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits, pools: ledger.snapshot(limits, nowMs, 'UTC'),
       budgetCurrency: USD, preferredTier: 'normal',
@@ -771,7 +864,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 3_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits: tolerant, pools: ledger.snapshot(tolerant, nowMs, 'UTC'),
       budgetCurrency: USD, preferredTier: 'normal',
@@ -785,7 +878,7 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 100, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: USD, shippingOptions,
+        currency: USD, shippingOptions, shippingTiers,
       },
       limits: { ...limits, dailyItemMinorUnits: 0 },
       pools: poolsFor(new BudgetLedger()), budgetCurrency: USD, preferredTier: 'normal',
@@ -800,13 +893,57 @@ describe('the decision order', () => {
     const outcome = decidePurchase({
       quoted: {
         itemMinorUnits: 5_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
-        currency: parseCurrencyCode('EUR') as CurrencyCode, shippingOptions,
+        currency: parseCurrencyCode('EUR') as CurrencyCode, shippingOptions, shippingTiers,
       },
       limits, pools: poolsFor(new BudgetLedger()), budgetCurrency: USD, preferredTier: 'normal',
     });
     expect(outcome.kind).toBe('refuse');
     if (outcome.kind !== 'refuse') return;
     expect(outcome.code).toBe('currency-mismatch');
+  });
+
+  test('tolerance covers the shortfall at the lowest rung, not the preferred one', () => {
+    const tolerant: BudgetLimits = {
+      ...limits,
+      overageTolerance: { enabled: true, dailyAllowanceMinorUnits: 1_000 },
+    };
+    const ledger = new BudgetLedger();
+    const nowMs = Date.parse('2026-07-27T12:00:00Z');
+    ledger.reserve({
+      id: 'spent', itemMinorUnits: 0, overageMinorUnits: 1_900, toleranceMinorUnits: 0,
+      limits: tolerant, nowMs, timezone: 'UTC',
+    });
+    ledger.commit('spent', nowMs);
+
+    const outcome = decidePurchase({
+      quoted: {
+        itemMinorUnits: 3_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
+        currency: USD, shippingOptions, shippingTiers,
+      },
+      limits: tolerant, pools: ledger.snapshot(tolerant, nowMs, 'UTC'),
+      budgetCurrency: USD, preferredTier: 'fastest',
+    });
+    expect(outcome.kind).toBe('within-budget');
+    if (outcome.kind !== 'within-budget') return;
+    // 100 left in the overage pool; standard delivery is 500, so 400 comes
+    // from tolerance. Overnight at 1,500 would have needed 1,400, more than
+    // the whole allowance, and is never what tolerance pays for.
+    expect(outcome.shipping.tier).toBe('normal');
+    expect(outcome.draw.toleranceMinorUnits).toBe(400);
+    expect(outcome.shipping.stepDown).toEqual({ from: 'fastest', to: 'normal', savedMinorUnits: 1_000, reason: 'overage-pool-insufficient' });
+  });
+
+  test('options offered but no tier read: refused with a reason that says so', () => {
+    const outcome = decidePurchase({
+      quoted: {
+        itemMinorUnits: 3_000, taxMinorUnits: 0, mandatoryFeesMinorUnits: 0,
+        currency: USD, shippingOptions, shippingTiers: new Map(),
+      },
+      limits, pools: poolsFor(new BudgetLedger()), budgetCurrency: USD, preferredTier: 'normal',
+    });
+    expect(outcome.kind).toBe('refuse');
+    if (outcome.kind !== 'refuse') return;
+    expect(outcome.reason).toContain('could not tell which');
   });
 });
 
@@ -816,13 +953,18 @@ describe('recurring charges are refused', () => {
     'Your plan renews automatically on 27 August',
     '$9.99 per month after the free trial',
     'Save my card for future purchases',
-  ])('refuses: %s', (summary) => {
-    expect(detectRecurringCharge(summary).recurring).toBe(true);
+  ])('refuses: %s', async (summary) => {
+    expect((await detectRecurringCharge(summary)).recurring).toBe(true);
   });
 
-  test('an ordinary one-off order summary is not flagged', () => {
-    const check = detectRecurringCharge('1 x Burr coffee grinder — USD 120.00. Standard delivery.');
+  test('an ordinary one-off order summary is not flagged', async () => {
+    const check = await detectRecurringCharge('1 x Burr coffee grinder, USD 120.00. Standard delivery.');
     expect(check.recurring).toBe(false);
+  });
+
+  test('a reading that is not a confident no refuses', async () => {
+    const check = await withPaymentsReadings({ recurring: () => 'unsure' }, () => detectRecurringCharge('1 x Burr coffee grinder, USD 120.00.'));
+    expect(check.recurring).toBe(true);
   });
 });
 

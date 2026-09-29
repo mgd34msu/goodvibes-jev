@@ -226,9 +226,9 @@ export function extractCheckout(
       feeLabels,
       shippingOptions,
       subtotalMinorUnits,
-      // Kept raw: `detectRecurringCharge` matches patterns against it and the
-      // matched fragments are sanitised there, at the point they become a
-      // message. Sanitising here would rewrite the text the detector reads.
+      // Kept raw: `detectRecurringCharge` has Jev read it, and none of it is
+      // ever quoted back to the owner. Sanitising here would rewrite the text
+      // the reading sees.
       orderSummaryText: raw.orderSummaryText,
     },
   };

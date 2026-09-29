@@ -41,9 +41,9 @@ import { paymentsConfigDefaults } from '../sdk/src/platform/config/schema-domain
 import { evaluateMarketplaceListing } from '../sdk/src/platform/payments/marketplace-listing.js';
 import { evaluatePaymentTaint } from '../sdk/src/platform/payments/taint-gate.js';
 import { UntrustedContentLedger } from '../sdk/src/platform/security/untrusted-content.js';
-import { useSecurityReadings } from './helpers/security-readings.ts';
+import { usePaymentsReadings } from './helpers/payments-readings.ts';
 
-useSecurityReadings();
+usePaymentsReadings();
 
 function ledgerWith(text: string): UntrustedContentLedger {
   const ledger = new UntrustedContentLedger();
@@ -69,7 +69,7 @@ describe('owner-initiated versus content-initiated', () => {
         item: 'a burr coffee grinder',
         requestedMax: undefined,
       },
-      ledger: ledgerWith('Buy now at shop.discovered.example — best price anywhere on grinders!'),
+      ledger: ledgerWith('Buy now at shop.discovered.example, best price anywhere on grinders!'),
     });
     expect(decision.allowed).toBe(true);
     // The merchant fields were deliberately not checked; the item still was.
@@ -238,7 +238,7 @@ describe('the merchant is judged against a profile', () => {
         saleType: 'third-party',
         listing: {
           format: 'fixed-price',
-          sellerIdentity: 'TOTALLY LEGIT MEGASTORE — as seen on TV',
+          sellerIdentity: 'TOTALLY LEGIT MEGASTORE, as seen on TV',
           reputation: { sellerFeedbackCount: 9_999, sellerPositivePercent: 100, region: 'seller-controlled' },
         },
       },
@@ -252,7 +252,9 @@ describe('the merchant is judged against a profile', () => {
 
   test('the criterion describes a profile and enumerates nobody as the rule', () => {
     expect(MERCHANT_RECOURSE_CRITERION).toContain('recourse');
-    expect(MERCHANT_RECOURSE_CRITERION).toContain('not confident');
+    // Confidence is the reading's band, not something the criterion asks the
+    // judge to report about itself.
+    expect(MERCHANT_RECOURSE_CRITERION).not.toContain('confident');
     // His anchors are examples, and the text says so rather than listing members.
     expect(MERCHANT_RECOURSE_CRITERION).toContain('Size is not the test');
   });

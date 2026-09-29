@@ -24,9 +24,13 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   createChannelPaymentNotifier,
-  parsePaymentReply,
+  readPaymentReply,
   type PaymentNoticeTarget,
+  type PaymentReplySource,
 } from '../sdk/src/platform/payments/notice-delivery.js';
+import { usePaymentsReadings } from './helpers/payments-readings.ts';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   advanceApproval,
   advanceVeto,
@@ -236,23 +240,63 @@ describe('an explicit answer during the window', () => {
 // ═══ Reading an answer ═════════════════════════════════════════════════════
 
 describe('reading a reply as an answer', () => {
-  test('the same word means opposite things on the two windows', () => {
-    expect(parsePaymentReply('go', 'approval')).toBe('approve');
-    expect(parsePaymentReply('go', 'veto')).toBe('acknowledge');
-    expect(parsePaymentReply('stop', 'approval')).toBe('deny');
-    expect(parsePaymentReply('stop', 'veto')).toBe('object');
+  const readings = usePaymentsReadings();
+  const NOTICE = 'Buying in 10 minutes unless you say stop: mouse from microcenter.com, total 31.49 USD.';
+
+  test('each window kind asks its own reading, so one word can settle them differently', async () => {
+    expect(await readPaymentReply('go', 'approval', NOTICE)).toBe('approve');
+    expect(await readPaymentReply('go', 'veto', NOTICE)).toBe('acknowledge');
+    expect(await readPaymentReply('stop', 'approval', NOTICE)).toBe('deny');
+    expect(await readPaymentReply('stop', 'veto', NOTICE)).toBe('object');
+    expect(readings.requests.map((request) => request.context?.battery)).toEqual([
+      'engine.payments.approval-reply',
+      'engine.payments.veto-reply',
+      'engine.payments.approval-reply',
+      'engine.payments.veto-reply',
+    ]);
   });
 
-  test('a leading answer word still counts', () => {
-    expect(parsePaymentReply('stop please', 'veto')).toBe('object');
-    expect(parsePaymentReply('go ahead', 'veto')).toBe('acknowledge');
+  test('the reply is read against the notice it follows', async () => {
+    await readPaymentReply('go ahead', 'veto', NOTICE);
+    expect(readings.requests[0]?.state).toEqual({ proposal: NOTICE, reply: 'go ahead' });
   });
 
-  test('anything unrecognised is NO answer, so the window\'s own silence rule decides', () => {
+  test('an unclear reading is NO answer, so the window\'s own silence rule decides', async () => {
     // Not guessed into an approval. On the veto path a guess buys something.
-    expect(parsePaymentReply('what is this', 'veto')).toBe(null);
-    expect(parsePaymentReply('hmm, maybe later?', 'approval')).toBe(null);
-    expect(parsePaymentReply('', 'veto')).toBe(null);
+    expect(await readPaymentReply('what is this', 'veto', NOTICE)).toBe(null);
+    expect(await readPaymentReply('hmm, maybe later?', 'approval', NOTICE)).toBe(null);
+  });
+
+  test('an empty reply is not read', async () => {
+    expect(await readPaymentReply('   ', 'veto', NOTICE)).toBe(null);
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  test('a reading that does not act is no answer, even when it leans to approve', async () => {
+    const weak = fakePort((_name, question) => choiceAnswer(question, 'approve', 0.6));
+    const previous = installJudgmentPort(weak.port);
+    try {
+      expect(await readPaymentReply('yeah probably', 'approval', NOTICE)).toBe(null);
+    } finally {
+      installJudgmentPort(previous);
+    }
+  });
+
+  test('the notifier hands the notice it sent to the reply source', async () => {
+    const seen: string[] = [];
+    const replies: PaymentReplySource = {
+      async waitForAnswer(input) {
+        seen.push(input.notice);
+        return null;
+      },
+    };
+    const channel = fakeChannel();
+    const notifier = createChannelPaymentNotifier({ router: channel.router, targets: targets(), replies });
+    await notifier.deliver({ kind: 'approval', message: 'approve the hub?' });
+    await notifier.deliver({ kind: 'veto', message: 'buying the mouse' });
+    await notifier.awaitAnswer({ kind: 'approval', deadlineMs: 0 });
+    await notifier.awaitAnswer({ kind: 'veto', deadlineMs: 0 });
+    expect(seen).toEqual(['approve the hub?', 'buying the mouse']);
   });
 });
 

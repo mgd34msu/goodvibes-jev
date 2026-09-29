@@ -114,6 +114,17 @@ export async function store(name: string): Promise<void> {
     expect(result.output).toContain('computed secret key');
   });
 
+  test('a key minted under a declared prefix family is classified', async () => {
+    const result = await runGate(`
+declare const secrets: { set(key: string, value: string): Promise<void> };
+function cardSecretKey(id: string, field: string): string { return \`GOODVIBES_PAYMENTS_CARD_\${id}_\${field}\`; }
+export async function store(id: string): Promise<void> {
+  await secrets.set(cardSecretKey(id, 'number'), 'value');
+}
+`);
+    expect(result.ok).toBe(true);
+  });
+
   test('the platform derivation classifies by construction, wrapper and all', async () => {
     const result = await runGate(`
 declare const secrets: { set(key: string, value: string): Promise<void> };

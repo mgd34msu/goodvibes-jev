@@ -38,6 +38,9 @@ import {
   WEBUI_CARD_ENTRY_CONDITIONS,
 } from '../sdk/src/platform/payments/entry-surface.js';
 import { parseCommandAuthorityChannel } from '../sdk/src/platform/payments/types.js';
+import { usePaymentsReadings, withPaymentsReadings } from './helpers/payments-readings.ts';
+
+const readings = usePaymentsReadings();
 
 const FIXTURE_PAN = '4242424242424242';
 const FIXTURE_PAN_SPACED = '4242 4242 4242 4242';
@@ -92,33 +95,59 @@ describe('entering and approving are different questions', () => {
 });
 
 describe('card details arriving on a remote channel are refused', () => {
-  test('a plausible card number is refused and never stored', () => {
-    const decision = evaluateCardEntry({ surface: 'telegram', text: `my card is ${FIXTURE_PAN}` });
+  test('a plausible card number is refused and never stored', async () => {
+    const decision = await evaluateCardEntry({ surface: 'telegram', text: `my card is ${FIXTURE_PAN}` });
     expect(decision.allowed).toBe(false);
     expect(decision.matched).toContain('card-number');
     expect(decision.reason).not.toBeNull();
   });
 
-  test('a spaced card number is caught too', () => {
-    const decision = evaluateCardEntry({ surface: 'telegram', text: FIXTURE_PAN_SPACED });
+  test('a spaced card number is caught too', async () => {
+    const decision = await evaluateCardEntry({ surface: 'telegram', text: FIXTURE_PAN_SPACED });
     expect(decision.matched).toContain('card-number');
   });
 
-  test('an expiry pattern is caught', () => {
-    expect(scanForCardDetails('12/34').matched).toContain('expiry');
+  test('an expiry the card-talk reading says is one is caught', async () => {
+    expect((await scanForCardDetails('card exp 12/34')).matched).toContain('expiry');
   });
 
-  test('a bare CVV is caught only when one was just asked for', () => {
+  test('a meeting date the reading says is not an expiry is not card details', async () => {
+    const scan = await withPaymentsReadings({ expiry: () => false }, () => scanForCardDetails('lunch on 12/28?'));
+    expect(scan.looksLikeCardDetails).toBe(false);
+  });
+
+  test('a long digit run that fails the Luhn checksum is not a card number', async () => {
+    expect((await scanForCardDetails('order 4242424242424241 shipped')).matched).not.toContain('card-number');
+  });
+
+  test('a bare CVV is caught only when one was just asked for', async () => {
     // A three-digit message means nothing out of context, and refusing every
     // one of them would make the channel unusable.
-    expect(scanForCardDetails('123').looksLikeCardDetails).toBe(false);
-    expect(scanForCardDetails('123', { expectingCvv: true }).matched).toContain('cvv');
+    expect((await scanForCardDetails('123')).looksLikeCardDetails).toBe(false);
+    expect((await scanForCardDetails('123', { expectingCvv: true })).matched).toContain('cvv');
   });
 
-  test('THE REFUSAL DOES NOT ECHO THE DIGITS', () => {
+  test('a reply to a security-code request that the reading says is not the code is not refused', async () => {
+    const scan = await withPaymentsReadings({ securityCodeReply: () => false }, () => scanForCardDetails('after 1700 please', { expectingCvv: true }));
+    expect(scan.matched).not.toContain('cvv');
+  });
+
+  test('an unsure security-code reading counts as the code', async () => {
+    const scan = await withPaymentsReadings({ securityCodeReply: () => 'unsure' }, () => scanForCardDetails('482', { expectingCvv: true }));
+    expect(scan.matched).toContain('cvv');
+  });
+
+  test('the security-code reading never sees a digit', async () => {
+    await scanForCardDetails('it is 482', { expectingCvv: true });
+    const asked = readings.requests.filter((request) => request.context?.battery === 'engine.payments.security-code-reply');
+    expect(asked).toHaveLength(1);
+    expect(JSON.stringify(asked[0]?.state)).not.toMatch(/\d/);
+  });
+
+  test('THE REFUSAL DOES NOT ECHO THE DIGITS', async () => {
     // The refusal is delivered over the same channel that stored the message.
     // Quoting the value, even masked, would write it there a second time.
-    const decision = evaluateCardEntry({ surface: 'telegram', text: `card ${FIXTURE_PAN} exp 12/34` });
+    const decision = await evaluateCardEntry({ surface: 'telegram', text: `card ${FIXTURE_PAN} exp 12/34` });
     const reply = decision.reason ?? '';
     expect(reply).not.toContain(FIXTURE_PAN);
     expect(reply).not.toContain('4242');
@@ -129,8 +158,8 @@ describe('card details arriving on a remote channel are refused', () => {
 
   });
 
-  test('the scan reports shapes, never the matching text', () => {
-    const scan = scanForCardDetails(`${FIXTURE_PAN} 12/34`);
+  test('the scan reports shapes, never the matching text', async () => {
+    const scan = await scanForCardDetails(`${FIXTURE_PAN} 12/34`);
     expect(JSON.stringify(scan)).not.toContain(FIXTURE_PAN);
     expect(JSON.stringify(scan)).not.toContain('4242');
   });
@@ -141,15 +170,15 @@ describe('card details arriving on a remote channel are refused', () => {
     expect(reply).toContain('exposed');
   });
 
-  test('an ordinary remote message is not treated as a refused card entry', () => {
-    const decision = evaluateCardEntry({ surface: 'telegram', text: 'what did the daemon do overnight?' });
+  test('an ordinary remote message is not treated as a refused card entry', async () => {
+    const decision = await evaluateCardEntry({ surface: 'telegram', text: 'what did the daemon do overnight?' });
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toBeNull();
     expect(decision.matched).toEqual([]);
   });
 
-  test('the same card details at a terminal are accepted', () => {
-    const decision = evaluateCardEntry({ surface: 'tui', text: FIXTURE_PAN });
+  test('the same card details at a terminal are accepted', async () => {
+    const decision = await evaluateCardEntry({ surface: 'tui', text: FIXTURE_PAN });
     expect(decision.allowed).toBe(true);
     expect(decision.reason).toBeNull();
   });

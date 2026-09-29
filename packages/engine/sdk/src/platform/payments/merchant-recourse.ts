@@ -71,26 +71,13 @@ import {
 export type { SaleType } from './marketplace-listing.js';
 
 /**
- * The criterion the judgement answers, in one place.
- *
- * Exported so the daemon's judge and this module's documentation cannot drift
- * into asking two different questions. It deliberately describes a PROFILE and
- * gives the owner's anchoring examples rather than enumerating anybody.
+ * The criterion the judgement answers. Written once, in the merchant reading
+ * (batteries/merchant.ts), which asks it; re-exported so this module's
+ * documentation and any reader of the policy name the same question. It
+ * describes a PROFILE and gives the owner's anchoring examples rather than
+ * enumerating anybody.
  */
-export const MERCHANT_RECOURSE_CRITERION = [
-  'Judging only the registrable domain given, not any page content, and not anything the',
-  'merchant says about itself, is this an established retailer where a buyer would have real',
-  'recourse if the purchase went wrong: consumer protections, a returns process, an accountable',
-  'business with something to lose?',
-  '',
-  'Size is not the test and neither is fame. Micro Center qualifies despite being far smaller',
-  'than Walmart. Etsy qualifies because of its buyer protection. Established online-only',
-  'retailers such as Redbubble qualify despite having no stores. A storefront like',
-  'jeffsgadgets.biz does not qualify, because there is nobody to go to.',
-  '',
-  'If you are not confident, say so. Being asked about a real retailer costs one message; the',
-  'reverse costs money spent somewhere with no way to get it back.',
-].join(' ');
+export { MERCHANT_RECOURSE_CRITERION } from './batteries/merchant.js';
 
 /** How a marketplace carries recourse, when the domain is one. */
 export type MarketplaceKind =
@@ -115,20 +102,25 @@ export interface MerchantJudgeInput {
 export interface MerchantJudgement {
   readonly qualifies: boolean;
   /**
-   * Whether the judge is confident. Anything less resolves to not-major, so an
-   * unsure judgement and a negative one have the same effect on spending.
+   * Whether the judgement is confident: for the Jev judge, both of its
+   * readings act. Anything less resolves to not-major, so an unsure
+   * judgement and a negative one have the same effect on spending.
    */
   readonly confident: boolean;
   /**
-   * Why, in the judge's own words, a phrase like "buyer protection applies" or
-   * "established electronics retailer with a returns process". Rendered to the
-   * owner so the notification names the recourse rather than a verdict.
+   * The recourse, as a phrase the owner reads, such as "a marketplace whose
+   * buyer protection covers the purchase". Rendered to the owner so the
+   * notification names the recourse rather than a verdict.
    */
   readonly recourse: string;
   readonly marketplace?: MarketplaceKind | undefined;
 }
 
-/** Supplied by the daemon. The SDK owns the criterion and the policy; not the model call. */
+/**
+ * The judge the checkout flow asks. The composition supplies it; the engine's
+ * own is `createJevMerchantJudge` (merchant-judge-model.ts), the Jev reading.
+ * Tests supply doubles.
+ */
 export interface MerchantJudgePort {
   judge(input: MerchantJudgeInput): Promise<MerchantJudgement>;
 }

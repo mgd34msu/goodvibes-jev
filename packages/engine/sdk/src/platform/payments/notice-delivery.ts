@@ -46,7 +46,9 @@
  * the rule to live and drift; the assertion instead is that nothing
  * markup-shaped survives into the rendered notice at all.
  */
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sanitizeNoticeField } from '../security/notice-text.js';
+import { approvalReply, vetoReply } from './batteries/payment-reply.js';
 import type { ChannelDelivery } from './windows.js';
 import type { PaymentNotifier } from './checkout-flow.js';
 import type { CommandAuthorityChannel } from './types.js';
@@ -85,11 +87,14 @@ export interface PaymentReplySource {
    * Null must mean SILENCE and nothing else. An implementation that resolved
    * null on its own internal error would convert a failure into "the owner did not
    * object", which on the veto path buys something.
+   *
+   * `notice` is the message the owner was sent; a reply is read against it.
    */
   waitForAnswer(input: {
     readonly kind: 'approval' | 'veto';
     readonly deadlineMs: number;
     readonly channels: readonly CommandAuthorityChannel[];
+    readonly notice: string;
   }): Promise<{
     readonly answer: 'approve' | 'deny' | 'acknowledge' | 'object';
     readonly channel: CommandAuthorityChannel;
@@ -107,49 +112,38 @@ export interface ChannelPaymentNotifierDeps {
   }) => void) | undefined;
 }
 
-/**
- * The words that count as an answer, and what each means.
- *
- * Deliberately small and exact. A fuzzy match on a purchase answer is a way to
- * read "no thanks, not that one" as an acknowledgement; anything unrecognised
- * is treated as no answer at all, which leaves the window's own silence rule to
- * decide, the rule the owner set, rather than a guess this parser made.
- */
-const APPROVAL_WORDS: ReadonlyMap<string, 'approve' | 'deny'> = new Map([
-  ['approve', 'approve'], ['approved', 'approve'], ['yes', 'approve'], ['y', 'approve'],
-  ['ok', 'approve'], ['okay', 'approve'], ['go', 'approve'], ['buy it', 'approve'],
-  ['deny', 'deny'], ['denied', 'deny'], ['no', 'deny'], ['n', 'deny'],
-  ['cancel', 'deny'], ['stop', 'deny'], ['don\'t', 'deny'], ['dont', 'deny'],
-]);
+/** The decision site the reply readings are logged under. */
+export const PAYMENT_REPLY_SITE = 'payments.reply';
 
-const VETO_WORDS: ReadonlyMap<string, 'acknowledge' | 'object'> = new Map([
-  ['go', 'acknowledge'], ['ok', 'acknowledge'], ['okay', 'acknowledge'],
-  ['yes', 'acknowledge'], ['y', 'acknowledge'], ['approve', 'acknowledge'],
-  ['buy it', 'acknowledge'], ['send it', 'acknowledge'],
-  ['stop', 'object'], ['no', 'object'], ['n', 'object'], ['cancel', 'object'],
-  ['wait', 'object'], ['don\'t', 'object'], ['dont', 'object'], ['hold', 'object'],
-]);
+export type PaymentAnswer = 'approve' | 'deny' | 'acknowledge' | 'object';
 
 /**
- * Read an inbound reply as an answer, or as nothing.
+ * Read an inbound reply as an answer to the notice it follows, or as nothing.
  *
- * The two maps are separate because the same word means opposite things: "stop"
- * on an approval is a denial and on a veto is an objection, and both happen to
- * refuse, but "go" is an approval on one and an acknowledgement on the other,
- * and those settle differently.
+ * Read by Jev, once per window kind (`engine.payments.approval-reply`,
+ * `engine.payments.veto-reply`), because the same words settle the two
+ * windows differently: "go" is an approval on one and an acknowledgement on
+ * the other. An answer is taken only when the reading acts; `unclear`, and
+ * any reading short of act, is no answer at all, which leaves the window's
+ * own silence rule to decide, the rule the owner set.
  */
-export function parsePaymentReply(
-  text: string,
+export async function readPaymentReply(
+  reply: string,
   kind: 'approval' | 'veto',
-): 'approve' | 'deny' | 'acknowledge' | 'object' | null {
-  const normalized = text.trim().toLowerCase().replace(/[.!?,]+$/, '');
-  if (normalized.length === 0) return null;
-  const table = kind === 'approval' ? APPROVAL_WORDS : VETO_WORDS;
-  const direct = table.get(normalized);
-  if (direct !== undefined) return direct;
-  // A leading word still counts: "stop please" and "go ahead" are answers.
-  const [first] = normalized.split(/\s+/);
-  return first === undefined ? null : (table.get(first) ?? null);
+  notice: string,
+): Promise<PaymentAnswer | null> {
+  if (reply.trim().length === 0) return null;
+  const port = judgmentPort(PAYMENT_REPLY_SITE);
+  if (kind === 'approval') {
+    const read = await approvalReply.read(port, notice, reply, { site: PAYMENT_REPLY_SITE });
+    const answer = read.reading.outcome === 'act' && read.reading.choice !== 'unclear' ? read.reading.choice : null;
+    read.recordAction(answer ?? 'no answer');
+    return answer;
+  }
+  const read = await vetoReply.read(port, notice, reply, { site: PAYMENT_REPLY_SITE });
+  const answer = read.reading.outcome === 'act' && read.reading.choice !== 'unclear' ? read.reading.choice : null;
+  read.recordAction(answer ?? 'no answer');
+  return answer;
 }
 
 /**
@@ -162,8 +156,11 @@ export function parsePaymentReply(
  * would push the decision past the point where the total is still valid.
  */
 export function createChannelPaymentNotifier(deps: ChannelPaymentNotifierDeps): PaymentNotifier {
+  // The last notice of each window kind, which a reply is read against.
+  const notices: { approval: string; veto: string } = { approval: '', veto: '' };
   return {
     async deliver(input): Promise<readonly ChannelDelivery[]> {
+      if (input.kind !== 'notice') notices[input.kind] = input.message;
       const deliveries: ChannelDelivery[] = [];
       for (const target of deps.targets) {
         let delivered = false;
@@ -198,6 +195,7 @@ export function createChannelPaymentNotifier(deps: ChannelPaymentNotifierDeps): 
         kind: input.kind,
         deadlineMs: input.deadlineMs,
         channels,
+        notice: notices[input.kind],
       });
     },
   };

@@ -73,7 +73,11 @@
  * late.
  */
 
-/** Surfaces where card details may be typed. */
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { maskDigits } from '../security/batteries/card-talk.js';
+import { cardShapeKinds, detectCardShapes, type CardShapeKind } from '../security/card-shapes.js';
+import { securityCodeReply } from './batteries/security-code-reply.js';
+
 /**
  * Surfaces where card details may be typed.
  *
@@ -133,12 +137,17 @@ export function isRemoteMessageSurface(surface: string): boolean {
   return REMOTE_MESSAGE_SURFACES.includes(surface.trim().toLowerCase());
 }
 
-/** Digit runs long enough to be a card number, ignoring spaces and dashes. */
-const PAN_SHAPED = /(?:\d[ -]?){13,19}/;
-/** MM/YY or MM/YYYY, the shape an expiry prompt gets answered with. */
-const EXPIRY_SHAPED = /\b(0[1-9]|1[0-2])\s*[/-]\s*(\d{2}|\d{4})\b/;
-/** A bare 3-4 digit group, which is what a CVV answer looks like. */
-const CVV_SHAPED = /^\s*\d{3,4}\s*$/;
+/** The decision site the security-code reply reading is logged under. */
+export const SECURITY_CODE_REPLY_SITE = 'payments.security-code-reply';
+
+/** A bare 3 or 4 digit run: something that could be a security code at all. */
+const SHORT_DIGIT_RUN = /\b\d{3,4}\b/;
+
+const SHAPE_NAMES: Readonly<Record<CardShapeKind, 'card-number' | 'expiry' | 'cvv'>> = {
+  pan: 'card-number',
+  expiry: 'expiry',
+  'security-code': 'cvv',
+};
 
 export interface CardDetailScan {
   readonly looksLikeCardDetails: boolean;
@@ -147,28 +156,39 @@ export interface CardDetailScan {
 }
 
 /**
- * Does this inbound message look like it carries card details?
+ * Does this inbound message carry card details?
  *
- * Returns only WHICH SHAPE matched, never the matching text. A scanner that
+ * Returns only WHICH KIND was found, never the matching text. A scanner that
  * echoed its evidence would put the card in the refusal, the log line and the
  * notification body, the exact places this exists to keep it out of.
  *
- * `expectingCvv` is set when the last thing we asked for was a verification
- * code, because a bare "123" is meaningless out of context and refusing every
- * three-digit message would be unusable.
+ * The same detection the remote channel gate uses (security/card-shapes.ts):
+ * a card number is a 13 to 19 digit run that passes the Luhn checksum, in
+ * code, because that is what a card number is and asking about one would send
+ * the digits off the machine; whether a short number is a security code or an
+ * `MM/YY` pair an expiry is the digit-masked `engine.security.card-talk`
+ * reading. They replace a digit-count regex that took any 13 to 19 digits (an
+ * order or tracking number) as a card and any `MM/YY` (a meeting date) as an
+ * expiry.
  *
- * Luhn is deliberately NOT used to narrow this. A number that fails Luhn is
- * still a number the owner typed into a chat surface, and the point is to stop that
- * happening at all rather than to grade the quality of what leaked.
+ * `expectingCvv` is set when the last thing we asked for was the security
+ * code. A bare "482" means nothing without that context, and with it the
+ * question is a different one: does this reply give the code that was asked
+ * for? That is read by Jev too (`engine.payments.security-code-reply`), over
+ * the reply with every digit masked, and anything but a confident no counts
+ * as the code.
  */
-export function scanForCardDetails(text: string, options: { readonly expectingCvv?: boolean } = {}): CardDetailScan {
-  const matched: ('card-number' | 'expiry' | 'cvv')[] = [];
-  const digitsOnly = text.replace(/[^\d]/g, '');
-  if (PAN_SHAPED.test(text) && digitsOnly.length >= 13 && digitsOnly.length <= 19) {
-    matched.push('card-number');
+export async function scanForCardDetails(text: string, options: { readonly expectingCvv?: boolean } = {}): Promise<CardDetailScan> {
+  const found = new Set(cardShapeKinds(await detectCardShapes(text)).map((kind) => SHAPE_NAMES[kind]));
+  if (options.expectingCvv === true && !found.has('cvv') && SHORT_DIGIT_RUN.test(text)) {
+    const run = await securityCodeReply.run(judgmentPort(SECURITY_CODE_REPLY_SITE), maskDigits(text), { site: SECURITY_CODE_REPLY_SITE });
+    const reading = run.readings.gives_code;
+    const givesCode = !(reading.verdict === 'no' && reading.outcome === 'act');
+    run.recordAction(givesCode ? 'treated as the security code' : 'not the security code');
+    if (givesCode) found.add('cvv');
   }
-  if (EXPIRY_SHAPED.test(text)) matched.push('expiry');
-  if (options.expectingCvv === true && CVV_SHAPED.test(text)) matched.push('cvv');
+  const order: readonly ('card-number' | 'expiry' | 'cvv')[] = ['card-number', 'expiry', 'cvv'];
+  const matched = order.filter((kind) => found.has(kind));
   return { looksLikeCardDetails: matched.length > 0, matched };
 }
 
@@ -211,12 +231,12 @@ export interface CardEntryDecision {
  * Note the asymmetry with approvals: this function has no bearing on whether
  * the same surface may approve a purchase. See the module header.
  */
-export function evaluateCardEntry(input: {
+export async function evaluateCardEntry(input: {
   readonly surface: string;
   readonly text: string;
   readonly expectingCvv?: boolean;
-}): CardEntryDecision {
-  const scan = scanForCardDetails(input.text, { expectingCvv: input.expectingCvv === true });
+}): Promise<CardEntryDecision> {
+  const scan = await scanForCardDetails(input.text, { expectingCvv: input.expectingCvv === true });
   if (mayEnterCardDetails(input.surface)) {
     return { allowed: true, reason: null, matched: scan.matched };
   }

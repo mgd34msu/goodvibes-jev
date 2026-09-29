@@ -7,9 +7,9 @@
  *
  *  1. `PaymentsServiceConfig` had the right fields and nothing built it from
  *     the real config manager, so a budget the owner typed did nothing.
- *  2. `MerchantJudgePort` had a criterion and a contract and nothing called a
- *     model, so "determine if it is reputable" always resolved to "I could not
- *     form a judgement".
+ *  2. `MerchantJudgePort` had a criterion and a contract and nothing asked
+ *     anything, so "determine if it is reputable" always resolved to "I could
+ *     not form a judgement". It is now the Jev merchant reading.
  */
 import { describe, expect, test } from 'bun:test';
 
@@ -21,8 +21,9 @@ import {
   readPaymentsServiceConfig,
   type PaymentsConfigReader,
 } from '../sdk/src/platform/payments/payments-config.js';
-import { createModelMerchantJudge } from '../sdk/src/platform/payments/merchant-judge-model.js';
+import { createJevMerchantJudge } from '../sdk/src/platform/payments/merchant-judge-model.js';
 import { MERCHANT_RECOURSE_CRITERION } from '../sdk/src/platform/payments/merchant-recourse.js';
+import { usePaymentsReadings, withPaymentsReadings } from './helpers/payments-readings.ts';
 
 /** A config manager standing on a plain map, so a test can set one key. */
 function config(values: Record<string, unknown>): PaymentsConfigReader {
@@ -140,111 +141,67 @@ describe('the service configuration is read from live config', () => {
 
 // ═══ The judge ═════════════════════════════════════════════════════════════
 
-/** A model that records what it was asked and answers with whatever is given. */
-function fakeModel(answer: string | null | (() => never)) {
-  const calls: { task: string; prompt: string; systemPrompt: string | undefined }[] = [];
-  return {
-    calls,
-    model: {
-      async chat(
-        task: 'intent_classify',
-        prompt: string,
-        options: { readonly maxTokens?: number; readonly systemPrompt?: string },
-      ): Promise<string | null> {
-        calls.push({ task, prompt, systemPrompt: options.systemPrompt });
-        if (typeof answer === 'function') {
-          answer();
-          // `answer` is declared `() => never`, so reaching this line means the
-          // fixture was handed a function that returns. Saying so beats what
-          // the unnarrowed `return answer` did, which was hand the function
-          // itself back as if it were the model's reply.
-          throw new Error('fakeModel: the answer function returned instead of throwing');
-        }
-        return answer;
-      },
-    },
-  };
-}
+describe('the merchant judgement is the Jev merchant reading', () => {
+  const readings = usePaymentsReadings();
+  const judge = createJevMerchantJudge();
 
-describe('the merchant judgement is made by a model', () => {
-  test('the prompt carries the criterion and the domain, and nothing else', async () => {
-    const fake = fakeModel('{"qualifies": true, "confident": true, "recourse": "returns process"}');
-    const judge = createModelMerchantJudge(fake.model);
+  test('the reading sees the domain and nothing else, and asks the criterion', async () => {
     await judge.judge({ registrableDomain: 'bestbuy.com' });
-
-    expect(fake.calls.length).toBe(1);
-    const call = fake.calls[0];
-    expect(call?.systemPrompt).toContain(MERCHANT_RECOURSE_CRITERION);
+    expect(readings.requests).toHaveLength(1);
+    const request = readings.requests[0]!;
     // The ONLY variable content. A page title, seller name or review count in
     // here would be the merchant writing its own reference.
-    expect(call?.prompt).toBe('Domain: bestbuy.com');
+    expect(request.state).toEqual({ registrable_domain: 'bestbuy.com' });
+    expect(request.context?.battery).toBe('engine.payments.merchant');
+    expect(JSON.stringify(request.questions['qualifies'])).toContain('Size is not the test');
+    expect(MERCHANT_RECOURSE_CRITERION).toContain('recourse');
   });
 
-  test('a qualifying verdict is returned as given', async () => {
-    const fake = fakeModel('{"qualifies": true, "confident": true, "recourse": "established electronics retailer"}');
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'bestbuy.com' });
-    expect(verdict.qualifies).toBe(true);
-    expect(verdict.confident).toBe(true);
-    expect(verdict.recourse).toContain('established');
+  test('a confident qualifying reading is a confident yes, with the recourse named', async () => {
+    const verdict = await judge.judge({ registrableDomain: 'bestbuy.com' });
+    expect(verdict).toEqual({
+      qualifies: true,
+      confident: true,
+      recourse: 'an established retailer that stands behind its sales with a returns process',
+      marketplace: 'none',
+    });
   });
 
-  test('an answer wrapped in a code fence is still read', async () => {
-    const fake = fakeModel('```json\n{"qualifies": false, "confident": true, "recourse": "none found"}\n```');
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'jeffsgadgets.biz' });
+  test('a marketplace kind comes from the recourse reading', async () => {
+    expect((await judge.judge({ registrableDomain: 'etsy.com' })).marketplace).toBe('buyer-protection');
+    expect((await judge.judge({ registrableDomain: 'ebay.com' })).marketplace).toBe('per-seller');
+  });
+
+  test('a confident no is a confident not-qualifying judgement', async () => {
+    const verdict = await judge.judge({ registrableDomain: 'jeffsgadgets.biz' });
     expect(verdict.qualifies).toBe(false);
-    expect(verdict.recourse).toBe('none found');
+    expect(verdict.confident).toBe(true);
   });
 
-  test('an unsure model is not a yes', async () => {
-    const fake = fakeModel('{"qualifies": true, "confident": false, "recourse": "maybe"}');
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'unknown.example' });
+  test('a reading that does not act is not confident, and carries no marketplace kind', async () => {
+    const verdict = await withPaymentsReadings(
+      { merchant: () => ({ qualifies: true, recourse: 'per-seller', unsure: true }) },
+      () => judge.judge({ registrableDomain: 'unknown.example' }),
+    );
     // classifyMerchant treats unconfident as not-major, so this resolves to an
     // approval where silence denies.
     expect(verdict.confident).toBe(false);
+    expect(verdict.marketplace).toBeUndefined();
   });
 
-  test('a missing confidence field reads as NOT confident', async () => {
-    const fake = fakeModel('{"qualifies": true, "recourse": "big shop"}');
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'x.example' });
-    expect(verdict.confident).toBe(false);
-  });
-
-  for (const [label, answer] of [
-    ['prose instead of JSON', 'Yes, that is a well known retailer with good returns.'],
-    ['a non-boolean verdict', '{"qualifies": "true", "confident": true, "recourse": "x"}'],
-    ['a missing verdict', '{"confident": true, "recourse": "x"}'],
-    ['empty', ''],
-    ['broken JSON', '{"qualifies": true, '],
-  ] as const) {
-    test(`${label} resolves to not-major rather than being salvaged`, async () => {
-      const fake = fakeModel(answer);
-      const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'x.example' });
-      expect(verdict.qualifies).toBe(false);
-      expect(verdict.confident).toBe(false);
-    });
-  }
-
-  test('a model that is unavailable resolves to not-major, never to yes', async () => {
-    const fake = fakeModel(() => {
-      throw new Error('Helper model routing is disabled.');
-    });
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'bestbuy.com' });
-    // A model outage must never make spending MORE automatic.
+  test('a yes with no recourse named is a contradiction, read as not confident', async () => {
+    const verdict = await withPaymentsReadings(
+      { merchant: () => ({ qualifies: true, recourse: 'none' }) },
+      () => judge.judge({ registrableDomain: 'odd.example' }),
+    );
     expect(verdict.qualifies).toBe(false);
     expect(verdict.confident).toBe(false);
-    expect(verdict.recourse).toContain('asking first');
   });
 
-  test('a helper that returns null (no route configured) resolves to not-major', async () => {
-    const fake = fakeModel(null);
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: 'bestbuy.com' });
+  test('an empty domain is not asked about at all', async () => {
+    const verdict = await judge.judge({ registrableDomain: '   ' });
+    expect(readings.requests).toHaveLength(0);
     expect(verdict.qualifies).toBe(false);
-  });
-
-  test('an empty domain is not sent to a model at all', async () => {
-    const fake = fakeModel('{"qualifies": true, "confident": true, "recourse": "x"}');
-    const verdict = await createModelMerchantJudge(fake.model).judge({ registrableDomain: '   ' });
-    expect(fake.calls.length).toBe(0);
-    expect(verdict.qualifies).toBe(false);
+    expect(verdict.confident).toBe(false);
   });
 });

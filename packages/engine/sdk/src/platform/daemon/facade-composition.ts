@@ -722,6 +722,7 @@ export function createDaemonFacadeCollaborators(
     providerRuntime,
     builtinChannels,
     workProposals,
+    paymentReplies: surfaceActionHelper.paymentReplies,
   };
 }
 

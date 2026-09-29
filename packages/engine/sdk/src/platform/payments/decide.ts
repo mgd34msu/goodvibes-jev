@@ -36,7 +36,7 @@
  *    no downgrade is possible, the overbudget item does not go though."
  */
 import type { BudgetLimits, PoolSnapshot } from './budget.js';
-import { walkShippingLadder, type ShippingLadderResult } from './shipping.js';
+import { walkShippingLadder, type ShippingLadderResult, type ShippingTiers } from './shipping.js';
 import type {
   CurrencyCode,
   MinorUnits,
@@ -44,6 +44,7 @@ import type {
   ShippingOption,
   ShippingTier,
 } from './types.js';
+import { SHIPPING_TIERS } from './types.js';
 
 /** What the checkout quoted, once parsed into integers we trust. */
 export interface QuotedTotals {
@@ -53,6 +54,8 @@ export interface QuotedTotals {
   readonly mandatoryFeesMinorUnits: MinorUnits;
   readonly currency: CurrencyCode;
   readonly shippingOptions: readonly ShippingOption[];
+  /** Which offered option each tier is, as `readShippingTiers` read it. */
+  readonly shippingTiers: ShippingTiers;
 }
 
 export interface DecisionInput {
@@ -132,7 +135,7 @@ export function decidePurchase(input: DecisionInput): DecisionOutcome {
 
   let shipping = walkShippingLadder({
     preferred: input.preferredTier,
-    options: quoted.shippingOptions,
+    tiers: quoted.shippingTiers,
     fixedUnavoidableMinorUnits: fixedUnavoidable,
     budgetForOverageMinorUnits: overageAvailable,
   });
@@ -140,31 +143,49 @@ export function decidePurchase(input: DecisionInput): DecisionOutcome {
   let toleranceDraw = 0;
 
   if (shipping === null) {
-    // Nothing fits even at the cheapest rung. The tolerance pool is the only
-    // remaining path, and it is OFF by default with a zero allowance.
-    const ladderAtAnyPrice = walkShippingLadder({
-      preferred: input.preferredTier,
-      options: quoted.shippingOptions,
+    // Nothing fits even at the lowest rung. The tolerance pool is the only
+    // remaining path, and it is OFF by default with a zero allowance. The
+    // shortfall is measured at the lowest rung offered, standard delivery when
+    // it is: tolerance covers the least the checkout can cost, never the tier
+    // the owner would have preferred.
+    const lowestTier = SHIPPING_TIERS.find((tier) => quoted.shippingTiers.has(tier));
+    const lowest = lowestTier === undefined ? null : walkShippingLadder({
+      preferred: lowestTier,
+      tiers: quoted.shippingTiers,
       fixedUnavoidableMinorUnits: fixedUnavoidable,
       budgetForOverageMinorUnits: Number.MAX_SAFE_INTEGER,
     });
+    const preferredOption = quoted.shippingTiers.get(input.preferredTier);
+    const ladderAtAnyPrice: ShippingLadderResult | null = lowest === null ? null : {
+      ...lowest,
+      stepDown: lowest.tier === input.preferredTier || preferredOption === undefined
+        ? null
+        : {
+            from: input.preferredTier,
+            to: lowest.tier,
+            savedMinorUnits: preferredOption.costMinorUnits - lowest.costMinorUnits,
+            reason: 'overage-pool-insufficient',
+          },
+    };
     if (ladderAtAnyPrice === null) {
       return {
         kind: 'refuse',
         code: 'overage-pool-exhausted',
-        reason:
-          'Refused: this checkout offers no delivery option, so I cannot work out what the '
-          + 'unavoidable charges would be.',
+        reason: quoted.shippingOptions.length === 0
+          ? 'Refused: this checkout offers no delivery option, so I cannot work out what the '
+            + 'unavoidable charges would be.'
+          : 'Refused: I could not tell which of this checkout\'s delivery options is standard or '
+            + 'faster, so I cannot choose one within your budget.',
       };
     }
-    const cheapestDraw = fixedUnavoidable + ladderAtAnyPrice.costMinorUnits;
-    const shortfall = cheapestDraw - overageAvailable;
+    const lowestDraw = fixedUnavoidable + ladderAtAnyPrice.costMinorUnits;
+    const shortfall = lowestDraw - overageAvailable;
     if (!limits.overageTolerance.enabled || shortfall > pools.tolerance.remaining) {
       return {
         kind: 'refuse',
         code: 'overage-pool-exhausted',
         reason:
-          `Refused: tax, fees and even the cheapest delivery come to ${cheapestDraw} and only `
+          `Refused: tax, fees and even the lowest delivery option I could choose come to ${lowestDraw} and only `
           + `${overageAvailable} is left in today's overage budget. I stepped delivery all the way `
           + 'down and it still does not fit, so this does not go through.',
       };

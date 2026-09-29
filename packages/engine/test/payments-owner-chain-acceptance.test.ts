@@ -58,9 +58,9 @@ import type { PurchaseRecord } from '../sdk/src/platform/payments/checkout-flow.
 
 import { startFixtureMerchant, type FixtureMerchant } from './helpers/fixture-merchant.js';
 import { FixtureCheckoutDriver, readFixtureCheckout } from './helpers/fixture-checkout-driver.js';
-import { useSecurityReadings } from './helpers/security-readings.ts';
+import { usePaymentsReadings } from './helpers/payments-readings.ts';
 
-useSecurityReadings();
+usePaymentsReadings();
 
 /** Obviously fake. No real card material appears in this repository. */
 const SENTINEL = {
@@ -305,8 +305,13 @@ describe('reading the store\'s email, and telling him about it', () => {
     const record = harness.recorded[0];
     expect(record).toBeDefined();
 
-    const result = correlatePurchaseMail(
-      { senderAddress: 'orders@order-update.bestbuy.com', receivedAtMs: Date.now() },
+    const result = await correlatePurchaseMail(
+      {
+        senderAddress: 'orders@order-update.bestbuy.com',
+        receivedAtMs: Date.now(),
+        subject: 'Your order is confirmed',
+        body: `Thanks for your order: ${record?.item ?? ''}. Order #BB-99182.`,
+      },
       harness.recorded,
     );
     // A different SUBDOMAIN of the same registrable domain still matches,
@@ -319,8 +324,13 @@ describe('reading the store\'s email, and telling him about it', () => {
     const handler = createPaymentsCheckoutBeginHandler(harness.service);
     await handler({ body: await beginParams() } as unknown as Parameters<typeof handler>[0]);
 
-    const result = correlatePurchaseMail(
-      { senderAddress: 'orders@bestbuy-receipts.example', receivedAtMs: Date.now() },
+    const result = await correlatePurchaseMail(
+      {
+        senderAddress: 'orders@bestbuy-receipts.example',
+        receivedAtMs: Date.now(),
+        subject: 'Your order is confirmed',
+        body: `Thanks for your order: ${harness.recorded[0]?.item ?? ''}.`,
+      },
       harness.recorded,
     );
     expect(result.kind).toBe('unrelated');
@@ -343,7 +353,7 @@ describe('reading the store\'s email, and telling him about it', () => {
       'Visit https://bestbuy-receipts.example/verify to confirm.',
     ].join('\n');
 
-    const facts = extractConfirmationFacts(body);
+    const facts = await extractConfirmationFacts({ subject: 'Order confirmed', body, receivedAtMs: Date.now() });
     expect(facts.orderNumber).toBe('BB-99182');
     expect(facts.trackingReference).toBe('1Z999AA10123456784');
 
