@@ -31,8 +31,11 @@ describe('goodvibes-toolchain dispatcher', () => {
   });
 
   test('the dispatch table covers every tool bin exactly (no drift in either direction)', () => {
-    const bins = Object.keys(binMap())
-      .filter((name) => name !== 'goodvibes-toolchain')
+    // Only the toolchain's own bins (paths under ./toolchain/); the manifest also
+    // carries other packages' bins, such as the contract runner's goodvibes-contract.
+    const bins = Object.entries(binMap())
+      .filter(([name, path]) => name !== 'goodvibes-toolchain' && path.startsWith('./toolchain/'))
+      .map(([name]) => name)
       .map((name) => name.replace(/^goodvibes-/, ''))
       .sort();
     expect(dispatcherTools().sort()).toEqual(bins);
