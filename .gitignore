@@ -14,6 +14,7 @@ packages/engine/.tmp/
 
 # Verdaccio dry-run and test scratch dir
 packages/engine/.test-tmp/
+packages/engine/test/.test-tmp/
 
 # api-extractor transient output (temp/ is gitignored; only etc/ baseline is committed)
 temp/
