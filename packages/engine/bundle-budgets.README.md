@@ -39,6 +39,12 @@ Entry keys must match the `./sdk/*` keys of the `exports` map in `packages/engin
   subsystem entries such as `./platform/knowledge` and `./platform/runtime/ui`,
   must have a budget.
 
+## Recorded raises and additions
+
+- **`./platform/contract`, raised at contract runner part R.11.** The budget was last set at R.5 (2024 B). R.6 to R.10 added the runner surface the design names: the steps a host may take over through `ContractRunnerDeps.steps` (correction, completion, escalation, amendment, answers, plan sync), best-of-N, resume, turn intake, fleet controls, the route selector and the external bridge, with their batteries. That is required code, so the budget follows it. What was not surface was taken out of the barrel instead: `engineItem`, `checkSummaries`, `queueSessionNudge`, `resumeStatus`, `resumeStepOf` and `findZombieCause`, internal helpers no consumer imported. Measured 2858 B, budget 3430 B.
+- **`./platform/runtime/client-services`, not raised at R.11.** R.10's runner composition put it 1 B over. The native-agents-only fleet probe that it and `agent-graph-composition.ts` each built inline is now `nativeAgentFleetCapacity` in `runtime/contract-composition.ts`, which brought it to 5765 B, under the existing 5852 B budget.
+- **`./platform/routing`, added at R.11.** The routing subsystem's entry was exported by ledger task E.4 without a budget. Measured 805 B, budget 966 B.
+
 ## Validation
 
 `scripts/bundle-budget.ts` compares `bundle-budgets.json` keys to `package.json` exports. CI fails on missing or unknown entries. To add a new export, add it to `package.json/exports` AND `bundle-budgets.json/<key>` in the same PR.

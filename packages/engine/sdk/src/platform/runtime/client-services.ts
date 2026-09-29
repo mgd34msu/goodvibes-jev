@@ -118,8 +118,7 @@ import { resolveRuntimeFeatureFlags } from './feature-flag-composition.js';
 import { createProviderStack } from './provider-stack.js';
 import type { ProviderModelDiscoveryMode, ProviderRegistryFactory } from './provider-stack.js';
 import { createAgentGraph } from './agent-graph.js';
-import { composeContractRunner, resumeContracts } from './contract-composition.js';
-import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
+import { composeContractRunner, nativeAgentFleetCapacity, resumeContracts } from './contract-composition.js';
 import type { ContractRunner } from '../contract/runner.js';
 import { attachConfigEmitBridge } from './config/index.js';
 import { FeatureAnnouncementStore, featureAnnouncementsPath } from './feature-announcements.js';
@@ -534,7 +533,6 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const contextAccountingHolder = new ContextAccountingHolder();
   const sessionLiveTurnControls = new SessionLiveTurnControlsHolder();
 
-  // This composition hosts no third-party coding agents, so the fleet counts native agents only.
   const contracts = composeContractRunner({
     runtimeBus: options.runtimeBus,
     agentManager: agents.agentManager,
@@ -542,7 +540,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     configManager,
     providerRegistry: providers.providerRegistry,
     projectRoot: workingDirectory,
-    fleetCapacity: makeRuntimeFleetProbe({ readConfig: (key) => configManager.get(key as never), agentManager: agents.agentManager, acpHost: { list: () => [] } }),
+    fleetCapacity: nativeAgentFleetCapacity(configManager, agents.agentManager),
     runtimeStore: options.runtimeStore,
   });
   agents.agentOrchestrator.setDependencies({

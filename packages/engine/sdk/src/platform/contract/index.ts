@@ -123,18 +123,18 @@ export {
   serializeContract,
 } from './store.js';
 export type { ContractReapSummary, ContractSnapshot, ContractSnapshotRejection, ContractStoreOptions } from './store.js';
-export { CHANGING_TOOLS, createUnitCheckLoop, queueSessionNudge } from './agent-hooks.js';
+export { CHANGING_TOOLS, createUnitCheckLoop } from './agent-hooks.js';
 export type { ContractAgentHooks, ContractHoldOutcome, ContractSessionHooks, UnitCheckEscalations, UnitCheckLoop, UnitCheckLoopDeps } from './agent-hooks.js';
 // Running contracts (sections 2.2, 4, 6.1, 7.3 and 7.4).
 export { AGENT_MANAGER_SESSION_ID, createContractRunner, filesModified, resolveIsolation } from './runner.js';
 export type { ContractRunner, ContractRunnerDeps, StartedContract } from './runner.js';
 // Resume and zombie reaping at startup (section 7.2).
-export { createContractResume, findZombieCause, resumeStatus, resumeStepOf } from './resume.js';
+export { createContractResume } from './resume.js';
 export type { ContractResume, ContractResumeDeps, ResumeReport, ResumeStep } from './resume.js';
 // Correction and finishing (sections 5 and 6).
 export { createContractSteps } from './steps.js';
 export type { ContractSteps, ContractStepsWithReplies, StepContext } from './steps.js';
-export { SESSION_NO_DELEGATION_NOTE, STALL_ROUTE_SITE, checkSummaries, createCorrection } from './correction.js';
+export { SESSION_NO_DELEGATION_NOTE, STALL_ROUTE_SITE, createCorrection } from './correction.js';
 export type { Correction, TargetFinding } from './correction.js';
 export { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFreshGroup, validateFixPlan } from './fix-plan.js';
 export type { FixBrief, FixScope } from './fix-plan.js';
@@ -171,7 +171,7 @@ export {
 export type { ContractPlanSync, ContractPlanSyncDeps, ExecutionPlans, WorkPlanService } from './plan-sync.js';
 export { ContractRun, failureFromError, isAbortError } from './run-context.js';
 export type { InFlightCheck, RunControl, RunEnv, SessionTurnState, SpawnPurpose, UnitRuntime } from './run-context.js';
-export { createGroupRunner, engineItem, takeBaseline } from './group-runner.js';
+export { createGroupRunner, takeBaseline } from './group-runner.js';
 export type { ContractEngineInput, GroupRunner, GroupRunnerDeps, GroupSteps } from './group-runner.js';
 export {
   ATTEMPT_ANSWER_CAP_CHARS,

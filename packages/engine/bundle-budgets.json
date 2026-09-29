@@ -258,8 +258,8 @@
     "rationale": "config facade with secrets, services, subscriptions, helper model, tool LLM, the daemon-served shared-config tier + admin-scoped credential-status read, and the config-ownership surface (scope resolution, daemon-tier paths, the daemon-owned migration and the derived control-plane base-url readers); re-anchored when the tree-root and daemon-home resolution policy (goodvibes-home.ts: the GOODVIBES_HOME / GOODVIBES_DAEMON_HOME readers, the derived tree directory, the ownership record and the relocated-process question) moved here from the two products that each carried a copy, together with the getConfiguredProviderId and isEffectiveDangerMode derivations; measured 3163 B gzip @ the config-twin hoist; headroom max(ceil(3163*1.2)=3796, 3163+50=3213) \u2192 3796 (1.2x dominates by 583 B)"
   },
   "./platform/contract": {
-    "gzip_bytes": 2429,
-    "rationale": "the contract runner's public surface (contract data model, settings, store, events, planning, evidence, checks, nudges, reports, and the runner: holds, workstreams, briefs, usage, watchdog); re-measured 2024 B gzip after runner execution (R.5); headroom max(ceil(2024*1.2)=2429, 2024+50=2074) \u2192 2429 (1.2x dominates by 355 B)"
+    "gzip_bytes": 3430,
+    "rationale": "the contract runner's public surface: the data model, settings, store, events, planning, evidence, checks, nudges, reports and runner of R.1 to R.5, and the steps a host may take over (correction, completion, escalation, amendment, answers, plan sync), best-of-N, resume, turn intake, fleet controls, the route selector and the external bridge added by R.6 to R.10; internal helpers with no consumer were taken out of the barrel in R.11; re-measured 2858 B gzip @ R.11; headroom max(ceil(2858*1.2)=3430, 2858+50=2908) \u2192 3430 (1.2x dominates by 522 B)"
   },
   "./platform/control-plane": {
     "gzip_bytes": 1967,
@@ -428,6 +428,10 @@
   "./platform/rewind": {
     "gzip_bytes": 622,
     "rationale": "unified message-anchored rewind service export (UnifiedRewindService + token store + IO types) plus the conversation host broker that lets the surface hosting a conversation serve a conversation-scope rewind; re-measured 518 B gzip @ commit f3c14554 with the turn-anchor registry and its sidecar reap added; headroom max(ceil(518*1.2)=622, 518+50=568) -> 622 (1.2x dominates)"
+  },
+  "./platform/routing": {
+    "gzip_bytes": 966,
+    "rationale": "the routing subsystem's public entry (tiers and policy, the request, model, catalog and provider batteries, the route planner, model tier and identity readings, provider access readings, the user error line, task routes and the routing judgment registry), exported by E.4 without a budget; measured 805 B gzip @ R.11; headroom max(ceil(805*1.2)=966, 805+50=855) \u2192 966 (1.2x dominates by 111 B)"
   },
   "./platform/runtime/client-services": {
     "gzip_bytes": 5852,

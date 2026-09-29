@@ -21,9 +21,8 @@ import type { ContractRunner } from '../contract/runner.js';
 import { AgentManager, ContextAccountingHolder } from '../tools/index.js';
 import type { ConfigManager } from '../config/index.js';
 import type { ProviderRegistry } from '../providers/index.js';
-import { composeContractRunner, resumeContracts } from './contract-composition.js';
+import { composeContractRunner, nativeAgentFleetCapacity, resumeContracts } from './contract-composition.js';
 import type { RuntimeEventBus } from './events/index.js';
-import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import type { RuntimeStore } from './store/index.js';
 
 export interface AgentGraph {
@@ -69,7 +68,6 @@ export function createAgentGraph(options: {
     release: (agentId) => agentManager.releaseConversationSource(agentId),
   });
   agentManager.setRuntimeBus(options.runtimeBus);
-  // This graph hosts no third-party coding agents, so the fleet counts native agents only.
   const composed = composeContractRunner({
     runtimeBus: options.runtimeBus,
     agentManager,
@@ -77,7 +75,7 @@ export function createAgentGraph(options: {
     configManager: options.configManager,
     providerRegistry: options.providerRegistry,
     projectRoot: options.workingDirectory,
-    fleetCapacity: makeRuntimeFleetProbe({ readConfig: (key) => options.configManager.get(key as never), agentManager, acpHost: { list: () => [] } }),
+    fleetCapacity: nativeAgentFleetCapacity(options.configManager, agentManager),
     runtimeStore: options.runtimeStore,
   });
   void resumeContracts(composed.runner, options.workingDirectory);

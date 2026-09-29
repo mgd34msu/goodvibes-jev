@@ -34,6 +34,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { buildPricingSeams } from './cost/pricing-seams.js';
 import type { RuntimeEventBus } from './events/index.js';
+import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import type { RuntimeStore } from './store/index.js';
 
 export interface ContractRunnerCompositionOptions {
@@ -50,6 +51,15 @@ export interface ContractRunnerCompositionOptions {
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
   readonly workPlanService?: WorkPlanService | undefined;
   readonly planManager?: ExecutionPlans | undefined;
+}
+
+/**
+ * The fleet ceiling for a composition that hosts no third-party coding
+ * agents (the client composition and the standalone agent graph): the fleet
+ * counts native agents only.
+ */
+export function nativeAgentFleetCapacity(configManager: Pick<ConfigManager, 'get'>, agentManager: Pick<AgentManager, 'list'>): FleetCapacityFn {
+  return makeRuntimeFleetProbe({ readConfig: (key) => configManager.get(key as never), agentManager, acpHost: { list: () => [] } });
 }
 
 /** The composed runner and its store; `dispose` releases both. */
