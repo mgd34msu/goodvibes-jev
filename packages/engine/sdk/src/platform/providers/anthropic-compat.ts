@@ -98,6 +98,7 @@ export interface AnthropicCompatOptions {
  */
 export class AnthropicCompatProvider implements LLMProvider {
   readonly name: string;
+  readonly adapterKind = 'anthropic-compat' as const;
   readonly credentialAuthority = 'resolver' as const;
   readonly modelSource: ProviderModelSource;
 

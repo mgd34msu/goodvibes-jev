@@ -1,6 +1,7 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 import { readsAsReasoningRejection } from '../routing/provider-readings.js';
+import { providerAdapterKind, speaksAnthropicMessages } from './adapter-kind.js';
 
 /**
  * Per-model reasoning-effort resolution.
@@ -534,21 +535,21 @@ export function isAcceptableReasoningEffortSetting(value: unknown, sessionId?: s
 /**
  * One line describing what this model receives on the wire, for the `/effort`
  * explainer. Generated from the resolved spec so it cannot go stale the way a
- * hand-written per-provider string does.
+ * hand-written per-provider string does. The field name follows the adapter
+ * the provider is registered on (adapter-kind.ts): the Anthropic Messages
+ * adapters send `output_config.effort` and `thinking.budget_tokens`, the
+ * Gemini adapter sends `thinking_config`, and every other adapter sends the
+ * OpenAI-style `reasoning_effort`.
  */
 export function describeReasoningWire(spec: ReasoningEffortSpec, providerId?: string): string {
-  const provider = (providerId ?? '').toLowerCase();
+  const kind = providerId === undefined ? undefined : providerAdapterKind(providerId);
   switch (spec.kind) {
     case 'effort':
-      if (provider.includes('anthropic') || provider.includes('bedrock') || provider.includes('vertex')) {
-        return 'output_config.effort';
-      }
-      if (provider.includes('google') || provider.includes('gemini')) return 'thinking_config.thinking_level';
+      if (speaksAnthropicMessages(kind)) return 'output_config.effort';
+      if (kind === 'gemini') return 'thinking_config.thinking_level';
       return 'reasoning_effort';
     case 'budget_tokens':
-      if (provider.includes('google') || provider.includes('gemini')) {
-        return 'thinking_config.thinking_budget';
-      }
+      if (kind === 'gemini') return 'thinking_config.thinking_budget';
       return 'thinking.budget_tokens';
     case 'toggle':
       return 'reasoning on/off';

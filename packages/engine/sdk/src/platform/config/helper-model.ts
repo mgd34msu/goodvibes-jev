@@ -1,7 +1,7 @@
 /**
  * Helper Model, lightweight LLM routing for grunt-work tasks.
  *
- * Routes tasks like cache planning, compaction, commit messages, etc. to a
+ * Routes tasks like compaction, commit messages, etc. to a
  * cheaper/free model so expensive main models don't waste tokens on routine work.
  *
  * Resolution order:
@@ -29,7 +29,6 @@ import { summarizeError } from '../utils/error-display.js';
 
 /** Tasks that can be routed to a helper model. */
 export type HelperTask =
-  | 'cache_strategy'     // Plan cache breakpoints + TTL
   | 'compaction'         // Summarize prior context for compaction
   | 'intent_classify'    // Classify user intent (question vs task)
   | 'tool_summarize'     // Condense large tool output

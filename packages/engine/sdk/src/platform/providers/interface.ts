@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolCall } from '../types/tools.js';
 import type { ProviderCapability } from './capabilities.js';
+import type { ProviderAdapterKind } from './adapter-kind.js';
 import type { SecretsManager } from '../config/secrets.js';
 import type { ServiceRegistry } from '../config/service-registry.js';
 import type { SubscriptionManager } from '../config/subscriptions.js';
@@ -202,6 +203,12 @@ export type ProviderModelSource =
 /** Contract all LLM providers must implement. */
 export interface LLMProvider {
   readonly name: string;
+  /**
+   * Which adapter this provider runs on (adapter-kind.ts). ProviderRegistry
+   * records it at registration so a lookup by provider id reads it. Omitted
+   * by providers that pick a wire per model.
+   */
+  readonly adapterKind?: ProviderAdapterKind | undefined;
   readonly models: string[];
   readonly batch?: ProviderBatchAdapter | undefined;
   /**

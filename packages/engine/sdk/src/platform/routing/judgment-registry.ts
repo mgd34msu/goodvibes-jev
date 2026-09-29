@@ -42,3 +42,8 @@ registry.register(userErrorReading);
 // Task routes: the agent route planner and route tool, hoisted into the engine.
 import { registry as taskRouteRegistry } from './task-routes/judgment-registry.js';
 for (const decision of taskRouteRegistry.list()) registry.register(decision);
+
+// Providers: transports and prompt caching.
+import { cacheMinimum, copilotClaudeModel } from './batteries/provider-cache.js';
+registry.register(copilotClaudeModel);
+registry.register(cacheMinimum);

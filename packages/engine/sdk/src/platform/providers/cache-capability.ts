@@ -2,6 +2,8 @@
 
 /** Cache capability types for LLM providers. */
 
+import { providerAdapterKind } from './adapter-kind.js';
+
 export type CacheType = 'explicit' | 'automatic' | 'implicit' | 'none';
 
 export interface ExplicitCacheCapability {
@@ -34,18 +36,6 @@ export type ProviderCacheCapability =
   | ImplicitCacheCapability
   | NoCacheCapability;
 
-/**
- * Priority-ordered alias map for provider name substring matching.
- * More specific patterns must appear before more general ones.
- * Used when no direct match is found in the registry.
- */
-const PROVIDER_ALIASES: Array<[string, string]> = [
-  // OpenRouter uses OpenAI-compatible caching
-  ['openrouter', 'openai'],
-  // anthropic-compat style providers map to anthropic caching
-  ['anthropic-compat', 'anthropic'],
-];
-
 // Registry of known provider capabilities
 // Map provider name -> capability
 const PROVIDER_CACHE_CAPABILITIES = {
@@ -69,6 +59,11 @@ const PROVIDER_CACHE_CAPABILITIES = {
     minCacheableTokens: 32768,
   },
   openai: {
+    type: 'automatic',
+    readDiscount: 0.5,
+  },
+  // OpenRouter caches the way OpenAI does (the terms of the openai row).
+  openrouter: {
     type: 'automatic',
     readDiscount: 0.5,
   },
@@ -115,7 +110,12 @@ const PROVIDER_CACHE_CAPABILITIES = {
 
 /**
  * Get the cache capability for a provider.
- * Returns 'none' for unknown providers.
+ *
+ * The provider's own row when the table has one. Otherwise a provider
+ * registered on the Anthropic-compatible adapter (its catalog `kind` or
+ * custom-provider `type` is 'anthropic-compat', recorded at registration in
+ * adapter-kind.ts) caches the way Anthropic does. Every other provider has
+ * no caching.
  */
 export function getCacheCapability(providerName: string): ProviderCacheCapability {
   // Normalize provider name (lowercase, strip trailing whitespace)
@@ -127,12 +127,8 @@ export function getCacheCapability(providerName: string): ProviderCacheCapabilit
     return PROVIDER_CACHE_CAPABILITIES[normalizedKey];
   }
 
-  // Known aliases (priority-ordered: more specific patterns first)
-  for (const [alias, target] of PROVIDER_ALIASES) {
-    const aliasTarget = target as keyof typeof PROVIDER_CACHE_CAPABILITIES;
-    if (normalized.includes(alias) && PROVIDER_CACHE_CAPABILITIES[aliasTarget]) {
-      return PROVIDER_CACHE_CAPABILITIES[aliasTarget];
-    }
+  if (providerAdapterKind(providerName) === 'anthropic-compat') {
+    return PROVIDER_CACHE_CAPABILITIES.anthropic;
   }
 
   // Unknown provider, no caching

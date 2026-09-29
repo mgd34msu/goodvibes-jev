@@ -130,6 +130,7 @@ function staticMaxOutput(model: string): number {
  */
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
+  readonly adapterKind = 'anthropic' as const;
   readonly credentialAuthority = 'resolver' as const;
   readonly modelSource: ProviderModelSource = { kind: 'live-discovery' };
   readonly batch: ProviderBatchAdapter;

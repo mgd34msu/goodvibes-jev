@@ -33,6 +33,7 @@ import type { GeminiPart } from './tool-formats.js';
 import type { CacheHitTracker } from './cache-strategy.js';
 import { summarizeError, toProviderError } from '../utils/error-display.js';
 import { SseLineBuffer } from './sse-line-buffer.js';
+import { readsAsBelowCacheMinimum } from '../routing/provider-cache-readings.js';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_CACHE_TTL_SECONDS = 3600;
@@ -119,6 +120,7 @@ function buildGeminiThinkingConfig(
  */
 export class GeminiProvider implements LLMProvider {
   readonly name = 'gemini';
+  readonly adapterKind = 'gemini' as const;
   readonly credentialAuthority = 'resolver' as const;
   readonly modelSource: ProviderModelSource = { kind: 'live-discovery' };
   /** Maps function call name → thoughtSignature for the current turn. */
@@ -233,6 +235,7 @@ export class GeminiProvider implements LLMProvider {
       }).catch(err => logger.warn('[Gemini] Failed to delete previous cache', { error: summarizeError(err) }));
     }
 
+    let rejection: { status: number; text: string };
     try {
       const cacheBody: Record<string, unknown> = {
         model: `models/${model}`,
@@ -256,29 +259,34 @@ export class GeminiProvider implements LLMProvider {
         body: JSON.stringify(cacheBody),
       });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        if (text.includes('too few tokens') || text.includes('minimum')) {
-          if (this.uncacheableHashes.size >= 50) this.uncacheableHashes.clear();
-          this.uncacheableHashes.add(hash);
-          logger.debug('[Gemini] Content below cache minimum', { status: res.status, error: text.slice(0, 200) });
-        } else {
-          logger.warn('[Gemini] Cache creation failed', { status: res.status, error: text.slice(0, 200) });
-        }
-        return null;
+      if (res.ok) {
+        const data = await res.json() as { name: string; expireTime: string };
+        this.cachedContentName = data.name;
+        this.cachedContentHash = hash;
+        this.cachedContentExpiry = new Date(data.expireTime).getTime();
+
+        logger.info(`[Gemini] Created cache: ${data.name} (expires ${data.expireTime})`);
+        return data.name;
       }
-
-      const data = await res.json() as { name: string; expireTime: string };
-      this.cachedContentName = data.name;
-      this.cachedContentHash = hash;
-      this.cachedContentExpiry = new Date(data.expireTime).getTime();
-
-      logger.info(`[Gemini] Created cache: ${data.name} (expires ${data.expireTime})`);
-      return data.name;
+      rejection = { status: res.status, text: await res.text().catch(() => '') };
     } catch (err) {
       logger.warn('[Gemini] Cache creation error', { error: summarizeError(err) });
       return null;
     }
+
+    // Only a 400 (INVALID_ARGUMENT) rejects the content itself; its wording is
+    // read by routing.cache-minimum, outside the try so a judgment port error
+    // propagates. Any other status, or a reading too weak to act on, leaves the
+    // prompt cacheable so a later request tries again.
+    const { status, text } = rejection;
+    if (status === 400 && await readsAsBelowCacheMinimum(text, 'providers.gemini.cache-minimum')) {
+      if (this.uncacheableHashes.size >= 50) this.uncacheableHashes.clear();
+      this.uncacheableHashes.add(hash);
+      logger.debug('[Gemini] Content below cache minimum', { status, error: text.slice(0, 200) });
+    } else {
+      logger.warn('[Gemini] Cache creation failed', { status, error: text.slice(0, 200) });
+    }
+    return null;
   }
 
   async chat(params: ChatRequest): Promise<ChatResponse> {

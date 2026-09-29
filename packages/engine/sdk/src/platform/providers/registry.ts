@@ -2,9 +2,8 @@ import type { LLMProvider, ProviderRuntimeMetadata, ProviderRuntimeMetadataDeps 
 import { ProviderNotFoundError } from './provider-not-found-error.js';
 import { join } from 'node:path';
 import { logger } from '../utils/logger.js';
-import {
-  ProviderCapabilityRegistry, type ProviderCapability, type RequestProfile, type RouteExplanation,
-} from './capabilities.js';
+import { ProviderCapabilityRegistry, type ProviderCapability, type RequestProfile, type RouteExplanation } from './capabilities.js';
+import { recordProviderAdapterKind } from './adapter-kind.js';
 import type { DiscoveredServer } from '../discovery/scanner.js';
 import { createDiscoveredProvider, getDiscoveredReasoningFormat } from './discovered-factory.js';
 import { getDiscoveredTraits } from './discovered-traits.js';
@@ -213,6 +212,7 @@ export class ProviderRegistry {
     assertProviderModelSource(provider);
     assertProviderCredentialAuthority(provider);
     this.providers.set(provider.name, provider);
+    recordProviderAdapterKind(provider);
     this.providerNativeModels = applyProviderNativeModelBaseline(this.providerNativeModels, provider);
     this._invalidateModelRegistry();
   }
@@ -243,6 +243,7 @@ export class ProviderRegistry {
     // rather than the LLMProvider's own fields, only contract-check when both are empty.
     if (models.length === 0) assertProviderModelSource(provider);
     this.providers.set(provider.name, provider);
+    recordProviderAdapterKind(provider);
     this.providerNativeModels = applyProviderNativeModelBaseline(this.providerNativeModels, provider);
     this.runtimeProviderNames.add(provider.name);
     this.runtimeModels = [

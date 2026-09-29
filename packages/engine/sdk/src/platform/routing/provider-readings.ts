@@ -20,7 +20,7 @@ import {
 const holds = (reading: YesNoReading): boolean => reading.verdict === 'yes' && reading.outcome === 'act';
 
 /** A bounded memo of settled readings; a failed reading is forgotten and asked again. */
-class ReadingMemo<V> {
+export class ReadingMemo<V> {
   readonly #limit: number;
   readonly #values = new Map<string, Promise<V>>();
 

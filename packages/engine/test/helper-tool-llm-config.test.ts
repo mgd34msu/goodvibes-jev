@@ -182,7 +182,7 @@ describe('helper model routing', () => {
       },
     });
 
-    await expect(helper.chat('cache_strategy', 'plan')).rejects.toThrow(HelperModelUnavailableError);
+    await expect(helper.chat('compaction', 'plan')).rejects.toThrow(HelperModelUnavailableError);
   });
 
   test('enabled helper with no dedicated route does not fall back to main model', async () => {
@@ -198,7 +198,7 @@ describe('helper model routing', () => {
       },
     });
 
-    await expect(helper.chat('cache_strategy', 'plan')).rejects.toThrow(HelperModelUnavailableError);
+    await expect(helper.chat('compaction', 'plan')).rejects.toThrow(HelperModelUnavailableError);
   });
 
   test('per-provider helper route rejects provider/model conflicts without trying later routes', () => {
@@ -222,7 +222,7 @@ describe('helper model routing', () => {
       },
     });
 
-    expect(() => router.resolve('cache_strategy')).toThrow("conflicts with provider 'openai'");
+    expect(() => router.resolve('compaction')).toThrow("conflicts with provider 'openai'");
   });
 
   test('helper provider request failures are observable', async () => {
@@ -249,7 +249,7 @@ describe('helper model routing', () => {
       },
     });
 
-    await expect(helper.chat('cache_strategy', 'plan')).rejects.toThrow('provider unavailable');
+    await expect(helper.chat('compaction', 'plan')).rejects.toThrow('provider unavailable');
   });
 
   test('missing helper response content is not converted to an empty string', async () => {
@@ -281,6 +281,6 @@ describe('helper model routing', () => {
       },
     });
 
-    await expect(helper.chat('cache_strategy', 'plan')).rejects.toThrow('did not include string content');
+    await expect(helper.chat('compaction', 'plan')).rejects.toThrow('did not include string content');
   });
 });

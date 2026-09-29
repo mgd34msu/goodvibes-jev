@@ -174,7 +174,13 @@ describe('provider cache observability', () => {
         }) as unknown as typeof fetch,
       });
 
-      await provider.chat({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hello' }] }).catch(() => undefined);
+      // The model has no /models entry, so its transport is read first; a no keeps the OpenAI-compatible path.
+      const previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.01)).port);
+      try {
+        await provider.chat({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hello' }] }).catch(() => undefined);
+      } finally {
+        installJudgmentPort(previousPort);
+      }
 
       expect(errorMessages(errorSpy).some((message) => message.includes('providers/github-copilot-token-cache'))).toBe(true);
       expect(quarantinedCopies(tokenCachePath).length).toBe(1);

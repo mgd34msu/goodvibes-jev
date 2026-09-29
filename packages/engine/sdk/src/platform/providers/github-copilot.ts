@@ -8,6 +8,7 @@ import { runLiveModelRefresh, type LiveModelDiscoveryResult } from './live-model
 import { summarizeError, toProviderError } from '../utils/error-display.js';
 import { instrumentedLlmCall } from '../runtime/llm-observability.js';
 import { logger } from '../utils/logger.js';
+import { readsAsCopilotClaudeModel } from '../routing/provider-cache-readings.js';
 
 const COPILOT_TOKEN_URL = `https://api.github.com/${['copilot', 'internal'].join('_')}/v2/token`;
 const DEFAULT_COPILOT_API_BASE_URL = 'https://api.individual.githubcopilot.com';
@@ -217,17 +218,54 @@ async function resolveCopilotToken(options: GitHubCopilotProviderOptions): Promi
   };
 }
 
-function usesAnthropicTransport(model: string): boolean {
-  return model.trim().toLowerCase().includes('claude');
-}
-
 interface CopilotModelCapabilities {
   readonly type?: unknown;
 }
 
 interface CopilotModelEntry {
   readonly id?: unknown;
+  readonly vendor?: unknown;
+  readonly supported_endpoints?: unknown;
   readonly capabilities?: CopilotModelCapabilities;
+}
+
+/**
+ * What Copilot's /models entry says about how a model is served: the
+ * `supported_endpoints` paths (for example '/chat/completions', '/responses',
+ * '/v1/messages') and the `vendor` name (for example 'Anthropic', 'OpenAI').
+ * Either may be missing from an entry.
+ */
+export interface CopilotModelFacts {
+  readonly supportedEndpoints?: readonly string[] | undefined;
+  readonly vendor?: string | undefined;
+}
+
+/** Copilot's Anthropic Messages endpoint, as `supported_endpoints` names it. */
+const COPILOT_MESSAGES_ENDPOINT = '/v1/messages';
+const ANTHROPIC_VENDOR = 'anthropic';
+
+function readCopilotModelFacts(entry: CopilotModelEntry): CopilotModelFacts {
+  const endpoints = Array.isArray(entry.supported_endpoints)
+    ? entry.supported_endpoints.filter((path): path is string => typeof path === 'string')
+    : undefined;
+  const vendor = typeof entry.vendor === 'string' && entry.vendor.trim().length > 0 ? entry.vendor.trim() : undefined;
+  return {
+    ...(endpoints ? { supportedEndpoints: endpoints } : {}),
+    ...(vendor ? { vendor } : {}),
+  };
+}
+
+/**
+ * Whether the model's /models entry says it is served on Copilot's Anthropic
+ * Messages endpoint: its `supported_endpoints` lists '/v1/messages', or, when
+ * the entry has no endpoint list, its `vendor` is Anthropic. Undefined when
+ * the entry carries neither field (or there is no entry), which is when the
+ * model id is read instead.
+ */
+export function copilotServesAnthropicMessages(facts: CopilotModelFacts | undefined): boolean | undefined {
+  if (facts?.supportedEndpoints) return facts.supportedEndpoints.includes(COPILOT_MESSAGES_ENDPOINT);
+  if (facts?.vendor) return facts.vendor.toLowerCase() === ANTHROPIC_VENDOR;
+  return undefined;
 }
 
 interface CopilotModelsResponse {
@@ -248,9 +286,10 @@ interface CopilotModelsResponse {
  * in this environment to call the endpoint directly. Response shape is
  * OpenAI-like (`{ data: [{ id, capabilities: { type } }] }`); only
  * `type: 'chat'` entries are kept so embedding-only models don't leak into
- * the chat model picker.
+ * the chat model picker. Each kept entry's `supported_endpoints` and `vendor`
+ * are kept with it: they say which transport the model is served on.
  */
-async function fetchCopilotModelIds(options: GitHubCopilotProviderOptions): Promise<string[]> {
+async function fetchCopilotModels(options: GitHubCopilotProviderOptions): Promise<Map<string, CopilotModelFacts>> {
   const fetchFn = options.fetchFn ?? fetch;
   const session = await resolveCopilotToken(options);
   const url = `${session.baseUrl.replace(/\/+$/, '')}/models`;
@@ -266,11 +305,13 @@ async function fetchCopilotModelIds(options: GitHubCopilotProviderOptions): Prom
     throw new Error(`GitHub Copilot /models (${url}) returned ${res.status} ${res.statusText}`);
   }
   const body = await res.json() as CopilotModelsResponse;
-  const ids = (body.data ?? [])
-    .filter((entry) => entry.capabilities?.type === undefined || entry.capabilities.type === 'chat')
-    .map((entry) => (typeof entry.id === 'string' ? entry.id : null))
-    .filter((id): id is string => id !== null && id.length > 0);
-  return ids;
+  const models = new Map<string, CopilotModelFacts>();
+  for (const entry of body.data ?? []) {
+    if (entry.capabilities?.type !== undefined && entry.capabilities.type !== 'chat') continue;
+    if (typeof entry.id !== 'string' || entry.id.length === 0) continue;
+    models.set(entry.id, readCopilotModelFacts(entry));
+  }
+  return models;
 }
 
 export class GitHubCopilotProvider implements LLMProvider {
@@ -278,7 +319,7 @@ export class GitHubCopilotProvider implements LLMProvider {
   readonly credentialAuthority = 'subscription' as const;
   /**
    * Live-discovery: GET /models on the Copilot API host, verified working
-   * for this provider's token-exchange auth mode (see `fetchCopilotModelIds`
+   * for this provider's token-exchange auth mode (see `fetchCopilotModels`
    * for the evidence trail). `COPILOT_DATED_STATIC_MODELS` below is the
    * offline fallback used when no GitHub token is configured or a live call
    * fails with no prior cache.
@@ -294,6 +335,9 @@ export class GitHubCopilotProvider implements LLMProvider {
   get models(): string[] {
     return this._models;
   }
+
+  /** The /models facts of each model from the last live fetch in this process. */
+  private readonly modelFacts = new Map<string, CopilotModelFacts>();
 
   constructor(private readonly options: GitHubCopilotProviderOptions) {}
 
@@ -316,7 +360,12 @@ export class GitHubCopilotProvider implements LLMProvider {
       datedStaticModels: COPILOT_DATED_STATIC_MODELS,
       datedStaticAsOf: COPILOT_DATED_STATIC_MODELS_AS_OF,
       isConfigured: this.isConfigured(),
-      fetchLive: () => fetchCopilotModelIds(this.options),
+      fetchLive: async () => {
+        const live = await fetchCopilotModels(this.options);
+        this.modelFacts.clear();
+        for (const [id, facts] of live) this.modelFacts.set(id, facts);
+        return [...live.keys()];
+      },
       force,
     });
     this._models = [...result.models];
@@ -324,12 +373,14 @@ export class GitHubCopilotProvider implements LLMProvider {
   }
 
   async chat(params: ChatRequest): Promise<ChatResponse> {
+    const model = params.model ?? this.models[0]!;
+    // Outside the try so a judgment port error is not rewrapped as a provider error.
+    const anthropicTransport = await this.usesAnthropicTransport(model);
     try {
-      const model = params.model ?? this.models[0]!;
       const session = await resolveCopilotToken(this.options);
       const baseURL = `${session.baseUrl.replace(/\/+$/, '')}/v1`;
       const defaultHeaders = buildCopilotDynamicHeaders(params.messages);
-      if (usesAnthropicTransport(model)) {
+      if (anthropicTransport) {
         const provider = new AnthropicCompatProvider({
           name: this.name,
           baseURL,
@@ -367,6 +418,19 @@ export class GitHubCopilotProvider implements LLMProvider {
         operation: 'chat',
       });
     }
+  }
+
+  /**
+   * Whether a model goes through Copilot's Anthropic Messages endpoint. The
+   * model's /models entry decides when it carries `supported_endpoints` or
+   * `vendor`; otherwise `routing.copilot-claude-model` reads the id, and only
+   * a reading strong enough to act on picks the Anthropic path. Every other
+   * model uses the OpenAI-compatible endpoint.
+   */
+  private async usesAnthropicTransport(model: string): Promise<boolean> {
+    const served = copilotServesAnthropicMessages(this.modelFacts.get(model));
+    if (served !== undefined) return served;
+    return readsAsCopilotClaudeModel(model, 'providers.github-copilot.transport');
   }
 
   async describeRuntime(deps: ProviderRuntimeMetadataDeps): Promise<ProviderRuntimeMetadata> {
