@@ -4,7 +4,11 @@
  * providers named in the done-when criteria plus Gemini (same empty-array
  * pattern), with a mocked API standing in for the live provider endpoint.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { EntryType, Question } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +32,24 @@ async function withMockedFetch<T>(
     globalThis.fetch = original;
   }
 }
+
+/** routing.chat-model reads the three non-chat ids below as no and every other id as yes. */
+const NOT_CHAT = new Set(['text-embedding-3-small', 'whisper-1', 'dall-e-3']);
+const chatPort = () => fakePort((name: string, _question: Question, state: EntryType) => {
+  if (name !== 'chat') throw new Error(`chat model port: unexpected question ${name}`);
+  return noulAnswer(NOT_CHAT.has(String((state as { model_id?: unknown }).model_id)) ? 0.05 : 0.95);
+});
+let chat = chatPort();
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetModelLimitReadings();
+  chat = chatPort();
+  previousPort = installJudgmentPort(chat.port);
+});
+afterEach(() => {
+  installJudgmentPort(previousPort);
+  forgetModelLimitReadings();
+});
 
 function withTempDir<T>(fn: (dir: string) => T): T {
   const dir = mkdtempSync(join(tmpdir(), 'goodvibes-provider-live-model-discovery-'));
@@ -93,7 +115,7 @@ describe('OpenAIProvider.refreshModels', () => {
     expect(provider.models).toEqual([...OPENAI_DATED_STATIC_MODELS]);
   });
 
-  test('a mocked live /v1/models response filters out non-chat models (embeddings, whisper, dall-e)', async () => {
+  test('a mocked live /v1/models response drops the models that read as non-chat (embeddings, whisper, dall-e)', async () => {
     await withTempDir(async (dir) => {
       await withMockedFetch(
         (url) => {
@@ -119,6 +141,7 @@ describe('OpenAIProvider.refreshModels', () => {
           expect(provider.models).not.toContain('text-embedding-3-small');
           expect(provider.models).not.toContain('whisper-1');
           expect(provider.models).not.toContain('dall-e-3');
+          expect(chat.requests).toHaveLength(5);
         },
       );
     });

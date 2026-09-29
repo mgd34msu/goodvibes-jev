@@ -19,6 +19,8 @@ import {
 } from './live-model-discovery.js';
 import { applyAnthropicReasoning, isAnthropicThinkingEnabled } from './anthropic-stream.js';
 import { prepareReasoningEffort } from './reasoning-effort-families.js';
+import { knownAnthropicOutputCapRow, readAnthropicOutputCapRow } from '../routing/model-limit-readings.js';
+import type { AnthropicOutputCapRow } from '../routing/batteries/model-limits.js';
 import { describeReasoningRejection } from './reasoning-effort.js';
 import { getCacheCapability } from './cache-capability.js';
 import { mapAnthropicStopReason } from './stop-reason-maps.js';
@@ -73,53 +75,44 @@ interface AnthropicResponseBody {
 
 
 /**
- * OFFLINE fallback for per-model max output tokens.
+ * Each documented output-cap row, for a model GET /v1/models has not
+ * reported a `max_tokens` for (no API key, or the live call failed). Which
+ * row a model id belongs to is read by routing.anthropic-output-cap
+ * (routing/batteries/model-limits.ts) and remembered per id; the id prefixes
+ * and substrings it replaces are gone.
  *
- * The authoritative source is the provider: GET /v1/models reports `max_tokens`
- * per model, and `refreshModels()` reads it (see `_liveMaxOutput`). This table
- * exists for the same case as ANTHROPIC_DATED_STATIC_MODELS, no API key, so
- * no live call is possible, and as the baseline when a live call fails.
- *
- * Order matters: the first match wins, so the newest and most specific arms
- * come first. Left un-updated, this table had no arm covering claude-opus-5,
- * claude-sonnet-5 or claude-fable-5, so all three fell to the 16384 default
- * and were capped at an eighth of their real 128000.
- *
- * Verified against Anthropic's published model comparison on 2026-07-27.
+ * platform.claude.com/docs/en/about-claude/models/overview and its legacy
+ * models table: 128K for Fable 5, Mythos 5, Opus 5, Opus 4.8 / 4.7 / 4.6,
+ * Sonnet 5 and Sonnet 4.6; 64K for Sonnet 4.5, Haiku 4.5, Opus 4.5, Sonnet 4
+ * and Sonnet 3.7; 32K for Opus 4 and 4.1; 8192 for Claude 3.5 Sonnet and
+ * Haiku; 4096 for Claude 3 Opus, Sonnet and Haiku and every earlier Claude.
  */
-const ANTHROPIC_MAX_OUTPUT: Array<{ match: (m: string) => boolean; cap: number }> = [
-  // 128K-output generation: Fable 5, Opus 5 / 4.8 / 4.7 / 4.6, Sonnet 5 / 4.6.
-  {
-    match: (m) => m.startsWith('claude-fable-5')
-      || m.startsWith('claude-mythos-5')
-      || m.startsWith('claude-opus-5')
-      || m.startsWith('claude-opus-4-8')
-      || m.startsWith('claude-opus-4-7')
-      || m.startsWith('claude-opus-4-6')
-      || m.startsWith('claude-sonnet-5')
-      || m.startsWith('claude-sonnet-4-6'),
-    cap: 128000,
-  },
-  // 64K-output generation: Haiku 4.5, Opus 4.5, Sonnet 4.5.
-  { match: (m) => m.includes('haiku-4-5') || m.includes('opus-4-5') || m.includes('sonnet-4-5'), cap: 64000 },
-  { match: (m) => m.includes('sonnet-4-0') || m.includes('sonnet-4'), cap: 64000 },
-  // Opus 4.1 / 4.0.
-  { match: (m) => m.includes('opus-4'), cap: 32000 },
-  // Older Haiku generations (3, 3.5).
-  { match: (m) => m.includes('haiku'), cap: 8192 },
-];
-const ANTHROPIC_DEFAULT_MAX_OUTPUT = 16384;
+const ANTHROPIC_OUTPUT_CAPS: Readonly<Record<AnthropicOutputCapRow, number>> = {
+  'output-128k': 128000,
+  'output-64k': 64000,
+  'output-32k': 32000,
+  'output-8k': 8192,
+  'output-4k': 4096,
+};
+
+/**
+ * The cap of a model with no documented row, or whose row reading does not
+ * settle: the smallest documented cap, since a max_tokens above a model's
+ * real cap is a 400 on every request.
+ */
+const ANTHROPIC_SMALLEST_OUTPUT_CAP = Math.min(...Object.values(ANTHROPIC_OUTPUT_CAPS));
+
+const OUTPUT_CAP_SITE = 'providers.anthropic.output-cap';
+
 const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'getHitRate' | 'recordTurn'> = {
   getHitRate: () => 0,
   recordTurn: () => {},
 };
 
-/** This model's max output tokens per the offline table. Live limits win, see `clampMaxTokens`. */
-function staticMaxOutput(model: string): number {
-  for (const { match, cap } of ANTHROPIC_MAX_OUTPUT) {
-    if (match(model)) return cap;
-  }
-  return ANTHROPIC_DEFAULT_MAX_OUTPUT;
+/** This model's max output tokens per its documented row as read so far. Live limits win, see `clampMaxTokens`. */
+function documentedMaxOutput(model: string): number {
+  const row = knownAnthropicOutputCapRow(model);
+  return row ? ANTHROPIC_OUTPUT_CAPS[row] : ANTHROPIC_SMALLEST_OUTPUT_CAP;
 }
 
 /**
@@ -149,10 +142,10 @@ export class AnthropicProvider implements LLMProvider {
    * Per-model max output tokens as the PROVIDER reports them, populated by
    * `refreshModels()` from GET /v1/models.
    *
-   * Empty until a live refresh succeeds, which is why the offline table still
-   * has to be correct, but once populated it is authoritative, so a model
-   * released after this build shipped is capped at its real limit instead of
-   * whatever the table happens to guess.
+   * Empty until a live refresh succeeds, which is why the documented rows
+   * still have to be correct, but once populated it is authoritative, so a
+   * model released after this build shipped is capped at its real limit
+   * rather than by a row.
    */
   private readonly _liveMaxOutput = new Map<string, number>();
 
@@ -195,6 +188,7 @@ export class AnthropicProvider implements LLMProvider {
 
     return (await instrumentedLlmCall(() => withRetry(async () => {
       const resolvedModel = normalizeAnthropicModel(model);
+      await this.prepareMaxOutput(resolvedModel);
       // Build Anthropic-formatted messages and tools early so we can inject cache_control.
       const anthropicMessages = toAnthropicMessages(messages);
       const anthropicTools = (tools && tools.length > 0) ? toAnthropicTools(tools) : null;
@@ -506,16 +500,25 @@ export class AnthropicProvider implements LLMProvider {
   /**
    * Clamp a requested max_tokens to what this model actually allows.
    *
-   * Live limit first (what the provider says), offline table second. A model
-   * the live call did not cover, because there is no API key, or because the
-   * call failed, still gets a real cap rather than the generic default,
-   * provided the table has an arm for it.
+   * Live limit first (what the provider says), documented row second. A
+   * model the live call did not cover, because there is no API key, or
+   * because the call failed, still gets its row's cap once
+   * `prepareMaxOutput` has read it, and the smallest documented cap when the
+   * reading does not settle. The caller's request already carries the
+   * catalog's output limit, which the min keeps.
    */
   private clampMaxTokens(model: string, requested: number): number {
-    return Math.min(requested, this._liveMaxOutput.get(model) ?? staticMaxOutput(model));
+    return Math.min(requested, this._liveMaxOutput.get(model) ?? documentedMaxOutput(model));
+  }
+
+  /** Reads the model's output-cap row before a request is built, unless the provider has reported its cap. */
+  private async prepareMaxOutput(model: string): Promise<void> {
+    if (this._liveMaxOutput.has(model)) return;
+    await readAnthropicOutputCapRow(model, OUTPUT_CAP_SITE);
   }
 
   private async createChatBatch(input: ProviderBatchCreateInput): Promise<ProviderBatchCreateResult> {
+    await Promise.all(input.requests.map((request) => this.prepareMaxOutput(normalizeAnthropicModel(request.params.model))));
     await Promise.all(input.requests.map((request) => prepareReasoningEffort(request.params.reasoningEffort, {
       modelId: normalizeAnthropicModel(request.params.model),
       ...(request.params.reasoningEffortSpec ? { spec: request.params.reasoningEffortSpec } : {}),

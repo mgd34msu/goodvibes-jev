@@ -43,6 +43,12 @@ registry.register(userErrorReading);
 import { registry as taskRouteRegistry } from './task-routes/judgment-registry.js';
 for (const decision of taskRouteRegistry.list()) registry.register(decision);
 
+// Providers: model limits and listings.
+import { anthropicOutputCap, chatModel, contextWindowFamily } from './batteries/model-limits.js';
+registry.register(contextWindowFamily);
+registry.register(anthropicOutputCap);
+registry.register(chatModel);
+
 // Providers: transports and prompt caching.
 import { cacheMinimum, copilotClaudeModel } from './batteries/provider-cache.js';
 registry.register(copilotClaudeModel);

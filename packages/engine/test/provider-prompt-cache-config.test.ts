@@ -17,7 +17,10 @@
  * present or absent and where a TTL is either '1h' or the 5-minute default.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.js';
 import { AnthropicProvider } from '../sdk/src/platform/providers/anthropic.js';
 import {
   getDefaultStrategy,
@@ -119,6 +122,18 @@ function cacheControls(body: Record<string, unknown>): Array<Record<string, unkn
   walk(body['tools']);
   return found;
 }
+
+
+/** routing.anthropic-output-cap reads every model id into the 64K row, so request bodies can be built. */
+let previousOutputCapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetModelLimitReadings();
+  previousOutputCapPort = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'output-64k', 0.95)).port);
+});
+afterEach(() => {
+  installJudgmentPort(previousOutputCapPort);
+  forgetModelLimitReadings();
+});
 
 describe('cache.enabled governs whether breakpoints are placed at all', () => {
   test('unset (shipped default) places cache breakpoints', async () => {

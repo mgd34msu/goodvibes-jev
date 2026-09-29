@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { ModelIdentityResolver } from '../routing/model-identity.js';
 
 interface OpenRouterModelData {
@@ -244,7 +244,12 @@ export class ModelLimitsService {
     return this.resolveTokenLimits(modelDef);
   }
 
-  getContextWindowForModel(modelDef: ModelDefinition): number {
+  /**
+   * The window a trusted source states for this model, or undefined when
+   * none does: the user's configured cap, the provider API, a learned
+   * provider limit, or OpenRouter's listing.
+   */
+  reportedContextWindow(modelDef: ModelDefinition): number | undefined {
     // An explicit user-configured cap (configured_cap) is authoritative and must
     // never be widened, or narrowed, by an OpenRouter identity match. provider_api
     // values are likewise trusted, as are learned provider limits
@@ -265,13 +270,19 @@ export class ModelLimitsService {
         return orMatch.context_length;
       }
     }
+    return undefined;
+  }
+
+  getContextWindowForModel(modelDef: ModelDefinition): number {
+    const reported = this.reportedContextWindow(modelDef);
+    if (reported !== undefined) return reported;
     // Never emit 0/NaN: a non-positive or non-finite window would poison
     // downstream budget math (used / contextWindow -> Infinity/NaN). Fall back to
-    // the family-aware floor instead.
+    // the documented family row, or the conservative default until it is read.
     const cw = modelDef.contextWindow;
     return Number.isFinite(cw) && cw > 0
       ? cw
-      : inferFallbackContextWindow(modelDef.provider, modelDef.id);
+      : knownFallbackContextWindow(modelDef.provider, modelDef.id);
   }
 
   getToolResultMaxCharsForModel(model: ModelDefinition | null | undefined): number {

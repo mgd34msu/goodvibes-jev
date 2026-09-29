@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import type { BenchmarkEntry } from './model-benchmarks.js';
 import { compositeScore } from './model-benchmarks.js';
 import type { CatalogModel } from './model-catalog.js';
@@ -228,7 +228,7 @@ export function getSyntheticModelDefinitions(
         reasoning: hasReasoning,
         multimodal: false,
       },
-      contextWindow: hasCatalogContextWindow ? bestBackend.contextWindow! : inferFallbackContextWindow('synthetic', canonical.id),
+      contextWindow: hasCatalogContextWindow ? bestBackend.contextWindow! : knownFallbackContextWindow('synthetic', canonical.id),
       ...(!hasCatalogContextWindow ? { contextWindowProvenance: 'fallback' as const } : {}),
       selectable: true,
       // A metered group carries no capability label until one of its backends is read.

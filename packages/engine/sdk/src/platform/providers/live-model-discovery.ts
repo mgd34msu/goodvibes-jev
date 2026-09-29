@@ -20,8 +20,9 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { resolveReasoningEffortSpec } from './reasoning-effort-families.js';
+import { readChatModelIds } from '../routing/model-limit-readings.js';
 import type { ModelDefinition } from './registry-types.js';
 
 const LIVE_FETCH_TIMEOUT_MS = 15_000;
@@ -197,8 +198,46 @@ export async function runLiveModelRefresh(opts: LiveModelRefreshOptions): Promis
   }
 }
 
-/** Chat-capable OpenAI model id, excludes embeddings, audio, image, and moderation endpoints. */
-const OPENAI_NON_CHAT_MODEL_PATTERN = /embedding|whisper|tts|dall-e|davinci|babbage|^ada|moderation|text-search|similarity|transcribe|speech|realtime|image/i;
+const CHAT_MODEL_SITE = 'providers.live-model-discovery.chat-model';
+
+/** One entry of an OpenAI-style model listing, with the fields some backends add. */
+interface ListedModelEntry {
+  readonly id?: unknown;
+  readonly model_id?: unknown;
+  readonly type?: unknown;
+  readonly capabilities?: unknown;
+}
+
+/**
+ * What the listing entry itself says about chat, when it says anything:
+ * Mistral's GET /v1/models reports `capabilities.completion_chat`
+ * (docs.mistral.ai/api, ModelCapabilities), and Together's GET /v1/models
+ * reports `type: "chat"` for its chat models (docs.together.ai/reference/models-1).
+ * Undefined when the entry carries neither, and for any other Together type,
+ * which routing.chat-model reads instead.
+ */
+function listedChatCapability(entry: ListedModelEntry): boolean | undefined {
+  const capabilities = entry.capabilities;
+  if (capabilities && typeof capabilities === 'object') {
+    const completionChat = (capabilities as { readonly completion_chat?: unknown }).completion_chat;
+    if (typeof completionChat === 'boolean') return completionChat;
+  }
+  return entry.type === 'chat' ? true : undefined;
+}
+
+/**
+ * The chat models of a listing, in listing order: an entry's own chat field
+ * decides where it has one, and routing.chat-model reads each other id
+ * (routing/model-limit-readings.ts). A reading that does not settle keeps the
+ * model listed.
+ */
+async function chatModelIds(providerName: string, entries: readonly { readonly id: string; readonly entry: ListedModelEntry }[]): Promise<string[]> {
+  const unstated = entries.filter(({ entry }) => listedChatCapability(entry) === undefined).map(({ id }) => id);
+  const readAsChat = new Set(await readChatModelIds(providerName, unstated, CHAT_MODEL_SITE));
+  return entries
+    .filter(({ id, entry }) => listedChatCapability(entry) ?? readAsChat.has(id))
+    .map(({ id }) => id);
+}
 
 /**
  * Fetch a model id list from an OpenAI-style listing endpoint
@@ -218,21 +257,19 @@ export async function fetchModelIdsFromListing(
     throw new Error(`${providerName} model listing (${url}) returned ${res.status} ${res.statusText}`);
   }
   const body = await res.json() as
-    | { data?: Array<{ id?: unknown; model_id?: unknown }> }
-    | Array<{ id?: unknown; model_id?: unknown }>;
+    | { data?: ListedModelEntry[] }
+    | ListedModelEntry[];
   // Most backends use OpenAI's `{data:[{id}]}`; Together returns a bare array,
   // and a few aggregators (e.g. AiHubMix) use `model_id` instead of `id`.
   const entries = Array.isArray(body) ? body : body.data;
   if (!Array.isArray(entries)) {
     throw new Error(`${providerName} model listing (${url}) returned no model array`);
   }
-  let ids = entries
-    .map((entry) => (typeof entry.id === 'string' ? entry.id : typeof entry.model_id === 'string' ? entry.model_id : null))
-    .filter((id): id is string => id !== null);
-  if (options.filterNonChat) {
-    ids = ids.filter((id) => !OPENAI_NON_CHAT_MODEL_PATTERN.test(id));
-  }
-  return ids;
+  const listed = entries.flatMap((entry) => {
+    const id = typeof entry.id === 'string' ? entry.id : typeof entry.model_id === 'string' ? entry.model_id : null;
+    return id === null ? [] : [{ id, entry }];
+  });
+  return options.filterNonChat ? chatModelIds(providerName, listed) : listed.map(({ id }) => id);
 }
 
 /**
@@ -323,7 +360,7 @@ export async function fetchAnthropicModelIds(apiKey: string): Promise<string[]> 
   return (await fetchAnthropicModels(apiKey)).map((model) => model.id);
 }
 
-/** Fetch the live model list from OpenAI's GET /v1/models endpoint, filtered to chat-capable ids. */
+/** Fetch the live model list from OpenAI's GET /v1/models endpoint, filtered to the ids that read as chat models. */
 export async function fetchOpenAIModelIds(apiKey: string): Promise<string[]> {
   const res = await fetchWithTimeout('https://api.openai.com/v1/models', {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -331,12 +368,8 @@ export async function fetchOpenAIModelIds(apiKey: string): Promise<string[]> {
   if (!res.ok) {
     throw new Error(`OpenAI /v1/models returned ${res.status} ${res.statusText}`);
   }
-  const body = await res.json() as { data?: Array<{ id?: unknown }> };
-  const ids = (body.data ?? [])
-    .map((entry) => (typeof entry.id === 'string' ? entry.id : null))
-    .filter((id): id is string => id !== null)
-    .filter((id) => !OPENAI_NON_CHAT_MODEL_PATTERN.test(id));
-  return ids;
+  const body = await res.json() as { data?: ListedModelEntry[] };
+  return chatModelIds('openai', (body.data ?? []).flatMap((entry) => (typeof entry.id === 'string' ? [{ id: entry.id, entry }] : [])));
 }
 
 /** Fetch the live model list from Google's Gemini ListModels endpoint. */
@@ -382,14 +415,13 @@ export function buildProviderNativeModelDefinition(providerId: string, modelId: 
       // and a provider's name says nothing about one model's input.
       multimodal: false,
     },
-    contextWindow: inferFallbackContextWindow(providerId, modelId),
+    contextWindow: knownFallbackContextWindow(providerId, modelId),
     contextWindowProvenance: 'fallback',
     selectable: true,
-    // Gateways mark no-cost models with a 'free' suffix (e.g. openrouter's
-    // ':free' variants and its 'openrouter/free' router id), a fixed id
-    // convention. Any other model carries no capability label until
+    // OpenRouter documents the ':free' suffix for its no-cost variants, a
+    // fixed id convention. Any other model carries no capability label until
     // routing.model-tier reads it.
-    ...(/[:/-]free$/i.test(modelId) ? { tier: 'free' as const } : {}),
+    ...(modelId.endsWith(':free') ? { tier: 'free' as const } : {}),
     // Gateways expose whatever upstream models they proxy, so the levels come
     // from the curated family table keyed on the model id rather than a fixed
     // list that was wrong for most of them.

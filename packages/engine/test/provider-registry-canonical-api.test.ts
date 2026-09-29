@@ -379,7 +379,10 @@ describe('ProviderRegistry.getCurrentModel(): fresh-home default fallback', () =
     expect(current.registryKey).toBe('openrouter:openrouter/free');
     expect(current.provider).toBe('openrouter');
     expect(current.id).toBe('openrouter/free');
-    expect(current.tier).toBe('free');
+    // Only OpenRouter's documented ':free' suffix labels a tier by id; the
+    // router id carries no tier label until the catalog lists it or
+    // routing.model-tier reads it.
+    expect(current.tier).toBeUndefined();
     expect(current.selectable).toBe(true);
     expect(current.contextWindowProvenance).toBe('fallback');
   });

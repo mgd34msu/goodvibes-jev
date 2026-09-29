@@ -104,7 +104,8 @@ export {
 } from './local-context-ingestion.js';
 export {
   FALLBACK_CONTEXT_WINDOW,
-  inferFallbackContextWindow,
+  knownFallbackContextWindow,
+  readFallbackContextWindow,
 } from './context-window-fallback.js';
 // The one pre-catalog fallback-model builder + routability guard, unifying
 // what the TUI and the agent each maintained as a near-identical copy.
@@ -124,7 +125,6 @@ export {
   getCatalogModelDefinitionsFrom,
   getCostFromPricingCatalog,
   hasKeyForProvider,
-  normalizeModelId,
 } from './model-catalog.js';
 export type {
   CatalogDiff,

@@ -5,7 +5,11 @@
  * static list to a dated baseline, and degrade honestly when the endpoint is
  * dead, the model list is never blanked.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { EntryType, Question } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,6 +30,27 @@ async function withMockedFetch<T>(
     globalThis.fetch = original;
   }
 }
+
+/** A routing.chat-model port reading each listed id as chat at `probability(id)`, recording every request. */
+function chatPort(probability: (modelId: string) => number) {
+  return fakePort((name: string, _question: Question, state: EntryType) => {
+    if (name !== 'chat') throw new Error(`chat model port: unexpected question ${name}`);
+    return noulAnswer(probability(String((state as { model_id?: unknown }).model_id)));
+  });
+}
+
+const NOT_CHAT = new Set(['text-embedding-large', 'whisper-large-v3']);
+let chat = chatPort((id) => (NOT_CHAT.has(id) ? 0.05 : 0.95));
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetModelLimitReadings();
+  chat = chatPort((id) => (NOT_CHAT.has(id) ? 0.05 : 0.95));
+  previousPort = installJudgmentPort(chat.port);
+});
+afterEach(() => {
+  installJudgmentPort(previousPort);
+  forgetModelLimitReadings();
+});
 
 function withTempDir<T>(fn: (dir: string) => T): T {
   const dir = mkdtempSync(join(tmpdir(), 'goodvibes-compat-live-model-discovery-'));
@@ -149,7 +174,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
     });
   });
 
-  test('non-chat ids from the listing are filtered out', async () => {
+  test('ids that read as non-chat models are filtered out, one reading per id', async () => {
     await withMockedFetch(
       () => new Response(
         JSON.stringify({ data: [{ id: 'chat-model' }, { id: 'text-embedding-large' }, { id: 'whisper-large-v3' }] }),
@@ -159,6 +184,45 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.models).toEqual(['chat-model']);
+        expect(chat.requests.map((request) => request.state)).toEqual([
+          { provider: 'groq', model_id: 'chat-model' },
+          { provider: 'groq', model_id: 'text-embedding-large' },
+          { provider: 'groq', model_id: 'whisper-large-v3' },
+        ]);
+      },
+    );
+  });
+
+  test("a listing entry's own chat field decides without a reading", async () => {
+    await withMockedFetch(
+      () => new Response(
+        JSON.stringify({
+          data: [
+            { id: 'mistral-large-latest', capabilities: { completion_chat: true } },
+            { id: 'mistral-embed', capabilities: { completion_chat: false } },
+            { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', type: 'chat' },
+            { id: 'text-embedding-large', type: 'embedding' },
+          ],
+        }),
+        { status: 200 },
+      ),
+      async () => {
+        const provider = makeProvider();
+        const result = await provider.refreshModels();
+        expect(result.models).toEqual(['mistral-large-latest', 'meta-llama/Llama-3.3-70B-Instruct-Turbo']);
+        // Only the entry whose type is not a documented chat type is read.
+        expect(chat.requests.map((request) => (request.state as { model_id?: unknown }).model_id)).toEqual(['text-embedding-large']);
+      },
+    );
+  });
+
+  test('a reading that does not settle keeps the model listed', async () => {
+    installJudgmentPort(chatPort(() => 0.5).port);
+    await withMockedFetch(
+      () => new Response(JSON.stringify({ data: [{ id: 'unclear-model' }] }), { status: 200 }),
+      async () => {
+        const result = await makeProvider().refreshModels();
+        expect(result.models).toEqual(['unclear-model']);
       },
     );
   });

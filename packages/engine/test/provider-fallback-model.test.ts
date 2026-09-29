@@ -5,6 +5,8 @@
 import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetProviderReadings, readReasoningFamily } from '../sdk/src/platform/routing/provider-readings.ts';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.ts';
+import { FALLBACK_CONTEXT_WINDOW, readFallbackContextWindow } from '../sdk/src/platform/providers/context-window-fallback.ts';
 import { describe, expect, test } from 'bun:test';
 import {
   buildFallbackModelDefinition,
@@ -92,15 +94,21 @@ describe('buildFallbackModelDefinition', () => {
     expect(definition.reasoningEffort).toBeUndefined();
   });
 
-  test('infers the context window from the family-aware resolver rather than a flat constant', () => {
-    // Anthropic's curated family window (200k) differs from a flat guess,
-    // proving this delegates to inferFallbackContextWindow rather than
-    // hardcoding a provider-tier split.
-    const anthropic = buildFallbackModelDefinition('anthropic', 'claude-x');
-    expect(anthropic.contextWindow).toBe(200_000);
-
-    const gemini = buildFallbackModelDefinition('google', 'gemini-x');
-    expect(gemini.contextWindow).toBe(1_000_000);
+  test('takes the context window from the read family row, and the conservative window before the read', async () => {
+    forgetModelLimitReadings();
+    const { port, requests } = fakePort((_name, question, state) => choiceAnswer(question, (state as { model_id?: unknown }).model_id === 'gemini-x' ? 'gemini' : 'claude', 0.95));
+    const previous = installJudgmentPort(port);
+    try {
+      expect(buildFallbackModelDefinition('anthropic', 'claude-x').contextWindow).toBe(FALLBACK_CONTEXT_WINDOW);
+      expect(requests).toHaveLength(0);
+      await readFallbackContextWindow('anthropic', 'claude-x', 'test');
+      await readFallbackContextWindow('google', 'gemini-x', 'test');
+      expect(buildFallbackModelDefinition('anthropic', 'claude-x').contextWindow).toBe(200_000);
+      expect(buildFallbackModelDefinition('google', 'gemini-x').contextWindow).toBe(1_000_000);
+    } finally {
+      installJudgmentPort(previous);
+      forgetModelLimitReadings();
+    }
   });
 
   test('every fallback definition declares tool calling and code editing support', () => {

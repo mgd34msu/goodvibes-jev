@@ -2,9 +2,12 @@
  * The routing readings the provider registry keeps: model capability tiers
  * (routing.model-tier) and cross-provider model identity for failover groups
  * (routing.model-identity), both remembered under the registry's persistence
- * root. Kept beside registry.ts so the registry stays a thin owner.
+ * root, and the context-window row of each model nothing else sizes
+ * (routing.context-window-family), remembered per process. Kept beside
+ * registry.ts so the registry stays a thin owner.
  */
 import { join } from 'node:path';
+import { mapLimit } from '@goodvibes-jev/judgment';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { ModelTierStore } from '../routing/model-tiers.js';
@@ -12,6 +15,18 @@ import type { CatalogModel } from './model-catalog.js';
 import { SyntheticIdentities } from './model-catalog-synthetic.js';
 import type { ModelDefinition } from './registry-types.js';
 import type { CanonicalModel } from './synthetic.js';
+import { knownFallbackContextWindow, readFallbackContextWindow } from './context-window-fallback.js';
+
+const CONTEXT_WINDOW_SITE = 'providers.registry.context-window-family';
+/** How many unsized models have their window row read at once. */
+const CONTEXT_WINDOW_CONCURRENCY = 8;
+
+/** Provider-listed definitions with each unsized window set to its row as read so far. */
+function resizeUnsizedModels(models: readonly ModelDefinition[]): ModelDefinition[] {
+  return models.map((model) => model.contextWindowProvenance === 'fallback'
+    ? { ...model, contextWindow: knownFallbackContextWindow(model.provider, model.id) }
+    : model);
+}
 
 export class RegistryRoutingReadings {
   readonly #root: () => string;
@@ -46,6 +61,32 @@ export class RegistryRoutingReadings {
     void this.synthetic.readAll(this.#models())
       .then((asked) => { if (asked > 0) rebuild(); })
       .catch((error: unknown) => logger.warn('[routing] Failover identity readings failed', { error: summarizeError(error) }));
+  }
+
+  /**
+   * Reads the documented window row (routing.context-window-family) of every
+   * model built without a window: catalog and failover-group definitions,
+   * and provider-listed ones the catalog does not cover, each only when
+   * `reported` finds no configured, provider or OpenRouter window for it.
+   * When a read changes any window, `rebuild` gets the resize for the stored
+   * provider-listed definitions (the catalog and group ones are rebuilt from
+   * the readings). Runs in the background; a failure is logged and retried on
+   * the next catalog load or listing refresh.
+   */
+  readContextWindowsInBackground(
+    built: readonly ModelDefinition[],
+    native: readonly ModelDefinition[],
+    reported: (model: ModelDefinition) => number | undefined,
+    rebuild: (resize: typeof resizeUnsizedModels) => void,
+  ): void {
+    const builtKeys = new Set(built.map((model) => model.registryKey));
+    const unsized = [...built, ...native.filter((model) => !builtKeys.has(model.registryKey))]
+      .filter((model) => model.contextWindowProvenance === 'fallback' && reported(model) === undefined);
+    if (unsized.length === 0) return;
+    void mapLimit(unsized, CONTEXT_WINDOW_CONCURRENCY, async (model) =>
+      (await readFallbackContextWindow(model.provider, model.id, CONTEXT_WINDOW_SITE)) !== model.contextWindow)
+      .then((changed) => { if (changed.some(Boolean)) rebuild(resizeUnsizedModels); })
+      .catch((error: unknown) => logger.warn('[routing] Context window readings failed', { error: summarizeError(error) }));
   }
 }
 

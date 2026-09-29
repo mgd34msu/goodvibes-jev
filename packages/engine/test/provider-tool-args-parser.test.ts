@@ -1,9 +1,24 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.js';
 import { AnthropicProvider } from '../sdk/src/platform/providers/anthropic.js';
 import {
   extractTextToolCalls,
   fromOpenAIToolCalls,
 } from '../sdk/src/platform/providers/tool-formats.js';
+
+
+/** routing.anthropic-output-cap reads every model id into the 64K row, so request bodies can be built. */
+let previousOutputCapPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  forgetModelLimitReadings();
+  previousOutputCapPort = installJudgmentPort(fakePort((_name, question) => choiceAnswer(question, 'output-64k', 0.95)).port);
+});
+afterEach(() => {
+  installJudgmentPort(previousOutputCapPort);
+  forgetModelLimitReadings();
+});
 
 describe('provider streamed tool argument parsing', () => {
   test('drops malformed OpenAI accumulated arguments instead of returning empty args', () => {

@@ -32,24 +32,20 @@ import { LocalContextIngestionService } from './local-context-ingestion.js';
 import { getModelLimitsCachePath, ModelLimitsService } from './model-limits.js';
 import { getGitHubCopilotTokenCachePath } from './github-copilot.js';
 import { summarizeError } from '../utils/error-display.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { ContextWindowOverrideStore, getContextWindowOverridesPath } from './context-window-overrides.js';
 import { splitModelRegistryKey, withRegistryKey } from './registry-helpers.js';
 import { computeConfiguredProviderIds } from './registry-configured-ids.js';
 import { initProviderCatalog, refreshProviderCatalog } from './registry-catalog-lifecycle.js';
 import { findAlternativeModel, RegistryRoutingReadings } from './registry-routing.js';
 import type { ModelTierStore } from '../routing/model-tiers.js';
-import {
-  buildModelRegistry, diffCustomModels, findModelDefinition, findModelDefinitionForProvider,
-} from './registry-models.js';
+import { buildModelRegistry, diffCustomModels, findModelDefinition, findModelDefinitionForProvider } from './registry-models.js';
 import { assertProviderModelSource } from './model-source-contract.js';
 import { assertProviderCredentialAuthority } from './credential-authority-contract.js';
 import { resolveModelReference } from './model-id-resolution.js';
 import { ConfiguredModelFollower } from './registry-configured-model.js';
 import type { LiveModelDiscoveryResult } from './live-model-discovery.js';
-import {
-  applyProviderNativeModelBaseline, removeProviderNativeModels, sweepLiveModelDiscovery,
-} from './registry-live-model-discovery.js';
+import { applyProviderNativeModelBaseline, removeProviderNativeModels, sweepLiveModelDiscovery } from './registry-live-model-discovery.js';
 import type {
   ModelDefinition, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
@@ -229,8 +225,13 @@ export class ProviderRegistry {
       options,
     );
     this.providerNativeModels = providerNativeModels;
-    if (reports.length > 0) this._invalidateModelRegistry();
+    if (reports.length > 0) { this._invalidateModelRegistry(); this.readContextWindows(); }
     return reports;
+  }
+
+  /** Reads the window row of each unsized catalog, failover-group and provider-listed model in the background (registry-routing.ts). */
+  private readContextWindows(): void {
+    this.routingReadings.readContextWindowsInBackground([...this.getCatalogBuiltins(), ...this.getSyntheticBuiltins()], this.providerNativeModels, (model) => this.modelLimitsService.reportedContextWindow(model), (resize) => { this.providerNativeModels = resize(this.providerNativeModels); this._invalidateModelRegistry(); });
   }
 
   /** Register a runtime/plugin-owned provider + optional models; returns an unregister callback. */
@@ -570,7 +571,7 @@ export class ProviderRegistry {
     }
     const provider = this.tryGet(providerId);
     if (!provider || !provider.models.includes(resolvedModelId)) return null;
-    const isFree = resolvedModelId.endsWith(':free') || resolvedModelId.endsWith('-free') || resolvedModelId.endsWith('/free');
+    const isFree = resolvedModelId.endsWith(':free');
     return this.contextWindowOverrideStore().apply({
       id: resolvedModelId,
       provider: providerId,
@@ -578,7 +579,7 @@ export class ProviderRegistry {
       displayName: resolvedModelId,
       description: `${resolvedModelId}, builtin provider default; model catalog has not hydrated yet.`,
       capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false },
-      contextWindow: inferFallbackContextWindow(providerId, resolvedModelId),
+      contextWindow: knownFallbackContextWindow(providerId, resolvedModelId),
       contextWindowProvenance: 'fallback',
       selectable: true,
       tier: isFree ? 'free' : 'standard',
@@ -831,7 +832,7 @@ export class ProviderRegistry {
       favoritesStore: this.favoritesStore,
       benchmarkStore: this.benchmarkStore,
       refreshCatalog: () => this.refreshCatalog(),
-      afterCatalogApplied: () => this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt)),
+      afterCatalogApplied: () => { this.routingReadings.readInBackground(() => this.updateCatalogState(this.catalogModels, this.pricingCatalog?.fetchedAt)); this.readContextWindows(); },
     };
   }
 }

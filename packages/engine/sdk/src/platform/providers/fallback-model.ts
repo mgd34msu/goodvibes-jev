@@ -1,9 +1,10 @@
 /**
  * fallback-model.ts, the pre-catalog fallback registration for the
  * configured model: before the model catalog cache has loaded, the
- * configured `provider:model` is registered with family-aware context-window
- * and reasoning-effort inference, so the context meter and the compaction
- * denominator agree with the post-catalog window instead of a placeholder.
+ * configured `provider:model` is registered with its documented family
+ * window and reasoning levels once routing has read the model id, so the
+ * context meter and the compaction denominator agree with the post-catalog
+ * window instead of a placeholder.
  *
  * ── Hoist provenance (2026-07-30 daemon/TUI split) ──────────────────────────
  *
@@ -11,8 +12,8 @@
  * (`runtime/services.ts`) carried an identical `ensureConfiguredModelIsRoutable`
  * and a near-identical `buildFallbackModelDefinition`, this module unifies
  * them. The TUI's `buildFallbackModelDefinition` is the superset adopted
- * here: it calls this package's own {@link inferFallbackContextWindow} and
- * {@link resolveReasoningEffortSpec} for family-aware inference, where the
+ * here: it calls this package's own {@link knownFallbackContextWindow} and
+ * {@link resolveReasoningEffortSpec} for the documented family rows, where the
  * agent's copy hardcoded a flat 128k/32k window split and a fixed
  * `['instant', 'low', 'medium', 'high']` reasoning-effort level set, which
  * silently mis-stated the window for any model outside the two curated
@@ -23,7 +24,7 @@
  * rather than a real divergence to preserve.
  */
 import type { ConfigManager } from '../config/manager.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { findFamilyReasoningEffortSpec } from './reasoning-effort-families.js';
 import type { ModelDefinition } from './registry-types.js';
 import type { ProviderRegistry } from './registry.js';
@@ -53,7 +54,7 @@ export function buildFallbackModelDefinition(provider: string, modelId: string):
       reasoning: familySpec !== undefined && familySpec.kind !== 'unavailable',
       multimodal: false,
     },
-    contextWindow: inferFallbackContextWindow(provider, modelId),
+    contextWindow: knownFallbackContextWindow(provider, modelId),
     contextWindowProvenance: 'fallback',
     selectable: true,
     ...(familySpec ? { reasoningEffort: familySpec } : {}),

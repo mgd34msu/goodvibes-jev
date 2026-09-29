@@ -2,7 +2,7 @@ import type { ModelDefinition, ProviderRegistry } from './registry.js';
 import type { ModelLimitsService } from './model-limits.js';
 import type { MinimalModelDefinition, SyntheticModelInfo } from './model-catalog-synthetic.js';
 import { logger } from '../utils/logger.js';
-import { inferFallbackContextWindow } from './context-window-fallback.js';
+import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { type ModelsDevReasoningOption, parseReasoningOptions } from './reasoning-effort.js';
 import type { ModelCapabilityFacts, ModelCapabilityFactsSource } from './capabilities.js';
 import { resolveReasoningEffortSpec } from './reasoning-effort-families.js';
@@ -112,16 +112,6 @@ export function getCostFromPricingCatalog(
     logger.debug('[cost-tracker] model not in catalog', { modelId });
   }
   return null;
-}
-
-export function normalizeModelId(modelId: string): string {
-  let id = modelId;
-  if (id.startsWith('coding-')) id = id.slice('coding-'.length);
-  const slashIdx = id.lastIndexOf('/');
-  if (slashIdx !== -1) id = id.slice(slashIdx + 1);
-  if (id.endsWith(':free')) id = id.slice(0, -':free'.length);
-  if (id.endsWith('-free')) id = id.slice(0, -'-free'.length);
-  return id;
 }
 
 export function hasKeyForProvider(provider: CatalogProvider): boolean {
@@ -260,7 +250,7 @@ export function getCatalogModelDefinitionsFrom(models: readonly CatalogModel[], 
       },
       contextWindow: hasCatalogContextWindow
         ? model.contextWindow!
-        : inferFallbackContextWindow(model.provider, model.id),
+        : knownFallbackContextWindow(model.provider, model.id),
       ...(!hasCatalogContextWindow ? { contextWindowProvenance: 'fallback' as const } : {}),
       selectable: true,
       tier: model.tier === 'subscription' ? 'subscription' : isFree ? 'free' : paidTierLabel(tiers, `${model.providerId}:${model.id}`),

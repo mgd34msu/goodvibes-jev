@@ -11,7 +11,11 @@
  * reviewed and kept. See docs/decisions/2026-07-27-daemon-refuses-derived-sends.md
  * and test/browser-outward-effects.test.ts, which still contract the refusal.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { EntryType, Question } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { forgetModelLimitReadings } from '../sdk/src/platform/routing/model-limit-readings.ts';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -154,8 +158,38 @@ describe('MCP upsert preserves env it was not asked to change', () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('Anthropic max_tokens matches what the provider publishes', () => {
+  /** A routing.anthropic-output-cap port reading each model id into `rowOf(id)` at `confidence`. */
+  function capPort(rowOf: (modelId: string) => string, confidence = 0.95) {
+    return fakePort((name: string, question: Question, state: EntryType) => {
+      if (name !== 'route') throw new Error(`output cap port: unexpected question ${name}`);
+      return choiceAnswer(question, rowOf(String((state as { model_id?: unknown }).model_id)), confidence);
+    });
+  }
+
+  const ROWS: Record<string, string> = {
+    'claude-opus-5': 'output-128k',
+    'claude-fable-5': 'output-128k',
+    'claude-haiku-4-5': 'output-64k',
+    'claude-3-haiku-20240307': 'output-4k',
+  };
+  let cap = capPort((id) => ROWS[id] ?? 'none');
+  let previousPort: ReturnType<typeof installJudgmentPort>;
+  function usePort(next: ReturnType<typeof capPort>): void {
+    cap = next;
+    installJudgmentPort(next.port);
+  }
+  beforeEach(() => {
+    forgetModelLimitReadings();
+    cap = capPort((id) => ROWS[id] ?? 'none');
+    previousPort = installJudgmentPort(cap.port);
+  });
+  afterEach(() => {
+    installJudgmentPort(previousPort);
+    forgetModelLimitReadings();
+  });
+
   /** Capture the outgoing request body without reaching the network. */
-  async function capturedMaxTokens(model: string, requested: number): Promise<number> {
+  async function capturedMaxTokens(model: string, requested: number, provider = new AnthropicProvider('test-key-not-real')): Promise<number> {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
@@ -170,7 +204,6 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
       );
     }) as typeof globalThis.fetch;
     try {
-      const provider = new AnthropicProvider('test-key-not-real');
       await provider.chat({
         model,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
@@ -182,32 +215,42 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
     return body['max_tokens'] as number;
   }
 
-  test('claude-opus-5 gets its real 128000, not the 16384 default', async () => {
-    // The live number, from Anthropic's published model comparison. Before the
-    // table had an arm for it, this model fell through to ANTHROPIC_DEFAULT_
-    // MAX_OUTPUT and was capped at an eighth of its capacity, silently.
+  test('a model read into the 128K row is capped at 128000', async () => {
     expect(await capturedMaxTokens('claude-opus-5', 200_000)).toBe(128_000);
-  });
-
-  test('sonnet-5 and fable-5 also get 128000', async () => {
-    expect(await capturedMaxTokens('claude-sonnet-5', 200_000)).toBe(128_000);
     expect(await capturedMaxTokens('claude-fable-5', 200_000)).toBe(128_000);
   });
 
-  test('haiku-4-5 gets 64000: the table is corrected, not merely widened', async () => {
+  test('each row caps at its own documented size', async () => {
     expect(await capturedMaxTokens('claude-haiku-4-5', 200_000)).toBe(64_000);
+    expect(await capturedMaxTokens('claude-3-haiku-20240307', 200_000)).toBe(4_096);
+  });
+
+  test('the model id is read once and the reading is remembered', async () => {
+    const provider = new AnthropicProvider('test-key-not-real');
+    await capturedMaxTokens('claude-opus-5', 200_000, provider);
+    await capturedMaxTokens('claude-opus-5', 200_000, provider);
+    expect(cap.requests.map((request) => request.state)).toEqual([{ model_id: 'claude-opus-5' }]);
   });
 
   test('a request under the cap is passed through unchanged', async () => {
-    expect(await capturedMaxTokens('claude-opus-5', 4_096)).toBe(4_096);
+    expect(await capturedMaxTokens('claude-opus-5', 4_000)).toBe(4_000);
   });
 
-  test('a live /v1/models limit beats the offline table', async () => {
+  test('a model with no documented row gets the smallest documented cap', async () => {
+    expect(await capturedMaxTokens('acme-support-bot', 200_000)).toBe(4_096);
+  });
+
+  test('a reading too weak to act on gets the smallest documented cap, not the row it leans to', async () => {
+    usePort(capPort(() => 'output-128k', 0.5));
+    expect(await capturedMaxTokens('claude-opus-5', 200_000)).toBe(4_096);
+  });
+
+  test('a live /v1/models limit beats the documented rows, and nothing is read', async () => {
     const realFetch = globalThis.fetch;
     let body: Record<string, unknown> = {};
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
       if (String(url).includes('/v1/models')) {
-        // A model this build's table has never heard of, with a real cap.
+        // A model no row names, with a real cap.
         return new Response(
           JSON.stringify({ data: [{ id: 'claude-future-9', max_tokens: 250_000, max_input_tokens: 2_000_000 }] }),
           { status: 200, headers: { 'content-type': 'application/json' } },
@@ -234,8 +277,8 @@ describe('Anthropic max_tokens matches what the provider publishes', () => {
     } finally {
       globalThis.fetch = realFetch;
     }
-    // Without the live read this model would fall to the 16384 default.
     expect(body['max_tokens']).toBe(250_000);
+    expect(cap.requests).toHaveLength(0);
   });
 });
 
