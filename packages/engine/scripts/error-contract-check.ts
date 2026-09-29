@@ -104,18 +104,24 @@ async function fileContainsPattern(rel: string, pattern: RegExp): Promise<boolea
 
 async function assertRetryContract(): Promise<void> {
   const errorsSource = read('errors/src/index.ts');
+  // The literal list lives in failure-transience.ts since 95c1e56 made it the
+  // one list the transience decision and the retry policy share; the errors
+  // package's index exports it as RETRYABLE_STATUS_CODES. Both files are the
+  // errors package, which is what this contract requires to own the list.
+  const transienceSource = read('errors/src/failure-transience.ts');
   const sdkTypesSource = read('sdk/src/platform/types/errors.ts');
   const transportRetrySource = read('transport-http/src/retry.ts');
   const retryLiteralPattern = new RegExp(String.raw`\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504\s*\]`);
   const retryLiteralAllowedFiles = new Set([
-    'errors/src/index.ts',
+    'errors/src/failure-transience.ts',
     'scripts/error-contract-check.ts',
     'test/error-kind.test.ts',
   ]);
 
   assert(
-    /export\s+const\s+RETRYABLE_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504\s*\]/.test(errorsSource),
-    'errors must own the canonical retryable status list',
+    /export\s+const\s+TRANSIENT_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*\[\s*408,\s*429,\s*500,\s*502,\s*503,\s*504\s*\]/.test(transienceSource)
+      && /export\s+const\s+RETRYABLE_STATUS_CODES\s*:\s*readonly\s+number\[\]\s*=\s*TRANSIENT_STATUS_CODES\s*;/.test(errorsSource),
+    'errors must own the canonical retryable status list (failure-transience.ts, exported by errors/src/index.ts as RETRYABLE_STATUS_CODES)',
   );
   const canonicalRetryImport = /import\s*\{[^}]*\bRETRYABLE_STATUS_CODES\b[^}]*\}\s*from\s*'@goodvibes-jev\/engine\/errors'/;
   assert(
