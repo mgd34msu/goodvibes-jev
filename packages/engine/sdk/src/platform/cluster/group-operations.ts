@@ -331,7 +331,7 @@ export async function joinGroup(
     // definition it does not hold. So a timeout covers both cases and the
     // message says both rather than guessing at one and being wrong half the
     // time.
-    const timedOut = outcome.reason.includes('answered in time');
+    const timedOut = outcome.failure === 'unanswered';
     return failed(
       timedOut
         ? 'no machine in that group accepted the join key, either the join key is wrong, or no machine in that group is reachable on this network'
@@ -466,19 +466,30 @@ export async function forgetNode(
       'create a group with `cluster create`, or join one with `cluster join`',
     );
   }
-  if (nodeId === context.nodeId) {
+  // The operator names a machine by its full id, its display name, or an id
+  // prefix. An exact id wins; otherwise the name or prefix must pick out one
+  // machine, since removing the wrong one is not undone by running it again.
+  const exact = state.members.find((entry) => entry.nodeId === nodeId);
+  const byName = state.members.filter((entry) => entry.displayName === nodeId);
+  const byPrefix = state.members.filter((entry) => entry.nodeId.startsWith(nodeId));
+  const candidates = exact ? [exact] : byName.length > 0 ? byName : byPrefix;
+  if (candidates.length > 1) {
     return failed(
-      'a machine cannot remove itself from the group',
-      'run `cluster leave` on this machine instead, or `cluster forget` from another machine in the group',
+      `'${nodeId}' matches ${candidates.length} machines in this group: ${candidates.map((entry) => `${entry.nodeId} (${entry.displayName})`).join(', ')}`,
+      'run `cluster forget` again with the full node id; `cluster nodes` lists them',
     );
   }
-  const member = state.members.find((entry) => entry.nodeId === nodeId)
-    ?? state.members.find((entry) => entry.displayName === nodeId)
-    ?? state.members.find((entry) => entry.nodeId.startsWith(nodeId));
+  const member = candidates[0];
   if (!member) {
     return failed(
       `no machine called '${nodeId}' is in this group`,
       'run `cluster nodes` to see the member list',
+    );
+  }
+  if (member.nodeId === context.nodeId) {
+    return failed(
+      'a machine cannot remove itself from the group',
+      'run `cluster leave` on this machine instead, or `cluster forget` from another machine in the group',
     );
   }
   const removed = removeMember(state, member.nodeId, 'removed by the operator', context.now());

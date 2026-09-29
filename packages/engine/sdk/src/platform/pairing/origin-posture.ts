@@ -54,7 +54,8 @@ export const LAN_PLAIN_HTTP_NOTICE =
 
 const NEEDS_HTTPS_REASON = 'needs https, available via tailscale';
 
-function isLoopbackHost(hostname: string): boolean {
+/** A loopback host (the W3C Secure Contexts list); a URL's bracketed IPv6 `[::1]` counts. */
+export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   return host === 'localhost' || host === '::1' || host === '127.0.0.1' || host.startsWith('127.') || host.endsWith('.localhost');
 }

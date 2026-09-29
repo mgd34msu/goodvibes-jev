@@ -10,11 +10,14 @@
  */
 
 /**
- * The fallback `sub` when no contact is configured. It is a real, well-formed
- * mailto that push services accept, but it reaches nobody, which is exactly
- * why the `push.vapidSubject` config key exists.
+ * The fallback `sub` when no contact is configured. It is a well-formed mailto
+ * that passes {@link isValidVapidSubject}, on the RFC 2606 reserved `.invalid`
+ * domain, so it reaches nobody, which is exactly why the `push.vapidSubject`
+ * config key exists. (The earlier `@localhost` default failed this file's own
+ * rule, which requires a dotted mail domain, and Apple's push service refuses
+ * a localhost contact.)
  */
-export const DEFAULT_VAPID_SUBJECT = 'mailto:goodvibes-push@localhost';
+export const DEFAULT_VAPID_SUBJECT = 'mailto:goodvibes-push@goodvibes.invalid';
 
 /** The message a rejected subject reports, shared by the config gate and the manager. */
 export const VAPID_SUBJECT_HINT =

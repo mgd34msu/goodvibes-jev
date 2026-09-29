@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TelegramIngressSupervisor, describeWebhookUrlProblem } from '../sdk/src/platform/channels/telegram/ingress.ts';
-import { TelegramBotApi } from '../sdk/src/platform/channels/telegram/api.ts';
+import { TelegramApiError, TelegramBotApi } from '../sdk/src/platform/channels/telegram/api.ts';
 import { TelegramOffsetStore } from '../sdk/src/platform/channels/telegram/offset-store.ts';
 
 // ── fakes ───────────────────────────────────────────────────────────────────
@@ -685,4 +685,20 @@ describe('telegram offset store: the cursor survives restarts', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, TEST_BUDGET_MS);
+});
+
+describe('a Telegram 409 is not classified from its description text', () => {
+  // TelegramApiError used to carry isConcurrentConsumerConflict and
+  // isWebhookConflict, a regex over Telegram's free-text description. Nothing
+  // called them after conflict-policy.ts took over the 409 (it asks
+  // getWebhookInfo), so they were a leftover guess and are removed.
+  test('the error exposes only the structured facts Telegram sends', () => {
+    const error = new TelegramApiError('getUpdates', {
+      errorCode: 409,
+      description: 'Conflict: terminated by other getUpdates request; make sure that only one bot instance is running',
+    });
+    expect(error.errorCode).toBe(409);
+    expect('isConcurrentConsumerConflict' in error).toBe(false);
+    expect('isWebhookConflict' in error).toBe(false);
+  });
 });

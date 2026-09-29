@@ -81,6 +81,9 @@ describe('isHttpOnLan', () => {
     ['http://192.168.1.5:3141', true],
     ['http://127.0.0.1:3141', false],
     ['http://localhost:3141', false],
+    ['http://[::1]:3141', false],
+    ['http://127.0.0.2:3141', false],
+    ['http://app.localhost:3141', false],
     ['https://app.example', false],
   ])('%s -> %p', (origin, expected) => {
     expect(isHttpOnLan(origin as string)).toBe(expected);

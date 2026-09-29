@@ -349,3 +349,31 @@ describe('inbound surface adapters: a swept credential reference', () => {
     });
   }
 });
+
+describe('mattermost: an outgoing webhook token in the body', () => {
+  // Mattermost's outgoing webhooks put the token in the form body, not a header.
+  // The body token was never read (a `??` after a helper that returns '' rather
+  // than null), so a configured Mattermost webhook refused every such call.
+  function formRequest(token: string): Request {
+    const body = new URLSearchParams({ token, channel_id: 'c1', user_id: 'u1', text: 'hello' });
+    return new Request('http://localhost/mattermost', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+  }
+
+  test('the right token in the body authorises the call', async () => {
+    const { context, calls } = makeContext({ shape: 'literal', configKeys: ['surfaces.mattermost.botToken'] });
+    const response = await handleMattermostSurfaceWebhook(formRequest(SECRET), context as never);
+    expect(response.status).not.toBe(401);
+    expect(calls.some((call) => call.kind === 'authorizeSurfaceIngress')).toBe(true);
+  });
+
+  test('a wrong token in the body is refused', async () => {
+    const { context, calls } = makeContext({ shape: 'literal', configKeys: ['surfaces.mattermost.botToken'] });
+    const response = await handleMattermostSurfaceWebhook(formRequest('not-the-secret'), context as never);
+    expect(response.status).toBe(401);
+    expect(calls).toHaveLength(0);
+  });
+});

@@ -15,6 +15,7 @@
  */
 import type { ConfigManager } from '../config/manager.js';
 import { resolveWebPort } from '../daemon/host-resolver.js';
+import { isLoopbackHost } from './origin-posture.js';
 import { stableUrlHostForBindHost, type ResolvedStableHost, type StableHostInputs } from './stable-host.js';
 
 export interface PairingWebOrigin {
@@ -39,7 +40,9 @@ export function isHttpOnLan(origin: string): boolean {
   } catch {
     return false;
   }
-  return host !== '127.0.0.1' && host !== 'localhost' && host !== '::1';
+  // `URL.hostname` keeps the brackets on an IPv6 host (`[::1]`), so the old
+  // `!== '::1'` never matched; the shared rule strips them.
+  return !isLoopbackHost(host);
 }
 
 /**

@@ -237,7 +237,13 @@ export async function handleDiscordGatewayDispatchPayload(
   const guildId = typeof dispatch.d.guild_id === 'string' ? dispatch.d.guild_id : undefined;
   const messageId = typeof dispatch.d.id === 'string' ? dispatch.d.id : undefined;
   const userId = typeof author.id === 'string' ? author.id : undefined;
-  const mentioned = Array.isArray(dispatch.d.mentions) && dispatch.d.mentions.length > 0;
+  // Mentioned means this bot is mentioned: a Discord bot user's id is its
+  // application id, so a mention counts only when one of the message's
+  // structured `mentions` carries the configured application id.
+  const applicationId = context.configManager.get('surfaces.discord.applicationId');
+  const mentioned = typeof applicationId === 'string' && applicationId.length > 0
+    && Array.isArray(dispatch.d.mentions)
+    && dispatch.d.mentions.some((mention) => (mention as { readonly id?: unknown } | null)?.id === applicationId);
   const policy = await context.authorizeSurfaceIngress({
     surface: 'discord',
     userId,

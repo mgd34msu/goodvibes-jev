@@ -1,5 +1,6 @@
 import { logger } from '../../utils/logger.js';
 import { SlackIntegration } from '../../integrations/index.js';
+import { slackMentionedUserIds } from '../../integrations/slack.js';
 import type { SurfaceAdapterContext } from '../types.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { fetchWithTimeout } from '../../utils/fetch-with-timeout.js';
@@ -219,7 +220,12 @@ export async function handleSlackSurfacePayload(
     }
     const task = event.text.trim();
     if (!task) return new Response(null, { status: 200 });
-    const mentioned = event.eventType === 'app_mention' || /<@[A-Z0-9]+>/i.test(task);
+    // Mentioned means this app's bot user is mentioned: Slack sends `app_mention`
+    // for that, and a plain `message` counts only when its markup names one of
+    // the bot user ids the event's `authorizations` carry, not any user.
+    const botUserIds = new Set(event.botUserIds.map((id) => id.toUpperCase()));
+    const mentioned = event.eventType === 'app_mention'
+      || slackMentionedUserIds(task).some((id) => botUserIds.has(id));
     const policy = await context.authorizeSurfaceIngress({
       surface: 'slack',
       userId: event.userId,

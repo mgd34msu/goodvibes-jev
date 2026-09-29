@@ -22,8 +22,7 @@ export async function handleNtfySurfaceWebhook(req: Request, context: SurfaceAda
     return Response.json({ error: 'ntfy webhook ingress is not configured' }, { status: 503 });
   }
   const providedToken = req.headers.get('x-ntfy-token')
-    ?? readBearerOrHeaderToken(req, 'x-goodvibes-ntfy-token')
-    ?? '';
+    ?? readBearerOrHeaderToken(req, 'x-goodvibes-ntfy-token');
   if (!constantTimeEquals(configuredToken, providedToken)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }

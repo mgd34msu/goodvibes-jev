@@ -24,6 +24,7 @@
  */
 import { createSocket, type Socket } from 'node:dgram';
 import { networkInterfaces } from 'node:os';
+import { isIPv6 } from 'node:net';
 import type { ClusterLogger, ClusterTransport, ClusterTransportDescription } from './types.js';
 
 /**
@@ -57,7 +58,7 @@ export function resolveMulticastInterfaces(): string[] {
 export interface UdpClusterTransportOptions {
   readonly port: number;
   readonly multicastGroup: string;
-  /** `host:port` or bare `host` entries; a bare host uses `port`. */
+  /** `host:port` or bare `host` entries (`[v6]:port` or a bare IPv6 address, which this IPv4 transport drops with a warning); a bare host uses `port`. */
   readonly peers: readonly string[];
   readonly logger: ClusterLogger;
 }
@@ -80,7 +81,13 @@ export class UdpClusterTransport implements ClusterTransport {
   private readonly peers: readonly ResolvedPeer[];
 
   constructor(private readonly options: UdpClusterTransportOptions) {
-    this.peers = parsePeers(options.peers, options.port);
+    // The socket is udp4 and joins IPv4 interfaces, so an IPv6 peer cannot be
+    // reached through it; say so once rather than fail every datagram quietly.
+    const peers = parsePeers(options.peers, options.port);
+    for (const peer of peers.filter((entry) => isIPv6(entry.host))) {
+      options.logger.warn('cluster: an IPv6 static peer cannot be reached, the cluster transport is IPv4 only', { peer: peer.host });
+    }
+    this.peers = peers.filter((entry) => !isIPv6(entry.host));
   }
 
   describe(): ClusterTransportDescription {
@@ -232,6 +239,18 @@ export function parsePeers(entries: readonly string[], defaultPort: number): Res
   for (const entry of entries) {
     const trimmed = String(entry ?? '').trim();
     if (!trimmed) continue;
+    // `[address]:port` is how a URL authority writes an IPv6 address with a
+    // port (RFC 3986); a bare IPv6 address has several colons and no port.
+    const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(trimmed);
+    if (bracketed) {
+      const port = bracketed[2] === undefined ? defaultPort : Number.parseInt(bracketed[2], 10);
+      if (isIPv6(bracketed[1]!) && validPort(port)) parsed.push({ host: bracketed[1]!, port });
+      continue;
+    }
+    if (isIPv6(trimmed)) {
+      parsed.push({ host: trimmed, port: defaultPort });
+      continue;
+    }
     const separator = trimmed.lastIndexOf(':');
     if (separator === -1) {
       parsed.push({ host: trimmed, port: defaultPort });
@@ -239,8 +258,12 @@ export function parsePeers(entries: readonly string[], defaultPort: number): Res
     }
     const host = trimmed.slice(0, separator);
     const port = Number.parseInt(trimmed.slice(separator + 1), 10);
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65_535) continue;
+    if (!host || host.includes(':') || !validPort(port)) continue;
     parsed.push({ host, port });
   }
   return parsed;
+}
+
+function validPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65_535;
 }

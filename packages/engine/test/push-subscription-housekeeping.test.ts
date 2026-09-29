@@ -33,7 +33,9 @@ import {
   DEFAULT_VAPID_SUBJECT,
   PushSubscriptionStore,
   PushSubscriptionValidationError,
+  VapidKeypairUnreadableError,
   VapidManager,
+  VAPID_SECRET_KEY,
   isValidVapidSubject,
   type PushSubscriptionPolicy,
   type PushSubscriptionSweepReport,
@@ -464,11 +466,13 @@ describe('the VAPID sub contact', () => {
     expect(verified).toBe(true);
   });
 
-  test('no configured contact falls back to the documented localhost subject', async () => {
+  test('no configured contact falls back to the documented reserved-domain subject, which passes its own rule', async () => {
     const manager = new VapidManager(memorySecrets());
     expect(manager.getSubject()).toBe(DEFAULT_VAPID_SUBJECT);
     const { sub, verified } = await subjectOf(manager);
-    expect(sub).toBe('mailto:goodvibes-push@localhost');
+    expect(sub).toBe('mailto:goodvibes-push@goodvibes.invalid');
+    // The fallback passes the same rule a configured subject is held to.
+    expect(isValidVapidSubject(DEFAULT_VAPID_SUBJECT)).toBe(true);
     expect(verified).toBe(true);
   });
 
@@ -574,5 +578,41 @@ describe('push.vapidSubject reaches a real delivery', () => {
     // Even a service built only to prove construction succeeds has already
     // started its store's periodic sweep, which would outlive this test.
     (service as unknown as { store: { stopPeriodicSweep(): void } }).store.stopPeriodicSweep();
+  });
+});
+
+describe('the stored VAPID key pair', () => {
+  // Every browser subscription is bound to the public key, so a stored pair
+  // missing a field used to be replaced by a new one in silence, breaking
+  // every subscription. It is now reported and left as it is.
+  function storeHolding(raw: string) {
+    const values = new Map<string, string>([[VAPID_SECRET_KEY, raw]]);
+    return {
+      values,
+      get: async (key: string) => values.get(key) ?? null,
+      set: async (key: string, value: string) => { values.set(key, value); },
+    };
+  }
+
+  test('a stored pair with no private key is reported, not replaced', async () => {
+    const raw = JSON.stringify({ publicKey: 'BPublicKeyOnly' });
+    const store = storeHolding(raw);
+    await expect(new VapidManager(store).getPublicKey()).rejects.toBeInstanceOf(VapidKeypairUnreadableError);
+    expect(store.values.get(VAPID_SECRET_KEY)).toBe(raw);
+  });
+
+  test('a stored pair whose public key is missing is completed from its private key, the same key', async () => {
+    const first = storeHolding('');
+    first.values.clear();
+    const original = await new VapidManager(first).getPublicKey();
+    const stored = JSON.parse(first.values.get(VAPID_SECRET_KEY)!) as { privateJwk: JsonWebKey };
+    const store = storeHolding(JSON.stringify({ privateJwk: stored.privateJwk }));
+    expect(await new VapidManager(store).getPublicKey()).toBe(original);
+  });
+
+  test('an unreadable stored pair is reported, not replaced', async () => {
+    const store = storeHolding('{not json');
+    await expect(new VapidManager(store).getPublicKey()).rejects.toThrow('not valid JSON');
+    expect(store.values.get(VAPID_SECRET_KEY)).toBe('{not json');
   });
 });

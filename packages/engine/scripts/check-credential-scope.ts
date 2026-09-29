@@ -432,7 +432,7 @@ function main(): void {
 
   console.error('credential-scope-check FAILED:\n');
   for (const finding of findings) {
-    console.error(`- ${relative(REPO_ROOT, finding.file)}:${finding.line}`);
+    console.error(`- ${relative(REPO_ROOT, resolve(REPO_ROOT, finding.file))}:${finding.line}`);
     console.error(`    ${finding.snippet}`);
     console.error(`    ${finding.reason}\n`);
   }

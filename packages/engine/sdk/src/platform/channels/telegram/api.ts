@@ -42,31 +42,10 @@ export class TelegramApiError extends Error {
     this.description = options.description ?? '';
   }
 
-  /**
-   * True when ANOTHER PROCESS is already long-polling this same bot token.
-   *
-   * Telegram answers the second getUpdates with 409 and the description
-   * "terminated by other getUpdates request", the SAME status code it uses
-   * for a registered webhook, and a completely different situation. A webhook
-   * conflict is ours to clear; this one is not, because the other consumer is
-   * a real process that is genuinely receiving the user's messages. Treating
-   * it as a webhook conflict is what produces two daemons that each keep
-   * terminating the other's long poll while messages arrive nowhere.
-   */
-  get isConcurrentConsumerConflict(): boolean {
-    if (this.errorCode !== 409) return false;
-    return /terminated by other getupdates/i.test(this.description);
-  }
-
-  /**
-   * True when a webhook is registered and therefore getUpdates cannot run.
-   * Telegram reports this as 409 Conflict, but so does a concurrent consumer,
-   * which is a different problem with a different remedy, so it is excluded
-   * here rather than swept into the same branch.
-   */
-  get isWebhookConflict(): boolean {
-    return this.errorCode === 409 && !this.isConcurrentConsumerConflict;
-  }
+  // A 409 is not classified here: Telegram uses it both for a registered
+  // webhook and for another process long-polling the same token, and its
+  // description text cannot tell them apart reliably. conflict-policy.ts
+  // decides which it is from getWebhookInfo.
 
   /** True when the bot token is missing, revoked, or wrong, never retryable. */
   get isUnauthorized(): boolean {

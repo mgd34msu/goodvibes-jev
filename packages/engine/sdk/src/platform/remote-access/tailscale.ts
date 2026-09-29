@@ -22,9 +22,17 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { logger } from '../utils/logger.js';
 
+/** One command's result. `errorCode` is the spawn error's errno code (ENOENT, ETIMEDOUT, ...) when it did not run to an exit status. */
+export interface TailscaleCommandResult {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly errorCode?: string | undefined;
+}
+
 /** Injectable command execution seam. */
 export interface TailscaleCommandRunner {
-  run(command: string, args: readonly string[]): { readonly status: number | null; readonly stdout: string; readonly stderr: string };
+  run(command: string, args: readonly string[]): TailscaleCommandResult;
 }
 
 const COMMAND_TIMEOUT_MS = 10_000;
@@ -35,9 +43,21 @@ export function defaultTailscaleRunner(): TailscaleCommandRunner {
     run(command, args) {
       try {
         const result = spawnSync(command, [...args], { encoding: 'utf-8', timeout: COMMAND_TIMEOUT_MS });
-        return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+        const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+        return {
+          // Bun leaves `status` undefined, not null, when the binary is missing.
+          status: result.status ?? null,
+          stdout: result.stdout ?? '',
+          stderr: result.stderr || result.error?.message || '',
+          ...(errorCode ? { errorCode } : {}),
+        };
       } catch (error) {
-        return { status: null, stdout: '', stderr: error instanceof Error ? error.message : String(error) };
+        return {
+          status: null,
+          stdout: '',
+          stderr: error instanceof Error ? error.message : String(error),
+          ...((error as NodeJS.ErrnoException)?.code ? { errorCode: (error as NodeJS.ErrnoException).code } : {}),
+        };
       }
     },
   };
@@ -57,6 +77,14 @@ export interface TailscaleDetection {
   readonly detail: string;
 }
 
+/** Why a tailscale command produced no exit status, from its errno code. */
+function notRunDetail(result: TailscaleCommandResult): string {
+  if (result.errorCode === 'ENOENT') return 'tailscale binary not found';
+  if (result.errorCode === 'ETIMEDOUT') return `tailscale did not answer within ${COMMAND_TIMEOUT_MS / 1000} seconds`;
+  const reason = result.stderr.trim();
+  return `tailscale could not be run${reason ? `: ${reason}` : ''}`;
+}
+
 /**
  * Detect a usable tailscale environment. READ-ONLY: `tailscale status --json`
  * only, never up/login/serve/set. Absence is a quiet, honest result, not an
@@ -65,7 +93,9 @@ export interface TailscaleDetection {
 export function detectTailscale(runner: TailscaleCommandRunner = defaultTailscaleRunner()): TailscaleDetection {
   const status = runner.run('tailscale', ['status', '--json']);
   if (status.status === null) {
-    return { available: false, loggedIn: false, detail: 'tailscale binary not found' };
+    // Which of these it was is the spawn error's errno code: ENOENT is a
+    // missing binary, ETIMEDOUT is a tailscale that did not answer in time.
+    return { available: false, loggedIn: false, detail: notRunDetail(status) };
   }
   let parsed: { BackendState?: string; Self?: { DNSName?: string } };
   try {
@@ -123,6 +153,7 @@ export function enableTailscaleServe(
     return { at: Date.now(), command, ok: false, detail: detection.detail };
   }
   const result = runner.run('tailscale', ['serve', '--bg', String(port)]);
+  if (result.status === null) return { at: Date.now(), command, ok: false, detail: notRunDetail(result) };
   if (result.status !== 0) {
     const stderr = result.stderr.trim() || result.stdout.trim() || 'tailscale serve failed';
     return { at: Date.now(), command, ok: false, detail: stderr };

@@ -6,6 +6,7 @@
 export { encryptPushPayload } from './encryption.js';
 export type { SubscriptionKeyMaterial, EncryptedPushPayload } from './encryption.js';
 export {
+  VapidKeypairUnreadableError,
   VapidManager,
   VAPID_SECRET_KEY,
   DEFAULT_VAPID_SUBJECT,

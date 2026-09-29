@@ -38,7 +38,23 @@ export interface SlackEventCallback {
   teamId: string;
   threadTs?: string | undefined;
   eventTs?: string | undefined;
+  /** The app's own bot user ids, from the event's `authorizations` (entries with `is_bot: true`). */
+  botUserIds: readonly string[];
   raw: Record<string, unknown>;
+}
+
+/** The bot user ids an Events API callback names in `authorizations[]` (Slack sets `is_bot` on the app's own). */
+function botUserIdsOf(body: Record<string, unknown>): string[] {
+  const authorizations = Array.isArray(body.authorizations) ? body.authorizations : [];
+  return authorizations.flatMap((entry) => {
+    const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+    return record.is_bot === true && typeof record.user_id === 'string' ? [record.user_id] : [];
+  });
+}
+
+/** The user ids a Slack message mentions, from Slack's `<@U123>` or `<@U123|name>` markup. */
+export function slackMentionedUserIds(text: string): string[] {
+  return [...text.matchAll(/<@([A-Z0-9]+)(?:\|[^>]*)?>/gi)].map((match) => match[1]!.toUpperCase());
 }
 
 export type SlackEvent = SlackSlashCommand | SlackInteraction | SlackEventCallback;
@@ -330,6 +346,7 @@ export class SlackIntegration {
         teamId: typeof body.team_id === 'string' ? body.team_id : '',
         threadTs: typeof eventPayload.thread_ts === 'string' ? eventPayload.thread_ts : undefined,
         eventTs: typeof eventPayload.ts === 'string' ? eventPayload.ts : undefined,
+        botUserIds: botUserIdsOf(body),
         raw: body,
       };
     }

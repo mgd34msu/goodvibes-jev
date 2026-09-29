@@ -45,6 +45,7 @@ import {
 } from '../sdk/src/platform/cluster/group-state.js';
 import {
   deriveGroupId,
+  deriveJoinSalt,
   generateGroupRoot,
   generateNodeKeyMaterial,
 } from '../sdk/src/platform/cluster/group-crypto.js';
@@ -96,6 +97,28 @@ describe('creating and joining a group', () => {
     expect(secondRoster.ok).toBe(true);
     if (!secondRoster.ok) return;
     expect(secondRoster.data.members).toHaveLength(2);
+  });
+
+  test('a join cut short by shutdown is reported as abandoned, not as an unanswered or wrong key', async () => {
+    // joinGroup chose the "wrong join key or unreachable" message by searching
+    // the failure reason for 'answered in time'; it now reads the failure kind,
+    // and a shutdown has its own kind so it is never taken for silence.
+    const { world: w, first, groupId, joinKey } = await makeGroupOfOne();
+    await first.runtime.stop();
+    const second = await addGroupNode(w, 'node-b');
+    const pending = second.runtime.requestJoin({ groupId, joinKey, joinSalt: deriveJoinSalt(groupId), timeoutMs: 60_000 });
+    // The join verifier is derived before the request is sent and waited on;
+    // stop only once the request is actually pending.
+    const admissions = (second.runtime as unknown as { readonly admissions: { readonly pending: unknown } }).admissions;
+    for (let tries = 0; admissions.pending === null && tries < 200; tries += 1) await new Promise((done) => setTimeout(done, 10));
+    expect(admissions.pending).not.toBeNull();
+    await second.runtime.stop();
+    const outcome = await pending;
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.failure).toBe('abandoned');
+      expect(outcome.reason).toContain('shut down');
+    }
   });
 
   test('the wrong join key is refused with a message that names the fix', async () => {
@@ -521,6 +544,41 @@ describe('removal', () => {
     expect(healedB.members).toHaveLength(0);
     expect(healedA.tombstones[0]?.nodeId).toBe('doomed');
     expect(healedB.tombstones[0]?.nodeId).toBe('doomed');
+  });
+
+  test('an id prefix that names two machines is refused, naming both', async () => {
+    const { world: w, first, groupId, joinKey } = await makeGroupOfOne();
+    for (const id of ['node-b1', 'node-b2']) {
+      const other = await addGroupNode(w, id);
+      await joinGroup(other.context, { groupId, joinKey });
+      await settle();
+    }
+    const result = await forgetNode(first.context, 'node-b');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('node-b1');
+      expect(result.error).toContain('node-b2');
+      expect(result.fix).toContain('full node id');
+    }
+    const roster = groupNodes(first.context);
+    if (roster.ok) expect(roster.data.members).toHaveLength(3);
+  });
+
+  test('an id prefix that names one machine removes it', async () => {
+    const { world: w, first, groupId, joinKey } = await makeGroupOfOne();
+    const second = await addGroupNode(w, 'node-b1');
+    await joinGroup(second.context, { groupId, joinKey });
+    await settle();
+    const result = await forgetNode(first.context, 'node-b');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.nodeId).toBe('node-b1');
+  });
+
+  test('a prefix that resolves to this machine is refused like its own id', async () => {
+    const { first } = await makeGroupOfOne();
+    const result = await forgetNode(first.context, 'node-');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.fix).toContain('cluster leave');
   });
 
   test('a machine cannot remove itself', async () => {

@@ -51,9 +51,12 @@ export async function handleMattermostSurfaceWebhook(req: Request, context: Surf
     { kind: 'env', name: 'MATTERMOST_BOT_TOKEN' },
   );
   if (credential.state === 'unresolvable') return surfaceCredentialUnavailable('mattermost', credential);
+  // Mattermost's outgoing webhooks send their token in the body; a header or
+  // bearer token is preferred when present. `readBearerOrHeaderToken` returns
+  // '' (never null) when neither header is set, so `||` falls through to it.
   const providedToken = readBearerOrHeaderToken(req, 'x-goodvibes-mattermost-token')
-    ?? readString(body.token)
-    ?? '';
+    || readString(body.token)
+    || '';
   if (credential.state === 'resolved' && !constantTimeEquals(credential.value, providedToken)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -74,7 +77,7 @@ export async function handleMattermostSurfaceWebhook(req: Request, context: Surf
   const teamId = readString(post?.team_id) ?? readString(body.team_id);
   if (!channelId) return Response.json({ error: 'Missing channel id' }, { status: 400 });
 
-  const task = readString(body.command) ? message : message;
+  const task = message;
   const policy = await context.authorizeSurfaceIngress({
     surface: 'mattermost',
     userId,

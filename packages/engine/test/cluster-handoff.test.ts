@@ -20,7 +20,7 @@ import {
   nextConsumerConflictBackoff,
 } from '../sdk/src/platform/cluster/consumer-conflict-backoff.js';
 import { deriveClusterTiming } from '../sdk/src/platform/cluster/timing.js';
-import { parsePeers } from '../sdk/src/platform/cluster/udp-transport.js';
+import { parsePeers, UdpClusterTransport } from '../sdk/src/platform/cluster/udp-transport.js';
 import {
   CLUSTER_PROTOCOL_VERSION,
   type ClusterConsumerGate,
@@ -708,6 +708,27 @@ describe('cluster settings', () => {
     expect(resolved.multicastGroup).toBe(DEFAULT_CLUSTER_SETTINGS.multicastGroup);
     expect(resolved.secret).toBe('');
     expect(resolved.peers).toEqual(['10.0.0.5', '10.0.0.6:61999']);
+  });
+
+  test('an IPv6 peer is read as one address, with or without brackets and a port', () => {
+    // Splitting at the last colon read `fe80::1` as host `fe80:` on port 1.
+    expect(parsePeers(['fe80::1', '[fe80::2]:5000', '[::1]', '[fe80::3]:0', 'fe80::4:5000x'], 61_860)).toEqual([
+      { host: 'fe80::1', port: 61_860 },
+      { host: 'fe80::2', port: 5_000 },
+      { host: '::1', port: 61_860 },
+    ]);
+  });
+
+  test('the IPv4 transport drops an IPv6 peer with a warning instead of sending to a wrong host', () => {
+    const warnings: unknown[] = [];
+    const transport = new UdpClusterTransport({
+      port: 61_860,
+      multicastGroup: '239.255.42.99',
+      peers: ['10.0.0.5', 'fe80::1'],
+      logger: { debug: () => {}, info: () => {}, warn: (...args: unknown[]) => { warnings.push(args); }, error: () => {} } as never,
+    } as never);
+    expect(transport.describe().peers).toEqual(['10.0.0.5:61860']);
+    expect(warnings).toHaveLength(1);
   });
 
   test('static peers parse with and without an explicit port, and junk is skipped', () => {

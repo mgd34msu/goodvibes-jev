@@ -72,8 +72,11 @@ export interface AdmissionHost {
  *   worth asserting a removal over.
  *
  * - `not-sent`, the request never left this machine.
+ *
+ * - `abandoned`, this machine gave up before the deadline (the daemon shut
+ *   down), so nothing is known about the group's answer.
  */
-export type AdmissionFailure = 'unanswered' | 'refused' | 'unverifiable-replies' | 'not-sent';
+export type AdmissionFailure = 'unanswered' | 'refused' | 'unverifiable-replies' | 'not-sent' | 'abandoned';
 
 export type AdmissionOutcome =
   | { readonly ok: true; readonly grant: AdmissionGrant; readonly node: NodeKeyMaterial }
@@ -104,7 +107,7 @@ export class GroupAdmissionService {
   }
 
   abandon(reason: string): void {
-    this.settle({ ok: false, failure: 'unanswered', reason });
+    this.settle({ ok: false, failure: 'abandoned', reason });
   }
 
   /** Route a datagram the group layer could not authenticate with a group key. */

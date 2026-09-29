@@ -69,6 +69,46 @@ function publicKeyFromJwk(jwk: JsonWebKey): string {
   return base64UrlFromBuffer(point);
 }
 
+/**
+ * A stored VAPID key pair that cannot be used. It is reported, never replaced:
+ * every browser push subscription is bound to the public key, so a new pair
+ * would silently break all of them.
+ */
+export class VapidKeypairUnreadableError extends Error {
+  constructor(problem: string) {
+    super(
+      `The stored VAPID key pair (secret ${VAPID_SECRET_KEY}) ${problem}. It was left as it is: replacing it would `
+      + 'invalidate every browser push subscription. Restore it from a backup, or delete that secret to generate a '
+      + 'new pair, after which each browser has to subscribe to notifications again.',
+    );
+    this.name = 'VapidKeypairUnreadableError';
+  }
+}
+
+/**
+ * The stored key pair, or {@link VapidKeypairUnreadableError}. A record with
+ * its private key but no public key is completed from the private key's own
+ * coordinates, the same key, so nothing a browser holds changes.
+ */
+function readStoredKeypair(raw: string): StoredVapidKeypair {
+  let parsed: Partial<StoredVapidKeypair>;
+  try {
+    parsed = JSON.parse(raw) as Partial<StoredVapidKeypair>;
+  } catch {
+    throw new VapidKeypairUnreadableError('is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.privateJwk || typeof parsed.privateJwk !== 'object') {
+    throw new VapidKeypairUnreadableError('has no private key');
+  }
+  if (typeof parsed.publicKey === 'string' && parsed.publicKey.length > 0) {
+    return { publicKey: parsed.publicKey, privateJwk: parsed.privateJwk };
+  }
+  if (!parsed.privateJwk.x || !parsed.privateJwk.y) {
+    throw new VapidKeypairUnreadableError('has no public key, and its private key carries no public coordinates to rebuild it from');
+  }
+  return { publicKey: publicKeyFromJwk(parsed.privateJwk), privateJwk: parsed.privateJwk };
+}
+
 export class VapidManager {
   private readonly subject: string;
   private inflight: Promise<StoredVapidKeypair> | null = null;
@@ -138,10 +178,7 @@ export class VapidManager {
 
   private async loadOrGenerate(): Promise<StoredVapidKeypair> {
     const existing = await this.store.get(VAPID_SECRET_KEY);
-    if (existing) {
-      const parsed = JSON.parse(existing) as StoredVapidKeypair;
-      if (parsed.publicKey && parsed.privateJwk) return parsed;
-    }
+    if (existing) return readStoredKeypair(existing);
     const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
     const privateJwk = privateKey.export({ format: 'jwk' }) as JsonWebKey;
     const keypair: StoredVapidKeypair = {

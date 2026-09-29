@@ -27,6 +27,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../utils/logger.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { readFailureTransience } from '@goodvibes-jev/engine/errors';
 
 /** Default reconnect policy. */
 const DEFAULT_RECONNECT_POLICY: Readonly<RetryPolicy> = Object.freeze({
@@ -217,7 +218,7 @@ export class ReconnectEngine {
    */
   async connect(authToken: string): Promise<boolean> {
     if (this._disposed) return false;
-    return this._attemptConnect(authToken, false);
+    return (await this._attemptConnect(authToken, false)) === 'connected';
   }
 
   /**
@@ -254,13 +255,14 @@ export class ReconnectEngine {
       if (this._disposed) return false;
 
       const authToken = await getAuthToken();
-      const connected = await this._attemptConnect(authToken, true);
-      if (connected) {
+      const attempt = await this._attemptConnect(authToken, true);
+      if (attempt === 'connected') {
         this._attempts = 0;
         return true;
       }
-
-      // If not connected and not retryable, terminal failure was already signalled
+      // A failure that cannot clear was already signalled as terminal; another
+      // attempt would only repeat it and signal it again.
+      if (attempt === 'terminal') return false;
     }
 
     const error = `ReconnectEngine: max reconnect attempts (${this._policy.maxAttempts}) exceeded`;
@@ -280,8 +282,8 @@ export class ReconnectEngine {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private async _attemptConnect(authToken: string, isReconnect: boolean): Promise<boolean> {
-    if (this._disposed) return false;
+  private async _attemptConnect(authToken: string, isReconnect: boolean): Promise<'connected' | 'retry' | 'terminal'> {
+    if (this._disposed) return 'terminal';
 
     this.callbacks?.onInitializing?.(this._attempts);
     this.callbacks?.onAuthenticating?.();
@@ -299,12 +301,12 @@ export class ReconnectEngine {
           error: outcome.error,
           unsupportedCode: outcome.unsupportedCode,
         });
-        if (this._disposed) return false;
+        if (this._disposed) return 'terminal';
         this.callbacks?.onTerminalFailure(outcome.error);
-        return false;
+        return 'terminal';
       }
 
-      const retryable = outcome.retryable && shouldRetry(this._policy, outcome.category);
+      const retryable = await this._retryable(outcome);
       logger.warn('ReconnectEngine: connect attempt failed', {
         error: outcome.error,
         category: outcome.category,
@@ -314,11 +316,11 @@ export class ReconnectEngine {
 
       if (!retryable) {
         this.callbacks?.onTerminalFailure(outcome.error);
-        return false;
+        return 'terminal';
       }
 
       this.callbacks?.onDisconnected?.(outcome.error, true);
-      return false;
+      return 'retry';
     }
 
     // Success path
@@ -354,7 +356,22 @@ export class ReconnectEngine {
       lastAckedOffset: this._lastAckedOffset,
     });
 
-    return true;
+    return 'connected';
+  }
+
+  /**
+   * Whether a failed connect could succeed on another attempt. The adapter's
+   * own `retryable` flag and a known category against the configured policy
+   * decide exactly; a failure the adapter could not categorise (`unknown`)
+   * is read through the engine's failure reading (readFailureTransience:
+   * structure first, then the `engine.failure-reading` battery on the
+   * wording). A failure that cannot be read rejects the reconnect.
+   */
+  private async _retryable(outcome: Extract<ConnectOutcome, { readonly success: false }>): Promise<boolean> {
+    if (!outcome.retryable) return false;
+    if (outcome.category !== 'unknown') return shouldRetry(this._policy, outcome.category);
+    const transience = await readFailureTransience(outcome.error, 'remote.reconnect.failure');
+    return transience.failureClass === 'retryable';
   }
 
   private _sleep(ms: number): Promise<void> {

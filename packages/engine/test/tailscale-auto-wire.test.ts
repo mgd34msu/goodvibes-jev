@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  defaultTailscaleRunner,
   detectTailscale,
   enableTailscaleServe,
   TailscaleServeReceiptStore,
@@ -22,11 +23,12 @@ import { registerTailscaleGatewayMethods } from '../sdk/src/platform/control-pla
 
 interface Call { command: string; args: readonly string[]; }
 
-function fakeRunner(state: 'missing' | 'logged-out' | 'ready', calls: Call[] = []): TailscaleCommandRunner {
+function fakeRunner(state: 'missing' | 'timeout' | 'logged-out' | 'ready', calls: Call[] = []): TailscaleCommandRunner {
   return {
     run(command, args) {
       calls.push({ command, args });
-      if (state === 'missing') return { status: null, stdout: '', stderr: 'not found' };
+      if (state === 'missing') return { status: null, stdout: '', stderr: 'spawnSync tailscale ENOENT', errorCode: 'ENOENT' };
+      if (state === 'timeout') return { status: null, stdout: '', stderr: 'spawnSync tailscale ETIMEDOUT', errorCode: 'ETIMEDOUT' };
       if (args[0] === 'status') {
         const body = state === 'ready'
           ? { BackendState: 'Running', Self: { DNSName: 'mybox.my-tailnet.ts.net.' } }
@@ -155,5 +157,26 @@ describe('tailscale.* verbs over the catalog', () => {
     } finally {
       rmSync(h.dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('a tailscale that did not run is described by why', () => {
+  // A command that timed out gives no exit status, the same as a missing
+  // binary, and both were reported as "tailscale binary not found".
+  test('a timeout is reported as a timeout, not as a missing binary', () => {
+    const detection = detectTailscale(fakeRunner('timeout'));
+    expect(detection.available).toBe(false);
+    expect(detection.detail).toContain('did not answer');
+    expect(detection.detail).not.toContain('not found');
+  });
+
+  test('a missing binary is still reported as not found', () => {
+    expect(detectTailscale(fakeRunner('missing')).detail).toBe('tailscale binary not found');
+  });
+
+  test('the real runner carries the spawn errno code', () => {
+    const result = defaultTailscaleRunner().run('goodvibes-no-such-binary-for-this-test', []);
+    expect(result.status).toBeNull();
+    expect(result.errorCode).toBe('ENOENT');
   });
 });
