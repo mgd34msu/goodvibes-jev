@@ -12,15 +12,24 @@
  *   - a credential-bearing key's notice carries the key NAME and nothing else,
  *     `secret: true`, and no `value` property at all. Not a nulled value, which
  *     a subscriber would read as "the credential was cleared".
+ *
+ * A declared secret-bearing key and any schema key are exact lookups; any
+ * other watched key is read once through
+ * `engine.runtime.config-event-credential-key`, and its value is carried only
+ * on a no verdict at critical stakes.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { EntryType, Question } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   attachConfigEmitBridge,
   listWatchableConfigPaths,
   toConfigEventValue,
   type ConfigChangeSource,
 } from '../sdk/src/platform/runtime/config/index.ts';
+import { clearConfigEventKeyReadings } from '../sdk/src/platform/runtime/config/emit-bridge.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { RUNTIME_EVENT_DOMAINS } from '../sdk/src/platform/runtime/events/index.ts';
 import type { ConfigEvent } from '../sdk/src/platform/runtime/events/index.ts';
@@ -54,6 +63,24 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+/** A port reading each key through `probability` (of holding a credential), recording every request. */
+function keyPort(probability: (key: string) => number) {
+  return fakePort((name: string, _question: Question, state: EntryType) => {
+    if (name !== 'credential') throw new Error(`config key port: unexpected question ${name}`);
+    return noulAnswer(probability((state as { key: string }).key));
+  });
+}
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  previousPort = installJudgmentPort(undefined);
+  clearConfigEventKeyReadings();
+});
+afterEach(() => {
+  installJudgmentPort(previousPort);
+  clearConfigEventKeyReadings();
+});
 
 describe('the config event domain exists and is documented', () => {
   test('`config` is a real runtime event domain', () => {
@@ -140,6 +167,7 @@ describe('attachConfigEmitBridge', () => {
   });
 
   test('a product may name extra keys the platform set does not', async () => {
+    installJudgmentPort(keyPort(() => 0.03).port);
     const bus = new RuntimeEventBus();
     const seen = collector(bus);
     const config = fakeConfig();
@@ -149,6 +177,90 @@ describe('attachConfigEmitBridge', () => {
     await flush();
 
     expect(seen.map((event) => event.key)).toEqual(['acme.customSetting']);
+    detach();
+  });
+});
+
+describe('an undeclared key is read through engine.runtime.config-event-credential-key', () => {
+  test('a no verdict carries the value; the key is read once for every change', async () => {
+    const { port, requests } = keyPort(() => 0.03);
+    installJudgmentPort(port);
+    const bus = new RuntimeEventBus();
+    const seen = collector(bus);
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus, additionalKeys: ['acme.theme'] });
+
+    config.change('acme.theme', 'dark');
+    config.change('acme.theme', 'light');
+    await flush();
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.state).toMatchObject({ key: 'acme.theme' });
+    expect(seen.map((event) => [event.secret, event.value])).toEqual([[false, 'dark'], [false, 'light']]);
+    detach();
+  });
+
+  test('a yes leaves the value out', async () => {
+    installJudgmentPort(keyPort(() => 0.95).port);
+    const bus = new RuntimeEventBus();
+    const seen = collector(bus);
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus, additionalKeys: ['acme.deployPhrase'] });
+
+    config.change('acme.deployPhrase', 'correct horse battery staple');
+    await flush();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.secret).toBe(true);
+    expect(Object.hasOwn(seen[0]!, 'value')).toBe(false);
+    detach();
+  });
+
+  test('a no short of the critical band leaves the value out', async () => {
+    installJudgmentPort(keyPort(() => 0.12).port);
+    const bus = new RuntimeEventBus();
+    const seen = collector(bus);
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus, additionalKeys: ['acme.feedAddress'] });
+
+    config.change('acme.feedAddress', 'https://feeds.example.com/private/abc123');
+    await flush();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.secret).toBe(true);
+    expect(JSON.stringify(seen[0])).not.toContain('abc123');
+    detach();
+  });
+
+  test('with no port installed the notice still goes out, without the value', async () => {
+    const bus = new RuntimeEventBus();
+    const seen = collector(bus);
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus, additionalKeys: ['acme.deployPhrase'] });
+
+    config.change('acme.deployPhrase', 'correct horse battery staple');
+    await flush();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.secret).toBe(true);
+    expect(Object.hasOwn(seen[0]!, 'value')).toBe(false);
+    detach();
+  });
+
+  test('schema keys and declared secret keys are never read', async () => {
+    const { port, requests } = keyPort(() => 0.5);
+    installJudgmentPort(port);
+    const bus = new RuntimeEventBus();
+    const seen = collector(bus);
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus });
+
+    config.change('voice.wake.enabled', true);
+    config.change('surfaces.telegram.botToken', 'a-real-looking-bot-token');
+    await flush();
+
+    expect(requests).toHaveLength(0);
+    expect(seen.map((event) => event.secret)).toEqual([false, true]);
     detach();
   });
 });

@@ -71,3 +71,9 @@ import { forensicsSlowPhase } from './forensics/batteries/slow-phase.js';
 registry.register(forensicsSlowPhase);
 
 // Runtime: observed fleet agents.
+
+// Runtime: credentials at rest and in config events.
+import { atRestCredential } from './batteries/at-rest-credential.js';
+registry.register(atRestCredential);
+import { eventCredentialKey } from './config/batteries/event-credential-key.js';
+registry.register(eventCredentialKey);

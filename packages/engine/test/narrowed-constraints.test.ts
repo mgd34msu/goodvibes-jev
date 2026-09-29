@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 
 import {
   redactSensitiveData,
-  redactCredentialsOnly,
+  redactIssuerCredentials,
 } from '../sdk/src/platform/utils/redaction.ts';
 import { redactAtRestLine } from '../sdk/src/platform/runtime/at-rest-persistence.ts';
 import { upsertMcpServerConfig } from '../sdk/src/platform/mcp/config.ts';
@@ -84,10 +84,10 @@ describe('at-rest redaction masks credentials without anonymising the owner', ()
     expect(out).toBe('/home/[REDACTED]/Projects/x');
   });
 
-  test('redactCredentialsOnly and redactSensitiveData agree on secrets, differ on identity', () => {
-    const withSecret = `key ${FIXTURE_API_KEY} here`;
-    expect(redactCredentialsOnly(withSecret)).toBe(redactSensitiveData(withSecret));
-    expect(redactCredentialsOnly('/home/mike/x')).toBe('/home/mike/x');
+  test('the at-rest and egress helpers agree on issuer formats, differ on identity', () => {
+    const withSecret = 'token ghp_0123456789012345678901234567890123456789 here';
+    expect(redactIssuerCredentials(withSecret)).toBe(redactSensitiveData(withSecret));
+    expect(redactIssuerCredentials('/home/mike/x')).toBe('/home/mike/x');
     expect(redactSensitiveData('/home/mike/x')).toBe('/home/[REDACTED]/x');
   });
 });

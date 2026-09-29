@@ -24,7 +24,10 @@
  *    written by a process that is in the act of dying, so a half-written last
  *    line is an expected state, not a corruption to escalate.
  *  - Redacted. Every line is credential-redacted before it lands, because a
- *    stack or an error message can carry a token in an argument.
+ *    stack or an error message can carry a token in an argument. A dying
+ *    process cannot wait for a reading, so a credential-shaped span is kept in
+ *    the clear only when an earlier write already read it as not a credential
+ *    (engine.runtime.at-rest-credential); every other such span is masked.
  *
  * The write path is deliberately synchronous. It runs from an
  * `uncaughtException` handler where the process is about to exit, so a

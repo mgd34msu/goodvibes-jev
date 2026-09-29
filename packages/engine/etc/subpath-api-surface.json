@@ -9290,10 +9290,11 @@
         "constructor",
         "conversation",
         "dispose",
+        "flush",
         "kvState",
         "sessionFile"
       ],
-      "text": "export declare class AgentSession { readonly agentId: string; private dirCreated; readonly conversation: ConversationManager; readonly kvState: KVState; readonly sessionFile: string; private readonly atRestPolicy; constructor(agentId: string, model: string, provider: string, paths: AgentSessionPaths, atRestPolicy?: AtRestPolicy); appendMessage(msg: Record<string, unknown>): void; dispose(): Promise<void>; private _ensureSessionDir; } ;; via AtRestPolicy = export interface AtRestPolicy { readonly redact: boolean; readonly retention: { readonly maxAgeMs: number; readonly maxTotalBytes: number; }; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare class AgentSession { readonly agentId: string; private dirCreated; readonly conversation: ConversationManager; readonly kvState: KVState; readonly sessionFile: string; private readonly atRestPolicy; private readonly lineWriter; constructor(agentId: string, model: string, provider: string, paths: AgentSessionPaths, atRestPolicy?: AtRestPolicy); appendMessage(msg: Record<string, unknown>): void; flush(): Promise<void>; dispose(): Promise<void>; private _appendLine; private _ensureSessionDir; } ;; via AtRestPolicy = export interface AtRestPolicy { readonly redact: boolean; readonly retention: { readonly maxAgeMs: number; readonly maxTotalBytes: number; }; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "AgentSessionPaths",
@@ -66321,6 +66322,17 @@
       "text": "export type ClipboardWriteFunction = (text: string) => void;"
     },
     {
+      "name": "CredentialCandidate",
+      "kind": "interface",
+      "required": [
+        "end",
+        "marker",
+        "start",
+        "value"
+      ],
+      "text": "export interface CredentialCandidate { readonly start: number; readonly end: number; readonly value: string; readonly marker: string; }"
+    },
+    {
       "name": "DEFAULT_MAX_REQUEST_BODY_BYTES",
       "kind": "const",
       "text": "DEFAULT_MAX_REQUEST_BODY_BYTES = 1000000"
@@ -66530,6 +66542,11 @@
       "text": "export declare function fetchWithTimeout(url: string | URL | Request, init?: RequestInit, timeoutMs?: number, fetchImpl?: (url: string | URL | Request, init?: RequestInit) => Promise<Response>): Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; } ;; URL = interface URL { hash: string; host: string; hostname: string; href: string; toString(): string; readonly origin: string; password: string; pathname: string; port: string; protocol: string; search: string; readonly searchParams: URLSearchParams; username: string; toJSON(): string; }"
     },
     {
+      "name": "findCredentialCandidates",
+      "kind": "function",
+      "text": "export declare function findCredentialCandidates(text: string): CredentialCandidate[];"
+    },
+    {
       "name": "findNearestAgentsFile",
       "kind": "function",
       "text": "export declare function findNearestAgentsFile(startDir: string): string | null;"
@@ -66715,9 +66732,9 @@
       "text": "export declare function readTextBodyWithinLimit(req: Request, maxBytes?: number): Promise<string | Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
     },
     {
-      "name": "redactCredentialsOnly",
+      "name": "redactIssuerCredentials",
       "kind": "function",
-      "text": "export declare function redactCredentialsOnly(text: string): string;"
+      "text": "export declare function redactIssuerCredentials(text: string): string;"
     },
     {
       "name": "redactSensitiveData",

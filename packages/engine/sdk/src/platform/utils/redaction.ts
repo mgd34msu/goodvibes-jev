@@ -1,14 +1,12 @@
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 /**
- * Secrets: strings that are dangerous to hold ANYWHERE, the owner's own disk
- * included. A leaked key is a leaked key whether the file it sits in ever
- * leaves the machine or not, so these apply to every caller.
+ * Issuer-reserved credential formats: GitHub, GitLab, Slack and AWS reserve
+ * these prefixes for their credentials, so a token in one of these shapes is a
+ * credential by the issuer's own definition. Masked everywhere, the owner's
+ * own disk included.
  */
-const CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /\b(sk-[A-Za-z0-9_-]{20,})/g, replacement: '[REDACTED_API_KEY]' },
-  { pattern: /\b(key-[A-Za-z0-9_-]{16,})/g, replacement: '[REDACTED_API_KEY]' },
-  { pattern: /(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, replacement: '$1[REDACTED_TOKEN]' },
+const ISSUER_CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(ghp_[A-Za-z0-9]{36,})/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { pattern: /\b(gho_[A-Za-z0-9]{36,})/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
   { pattern: /\b(github_pat_[A-Za-z0-9_]{36,})/g, replacement: '[REDACTED_GITHUB_TOKEN]' },
@@ -17,6 +15,60 @@ const CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(xoxp-[A-Za-z0-9-]{24,})/g, replacement: '[REDACTED_SLACK_TOKEN]' },
   { pattern: /\b(AKIA[A-Z0-9]{16})\b/g, replacement: '[REDACTED_AWS_KEY]' },
 ];
+
+/**
+ * Shapes that a credential often has but that ordinary text also has: an
+ * `sk-` token of 20 or more characters, a `key-` token of 16 or more, and the
+ * word after `Bearer`. `key-rotation-policy-for-tenants` and "the bearer of bad
+ * news" fit them too. The at-rest writers use them only to FIND candidate
+ * spans; whether a span is a credential is the `engine.runtime.at-rest-credential`
+ * reading (runtime/at-rest-persistence.ts). The Bearer shape matches the token
+ * alone, so a marker replaces the token and keeps the word `Bearer`.
+ */
+const CREDENTIAL_CANDIDATE_SHAPES: ReadonlyArray<{ pattern: RegExp; marker: string }> = [
+  { pattern: /\bsk-[A-Za-z0-9_-]{20,}/g, marker: '[REDACTED_API_KEY]' },
+  { pattern: /\bkey-[A-Za-z0-9_-]{16,}/g, marker: '[REDACTED_API_KEY]' },
+  { pattern: /(?<=Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, marker: '[REDACTED_TOKEN]' },
+];
+
+/**
+ * What the egress helper masks: the candidate shapes as a masking rule, then
+ * the issuer formats. The egress path (session export, telemetry) is not the
+ * at-rest path and still masks every candidate span.
+ */
+const CREDENTIAL_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  ...CREDENTIAL_CANDIDATE_SHAPES.map(({ pattern, marker }) => ({ pattern, replacement: marker })),
+  ...ISSUER_CREDENTIAL_PATTERNS,
+];
+
+/** A span of text in a credential candidate shape, and the marker that replaces it when masked. */
+export interface CredentialCandidate {
+  readonly start: number;
+  readonly end: number;
+  readonly value: string;
+  readonly marker: string;
+}
+
+/**
+ * The spans of `text` in a credential candidate shape, in text order, with
+ * overlaps removed (the earlier span wins, and at the same start the longer).
+ */
+export function findCredentialCandidates(text: string): CredentialCandidate[] {
+  const found: CredentialCandidate[] = [];
+  for (const { pattern, marker } of CREDENTIAL_CANDIDATE_SHAPES) {
+    for (const match of text.matchAll(pattern)) {
+      if (match[0].length === 0) continue;
+      found.push({ start: match.index, end: match.index + match[0].length, value: match[0], marker });
+    }
+  }
+  found.sort((a, b) => a.start - b.start || b.end - a.end);
+  const spans: CredentialCandidate[] = [];
+  for (const candidate of found) {
+    const last = spans[spans.length - 1];
+    if (last === undefined || candidate.start >= last.end) spans.push(candidate);
+  }
+  return spans;
+}
 
 /**
  * Identity: the owner's account name, as it appears inside a home path.
@@ -224,15 +276,18 @@ export function redactSensitiveData(text: string): string {
 }
 
 /**
- * Credentials only, leaving paths intact.
+ * Profile values and issuer-reserved credential formats only, leaving paths
+ * and candidate-shaped spans intact.
  *
  * For text that STAYS on the owner's machine, the at-rest journal, whose file
  * lives inside the very directory the identity patterns would rewrite. There
  * is no one to anonymise them from in their own files, and `/home/[REDACTED]/…`
- * makes a journal entry unusable for the debugging it exists for.
+ * makes a journal entry unusable for the debugging it exists for. The
+ * candidate spans ({@link findCredentialCandidates}) are masked by the at-rest
+ * writer on its reading of each one.
  */
-export function redactCredentialsOnly(text: string): string {
-  return applyPatterns(text, CREDENTIAL_PATTERNS);
+export function redactIssuerCredentials(text: string): string {
+  return applyPatterns(text, ISSUER_CREDENTIAL_PATTERNS);
 }
 
 export function redactStructuredData(value: unknown): unknown {

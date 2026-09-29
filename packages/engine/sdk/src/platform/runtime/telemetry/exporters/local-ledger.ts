@@ -15,9 +15,13 @@ import { summarizeError } from '../../../utils/error-display.js';
 import {
   type AtRestPolicy,
   DEFAULT_AT_REST_POLICY,
-  redactAtRestLine,
+  AtRestLineWriter,
   enforceFileRetention,
 } from '../../at-rest-persistence.js';
+
+/** The decision sites the ledger's credential span readings are logged under. */
+const SPAN_FILE_CREDENTIAL_SITE = 'runtime.telemetry.local-ledger.span-credential-span';
+const LEDGER_FILE_CREDENTIAL_SITE = 'runtime.telemetry.local-ledger.event-credential-span';
 
 /** Configuration for LocalLedgerExporter. */
 export interface LocalLedgerConfig {
@@ -85,6 +89,9 @@ export class LocalLedgerExporter implements SpanExporter {
   private readonly maxFileSizeBytes: number;
   private readonly ledgerFilePath: string;
   private readonly atRestPolicy: AtRestPolicy;
+  /** Keep each file's lines in order while their credential spans are read. */
+  private readonly spanWriter = new AtRestLineWriter(SPAN_FILE_CREDENTIAL_SITE);
+  private readonly ledgerWriter = new AtRestLineWriter(LEDGER_FILE_CREDENTIAL_SITE);
 
   constructor(config: LocalLedgerConfig) {
     this.filePath = config.filePath;
@@ -126,15 +133,12 @@ export class LocalLedgerExporter implements SpanExporter {
       return;
     }
 
-    const emitLines = this.atRestPolicy.redact ? lines.map((line) => redactAtRestLine(line)) : lines;
-    const payload = `${emitLines.join('\n')}\n`;
-
-    // All I/O in a microtask to keep the call non-blocking.
-    await Promise.resolve().then(() => {
+    const payload = `${lines.join('\n')}\n`;
+    const append = (text: string): void => {
       try {
         this._rotateIfNeeded();
         this._enforceRetention();
-        appendFileSync(this.filePath, payload, 'utf8');
+        appendFileSync(this.filePath, text, 'utf8');
       } catch (err) {
         logger.warn('[local-ledger] export failed', {
           error: summarizeError(err),
@@ -144,7 +148,15 @@ export class LocalLedgerExporter implements SpanExporter {
           droppedSpans,
         });
       }
+    };
+
+    // All I/O in a microtask to keep the call non-blocking. With redaction on,
+    // the batch waits for the readings of any credential-shaped span in it.
+    await Promise.resolve().then(() => {
+      if (this.atRestPolicy.redact) this.spanWriter.write(payload, append);
+      else append(payload);
     });
+    await this.spanWriter.flush();
   }
 
   /**
@@ -163,10 +175,22 @@ export class LocalLedgerExporter implements SpanExporter {
    * for the consumer side of this pipeline.
    */
   recordEvent(entry: LedgerEntry): void {
+    const append = (line: string): void => {
+      try {
+        appendFileSync(this.ledgerFilePath, `${line}\n`, 'utf8');
+      } catch (err) {
+        logger.warn('[local-ledger] ledger write failed', {
+          error: summarizeError(err),
+          ledgerFilePath: this.ledgerFilePath,
+          runId: entry.runId,
+          rev: entry.rev,
+          eventName: entry.eventName,
+        });
+      }
+    };
+    let serialized: string;
     try {
-      const serialized = JSON.stringify(entry);
-      const line = (this.atRestPolicy.redact ? redactAtRestLine(serialized) : serialized) + '\n';
-      appendFileSync(this.ledgerFilePath, line, 'utf8');
+      serialized = JSON.stringify(entry);
     } catch (err) {
       logger.warn('[local-ledger] ledger write failed', {
         error: summarizeError(err),
@@ -175,7 +199,12 @@ export class LocalLedgerExporter implements SpanExporter {
         rev: entry.rev,
         eventName: entry.eventName,
       });
+      return;
     }
+    // A line with a credential-shaped span not yet read is written once the
+    // span is read, after every line ahead of it; flush() waits for those.
+    if (this.atRestPolicy.redact) this.ledgerWriter.write(serialized, append);
+    else append(serialized);
   }
 
   /**
@@ -251,14 +280,14 @@ export class LocalLedgerExporter implements SpanExporter {
     return [...seen];
   }
 
-  /** Flush is a no-op for synchronous append-only writes. */
+  /** Resolves once every line waiting on a credential span reading is written. */
   async flush(): Promise<void> {
-    // Nothing to flush, writes are synchronous via appendFileSync.
+    await Promise.all([this.spanWriter.flush(), this.ledgerWriter.flush()]);
   }
 
-  /** Shutdown is a no-op for file-based exports. */
+  /** Shutdown writes any line still waiting on a reading; there is nothing else to tear down. */
   async shutdown(): Promise<void> {
-    // Nothing to tear down.
+    await this.flush();
   }
 
   /**

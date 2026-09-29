@@ -11,9 +11,12 @@
  * so nothing masked the at-rest copy.
  *
  * This module supplies:
- *   - redactAtRestLine: run the secret/credential patterns
- *     (redactCredentialsOnly) over a serialized JSON line before it is appended.
- *     The patterns replace only the matched secret substrings with
+ *   - redactAtRestLine: mask profile values and issuer-reserved credential
+ *     formats (redactIssuerCredentials), and every candidate span (an `sk-` or
+ *     `key-` token, the word after `Bearer`) that has not been read as
+ *     something other than a credential by `engine.runtime.at-rest-credential`,
+ *     in a serialized JSON line before it is appended.
+ *     The markers replace only the matched secret substrings with
  *     JSON-safe `[REDACTED_*]` markers, so the line stays valid JSON and its
  *     non-secret content stays readable, a redacted record never pretends the
  *     content was not there, it shows the marker.
@@ -34,9 +37,15 @@
  *   - resolveAtRestPolicy: read the honest-default config keys (redaction on by
  *     default; retention generous but bounded) into a resolved policy.
  */
+import { createHash } from 'node:crypto';
 import { statSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { redactCredentialsOnly } from '../utils/redaction.js';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { findCredentialCandidates, redactIssuerCredentials, type CredentialCandidate } from '../utils/redaction.js';
+import { logger } from '../utils/logger.js';
+import { summarizeError } from '../utils/error-display.js';
+import { atRestCredential } from './batteries/at-rest-credential.js';
 
 /** Resolved at-rest policy the journal + ledger writers consult. */
 export interface AtRestPolicy {
@@ -91,16 +100,159 @@ export function resolveAtRestPolicy(get?: (key: string) => unknown): AtRestPolic
   return { redact, retention: { maxAgeMs, maxTotalBytes } };
 }
 
+// ---------------------------------------------------------------------------
+// Candidate spans: `engine.runtime.at-rest-credential`
+// ---------------------------------------------------------------------------
+
+/** How much text on each side of a candidate span the reading sees. */
+const CANDIDATE_CONTEXT_CHARS = 160;
+/** How many span readings run at once; each span is its own request. */
+const CANDIDATE_READ_CONCURRENCY = 4;
+/** How many span readings are remembered for the life of the process. */
+const REMEMBERED_SPAN_LIMIT = 2048;
+
 /**
- * Redact secret/credential patterns in a serialized JSON line. Reuses
- * redactCredentialsOnly so the credential pattern set stays a single source
- * shared with the telemetry egress, without also applying that egress helper's
- * home-path anonymisation to a file that never leaves this machine. The
- * replacements are JSON-safe markers, so the result stays a valid, parseable
- * line.
+ * Remembered readings, keyed by a SHA-256 of the span so the process never
+ * keeps a table of plaintext credentials: true when the span read as not a
+ * credential (kept in the clear), false when it read as one or the reading
+ * was uncertain (masked).
+ */
+const spanReadings = new Map<string, boolean>();
+const spanReadsInFlight = new Map<string, Promise<void>>();
+
+const spanKey = (value: string): string => createHash('sha256').update(value).digest('hex');
+
+function rememberSpan(key: string, clear: boolean): void {
+  if (spanReadings.size >= REMEMBERED_SPAN_LIMIT && !spanReadings.has(key)) {
+    spanReadings.delete(spanReadings.keys().next().value!);
+  }
+  spanReadings.set(key, clear);
+}
+
+/** The candidate spans in `text` that have no remembered reading, one per distinct value. */
+function unreadCandidates(text: string): CredentialCandidate[] {
+  const seen = new Set<string>();
+  return findCredentialCandidates(text).filter((candidate) => {
+    const key = spanKey(candidate.value);
+    if (spanReadings.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function readSpan(candidate: CredentialCandidate, text: string, site: string): Promise<void> {
+  const key = spanKey(candidate.value);
+  const inFlight = spanReadsInFlight.get(key);
+  if (inFlight) return inFlight;
+  const read = (async (): Promise<void> => {
+    const state = {
+      span: candidate.value,
+      context: text.slice(Math.max(0, candidate.start - CANDIDATE_CONTEXT_CHARS), candidate.end + CANDIDATE_CONTEXT_CHARS),
+    };
+    const run = await atRestCredential.run(judgmentPort(site), state, { site });
+    // Critical band: a no verdict needs 0.9 confidence. Anything else masks.
+    const clear = run.readings.credential.verdict === 'no';
+    run.recordAction(clear ? 'keep' : 'mask');
+    rememberSpan(key, clear);
+  })();
+  spanReadsInFlight.set(key, read);
+  void read.then(
+    () => spanReadsInFlight.delete(key),
+    () => spanReadsInFlight.delete(key),
+  );
+  return read;
+}
+
+/**
+ * Reads every candidate span in `lines` that has no remembered reading and
+ * remembers the answers, so {@link redactAtRestLine} can apply them. Rejects
+ * when a reading cannot be made (no port installed, a port error); the spans
+ * it did not read stay unread, and so masked.
+ */
+export async function readAtRestCredentialSpans(lines: readonly string[], site: string): Promise<void> {
+  const work: Array<{ candidate: CredentialCandidate; text: string }> = [];
+  const keys = new Set<string>();
+  for (const line of lines) {
+    const text = redactIssuerCredentials(line);
+    for (const candidate of unreadCandidates(text)) {
+      const key = spanKey(candidate.value);
+      if (keys.has(key)) continue;
+      keys.add(key);
+      work.push({ candidate, text });
+    }
+  }
+  await mapLimit(work, CANDIDATE_READ_CONCURRENCY, ({ candidate, text }) => readSpan(candidate, text, site));
+}
+
+/**
+ * Mask profile values, issuer-reserved credential formats and candidate spans
+ * in a serialized JSON line. A candidate span stays in the clear only when
+ * `engine.runtime.at-rest-credential` read it as not a credential; an unread
+ * span is masked. Credentials only: no home-path anonymisation, because this
+ * file never leaves the machine. The markers are JSON-safe, so the result stays
+ * a valid, parseable line.
  */
 export function redactAtRestLine(line: string): string {
-  return redactCredentialsOnly(line);
+  const text = redactIssuerCredentials(line);
+  let out = '';
+  let cursor = 0;
+  for (const candidate of findCredentialCandidates(text)) {
+    if (spanReadings.get(spanKey(candidate.value)) === true) continue;
+    out += text.slice(cursor, candidate.start) + candidate.marker;
+    cursor = candidate.end;
+  }
+  return out + text.slice(cursor);
+}
+
+/** Forgets every remembered span reading (tests). */
+export function clearAtRestCredentialReadings(): void {
+  spanReadings.clear();
+}
+
+/**
+ * Keeps an append-only file's lines in order while the candidate spans in a
+ * line are read. A line with no unread candidate and nothing queued ahead of it
+ * is written at once, as before; any other line waits for the lines ahead of it
+ * and for its own readings. When a reading cannot be made the failure is logged
+ * and the line is written with its unread spans masked.
+ */
+export class AtRestLineWriter {
+  readonly #site: string;
+  #tail: Promise<void> | null = null;
+
+  constructor(site: string) {
+    this.#site = site;
+  }
+
+  /** Redact `line` and hand it to `append`, which handles its own write errors. */
+  write(line: string, append: (redacted: string) => void): void {
+    if (this.#tail === null && unreadCandidates(redactIssuerCredentials(line)).length === 0) {
+      append(redactAtRestLine(line));
+      return;
+    }
+    const previous = this.#tail ?? Promise.resolve();
+    const next = previous
+      .then(() => readAtRestCredentialSpans([line], this.#site))
+      .catch((error: unknown) => {
+        logger.warn('[at-rest] credential span reading failed; unread spans are masked', {
+          site: this.#site,
+          error: summarizeError(error),
+        });
+      })
+      .then(() => append(redactAtRestLine(line)))
+      .catch((error: unknown) => {
+        logger.warn('[at-rest] writing a queued line failed', { site: this.#site, error: summarizeError(error) });
+      });
+    this.#tail = next;
+    void next.then(() => {
+      if (this.#tail === next) this.#tail = null;
+    });
+  }
+
+  /** Resolves once every queued line has been written. */
+  async flush(): Promise<void> {
+    while (this.#tail !== null) await this.#tail;
+  }
 }
 
 export interface RetentionOutcome {

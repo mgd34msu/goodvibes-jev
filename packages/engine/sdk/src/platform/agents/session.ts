@@ -7,9 +7,12 @@ import { summarizeError } from '../utils/error-display.js';
 import {
   type AtRestPolicy,
   DEFAULT_AT_REST_POLICY,
-  redactAtRestLine,
+  AtRestLineWriter,
   enforceJournalDirectoryRetention,
 } from '../runtime/at-rest-persistence.js';
+
+/** The decision site the journal's credential span readings are logged under. */
+const AGENT_JOURNAL_CREDENTIAL_SITE = 'agents.session.journal-credential-span';
 
 export interface AgentSessionPaths {
   readonly sessionsDir: string;
@@ -50,6 +53,9 @@ export class AgentSession {
 
   /** The at-rest redaction + retention policy for this journal. */
   private readonly atRestPolicy: AtRestPolicy;
+
+  /** Keeps journal lines in order while their credential spans are read. */
+  private readonly lineWriter = new AtRestLineWriter(AGENT_JOURNAL_CREDENTIAL_SITE);
 
   constructor(
     agentId: string,
@@ -96,7 +102,10 @@ export class AgentSession {
 
   /**
    * Append a message record to the agent's JSONL log.
-   * Each record is written as a single JSON line.
+   * Each record is written as a single JSON line. With redaction on, a line
+   * carrying a credential-shaped span that has not been read yet is written
+   * once the span is read (engine.runtime.at-rest-credential), after every
+   * line ahead of it; {@link flush} waits for those.
    */
   appendMessage(msg: Record<string, unknown>): void {
     try {
@@ -104,11 +113,19 @@ export class AgentSession {
         this._ensureSessionDir();
       }
       const serialized = JSON.stringify(msg);
-      const line = this.atRestPolicy.redact ? redactAtRestLine(serialized) : serialized;
-      appendFileSync(this.sessionFile, line + '\n', 'utf-8');
+      if (this.atRestPolicy.redact) {
+        this.lineWriter.write(serialized, (line) => this._appendLine(line));
+      } else {
+        this._appendLine(serialized);
+      }
     } catch (err) {
       logger.error('AgentSession.appendMessage failed', { agentId: this.agentId, error: summarizeError(err) });
     }
+  }
+
+  /** Resolves once every appended message is on disk. */
+  flush(): Promise<void> {
+    return this.lineWriter.flush();
   }
 
   /**
@@ -116,6 +133,7 @@ export class AgentSession {
    * Flushes and disposes the KV state.
    */
   async dispose(): Promise<void> {
+    await this.flush();
     try {
       await this.kvState.dispose();
     } catch (err) {
@@ -127,6 +145,14 @@ export class AgentSession {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  private _appendLine(line: string): void {
+    try {
+      appendFileSync(this.sessionFile, line + '\n', 'utf-8');
+    } catch (err) {
+      logger.error('AgentSession.appendMessage failed', { agentId: this.agentId, error: summarizeError(err) });
+    }
+  }
 
   private _ensureSessionDir(): void {
     mkdirSync(dirname(this.sessionFile), { recursive: true });
