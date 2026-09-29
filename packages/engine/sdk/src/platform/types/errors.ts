@@ -7,6 +7,7 @@ import {
   type FailureConclusions,
   type FailureEvidence,
 } from '@goodvibes-jev/engine/errors';
+import { readRetryWaitMs } from './batteries/retry-wait.js';
 
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
@@ -90,14 +91,6 @@ function inferProviderGuidance(category: PlatformErrorCategory, statusCode?: num
   }
 }
 
-function inferRetryAfterMs(message: string, statusCode?: number, explicitRetryAfterMs?: number): number | undefined {
-  if (explicitRetryAfterMs !== undefined) return explicitRetryAfterMs;
-  if (statusCode !== 429) return undefined;
-  const match = message.match(/retry[-_\s]?after[:=\s]+(\d+)/i);
-  if (!match) return undefined;
-  return parseInt(match[1]!, 10) * 1000;
-}
-
 /** Base class for all application errors. Provides a machine-readable code and recoverability hint. */
 export class AppError extends GoodVibesSdkError {
   /** HTTP status code associated with the failure. */
@@ -163,15 +156,16 @@ export class ProviderError extends AppError {
     // The status fixes a provisional category; whether a 400 or 429 is really a
     // spent account is read from the wording where it matters (readProviderFailure).
     const category = options.category ?? categoryForStatus(statusCode) ?? 'unknown';
-    const retryAfterMs = inferRetryAfterMs(message, statusCode, options.retryAfterMs);
     const guidance = options.guidance ?? inferProviderGuidance(category, statusCode);
 
     super(message, 'PROVIDER_ERROR', statusCode !== undefined && RETRYABLE_STATUS_CODES.includes(statusCode), {
+      // retryAfterMs passes through as given: only the explicit value (a
+      // Retry-After header or a structured field). A wait the message states
+      // in words is read by Jev through readRetryWait.
       ...options,
       statusCode,
       category,
       guidance,
-      retryAfterMs,
       source: options.source ?? 'provider',
       rawMessage: options.rawMessage ?? message,
     });
@@ -238,6 +232,18 @@ export function failureEvidence(err: Error): FailureEvidence {
 /** Reads what an error's wording says about the failure (one Jev request per distinct wording). */
 export function readErrorFailure(err: Error, site: string): Promise<FailureConclusions> {
   return readFailure(failureEvidence(err), site);
+}
+
+/**
+ * How long to wait before retrying, in milliseconds: the explicit value the
+ * error carries (a Retry-After header or a structured field) when there is
+ * one, otherwise the wait the message states, read by Jev
+ * (`engine.provider.retry-wait`). Undefined when neither gives one.
+ */
+export async function readRetryWait(err: unknown, site = 'types.errors.retry-wait'): Promise<number | undefined> {
+  if (err instanceof AppError && err.retryAfterMs !== undefined) return err.retryAfterMs;
+  if (!(err instanceof Error)) return undefined;
+  return readRetryWaitMs({ message: err.message, status: err instanceof AppError ? err.statusCode : undefined }, site);
 }
 
 /**

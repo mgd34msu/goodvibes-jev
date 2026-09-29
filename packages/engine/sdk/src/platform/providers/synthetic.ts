@@ -1,5 +1,5 @@
 import type { LLMProvider, ChatRequest, ChatResponse, ProviderModelSource } from './interface.js';
-import { ProviderError, isBillingOrCreditError, isRateLimitOrQuotaError } from '../types/errors.js';
+import { ProviderError, isBillingOrCreditError, isRateLimitOrQuotaError, readRetryWait } from '../types/errors.js';
 import { logger } from '../utils/logger.js';
 import type { BenchmarkEntry } from './model-benchmarks.js';
 import { compositeScore } from './model-benchmarks.js';
@@ -378,10 +378,9 @@ export class SyntheticProvider implements LLMProvider {
         // "malformed request, stop trying" branch below.
         const outOfCredit = await isBillingOrCreditError(err, 'providers.synthetic.rotate');
         if (outOfCredit || await isRateLimitOrQuotaError(err, 'providers.synthetic.rotate')) {
-          // Record cooldown
-          const cooldownMs = (err instanceof ProviderError && err.retryAfterMs)
-            ? err.retryAfterMs
-            : DEFAULT_COOLDOWN_MS;
+          // Record cooldown: the wait the provider gave (its Retry-After, or
+          // the wait its message states, read by Jev), else the default.
+          const cooldownMs = (await readRetryWait(err, 'providers.synthetic.rotate')) || DEFAULT_COOLDOWN_MS;
           cooldownArr[idx]! = now + cooldownMs;
           this.cooldowns.set(syntheticId, cooldownArr);
           if (cooldownMs < shortestCooldown) shortestCooldown = cooldownMs;

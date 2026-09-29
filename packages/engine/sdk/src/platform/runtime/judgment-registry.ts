@@ -66,6 +66,10 @@ registry.register(trustNoteCaution);
 import { displayPayload } from '../utils/batteries/display-payload.js';
 registry.register(displayPayload);
 
+// Types: the wait a provider error's message states before retrying.
+import { retryWait } from '../types/batteries/retry-wait.js';
+registry.register(retryWait);
+
 // Runtime: model picker.
 import { modelFamily } from './ui/model-picker/batteries/model-family.js';
 registry.register(modelFamily);

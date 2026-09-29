@@ -66316,6 +66316,11 @@
       "name": "readErrorFailure",
       "kind": "function",
       "text": "export declare function readErrorFailure(err: Error, site: string): Promise<FailureConclusions>; ;; via Error = interface Error { name: string; message: string; stack?: string; } ;; FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readRetryWait",
+      "kind": "function",
+      "text": "export declare function readRetryWait(err: unknown, site?: string): Promise<number | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     }
   ],
   "./platform/utils": [
@@ -66379,7 +66384,7 @@
     {
       "name": "ErrorNormalizationOptions",
       "kind": "interface",
-      "text": "export interface ErrorNormalizationOptions { readonly provider?: string | undefined; readonly fallbackMessage?: string | undefined; readonly source?: PlatformErrorSource | undefined; readonly failure?: FailureConclusions | undefined; } ;; via FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; PlatformErrorSource = export type PlatformErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown';"
+      "text": "export interface ErrorNormalizationOptions { readonly provider?: string | undefined; readonly fallbackMessage?: string | undefined; readonly source?: PlatformErrorSource | undefined; readonly failure?: FailureConclusions | undefined; readonly retryWaitMs?: number | undefined; } ;; via FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; PlatformErrorSource = export type PlatformErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown';"
     },
     {
       "name": "FlushOptions",

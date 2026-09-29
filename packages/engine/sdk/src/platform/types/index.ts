@@ -15,6 +15,7 @@ export {
   PermissionError,
   ProviderError,
   readErrorFailure,
+  readRetryWait,
   RenderError,
   RETRYABLE_STATUS_CODES,
   ToolError,

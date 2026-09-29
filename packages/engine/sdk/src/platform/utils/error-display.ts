@@ -9,7 +9,7 @@ import {
   summaryDependsOnWording,
   type FailureConclusions,
 } from '@goodvibes-jev/engine/errors';
-import { AppError, ProviderError, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
+import { AppError, ProviderError, readRetryWait, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
 import type { StructuredDaemonErrorBody } from '../types/daemon-error-contract.js';
 import { redactSensitiveData } from './redaction.js';
 import { displayPayload, MAX_DISPLAY_MESSAGE_CHARS, payloadSpans } from './batteries/display-payload.js';
@@ -52,6 +52,12 @@ export interface ErrorNormalizationOptions {
    * {@link readNormalizedError} supplies it.
    */
   readonly failure?: FailureConclusions | undefined;
+  /**
+   * The wait before retrying, in milliseconds, that Jev read in a provider
+   * error's message (`engine.provider.retry-wait`). Used only when the error
+   * carries no explicit wait; {@link readNormalizedError} supplies it.
+   */
+  readonly retryWaitMs?: number | undefined;
 }
 
 export interface ProviderErrorNormalizationOptions extends ProviderErrorOptions {
@@ -245,6 +251,7 @@ function normalizeWith(error: unknown, options: ErrorNormalizationOptions, displ
   const hint = error instanceof AppError && error.guidance && category === fixed
     ? error.guidance
     : inferHint(category, statusCode);
+  const retryAfterMs = (error instanceof AppError ? error.retryAfterMs : undefined) ?? options.retryWaitMs;
 
   return {
     name: error instanceof Error ? error.name : 'Error',
@@ -262,7 +269,7 @@ function normalizeWith(error: unknown, options: ErrorNormalizationOptions, displ
     ...(error instanceof AppError && error.requestId ? { requestId: error.requestId } : {}),
     ...(error instanceof AppError && error.providerCode ? { providerCode: error.providerCode } : {}),
     ...(error instanceof AppError && error.providerType ? { providerType: error.providerType } : {}),
-    ...(error instanceof AppError && error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
   };
 }
 
@@ -271,8 +278,9 @@ function normalizeWith(error: unknown, options: ErrorNormalizationOptions, displ
  * change what is shown: the category or source when structure leaves them
  * open, the connection-failure summary when no HTTP response came back, and
  * which bracketed parts of the message are machine payload to leave out of
- * the displayed message. When structure settles all of these, no request is
- * made.
+ * the displayed message; and, for a provider error with no explicit wait,
+ * the wait before retrying its message states (`engine.provider.retry-wait`).
+ * When structure settles all of these, no request is made.
  */
 export async function readNormalizedError(
   error: unknown,
@@ -283,7 +291,8 @@ export async function readNormalizedError(
   const wordingMatters = categoryDependsOnWording(fixed, statusCode, fromProvider)
     || sourceDependsOnWording(error, options.source)
     || summaryDependsOnWording(statusCode);
-  const [failure, display] = await Promise.all([
+  const readsWait = error instanceof ProviderError && error.retryAfterMs === undefined;
+  const [failure, display, retryWaitMs] = await Promise.all([
     wordingMatters
       ? readFailure({
         message: rawMessage,
@@ -293,8 +302,9 @@ export async function readNormalizedError(
       }, options.site)
       : Promise.resolve(options.failure),
     extractStructuredMessage(rawMessage) === undefined ? readDisplayMessage(rawMessage, options.site) : Promise.resolve(undefined),
+    readsWait ? readRetryWait(error, options.site) : Promise.resolve(options.retryWaitMs),
   ]);
-  return normalizeWith(error, { ...options, failure }, display);
+  return normalizeWith(error, { ...options, failure, retryWaitMs }, display);
 }
 
 /**

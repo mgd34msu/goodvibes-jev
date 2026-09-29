@@ -8,11 +8,16 @@
  * request's `Message:` line; wording no entry names reads as category
  * `unknown`, connection failure `none`, with every yes/no question answered no. The readings are strong
  * (well past the low-stakes bands), so the battery acts on every one.
+ *
+ * The same port answers the retry-wait reading (`engine.provider.retry-wait`,
+ * asked for a provider error's message when it carries no explicit wait) as
+ * "no number is a wait", so a test here sees only the explicit waits it sets.
  */
 import { afterEach, beforeEach } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { forgetFailureReadings, installJudgmentPort, type ConnectionFailure, type FailureCategory } from '@goodvibes-jev/engine/errors';
+import { forgetRetryWaitReadings } from '../../sdk/src/platform/types/batteries/retry-wait.ts';
 
 export interface FailureWordingReading {
   readonly category?: FailureCategory;
@@ -46,6 +51,8 @@ function messageOf(state: unknown): string {
 export function failureReadingsPort(table: FailureWordingTable) {
   return fakePort((name: string, question: Question, state: unknown) => {
     const message = messageOf(state);
+    if (name === 'pick') return choiceAnswer(question, 'none', 0.95);
+    if (name === 'unit') return choiceAnswer(question, 's', 0.95);
     const reading = table.find(([wording]) => message.includes(wording))?.[1] ?? {};
     if (name === 'category') return choiceAnswer(question, reading.category ?? 'unknown', 0.95);
     if (name === 'connection_failure') return choiceAnswer(question, reading.connection ?? 'none', 0.95);
@@ -64,6 +71,7 @@ export function useFailureReadings(table: FailureWordingTable): { readonly reque
   let previous: ReturnType<typeof installJudgmentPort>;
   beforeEach(() => {
     forgetFailureReadings();
+    forgetRetryWaitReadings();
     const { port, requests } = failureReadingsPort(table);
     log.requests = requests;
     previous = installJudgmentPort(port);
@@ -71,6 +79,7 @@ export function useFailureReadings(table: FailureWordingTable): { readonly reque
   afterEach(() => {
     installJudgmentPort(previous);
     forgetFailureReadings();
+    forgetRetryWaitReadings();
   });
   return log;
 }

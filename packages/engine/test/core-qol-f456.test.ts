@@ -16,8 +16,10 @@ const REFUSED = [['ECONNREFUSED', { category: 'network', connection: 'refused', 
 
 describe('F6 - ProviderError semantics', () => {
   useFailureReadings(REFUSED);
-  it('keeps rate-limit retries recoverable and parses retry-after', () => {
-    const err = new ProviderError('Rate limited retry-after: 30', 429);
+  it('keeps rate-limit retries recoverable and carries the explicit retry-after', () => {
+    // A wait stated only in the message is read by Jev (readRetryWait,
+    // provider-retry-wait.test.ts); the constructor keeps the explicit value.
+    const err = new ProviderError('Rate limited', { statusCode: 429, retryAfterMs: 30000 });
     expect(err.category).toBe('rate_limit');
     expect(err.retryAfterMs).toBe(30000);
     expect(err.recoverable).toBe(true);
