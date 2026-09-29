@@ -1,7 +1,7 @@
 /**
  * routes/register-fleet-checkpoints-search.ts
  *
- * Single composite entry point for the fleet.*, checkpoints.*, sessions.search
+ * Single composite entry point for the fleet.*, contracts.*, checkpoints.*, sessions.search
  * verb-registration calls (see CHANGELOG 1.0.0), so ../../runtime/services.ts,
  * already at its line-cap ceiling, only needs one import and one call
  * instead of three of each. See routes/fleet.ts, routes/checkpoints.ts, and
@@ -20,6 +20,8 @@ import { registerSessionSearchGatewayMethod, type SessionSearchBroker } from './
 import { createEventEnvelope } from '../../runtime/events/index.js';
 import type { RuntimeEventBus, RuntimeEventEnvelope } from '../../runtime/events/index.js';
 import type { WorkspaceEvent } from '../../../events/workspace.js';
+import type { ContractOperatorService } from '../../contract/operator-service.js';
+import { registerContractGatewayMethods } from './contracts.js';
 
 export interface FleetCheckpointsSearchGatewayDeps {
   readonly processRegistry: FleetQueryOnlyRegistry & FleetSteerCapableRegistry;
@@ -39,10 +41,16 @@ export interface FleetCheckpointsSearchGatewayDeps {
    * orchestration engine).
    */
   readonly attemptsController?: FleetAttemptsController | undefined;
+  /**
+   * The contracts operator surface. When present, the contracts.* verbs are
+   * registered; absent, they stay cataloged-but-unhandled, like the attempts verbs.
+   */
+  readonly contractOperator?: ContractOperatorService | undefined;
 }
 
 export function registerFleetCheckpointsSearchGatewayMethods(catalog: GatewayMethodCatalog, deps: FleetCheckpointsSearchGatewayDeps): void {
   registerFleetGatewayMethods(catalog, deps.processRegistry, deps.attemptsController);
+  if (deps.contractOperator) registerContractGatewayMethods(catalog, deps.contractOperator);
   const bus = deps.runtimeBus;
   const checkpointsEmit: CheckpointsEventSink | undefined = bus
     ? (event: WorkspaceEvent, sessionId: string): void => {

@@ -41,7 +41,7 @@ returns an `EmbeddedSession`:
 | `events`                  | the `RuntimeEventBus`: `.on(type, cb)` or `.onDomain(dom, cb)` |
 | `approvals`               | the `ApprovalBroker` permission asks flow through             |
 | `sessions`                | the `SharedSessionBroker` backing the session                 |
-| `submit(in)`              | send input; resolves with the broker's submission record      |
+| `submit(in)`              | send input; resolves with the broker's submission record. When the broker answers in spawn mode, the text starts a contract through the daemon's `contracts` surface and `activeAgentId` is the contract's owner agent, bound to the session |
 | `cancelActive(agentIds)`  | cancel one or more in-flight agent turns by the agent id a submission reported as `activeAgentId`; returns the number actually cancelled |
 | `stop()`                  | tear down and release the port (idempotent)                   |
 

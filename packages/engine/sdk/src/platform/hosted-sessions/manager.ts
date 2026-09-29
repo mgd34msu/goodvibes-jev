@@ -45,7 +45,8 @@ import { summarizeError } from '../utils/error-display.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import type { SessionLiveTurnControls } from '../control-plane/routes/session-runtime.js';
 import { resolveHostedModelDefinition } from './model-route.js';
-import { createHostedSessionRuntime, newHostedSessionId, type HostedSessionRuntime } from './session-runtime.js';
+import { createHostedSessionRuntime, newHostedSessionId, type HostedSessionContractSink, type HostedSessionRuntime } from './session-runtime.js';
+import type { HostedContractRunners } from '../contract/operator-service.js';
 import { HostedWorkspaceFloors, type HostedWorkspaceFloorFactory, type HostedWorkspaceFloorLease } from './workspace-floor.js';
 import { HostedSessionStore, type HostedSessionLoadReport } from './store.js';
 import { HostedSessionSpineIntake, type HostedSessionSpine } from './spine-intake.js';
@@ -56,6 +57,8 @@ import {
   clampAttachmentLease,
 } from './attachments.js';
 export type { HostedSessionSpine } from './spine-intake.js';
+import { HostedSessionArgumentError, HostedSessionLimitError, HostedSessionNotFoundError, HostedSessionUnavailableError } from './errors.js';
+export { HostedSessionArgumentError, HostedSessionLimitError, HostedSessionNotFoundError, HostedSessionUnavailableError } from './errors.js';
 import type {
   CreateHostedSessionInput,
   HostedDetachPolicy,
@@ -299,6 +302,35 @@ export class HostedSessionManager {
     return live !== undefined && live.record.status !== 'terminated';
   }
 
+  /** What a session's loop reports about its contracts (session-contracts.ts): the record lists them, and a line said is persisted and announced. */
+  private sessionContracts(sessionId: string): HostedSessionContractSink {
+    const change = (update: (record: HostedSessionRecord) => HostedSessionRecord, event: HostedSessionLifecycleEvent, detail: string): void => {
+      const live = this.sessions.get(sessionId);
+      if (!live || live.record.status === 'terminated') return;
+      live.record = update({ ...live.record, updatedAt: this.now() });
+      this.publish(event, live.record, { detail });
+      void this.persist(live.record);
+    };
+    return {
+      contractIds: () => this.sessions.get(sessionId)?.record.contractIds ?? [],
+      started: (contractId) => change((record) => ({ ...record, contractIds: [...record.contractIds, contractId] }), 'hosted-session-contract-started', contractId),
+      said: (line) => change((record) => ({ ...record, messageCount: this.sessions.get(sessionId)?.runtime?.conversation.getMessageCount() ?? record.messageCount }), 'hosted-session-contract-notice', line),
+    };
+  }
+
+  /** The contracts operator surface's view of this engine (contract/operator-service.ts): every floor's runner, and a live session's. */
+  contractRunners(): HostedContractRunners {
+    return {
+      runners: () => this.floors.floors().map((floor) => floor.contractRunner),
+      forSession: async (sessionId) => {
+        const live = this.sessions.get(sessionId);
+        if (!live || live.record.status === 'terminated') return null;
+        await this.ensureComposed(live);
+        return live.lease ? { runner: live.lease.floor.contractRunner, workspaceRoot: live.record.workspaceRoot } : null;
+      },
+    };
+  }
+
   /** The live-turn controls for a hosted session, when its loop is composed. */
   liveTurnControls(sessionId: string): SessionLiveTurnControls | null {
     return this.sessions.get(sessionId)?.runtime?.liveTurnControls ?? null;
@@ -337,6 +369,7 @@ export class HostedSessionManager {
         systemPrompt: this.options.systemPrompt({ sessionId, workspaceRoot }),
         ...(model === undefined ? {} : { model }),
         ...(input.originSurface ? { originSurface: input.originSurface } : {}),
+        contracts: this.sessionContracts(sessionId),
       });
       record = {
         id: sessionId,
@@ -520,6 +553,7 @@ export class HostedSessionManager {
         ...(model === undefined ? {} : { model }),
         // Rebuilding as the host would move client-owned settings mid-life.
         ...(live.record.originSurface ? { originSurface: live.record.originSurface } : {}),
+        contracts: this.sessionContracts(live.record.id),
       });
       this.replayConversation(live, runtime);
       live.runtime = runtime;
@@ -755,38 +789,6 @@ export class HostedSessionManager {
     this.publish('hosted-session-detached', live.record, {
       detail: 'the daemon is stopping; this session survives and is reattachable after the restart',
     });
-  }
-}
-
-/** A hosted session id nobody here knows. */
-export class HostedSessionNotFoundError extends Error {
-  constructor(public readonly sessionId: string) {
-    super(`This daemon hosts no session ${sessionId}.`);
-    this.name = 'HostedSessionNotFoundError';
-  }
-}
-
-/** A known hosted session that cannot serve this request, with the reason. */
-export class HostedSessionUnavailableError extends Error {
-  constructor(public readonly sessionId: string, reason: string) {
-    super(`Hosted session ${sessionId} is unavailable: ${reason}.`);
-    this.name = 'HostedSessionUnavailableError';
-  }
-}
-
-/** A malformed request argument. */
-export class HostedSessionArgumentError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'HostedSessionArgumentError';
-  }
-}
-
-/** The configured hosted-session cap is reached. */
-export class HostedSessionLimitError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'HostedSessionLimitError';
   }
 }
 

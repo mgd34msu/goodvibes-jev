@@ -38,7 +38,8 @@
     "goodvibes-per-job-green": "./toolchain/dist/bin/per-job-green.js",
     "goodvibes-changelog-gate": "./toolchain/dist/bin/changelog-gate.js",
     "goodvibes-sha256sums": "./toolchain/dist/bin/sha256sums.js",
-    "goodvibes-train-status": "./toolchain/dist/bin/train-status.js"
+    "goodvibes-train-status": "./toolchain/dist/bin/train-status.js",
+    "goodvibes-contract": "./sdk/dist/bin/goodvibes-contract.js"
   },
   "files": [
     "contracts/artifacts",

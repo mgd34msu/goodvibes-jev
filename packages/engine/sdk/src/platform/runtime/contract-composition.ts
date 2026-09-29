@@ -15,13 +15,15 @@
  *   `runner.hooks()` there when it sets them).
  *
  * `resumeContracts` resumes every contract left on disk at startup, once per
- * project root in the process, and logs what it resumed or reaped.
+ * project root in the process, logs what it resumed or reaped, and hands every
+ * caller for the root the same promise of the report.
  */
 import { resolve } from 'node:path';
 import type { ConfigManager } from '../config/manager.js';
 import { ContractStore } from '../contract/store.js';
 import { createContractRunner, type ContractRunner } from '../contract/runner.js';
 import { createRoutePlannerContractSelector } from '../contract/route.js';
+import type { ResumeReport } from '../contract/resume.js';
 import type { ExecutionPlans, WorkPlanService } from '../contract/plan-sync.js';
 import type { AgentMessageBus } from '../agents/message-bus.js';
 import { createAgentManagerDecompositionRunner } from '../agents/planner-decomposition-runner.js';
@@ -118,24 +120,34 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
 }
 
 /**
- * Project roots whose contracts this process already resumed. Two
- * compositions can share a root in one process (the daemon's own services and
- * a hosted-session floor on the same workspace); only the first resumes what
- * is on disk, so no contract runs twice.
+ * The resume of each project root this process started. Two compositions can
+ * share a root in one process (the daemon's own services and a hosted-session
+ * floor on the same workspace); only the first resumes what is on disk, so no
+ * contract runs twice, and every later call for the root gets the same promise.
  */
-const resumedRoots = new Set<string>();
+const resumedRoots = new Map<string, Promise<ResumeReport | null>>();
 
 /**
  * Resumes the contracts left on disk under `projectRoot` (design 7.2), once
- * per root in this process; what was resumed or reaped is logged, and a
- * failure is logged, not thrown into startup.
+ * per root in this process. Every call for a root returns the same promise: it
+ * resolves to the report of what was resumed, queued or reaped (also logged),
+ * or to null when resuming failed (logged, not thrown into startup). A host
+ * that follows the resumed contracts (the contract CLI) awaits it.
  */
-export function resumeContracts(runner: Pick<ContractRunner, 'resumeAll'>, projectRoot: string): Promise<void> {
+export function resumeContracts(runner: Pick<ContractRunner, 'resumeAll'>, projectRoot: string): Promise<ResumeReport | null> {
   const root = resolve(projectRoot);
-  if (resumedRoots.has(root)) return Promise.resolve();
-  resumedRoots.add(root);
-  return runner.resumeAll().then(
-    (report) => { logger.info('[contracts] resumed contracts from disk', { projectRoot: root, report }); },
-    (error: unknown) => { logger.error('[contracts] resuming contracts from disk failed', { projectRoot: root, error: summarizeError(error) }); },
+  const started = resumedRoots.get(root);
+  if (started !== undefined) return started;
+  const resuming = runner.resumeAll().then(
+    (report): ResumeReport => {
+      logger.info('[contracts] resumed contracts from disk', { projectRoot: root, report });
+      return report;
+    },
+    (error: unknown): null => {
+      logger.error('[contracts] resuming contracts from disk failed', { projectRoot: root, error: summarizeError(error) });
+      return null;
+    },
   );
+  resumedRoots.set(root, resuming);
+  return resuming;
 }

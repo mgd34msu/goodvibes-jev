@@ -33,7 +33,14 @@ export type {
 } from './manager.js';
 
 export { createHostedSessionRuntime, newHostedSessionId } from './session-runtime.js';
-export type { HostedSessionRuntime, HostedSessionRuntimeOptions } from './session-runtime.js';
+export type { HostedSessionContractSink, HostedSessionRuntime, HostedSessionRuntimeOptions } from './session-runtime.js';
+
+// A hosted session as the host of the contracts it starts, and the external
+// work adapter that dispatches contract work into hosted sessions.
+export { observeSessionContracts, sessionContractLine } from './session-contracts.js';
+export type { SessionContractObserver, SessionContractRunner } from './session-contracts.js';
+export { EXTERNAL_CANCEL_REASON, createHostedContractWorkAdapter } from './contract-work-adapter.js';
+export type { HostedContractWorkAdapterDeps } from './contract-work-adapter.js';
 
 // How much authority a hosted run's exec tool carries, the contained default,
 // the explicitly-granted workstream posture, and the pieces a product needs to

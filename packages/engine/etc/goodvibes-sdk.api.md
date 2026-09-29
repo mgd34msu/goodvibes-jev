@@ -28,34 +28,34 @@ export const AccountsSnapshotResponseSchema: z.ZodObject<{
         pendingLogin: z.ZodBoolean;
         availableRoutes: z.ZodArray<z.ZodEnum<{
             "api-key": "api-key";
-            subscription: "subscription";
             "service-oauth": "service-oauth";
+            subscription: "subscription";
             unconfigured: "unconfigured";
         }>>;
         preferredRoute: z.ZodEnum<{
             "api-key": "api-key";
-            subscription: "subscription";
             "service-oauth": "service-oauth";
+            subscription: "subscription";
             unconfigured: "unconfigured";
         }>;
         activeRoute: z.ZodEnum<{
             "api-key": "api-key";
-            subscription: "subscription";
             "service-oauth": "service-oauth";
+            subscription: "subscription";
             unconfigured: "unconfigured";
         }>;
         activeRouteReason: z.ZodString;
         authFreshness: z.ZodEnum<{
-            pending: "pending";
-            expired: "expired";
             unconfigured: "unconfigured";
-            healthy: "healthy";
+            expired: "expired";
             expiring: "expiring";
+            healthy: "healthy";
+            pending: "pending";
         }>;
         fallbackRoute: z.ZodOptional<z.ZodEnum<{
             "api-key": "api-key";
-            subscription: "subscription";
             "service-oauth": "service-oauth";
+            subscription: "subscription";
             unconfigured: "unconfigured";
         }>>;
         fallbackRisk: z.ZodOptional<z.ZodString>;
@@ -77,17 +77,17 @@ export const AccountsSnapshotResponseSchema: z.ZodObject<{
         routeRecords: z.ZodArray<z.ZodObject<{
             route: z.ZodEnum<{
                 "api-key": "api-key";
-                subscription: "subscription";
                 "service-oauth": "service-oauth";
+                subscription: "subscription";
                 unconfigured: "unconfigured";
             }>;
             usable: z.ZodBoolean;
             freshness: z.ZodEnum<{
-                pending: "pending";
-                expired: "expired";
                 unconfigured: "unconfigured";
-                healthy: "healthy";
+                expired: "expired";
                 expiring: "expiring";
+                healthy: "healthy";
+                pending: "pending";
             }>;
             detail: z.ZodString;
             issues: z.ZodArray<z.ZodString>;
@@ -710,10 +710,10 @@ export type ConfiguredVia = z.infer<typeof ConfiguredViaSchema>;
 
 // @public (undocumented)
 export const ConfiguredViaSchema: z.ZodEnum<{
-    anonymous: "anonymous";
     subscription: "subscription";
-    secrets: "secrets";
+    anonymous: "anonymous";
     env: "env";
+    secrets: "secrets";
 }>;
 
 // Warning: (ae-forgotten-export) The symbol "CONNECTION_OPTIONS" needs to be exported by the entry point index.d.ts
@@ -1201,10 +1201,10 @@ export const ControlAuthCurrentResponseSchema: z.ZodObject<{
     sessionCookiePresent: z.ZodBoolean;
     principalId: z.ZodNullable<z.ZodString>;
     principalKind: z.ZodNullable<z.ZodEnum<{
-        token: "token";
         user: "user";
-        bot: "bot";
         service: "service";
+        bot: "bot";
+        token: "token";
     }>>;
     admin: z.ZodBoolean;
     scopes: z.ZodArray<z.ZodString>;
@@ -1348,6 +1348,11 @@ export function createMemoryTokenStore(initialToken?: string | null, initialExpi
 // @public
 export function createOpenTelemetryObserver(tracer: OtelTracer, meter: OtelMeter): SDKObserver;
 
+// Warning: (ae-forgotten-export) The symbol "ContractExternalWorkAdapter" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function createOperatorContractWorkAdapter(client: Pick<OperatorRemoteClient, 'invoke'>): ContractExternalWorkAdapter;
+
 // @public
 export function createOperatorRemoteClient(transport: HttpTransport, contract: OperatorContractManifest, clientOptions?: OperatorRemoteClientOptions): OperatorRemoteClient;
 
@@ -1436,17 +1441,17 @@ export const CurrentModelResponseSchema: z.ZodObject<{
     }, z.core.$strict>>;
     configured: z.ZodBoolean;
     configuredVia: z.ZodOptional<z.ZodEnum<{
-        anonymous: "anonymous";
         subscription: "subscription";
-        secrets: "secrets";
+        anonymous: "anonymous";
         env: "env";
+        secrets: "secrets";
     }>>;
     routes: z.ZodOptional<z.ZodArray<z.ZodObject<{
         route: z.ZodEnum<{
             none: "none";
-            anonymous: "anonymous";
             "api-key": "api-key";
             "service-oauth": "service-oauth";
+            anonymous: "anonymous";
             "secret-ref": "secret-ref";
             "subscription-oauth": "subscription-oauth";
         }>;
@@ -1454,11 +1459,11 @@ export const CurrentModelResponseSchema: z.ZodObject<{
         configured: z.ZodBoolean;
         usable: z.ZodOptional<z.ZodBoolean>;
         freshness: z.ZodOptional<z.ZodEnum<{
-            pending: "pending";
-            expired: "expired";
             unconfigured: "unconfigured";
-            healthy: "healthy";
+            expired: "expired";
             expiring: "expiring";
+            healthy: "healthy";
+            pending: "pending";
         }>>;
         detail: z.ZodOptional<z.ZodString>;
         envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -1844,7 +1849,7 @@ export { forSession as forSessionRuntime }
 export const FOUNDATION_METADATA: {
     readonly productId: "goodvibes";
     readonly productVersion: "2.0.23";
-    readonly operatorMethodCount: 507;
+    readonly operatorMethodCount: 512;
     readonly operatorEventCount: 34;
     readonly peerEndpointCount: 6;
 };
@@ -2660,18 +2665,18 @@ export const ListProviderModelsResponseSchema: z.ZodObject<{
         label: z.ZodString;
         configured: z.ZodBoolean;
         configuredVia: z.ZodOptional<z.ZodEnum<{
-            anonymous: "anonymous";
             subscription: "subscription";
-            secrets: "secrets";
+            anonymous: "anonymous";
             env: "env";
+            secrets: "secrets";
         }>>;
         envVars: z.ZodArray<z.ZodString>;
         routes: z.ZodOptional<z.ZodArray<z.ZodObject<{
             route: z.ZodEnum<{
                 none: "none";
-                anonymous: "anonymous";
                 "api-key": "api-key";
                 "service-oauth": "service-oauth";
+                anonymous: "anonymous";
                 "secret-ref": "secret-ref";
                 "subscription-oauth": "subscription-oauth";
             }>;
@@ -2679,11 +2684,11 @@ export const ListProviderModelsResponseSchema: z.ZodObject<{
             configured: z.ZodBoolean;
             usable: z.ZodOptional<z.ZodBoolean>;
             freshness: z.ZodOptional<z.ZodEnum<{
-                pending: "pending";
-                expired: "expired";
                 unconfigured: "unconfigured";
-                healthy: "healthy";
+                expired: "expired";
                 expiring: "expiring";
+                healthy: "healthy";
+                pending: "pending";
             }>>;
             detail: z.ZodOptional<z.ZodString>;
             envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -2702,9 +2707,9 @@ export const ListProviderModelsResponseSchema: z.ZodObject<{
                 levels: z.ZodArray<z.ZodString>;
                 source: z.ZodEnum<{
                     catalog: "catalog";
-                    family: "family";
                     declared: "declared";
                     fallback: "fallback";
+                    family: "family";
                 }>;
             }, z.core.$strict>>;
         }, z.core.$strict>>;
@@ -2873,9 +2878,9 @@ export const ModelReasoningOptionsSchema: z.ZodObject<{
     levels: z.ZodArray<z.ZodString>;
     source: z.ZodEnum<{
         catalog: "catalog";
-        family: "family";
         declared: "declared";
         fallback: "fallback";
+        family: "family";
     }>;
 }, z.core.$strict>;
 
@@ -2938,7 +2943,10 @@ export function openServerSentEventStream(transport: HttpTransport, pathOrUrl: s
 export const OPERATOR_CONTRACT: OperatorContractManifest;
 
 // @public (undocumented)
-export const OPERATOR_METHOD_IDS: readonly ["accounts.snapshot", "acp.agents.list", "acp.sessions.create", "approvals.approve", "approvals.cancel", "approvals.claim", "approvals.deny", "approvals.list", "approvals.raise", "artifacts.content.get", "artifacts.create", "artifacts.get", "artifacts.list", "automation.heartbeat.list", "automation.heartbeat.run", "automation.integration.snapshot", "automation.jobs.create", "automation.jobs.delete", "automation.jobs.disable", "automation.jobs.enable", "automation.jobs.list", "automation.jobs.run", "automation.jobs.update", "automation.runs.cancel", "automation.runs.get", "automation.runs.list", "automation.runs.retry", "automation.schedules.create", "automation.schedules.delete", "automation.schedules.disable", "automation.schedules.enable", "automation.schedules.list", "automation.schedules.run", "browser.click", "browser.extract", "browser.history.back", "browser.history.forward", "browser.navigate", "browser.press", "browser.provision", "browser.readText", "browser.screenshot", "browser.scroll", "browser.select", "browser.sessions.attach", "browser.sessions.close", "browser.sessions.launch", "browser.sessions.list", "browser.sessions.release", "browser.snapshot", "browser.status", "browser.tabs.close", "browser.tabs.create", "browser.tabs.list", "browser.tabs.switch", "browser.type", "browser.waitFor", "calendar.events.create", "calendar.events.get", "calendar.events.list", "calendar.ics.export", "calendar.ics.import", "channels.accounts.action.default", "channels.accounts.action.named", "channels.accounts.get", "channels.accounts.list", "channels.accounts.surface.list", "channels.actions.invoke", "channels.actions.list", "channels.actions.surface.list", "channels.agent_tools.list", "channels.agent_tools.surface.list", "channels.allowlist.edit", "channels.allowlist.resolve", "channels.authorize", "channels.capabilities.list", "channels.capabilities.surface.list", "channels.directory.query", "channels.doctor.get", "channels.drafts.delete", "channels.drafts.get", "channels.drafts.list", "channels.drafts.save", "channels.inbox.list", "channels.lifecycle.get", "channels.policies.audit", "channels.policies.list", "channels.policies.update", "channels.profiles.delete", "channels.profiles.get", "channels.profiles.list", "channels.profiles.set", "channels.repairs.list", "channels.routing.assign", "channels.routing.delete", "channels.routing.list", "channels.setup.get", "channels.status", "channels.targets.resolve", "channels.test.send", "channels.tools.invoke", "channels.tools.list", "channels.tools.surface.list", "checkin.config.get", "checkin.config.set", "checkin.receipts.list", "checkin.run", "checkpoints.create", "checkpoints.diff", "checkpoints.list", "checkpoints.restore", "checkpoints.restorePreview", "checkpoints.revertHunk", "checkpoints.revertHunkPreview", "ci.status", "ci.watches.create", "ci.watches.delete", "ci.watches.list", "ci.watches.run", "companion.chat.events.stream", "companion.chat.messages.create", "companion.chat.messages.edit", "companion.chat.messages.list", "companion.chat.messages.retry", "companion.chat.messages.steer", "companion.chat.sessions.close", "companion.chat.sessions.create", "companion.chat.sessions.delete", "companion.chat.sessions.get", "companion.chat.sessions.list", "companion.chat.sessions.update", "companion.chat.turns.cancel", "config.get", "config.set", "continuity.snapshot", "control.auth.current", "control.auth.login", "control.clients.list", "control.contract", "control.events.catalog", "control.events.stream", "control.messages.list", "control.methods.get", "control.methods.list", "control.snapshot", "control.status", "control.web", "cost.attribution.get", "credentials.delete", "credentials.get", "credentials.set", "deliveries.get", "deliveries.list", "devices.artifacts.list", "devices.artifacts.read", "devices.capability.request", "devices.grants.list", "devices.grants.revoke", "devices.housekeeping.run", "devices.nodes.list", "email.draft.create", "email.expectation.cancel", "email.expectation.list", "email.expectation.open", "email.inbound.status", "email.inbox.list", "email.inbox.read", "email.send", "flags.graduation.report", "fleet.archive", "fleet.archiveFinished", "fleet.archived.list", "fleet.attempts.judge", "fleet.attempts.list", "fleet.attempts.pick", "fleet.conflicts.list", "fleet.conflicts.resolve", "fleet.graph.get", "fleet.list", "fleet.observed.steer", "fleet.snapshot", "fleet.unarchive", "health.snapshot", "homeassistant.homeGraph.askHomeGraph", "homeassistant.homeGraph.browse", "homeassistant.homeGraph.export", "homeassistant.homeGraph.generateHomeGraphPacket", "homeassistant.homeGraph.generateRoomPage", "homeassistant.homeGraph.import", "homeassistant.homeGraph.ingestHomeGraphArtifact", "homeassistant.homeGraph.ingestHomeGraphNote", "homeassistant.homeGraph.ingestHomeGraphUrl", "homeassistant.homeGraph.linkHomeGraphKnowledge", "homeassistant.homeGraph.listHomeGraphIssues", "homeassistant.homeGraph.map", "homeassistant.homeGraph.pages.list", "homeassistant.homeGraph.refinement.run", "homeassistant.homeGraph.refinement.task.cancel", "homeassistant.homeGraph.refinement.task.get", "homeassistant.homeGraph.refinement.tasks.list", "homeassistant.homeGraph.refreshDevicePassport", "homeassistant.homeGraph.reindex", "homeassistant.homeGraph.reset", "homeassistant.homeGraph.reviewHomeGraphFact", "homeassistant.homeGraph.sources.list", "homeassistant.homeGraph.status", "homeassistant.homeGraph.syncHomeGraph", "homeassistant.homeGraph.unlinkHomeGraphKnowledge", "intelligence.snapshot", "knowledge.ask", "knowledge.candidate.decide", "knowledge.candidate.get", "knowledge.candidates.list", "knowledge.connector.doctor", "knowledge.connector.get", "knowledge.connectors.list", "knowledge.extraction.get", "knowledge.extractions.list", "knowledge.graphql.execute", "knowledge.graphql.schema", "knowledge.ingest.artifact", "knowledge.ingest.bookmarks", "knowledge.ingest.browserHistory", "knowledge.ingest.connector", "knowledge.ingest.url", "knowledge.ingest.urls", "knowledge.issue.review", "knowledge.issues.list", "knowledge.item.get", "knowledge.job-runs.list", "knowledge.job.get", "knowledge.job.run", "knowledge.jobs.list", "knowledge.lint", "knowledge.map", "knowledge.nodes.list", "knowledge.packet", "knowledge.projection.materialize", "knowledge.projection.render", "knowledge.projections.list", "knowledge.refinement.run", "knowledge.refinement.task.cancel", "knowledge.refinement.task.get", "knowledge.refinement.tasks.list", "knowledge.reindex", "knowledge.report.get", "knowledge.reports.list", "knowledge.schedule.delete", "knowledge.schedule.enable", "knowledge.schedule.get", "knowledge.schedule.save", "knowledge.schedules.list", "knowledge.search", "knowledge.source.extraction.get", "knowledge.sources.list", "knowledge.status", "knowledge.usage.list", "local_auth.bootstrap.delete", "local_auth.sessions.delete", "local_auth.status", "local_auth.users.create", "local_auth.users.delete", "local_auth.users.password.rotate", "mcp.config.get", "mcp.config.reload", "mcp.servers.list", "mcp.servers.remove", "mcp.servers.reveal", "mcp.servers.upsert", "mcp.tools.list", "media.analyze", "media.generate", "media.providers.list", "media.transform", "memory.consolidation.receipts", "memory.doctor", "memory.embeddings.default.set", "memory.projections.get", "memory.projections.list", "memory.records.add", "memory.records.delete", "memory.records.export", "memory.records.get", "memory.records.import", "memory.records.links.add", "memory.records.links.list", "memory.records.list", "memory.records.search", "memory.records.search-semantic", "memory.records.update", "memory.records.update-review", "memory.review-queue", "memory.vector.rebuild", "memory.vector.stats", "models.current.get", "models.current.set", "models.list", "multimodal.analyze", "multimodal.packet", "multimodal.providers.list", "multimodal.status", "multimodal.writeback", "occasions.acknowledge", "occasions.answer", "occasions.confirm", "occasions.conflict.resolve", "occasions.gifts", "occasions.interview.answer", "occasions.interview.get", "occasions.interview.record", "occasions.list", "occasions.pending", "occasions.plans.confirm", "occasions.plans.list", "occasions.plans.propose", "occasions.propose", "occasions.remove", "occasions.state", "occasions.sweep", "ops.memory.get", "pairing.handoff.complete", "pairing.handoff.create", "pairing.posture.get", "pairing.tokens.create", "pairing.tokens.delete", "pairing.tokens.list", "pairing.tokens.migrate", "pairing.tokens.rename", "pairing.tokens.revokeShared", "panels.list", "panels.open", "payments.budget.status", "payments.cards.create", "payments.cards.delete", "payments.cards.list", "payments.checkout.begin", "payments.checkout.fillCard", "payments.purchases.list", "permissions.rules.delete", "permissions.rules.list", "power.keepAwake.set", "power.status.get", "principals.create", "principals.delete", "principals.get", "principals.list", "principals.resolve", "principals.update", "profile.append", "profile.forget", "profile.get", "profile.person", "profile.provenance", "profile.read", "profile.set", "profile.status", "profile.undo", "projectPlanning.decisions.list", "projectPlanning.decisions.record", "projectPlanning.evaluate", "projectPlanning.language.get", "projectPlanning.language.upsert", "projectPlanning.state.get", "projectPlanning.state.upsert", "projectPlanning.status", "projectPlanning.workPlan.clearCompleted", "projectPlanning.workPlan.snapshot", "projectPlanning.workPlan.task.create", "projectPlanning.workPlan.task.delete", "projectPlanning.workPlan.task.get", "projectPlanning.workPlan.task.status", "projectPlanning.workPlan.task.update", "projectPlanning.workPlan.tasks.list", "projectPlanning.workPlan.tasks.reorder", "providers.get", "providers.list", "providers.usage.get", "push.subscriptions.create", "push.subscriptions.delete", "push.subscriptions.list", "push.subscriptions.reconcile", "push.subscriptions.verify", "push.vapid.get", "quota.fanout.get", "quota.snapshot.get", "relay.pairing.mint", "relay.reachability.get", "remote.node_host.contract", "remote.pair.requests.approve", "remote.pair.requests.list", "remote.pair.requests.reject", "remote.peers.disconnect", "remote.peers.invoke", "remote.peers.list", "remote.peers.token.revoke", "remote.peers.token.rotate", "remote.snapshot", "remote.work.cancel", "remote.work.list", "review.snapshot", "rewind.apply", "rewind.conversation.host.register", "rewind.conversation.host.release", "rewind.conversation.hosts.list", "rewind.conversation.requests.answer", "rewind.conversation.requests.take", "rewind.plan", "routes.bindings.create", "routes.bindings.delete", "routes.bindings.list", "routes.bindings.update", "routes.snapshot", "runtime.metrics.get", "scheduler.capacity", "security.settings", "services.install", "services.restart", "services.start", "services.status", "services.stop", "services.uninstall", "sessions.changes.get", "sessions.close", "sessions.contextUsage.get", "sessions.create", "sessions.delete", "sessions.detach", "sessions.followUp", "sessions.get", "sessions.hosted.attach", "sessions.hosted.create", "sessions.hosted.detach", "sessions.hosted.kill", "sessions.hosted.list", "sessions.inputs.cancel", "sessions.inputs.deliver", "sessions.inputs.list", "sessions.integration.snapshot", "sessions.list", "sessions.messages.create", "sessions.messages.list", "sessions.permissionMode.get", "sessions.permissionMode.set", "sessions.queuedMessages.delete", "sessions.queuedMessages.edit", "sessions.queuedMessages.list", "sessions.register", "sessions.reopen", "sessions.search", "sessions.steer", "sessions.toolCalls.cancel", "settings.snapshot", "skills.create", "skills.delete", "skills.get", "skills.list", "skills.update", "stepup.challenge.mint", "stepup.credentials.register", "surfaces.list", "tailscale.get", "tailscale.serve.run", "tasks.cancel", "tasks.create", "tasks.get", "tasks.list", "tasks.retry", "tasks.status", "telemetry.errors.list", "telemetry.events.list", "telemetry.metrics.get", "telemetry.otlp.logs", "telemetry.otlp.metrics", "telemetry.otlp.traces", "telemetry.snapshot", "telemetry.stream", "telemetry.traces.list", "update.check", "update.status", "voice.local.install", "voice.local.status", "voice.providers.list", "voice.realtime.session", "voice.status", "voice.stt", "voice.tts", "voice.tts.stream", "voice.voices.list", "voice.wake.model.get", "voice.wake.provision", "voice.wake.status", "watchers.create", "watchers.delete", "watchers.list", "watchers.run", "watchers.start", "watchers.stop", "watchers.update", "web_search.providers.list", "web_search.query", "workspaces.registrations.add", "workspaces.registrations.list", "workspaces.registrations.remove", "workspaces.resolve", "worktrees.discard", "worktrees.setup.run", "worktrees.snapshot"];
+export const OPERATOR_METHOD_IDS: readonly ["accounts.snapshot", "acp.agents.list", "acp.sessions.create", "approvals.approve", "approvals.cancel", "approvals.claim", "approvals.deny", "approvals.list", "approvals.raise", "artifacts.content.get", "artifacts.create", "artifacts.get", "artifacts.list", "automation.heartbeat.list", "automation.heartbeat.run", "automation.integration.snapshot", "automation.jobs.create", "automation.jobs.delete", "automation.jobs.disable", "automation.jobs.enable", "automation.jobs.list", "automation.jobs.run", "automation.jobs.update", "automation.runs.cancel", "automation.runs.get", "automation.runs.list", "automation.runs.retry", "automation.schedules.create", "automation.schedules.delete", "automation.schedules.disable", "automation.schedules.enable", "automation.schedules.list", "automation.schedules.run", "browser.click", "browser.extract", "browser.history.back", "browser.history.forward", "browser.navigate", "browser.press", "browser.provision", "browser.readText", "browser.screenshot", "browser.scroll", "browser.select", "browser.sessions.attach", "browser.sessions.close", "browser.sessions.launch", "browser.sessions.list", "browser.sessions.release", "browser.snapshot", "browser.status", "browser.tabs.close", "browser.tabs.create", "browser.tabs.list", "browser.tabs.switch", "browser.type", "browser.waitFor", "calendar.events.create", "calendar.events.get", "calendar.events.list", "calendar.ics.export", "calendar.ics.import", "channels.accounts.action.default", "channels.accounts.action.named", "channels.accounts.get", "channels.accounts.list", "channels.accounts.surface.list", "channels.actions.invoke", "channels.actions.list", "channels.actions.surface.list", "channels.agent_tools.list", "channels.agent_tools.surface.list", "channels.allowlist.edit", "channels.allowlist.resolve", "channels.authorize", "channels.capabilities.list", "channels.capabilities.surface.list", "channels.directory.query", "channels.doctor.get", "channels.drafts.delete", "channels.drafts.get", "channels.drafts.list", "channels.drafts.save", "channels.inbox.list", "channels.lifecycle.get", "channels.policies.audit", "channels.policies.list", "channels.policies.update", "channels.profiles.delete", "channels.profiles.get", "channels.profiles.list", "channels.profiles.set", "channels.repairs.list", "channels.routing.assign", "channels.routing.delete", "channels.routing.list", "channels.setup.get", "channels.status", "channels.targets.resolve", "channels.test.send", "channels.tools.invoke", "channels.tools.list", "channels.tools.surface.list", "checkin.config.get", "checkin.config.set", "checkin.receipts.list", "checkin.run", "checkpoints.create", "checkpoints.diff", "checkpoints.list", "checkpoints.restore", "checkpoints.restorePreview", "checkpoints.revertHunk", "checkpoints.revertHunkPreview", "ci.status", "ci.watches.create", "ci.watches.delete", "ci.watches.list", "ci.watches.run", "companion.chat.events.stream", "companion.chat.messages.create", "companion.chat.messages.edit", "companion.chat.messages.list", "companion.chat.messages.retry", "companion.chat.messages.steer", "companion.chat.sessions.close", "companion.chat.sessions.create", "companion.chat.sessions.delete", "companion.chat.sessions.get", "companion.chat.sessions.list", "companion.chat.sessions.update", "companion.chat.turns.cancel", "config.get", "config.set", "continuity.snapshot", "contracts.cancel", "contracts.get", "contracts.list", "contracts.reply", "contracts.start", "control.auth.current", "control.auth.login", "control.clients.list", "control.contract", "control.events.catalog", "control.events.stream", "control.messages.list", "control.methods.get", "control.methods.list", "control.snapshot", "control.status", "control.web", "cost.attribution.get", "credentials.delete", "credentials.get", "credentials.set", "deliveries.get", "deliveries.list", "devices.artifacts.list", "devices.artifacts.read", "devices.capability.request", "devices.grants.list", "devices.grants.revoke", "devices.housekeeping.run", "devices.nodes.list", "email.draft.create", "email.expectation.cancel", "email.expectation.list", "email.expectation.open", "email.inbound.status", "email.inbox.list", "email.inbox.read", "email.send", "flags.graduation.report", "fleet.archive", "fleet.archiveFinished", "fleet.archived.list", "fleet.attempts.judge", "fleet.attempts.list", "fleet.attempts.pick", "fleet.conflicts.list", "fleet.conflicts.resolve", "fleet.graph.get", "fleet.list", "fleet.observed.steer", "fleet.snapshot", "fleet.unarchive", "health.snapshot", "homeassistant.homeGraph.askHomeGraph", "homeassistant.homeGraph.browse", "homeassistant.homeGraph.export", "homeassistant.homeGraph.generateHomeGraphPacket", "homeassistant.homeGraph.generateRoomPage", "homeassistant.homeGraph.import", "homeassistant.homeGraph.ingestHomeGraphArtifact", "homeassistant.homeGraph.ingestHomeGraphNote", "homeassistant.homeGraph.ingestHomeGraphUrl", "homeassistant.homeGraph.linkHomeGraphKnowledge", "homeassistant.homeGraph.listHomeGraphIssues", "homeassistant.homeGraph.map", "homeassistant.homeGraph.pages.list", "homeassistant.homeGraph.refinement.run", "homeassistant.homeGraph.refinement.task.cancel", "homeassistant.homeGraph.refinement.task.get", "homeassistant.homeGraph.refinement.tasks.list", "homeassistant.homeGraph.refreshDevicePassport", "homeassistant.homeGraph.reindex", "homeassistant.homeGraph.reset", "homeassistant.homeGraph.reviewHomeGraphFact", "homeassistant.homeGraph.sources.list", "homeassistant.homeGraph.status", "homeassistant.homeGraph.syncHomeGraph", "homeassistant.homeGraph.unlinkHomeGraphKnowledge", "intelligence.snapshot", "knowledge.ask", "knowledge.candidate.decide", "knowledge.candidate.get", "knowledge.candidates.list", "knowledge.connector.doctor", "knowledge.connector.get", "knowledge.connectors.list", "knowledge.extraction.get", "knowledge.extractions.list", "knowledge.graphql.execute", "knowledge.graphql.schema", "knowledge.ingest.artifact", "knowledge.ingest.bookmarks", "knowledge.ingest.browserHistory", "knowledge.ingest.connector", "knowledge.ingest.url", "knowledge.ingest.urls", "knowledge.issue.review", "knowledge.issues.list", "knowledge.item.get", "knowledge.job-runs.list", "knowledge.job.get", "knowledge.job.run", "knowledge.jobs.list", "knowledge.lint", "knowledge.map", "knowledge.nodes.list", "knowledge.packet", "knowledge.projection.materialize", "knowledge.projection.render", "knowledge.projections.list", "knowledge.refinement.run", "knowledge.refinement.task.cancel", "knowledge.refinement.task.get", "knowledge.refinement.tasks.list", "knowledge.reindex", "knowledge.report.get", "knowledge.reports.list", "knowledge.schedule.delete", "knowledge.schedule.enable", "knowledge.schedule.get", "knowledge.schedule.save", "knowledge.schedules.list", "knowledge.search", "knowledge.source.extraction.get", "knowledge.sources.list", "knowledge.status", "knowledge.usage.list", "local_auth.bootstrap.delete", "local_auth.sessions.delete", "local_auth.status", "local_auth.users.create", "local_auth.users.delete", "local_auth.users.password.rotate", "mcp.config.get", "mcp.config.reload", "mcp.servers.list", "mcp.servers.remove", "mcp.servers.reveal", "mcp.servers.upsert", "mcp.tools.list", "media.analyze", "media.generate", "media.providers.list", "media.transform", "memory.consolidation.receipts", "memory.doctor", "memory.embeddings.default.set", "memory.projections.get", "memory.projections.list", "memory.records.add", "memory.records.delete", "memory.records.export", "memory.records.get", "memory.records.import", "memory.records.links.add", "memory.records.links.list", "memory.records.list", "memory.records.search", "memory.records.search-semantic", "memory.records.update", "memory.records.update-review", "memory.review-queue", "memory.vector.rebuild", "memory.vector.stats", "models.current.get", "models.current.set", "models.list", "multimodal.analyze", "multimodal.packet", "multimodal.providers.list", "multimodal.status", "multimodal.writeback", "occasions.acknowledge", "occasions.answer", "occasions.confirm", "occasions.conflict.resolve", "occasions.gifts", "occasions.interview.answer", "occasions.interview.get", "occasions.interview.record", "occasions.list", "occasions.pending", "occasions.plans.confirm", "occasions.plans.list", "occasions.plans.propose", "occasions.propose", "occasions.remove", "occasions.state", "occasions.sweep", "ops.memory.get", "pairing.handoff.complete", "pairing.handoff.create", "pairing.posture.get", "pairing.tokens.create", "pairing.tokens.delete", "pairing.tokens.list", "pairing.tokens.migrate", "pairing.tokens.rename", "pairing.tokens.revokeShared", "panels.list", "panels.open", "payments.budget.status", "payments.cards.create", "payments.cards.delete", "payments.cards.list", "payments.checkout.begin", "payments.checkout.fillCard", "payments.purchases.list", "permissions.rules.delete", "permissions.rules.list", "power.keepAwake.set", "power.status.get", "principals.create", "principals.delete", "principals.get", "principals.list", "principals.resolve", "principals.update", "profile.append", "profile.forget", "profile.get", "profile.person", "profile.provenance", "profile.read", "profile.set", "profile.status", "profile.undo", "projectPlanning.decisions.list", "projectPlanning.decisions.record", "projectPlanning.evaluate", "projectPlanning.language.get", "projectPlanning.language.upsert", "projectPlanning.state.get", "projectPlanning.state.upsert", "projectPlanning.status", "projectPlanning.workPlan.clearCompleted", "projectPlanning.workPlan.snapshot", "projectPlanning.workPlan.task.create", "projectPlanning.workPlan.task.delete", "projectPlanning.workPlan.task.get", "projectPlanning.workPlan.task.status", "projectPlanning.workPlan.task.update", "projectPlanning.workPlan.tasks.list", "projectPlanning.workPlan.tasks.reorder", "providers.get", "providers.list", "providers.usage.get", "push.subscriptions.create", "push.subscriptions.delete", "push.subscriptions.list", "push.subscriptions.reconcile", "push.subscriptions.verify", "push.vapid.get", "quota.fanout.get", "quota.snapshot.get", "relay.pairing.mint", "relay.reachability.get", "remote.node_host.contract", "remote.pair.requests.approve", "remote.pair.requests.list", "remote.pair.requests.reject", "remote.peers.disconnect", "remote.peers.invoke", "remote.peers.list", "remote.peers.token.revoke", "remote.peers.token.rotate", "remote.snapshot", "remote.work.cancel", "remote.work.list", "review.snapshot", "rewind.apply", "rewind.conversation.host.register", "rewind.conversation.host.release", "rewind.conversation.hosts.list", "rewind.conversation.requests.answer", "rewind.conversation.requests.take", "rewind.plan", "routes.bindings.create", "routes.bindings.delete", "routes.bindings.list", "routes.bindings.update", "routes.snapshot", "runtime.metrics.get", "scheduler.capacity", "security.settings", "services.install", "services.restart", "services.start", "services.status", "services.stop", "services.uninstall", "sessions.changes.get", "sessions.close", "sessions.contextUsage.get", "sessions.create", "sessions.delete", "sessions.detach", "sessions.followUp", "sessions.get", "sessions.hosted.attach", "sessions.hosted.create", "sessions.hosted.detach", "sessions.hosted.kill", "sessions.hosted.list", "sessions.inputs.cancel", "sessions.inputs.deliver", "sessions.inputs.list", "sessions.integration.snapshot", "sessions.list", "sessions.messages.create", "sessions.messages.list", "sessions.permissionMode.get", "sessions.permissionMode.set", "sessions.queuedMessages.delete", "sessions.queuedMessages.edit", "sessions.queuedMessages.list", "sessions.register", "sessions.reopen", "sessions.search", "sessions.steer", "sessions.toolCalls.cancel", "settings.snapshot", "skills.create", "skills.delete", "skills.get", "skills.list", "skills.update", "stepup.challenge.mint", "stepup.credentials.register", "surfaces.list", "tailscale.get", "tailscale.serve.run", "tasks.cancel", "tasks.create", "tasks.get", "tasks.list", "tasks.retry", "tasks.status", "telemetry.errors.list", "telemetry.events.list", "telemetry.metrics.get", "telemetry.otlp.logs", "telemetry.otlp.metrics", "telemetry.otlp.traces", "telemetry.snapshot", "telemetry.stream", "telemetry.traces.list", "update.check", "update.status", "voice.local.install", "voice.local.status", "voice.providers.list", "voice.realtime.session", "voice.status", "voice.stt", "voice.tts", "voice.tts.stream", "voice.voices.list", "voice.wake.model.get", "voice.wake.provision", "voice.wake.status", "watchers.create", "watchers.delete", "watchers.list", "watchers.run", "watchers.start", "watchers.stop", "watchers.update", "web_search.providers.list", "web_search.query", "workspaces.registrations.add", "workspaces.registrations.list", "workspaces.registrations.remove", "workspaces.resolve", "worktrees.discard", "worktrees.setup.run", "worktrees.snapshot"];
+
+// @public
+export const OPERATOR_WORK_CANCEL_REASON = "cancelled by the requester";
 
 // @public (undocumented)
 export interface OperatorContractManifest {
@@ -4514,6 +4522,33 @@ export interface OperatorMethodInputMap {
     });
     // (undocumented)
     "continuity.snapshot": {};
+    // (undocumented)
+    "contracts.cancel": {
+        contractId: string;
+        reason?: string;
+    };
+    // (undocumented)
+    "contracts.get": {
+        contractId: string;
+    };
+    // (undocumented)
+    "contracts.list": {
+        sessionId?: string;
+        includeTerminal?: boolean;
+    };
+    // (undocumented)
+    "contracts.reply": {
+        contractId: string;
+        escalationId: string;
+        text: string;
+    };
+    // (undocumented)
+    "contracts.start": {
+        ask: string;
+        sessionId?: string;
+        workspaceRoot?: string;
+        isolation?: "auto" | "shared" | "worktree";
+    };
     // (undocumented)
     "control.auth.current": {};
     // (undocumented)
@@ -12177,6 +12212,1838 @@ export interface OperatorMethodOutputMap {
                 assistedNarrative?: string;
             };
         };
+    };
+    // (undocumented)
+    "contracts.cancel": {
+        cancelled: boolean;
+    };
+    // (undocumented)
+    "contracts.get": {
+        id: string;
+        schemaVersion: number;
+        sessionId: string;
+        origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+        ask: string;
+        ownerAgentId: string;
+        parentAgentId?: string;
+        projectRoot: string;
+        isolation: "shared" | "worktree";
+        branch?: string;
+        worktreePath?: string;
+        baseBranch?: string;
+        baseline?: {
+            head: null | string;
+            dirty: ({} & {
+                readonly [key: string]: null | string;
+            });
+        };
+        sessionMode?: boolean;
+        proposedUnits?: readonly ({
+            task: string;
+            template?: string;
+        })[];
+        draftPlan?: {
+            goal: string;
+            units: readonly ({
+                id: string;
+                title: string;
+                brief: string;
+                dependsOn: readonly string[];
+                files?: readonly string[];
+                attempts?: number;
+            })[];
+        };
+        budget?: {
+            maxTokens?: number;
+            maxCostUsd?: number;
+        };
+        goal: string;
+        criteria: readonly ({
+            id: string;
+            text: string;
+            origin: "derived" | "fix" | "integration" | "owner" | "stated";
+            quote?: string;
+            serves: readonly string[];
+            disposition: "excluded" | "judged" | "met-by-structure";
+            dispositionReason?: string;
+            status: "met" | "unmet" | "unread" | "unshown";
+            readings: readonly ({
+                checkId: string;
+                at: number;
+                probabilityUnmet: number;
+                verdict: "met" | "unmet" | "unshown";
+                outcome: "act" | "confirm" | "escalate";
+                severity?: "critical" | "major" | "minor";
+                decisionId?: string;
+            })[];
+        })[];
+        groups: readonly ({
+            id: string;
+            title: string;
+            goal: string;
+            kind: "fix" | "integration" | "work";
+            repairs?: {
+                scope: "deliverable" | "group" | "unit";
+                targetId: string;
+                criterionIds: readonly string[];
+            };
+            dependsOn: readonly string[];
+            criteria: readonly ({
+                id: string;
+                text: string;
+                origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                quote?: string;
+                serves: readonly string[];
+                disposition: "excluded" | "judged" | "met-by-structure";
+                dispositionReason?: string;
+                status: "met" | "unmet" | "unread" | "unshown";
+                readings: readonly ({
+                    checkId: string;
+                    at: number;
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
+                    decisionId?: string;
+                })[];
+            })[];
+            unitIds: readonly string[];
+            status: "awaiting-owner" | "blocked" | "cancelled" | "failed" | "fixing" | "judging" | "passed" | "pending" | "running";
+            checks: readonly ({
+                id: string;
+                at: number;
+                trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                claims?: {
+                    kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                    summary: string;
+                };
+                gates?: readonly ({
+                    gate: string;
+                    passed: boolean;
+                    output: string;
+                    durationMs: number;
+                    skipped?: boolean;
+                })[];
+                goal: {
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                quality: {
+                    placeholder?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    tests_weakened?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    breaks_existing?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    out_of_scope?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    hidden_failure?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    unsupported_claims?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                };
+                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                decisionIds: readonly string[];
+                evidenceDigest: string;
+            })[];
+            fixRounds: number;
+            baseline?: {
+                head: null | string;
+                dirty: ({} & {
+                    readonly [key: string]: null | string;
+                });
+            };
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens?: number;
+                llmCallCount: number;
+                turnCount: number;
+                toolCallCount: number;
+                costUsd: null | number;
+                costState: "estimated" | "priced" | "unpriced";
+                costSource?: "catalog" | "mixed" | "provider" | "user";
+                pricingAsOf?: string;
+            };
+        })[];
+        units: readonly ({
+            id: string;
+            groupId: string;
+            title: string;
+            goal: string;
+            brief: string;
+            role: "design" | "implement" | "integration" | "research";
+            dependsOn: readonly string[];
+            files: readonly string[];
+            attempts: number;
+            criteria: readonly ({
+                id: string;
+                text: string;
+                origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                quote?: string;
+                serves: readonly string[];
+                disposition: "excluded" | "judged" | "met-by-structure";
+                dispositionReason?: string;
+                status: "met" | "unmet" | "unread" | "unshown";
+                readings: readonly ({
+                    checkId: string;
+                    at: number;
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
+                    decisionId?: string;
+                })[];
+            })[];
+            status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+            agentIds: readonly string[];
+            activeAgentId?: string;
+            route?: {
+                model: string;
+                provider: string;
+                fallbackModels?: readonly string[];
+                routing?: {
+                    providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                    providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                    fallbackModels?: readonly string[];
+                };
+                reasoningEffort?: string;
+                reason: string;
+            };
+            checks: readonly ({
+                id: string;
+                at: number;
+                trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                claims?: {
+                    kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                    summary: string;
+                };
+                gates?: readonly ({
+                    gate: string;
+                    passed: boolean;
+                    output: string;
+                    durationMs: number;
+                    skipped?: boolean;
+                })[];
+                goal: {
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                quality: {
+                    placeholder?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    tests_weakened?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    breaks_existing?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    out_of_scope?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    hidden_failure?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    unsupported_claims?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                };
+                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                decisionIds: readonly string[];
+                evidenceDigest: string;
+            })[];
+            nudges: readonly ({
+                id: string;
+                checkId: string;
+                at: number;
+                kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                criterionIds: readonly string[];
+                text: string;
+                delivery: "bus" | "hold" | "wake";
+                agentId: string;
+                consumedAt?: number;
+            })[];
+            fixRounds: number;
+            freshAgents: number;
+            transportRetries: number;
+            touchedPaths: readonly string[];
+            baseline?: {
+                head: null | string;
+                dirty: ({} & {
+                    readonly [key: string]: null | string;
+                });
+            };
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens?: number;
+                llmCallCount: number;
+                turnCount: number;
+                toolCallCount: number;
+                costUsd: null | number;
+                costState: "estimated" | "priced" | "unpriced";
+                costSource?: "catalog" | "mixed" | "provider" | "user";
+                pricingAsOf?: string;
+            };
+            answer?: string;
+            lastOutput?: string;
+            failureReason?: string;
+            attemptOf?: string;
+            attemptIndex?: number;
+            attemptSelection?: {
+                engineGroupId: string;
+                candidateIds: readonly string[];
+                proposedId?: string;
+                outcome: "act" | "confirm" | "escalate";
+                reasons: string;
+                decisionId?: string;
+                pickedId?: string;
+            };
+            attemptUnits?: readonly ({
+                id: string;
+                groupId: string;
+                title: string;
+                goal: string;
+                brief: string;
+                role: "design" | "implement" | "integration" | "research";
+                dependsOn: readonly string[];
+                files: readonly string[];
+                attempts: number;
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                    quote?: string;
+                    serves: readonly string[];
+                    disposition: "excluded" | "judged" | "met-by-structure";
+                    dispositionReason?: string;
+                    status: "met" | "unmet" | "unread" | "unshown";
+                    readings: readonly ({
+                        checkId: string;
+                        at: number;
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                        severity?: "critical" | "major" | "minor";
+                        decisionId?: string;
+                    })[];
+                })[];
+                status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                agentIds: readonly string[];
+                activeAgentId?: string;
+                route?: {
+                    model: string;
+                    provider: string;
+                    fallbackModels?: readonly string[];
+                    routing?: {
+                        providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                        providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                        fallbackModels?: readonly string[];
+                    };
+                    reasoningEffort?: string;
+                    reason: string;
+                };
+                checks: readonly ({
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    claims?: {
+                        kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                        summary: string;
+                    };
+                    gates?: readonly ({
+                        gate: string;
+                        passed: boolean;
+                        output: string;
+                        durationMs: number;
+                        skipped?: boolean;
+                    })[];
+                    goal: {
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    quality: {
+                        placeholder?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        tests_weakened?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        breaks_existing?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        out_of_scope?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        hidden_failure?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        unsupported_claims?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                    };
+                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                    decisionIds: readonly string[];
+                    evidenceDigest: string;
+                })[];
+                nudges: readonly ({
+                    id: string;
+                    checkId: string;
+                    at: number;
+                    kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    criterionIds: readonly string[];
+                    text: string;
+                    delivery: "bus" | "hold" | "wake";
+                    agentId: string;
+                    consumedAt?: number;
+                })[];
+                fixRounds: number;
+                freshAgents: number;
+                transportRetries: number;
+                touchedPaths: readonly string[];
+                baseline?: {
+                    head: null | string;
+                    dirty: ({} & {
+                        readonly [key: string]: null | string;
+                    });
+                };
+                usage: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens?: number;
+                    llmCallCount: number;
+                    turnCount: number;
+                    toolCallCount: number;
+                    costUsd: null | number;
+                    costState: "estimated" | "priced" | "unpriced";
+                    costSource?: "catalog" | "mixed" | "provider" | "user";
+                    pricingAsOf?: string;
+                };
+                answer?: string;
+                lastOutput?: string;
+                failureReason?: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                attemptSelection?: {
+                    engineGroupId: string;
+                    candidateIds: readonly string[];
+                    proposedId?: string;
+                    outcome: "act" | "confirm" | "escalate";
+                    reasons: string;
+                    decisionId?: string;
+                    pickedId?: string;
+                };
+            })[];
+        })[];
+        shape?: {
+            forbids_delegation: {
+                verdict: "no" | "uncertain" | "yes";
+                probability: number;
+                outcome: "act" | "confirm" | "escalate";
+            };
+            requests_parallel_agents: {
+                verdict: "no" | "uncertain" | "yes";
+                probability: number;
+                outcome: "act" | "confirm" | "escalate";
+            };
+            forbids_writing: {
+                verdict: "no" | "uncertain" | "yes";
+                probability: number;
+                outcome: "act" | "confirm" | "escalate";
+            };
+            asks_for_attempts: {
+                verdict: "no" | "uncertain" | "yes";
+                probability: number;
+                outcome: "act" | "confirm" | "escalate";
+            };
+            decisionIds: readonly string[];
+        };
+        status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+        statusBeforeOwner?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+        resumeFrom?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+        checks: readonly ({
+            id: string;
+            at: number;
+            trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+            claims?: {
+                kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                summary: string;
+            };
+            gates?: readonly ({
+                gate: string;
+                passed: boolean;
+                output: string;
+                durationMs: number;
+                skipped?: boolean;
+            })[];
+            goal: {
+                probabilityUnmet: number;
+                verdict: "met" | "unmet" | "unshown";
+                outcome: "act" | "confirm" | "escalate";
+            };
+            quality: {
+                placeholder?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                tests_weakened?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                breaks_existing?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                out_of_scope?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                hidden_failure?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                unsupported_claims?: {
+                    verdict: "no" | "uncertain" | "yes";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+            };
+            result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+            problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+            qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+            decisionIds: readonly string[];
+            evidenceDigest: string;
+        })[];
+        fixRounds: number;
+        escalations: readonly ({
+            id: string;
+            at: number;
+            scope: "deliverable" | "group" | "plan" | "shape" | "unit";
+            targetId: string;
+            reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
+            question: string;
+            unmetCriterionIds: readonly string[];
+            resolvedAt?: number;
+            reply?: {
+                text: string;
+                reading: "amend" | "approve" | "reject" | "unclear";
+                outcome: "act" | "confirm" | "escalate";
+                decisionId?: string;
+            };
+        })[];
+        decisions: readonly ({
+            id: string;
+            at: number;
+            action: "attempts-reduced" | "attempts-selected" | "cancelled" | "checked" | "committed" | "created" | "escalated" | "failed" | "fix-planned" | "fresh-agent" | "group-passed" | "nudged" | "owner-replied" | "passed" | "plan-accepted" | "plan-repaired" | "planned" | "queued" | "reaped" | "regressed" | "resumed" | "shaped" | "silence-retry" | "spawned" | "stalled" | "transport-retry" | "woke";
+            targetId: string;
+            reason: string;
+            decisionIds: readonly string[];
+            route?: {
+                model: string;
+                provider: string;
+                fallbackModels?: readonly string[];
+                routing?: {
+                    providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                    providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                    fallbackModels?: readonly string[];
+                };
+                reasoningEffort?: string;
+                reason: string;
+            };
+        })[];
+        usage: {
+            inputTokens: number;
+            outputTokens: number;
+            cacheReadTokens: number;
+            cacheWriteTokens: number;
+            reasoningTokens?: number;
+            llmCallCount: number;
+            turnCount: number;
+            toolCallCount: number;
+            costUsd: null | number;
+            costState: "estimated" | "priced" | "unpriced";
+            costSource?: "catalog" | "mixed" | "provider" | "user";
+            pricingAsOf?: string;
+        };
+        judgmentUsage: {
+            calls: number;
+            inputTokens: number;
+            outputTokens: number;
+        };
+        plannerAgentIds: readonly string[];
+        answer?: string;
+        statusLine?: string;
+        commit?: {
+            status: "applied" | "committed" | "failed" | "skipped";
+            hash?: string;
+            note: string;
+        };
+        failureKind?: "budget" | "judgment-unavailable" | "max_turns" | "other" | "owner-rejected" | "planning" | "transport" | "zombie";
+        error?: string;
+        createdAt: number;
+        completedAt?: number;
+    };
+    // (undocumented)
+    "contracts.list": {
+        contracts: readonly ({
+            id: string;
+            schemaVersion: number;
+            sessionId: string;
+            origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+            ask: string;
+            ownerAgentId: string;
+            parentAgentId?: string;
+            projectRoot: string;
+            isolation: "shared" | "worktree";
+            branch?: string;
+            worktreePath?: string;
+            baseBranch?: string;
+            baseline?: {
+                head: null | string;
+                dirty: ({} & {
+                    readonly [key: string]: null | string;
+                });
+            };
+            sessionMode?: boolean;
+            proposedUnits?: readonly ({
+                task: string;
+                template?: string;
+            })[];
+            draftPlan?: {
+                goal: string;
+                units: readonly ({
+                    id: string;
+                    title: string;
+                    brief: string;
+                    dependsOn: readonly string[];
+                    files?: readonly string[];
+                    attempts?: number;
+                })[];
+            };
+            budget?: {
+                maxTokens?: number;
+                maxCostUsd?: number;
+            };
+            goal: string;
+            criteria: readonly ({
+                id: string;
+                text: string;
+                origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                quote?: string;
+                serves: readonly string[];
+                disposition: "excluded" | "judged" | "met-by-structure";
+                dispositionReason?: string;
+                status: "met" | "unmet" | "unread" | "unshown";
+                readings: readonly ({
+                    checkId: string;
+                    at: number;
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
+                    decisionId?: string;
+                })[];
+            })[];
+            groups: readonly ({
+                id: string;
+                title: string;
+                goal: string;
+                kind: "fix" | "integration" | "work";
+                repairs?: {
+                    scope: "deliverable" | "group" | "unit";
+                    targetId: string;
+                    criterionIds: readonly string[];
+                };
+                dependsOn: readonly string[];
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                    quote?: string;
+                    serves: readonly string[];
+                    disposition: "excluded" | "judged" | "met-by-structure";
+                    dispositionReason?: string;
+                    status: "met" | "unmet" | "unread" | "unshown";
+                    readings: readonly ({
+                        checkId: string;
+                        at: number;
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                        severity?: "critical" | "major" | "minor";
+                        decisionId?: string;
+                    })[];
+                })[];
+                unitIds: readonly string[];
+                status: "awaiting-owner" | "blocked" | "cancelled" | "failed" | "fixing" | "judging" | "passed" | "pending" | "running";
+                checks: readonly ({
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    claims?: {
+                        kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                        summary: string;
+                    };
+                    gates?: readonly ({
+                        gate: string;
+                        passed: boolean;
+                        output: string;
+                        durationMs: number;
+                        skipped?: boolean;
+                    })[];
+                    goal: {
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    quality: {
+                        placeholder?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        tests_weakened?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        breaks_existing?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        out_of_scope?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        hidden_failure?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        unsupported_claims?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                    };
+                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                    decisionIds: readonly string[];
+                    evidenceDigest: string;
+                })[];
+                fixRounds: number;
+                baseline?: {
+                    head: null | string;
+                    dirty: ({} & {
+                        readonly [key: string]: null | string;
+                    });
+                };
+                usage: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens?: number;
+                    llmCallCount: number;
+                    turnCount: number;
+                    toolCallCount: number;
+                    costUsd: null | number;
+                    costState: "estimated" | "priced" | "unpriced";
+                    costSource?: "catalog" | "mixed" | "provider" | "user";
+                    pricingAsOf?: string;
+                };
+            })[];
+            units: readonly ({
+                id: string;
+                groupId: string;
+                title: string;
+                goal: string;
+                brief: string;
+                role: "design" | "implement" | "integration" | "research";
+                dependsOn: readonly string[];
+                files: readonly string[];
+                attempts: number;
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                    quote?: string;
+                    serves: readonly string[];
+                    disposition: "excluded" | "judged" | "met-by-structure";
+                    dispositionReason?: string;
+                    status: "met" | "unmet" | "unread" | "unshown";
+                    readings: readonly ({
+                        checkId: string;
+                        at: number;
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                        severity?: "critical" | "major" | "minor";
+                        decisionId?: string;
+                    })[];
+                })[];
+                status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                agentIds: readonly string[];
+                activeAgentId?: string;
+                route?: {
+                    model: string;
+                    provider: string;
+                    fallbackModels?: readonly string[];
+                    routing?: {
+                        providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                        providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                        fallbackModels?: readonly string[];
+                    };
+                    reasoningEffort?: string;
+                    reason: string;
+                };
+                checks: readonly ({
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    claims?: {
+                        kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                        summary: string;
+                    };
+                    gates?: readonly ({
+                        gate: string;
+                        passed: boolean;
+                        output: string;
+                        durationMs: number;
+                        skipped?: boolean;
+                    })[];
+                    goal: {
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    quality: {
+                        placeholder?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        tests_weakened?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        breaks_existing?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        out_of_scope?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        hidden_failure?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        unsupported_claims?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                    };
+                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                    decisionIds: readonly string[];
+                    evidenceDigest: string;
+                })[];
+                nudges: readonly ({
+                    id: string;
+                    checkId: string;
+                    at: number;
+                    kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    criterionIds: readonly string[];
+                    text: string;
+                    delivery: "bus" | "hold" | "wake";
+                    agentId: string;
+                    consumedAt?: number;
+                })[];
+                fixRounds: number;
+                freshAgents: number;
+                transportRetries: number;
+                touchedPaths: readonly string[];
+                baseline?: {
+                    head: null | string;
+                    dirty: ({} & {
+                        readonly [key: string]: null | string;
+                    });
+                };
+                usage: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens?: number;
+                    llmCallCount: number;
+                    turnCount: number;
+                    toolCallCount: number;
+                    costUsd: null | number;
+                    costState: "estimated" | "priced" | "unpriced";
+                    costSource?: "catalog" | "mixed" | "provider" | "user";
+                    pricingAsOf?: string;
+                };
+                answer?: string;
+                lastOutput?: string;
+                failureReason?: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                attemptSelection?: {
+                    engineGroupId: string;
+                    candidateIds: readonly string[];
+                    proposedId?: string;
+                    outcome: "act" | "confirm" | "escalate";
+                    reasons: string;
+                    decisionId?: string;
+                    pickedId?: string;
+                };
+                attemptUnits?: readonly ({
+                    id: string;
+                    groupId: string;
+                    title: string;
+                    goal: string;
+                    brief: string;
+                    role: "design" | "implement" | "integration" | "research";
+                    dependsOn: readonly string[];
+                    files: readonly string[];
+                    attempts: number;
+                    criteria: readonly ({
+                        id: string;
+                        text: string;
+                        origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                        quote?: string;
+                        serves: readonly string[];
+                        disposition: "excluded" | "judged" | "met-by-structure";
+                        dispositionReason?: string;
+                        status: "met" | "unmet" | "unread" | "unshown";
+                        readings: readonly ({
+                            checkId: string;
+                            at: number;
+                            probabilityUnmet: number;
+                            verdict: "met" | "unmet" | "unshown";
+                            outcome: "act" | "confirm" | "escalate";
+                            severity?: "critical" | "major" | "minor";
+                            decisionId?: string;
+                        })[];
+                    })[];
+                    status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                    agentIds: readonly string[];
+                    activeAgentId?: string;
+                    route?: {
+                        model: string;
+                        provider: string;
+                        fallbackModels?: readonly string[];
+                        routing?: {
+                            providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                            providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                            fallbackModels?: readonly string[];
+                        };
+                        reasoningEffort?: string;
+                        reason: string;
+                    };
+                    checks: readonly ({
+                        id: string;
+                        at: number;
+                        trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                        claims?: {
+                            kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                            summary: string;
+                        };
+                        gates?: readonly ({
+                            gate: string;
+                            passed: boolean;
+                            output: string;
+                            durationMs: number;
+                            skipped?: boolean;
+                        })[];
+                        goal: {
+                            probabilityUnmet: number;
+                            verdict: "met" | "unmet" | "unshown";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        quality: {
+                            placeholder?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            tests_weakened?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            breaks_existing?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            out_of_scope?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            hidden_failure?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            unsupported_claims?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                        };
+                        result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                        problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                        qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                        decisionIds: readonly string[];
+                        evidenceDigest: string;
+                    })[];
+                    nudges: readonly ({
+                        id: string;
+                        checkId: string;
+                        at: number;
+                        kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                        criterionIds: readonly string[];
+                        text: string;
+                        delivery: "bus" | "hold" | "wake";
+                        agentId: string;
+                        consumedAt?: number;
+                    })[];
+                    fixRounds: number;
+                    freshAgents: number;
+                    transportRetries: number;
+                    touchedPaths: readonly string[];
+                    baseline?: {
+                        head: null | string;
+                        dirty: ({} & {
+                            readonly [key: string]: null | string;
+                        });
+                    };
+                    usage: {
+                        inputTokens: number;
+                        outputTokens: number;
+                        cacheReadTokens: number;
+                        cacheWriteTokens: number;
+                        reasoningTokens?: number;
+                        llmCallCount: number;
+                        turnCount: number;
+                        toolCallCount: number;
+                        costUsd: null | number;
+                        costState: "estimated" | "priced" | "unpriced";
+                        costSource?: "catalog" | "mixed" | "provider" | "user";
+                        pricingAsOf?: string;
+                    };
+                    answer?: string;
+                    lastOutput?: string;
+                    failureReason?: string;
+                    attemptOf?: string;
+                    attemptIndex?: number;
+                    attemptSelection?: {
+                        engineGroupId: string;
+                        candidateIds: readonly string[];
+                        proposedId?: string;
+                        outcome: "act" | "confirm" | "escalate";
+                        reasons: string;
+                        decisionId?: string;
+                        pickedId?: string;
+                    };
+                })[];
+            })[];
+            shape?: {
+                forbids_delegation: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                requests_parallel_agents: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                forbids_writing: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                asks_for_attempts: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                decisionIds: readonly string[];
+            };
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            statusBeforeOwner?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            resumeFrom?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            checks: readonly ({
+                id: string;
+                at: number;
+                trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                claims?: {
+                    kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                    summary: string;
+                };
+                gates?: readonly ({
+                    gate: string;
+                    passed: boolean;
+                    output: string;
+                    durationMs: number;
+                    skipped?: boolean;
+                })[];
+                goal: {
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                quality: {
+                    placeholder?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    tests_weakened?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    breaks_existing?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    out_of_scope?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    hidden_failure?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    unsupported_claims?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                };
+                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                decisionIds: readonly string[];
+                evidenceDigest: string;
+            })[];
+            fixRounds: number;
+            escalations: readonly ({
+                id: string;
+                at: number;
+                scope: "deliverable" | "group" | "plan" | "shape" | "unit";
+                targetId: string;
+                reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
+                question: string;
+                unmetCriterionIds: readonly string[];
+                resolvedAt?: number;
+                reply?: {
+                    text: string;
+                    reading: "amend" | "approve" | "reject" | "unclear";
+                    outcome: "act" | "confirm" | "escalate";
+                    decisionId?: string;
+                };
+            })[];
+            decisions: readonly ({
+                id: string;
+                at: number;
+                action: "attempts-reduced" | "attempts-selected" | "cancelled" | "checked" | "committed" | "created" | "escalated" | "failed" | "fix-planned" | "fresh-agent" | "group-passed" | "nudged" | "owner-replied" | "passed" | "plan-accepted" | "plan-repaired" | "planned" | "queued" | "reaped" | "regressed" | "resumed" | "shaped" | "silence-retry" | "spawned" | "stalled" | "transport-retry" | "woke";
+                targetId: string;
+                reason: string;
+                decisionIds: readonly string[];
+                route?: {
+                    model: string;
+                    provider: string;
+                    fallbackModels?: readonly string[];
+                    routing?: {
+                        providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                        providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                        fallbackModels?: readonly string[];
+                    };
+                    reasoningEffort?: string;
+                    reason: string;
+                };
+            })[];
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens?: number;
+                llmCallCount: number;
+                turnCount: number;
+                toolCallCount: number;
+                costUsd: null | number;
+                costState: "estimated" | "priced" | "unpriced";
+                costSource?: "catalog" | "mixed" | "provider" | "user";
+                pricingAsOf?: string;
+            };
+            judgmentUsage: {
+                calls: number;
+                inputTokens: number;
+                outputTokens: number;
+            };
+            plannerAgentIds: readonly string[];
+            answer?: string;
+            statusLine?: string;
+            commit?: {
+                status: "applied" | "committed" | "failed" | "skipped";
+                hash?: string;
+                note: string;
+            };
+            failureKind?: "budget" | "judgment-unavailable" | "max_turns" | "other" | "owner-rejected" | "planning" | "transport" | "zombie";
+            error?: string;
+            createdAt: number;
+            completedAt?: number;
+        })[];
+    };
+    // (undocumented)
+    "contracts.reply": {
+        escalationId: string;
+        reading: "amend" | "approve" | "reject" | "unclear";
+        outcome: "act" | "confirm" | "escalate";
+        action: "amended" | "approved" | "asked-again" | "refused" | "stopped";
+        nextEscalationId?: string;
+    };
+    // (undocumented)
+    "contracts.start": {
+        contract: {
+            id: string;
+            schemaVersion: number;
+            sessionId: string;
+            origin: "agent-tool" | "cli" | "external" | "hosted" | "proposal" | "turn";
+            ask: string;
+            ownerAgentId: string;
+            parentAgentId?: string;
+            projectRoot: string;
+            isolation: "shared" | "worktree";
+            branch?: string;
+            worktreePath?: string;
+            baseBranch?: string;
+            baseline?: {
+                head: null | string;
+                dirty: ({} & {
+                    readonly [key: string]: null | string;
+                });
+            };
+            sessionMode?: boolean;
+            proposedUnits?: readonly ({
+                task: string;
+                template?: string;
+            })[];
+            draftPlan?: {
+                goal: string;
+                units: readonly ({
+                    id: string;
+                    title: string;
+                    brief: string;
+                    dependsOn: readonly string[];
+                    files?: readonly string[];
+                    attempts?: number;
+                })[];
+            };
+            budget?: {
+                maxTokens?: number;
+                maxCostUsd?: number;
+            };
+            goal: string;
+            criteria: readonly ({
+                id: string;
+                text: string;
+                origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                quote?: string;
+                serves: readonly string[];
+                disposition: "excluded" | "judged" | "met-by-structure";
+                dispositionReason?: string;
+                status: "met" | "unmet" | "unread" | "unshown";
+                readings: readonly ({
+                    checkId: string;
+                    at: number;
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                    severity?: "critical" | "major" | "minor";
+                    decisionId?: string;
+                })[];
+            })[];
+            groups: readonly ({
+                id: string;
+                title: string;
+                goal: string;
+                kind: "fix" | "integration" | "work";
+                repairs?: {
+                    scope: "deliverable" | "group" | "unit";
+                    targetId: string;
+                    criterionIds: readonly string[];
+                };
+                dependsOn: readonly string[];
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                    quote?: string;
+                    serves: readonly string[];
+                    disposition: "excluded" | "judged" | "met-by-structure";
+                    dispositionReason?: string;
+                    status: "met" | "unmet" | "unread" | "unshown";
+                    readings: readonly ({
+                        checkId: string;
+                        at: number;
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                        severity?: "critical" | "major" | "minor";
+                        decisionId?: string;
+                    })[];
+                })[];
+                unitIds: readonly string[];
+                status: "awaiting-owner" | "blocked" | "cancelled" | "failed" | "fixing" | "judging" | "passed" | "pending" | "running";
+                checks: readonly ({
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    claims?: {
+                        kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                        summary: string;
+                    };
+                    gates?: readonly ({
+                        gate: string;
+                        passed: boolean;
+                        output: string;
+                        durationMs: number;
+                        skipped?: boolean;
+                    })[];
+                    goal: {
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    quality: {
+                        placeholder?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        tests_weakened?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        breaks_existing?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        out_of_scope?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        hidden_failure?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        unsupported_claims?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                    };
+                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                    decisionIds: readonly string[];
+                    evidenceDigest: string;
+                })[];
+                fixRounds: number;
+                baseline?: {
+                    head: null | string;
+                    dirty: ({} & {
+                        readonly [key: string]: null | string;
+                    });
+                };
+                usage: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens?: number;
+                    llmCallCount: number;
+                    turnCount: number;
+                    toolCallCount: number;
+                    costUsd: null | number;
+                    costState: "estimated" | "priced" | "unpriced";
+                    costSource?: "catalog" | "mixed" | "provider" | "user";
+                    pricingAsOf?: string;
+                };
+            })[];
+            units: readonly ({
+                id: string;
+                groupId: string;
+                title: string;
+                goal: string;
+                brief: string;
+                role: "design" | "implement" | "integration" | "research";
+                dependsOn: readonly string[];
+                files: readonly string[];
+                attempts: number;
+                criteria: readonly ({
+                    id: string;
+                    text: string;
+                    origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                    quote?: string;
+                    serves: readonly string[];
+                    disposition: "excluded" | "judged" | "met-by-structure";
+                    dispositionReason?: string;
+                    status: "met" | "unmet" | "unread" | "unshown";
+                    readings: readonly ({
+                        checkId: string;
+                        at: number;
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                        severity?: "critical" | "major" | "minor";
+                        decisionId?: string;
+                    })[];
+                })[];
+                status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                agentIds: readonly string[];
+                activeAgentId?: string;
+                route?: {
+                    model: string;
+                    provider: string;
+                    fallbackModels?: readonly string[];
+                    routing?: {
+                        providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                        providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                        fallbackModels?: readonly string[];
+                    };
+                    reasoningEffort?: string;
+                    reason: string;
+                };
+                checks: readonly ({
+                    id: string;
+                    at: number;
+                    trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                    claims?: {
+                        kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                        summary: string;
+                    };
+                    gates?: readonly ({
+                        gate: string;
+                        passed: boolean;
+                        output: string;
+                        durationMs: number;
+                        skipped?: boolean;
+                    })[];
+                    goal: {
+                        probabilityUnmet: number;
+                        verdict: "met" | "unmet" | "unshown";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    quality: {
+                        placeholder?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        tests_weakened?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        breaks_existing?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        out_of_scope?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        hidden_failure?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        unsupported_claims?: {
+                            verdict: "no" | "uncertain" | "yes";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                    };
+                    result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                    problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                    decisionIds: readonly string[];
+                    evidenceDigest: string;
+                })[];
+                nudges: readonly ({
+                    id: string;
+                    checkId: string;
+                    at: number;
+                    kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                    criterionIds: readonly string[];
+                    text: string;
+                    delivery: "bus" | "hold" | "wake";
+                    agentId: string;
+                    consumedAt?: number;
+                })[];
+                fixRounds: number;
+                freshAgents: number;
+                transportRetries: number;
+                touchedPaths: readonly string[];
+                baseline?: {
+                    head: null | string;
+                    dirty: ({} & {
+                        readonly [key: string]: null | string;
+                    });
+                };
+                usage: {
+                    inputTokens: number;
+                    outputTokens: number;
+                    cacheReadTokens: number;
+                    cacheWriteTokens: number;
+                    reasoningTokens?: number;
+                    llmCallCount: number;
+                    turnCount: number;
+                    toolCallCount: number;
+                    costUsd: null | number;
+                    costState: "estimated" | "priced" | "unpriced";
+                    costSource?: "catalog" | "mixed" | "provider" | "user";
+                    pricingAsOf?: string;
+                };
+                answer?: string;
+                lastOutput?: string;
+                failureReason?: string;
+                attemptOf?: string;
+                attemptIndex?: number;
+                attemptSelection?: {
+                    engineGroupId: string;
+                    candidateIds: readonly string[];
+                    proposedId?: string;
+                    outcome: "act" | "confirm" | "escalate";
+                    reasons: string;
+                    decisionId?: string;
+                    pickedId?: string;
+                };
+                attemptUnits?: readonly ({
+                    id: string;
+                    groupId: string;
+                    title: string;
+                    goal: string;
+                    brief: string;
+                    role: "design" | "implement" | "integration" | "research";
+                    dependsOn: readonly string[];
+                    files: readonly string[];
+                    attempts: number;
+                    criteria: readonly ({
+                        id: string;
+                        text: string;
+                        origin: "derived" | "fix" | "integration" | "owner" | "stated";
+                        quote?: string;
+                        serves: readonly string[];
+                        disposition: "excluded" | "judged" | "met-by-structure";
+                        dispositionReason?: string;
+                        status: "met" | "unmet" | "unread" | "unshown";
+                        readings: readonly ({
+                            checkId: string;
+                            at: number;
+                            probabilityUnmet: number;
+                            verdict: "met" | "unmet" | "unshown";
+                            outcome: "act" | "confirm" | "escalate";
+                            severity?: "critical" | "major" | "minor";
+                            decisionId?: string;
+                        })[];
+                    })[];
+                    status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
+                    agentIds: readonly string[];
+                    activeAgentId?: string;
+                    route?: {
+                        model: string;
+                        provider: string;
+                        fallbackModels?: readonly string[];
+                        routing?: {
+                            providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                            providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                            fallbackModels?: readonly string[];
+                        };
+                        reasoningEffort?: string;
+                        reason: string;
+                    };
+                    checks: readonly ({
+                        id: string;
+                        at: number;
+                        trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                        claims?: {
+                            kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                            summary: string;
+                        };
+                        gates?: readonly ({
+                            gate: string;
+                            passed: boolean;
+                            output: string;
+                            durationMs: number;
+                            skipped?: boolean;
+                        })[];
+                        goal: {
+                            probabilityUnmet: number;
+                            verdict: "met" | "unmet" | "unshown";
+                            outcome: "act" | "confirm" | "escalate";
+                        };
+                        quality: {
+                            placeholder?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            tests_weakened?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            breaks_existing?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            out_of_scope?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            hidden_failure?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                            unsupported_claims?: {
+                                verdict: "no" | "uncertain" | "yes";
+                                outcome: "act" | "confirm" | "escalate";
+                            };
+                        };
+                        result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                        problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                        qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                        decisionIds: readonly string[];
+                        evidenceDigest: string;
+                    })[];
+                    nudges: readonly ({
+                        id: string;
+                        checkId: string;
+                        at: number;
+                        kinds: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                        criterionIds: readonly string[];
+                        text: string;
+                        delivery: "bus" | "hold" | "wake";
+                        agentId: string;
+                        consumedAt?: number;
+                    })[];
+                    fixRounds: number;
+                    freshAgents: number;
+                    transportRetries: number;
+                    touchedPaths: readonly string[];
+                    baseline?: {
+                        head: null | string;
+                        dirty: ({} & {
+                            readonly [key: string]: null | string;
+                        });
+                    };
+                    usage: {
+                        inputTokens: number;
+                        outputTokens: number;
+                        cacheReadTokens: number;
+                        cacheWriteTokens: number;
+                        reasoningTokens?: number;
+                        llmCallCount: number;
+                        turnCount: number;
+                        toolCallCount: number;
+                        costUsd: null | number;
+                        costState: "estimated" | "priced" | "unpriced";
+                        costSource?: "catalog" | "mixed" | "provider" | "user";
+                        pricingAsOf?: string;
+                    };
+                    answer?: string;
+                    lastOutput?: string;
+                    failureReason?: string;
+                    attemptOf?: string;
+                    attemptIndex?: number;
+                    attemptSelection?: {
+                        engineGroupId: string;
+                        candidateIds: readonly string[];
+                        proposedId?: string;
+                        outcome: "act" | "confirm" | "escalate";
+                        reasons: string;
+                        decisionId?: string;
+                        pickedId?: string;
+                    };
+                })[];
+            })[];
+            shape?: {
+                forbids_delegation: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                requests_parallel_agents: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                forbids_writing: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                asks_for_attempts: {
+                    verdict: "no" | "uncertain" | "yes";
+                    probability: number;
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                decisionIds: readonly string[];
+            };
+            status: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            statusBeforeOwner?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            resumeFrom?: "awaiting-owner" | "cancelled" | "checking-plan" | "committing" | "failed" | "fixing" | "judging" | "passed" | "planning" | "queued" | "running" | "shaping";
+            checks: readonly ({
+                id: string;
+                at: number;
+                trigger: "agent-failed" | "completion" | "fix-passed" | "owner-amend" | "resume" | "turn-end";
+                claims?: {
+                    kind: "files_verified" | "git_corroborated" | "unverifiable_no_claims" | "unverified" | "verified_empty";
+                    summary: string;
+                };
+                gates?: readonly ({
+                    gate: string;
+                    passed: boolean;
+                    output: string;
+                    durationMs: number;
+                    skipped?: boolean;
+                })[];
+                goal: {
+                    probabilityUnmet: number;
+                    verdict: "met" | "unmet" | "unshown";
+                    outcome: "act" | "confirm" | "escalate";
+                };
+                quality: {
+                    placeholder?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    tests_weakened?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    breaks_existing?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    out_of_scope?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    hidden_failure?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                    unsupported_claims?: {
+                        verdict: "no" | "uncertain" | "yes";
+                        outcome: "act" | "confirm" | "escalate";
+                    };
+                };
+                result: "await-owner" | "nudge" | "pass" | "recorded" | "stall";
+                problems?: readonly ("claims" | "gate" | "quality" | "regression" | "unmet" | "unshown")[];
+                qualityProblems?: readonly ("breaks_existing" | "hidden_failure" | "out_of_scope" | "placeholder" | "tests_weakened" | "unsupported_claims")[];
+                decisionIds: readonly string[];
+                evidenceDigest: string;
+            })[];
+            fixRounds: number;
+            escalations: readonly ({
+                id: string;
+                at: number;
+                scope: "deliverable" | "group" | "plan" | "shape" | "unit";
+                targetId: string;
+                reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
+                question: string;
+                unmetCriterionIds: readonly string[];
+                resolvedAt?: number;
+                reply?: {
+                    text: string;
+                    reading: "amend" | "approve" | "reject" | "unclear";
+                    outcome: "act" | "confirm" | "escalate";
+                    decisionId?: string;
+                };
+            })[];
+            decisions: readonly ({
+                id: string;
+                at: number;
+                action: "attempts-reduced" | "attempts-selected" | "cancelled" | "checked" | "committed" | "created" | "escalated" | "failed" | "fix-planned" | "fresh-agent" | "group-passed" | "nudged" | "owner-replied" | "passed" | "plan-accepted" | "plan-repaired" | "planned" | "queued" | "reaped" | "regressed" | "resumed" | "shaped" | "silence-retry" | "spawned" | "stalled" | "transport-retry" | "woke";
+                targetId: string;
+                reason: string;
+                decisionIds: readonly string[];
+                route?: {
+                    model: string;
+                    provider: string;
+                    fallbackModels?: readonly string[];
+                    routing?: {
+                        providerSelection?: "concrete" | "inherit-current" | "synthetic";
+                        providerFailurePolicy?: "fail" | "ordered-fallbacks";
+                        fallbackModels?: readonly string[];
+                    };
+                    reasoningEffort?: string;
+                    reason: string;
+                };
+            })[];
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens?: number;
+                llmCallCount: number;
+                turnCount: number;
+                toolCallCount: number;
+                costUsd: null | number;
+                costState: "estimated" | "priced" | "unpriced";
+                costSource?: "catalog" | "mixed" | "provider" | "user";
+                pricingAsOf?: string;
+            };
+            judgmentUsage: {
+                calls: number;
+                inputTokens: number;
+                outputTokens: number;
+            };
+            plannerAgentIds: readonly string[];
+            answer?: string;
+            statusLine?: string;
+            commit?: {
+                status: "applied" | "committed" | "failed" | "skipped";
+                hash?: string;
+                note: string;
+            };
+            failureKind?: "budget" | "judgment-unavailable" | "max_turns" | "other" | "owner-rejected" | "planning" | "transport" | "zombie";
+            error?: string;
+            createdAt: number;
+            completedAt?: number;
+        };
+        ownerAgentId: string;
     };
     // (undocumented)
     "control.auth.current": {
@@ -25333,17 +27200,17 @@ export const PatchCurrentModelResponseSchema: z.ZodObject<{
     }, z.core.$strict>>;
     configured: z.ZodBoolean;
     configuredVia: z.ZodOptional<z.ZodEnum<{
-        anonymous: "anonymous";
         subscription: "subscription";
-        secrets: "secrets";
+        anonymous: "anonymous";
         env: "env";
+        secrets: "secrets";
     }>>;
     routes: z.ZodOptional<z.ZodArray<z.ZodObject<{
         route: z.ZodEnum<{
             none: "none";
-            anonymous: "anonymous";
             "api-key": "api-key";
             "service-oauth": "service-oauth";
+            anonymous: "anonymous";
             "secret-ref": "secret-ref";
             "subscription-oauth": "subscription-oauth";
         }>;
@@ -25351,11 +27218,11 @@ export const PatchCurrentModelResponseSchema: z.ZodObject<{
         configured: z.ZodBoolean;
         usable: z.ZodOptional<z.ZodBoolean>;
         freshness: z.ZodOptional<z.ZodEnum<{
-            pending: "pending";
-            expired: "expired";
             unconfigured: "unconfigured";
-            healthy: "healthy";
+            expired: "expired";
             expiring: "expiring";
+            healthy: "healthy";
+            pending: "pending";
         }>>;
         detail: z.ZodOptional<z.ZodString>;
         envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -26202,9 +28069,9 @@ export type ProviderAuthRouteDescriptor = z.infer<typeof ProviderAuthRouteDescri
 export const ProviderAuthRouteDescriptorSchema: z.ZodObject<{
     route: z.ZodEnum<{
         none: "none";
-        anonymous: "anonymous";
         "api-key": "api-key";
         "service-oauth": "service-oauth";
+        anonymous: "anonymous";
         "secret-ref": "secret-ref";
         "subscription-oauth": "subscription-oauth";
     }>;
@@ -26212,11 +28079,11 @@ export const ProviderAuthRouteDescriptorSchema: z.ZodObject<{
     configured: z.ZodBoolean;
     usable: z.ZodOptional<z.ZodBoolean>;
     freshness: z.ZodOptional<z.ZodEnum<{
-        pending: "pending";
-        expired: "expired";
         unconfigured: "unconfigured";
-        healthy: "healthy";
+        expired: "expired";
         expiring: "expiring";
+        healthy: "healthy";
+        pending: "pending";
     }>>;
     detail: z.ZodOptional<z.ZodString>;
     envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -26276,9 +28143,9 @@ export const ProviderModelEntrySchema: z.ZodObject<{
         levels: z.ZodArray<z.ZodString>;
         source: z.ZodEnum<{
             catalog: "catalog";
-            family: "family";
             declared: "declared";
             fallback: "fallback";
+            family: "family";
         }>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
@@ -26292,18 +28159,18 @@ export const ProviderModelProviderSchema: z.ZodObject<{
     label: z.ZodString;
     configured: z.ZodBoolean;
     configuredVia: z.ZodOptional<z.ZodEnum<{
-        anonymous: "anonymous";
         subscription: "subscription";
-        secrets: "secrets";
+        anonymous: "anonymous";
         env: "env";
+        secrets: "secrets";
     }>>;
     envVars: z.ZodArray<z.ZodString>;
     routes: z.ZodOptional<z.ZodArray<z.ZodObject<{
         route: z.ZodEnum<{
             none: "none";
-            anonymous: "anonymous";
             "api-key": "api-key";
             "service-oauth": "service-oauth";
+            anonymous: "anonymous";
             "secret-ref": "secret-ref";
             "subscription-oauth": "subscription-oauth";
         }>;
@@ -26311,11 +28178,11 @@ export const ProviderModelProviderSchema: z.ZodObject<{
         configured: z.ZodBoolean;
         usable: z.ZodOptional<z.ZodBoolean>;
         freshness: z.ZodOptional<z.ZodEnum<{
-            pending: "pending";
-            expired: "expired";
             unconfigured: "unconfigured";
-            healthy: "healthy";
+            expired: "expired";
             expiring: "expiring";
+            healthy: "healthy";
+            pending: "pending";
         }>>;
         detail: z.ZodOptional<z.ZodString>;
         envVars: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -26334,9 +28201,9 @@ export const ProviderModelProviderSchema: z.ZodObject<{
             levels: z.ZodArray<z.ZodString>;
             source: z.ZodEnum<{
                 catalog: "catalog";
-                family: "family";
                 declared: "declared";
                 fallback: "fallback";
+                family: "family";
             }>;
         }, z.core.$strict>>;
     }, z.core.$strict>>;

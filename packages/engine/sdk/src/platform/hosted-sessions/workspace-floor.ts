@@ -66,10 +66,12 @@ export interface HostedWorkspaceFloor {
   /**
    * The workspace's contract runner (contract runner design 10.2): the
    * session's turns are read by its intake, its agent tool starts contracts
-   * through it, and compaction lists its contracts. A product builds the floor
+   * through it, and compaction lists its contracts; each session observes it
+   * for the contracts it started (session-contracts.ts), and the contracts
+   * operator surface reads and acts through it. A product builds the floor
    * from `services`, whose composition owns the runner.
    */
-  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get' | 'reply' | 'hooks'>;
+  readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get' | 'cancel' | 'reply' | 'hooks' | 'on'>;
   /**
    * What a session on this floor may do with exec, decided per session.
    *
@@ -127,6 +129,11 @@ export class HostedWorkspaceFloors {
   /** The workspace roots with a live floor, for status reporting. */
   workspaces(): readonly string[] {
     return [...this.entries.keys()];
+  }
+
+  /** The composed floors, for the contracts operator surface. */
+  floors(): readonly HostedWorkspaceFloor[] {
+    return [...this.entries.values()].map((entry) => entry.floor);
   }
 
   async acquire(workspaceRoot: string): Promise<HostedWorkspaceFloorLease> {

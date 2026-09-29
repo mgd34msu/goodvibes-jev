@@ -184,7 +184,7 @@ export const EXEMPT_VERB_CATEGORIES: Readonly<Record<string, readonly string[]>>
     // and is reopenable. Naming both `close` would give one word two outcomes,
     // one of which cannot be undone.
     'detach', 'followUp', 'deliver', 'steer', 'reorder', 'clearCompleted', 'record',
-    'evaluate', 'send', 'read', 'save', 'kill',
+    'evaluate', 'send', 'read', 'save', 'kill', 'reply',
   ],
   'reporting-and-diagnostics': [
     // Read-shaped diagnostic/reporting endpoints named for their specific

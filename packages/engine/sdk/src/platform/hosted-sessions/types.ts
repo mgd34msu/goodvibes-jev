@@ -124,7 +124,11 @@ export type HostedSessionLifecycleEvent =
   | 'hosted-session-turn-started'
   | 'hosted-session-turn-ended'
   | 'hosted-session-terminated'
-  | 'hosted-session-restored';
+  | 'hosted-session-restored'
+  /** A contract was started in the session; `detail` is its id, and the record's `contractIds` lists it. */
+  | 'hosted-session-contract-started'
+  /** The session said a contract's question for its owner, or the contract's outcome; `detail` is the line. */
+  | 'hosted-session-contract-notice';
 
 /** The payload of every hosted-session lifecycle notice. */
 export interface HostedSessionUpdatePayload {

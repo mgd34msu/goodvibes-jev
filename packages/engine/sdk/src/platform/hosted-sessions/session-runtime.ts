@@ -67,6 +67,7 @@ import type { ModelDefinition } from '../providers/registry.js';
 import { withHostedSessionModel } from './model-route.js';
 import type { HostedWorkspaceFloor } from './workspace-floor.js';
 import { createContractIntake } from '../contract/intake-route.js';
+import { observeSessionContracts } from './session-contracts.js';
 import { resolveSurfaceDirectory } from '../runtime/surface-root.js';
 import {
   containmentFor,
@@ -140,6 +141,23 @@ export interface HostedSessionRuntimeOptions {
    * `conversational` when the floor states nothing either (exec-posture.ts).
    */
   readonly execPosture?: HostedSessionExecPosture | undefined;
+  /**
+   * What the engine keeps about the contracts this session starts
+   * (session-contracts.ts): the record's list, and a notice when the session
+   * says a contract's question or outcome. Omitted, the session still says
+   * them in its conversation and lists nothing.
+   */
+  readonly contracts?: HostedSessionContractSink | undefined;
+}
+
+/** The engine's side of a session's contracts. */
+export interface HostedSessionContractSink {
+  /** The contracts the session's record lists now. */
+  contractIds(): readonly string[];
+  /** A contract was created under this session. */
+  started(contractId: string): void;
+  /** The session said a contract's question or outcome in its conversation. */
+  said(line: string): void;
 }
 
 /**
@@ -275,6 +293,24 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
     contractHooks: options.floor.contractRunner.hooks(),
   });
 
+  // The contracts this session starts talk back to it: their questions for the
+  // owner and their outcomes are the session's replies (contract runner design 10.2).
+  const contracts = options.contracts;
+  const listed = new Set<string>();
+  const stopContracts = observeSessionContracts({
+    sessionId,
+    runner: options.floor.contractRunner,
+    contractIds: () => contracts?.contractIds() ?? [...listed],
+    started: (contractId) => {
+      listed.add(contractId);
+      contracts?.started(contractId);
+    },
+    say: (line) => {
+      conversation.addSystemMessage(line);
+      contracts?.said(line);
+    },
+  });
+
   let running = false;
   const runtime: HostedSessionRuntime = {
     sessionId,
@@ -308,6 +344,7 @@ export function createHostedSessionRuntime(options: HostedSessionRuntimeOptions)
       return true;
     },
     dispose: (): void => {
+      stopContracts();
       try {
         orchestrator.dispose();
       } catch (error) {

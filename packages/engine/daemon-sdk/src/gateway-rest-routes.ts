@@ -7,7 +7,7 @@ import type { DaemonGatewayRestRouteHandlers } from './context.js';
  * ALSO advertise an `http` binding in the operator method catalog (skills.*,
  * principals.*, profile.*, occasions.*, checkin.*, ci.*, channels.profiles.*, the session-scoped
  * sessions.permissionMode.get/set + sessions.contextUsage.get, stepup.* (the
- * relay step-up ceremony), and runtime.metrics.get). Those verbs are
+ * relay step-up ceremony), runtime.metrics.get, and contracts.*). Those verbs are
  * served in-process through `invokeGatewayMethodCall`'s registered-handler
  * branch, reachable over the wire via the generic
  * `POST /api/control/gateway-methods/:methodId/invoke` endpoint. But each one
@@ -173,6 +173,14 @@ export const GATEWAY_REST_ROUTES: readonly GatewayRestRoute[] = [
   route('GET', '/api/runtime/metrics', 'runtime.metrics.get'),
   // fleet.graph.get, the workstream task-graph view.
   route('GET', '/api/fleet/workstreams/{workstreamId}/graph', 'fleet.graph.get'),
+  // contracts.*, the contract runner's operator surface: list and read the
+  // contracts this daemon holds, start one, cancel one, and answer an open
+  // escalation (docs/design/contract-runner.md 10.2).
+  route('GET', '/api/contracts', 'contracts.list'),
+  route('POST', '/api/contracts', 'contracts.start'),
+  route('GET', '/api/contracts/{contractId}', 'contracts.get'),
+  route('POST', '/api/contracts/{contractId}/cancel', 'contracts.cancel'),
+  route('POST', '/api/contracts/{contractId}/reply', 'contracts.reply'),
   // power.*, sleep ownership: the chip state + the owner keep-awake toggle.
   route('GET', '/api/power/status', 'power.status.get'),
   route('POST', '/api/power/keep-awake', 'power.keepAwake.set'),

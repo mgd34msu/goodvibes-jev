@@ -1104,7 +1104,9 @@ Schema blocks below are emitted directly from the synced contract JSON and may c
         "hosted-session-turn-started",
         "hosted-session-turn-ended",
         "hosted-session-terminated",
-        "hosted-session-restored"
+        "hosted-session-restored",
+        "hosted-session-contract-started",
+        "hosted-session-contract-notice"
       ]
     },
     "session": {

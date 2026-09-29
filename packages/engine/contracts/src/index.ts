@@ -31,6 +31,25 @@ export type {
 } from './types.js';
 export { DISTRIBUTED_WORK_TYPES } from './types.js';
 export {
+  CONTRACT_WORK_STATUS,
+  ContractExternalWorkBridge,
+  contractWorkHandle,
+  contractWorkProgress,
+  contractWorkResult,
+  contractWorkSnapshot,
+} from './contract-work.js';
+export type {
+  ContractExternalWorkAdapter,
+  ContractExternalWorkHandle,
+  ContractExternalWorkRequest,
+  ContractExternalWorkResult,
+  ContractExternalWorkSnapshot,
+  ContractExternalWorkStatus,
+  ContractRunStatus,
+  ContractWorkFields,
+  ContractWorkView,
+} from './contract-work.js';
+export {
   BANNED_VERBS,
   CORE_VERBS,
   EXEMPT_VERB_CATEGORIES,

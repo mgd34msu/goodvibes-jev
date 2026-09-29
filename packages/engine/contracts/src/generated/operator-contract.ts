@@ -30085,6 +30085,10812 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
         "invokable": true
       },
       {
+        "id": "contracts.cancel",
+        "title": "Cancel a Contract",
+        "description": "Stop a contract and every unit agent it runs; its status line records how many files were already changed and where. `cancelled` is false when the contract had already ended. 404 with CONTRACT_NOT_FOUND for an unknown id.",
+        "category": "contracts",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:fleet"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/contracts/{contractId}/cancel"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contractId": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "contractId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "cancelled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cancelled"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
+        "id": "contracts.get",
+        "title": "Get a Contract",
+        "description": "One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND when no runner on this daemon holds the id.",
+        "category": "contracts",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:fleet"
+        ],
+        "http": {
+          "method": "GET",
+          "path": "/api/contracts/{contractId}"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contractId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "contractId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "schemaVersion": {
+              "type": "number"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string",
+              "enum": [
+                "turn",
+                "agent-tool",
+                "cli",
+                "hosted",
+                "external",
+                "proposal"
+              ]
+            },
+            "ask": {
+              "type": "string"
+            },
+            "ownerAgentId": {
+              "type": "string"
+            },
+            "parentAgentId": {
+              "type": "string"
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "isolation": {
+              "type": "string",
+              "enum": [
+                "worktree",
+                "shared"
+              ]
+            },
+            "branch": {
+              "type": "string"
+            },
+            "worktreePath": {
+              "type": "string"
+            },
+            "baseBranch": {
+              "type": "string"
+            },
+            "baseline": {
+              "type": "object",
+              "properties": {
+                "head": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "dirty": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "head",
+                "dirty"
+              ],
+              "additionalProperties": false
+            },
+            "sessionMode": {
+              "type": "boolean"
+            },
+            "proposedUnits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "template": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "task"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "draftPlan": {
+              "type": "object",
+              "properties": {
+                "goal": {
+                  "type": "string"
+                },
+                "units": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "brief": {
+                        "type": "string"
+                      },
+                      "dependsOn": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "attempts": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "brief",
+                      "dependsOn"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "goal",
+                "units"
+              ],
+              "additionalProperties": false
+            },
+            "budget": {
+              "type": "object",
+              "properties": {
+                "maxTokens": {
+                  "type": "number"
+                },
+                "maxCostUsd": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "goal": {
+              "type": "string"
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "type": "string",
+                    "enum": [
+                      "stated",
+                      "derived",
+                      "integration",
+                      "fix",
+                      "owner"
+                    ]
+                  },
+                  "quote": {
+                    "type": "string"
+                  },
+                  "serves": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "disposition": {
+                    "type": "string",
+                    "enum": [
+                      "judged",
+                      "excluded",
+                      "met-by-structure"
+                    ]
+                  },
+                  "dispositionReason": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "unread",
+                      "met",
+                      "unmet",
+                      "unshown"
+                    ]
+                  },
+                  "readings": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "checkId": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "probabilityUnmet": {
+                          "type": "number"
+                        },
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "met",
+                            "unmet",
+                            "unshown"
+                          ]
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        },
+                        "severity": {
+                          "type": "string",
+                          "enum": [
+                            "critical",
+                            "major",
+                            "minor"
+                          ]
+                        },
+                        "decisionId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "checkId",
+                        "at",
+                        "probabilityUnmet",
+                        "verdict",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "text",
+                  "origin",
+                  "serves",
+                  "disposition",
+                  "status",
+                  "readings"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "goal": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "work",
+                      "fix",
+                      "integration"
+                    ]
+                  },
+                  "repairs": {
+                    "type": "object",
+                    "properties": {
+                      "scope": {
+                        "type": "string",
+                        "enum": [
+                          "unit",
+                          "group",
+                          "deliverable"
+                        ]
+                      },
+                      "targetId": {
+                        "type": "string"
+                      },
+                      "criterionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "scope",
+                      "targetId",
+                      "criterionIds"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "stated",
+                            "derived",
+                            "integration",
+                            "fix",
+                            "owner"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "serves": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "disposition": {
+                          "type": "string",
+                          "enum": [
+                            "judged",
+                            "excluded",
+                            "met-by-structure"
+                          ]
+                        },
+                        "dispositionReason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "unread",
+                            "met",
+                            "unmet",
+                            "unshown"
+                          ]
+                        },
+                        "readings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "checkId": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "probabilityUnmet": {
+                                "type": "number"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              },
+                              "severity": {
+                                "type": "string",
+                                "enum": [
+                                  "critical",
+                                  "major",
+                                  "minor"
+                                ]
+                              },
+                              "decisionId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "checkId",
+                              "at",
+                              "probabilityUnmet",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "origin",
+                        "serves",
+                        "disposition",
+                        "status",
+                        "readings"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "unitIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "blocked",
+                      "running",
+                      "judging",
+                      "fixing",
+                      "awaiting-owner",
+                      "passed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "trigger": {
+                          "type": "string",
+                          "enum": [
+                            "turn-end",
+                            "completion",
+                            "agent-failed",
+                            "fix-passed",
+                            "resume",
+                            "owner-amend"
+                          ]
+                        },
+                        "claims": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "files_verified",
+                                "git_corroborated",
+                                "verified_empty",
+                                "unverifiable_no_claims",
+                                "unverified"
+                              ]
+                            },
+                            "summary": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "summary"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "gates": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "gate": {
+                                "type": "string"
+                              },
+                              "passed": {
+                                "type": "boolean"
+                              },
+                              "output": {
+                                "type": "string"
+                              },
+                              "durationMs": {
+                                "type": "number"
+                              },
+                              "skipped": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "gate",
+                              "passed",
+                              "output",
+                              "durationMs"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "goal": {
+                          "type": "object",
+                          "properties": {
+                            "probabilityUnmet": {
+                              "type": "number"
+                            },
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "probabilityUnmet",
+                            "verdict",
+                            "outcome"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "quality": {
+                          "type": "object",
+                          "properties": {
+                            "placeholder": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "tests_weakened": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "breaks_existing": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "out_of_scope": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "hidden_failure": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "unsupported_claims": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "result": {
+                          "type": "string",
+                          "enum": [
+                            "pass",
+                            "nudge",
+                            "await-owner",
+                            "stall",
+                            "recorded"
+                          ]
+                        },
+                        "problems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "unmet",
+                              "unshown",
+                              "regression",
+                              "quality",
+                              "gate",
+                              "claims"
+                            ]
+                          }
+                        },
+                        "qualityProblems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "placeholder",
+                              "tests_weakened",
+                              "breaks_existing",
+                              "out_of_scope",
+                              "hidden_failure",
+                              "unsupported_claims"
+                            ]
+                          }
+                        },
+                        "decisionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "evidenceDigest": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "at",
+                        "trigger",
+                        "goal",
+                        "quality",
+                        "result",
+                        "decisionIds",
+                        "evidenceDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "fixRounds": {
+                    "type": "number"
+                  },
+                  "baseline": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "dirty": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "dirty"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      },
+                      "llmCallCount": {
+                        "type": "number"
+                      },
+                      "turnCount": {
+                        "type": "number"
+                      },
+                      "toolCallCount": {
+                        "type": "number"
+                      },
+                      "costUsd": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "costState": {
+                        "type": "string",
+                        "enum": [
+                          "priced",
+                          "unpriced",
+                          "estimated"
+                        ]
+                      },
+                      "costSource": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "provider",
+                          "catalog",
+                          "mixed"
+                        ]
+                      },
+                      "pricingAsOf": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "llmCallCount",
+                      "turnCount",
+                      "toolCallCount",
+                      "costUsd",
+                      "costState"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "goal",
+                  "kind",
+                  "dependsOn",
+                  "criteria",
+                  "unitIds",
+                  "status",
+                  "checks",
+                  "fixRounds",
+                  "usage"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "units": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "groupId": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "goal": {
+                    "type": "string"
+                  },
+                  "brief": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "implement",
+                      "research",
+                      "design",
+                      "integration"
+                    ]
+                  },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "attempts": {
+                    "type": "number"
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "stated",
+                            "derived",
+                            "integration",
+                            "fix",
+                            "owner"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "serves": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "disposition": {
+                          "type": "string",
+                          "enum": [
+                            "judged",
+                            "excluded",
+                            "met-by-structure"
+                          ]
+                        },
+                        "dispositionReason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "unread",
+                            "met",
+                            "unmet",
+                            "unshown"
+                          ]
+                        },
+                        "readings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "checkId": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "probabilityUnmet": {
+                                "type": "number"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              },
+                              "severity": {
+                                "type": "string",
+                                "enum": [
+                                  "critical",
+                                  "major",
+                                  "minor"
+                                ]
+                              },
+                              "decisionId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "checkId",
+                              "at",
+                              "probabilityUnmet",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "origin",
+                        "serves",
+                        "disposition",
+                        "status",
+                        "readings"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "blocked",
+                      "running",
+                      "checking",
+                      "held",
+                      "nudged",
+                      "fixing",
+                      "awaiting-owner",
+                      "held-merge",
+                      "passed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "agentIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "activeAgentId": {
+                    "type": "string"
+                  },
+                  "route": {
+                    "type": "object",
+                    "properties": {
+                      "model": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "fallbackModels": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "routing": {
+                        "type": "object",
+                        "properties": {
+                          "providerSelection": {
+                            "type": "string",
+                            "enum": [
+                              "inherit-current",
+                              "concrete",
+                              "synthetic"
+                            ]
+                          },
+                          "providerFailurePolicy": {
+                            "type": "string",
+                            "enum": [
+                              "ordered-fallbacks",
+                              "fail"
+                            ]
+                          },
+                          "fallbackModels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "reasoningEffort": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "model",
+                      "provider",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "trigger": {
+                          "type": "string",
+                          "enum": [
+                            "turn-end",
+                            "completion",
+                            "agent-failed",
+                            "fix-passed",
+                            "resume",
+                            "owner-amend"
+                          ]
+                        },
+                        "claims": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "files_verified",
+                                "git_corroborated",
+                                "verified_empty",
+                                "unverifiable_no_claims",
+                                "unverified"
+                              ]
+                            },
+                            "summary": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "summary"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "gates": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "gate": {
+                                "type": "string"
+                              },
+                              "passed": {
+                                "type": "boolean"
+                              },
+                              "output": {
+                                "type": "string"
+                              },
+                              "durationMs": {
+                                "type": "number"
+                              },
+                              "skipped": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "gate",
+                              "passed",
+                              "output",
+                              "durationMs"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "goal": {
+                          "type": "object",
+                          "properties": {
+                            "probabilityUnmet": {
+                              "type": "number"
+                            },
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "probabilityUnmet",
+                            "verdict",
+                            "outcome"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "quality": {
+                          "type": "object",
+                          "properties": {
+                            "placeholder": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "tests_weakened": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "breaks_existing": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "out_of_scope": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "hidden_failure": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "unsupported_claims": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "result": {
+                          "type": "string",
+                          "enum": [
+                            "pass",
+                            "nudge",
+                            "await-owner",
+                            "stall",
+                            "recorded"
+                          ]
+                        },
+                        "problems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "unmet",
+                              "unshown",
+                              "regression",
+                              "quality",
+                              "gate",
+                              "claims"
+                            ]
+                          }
+                        },
+                        "qualityProblems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "placeholder",
+                              "tests_weakened",
+                              "breaks_existing",
+                              "out_of_scope",
+                              "hidden_failure",
+                              "unsupported_claims"
+                            ]
+                          }
+                        },
+                        "decisionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "evidenceDigest": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "at",
+                        "trigger",
+                        "goal",
+                        "quality",
+                        "result",
+                        "decisionIds",
+                        "evidenceDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "nudges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "checkId": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "kinds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "unmet",
+                              "unshown",
+                              "regression",
+                              "quality",
+                              "gate",
+                              "claims"
+                            ]
+                          }
+                        },
+                        "criterionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "delivery": {
+                          "type": "string",
+                          "enum": [
+                            "hold",
+                            "bus",
+                            "wake"
+                          ]
+                        },
+                        "agentId": {
+                          "type": "string"
+                        },
+                        "consumedAt": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "checkId",
+                        "at",
+                        "kinds",
+                        "criterionIds",
+                        "text",
+                        "delivery",
+                        "agentId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "fixRounds": {
+                    "type": "number"
+                  },
+                  "freshAgents": {
+                    "type": "number"
+                  },
+                  "transportRetries": {
+                    "type": "number"
+                  },
+                  "touchedPaths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "baseline": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "dirty": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "dirty"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      },
+                      "llmCallCount": {
+                        "type": "number"
+                      },
+                      "turnCount": {
+                        "type": "number"
+                      },
+                      "toolCallCount": {
+                        "type": "number"
+                      },
+                      "costUsd": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "costState": {
+                        "type": "string",
+                        "enum": [
+                          "priced",
+                          "unpriced",
+                          "estimated"
+                        ]
+                      },
+                      "costSource": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "provider",
+                          "catalog",
+                          "mixed"
+                        ]
+                      },
+                      "pricingAsOf": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "llmCallCount",
+                      "turnCount",
+                      "toolCallCount",
+                      "costUsd",
+                      "costState"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "answer": {
+                    "type": "string"
+                  },
+                  "lastOutput": {
+                    "type": "string"
+                  },
+                  "failureReason": {
+                    "type": "string"
+                  },
+                  "attemptOf": {
+                    "type": "string"
+                  },
+                  "attemptIndex": {
+                    "type": "number"
+                  },
+                  "attemptSelection": {
+                    "type": "object",
+                    "properties": {
+                      "engineGroupId": {
+                        "type": "string"
+                      },
+                      "candidateIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "proposedId": {
+                        "type": "string"
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "act",
+                          "confirm",
+                          "escalate"
+                        ]
+                      },
+                      "reasons": {
+                        "type": "string"
+                      },
+                      "decisionId": {
+                        "type": "string"
+                      },
+                      "pickedId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "engineGroupId",
+                      "candidateIds",
+                      "outcome",
+                      "reasons"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "attemptUnits": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "groupId": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "goal": {
+                          "type": "string"
+                        },
+                        "brief": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "implement",
+                            "research",
+                            "design",
+                            "integration"
+                          ]
+                        },
+                        "dependsOn": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "attempts": {
+                          "type": "number"
+                        },
+                        "criteria": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "origin": {
+                                "type": "string",
+                                "enum": [
+                                  "stated",
+                                  "derived",
+                                  "integration",
+                                  "fix",
+                                  "owner"
+                                ]
+                              },
+                              "quote": {
+                                "type": "string"
+                              },
+                              "serves": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "disposition": {
+                                "type": "string",
+                                "enum": [
+                                  "judged",
+                                  "excluded",
+                                  "met-by-structure"
+                                ]
+                              },
+                              "dispositionReason": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "unread",
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "readings": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "checkId": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "number"
+                                    },
+                                    "probabilityUnmet": {
+                                      "type": "number"
+                                    },
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "met",
+                                        "unmet",
+                                        "unshown"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    },
+                                    "severity": {
+                                      "type": "string",
+                                      "enum": [
+                                        "critical",
+                                        "major",
+                                        "minor"
+                                      ]
+                                    },
+                                    "decisionId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "checkId",
+                                    "at",
+                                    "probabilityUnmet",
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "text",
+                              "origin",
+                              "serves",
+                              "disposition",
+                              "status",
+                              "readings"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "blocked",
+                            "running",
+                            "checking",
+                            "held",
+                            "nudged",
+                            "fixing",
+                            "awaiting-owner",
+                            "held-merge",
+                            "passed",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "agentIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "activeAgentId": {
+                          "type": "string"
+                        },
+                        "route": {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            },
+                            "fallbackModels": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "routing": {
+                              "type": "object",
+                              "properties": {
+                                "providerSelection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "inherit-current",
+                                    "concrete",
+                                    "synthetic"
+                                  ]
+                                },
+                                "providerFailurePolicy": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ordered-fallbacks",
+                                    "fail"
+                                  ]
+                                },
+                                "fallbackModels": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "reasoningEffort": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "provider",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "trigger": {
+                                "type": "string",
+                                "enum": [
+                                  "turn-end",
+                                  "completion",
+                                  "agent-failed",
+                                  "fix-passed",
+                                  "resume",
+                                  "owner-amend"
+                                ]
+                              },
+                              "claims": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "files_verified",
+                                      "git_corroborated",
+                                      "verified_empty",
+                                      "unverifiable_no_claims",
+                                      "unverified"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "summary"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "gates": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "gate": {
+                                      "type": "string"
+                                    },
+                                    "passed": {
+                                      "type": "boolean"
+                                    },
+                                    "output": {
+                                      "type": "string"
+                                    },
+                                    "durationMs": {
+                                      "type": "number"
+                                    },
+                                    "skipped": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "gate",
+                                    "passed",
+                                    "output",
+                                    "durationMs"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "goal": {
+                                "type": "object",
+                                "properties": {
+                                  "probabilityUnmet": {
+                                    "type": "number"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "probabilityUnmet",
+                                  "verdict",
+                                  "outcome"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "quality": {
+                                "type": "object",
+                                "properties": {
+                                  "placeholder": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "tests_weakened": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "breaks_existing": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "out_of_scope": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "hidden_failure": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "unsupported_claims": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "result": {
+                                "type": "string",
+                                "enum": [
+                                  "pass",
+                                  "nudge",
+                                  "await-owner",
+                                  "stall",
+                                  "recorded"
+                                ]
+                              },
+                              "problems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unmet",
+                                    "unshown",
+                                    "regression",
+                                    "quality",
+                                    "gate",
+                                    "claims"
+                                  ]
+                                }
+                              },
+                              "qualityProblems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "placeholder",
+                                    "tests_weakened",
+                                    "breaks_existing",
+                                    "out_of_scope",
+                                    "hidden_failure",
+                                    "unsupported_claims"
+                                  ]
+                                }
+                              },
+                              "decisionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "evidenceDigest": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "at",
+                              "trigger",
+                              "goal",
+                              "quality",
+                              "result",
+                              "decisionIds",
+                              "evidenceDigest"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "nudges": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "checkId": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "kinds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unmet",
+                                    "unshown",
+                                    "regression",
+                                    "quality",
+                                    "gate",
+                                    "claims"
+                                  ]
+                                }
+                              },
+                              "criterionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "delivery": {
+                                "type": "string",
+                                "enum": [
+                                  "hold",
+                                  "bus",
+                                  "wake"
+                                ]
+                              },
+                              "agentId": {
+                                "type": "string"
+                              },
+                              "consumedAt": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "checkId",
+                              "at",
+                              "kinds",
+                              "criterionIds",
+                              "text",
+                              "delivery",
+                              "agentId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "fixRounds": {
+                          "type": "number"
+                        },
+                        "freshAgents": {
+                          "type": "number"
+                        },
+                        "transportRetries": {
+                          "type": "number"
+                        },
+                        "touchedPaths": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "baseline": {
+                          "type": "object",
+                          "properties": {
+                            "head": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "dirty": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "head",
+                            "dirty"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "inputTokens": {
+                              "type": "number"
+                            },
+                            "outputTokens": {
+                              "type": "number"
+                            },
+                            "cacheReadTokens": {
+                              "type": "number"
+                            },
+                            "cacheWriteTokens": {
+                              "type": "number"
+                            },
+                            "reasoningTokens": {
+                              "type": "number"
+                            },
+                            "llmCallCount": {
+                              "type": "number"
+                            },
+                            "turnCount": {
+                              "type": "number"
+                            },
+                            "toolCallCount": {
+                              "type": "number"
+                            },
+                            "costUsd": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "costState": {
+                              "type": "string",
+                              "enum": [
+                                "priced",
+                                "unpriced",
+                                "estimated"
+                              ]
+                            },
+                            "costSource": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "provider",
+                                "catalog",
+                                "mixed"
+                              ]
+                            },
+                            "pricingAsOf": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "outputTokens",
+                            "cacheReadTokens",
+                            "cacheWriteTokens",
+                            "llmCallCount",
+                            "turnCount",
+                            "toolCallCount",
+                            "costUsd",
+                            "costState"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "answer": {
+                          "type": "string"
+                        },
+                        "lastOutput": {
+                          "type": "string"
+                        },
+                        "failureReason": {
+                          "type": "string"
+                        },
+                        "attemptOf": {
+                          "type": "string"
+                        },
+                        "attemptIndex": {
+                          "type": "number"
+                        },
+                        "attemptSelection": {
+                          "type": "object",
+                          "properties": {
+                            "engineGroupId": {
+                              "type": "string"
+                            },
+                            "candidateIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "proposedId": {
+                              "type": "string"
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "reasons": {
+                              "type": "string"
+                            },
+                            "decisionId": {
+                              "type": "string"
+                            },
+                            "pickedId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "engineGroupId",
+                            "candidateIds",
+                            "outcome",
+                            "reasons"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "groupId",
+                        "title",
+                        "goal",
+                        "brief",
+                        "role",
+                        "dependsOn",
+                        "files",
+                        "attempts",
+                        "criteria",
+                        "status",
+                        "agentIds",
+                        "checks",
+                        "nudges",
+                        "fixRounds",
+                        "freshAgents",
+                        "transportRetries",
+                        "touchedPaths",
+                        "usage"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "id",
+                  "groupId",
+                  "title",
+                  "goal",
+                  "brief",
+                  "role",
+                  "dependsOn",
+                  "files",
+                  "attempts",
+                  "criteria",
+                  "status",
+                  "agentIds",
+                  "checks",
+                  "nudges",
+                  "fixRounds",
+                  "freshAgents",
+                  "transportRetries",
+                  "touchedPaths",
+                  "usage"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "shape": {
+              "type": "object",
+              "properties": {
+                "forbids_delegation": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "uncertain"
+                      ]
+                    },
+                    "probability": {
+                      "type": "number"
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "probability",
+                    "outcome"
+                  ],
+                  "additionalProperties": false
+                },
+                "requests_parallel_agents": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "uncertain"
+                      ]
+                    },
+                    "probability": {
+                      "type": "number"
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "probability",
+                    "outcome"
+                  ],
+                  "additionalProperties": false
+                },
+                "forbids_writing": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "uncertain"
+                      ]
+                    },
+                    "probability": {
+                      "type": "number"
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "probability",
+                    "outcome"
+                  ],
+                  "additionalProperties": false
+                },
+                "asks_for_attempts": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "uncertain"
+                      ]
+                    },
+                    "probability": {
+                      "type": "number"
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "probability",
+                    "outcome"
+                  ],
+                  "additionalProperties": false
+                },
+                "decisionIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "forbids_delegation",
+                "requests_parallel_agents",
+                "forbids_writing",
+                "asks_for_attempts",
+                "decisionIds"
+              ],
+              "additionalProperties": false
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "shaping",
+                "planning",
+                "checking-plan",
+                "running",
+                "judging",
+                "fixing",
+                "committing",
+                "awaiting-owner",
+                "passed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "statusBeforeOwner": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "shaping",
+                "planning",
+                "checking-plan",
+                "running",
+                "judging",
+                "fixing",
+                "committing",
+                "awaiting-owner",
+                "passed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "resumeFrom": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "shaping",
+                "planning",
+                "checking-plan",
+                "running",
+                "judging",
+                "fixing",
+                "committing",
+                "awaiting-owner",
+                "passed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "enum": [
+                      "turn-end",
+                      "completion",
+                      "agent-failed",
+                      "fix-passed",
+                      "resume",
+                      "owner-amend"
+                    ]
+                  },
+                  "claims": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "files_verified",
+                          "git_corroborated",
+                          "verified_empty",
+                          "unverifiable_no_claims",
+                          "unverified"
+                        ]
+                      },
+                      "summary": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "summary"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "gates": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "gate": {
+                          "type": "string"
+                        },
+                        "passed": {
+                          "type": "boolean"
+                        },
+                        "output": {
+                          "type": "string"
+                        },
+                        "durationMs": {
+                          "type": "number"
+                        },
+                        "skipped": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "gate",
+                        "passed",
+                        "output",
+                        "durationMs"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "goal": {
+                    "type": "object",
+                    "properties": {
+                      "probabilityUnmet": {
+                        "type": "number"
+                      },
+                      "verdict": {
+                        "type": "string",
+                        "enum": [
+                          "met",
+                          "unmet",
+                          "unshown"
+                        ]
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "act",
+                          "confirm",
+                          "escalate"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "probabilityUnmet",
+                      "verdict",
+                      "outcome"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "quality": {
+                    "type": "object",
+                    "properties": {
+                      "placeholder": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "tests_weakened": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "breaks_existing": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "out_of_scope": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "hidden_failure": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "unsupported_claims": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "pass",
+                      "nudge",
+                      "await-owner",
+                      "stall",
+                      "recorded"
+                    ]
+                  },
+                  "problems": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "unmet",
+                        "unshown",
+                        "regression",
+                        "quality",
+                        "gate",
+                        "claims"
+                      ]
+                    }
+                  },
+                  "qualityProblems": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "placeholder",
+                        "tests_weakened",
+                        "breaks_existing",
+                        "out_of_scope",
+                        "hidden_failure",
+                        "unsupported_claims"
+                      ]
+                    }
+                  },
+                  "decisionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "evidenceDigest": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "at",
+                  "trigger",
+                  "goal",
+                  "quality",
+                  "result",
+                  "decisionIds",
+                  "evidenceDigest"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "fixRounds": {
+              "type": "number"
+            },
+            "escalations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "plan",
+                      "unit",
+                      "group",
+                      "deliverable",
+                      "shape"
+                    ]
+                  },
+                  "targetId": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "plan-unresolved",
+                      "stalled",
+                      "unsettled",
+                      "fix-rounds-exhausted",
+                      "writing-unclear",
+                      "attempts-undecided",
+                      "owner-decision-needed"
+                    ]
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "unmetCriterionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "resolvedAt": {
+                    "type": "number"
+                  },
+                  "reply": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "reading": {
+                        "type": "string",
+                        "enum": [
+                          "approve",
+                          "reject",
+                          "amend",
+                          "unclear"
+                        ]
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "act",
+                          "confirm",
+                          "escalate"
+                        ]
+                      },
+                      "decisionId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "reading",
+                      "outcome"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "at",
+                  "scope",
+                  "targetId",
+                  "reason",
+                  "question",
+                  "unmetCriterionIds"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "decisions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "number"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "created",
+                      "queued",
+                      "shaped",
+                      "planned",
+                      "plan-repaired",
+                      "plan-accepted",
+                      "spawned",
+                      "checked",
+                      "nudged",
+                      "woke",
+                      "regressed",
+                      "stalled",
+                      "fix-planned",
+                      "fresh-agent",
+                      "escalated",
+                      "owner-replied",
+                      "transport-retry",
+                      "silence-retry",
+                      "attempts-selected",
+                      "attempts-reduced",
+                      "group-passed",
+                      "committed",
+                      "passed",
+                      "failed",
+                      "cancelled",
+                      "resumed",
+                      "reaped"
+                    ]
+                  },
+                  "targetId": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "decisionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "route": {
+                    "type": "object",
+                    "properties": {
+                      "model": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string"
+                      },
+                      "fallbackModels": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "routing": {
+                        "type": "object",
+                        "properties": {
+                          "providerSelection": {
+                            "type": "string",
+                            "enum": [
+                              "inherit-current",
+                              "concrete",
+                              "synthetic"
+                            ]
+                          },
+                          "providerFailurePolicy": {
+                            "type": "string",
+                            "enum": [
+                              "ordered-fallbacks",
+                              "fail"
+                            ]
+                          },
+                          "fallbackModels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "reasoningEffort": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "model",
+                      "provider",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "id",
+                  "at",
+                  "action",
+                  "targetId",
+                  "reason",
+                  "decisionIds"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                },
+                "cacheReadTokens": {
+                  "type": "number"
+                },
+                "cacheWriteTokens": {
+                  "type": "number"
+                },
+                "reasoningTokens": {
+                  "type": "number"
+                },
+                "llmCallCount": {
+                  "type": "number"
+                },
+                "turnCount": {
+                  "type": "number"
+                },
+                "toolCallCount": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "costState": {
+                  "type": "string",
+                  "enum": [
+                    "priced",
+                    "unpriced",
+                    "estimated"
+                  ]
+                },
+                "costSource": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "provider",
+                    "catalog",
+                    "mixed"
+                  ]
+                },
+                "pricingAsOf": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "inputTokens",
+                "outputTokens",
+                "cacheReadTokens",
+                "cacheWriteTokens",
+                "llmCallCount",
+                "turnCount",
+                "toolCallCount",
+                "costUsd",
+                "costState"
+              ],
+              "additionalProperties": false
+            },
+            "judgmentUsage": {
+              "type": "object",
+              "properties": {
+                "calls": {
+                  "type": "number"
+                },
+                "inputTokens": {
+                  "type": "number"
+                },
+                "outputTokens": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "calls",
+                "inputTokens",
+                "outputTokens"
+              ],
+              "additionalProperties": false
+            },
+            "plannerAgentIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "answer": {
+              "type": "string"
+            },
+            "statusLine": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "committed",
+                    "applied",
+                    "skipped",
+                    "failed"
+                  ]
+                },
+                "hash": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "note"
+              ],
+              "additionalProperties": false
+            },
+            "failureKind": {
+              "type": "string",
+              "enum": [
+                "transport",
+                "max_turns",
+                "planning",
+                "budget",
+                "owner-rejected",
+                "judgment-unavailable",
+                "zombie",
+                "other"
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "createdAt": {
+              "type": "number"
+            },
+            "completedAt": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "schemaVersion",
+            "sessionId",
+            "origin",
+            "ask",
+            "ownerAgentId",
+            "projectRoot",
+            "isolation",
+            "goal",
+            "criteria",
+            "groups",
+            "units",
+            "status",
+            "checks",
+            "fixRounds",
+            "escalations",
+            "decisions",
+            "usage",
+            "judgmentUsage",
+            "plannerAgentIds",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
+        "id": "contracts.list",
+        "title": "List Contracts",
+        "description": "Every contract this daemon holds, newest first, each with its whole tree: the ask, the goal, the acceptance criteria with every Jev reading, the groups and units with their checks and nudges, open and answered owner escalations, decisions, usage, and the answer or status line once it ends. `sessionId` narrows the list to one session's contracts (a hosted session's, or a shared session's); ended contracts are left out unless `includeTerminal` is set.",
+        "category": "contracts",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "read:fleet"
+        ],
+        "http": {
+          "method": "GET",
+          "path": "/api/contracts"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "includeTerminal": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "contracts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "schemaVersion": {
+                    "type": "number"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "type": "string",
+                    "enum": [
+                      "turn",
+                      "agent-tool",
+                      "cli",
+                      "hosted",
+                      "external",
+                      "proposal"
+                    ]
+                  },
+                  "ask": {
+                    "type": "string"
+                  },
+                  "ownerAgentId": {
+                    "type": "string"
+                  },
+                  "parentAgentId": {
+                    "type": "string"
+                  },
+                  "projectRoot": {
+                    "type": "string"
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "enum": [
+                      "worktree",
+                      "shared"
+                    ]
+                  },
+                  "branch": {
+                    "type": "string"
+                  },
+                  "worktreePath": {
+                    "type": "string"
+                  },
+                  "baseBranch": {
+                    "type": "string"
+                  },
+                  "baseline": {
+                    "type": "object",
+                    "properties": {
+                      "head": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "dirty": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "head",
+                      "dirty"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "sessionMode": {
+                    "type": "boolean"
+                  },
+                  "proposedUnits": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "task": {
+                          "type": "string"
+                        },
+                        "template": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "task"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "draftPlan": {
+                    "type": "object",
+                    "properties": {
+                      "goal": {
+                        "type": "string"
+                      },
+                      "units": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "brief": {
+                              "type": "string"
+                            },
+                            "dependsOn": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "files": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "attempts": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "title",
+                            "brief",
+                            "dependsOn"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "goal",
+                      "units"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "budget": {
+                    "type": "object",
+                    "properties": {
+                      "maxTokens": {
+                        "type": "number"
+                      },
+                      "maxCostUsd": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "goal": {
+                    "type": "string"
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "stated",
+                            "derived",
+                            "integration",
+                            "fix",
+                            "owner"
+                          ]
+                        },
+                        "quote": {
+                          "type": "string"
+                        },
+                        "serves": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "disposition": {
+                          "type": "string",
+                          "enum": [
+                            "judged",
+                            "excluded",
+                            "met-by-structure"
+                          ]
+                        },
+                        "dispositionReason": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "unread",
+                            "met",
+                            "unmet",
+                            "unshown"
+                          ]
+                        },
+                        "readings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "checkId": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "probabilityUnmet": {
+                                "type": "number"
+                              },
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              },
+                              "severity": {
+                                "type": "string",
+                                "enum": [
+                                  "critical",
+                                  "major",
+                                  "minor"
+                                ]
+                              },
+                              "decisionId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "checkId",
+                              "at",
+                              "probabilityUnmet",
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "text",
+                        "origin",
+                        "serves",
+                        "disposition",
+                        "status",
+                        "readings"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "groups": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "goal": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "work",
+                            "fix",
+                            "integration"
+                          ]
+                        },
+                        "repairs": {
+                          "type": "object",
+                          "properties": {
+                            "scope": {
+                              "type": "string",
+                              "enum": [
+                                "unit",
+                                "group",
+                                "deliverable"
+                              ]
+                            },
+                            "targetId": {
+                              "type": "string"
+                            },
+                            "criterionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "scope",
+                            "targetId",
+                            "criterionIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "dependsOn": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "criteria": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "origin": {
+                                "type": "string",
+                                "enum": [
+                                  "stated",
+                                  "derived",
+                                  "integration",
+                                  "fix",
+                                  "owner"
+                                ]
+                              },
+                              "quote": {
+                                "type": "string"
+                              },
+                              "serves": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "disposition": {
+                                "type": "string",
+                                "enum": [
+                                  "judged",
+                                  "excluded",
+                                  "met-by-structure"
+                                ]
+                              },
+                              "dispositionReason": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "unread",
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "readings": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "checkId": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "number"
+                                    },
+                                    "probabilityUnmet": {
+                                      "type": "number"
+                                    },
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "met",
+                                        "unmet",
+                                        "unshown"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    },
+                                    "severity": {
+                                      "type": "string",
+                                      "enum": [
+                                        "critical",
+                                        "major",
+                                        "minor"
+                                      ]
+                                    },
+                                    "decisionId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "checkId",
+                                    "at",
+                                    "probabilityUnmet",
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "text",
+                              "origin",
+                              "serves",
+                              "disposition",
+                              "status",
+                              "readings"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "unitIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "blocked",
+                            "running",
+                            "judging",
+                            "fixing",
+                            "awaiting-owner",
+                            "passed",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "trigger": {
+                                "type": "string",
+                                "enum": [
+                                  "turn-end",
+                                  "completion",
+                                  "agent-failed",
+                                  "fix-passed",
+                                  "resume",
+                                  "owner-amend"
+                                ]
+                              },
+                              "claims": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "files_verified",
+                                      "git_corroborated",
+                                      "verified_empty",
+                                      "unverifiable_no_claims",
+                                      "unverified"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "summary"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "gates": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "gate": {
+                                      "type": "string"
+                                    },
+                                    "passed": {
+                                      "type": "boolean"
+                                    },
+                                    "output": {
+                                      "type": "string"
+                                    },
+                                    "durationMs": {
+                                      "type": "number"
+                                    },
+                                    "skipped": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "gate",
+                                    "passed",
+                                    "output",
+                                    "durationMs"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "goal": {
+                                "type": "object",
+                                "properties": {
+                                  "probabilityUnmet": {
+                                    "type": "number"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "probabilityUnmet",
+                                  "verdict",
+                                  "outcome"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "quality": {
+                                "type": "object",
+                                "properties": {
+                                  "placeholder": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "tests_weakened": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "breaks_existing": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "out_of_scope": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "hidden_failure": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "unsupported_claims": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "result": {
+                                "type": "string",
+                                "enum": [
+                                  "pass",
+                                  "nudge",
+                                  "await-owner",
+                                  "stall",
+                                  "recorded"
+                                ]
+                              },
+                              "problems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unmet",
+                                    "unshown",
+                                    "regression",
+                                    "quality",
+                                    "gate",
+                                    "claims"
+                                  ]
+                                }
+                              },
+                              "qualityProblems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "placeholder",
+                                    "tests_weakened",
+                                    "breaks_existing",
+                                    "out_of_scope",
+                                    "hidden_failure",
+                                    "unsupported_claims"
+                                  ]
+                                }
+                              },
+                              "decisionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "evidenceDigest": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "at",
+                              "trigger",
+                              "goal",
+                              "quality",
+                              "result",
+                              "decisionIds",
+                              "evidenceDigest"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "fixRounds": {
+                          "type": "number"
+                        },
+                        "baseline": {
+                          "type": "object",
+                          "properties": {
+                            "head": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "dirty": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "head",
+                            "dirty"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "inputTokens": {
+                              "type": "number"
+                            },
+                            "outputTokens": {
+                              "type": "number"
+                            },
+                            "cacheReadTokens": {
+                              "type": "number"
+                            },
+                            "cacheWriteTokens": {
+                              "type": "number"
+                            },
+                            "reasoningTokens": {
+                              "type": "number"
+                            },
+                            "llmCallCount": {
+                              "type": "number"
+                            },
+                            "turnCount": {
+                              "type": "number"
+                            },
+                            "toolCallCount": {
+                              "type": "number"
+                            },
+                            "costUsd": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "costState": {
+                              "type": "string",
+                              "enum": [
+                                "priced",
+                                "unpriced",
+                                "estimated"
+                              ]
+                            },
+                            "costSource": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "provider",
+                                "catalog",
+                                "mixed"
+                              ]
+                            },
+                            "pricingAsOf": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "outputTokens",
+                            "cacheReadTokens",
+                            "cacheWriteTokens",
+                            "llmCallCount",
+                            "turnCount",
+                            "toolCallCount",
+                            "costUsd",
+                            "costState"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "goal",
+                        "kind",
+                        "dependsOn",
+                        "criteria",
+                        "unitIds",
+                        "status",
+                        "checks",
+                        "fixRounds",
+                        "usage"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "units": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "groupId": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "goal": {
+                          "type": "string"
+                        },
+                        "brief": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "implement",
+                            "research",
+                            "design",
+                            "integration"
+                          ]
+                        },
+                        "dependsOn": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "attempts": {
+                          "type": "number"
+                        },
+                        "criteria": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "origin": {
+                                "type": "string",
+                                "enum": [
+                                  "stated",
+                                  "derived",
+                                  "integration",
+                                  "fix",
+                                  "owner"
+                                ]
+                              },
+                              "quote": {
+                                "type": "string"
+                              },
+                              "serves": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "disposition": {
+                                "type": "string",
+                                "enum": [
+                                  "judged",
+                                  "excluded",
+                                  "met-by-structure"
+                                ]
+                              },
+                              "dispositionReason": {
+                                "type": "string"
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "unread",
+                                  "met",
+                                  "unmet",
+                                  "unshown"
+                                ]
+                              },
+                              "readings": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "checkId": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "number"
+                                    },
+                                    "probabilityUnmet": {
+                                      "type": "number"
+                                    },
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "met",
+                                        "unmet",
+                                        "unshown"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    },
+                                    "severity": {
+                                      "type": "string",
+                                      "enum": [
+                                        "critical",
+                                        "major",
+                                        "minor"
+                                      ]
+                                    },
+                                    "decisionId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "checkId",
+                                    "at",
+                                    "probabilityUnmet",
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "text",
+                              "origin",
+                              "serves",
+                              "disposition",
+                              "status",
+                              "readings"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "blocked",
+                            "running",
+                            "checking",
+                            "held",
+                            "nudged",
+                            "fixing",
+                            "awaiting-owner",
+                            "held-merge",
+                            "passed",
+                            "failed",
+                            "cancelled"
+                          ]
+                        },
+                        "agentIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "activeAgentId": {
+                          "type": "string"
+                        },
+                        "route": {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            },
+                            "fallbackModels": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "routing": {
+                              "type": "object",
+                              "properties": {
+                                "providerSelection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "inherit-current",
+                                    "concrete",
+                                    "synthetic"
+                                  ]
+                                },
+                                "providerFailurePolicy": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ordered-fallbacks",
+                                    "fail"
+                                  ]
+                                },
+                                "fallbackModels": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "reasoningEffort": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "provider",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "checks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "trigger": {
+                                "type": "string",
+                                "enum": [
+                                  "turn-end",
+                                  "completion",
+                                  "agent-failed",
+                                  "fix-passed",
+                                  "resume",
+                                  "owner-amend"
+                                ]
+                              },
+                              "claims": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "files_verified",
+                                      "git_corroborated",
+                                      "verified_empty",
+                                      "unverifiable_no_claims",
+                                      "unverified"
+                                    ]
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "summary"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "gates": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "gate": {
+                                      "type": "string"
+                                    },
+                                    "passed": {
+                                      "type": "boolean"
+                                    },
+                                    "output": {
+                                      "type": "string"
+                                    },
+                                    "durationMs": {
+                                      "type": "number"
+                                    },
+                                    "skipped": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "gate",
+                                    "passed",
+                                    "output",
+                                    "durationMs"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "goal": {
+                                "type": "object",
+                                "properties": {
+                                  "probabilityUnmet": {
+                                    "type": "number"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "probabilityUnmet",
+                                  "verdict",
+                                  "outcome"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "quality": {
+                                "type": "object",
+                                "properties": {
+                                  "placeholder": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "tests_weakened": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "breaks_existing": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "out_of_scope": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "hidden_failure": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "unsupported_claims": {
+                                    "type": "object",
+                                    "properties": {
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "yes",
+                                          "no",
+                                          "uncertain"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "result": {
+                                "type": "string",
+                                "enum": [
+                                  "pass",
+                                  "nudge",
+                                  "await-owner",
+                                  "stall",
+                                  "recorded"
+                                ]
+                              },
+                              "problems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unmet",
+                                    "unshown",
+                                    "regression",
+                                    "quality",
+                                    "gate",
+                                    "claims"
+                                  ]
+                                }
+                              },
+                              "qualityProblems": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "placeholder",
+                                    "tests_weakened",
+                                    "breaks_existing",
+                                    "out_of_scope",
+                                    "hidden_failure",
+                                    "unsupported_claims"
+                                  ]
+                                }
+                              },
+                              "decisionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "evidenceDigest": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "at",
+                              "trigger",
+                              "goal",
+                              "quality",
+                              "result",
+                              "decisionIds",
+                              "evidenceDigest"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "nudges": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "checkId": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "number"
+                              },
+                              "kinds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "unmet",
+                                    "unshown",
+                                    "regression",
+                                    "quality",
+                                    "gate",
+                                    "claims"
+                                  ]
+                                }
+                              },
+                              "criterionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "delivery": {
+                                "type": "string",
+                                "enum": [
+                                  "hold",
+                                  "bus",
+                                  "wake"
+                                ]
+                              },
+                              "agentId": {
+                                "type": "string"
+                              },
+                              "consumedAt": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "checkId",
+                              "at",
+                              "kinds",
+                              "criterionIds",
+                              "text",
+                              "delivery",
+                              "agentId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "fixRounds": {
+                          "type": "number"
+                        },
+                        "freshAgents": {
+                          "type": "number"
+                        },
+                        "transportRetries": {
+                          "type": "number"
+                        },
+                        "touchedPaths": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "baseline": {
+                          "type": "object",
+                          "properties": {
+                            "head": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "dirty": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          "required": [
+                            "head",
+                            "dirty"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "inputTokens": {
+                              "type": "number"
+                            },
+                            "outputTokens": {
+                              "type": "number"
+                            },
+                            "cacheReadTokens": {
+                              "type": "number"
+                            },
+                            "cacheWriteTokens": {
+                              "type": "number"
+                            },
+                            "reasoningTokens": {
+                              "type": "number"
+                            },
+                            "llmCallCount": {
+                              "type": "number"
+                            },
+                            "turnCount": {
+                              "type": "number"
+                            },
+                            "toolCallCount": {
+                              "type": "number"
+                            },
+                            "costUsd": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "costState": {
+                              "type": "string",
+                              "enum": [
+                                "priced",
+                                "unpriced",
+                                "estimated"
+                              ]
+                            },
+                            "costSource": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "provider",
+                                "catalog",
+                                "mixed"
+                              ]
+                            },
+                            "pricingAsOf": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "outputTokens",
+                            "cacheReadTokens",
+                            "cacheWriteTokens",
+                            "llmCallCount",
+                            "turnCount",
+                            "toolCallCount",
+                            "costUsd",
+                            "costState"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "answer": {
+                          "type": "string"
+                        },
+                        "lastOutput": {
+                          "type": "string"
+                        },
+                        "failureReason": {
+                          "type": "string"
+                        },
+                        "attemptOf": {
+                          "type": "string"
+                        },
+                        "attemptIndex": {
+                          "type": "number"
+                        },
+                        "attemptSelection": {
+                          "type": "object",
+                          "properties": {
+                            "engineGroupId": {
+                              "type": "string"
+                            },
+                            "candidateIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "proposedId": {
+                              "type": "string"
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "reasons": {
+                              "type": "string"
+                            },
+                            "decisionId": {
+                              "type": "string"
+                            },
+                            "pickedId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "engineGroupId",
+                            "candidateIds",
+                            "outcome",
+                            "reasons"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "attemptUnits": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "groupId": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              },
+                              "goal": {
+                                "type": "string"
+                              },
+                              "brief": {
+                                "type": "string"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": [
+                                  "implement",
+                                  "research",
+                                  "design",
+                                  "integration"
+                                ]
+                              },
+                              "dependsOn": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "files": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attempts": {
+                                "type": "number"
+                              },
+                              "criteria": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "origin": {
+                                      "type": "string",
+                                      "enum": [
+                                        "stated",
+                                        "derived",
+                                        "integration",
+                                        "fix",
+                                        "owner"
+                                      ]
+                                    },
+                                    "quote": {
+                                      "type": "string"
+                                    },
+                                    "serves": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "disposition": {
+                                      "type": "string",
+                                      "enum": [
+                                        "judged",
+                                        "excluded",
+                                        "met-by-structure"
+                                      ]
+                                    },
+                                    "dispositionReason": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "type": "string",
+                                      "enum": [
+                                        "unread",
+                                        "met",
+                                        "unmet",
+                                        "unshown"
+                                      ]
+                                    },
+                                    "readings": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "checkId": {
+                                            "type": "string"
+                                          },
+                                          "at": {
+                                            "type": "number"
+                                          },
+                                          "probabilityUnmet": {
+                                            "type": "number"
+                                          },
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "met",
+                                              "unmet",
+                                              "unshown"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          },
+                                          "severity": {
+                                            "type": "string",
+                                            "enum": [
+                                              "critical",
+                                              "major",
+                                              "minor"
+                                            ]
+                                          },
+                                          "decisionId": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "checkId",
+                                          "at",
+                                          "probabilityUnmet",
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "text",
+                                    "origin",
+                                    "serves",
+                                    "disposition",
+                                    "status",
+                                    "readings"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "blocked",
+                                  "running",
+                                  "checking",
+                                  "held",
+                                  "nudged",
+                                  "fixing",
+                                  "awaiting-owner",
+                                  "held-merge",
+                                  "passed",
+                                  "failed",
+                                  "cancelled"
+                                ]
+                              },
+                              "agentIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "activeAgentId": {
+                                "type": "string"
+                              },
+                              "route": {
+                                "type": "object",
+                                "properties": {
+                                  "model": {
+                                    "type": "string"
+                                  },
+                                  "provider": {
+                                    "type": "string"
+                                  },
+                                  "fallbackModels": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "routing": {
+                                    "type": "object",
+                                    "properties": {
+                                      "providerSelection": {
+                                        "type": "string",
+                                        "enum": [
+                                          "inherit-current",
+                                          "concrete",
+                                          "synthetic"
+                                        ]
+                                      },
+                                      "providerFailurePolicy": {
+                                        "type": "string",
+                                        "enum": [
+                                          "ordered-fallbacks",
+                                          "fail"
+                                        ]
+                                      },
+                                      "fallbackModels": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  "reasoningEffort": {
+                                    "type": "string"
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "model",
+                                  "provider",
+                                  "reason"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "checks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "number"
+                                    },
+                                    "trigger": {
+                                      "type": "string",
+                                      "enum": [
+                                        "turn-end",
+                                        "completion",
+                                        "agent-failed",
+                                        "fix-passed",
+                                        "resume",
+                                        "owner-amend"
+                                      ]
+                                    },
+                                    "claims": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "files_verified",
+                                            "git_corroborated",
+                                            "verified_empty",
+                                            "unverifiable_no_claims",
+                                            "unverified"
+                                          ]
+                                        },
+                                        "summary": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "summary"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "gates": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "gate": {
+                                            "type": "string"
+                                          },
+                                          "passed": {
+                                            "type": "boolean"
+                                          },
+                                          "output": {
+                                            "type": "string"
+                                          },
+                                          "durationMs": {
+                                            "type": "number"
+                                          },
+                                          "skipped": {
+                                            "type": "boolean"
+                                          }
+                                        },
+                                        "required": [
+                                          "gate",
+                                          "passed",
+                                          "output",
+                                          "durationMs"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "goal": {
+                                      "type": "object",
+                                      "properties": {
+                                        "probabilityUnmet": {
+                                          "type": "number"
+                                        },
+                                        "verdict": {
+                                          "type": "string",
+                                          "enum": [
+                                            "met",
+                                            "unmet",
+                                            "unshown"
+                                          ]
+                                        },
+                                        "outcome": {
+                                          "type": "string",
+                                          "enum": [
+                                            "act",
+                                            "confirm",
+                                            "escalate"
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "probabilityUnmet",
+                                        "verdict",
+                                        "outcome"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "quality": {
+                                      "type": "object",
+                                      "properties": {
+                                        "placeholder": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "tests_weakened": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "breaks_existing": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "out_of_scope": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "hidden_failure": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "unsupported_claims": {
+                                          "type": "object",
+                                          "properties": {
+                                            "verdict": {
+                                              "type": "string",
+                                              "enum": [
+                                                "yes",
+                                                "no",
+                                                "uncertain"
+                                              ]
+                                            },
+                                            "outcome": {
+                                              "type": "string",
+                                              "enum": [
+                                                "act",
+                                                "confirm",
+                                                "escalate"
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "verdict",
+                                            "outcome"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "result": {
+                                      "type": "string",
+                                      "enum": [
+                                        "pass",
+                                        "nudge",
+                                        "await-owner",
+                                        "stall",
+                                        "recorded"
+                                      ]
+                                    },
+                                    "problems": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unmet",
+                                          "unshown",
+                                          "regression",
+                                          "quality",
+                                          "gate",
+                                          "claims"
+                                        ]
+                                      }
+                                    },
+                                    "qualityProblems": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "placeholder",
+                                          "tests_weakened",
+                                          "breaks_existing",
+                                          "out_of_scope",
+                                          "hidden_failure",
+                                          "unsupported_claims"
+                                        ]
+                                      }
+                                    },
+                                    "decisionIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "evidenceDigest": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "at",
+                                    "trigger",
+                                    "goal",
+                                    "quality",
+                                    "result",
+                                    "decisionIds",
+                                    "evidenceDigest"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "nudges": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "checkId": {
+                                      "type": "string"
+                                    },
+                                    "at": {
+                                      "type": "number"
+                                    },
+                                    "kinds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "enum": [
+                                          "unmet",
+                                          "unshown",
+                                          "regression",
+                                          "quality",
+                                          "gate",
+                                          "claims"
+                                        ]
+                                      }
+                                    },
+                                    "criterionIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "delivery": {
+                                      "type": "string",
+                                      "enum": [
+                                        "hold",
+                                        "bus",
+                                        "wake"
+                                      ]
+                                    },
+                                    "agentId": {
+                                      "type": "string"
+                                    },
+                                    "consumedAt": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "checkId",
+                                    "at",
+                                    "kinds",
+                                    "criterionIds",
+                                    "text",
+                                    "delivery",
+                                    "agentId"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "fixRounds": {
+                                "type": "number"
+                              },
+                              "freshAgents": {
+                                "type": "number"
+                              },
+                              "transportRetries": {
+                                "type": "number"
+                              },
+                              "touchedPaths": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "baseline": {
+                                "type": "object",
+                                "properties": {
+                                  "head": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "dirty": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "head",
+                                  "dirty"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "number"
+                                  },
+                                  "outputTokens": {
+                                    "type": "number"
+                                  },
+                                  "cacheReadTokens": {
+                                    "type": "number"
+                                  },
+                                  "cacheWriteTokens": {
+                                    "type": "number"
+                                  },
+                                  "reasoningTokens": {
+                                    "type": "number"
+                                  },
+                                  "llmCallCount": {
+                                    "type": "number"
+                                  },
+                                  "turnCount": {
+                                    "type": "number"
+                                  },
+                                  "toolCallCount": {
+                                    "type": "number"
+                                  },
+                                  "costUsd": {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "costState": {
+                                    "type": "string",
+                                    "enum": [
+                                      "priced",
+                                      "unpriced",
+                                      "estimated"
+                                    ]
+                                  },
+                                  "costSource": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "provider",
+                                      "catalog",
+                                      "mixed"
+                                    ]
+                                  },
+                                  "pricingAsOf": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "inputTokens",
+                                  "outputTokens",
+                                  "cacheReadTokens",
+                                  "cacheWriteTokens",
+                                  "llmCallCount",
+                                  "turnCount",
+                                  "toolCallCount",
+                                  "costUsd",
+                                  "costState"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "answer": {
+                                "type": "string"
+                              },
+                              "lastOutput": {
+                                "type": "string"
+                              },
+                              "failureReason": {
+                                "type": "string"
+                              },
+                              "attemptOf": {
+                                "type": "string"
+                              },
+                              "attemptIndex": {
+                                "type": "number"
+                              },
+                              "attemptSelection": {
+                                "type": "object",
+                                "properties": {
+                                  "engineGroupId": {
+                                    "type": "string"
+                                  },
+                                  "candidateIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "proposedId": {
+                                    "type": "string"
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  },
+                                  "reasons": {
+                                    "type": "string"
+                                  },
+                                  "decisionId": {
+                                    "type": "string"
+                                  },
+                                  "pickedId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "engineGroupId",
+                                  "candidateIds",
+                                  "outcome",
+                                  "reasons"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "groupId",
+                              "title",
+                              "goal",
+                              "brief",
+                              "role",
+                              "dependsOn",
+                              "files",
+                              "attempts",
+                              "criteria",
+                              "status",
+                              "agentIds",
+                              "checks",
+                              "nudges",
+                              "fixRounds",
+                              "freshAgents",
+                              "transportRetries",
+                              "touchedPaths",
+                              "usage"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "groupId",
+                        "title",
+                        "goal",
+                        "brief",
+                        "role",
+                        "dependsOn",
+                        "files",
+                        "attempts",
+                        "criteria",
+                        "status",
+                        "agentIds",
+                        "checks",
+                        "nudges",
+                        "fixRounds",
+                        "freshAgents",
+                        "transportRetries",
+                        "touchedPaths",
+                        "usage"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "shape": {
+                    "type": "object",
+                    "properties": {
+                      "forbids_delegation": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "probability",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "requests_parallel_agents": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "probability",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "forbids_writing": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "probability",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "asks_for_attempts": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "probability",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "decisionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "forbids_delegation",
+                      "requests_parallel_agents",
+                      "forbids_writing",
+                      "asks_for_attempts",
+                      "decisionIds"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "queued",
+                      "shaping",
+                      "planning",
+                      "checking-plan",
+                      "running",
+                      "judging",
+                      "fixing",
+                      "committing",
+                      "awaiting-owner",
+                      "passed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "statusBeforeOwner": {
+                    "type": "string",
+                    "enum": [
+                      "queued",
+                      "shaping",
+                      "planning",
+                      "checking-plan",
+                      "running",
+                      "judging",
+                      "fixing",
+                      "committing",
+                      "awaiting-owner",
+                      "passed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "resumeFrom": {
+                    "type": "string",
+                    "enum": [
+                      "queued",
+                      "shaping",
+                      "planning",
+                      "checking-plan",
+                      "running",
+                      "judging",
+                      "fixing",
+                      "committing",
+                      "awaiting-owner",
+                      "passed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "trigger": {
+                          "type": "string",
+                          "enum": [
+                            "turn-end",
+                            "completion",
+                            "agent-failed",
+                            "fix-passed",
+                            "resume",
+                            "owner-amend"
+                          ]
+                        },
+                        "claims": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "files_verified",
+                                "git_corroborated",
+                                "verified_empty",
+                                "unverifiable_no_claims",
+                                "unverified"
+                              ]
+                            },
+                            "summary": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "summary"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "gates": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "gate": {
+                                "type": "string"
+                              },
+                              "passed": {
+                                "type": "boolean"
+                              },
+                              "output": {
+                                "type": "string"
+                              },
+                              "durationMs": {
+                                "type": "number"
+                              },
+                              "skipped": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "gate",
+                              "passed",
+                              "output",
+                              "durationMs"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "goal": {
+                          "type": "object",
+                          "properties": {
+                            "probabilityUnmet": {
+                              "type": "number"
+                            },
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "probabilityUnmet",
+                            "verdict",
+                            "outcome"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "quality": {
+                          "type": "object",
+                          "properties": {
+                            "placeholder": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "tests_weakened": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "breaks_existing": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "out_of_scope": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "hidden_failure": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "unsupported_claims": {
+                              "type": "object",
+                              "properties": {
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "yes",
+                                    "no",
+                                    "uncertain"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "result": {
+                          "type": "string",
+                          "enum": [
+                            "pass",
+                            "nudge",
+                            "await-owner",
+                            "stall",
+                            "recorded"
+                          ]
+                        },
+                        "problems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "unmet",
+                              "unshown",
+                              "regression",
+                              "quality",
+                              "gate",
+                              "claims"
+                            ]
+                          }
+                        },
+                        "qualityProblems": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "placeholder",
+                              "tests_weakened",
+                              "breaks_existing",
+                              "out_of_scope",
+                              "hidden_failure",
+                              "unsupported_claims"
+                            ]
+                          }
+                        },
+                        "decisionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "evidenceDigest": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "at",
+                        "trigger",
+                        "goal",
+                        "quality",
+                        "result",
+                        "decisionIds",
+                        "evidenceDigest"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "fixRounds": {
+                    "type": "number"
+                  },
+                  "escalations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "scope": {
+                          "type": "string",
+                          "enum": [
+                            "plan",
+                            "unit",
+                            "group",
+                            "deliverable",
+                            "shape"
+                          ]
+                        },
+                        "targetId": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "plan-unresolved",
+                            "stalled",
+                            "unsettled",
+                            "fix-rounds-exhausted",
+                            "writing-unclear",
+                            "attempts-undecided",
+                            "owner-decision-needed"
+                          ]
+                        },
+                        "question": {
+                          "type": "string"
+                        },
+                        "unmetCriterionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "resolvedAt": {
+                          "type": "number"
+                        },
+                        "reply": {
+                          "type": "object",
+                          "properties": {
+                            "text": {
+                              "type": "string"
+                            },
+                            "reading": {
+                              "type": "string",
+                              "enum": [
+                                "approve",
+                                "reject",
+                                "amend",
+                                "unclear"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "decisionId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "text",
+                            "reading",
+                            "outcome"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "at",
+                        "scope",
+                        "targetId",
+                        "reason",
+                        "question",
+                        "unmetCriterionIds"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "decisions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "number"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "created",
+                            "queued",
+                            "shaped",
+                            "planned",
+                            "plan-repaired",
+                            "plan-accepted",
+                            "spawned",
+                            "checked",
+                            "nudged",
+                            "woke",
+                            "regressed",
+                            "stalled",
+                            "fix-planned",
+                            "fresh-agent",
+                            "escalated",
+                            "owner-replied",
+                            "transport-retry",
+                            "silence-retry",
+                            "attempts-selected",
+                            "attempts-reduced",
+                            "group-passed",
+                            "committed",
+                            "passed",
+                            "failed",
+                            "cancelled",
+                            "resumed",
+                            "reaped"
+                          ]
+                        },
+                        "targetId": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "decisionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "route": {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            },
+                            "fallbackModels": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "routing": {
+                              "type": "object",
+                              "properties": {
+                                "providerSelection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "inherit-current",
+                                    "concrete",
+                                    "synthetic"
+                                  ]
+                                },
+                                "providerFailurePolicy": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ordered-fallbacks",
+                                    "fail"
+                                  ]
+                                },
+                                "fallbackModels": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "reasoningEffort": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "provider",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "at",
+                        "action",
+                        "targetId",
+                        "reason",
+                        "decisionIds"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      },
+                      "cacheReadTokens": {
+                        "type": "number"
+                      },
+                      "cacheWriteTokens": {
+                        "type": "number"
+                      },
+                      "reasoningTokens": {
+                        "type": "number"
+                      },
+                      "llmCallCount": {
+                        "type": "number"
+                      },
+                      "turnCount": {
+                        "type": "number"
+                      },
+                      "toolCallCount": {
+                        "type": "number"
+                      },
+                      "costUsd": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "costState": {
+                        "type": "string",
+                        "enum": [
+                          "priced",
+                          "unpriced",
+                          "estimated"
+                        ]
+                      },
+                      "costSource": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "provider",
+                          "catalog",
+                          "mixed"
+                        ]
+                      },
+                      "pricingAsOf": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "llmCallCount",
+                      "turnCount",
+                      "toolCallCount",
+                      "costUsd",
+                      "costState"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "judgmentUsage": {
+                    "type": "object",
+                    "properties": {
+                      "calls": {
+                        "type": "number"
+                      },
+                      "inputTokens": {
+                        "type": "number"
+                      },
+                      "outputTokens": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "calls",
+                      "inputTokens",
+                      "outputTokens"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "plannerAgentIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "answer": {
+                    "type": "string"
+                  },
+                  "statusLine": {
+                    "type": "string"
+                  },
+                  "commit": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "committed",
+                          "applied",
+                          "skipped",
+                          "failed"
+                        ]
+                      },
+                      "hash": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "note"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "failureKind": {
+                    "type": "string",
+                    "enum": [
+                      "transport",
+                      "max_turns",
+                      "planning",
+                      "budget",
+                      "owner-rejected",
+                      "judgment-unavailable",
+                      "zombie",
+                      "other"
+                    ]
+                  },
+                  "error": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "number"
+                  },
+                  "completedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "schemaVersion",
+                  "sessionId",
+                  "origin",
+                  "ask",
+                  "ownerAgentId",
+                  "projectRoot",
+                  "isolation",
+                  "goal",
+                  "criteria",
+                  "groups",
+                  "units",
+                  "status",
+                  "checks",
+                  "fixRounds",
+                  "escalations",
+                  "decisions",
+                  "usage",
+                  "judgmentUsage",
+                  "plannerAgentIds",
+                  "createdAt"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "contracts"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
+        "id": "contracts.reply",
+        "title": "Reply to a Contract Escalation",
+        "description": "The owner's free-text reply to an open escalation of a contract, read by Jev as approve, reject, amend or unclear. Returns how it was read and what the runner did: approved, amended, stopped, asked again (with the new escalation id), or refused when the escalation is no longer open. Approval never passes a criterion Jev read as unmet; the requirement changes only through an amendment. 404 with CONTRACT_NOT_FOUND for an unknown id; 409 with CONTRACT_ENDED when the contract has ended.",
+        "category": "contracts",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:fleet"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/contracts/{contractId}/reply"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "contractId": {
+              "type": "string"
+            },
+            "escalationId": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "contractId",
+            "escalationId",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "escalationId": {
+              "type": "string"
+            },
+            "reading": {
+              "type": "string",
+              "enum": [
+                "approve",
+                "reject",
+                "amend",
+                "unclear"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "act",
+                "confirm",
+                "escalate"
+              ]
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "approved",
+                "amended",
+                "stopped",
+                "asked-again",
+                "refused"
+              ]
+            },
+            "nextEscalationId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "escalationId",
+            "reading",
+            "outcome",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
+        "id": "contracts.start",
+        "title": "Start a Contract",
+        "description": "Start a contract for `ask`, the person's words verbatim, which every stated acceptance criterion must trace to. Returns at once with the new contract and its owner agent id; the contract shapes, plans and runs on its own, and its progress arrives on the `contracts` event domain. When `sessionId` names a live session this daemon hosts, the contract starts in that session (origin `hosted`): its turns receive the contract's questions and a following turn answers them. Otherwise it starts on the daemon's own runner (origin `external`) under `sessionId`, or the `operator` session when none is given, in `workspaceRoot` (absolute), or the daemon's working directory. `isolation` overrides `contract.isolation` for this contract.",
+        "category": "contracts",
+        "source": "builtin",
+        "access": "authenticated",
+        "transport": [
+          "http",
+          "ws"
+        ],
+        "scopes": [
+          "write:fleet"
+        ],
+        "http": {
+          "method": "POST",
+          "path": "/api/contracts"
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "ask": {
+              "type": "string"
+            },
+            "sessionId": {
+              "type": "string"
+            },
+            "workspaceRoot": {
+              "type": "string"
+            },
+            "isolation": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "worktree",
+                "shared"
+              ]
+            }
+          },
+          "required": [
+            "ask"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "schemaVersion": {
+                  "type": "number"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "turn",
+                    "agent-tool",
+                    "cli",
+                    "hosted",
+                    "external",
+                    "proposal"
+                  ]
+                },
+                "ask": {
+                  "type": "string"
+                },
+                "ownerAgentId": {
+                  "type": "string"
+                },
+                "parentAgentId": {
+                  "type": "string"
+                },
+                "projectRoot": {
+                  "type": "string"
+                },
+                "isolation": {
+                  "type": "string",
+                  "enum": [
+                    "worktree",
+                    "shared"
+                  ]
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "worktreePath": {
+                  "type": "string"
+                },
+                "baseBranch": {
+                  "type": "string"
+                },
+                "baseline": {
+                  "type": "object",
+                  "properties": {
+                    "head": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dirty": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "head",
+                    "dirty"
+                  ],
+                  "additionalProperties": false
+                },
+                "sessionMode": {
+                  "type": "boolean"
+                },
+                "proposedUnits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task": {
+                        "type": "string"
+                      },
+                      "template": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "draftPlan": {
+                  "type": "object",
+                  "properties": {
+                    "goal": {
+                      "type": "string"
+                    },
+                    "units": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "brief": {
+                            "type": "string"
+                          },
+                          "dependsOn": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "files": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "attempts": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "brief",
+                          "dependsOn"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "goal",
+                    "units"
+                  ],
+                  "additionalProperties": false
+                },
+                "budget": {
+                  "type": "object",
+                  "properties": {
+                    "maxTokens": {
+                      "type": "number"
+                    },
+                    "maxCostUsd": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "goal": {
+                  "type": "string"
+                },
+                "criteria": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "origin": {
+                        "type": "string",
+                        "enum": [
+                          "stated",
+                          "derived",
+                          "integration",
+                          "fix",
+                          "owner"
+                        ]
+                      },
+                      "quote": {
+                        "type": "string"
+                      },
+                      "serves": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "disposition": {
+                        "type": "string",
+                        "enum": [
+                          "judged",
+                          "excluded",
+                          "met-by-structure"
+                        ]
+                      },
+                      "dispositionReason": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "unread",
+                          "met",
+                          "unmet",
+                          "unshown"
+                        ]
+                      },
+                      "readings": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "checkId": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            },
+                            "probabilityUnmet": {
+                              "type": "number"
+                            },
+                            "verdict": {
+                              "type": "string",
+                              "enum": [
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string",
+                              "enum": [
+                                "act",
+                                "confirm",
+                                "escalate"
+                              ]
+                            },
+                            "severity": {
+                              "type": "string",
+                              "enum": [
+                                "critical",
+                                "major",
+                                "minor"
+                              ]
+                            },
+                            "decisionId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "checkId",
+                            "at",
+                            "probabilityUnmet",
+                            "verdict",
+                            "outcome"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "text",
+                      "origin",
+                      "serves",
+                      "disposition",
+                      "status",
+                      "readings"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "groups": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "goal": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "work",
+                          "fix",
+                          "integration"
+                        ]
+                      },
+                      "repairs": {
+                        "type": "object",
+                        "properties": {
+                          "scope": {
+                            "type": "string",
+                            "enum": [
+                              "unit",
+                              "group",
+                              "deliverable"
+                            ]
+                          },
+                          "targetId": {
+                            "type": "string"
+                          },
+                          "criterionIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "scope",
+                          "targetId",
+                          "criterionIds"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "dependsOn": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "enum": [
+                                "stated",
+                                "derived",
+                                "integration",
+                                "fix",
+                                "owner"
+                              ]
+                            },
+                            "quote": {
+                              "type": "string"
+                            },
+                            "serves": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "disposition": {
+                              "type": "string",
+                              "enum": [
+                                "judged",
+                                "excluded",
+                                "met-by-structure"
+                              ]
+                            },
+                            "dispositionReason": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "unread",
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "readings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "checkId": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  },
+                                  "probabilityUnmet": {
+                                    "type": "number"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  },
+                                  "severity": {
+                                    "type": "string",
+                                    "enum": [
+                                      "critical",
+                                      "major",
+                                      "minor"
+                                    ]
+                                  },
+                                  "decisionId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "checkId",
+                                  "at",
+                                  "probabilityUnmet",
+                                  "verdict",
+                                  "outcome"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "text",
+                            "origin",
+                            "serves",
+                            "disposition",
+                            "status",
+                            "readings"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "unitIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "blocked",
+                          "running",
+                          "judging",
+                          "fixing",
+                          "awaiting-owner",
+                          "passed",
+                          "failed",
+                          "cancelled"
+                        ]
+                      },
+                      "checks": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            },
+                            "trigger": {
+                              "type": "string",
+                              "enum": [
+                                "turn-end",
+                                "completion",
+                                "agent-failed",
+                                "fix-passed",
+                                "resume",
+                                "owner-amend"
+                              ]
+                            },
+                            "claims": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "files_verified",
+                                    "git_corroborated",
+                                    "verified_empty",
+                                    "unverifiable_no_claims",
+                                    "unverified"
+                                  ]
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "summary"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "gates": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "gate": {
+                                    "type": "string"
+                                  },
+                                  "passed": {
+                                    "type": "boolean"
+                                  },
+                                  "output": {
+                                    "type": "string"
+                                  },
+                                  "durationMs": {
+                                    "type": "number"
+                                  },
+                                  "skipped": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "gate",
+                                  "passed",
+                                  "output",
+                                  "durationMs"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "goal": {
+                              "type": "object",
+                              "properties": {
+                                "probabilityUnmet": {
+                                  "type": "number"
+                                },
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "met",
+                                    "unmet",
+                                    "unshown"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "probabilityUnmet",
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "quality": {
+                              "type": "object",
+                              "properties": {
+                                "placeholder": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "tests_weakened": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "breaks_existing": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "out_of_scope": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "hidden_failure": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "unsupported_claims": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "result": {
+                              "type": "string",
+                              "enum": [
+                                "pass",
+                                "nudge",
+                                "await-owner",
+                                "stall",
+                                "recorded"
+                              ]
+                            },
+                            "problems": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "unmet",
+                                  "unshown",
+                                  "regression",
+                                  "quality",
+                                  "gate",
+                                  "claims"
+                                ]
+                              }
+                            },
+                            "qualityProblems": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "placeholder",
+                                  "tests_weakened",
+                                  "breaks_existing",
+                                  "out_of_scope",
+                                  "hidden_failure",
+                                  "unsupported_claims"
+                                ]
+                              }
+                            },
+                            "decisionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "evidenceDigest": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "at",
+                            "trigger",
+                            "goal",
+                            "quality",
+                            "result",
+                            "decisionIds",
+                            "evidenceDigest"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "fixRounds": {
+                        "type": "number"
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "head": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "dirty": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "head",
+                          "dirty"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "usage": {
+                        "type": "object",
+                        "properties": {
+                          "inputTokens": {
+                            "type": "number"
+                          },
+                          "outputTokens": {
+                            "type": "number"
+                          },
+                          "cacheReadTokens": {
+                            "type": "number"
+                          },
+                          "cacheWriteTokens": {
+                            "type": "number"
+                          },
+                          "reasoningTokens": {
+                            "type": "number"
+                          },
+                          "llmCallCount": {
+                            "type": "number"
+                          },
+                          "turnCount": {
+                            "type": "number"
+                          },
+                          "toolCallCount": {
+                            "type": "number"
+                          },
+                          "costUsd": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "costState": {
+                            "type": "string",
+                            "enum": [
+                              "priced",
+                              "unpriced",
+                              "estimated"
+                            ]
+                          },
+                          "costSource": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "provider",
+                              "catalog",
+                              "mixed"
+                            ]
+                          },
+                          "pricingAsOf": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "inputTokens",
+                          "outputTokens",
+                          "cacheReadTokens",
+                          "cacheWriteTokens",
+                          "llmCallCount",
+                          "turnCount",
+                          "toolCallCount",
+                          "costUsd",
+                          "costState"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title",
+                      "goal",
+                      "kind",
+                      "dependsOn",
+                      "criteria",
+                      "unitIds",
+                      "status",
+                      "checks",
+                      "fixRounds",
+                      "usage"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "units": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "groupId": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "goal": {
+                        "type": "string"
+                      },
+                      "brief": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "implement",
+                          "research",
+                          "design",
+                          "integration"
+                        ]
+                      },
+                      "dependsOn": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "attempts": {
+                        "type": "number"
+                      },
+                      "criteria": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "origin": {
+                              "type": "string",
+                              "enum": [
+                                "stated",
+                                "derived",
+                                "integration",
+                                "fix",
+                                "owner"
+                              ]
+                            },
+                            "quote": {
+                              "type": "string"
+                            },
+                            "serves": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "disposition": {
+                              "type": "string",
+                              "enum": [
+                                "judged",
+                                "excluded",
+                                "met-by-structure"
+                              ]
+                            },
+                            "dispositionReason": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "unread",
+                                "met",
+                                "unmet",
+                                "unshown"
+                              ]
+                            },
+                            "readings": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "checkId": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  },
+                                  "probabilityUnmet": {
+                                    "type": "number"
+                                  },
+                                  "verdict": {
+                                    "type": "string",
+                                    "enum": [
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "outcome": {
+                                    "type": "string",
+                                    "enum": [
+                                      "act",
+                                      "confirm",
+                                      "escalate"
+                                    ]
+                                  },
+                                  "severity": {
+                                    "type": "string",
+                                    "enum": [
+                                      "critical",
+                                      "major",
+                                      "minor"
+                                    ]
+                                  },
+                                  "decisionId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "checkId",
+                                  "at",
+                                  "probabilityUnmet",
+                                  "verdict",
+                                  "outcome"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "text",
+                            "origin",
+                            "serves",
+                            "disposition",
+                            "status",
+                            "readings"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "blocked",
+                          "running",
+                          "checking",
+                          "held",
+                          "nudged",
+                          "fixing",
+                          "awaiting-owner",
+                          "held-merge",
+                          "passed",
+                          "failed",
+                          "cancelled"
+                        ]
+                      },
+                      "agentIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "activeAgentId": {
+                        "type": "string"
+                      },
+                      "route": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "fallbackModels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "routing": {
+                            "type": "object",
+                            "properties": {
+                              "providerSelection": {
+                                "type": "string",
+                                "enum": [
+                                  "inherit-current",
+                                  "concrete",
+                                  "synthetic"
+                                ]
+                              },
+                              "providerFailurePolicy": {
+                                "type": "string",
+                                "enum": [
+                                  "ordered-fallbacks",
+                                  "fail"
+                                ]
+                              },
+                              "fallbackModels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "reasoningEffort": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "model",
+                          "provider",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "checks": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            },
+                            "trigger": {
+                              "type": "string",
+                              "enum": [
+                                "turn-end",
+                                "completion",
+                                "agent-failed",
+                                "fix-passed",
+                                "resume",
+                                "owner-amend"
+                              ]
+                            },
+                            "claims": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "files_verified",
+                                    "git_corroborated",
+                                    "verified_empty",
+                                    "unverifiable_no_claims",
+                                    "unverified"
+                                  ]
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "summary"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "gates": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "gate": {
+                                    "type": "string"
+                                  },
+                                  "passed": {
+                                    "type": "boolean"
+                                  },
+                                  "output": {
+                                    "type": "string"
+                                  },
+                                  "durationMs": {
+                                    "type": "number"
+                                  },
+                                  "skipped": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "gate",
+                                  "passed",
+                                  "output",
+                                  "durationMs"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "goal": {
+                              "type": "object",
+                              "properties": {
+                                "probabilityUnmet": {
+                                  "type": "number"
+                                },
+                                "verdict": {
+                                  "type": "string",
+                                  "enum": [
+                                    "met",
+                                    "unmet",
+                                    "unshown"
+                                  ]
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "probabilityUnmet",
+                                "verdict",
+                                "outcome"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "quality": {
+                              "type": "object",
+                              "properties": {
+                                "placeholder": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "tests_weakened": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "breaks_existing": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "out_of_scope": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "hidden_failure": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "unsupported_claims": {
+                                  "type": "object",
+                                  "properties": {
+                                    "verdict": {
+                                      "type": "string",
+                                      "enum": [
+                                        "yes",
+                                        "no",
+                                        "uncertain"
+                                      ]
+                                    },
+                                    "outcome": {
+                                      "type": "string",
+                                      "enum": [
+                                        "act",
+                                        "confirm",
+                                        "escalate"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "verdict",
+                                    "outcome"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "result": {
+                              "type": "string",
+                              "enum": [
+                                "pass",
+                                "nudge",
+                                "await-owner",
+                                "stall",
+                                "recorded"
+                              ]
+                            },
+                            "problems": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "unmet",
+                                  "unshown",
+                                  "regression",
+                                  "quality",
+                                  "gate",
+                                  "claims"
+                                ]
+                              }
+                            },
+                            "qualityProblems": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "placeholder",
+                                  "tests_weakened",
+                                  "breaks_existing",
+                                  "out_of_scope",
+                                  "hidden_failure",
+                                  "unsupported_claims"
+                                ]
+                              }
+                            },
+                            "decisionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "evidenceDigest": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "at",
+                            "trigger",
+                            "goal",
+                            "quality",
+                            "result",
+                            "decisionIds",
+                            "evidenceDigest"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "nudges": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "checkId": {
+                              "type": "string"
+                            },
+                            "at": {
+                              "type": "number"
+                            },
+                            "kinds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "unmet",
+                                  "unshown",
+                                  "regression",
+                                  "quality",
+                                  "gate",
+                                  "claims"
+                                ]
+                              }
+                            },
+                            "criterionIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "delivery": {
+                              "type": "string",
+                              "enum": [
+                                "hold",
+                                "bus",
+                                "wake"
+                              ]
+                            },
+                            "agentId": {
+                              "type": "string"
+                            },
+                            "consumedAt": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "checkId",
+                            "at",
+                            "kinds",
+                            "criterionIds",
+                            "text",
+                            "delivery",
+                            "agentId"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "fixRounds": {
+                        "type": "number"
+                      },
+                      "freshAgents": {
+                        "type": "number"
+                      },
+                      "transportRetries": {
+                        "type": "number"
+                      },
+                      "touchedPaths": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "baseline": {
+                        "type": "object",
+                        "properties": {
+                          "head": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "dirty": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "head",
+                          "dirty"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "usage": {
+                        "type": "object",
+                        "properties": {
+                          "inputTokens": {
+                            "type": "number"
+                          },
+                          "outputTokens": {
+                            "type": "number"
+                          },
+                          "cacheReadTokens": {
+                            "type": "number"
+                          },
+                          "cacheWriteTokens": {
+                            "type": "number"
+                          },
+                          "reasoningTokens": {
+                            "type": "number"
+                          },
+                          "llmCallCount": {
+                            "type": "number"
+                          },
+                          "turnCount": {
+                            "type": "number"
+                          },
+                          "toolCallCount": {
+                            "type": "number"
+                          },
+                          "costUsd": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "costState": {
+                            "type": "string",
+                            "enum": [
+                              "priced",
+                              "unpriced",
+                              "estimated"
+                            ]
+                          },
+                          "costSource": {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "provider",
+                              "catalog",
+                              "mixed"
+                            ]
+                          },
+                          "pricingAsOf": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "inputTokens",
+                          "outputTokens",
+                          "cacheReadTokens",
+                          "cacheWriteTokens",
+                          "llmCallCount",
+                          "turnCount",
+                          "toolCallCount",
+                          "costUsd",
+                          "costState"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "answer": {
+                        "type": "string"
+                      },
+                      "lastOutput": {
+                        "type": "string"
+                      },
+                      "failureReason": {
+                        "type": "string"
+                      },
+                      "attemptOf": {
+                        "type": "string"
+                      },
+                      "attemptIndex": {
+                        "type": "number"
+                      },
+                      "attemptSelection": {
+                        "type": "object",
+                        "properties": {
+                          "engineGroupId": {
+                            "type": "string"
+                          },
+                          "candidateIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "proposedId": {
+                            "type": "string"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          },
+                          "reasons": {
+                            "type": "string"
+                          },
+                          "decisionId": {
+                            "type": "string"
+                          },
+                          "pickedId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "engineGroupId",
+                          "candidateIds",
+                          "outcome",
+                          "reasons"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "attemptUnits": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "groupId": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "goal": {
+                              "type": "string"
+                            },
+                            "brief": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "implement",
+                                "research",
+                                "design",
+                                "integration"
+                              ]
+                            },
+                            "dependsOn": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "files": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "attempts": {
+                              "type": "number"
+                            },
+                            "criteria": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  },
+                                  "origin": {
+                                    "type": "string",
+                                    "enum": [
+                                      "stated",
+                                      "derived",
+                                      "integration",
+                                      "fix",
+                                      "owner"
+                                    ]
+                                  },
+                                  "quote": {
+                                    "type": "string"
+                                  },
+                                  "serves": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "disposition": {
+                                    "type": "string",
+                                    "enum": [
+                                      "judged",
+                                      "excluded",
+                                      "met-by-structure"
+                                    ]
+                                  },
+                                  "dispositionReason": {
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "type": "string",
+                                    "enum": [
+                                      "unread",
+                                      "met",
+                                      "unmet",
+                                      "unshown"
+                                    ]
+                                  },
+                                  "readings": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "checkId": {
+                                          "type": "string"
+                                        },
+                                        "at": {
+                                          "type": "number"
+                                        },
+                                        "probabilityUnmet": {
+                                          "type": "number"
+                                        },
+                                        "verdict": {
+                                          "type": "string",
+                                          "enum": [
+                                            "met",
+                                            "unmet",
+                                            "unshown"
+                                          ]
+                                        },
+                                        "outcome": {
+                                          "type": "string",
+                                          "enum": [
+                                            "act",
+                                            "confirm",
+                                            "escalate"
+                                          ]
+                                        },
+                                        "severity": {
+                                          "type": "string",
+                                          "enum": [
+                                            "critical",
+                                            "major",
+                                            "minor"
+                                          ]
+                                        },
+                                        "decisionId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "checkId",
+                                        "at",
+                                        "probabilityUnmet",
+                                        "verdict",
+                                        "outcome"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "text",
+                                  "origin",
+                                  "serves",
+                                  "disposition",
+                                  "status",
+                                  "readings"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "blocked",
+                                "running",
+                                "checking",
+                                "held",
+                                "nudged",
+                                "fixing",
+                                "awaiting-owner",
+                                "held-merge",
+                                "passed",
+                                "failed",
+                                "cancelled"
+                              ]
+                            },
+                            "agentIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "activeAgentId": {
+                              "type": "string"
+                            },
+                            "route": {
+                              "type": "object",
+                              "properties": {
+                                "model": {
+                                  "type": "string"
+                                },
+                                "provider": {
+                                  "type": "string"
+                                },
+                                "fallbackModels": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "routing": {
+                                  "type": "object",
+                                  "properties": {
+                                    "providerSelection": {
+                                      "type": "string",
+                                      "enum": [
+                                        "inherit-current",
+                                        "concrete",
+                                        "synthetic"
+                                      ]
+                                    },
+                                    "providerFailurePolicy": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ordered-fallbacks",
+                                        "fail"
+                                      ]
+                                    },
+                                    "fallbackModels": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "reasoningEffort": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "provider",
+                                "reason"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "checks": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  },
+                                  "trigger": {
+                                    "type": "string",
+                                    "enum": [
+                                      "turn-end",
+                                      "completion",
+                                      "agent-failed",
+                                      "fix-passed",
+                                      "resume",
+                                      "owner-amend"
+                                    ]
+                                  },
+                                  "claims": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "files_verified",
+                                          "git_corroborated",
+                                          "verified_empty",
+                                          "unverifiable_no_claims",
+                                          "unverified"
+                                        ]
+                                      },
+                                      "summary": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "summary"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "gates": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "gate": {
+                                          "type": "string"
+                                        },
+                                        "passed": {
+                                          "type": "boolean"
+                                        },
+                                        "output": {
+                                          "type": "string"
+                                        },
+                                        "durationMs": {
+                                          "type": "number"
+                                        },
+                                        "skipped": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "required": [
+                                        "gate",
+                                        "passed",
+                                        "output",
+                                        "durationMs"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "goal": {
+                                    "type": "object",
+                                    "properties": {
+                                      "probabilityUnmet": {
+                                        "type": "number"
+                                      },
+                                      "verdict": {
+                                        "type": "string",
+                                        "enum": [
+                                          "met",
+                                          "unmet",
+                                          "unshown"
+                                        ]
+                                      },
+                                      "outcome": {
+                                        "type": "string",
+                                        "enum": [
+                                          "act",
+                                          "confirm",
+                                          "escalate"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "probabilityUnmet",
+                                      "verdict",
+                                      "outcome"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "quality": {
+                                    "type": "object",
+                                    "properties": {
+                                      "placeholder": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "tests_weakened": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "breaks_existing": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "out_of_scope": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "hidden_failure": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "unsupported_claims": {
+                                        "type": "object",
+                                        "properties": {
+                                          "verdict": {
+                                            "type": "string",
+                                            "enum": [
+                                              "yes",
+                                              "no",
+                                              "uncertain"
+                                            ]
+                                          },
+                                          "outcome": {
+                                            "type": "string",
+                                            "enum": [
+                                              "act",
+                                              "confirm",
+                                              "escalate"
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "verdict",
+                                          "outcome"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  "result": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pass",
+                                      "nudge",
+                                      "await-owner",
+                                      "stall",
+                                      "recorded"
+                                    ]
+                                  },
+                                  "problems": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "unmet",
+                                        "unshown",
+                                        "regression",
+                                        "quality",
+                                        "gate",
+                                        "claims"
+                                      ]
+                                    }
+                                  },
+                                  "qualityProblems": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "placeholder",
+                                        "tests_weakened",
+                                        "breaks_existing",
+                                        "out_of_scope",
+                                        "hidden_failure",
+                                        "unsupported_claims"
+                                      ]
+                                    }
+                                  },
+                                  "decisionIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "evidenceDigest": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "at",
+                                  "trigger",
+                                  "goal",
+                                  "quality",
+                                  "result",
+                                  "decisionIds",
+                                  "evidenceDigest"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "nudges": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "checkId": {
+                                    "type": "string"
+                                  },
+                                  "at": {
+                                    "type": "number"
+                                  },
+                                  "kinds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "unmet",
+                                        "unshown",
+                                        "regression",
+                                        "quality",
+                                        "gate",
+                                        "claims"
+                                      ]
+                                    }
+                                  },
+                                  "criterionIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  },
+                                  "delivery": {
+                                    "type": "string",
+                                    "enum": [
+                                      "hold",
+                                      "bus",
+                                      "wake"
+                                    ]
+                                  },
+                                  "agentId": {
+                                    "type": "string"
+                                  },
+                                  "consumedAt": {
+                                    "type": "number"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "checkId",
+                                  "at",
+                                  "kinds",
+                                  "criterionIds",
+                                  "text",
+                                  "delivery",
+                                  "agentId"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "fixRounds": {
+                              "type": "number"
+                            },
+                            "freshAgents": {
+                              "type": "number"
+                            },
+                            "transportRetries": {
+                              "type": "number"
+                            },
+                            "touchedPaths": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "baseline": {
+                              "type": "object",
+                              "properties": {
+                                "head": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "dirty": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              "required": [
+                                "head",
+                                "dirty"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "usage": {
+                              "type": "object",
+                              "properties": {
+                                "inputTokens": {
+                                  "type": "number"
+                                },
+                                "outputTokens": {
+                                  "type": "number"
+                                },
+                                "cacheReadTokens": {
+                                  "type": "number"
+                                },
+                                "cacheWriteTokens": {
+                                  "type": "number"
+                                },
+                                "reasoningTokens": {
+                                  "type": "number"
+                                },
+                                "llmCallCount": {
+                                  "type": "number"
+                                },
+                                "turnCount": {
+                                  "type": "number"
+                                },
+                                "toolCallCount": {
+                                  "type": "number"
+                                },
+                                "costUsd": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "costState": {
+                                  "type": "string",
+                                  "enum": [
+                                    "priced",
+                                    "unpriced",
+                                    "estimated"
+                                  ]
+                                },
+                                "costSource": {
+                                  "type": "string",
+                                  "enum": [
+                                    "user",
+                                    "provider",
+                                    "catalog",
+                                    "mixed"
+                                  ]
+                                },
+                                "pricingAsOf": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "inputTokens",
+                                "outputTokens",
+                                "cacheReadTokens",
+                                "cacheWriteTokens",
+                                "llmCallCount",
+                                "turnCount",
+                                "toolCallCount",
+                                "costUsd",
+                                "costState"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "answer": {
+                              "type": "string"
+                            },
+                            "lastOutput": {
+                              "type": "string"
+                            },
+                            "failureReason": {
+                              "type": "string"
+                            },
+                            "attemptOf": {
+                              "type": "string"
+                            },
+                            "attemptIndex": {
+                              "type": "number"
+                            },
+                            "attemptSelection": {
+                              "type": "object",
+                              "properties": {
+                                "engineGroupId": {
+                                  "type": "string"
+                                },
+                                "candidateIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "proposedId": {
+                                  "type": "string"
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "act",
+                                    "confirm",
+                                    "escalate"
+                                  ]
+                                },
+                                "reasons": {
+                                  "type": "string"
+                                },
+                                "decisionId": {
+                                  "type": "string"
+                                },
+                                "pickedId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "engineGroupId",
+                                "candidateIds",
+                                "outcome",
+                                "reasons"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "groupId",
+                            "title",
+                            "goal",
+                            "brief",
+                            "role",
+                            "dependsOn",
+                            "files",
+                            "attempts",
+                            "criteria",
+                            "status",
+                            "agentIds",
+                            "checks",
+                            "nudges",
+                            "fixRounds",
+                            "freshAgents",
+                            "transportRetries",
+                            "touchedPaths",
+                            "usage"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "groupId",
+                      "title",
+                      "goal",
+                      "brief",
+                      "role",
+                      "dependsOn",
+                      "files",
+                      "attempts",
+                      "criteria",
+                      "status",
+                      "agentIds",
+                      "checks",
+                      "nudges",
+                      "fixRounds",
+                      "freshAgents",
+                      "transportRetries",
+                      "touchedPaths",
+                      "usage"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "shape": {
+                  "type": "object",
+                  "properties": {
+                    "forbids_delegation": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "yes",
+                            "no",
+                            "uncertain"
+                          ]
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "probability",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requests_parallel_agents": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "yes",
+                            "no",
+                            "uncertain"
+                          ]
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "probability",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "forbids_writing": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "yes",
+                            "no",
+                            "uncertain"
+                          ]
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "probability",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "asks_for_attempts": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "yes",
+                            "no",
+                            "uncertain"
+                          ]
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "probability",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decisionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "forbids_delegation",
+                    "requests_parallel_agents",
+                    "forbids_writing",
+                    "asks_for_attempts",
+                    "decisionIds"
+                  ],
+                  "additionalProperties": false
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "shaping",
+                    "planning",
+                    "checking-plan",
+                    "running",
+                    "judging",
+                    "fixing",
+                    "committing",
+                    "awaiting-owner",
+                    "passed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "statusBeforeOwner": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "shaping",
+                    "planning",
+                    "checking-plan",
+                    "running",
+                    "judging",
+                    "fixing",
+                    "committing",
+                    "awaiting-owner",
+                    "passed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "resumeFrom": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "shaping",
+                    "planning",
+                    "checking-plan",
+                    "running",
+                    "judging",
+                    "fixing",
+                    "committing",
+                    "awaiting-owner",
+                    "passed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "number"
+                      },
+                      "trigger": {
+                        "type": "string",
+                        "enum": [
+                          "turn-end",
+                          "completion",
+                          "agent-failed",
+                          "fix-passed",
+                          "resume",
+                          "owner-amend"
+                        ]
+                      },
+                      "claims": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "files_verified",
+                              "git_corroborated",
+                              "verified_empty",
+                              "unverifiable_no_claims",
+                              "unverified"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "gates": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "gate": {
+                              "type": "string"
+                            },
+                            "passed": {
+                              "type": "boolean"
+                            },
+                            "output": {
+                              "type": "string"
+                            },
+                            "durationMs": {
+                              "type": "number"
+                            },
+                            "skipped": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "gate",
+                            "passed",
+                            "output",
+                            "durationMs"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "goal": {
+                        "type": "object",
+                        "properties": {
+                          "probabilityUnmet": {
+                            "type": "number"
+                          },
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "met",
+                              "unmet",
+                              "unshown"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "probabilityUnmet",
+                          "verdict",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "quality": {
+                        "type": "object",
+                        "properties": {
+                          "placeholder": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "tests_weakened": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "breaks_existing": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "out_of_scope": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "hidden_failure": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "unsupported_claims": {
+                            "type": "object",
+                            "properties": {
+                              "verdict": {
+                                "type": "string",
+                                "enum": [
+                                  "yes",
+                                  "no",
+                                  "uncertain"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "act",
+                                  "confirm",
+                                  "escalate"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "verdict",
+                              "outcome"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "result": {
+                        "type": "string",
+                        "enum": [
+                          "pass",
+                          "nudge",
+                          "await-owner",
+                          "stall",
+                          "recorded"
+                        ]
+                      },
+                      "problems": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "unmet",
+                            "unshown",
+                            "regression",
+                            "quality",
+                            "gate",
+                            "claims"
+                          ]
+                        }
+                      },
+                      "qualityProblems": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "placeholder",
+                            "tests_weakened",
+                            "breaks_existing",
+                            "out_of_scope",
+                            "hidden_failure",
+                            "unsupported_claims"
+                          ]
+                        }
+                      },
+                      "decisionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "evidenceDigest": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "at",
+                      "trigger",
+                      "goal",
+                      "quality",
+                      "result",
+                      "decisionIds",
+                      "evidenceDigest"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "fixRounds": {
+                  "type": "number"
+                },
+                "escalations": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "number"
+                      },
+                      "scope": {
+                        "type": "string",
+                        "enum": [
+                          "plan",
+                          "unit",
+                          "group",
+                          "deliverable",
+                          "shape"
+                        ]
+                      },
+                      "targetId": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "plan-unresolved",
+                          "stalled",
+                          "unsettled",
+                          "fix-rounds-exhausted",
+                          "writing-unclear",
+                          "attempts-undecided",
+                          "owner-decision-needed"
+                        ]
+                      },
+                      "question": {
+                        "type": "string"
+                      },
+                      "unmetCriterionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "resolvedAt": {
+                        "type": "number"
+                      },
+                      "reply": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          },
+                          "reading": {
+                            "type": "string",
+                            "enum": [
+                              "approve",
+                              "reject",
+                              "amend",
+                              "unclear"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          },
+                          "decisionId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "reading",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "at",
+                      "scope",
+                      "targetId",
+                      "reason",
+                      "question",
+                      "unmetCriterionIds"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "decisions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "type": "number"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "created",
+                          "queued",
+                          "shaped",
+                          "planned",
+                          "plan-repaired",
+                          "plan-accepted",
+                          "spawned",
+                          "checked",
+                          "nudged",
+                          "woke",
+                          "regressed",
+                          "stalled",
+                          "fix-planned",
+                          "fresh-agent",
+                          "escalated",
+                          "owner-replied",
+                          "transport-retry",
+                          "silence-retry",
+                          "attempts-selected",
+                          "attempts-reduced",
+                          "group-passed",
+                          "committed",
+                          "passed",
+                          "failed",
+                          "cancelled",
+                          "resumed",
+                          "reaped"
+                        ]
+                      },
+                      "targetId": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "decisionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "route": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string"
+                          },
+                          "fallbackModels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "routing": {
+                            "type": "object",
+                            "properties": {
+                              "providerSelection": {
+                                "type": "string",
+                                "enum": [
+                                  "inherit-current",
+                                  "concrete",
+                                  "synthetic"
+                                ]
+                              },
+                              "providerFailurePolicy": {
+                                "type": "string",
+                                "enum": [
+                                  "ordered-fallbacks",
+                                  "fail"
+                                ]
+                              },
+                              "fallbackModels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "reasoningEffort": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "model",
+                          "provider",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "at",
+                      "action",
+                      "targetId",
+                      "reason",
+                      "decisionIds"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "usage": {
+                  "type": "object",
+                  "properties": {
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    },
+                    "cacheReadTokens": {
+                      "type": "number"
+                    },
+                    "cacheWriteTokens": {
+                      "type": "number"
+                    },
+                    "reasoningTokens": {
+                      "type": "number"
+                    },
+                    "llmCallCount": {
+                      "type": "number"
+                    },
+                    "turnCount": {
+                      "type": "number"
+                    },
+                    "toolCallCount": {
+                      "type": "number"
+                    },
+                    "costUsd": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "costState": {
+                      "type": "string",
+                      "enum": [
+                        "priced",
+                        "unpriced",
+                        "estimated"
+                      ]
+                    },
+                    "costSource": {
+                      "type": "string",
+                      "enum": [
+                        "user",
+                        "provider",
+                        "catalog",
+                        "mixed"
+                      ]
+                    },
+                    "pricingAsOf": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "outputTokens",
+                    "cacheReadTokens",
+                    "cacheWriteTokens",
+                    "llmCallCount",
+                    "turnCount",
+                    "toolCallCount",
+                    "costUsd",
+                    "costState"
+                  ],
+                  "additionalProperties": false
+                },
+                "judgmentUsage": {
+                  "type": "object",
+                  "properties": {
+                    "calls": {
+                      "type": "number"
+                    },
+                    "inputTokens": {
+                      "type": "number"
+                    },
+                    "outputTokens": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "calls",
+                    "inputTokens",
+                    "outputTokens"
+                  ],
+                  "additionalProperties": false
+                },
+                "plannerAgentIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "answer": {
+                  "type": "string"
+                },
+                "statusLine": {
+                  "type": "string"
+                },
+                "commit": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "committed",
+                        "applied",
+                        "skipped",
+                        "failed"
+                      ]
+                    },
+                    "hash": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "note"
+                  ],
+                  "additionalProperties": false
+                },
+                "failureKind": {
+                  "type": "string",
+                  "enum": [
+                    "transport",
+                    "max_turns",
+                    "planning",
+                    "budget",
+                    "owner-rejected",
+                    "judgment-unavailable",
+                    "zombie",
+                    "other"
+                  ]
+                },
+                "error": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "number"
+                },
+                "completedAt": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "id",
+                "schemaVersion",
+                "sessionId",
+                "origin",
+                "ask",
+                "ownerAgentId",
+                "projectRoot",
+                "isolation",
+                "goal",
+                "criteria",
+                "groups",
+                "units",
+                "status",
+                "checks",
+                "fixRounds",
+                "escalations",
+                "decisions",
+                "usage",
+                "judgmentUsage",
+                "plannerAgentIds",
+                "createdAt"
+              ],
+              "additionalProperties": false
+            },
+            "ownerAgentId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "contract",
+            "ownerAgentId"
+          ],
+          "additionalProperties": false
+        },
+        "invokable": true
+      },
+      {
         "id": "control.auth.current",
         "title": "Current Auth Context",
         "description": "Return the current control-plane principal, granted scopes, and authentication mode.",
@@ -105139,7 +115945,7 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       {
         "id": "control.hosted_session_update",
         "title": "Hosted Session Lifecycle Update",
-        "description": "Every lifecycle transition of a session whose loop runs INSIDE the daemon: created, attached, detached, turn started, turn ended, terminated, and restored after a restart. The payload carries the whole hosted-session record plus the transition name, the client it is about (attach/detach) and a short detail, so a subscriber renders the change from the event and needs no follow-up read. This channel is LIFECYCLE ONLY. The turn itself, streamed tokens, tool calls, tool results, turn transitions, is already on the `turn` and `tools` runtime domains, stamped with the hosted session id, because a hosted session runs the ordinary orchestrator; a client watches those exactly as it does for a local session and filters on the id it was handed. A second copy of that stream is not published here. Domain-tagged `session`, so a client narrowing with ?domains=… must include `session` to receive it. The record is the daemon's: `effectiveDetachPolicy` says what leaving would do right now, and `terminatedReason` says why a session ended, a hosted session never simply disappears.",
+        "description": "Every lifecycle transition of a session whose loop runs INSIDE the daemon: created, attached, detached, turn started, turn ended, terminated, and restored after a restart, plus a contract started in the session and a line the session said for one of its contracts (a question for the owner, or the outcome). The payload carries the whole hosted-session record plus the transition name, the client it is about (attach/detach) and a short detail, so a subscriber renders the change from the event and needs no follow-up read. This channel is LIFECYCLE ONLY. The turn itself, streamed tokens, tool calls, tool results, turn transitions, is already on the `turn` and `tools` runtime domains, stamped with the hosted session id, because a hosted session runs the ordinary orchestrator; a client watches those exactly as it does for a local session and filters on the id it was handed. A second copy of that stream is not published here. Domain-tagged `session`, so a client narrowing with ?domains=… must include `session` to receive it. The record is the daemon's: `effectiveDetachPolicy` says what leaving would do right now, and `terminatedReason` says why a session ended, a hosted session never simply disappears.",
         "category": "transport",
         "source": "builtin",
         "transport": [
@@ -105167,7 +115973,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                 "hosted-session-turn-started",
                 "hosted-session-turn-ended",
                 "hosted-session-terminated",
-                "hosted-session-restored"
+                "hosted-session-restored",
+                "hosted-session-contract-started",
+                "hosted-session-contract-notice"
               ]
             },
             "session": {
@@ -105599,10 +116407,10 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       }
     ],
     "schemaCoverage": {
-      "methods": 507,
-      "typedInputs": 507,
+      "methods": 512,
+      "typedInputs": 512,
       "genericInputs": 0,
-      "typedOutputs": 507,
+      "typedOutputs": 512,
       "genericOutputs": 0
     },
     "eventCoverage": {
@@ -105611,8 +116419,8 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
       "withWireEvents": 34
     },
     "validationCoverage": {
-      "methods": 507,
-      "validated": 500,
+      "methods": 512,
+      "validated": 505,
       "skippedGeneric": 0,
       "skippedUntyped": 7
     }

@@ -329,7 +329,14 @@ export { createContractFleetControls, qualifyId, splitQualifiedId } from './flee
 export type { ContractConflictItem, ContractFleetControls, ContractFleetControlsDeps } from './fleet-controls.js';
 export { createRoutePlannerContractSelector } from './route.js';
 export type { ContractPlannedRoute, ContractRoutePlanner } from './route.js';
-export { ContractExternalWorkBridge } from './external.js';
+export {
+  CONTRACT_WORK_STATUS,
+  ContractExternalWorkBridge,
+  contractWorkHandle,
+  contractWorkProgress,
+  contractWorkResult,
+  contractWorkSnapshot,
+} from './external.js';
 export type {
   ContractExternalWorkAdapter,
   ContractExternalWorkHandle,
@@ -337,4 +344,33 @@ export type {
   ContractExternalWorkResult,
   ContractExternalWorkSnapshot,
   ContractExternalWorkStatus,
+  ContractWorkFields,
 } from './external.js';
+// The contracts operator surface (section 10.2): the contracts.* methods, their REST paths and the external adapters act through it.
+export { ContractOperatorError, OPERATOR_SESSION_ID, createContractOperatorService } from './operator-service.js';
+export type {
+  ContractOperatorErrorCode,
+  ContractOperatorService,
+  ContractOperatorServiceDeps,
+  HostedContractRunners,
+  HostedSessionContracts,
+  OperatorContractRunner,
+  OperatorStartedContract,
+  OperatorStartInput,
+} from './operator-service.js';
+// The command line (section 10.1): the whole CLI as one function, for the bin and a product's run command.
+export {
+  CLI_CANCEL_REASON,
+  CLI_INTERRUPT_REASON,
+  CONTRACT_CLI_USAGE,
+  EXIT_AWAITING_OWNER,
+  EXIT_FAILED,
+  EXIT_INTERRUPTED,
+  EXIT_OK,
+  EXIT_USAGE,
+  SESSION_CONTINUE_LINE,
+  runContractCli,
+} from './cli.js';
+export type { ContractCliDeps, ContractCliIo, ContractCliRunner, ContractSessionDriver, OpenedContractRunner } from './cli.js';
+export { contractRow, formatContractEvent, renderContractTable, renderContractTree } from './cli-render.js';
+export type { ContractRow } from './cli-render.js';

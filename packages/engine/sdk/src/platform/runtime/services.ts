@@ -138,6 +138,7 @@ import { attachConfigEmitBridge } from './config/index.js';
 import { ObservedAgentSource } from './fleet/observed/source.js';
 import type { ContractRunner } from '../contract/runner.js';
 import { composeContractRunner, resumeContracts } from './contract-composition.js';
+import { createContractOperatorService, type ContractOperatorService } from '../contract/operator-service.js';
 import type { SessionSnapshot } from './session-persistence-scope.js';
 import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import {
@@ -312,6 +313,8 @@ export interface RuntimeServices {
   readonly sessionLiveTurnControls: SessionLiveTurnControlsHolder;
   /** The contract runner (contract-composition.ts): every spawn that is not outside a contract, every turn routed to work, and the fleet's contract tree go through it. */
   readonly contractRunner: ContractRunner;
+  /** The contracts operator surface (contract runner design 10.2) over this runner and, once attached, the hosted-session floors' runners. */
+  readonly contractOperator: ContractOperatorService;
   /** A session's snapshot for saving, with the trees of the contracts started in the session filled from the runner (contract runner design 7.1). */
   sessionSnapshot(sessionId: string, conversation: Omit<SessionSnapshot, 'contracts'>): SessionSnapshot;
   readonly processManager: ProcessManager;
@@ -860,6 +863,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     planManager,
   });
   const contractRunner = contracts.runner;
+  const contractOperator = createContractOperatorService({ runner: contractRunner, workingDirectory });
   agentOrchestrator.setDependencies({
     contractRunner,
     contractHooks: contractRunner.hooks(),
@@ -1046,7 +1050,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     resetLocalEngineFailureState: () => voiceProviders.get('local')?.resetEngineFailureState?.(),
     admitExpensiveWork: (label) => admitExpensiveWork(label),
   });
-  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
+  registerGatewayVerbGroups(gatewayMethods, { homeDirectory, processRegistry, workspaceCheckpointManager, sessionBroker, secretsManager, approvalBroker, requestApproval: (input) => approvalBroker.requestApproval(input), stampFixSessionOnApproval: (offerCallId, outcome) => approvalBroker.stampFixSession(offerCallId, outcome), watcherRegistry, userPermissionRuleStore, shellPaths, surfaceRoot, runtimeBus: options.runtimeBus, sessionPresence: { isAttached }, configManager, runtimeStore: options.runtimeStore, channelDeliveryRouter, providerRegistry, automationManager, sessionLister: sessionBroker, sessionIntake: sessionBroker, channelPolicy, workingDirectory, attemptsController: contractRunner.fleetControls(), contractOperator, stepUpService, memoryRegistry, pairingTokens, acpHost, sessionLiveTurnControls, powerManager, memoryGovernor, voiceSetup, credentialWrites: { config: configManager, secrets: secretsManager }, approvalRaise: approvalBroker, disposal: disposalScope.registry, personalCapture, onCiAutoWatch: (observer) => { ciAutoWatchObserver = observer; } }); // see routes/register-gateway-verb-groups.ts
   // Teardown for every poller started above. RuntimePollerOwners is all-required,
   // so a poller added to this graph later cannot compile without being named here.
   registerRuntimePollers(disposalScope.registry, {
@@ -1154,6 +1158,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     contextAccountingHolder,
     sessionLiveTurnControls,
     contractRunner,
+    contractOperator,
     sessionSnapshot: (sessionId, conversation) => ({ ...conversation, contracts: contractRunner.list({ sessionId, includeTerminal: true }) }),
     processManager,
     processRegistry,

@@ -3,7 +3,8 @@
  *
  * Exercises the SDK Embedding API 1.0 facade (`createEmbeddedSession`) against a
  * real in-process daemon: the exposed seams (runtime bus, session broker,
- * approval broker), the injected permission-callback bridge, and idempotent
+ * approval broker), the injected permission-callback bridge, a spawn-mode submit
+ * starting a contract through the daemon's contracts surface, and idempotent
  * shutdown. LLM-free, it drives the brokers directly rather than a full turn.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -79,6 +80,25 @@ describe('createEmbeddedSession', () => {
   test('the session broker seam creates a workspace-bound session', async () => {
     const record = await session.sessions.createSession({ project: work, title: 'embed' });
     expect(record.id.length).toBeGreaterThan(0);
+  });
+
+  test('a submit the broker answers in spawn mode starts a contract and binds its owner to the session', async () => {
+    const created: { contractId: string; sessionId: string; origin: string; ask: string; ownerAgentId: string }[] = [];
+    const unsubscribe = session.events.onDomain('contracts', (envelope) => {
+      const payload = envelope.payload as { type: string; contractId: string; sessionId: string; origin: string; ask: string; ownerAgentId: string };
+      if (payload.type === 'CONTRACT_CREATED') created.push(payload);
+    });
+    try {
+      const submission = await session.submit({ body: 'Add a CHANGELOG entry for the export flag.', title: 'embed work' });
+      expect(submission.mode).toBe('spawn');
+      expect(created).toHaveLength(1);
+      expect(created[0]).toMatchObject({ sessionId: submission.session.id, origin: 'external', ask: 'Add a CHANGELOG entry for the export flag.' });
+      // The owner record is the agent working on the session's input.
+      expect(submission.activeAgentId).toBe(created[0]!.ownerAgentId);
+      expect(session.sessions.getSession(submission.session.id)?.activeAgentId).toBe(created[0]!.ownerAgentId);
+    } finally {
+      unsubscribe();
+    }
   });
 
   test('stop is idempotent', async () => {

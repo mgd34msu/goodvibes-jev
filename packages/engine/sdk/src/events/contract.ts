@@ -157,6 +157,10 @@ export type EscalationReason = (typeof ESCALATION_REASONS)[number];
 export const OWNER_REPLY_READINGS = ['approve', 'reject', 'amend', 'unclear'] as const;
 export type OwnerReplyReading = (typeof OWNER_REPLY_READINGS)[number];
 
+/** What the runner did with an owner's reply (the action of CONTRACT_OWNER_REPLIED). */
+export const OWNER_REPLY_ACTIONS = ['approved', 'amended', 'stopped', 'asked-again', 'refused'] as const;
+export type OwnerReplyAction = (typeof OWNER_REPLY_ACTIONS)[number];
+
 export const STALL_ROUTES = ['split', 'fresh', 'owner'] as const;
 export type StallRoute = (typeof STALL_ROUTES)[number];
 
@@ -178,6 +182,19 @@ export type GroupKind = (typeof GROUP_KINDS)[number];
 
 export const UNIT_SILENCE_ACTIONS = ['retried', 'failed'] as const;
 export type UnitSilenceAction = (typeof UNIT_SILENCE_ACTIONS)[number];
+
+/** How much an unmet criterion matters, read by the unmet-severity battery. */
+export const CRITERION_SEVERITIES = ['critical', 'major', 'minor'] as const;
+export type CriterionSeverity = (typeof CRITERION_SEVERITIES)[number];
+
+/** What a contract decision records the runner did. */
+export const CONTRACT_DECISION_ACTIONS = [
+  'created', 'queued', 'shaped', 'planned', 'plan-repaired', 'plan-accepted', 'spawned', 'checked',
+  'nudged', 'woke', 'regressed', 'stalled', 'fix-planned', 'fresh-agent', 'escalated',
+  'owner-replied', 'transport-retry', 'silence-retry', 'attempts-selected', 'attempts-reduced', 'group-passed',
+  'committed', 'passed', 'failed', 'cancelled', 'resumed', 'reaped',
+] as const;
+export type ContractDecisionAction = (typeof CONTRACT_DECISION_ACTIONS)[number];
 
 /** Which input set a unit agent's turn ceiling, carried on a max_turns failure. */
 export const TURN_LIMIT_SOURCES = ['default', 'spawn-override', 'policy-bound'] as const;

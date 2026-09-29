@@ -17,3 +17,4 @@ export type {
   KnownPathMethodArgs,
   KnownStreamArgs,
 } from './client-core.js';
+export { OPERATOR_WORK_CANCEL_REASON, createOperatorContractWorkAdapter } from './contract-work-adapter.js';

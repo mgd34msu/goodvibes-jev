@@ -146,6 +146,7 @@ export class DaemonServer {
         text: string;
         at: number;
     }[];
+    get contracts(): RuntimeServices['contractOperator'];
     // Warning: (ae-forgotten-export) The symbol "DaemonDangerConfig" needs to be exported by the entry point embed.d.ts
     enable(dangerConfig: DaemonDangerConfig, token?: string): boolean;
     get eventBus(): RuntimeEventBus;

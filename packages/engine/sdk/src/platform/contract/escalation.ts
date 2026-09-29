@@ -17,7 +17,7 @@
  */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { Outcome } from '@goodvibes-jev/judgment';
-import type { OwnerReplyReading } from '../../events/contract.js';
+import type { OwnerReplyAction, OwnerReplyReading } from '../../events/contract.js';
 import { ownerPick } from './batteries/owner-pick.js';
 import { ownerReply } from './batteries/owner-reply.js';
 import { readRequestShape, REQUEST_SHAPE_SITE, saysNoAtAct, saysYesAtAct } from './batteries/request-shape.js';
@@ -86,7 +86,7 @@ export const AMENDMENT_FAILED_LINE = (problems: string): string => `That change 
 /** Lines the runner adds under a question it asks again; they are dropped before another is added. */
 const ADDED_LINE_PREFIXES = [ASK_AGAIN_LINE, APPROVAL_REFUSED_LINE, 'Say which attempt to take', 'The plan cannot run as it stands', 'That change could not be applied'];
 
-export type OwnerReplyAction = 'approved' | 'amended' | 'stopped' | 'asked-again' | 'refused';
+export type { OwnerReplyAction };
 
 export interface OwnerReplyOutcome {
   readonly escalationId: string;

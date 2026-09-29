@@ -69,6 +69,8 @@ export const HOSTED_SESSION_UPDATE_WIRE_EVENTS = [
   'hosted-session-turn-ended',
   'hosted-session-terminated',
   'hosted-session-restored',
+  'hosted-session-contract-started',
+  'hosted-session-contract-notice',
 ] as const;
 
 const RUNTIME_DOMAIN_DESCRIPTIONS = {
@@ -174,7 +176,9 @@ export const builtinGatewayEventDescriptors: readonly GatewayEventDescriptor[] =
     title: 'Hosted Session Lifecycle Update',
     description:
       'Every lifecycle transition of a session whose loop runs INSIDE the daemon: created, attached, '
-      + 'detached, turn started, turn ended, terminated, and restored after a restart. The payload '
+      + 'detached, turn started, turn ended, terminated, and restored after a restart, plus a contract '
+      + 'started in the session and a line the session said for one of its contracts (a question for '
+      + 'the owner, or the outcome). The payload '
       + 'carries the whole hosted-session record plus the transition name, the client it is about '
       + '(attach/detach) and a short detail, so a subscriber renders the change from the event and '
       + 'needs no follow-up read. '

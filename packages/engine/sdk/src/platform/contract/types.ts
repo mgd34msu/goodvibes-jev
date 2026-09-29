@@ -18,6 +18,7 @@ import type {
   CheckTrigger,
   ClaimVerificationKind,
   ContractAgentRole,
+  ContractDecisionAction,
   ContractFailureKind,
   ContractGroupStatus,
   ContractOrigin,
@@ -26,6 +27,7 @@ import type {
   ContractUnitStatus,
   CriterionDisposition,
   CriterionOrigin,
+  CriterionSeverity,
   CriterionStatus,
   CriterionVerdict,
   EscalationReason,
@@ -46,11 +48,13 @@ export type {
   CheckResult,
   CheckTrigger,
   ContractAgentRole,
+  ContractDecisionAction,
   ContractFailureKind,
   ContractOrigin,
   ContractStatus,
   CriterionDisposition,
   CriterionOrigin,
+  CriterionSeverity,
   CriterionStatus,
   CriterionVerdict,
   EscalationReason,
@@ -64,11 +68,13 @@ export type {
 };
 export {
   CONTRACT_AGENT_ROLES,
+  CONTRACT_DECISION_ACTIONS,
   CONTRACT_FAILURE_KINDS,
   CONTRACT_GROUP_STATUSES,
   CONTRACT_ORIGINS,
   CONTRACT_STATUSES,
   CONTRACT_UNIT_STATUSES,
+  CRITERION_SEVERITIES,
   QUALITY_ITEMS,
 } from '../../events/contract.js';
 
@@ -172,8 +178,6 @@ export interface RequestShape {
 
 // ── Criteria and readings ─────────────────────────────────────────────────────
 
-export const CRITERION_SEVERITIES = ['critical', 'major', 'minor'] as const;
-export type CriterionSeverity = (typeof CRITERION_SEVERITIES)[number];
 
 export interface CriterionReading {
   readonly checkId: string;
@@ -356,13 +360,6 @@ export interface Escalation {
   } | undefined;
 }
 
-export const CONTRACT_DECISION_ACTIONS = [
-  'created', 'queued', 'shaped', 'planned', 'plan-repaired', 'plan-accepted', 'spawned', 'checked',
-  'nudged', 'woke', 'regressed', 'stalled', 'fix-planned', 'fresh-agent', 'escalated',
-  'owner-replied', 'transport-retry', 'silence-retry', 'attempts-selected', 'attempts-reduced', 'group-passed',
-  'committed', 'passed', 'failed', 'cancelled', 'resumed', 'reaped',
-] as const;
-export type ContractDecisionAction = (typeof CONTRACT_DECISION_ACTIONS)[number];
 
 /** One runner decision, with the decision-log ids of the Jev readings behind it. */
 export interface ContractDecision {

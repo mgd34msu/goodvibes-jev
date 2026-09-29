@@ -73,7 +73,12 @@ export interface EmbeddedSession {
   readonly approvals: ApprovalBroker;
   /** The shared session broker backing this session. */
   readonly sessions: SharedSessionBroker;
-  /** Submit input to the session. Returns the broker's submission record. */
+  /**
+   * Submit input to the session. Returns the broker's submission record. When
+   * the broker answers in spawn mode (nothing is running for the input), the
+   * text starts a contract and the record's `activeAgentId` is the contract's
+   * owner agent, bound to the session.
+   */
   submit(input: string | EmbeddedSessionInput): Promise<SharedSessionSubmission>;
   /**
    * Cancel the in-flight work for one or more running agents (the agent ids a
@@ -150,10 +155,10 @@ export async function createEmbeddedSession(options: EmbedSessionOptions): Promi
     events,
     approvals,
     sessions,
-    submit: (input) => {
+    submit: async (input) => {
       const body = typeof input === 'string' ? input : input.body;
       const structured = typeof input === 'string' ? undefined : input;
-      return sessions.submitMessage({
+      const submission = await sessions.submitMessage({
         surfaceKind,
         surfaceId,
         body,
@@ -161,6 +166,15 @@ export async function createEmbeddedSession(options: EmbedSessionOptions): Promi
         ...(structured?.title !== undefined ? { title: structured.title } : {}),
         ...(structured?.metadata !== undefined ? { metadata: structured.metadata } : {}),
       });
+      if (submission.mode !== 'spawn') return submission;
+      // Spawn mode: nothing is running for this input yet. The submitted text
+      // is the ask of a new contract (contract runner design 10.2), started
+      // through the daemon's contracts operator surface in the daemon's
+      // working directory (this workspace), and its owner agent is bound to the
+      // session as the agent working on it.
+      const started = await server.contracts.start({ ask: body, sessionId: submission.session.id });
+      const bound = await sessions.bindAgent(submission.session.id, started.ownerAgentId);
+      return { ...submission, session: bound ?? submission.session, activeAgentId: started.ownerAgentId };
     },
     cancelActive: (agentIds) => {
       let cancelled = 0;

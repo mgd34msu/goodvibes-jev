@@ -342,6 +342,8 @@ export class DaemonServer {
 
   /** The daemon's shared session broker, the SAME broker the HTTP session routes drive. Exposed so an in-process embedder can submit input to a session directly. */
   get sessions(): SharedSessionBroker { return this.sessionBroker; }
+  /** The contracts operator surface, the SAME service the contracts.* methods and their REST paths act through. Exposed so an in-process embedder starts the contract a spawn-mode submit asks for (embed/session.ts). */
+  get contracts(): RuntimeServices['contractOperator'] { return this.runtimeServices.contractOperator; }
 
   /**
    * Cancel a running agent by id, the SAME cooperative-plus-abort cancellation

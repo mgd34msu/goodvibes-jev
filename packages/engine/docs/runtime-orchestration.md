@@ -127,7 +127,19 @@ separate review and fix agents. The build design is
 | `turn` | The contract intake reads a person's turn as work (see [Turn loop](#turn-loop)) |
 | `agent-tool` | The `agent` tool's `spawn` or `batch-spawn` without `outsideContract`; the tasks become proposed units and the result carries `contractStarted: true` and the contract id |
 | `proposal` | A launched plan proposal or workstream draft, through `runner.startFromPlan`; the drafted units are kept and the planner writes their criteria |
-| `cli`, `hosted`, `external` | Declared for a command-line host, the daemon's contract methods and the external work seam (`ContractExternalWorkAdapter` and `ContractExternalWorkBridge`: `dispatch`, `status`, `cancel`, `result`); no engine code starts a contract with these origins. A turn in a hosted session is read by the same turn intake and starts with origin `turn` |
+| `cli` | The command line, `goodvibes-contract run` (`runContractCli` in `contract/cli.ts`); it follows the contract, asks the owner's questions at a terminal, and hosts the session a session-mode contract's turns run in |
+| `hosted` | `contracts.start` naming a live hosted session, and the hosted external work adapter (`createHostedContractWorkAdapter`); the contract runs on the session's workspace floor. A turn in a hosted session is read by the same turn intake and starts with origin `turn` |
+| `external` | `contracts.start` without a hosted session (under the `operator` session unless one is named), the operator external work adapter (`createOperatorContractWorkAdapter`), and an embedded session's spawn-mode submit |
+
+The daemon's operator methods `contracts.list`, `contracts.get`,
+`contracts.start`, `contracts.cancel` and `contracts.reply` (REST
+`/api/contracts...`) act through one service across the daemon's runner and
+each hosted floor's runner. A hosted session lists the contracts it started
+on its record (`contractIds`), says each contract's question for its owner
+and its outcome in its conversation, and sends its next turn to an open
+question. The external work seam (`ContractExternalWorkAdapter`: `dispatch`,
+`status`, `cancel`, `result`) maps a contract to a snapshot and a result the
+same way in both adapters (`contract-work.ts` in the contracts package).
 
 A spawn by an `AgentManager` caller that does not set `outsideContract` goes
 through `runner.startForOwner`, which makes the spawned record the contract's

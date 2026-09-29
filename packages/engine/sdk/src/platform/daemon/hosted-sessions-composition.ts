@@ -171,6 +171,8 @@ export function composeHostedSessionsForFacade(
   // signals a hosted turn never emits, and closes it 'idle-reaped' while its
   // turn is still running.
   runtimeServices.sessionBroker.setExternalLivenessProbe(createHostedSessionLivenessProbe(manager));
+  // The contracts.* methods read and act across the hosted floors' runners too.
+  runtimeServices.contractOperator.attachHosted(manager.contractRunners());
   return manager;
 }
 

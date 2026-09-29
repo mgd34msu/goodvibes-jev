@@ -175,10 +175,11 @@ const ROUTE_REGISTRARS: ReadonlyArray<readonly [string, (catalog: GatewayMethodC
 
 /**
  * Every `export function register…GatewayMethods` / `…Verbs` the routes
- * directory is expected to contain. Two entries are deliberately NOT probed
+ * directory is expected to contain. Some entries are deliberately NOT probed
  * directly: `registerGatewayVerbGroups` is the composition root that calls the
  * others, and `registerFleetGatewayMethods` / `registerCheckpointGatewayMethods`
- * are reached through `registerFleetCheckpointsSearchGatewayMethods`.
+ * / `registerContractGatewayMethods` are reached through
+ * `registerFleetCheckpointsSearchGatewayMethods`.
  */
 export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerAcpGatewayMethods',
@@ -191,6 +192,7 @@ export const EXPECTED_ROUTE_REGISTRARS: readonly string[] = [
   'registerCheckinGatewayMethods',
   'registerCheckpointGatewayMethods',
   'registerCiGatewayMethods',
+  'registerContractGatewayMethods',
   'registerCostGatewayMethods',
   'registerCredentialWriteGatewayMethods',
   'registerDaemonEmailVerbs',

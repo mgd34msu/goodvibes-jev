@@ -5263,6 +5263,2271 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       }
     }
   },
+  "contracts.cancel": {
+    "methodId": "contracts.cancel",
+    "http": {
+      "method": "POST",
+      "path": "/api/contracts/{contractId}/cancel"
+    },
+    "status": 200,
+    "body": {
+      "cancelled": false
+    }
+  },
+  "contracts.get": {
+    "methodId": "contracts.get",
+    "http": {
+      "method": "GET",
+      "path": "/api/contracts/{contractId}"
+    },
+    "status": 200,
+    "body": {
+      "id": "sample",
+      "schemaVersion": 0,
+      "sessionId": "sample",
+      "origin": "turn",
+      "ask": "sample",
+      "ownerAgentId": "sample",
+      "parentAgentId": "sample",
+      "projectRoot": "sample",
+      "isolation": "worktree",
+      "branch": "sample",
+      "worktreePath": "sample",
+      "baseBranch": "sample",
+      "baseline": {
+        "head": "sample",
+        "dirty": {}
+      },
+      "sessionMode": false,
+      "proposedUnits": [
+        {
+          "task": "sample",
+          "template": "sample"
+        }
+      ],
+      "draftPlan": {
+        "goal": "sample",
+        "units": [
+          {
+            "id": "sample",
+            "title": "sample",
+            "brief": "sample",
+            "dependsOn": [
+              "sample"
+            ],
+            "files": [
+              "sample"
+            ],
+            "attempts": 0
+          }
+        ]
+      },
+      "budget": {
+        "maxTokens": 0,
+        "maxCostUsd": 0
+      },
+      "goal": "sample",
+      "criteria": [
+        {
+          "id": "sample",
+          "text": "sample",
+          "origin": "stated",
+          "quote": "sample",
+          "serves": [
+            "sample"
+          ],
+          "disposition": "judged",
+          "dispositionReason": "sample",
+          "status": "unread",
+          "readings": [
+            {
+              "checkId": "sample",
+              "at": 0,
+              "probabilityUnmet": 0,
+              "verdict": "met",
+              "outcome": "act",
+              "severity": "critical",
+              "decisionId": "sample"
+            }
+          ]
+        }
+      ],
+      "groups": [
+        {
+          "id": "sample",
+          "title": "sample",
+          "goal": "sample",
+          "kind": "work",
+          "repairs": {
+            "scope": "unit",
+            "targetId": "sample",
+            "criterionIds": [
+              "sample"
+            ]
+          },
+          "dependsOn": [
+            "sample"
+          ],
+          "criteria": [
+            {
+              "id": "sample",
+              "text": "sample",
+              "origin": "stated",
+              "quote": "sample",
+              "serves": [
+                "sample"
+              ],
+              "disposition": "judged",
+              "dispositionReason": "sample",
+              "status": "unread",
+              "readings": [
+                {
+                  "checkId": "sample",
+                  "at": 0,
+                  "probabilityUnmet": 0,
+                  "verdict": "met",
+                  "outcome": "act",
+                  "severity": "critical",
+                  "decisionId": "sample"
+                }
+              ]
+            }
+          ],
+          "unitIds": [
+            "sample"
+          ],
+          "status": "pending",
+          "checks": [
+            {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "claims": {
+                "kind": "files_verified",
+                "summary": "sample"
+              },
+              "gates": [
+                {
+                  "gate": "sample",
+                  "passed": false,
+                  "output": "sample",
+                  "durationMs": 0,
+                  "skipped": false
+                }
+              ],
+              "goal": {
+                "probabilityUnmet": 0,
+                "verdict": "met",
+                "outcome": "act"
+              },
+              "quality": {
+                "placeholder": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "tests_weakened": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "breaks_existing": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "out_of_scope": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "hidden_failure": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "unsupported_claims": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                }
+              },
+              "result": "pass",
+              "problems": [
+                "unmet"
+              ],
+              "qualityProblems": [
+                "placeholder"
+              ],
+              "decisionIds": [
+                "sample"
+              ],
+              "evidenceDigest": "sample"
+            }
+          ],
+          "fixRounds": 0,
+          "baseline": {
+            "head": "sample",
+            "dirty": {}
+          },
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "llmCallCount": 0,
+            "turnCount": 0,
+            "toolCallCount": 0,
+            "costUsd": 0,
+            "costState": "priced",
+            "costSource": "user",
+            "pricingAsOf": "sample"
+          }
+        }
+      ],
+      "units": [
+        {
+          "id": "sample",
+          "groupId": "sample",
+          "title": "sample",
+          "goal": "sample",
+          "brief": "sample",
+          "role": "implement",
+          "dependsOn": [
+            "sample"
+          ],
+          "files": [
+            "sample"
+          ],
+          "attempts": 0,
+          "criteria": [
+            {
+              "id": "sample",
+              "text": "sample",
+              "origin": "stated",
+              "quote": "sample",
+              "serves": [
+                "sample"
+              ],
+              "disposition": "judged",
+              "dispositionReason": "sample",
+              "status": "unread",
+              "readings": [
+                {
+                  "checkId": "sample",
+                  "at": 0,
+                  "probabilityUnmet": 0,
+                  "verdict": "met",
+                  "outcome": "act",
+                  "severity": "critical",
+                  "decisionId": "sample"
+                }
+              ]
+            }
+          ],
+          "status": "pending",
+          "agentIds": [
+            "sample"
+          ],
+          "activeAgentId": "sample",
+          "route": {
+            "model": "sample",
+            "provider": "sample",
+            "fallbackModels": [
+              "sample"
+            ],
+            "routing": {
+              "providerSelection": "inherit-current",
+              "providerFailurePolicy": "ordered-fallbacks",
+              "fallbackModels": [
+                "sample"
+              ]
+            },
+            "reasoningEffort": "sample",
+            "reason": "sample"
+          },
+          "checks": [
+            {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "claims": {
+                "kind": "files_verified",
+                "summary": "sample"
+              },
+              "gates": [
+                {
+                  "gate": "sample",
+                  "passed": false,
+                  "output": "sample",
+                  "durationMs": 0,
+                  "skipped": false
+                }
+              ],
+              "goal": {
+                "probabilityUnmet": 0,
+                "verdict": "met",
+                "outcome": "act"
+              },
+              "quality": {
+                "placeholder": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "tests_weakened": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "breaks_existing": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "out_of_scope": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "hidden_failure": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "unsupported_claims": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                }
+              },
+              "result": "pass",
+              "problems": [
+                "unmet"
+              ],
+              "qualityProblems": [
+                "placeholder"
+              ],
+              "decisionIds": [
+                "sample"
+              ],
+              "evidenceDigest": "sample"
+            }
+          ],
+          "nudges": [
+            {
+              "id": "sample",
+              "checkId": "sample",
+              "at": 0,
+              "kinds": [
+                "unmet"
+              ],
+              "criterionIds": [
+                "sample"
+              ],
+              "text": "sample",
+              "delivery": "hold",
+              "agentId": "sample",
+              "consumedAt": 0
+            }
+          ],
+          "fixRounds": 0,
+          "freshAgents": 0,
+          "transportRetries": 0,
+          "touchedPaths": [
+            "sample"
+          ],
+          "baseline": {
+            "head": "sample",
+            "dirty": {}
+          },
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "llmCallCount": 0,
+            "turnCount": 0,
+            "toolCallCount": 0,
+            "costUsd": 0,
+            "costState": "priced",
+            "costSource": "user",
+            "pricingAsOf": "sample"
+          },
+          "answer": "sample",
+          "lastOutput": "sample",
+          "failureReason": "sample",
+          "attemptOf": "sample",
+          "attemptIndex": 0,
+          "attemptSelection": {
+            "engineGroupId": "sample",
+            "candidateIds": [
+              "sample"
+            ],
+            "proposedId": "sample",
+            "outcome": "act",
+            "reasons": "sample",
+            "decisionId": "sample",
+            "pickedId": "sample"
+          },
+          "attemptUnits": [
+            {
+              "id": "sample",
+              "groupId": "sample",
+              "title": "sample",
+              "goal": "sample",
+              "brief": "sample",
+              "role": "implement",
+              "dependsOn": [
+                "sample"
+              ],
+              "files": [
+                "sample"
+              ],
+              "attempts": 0,
+              "criteria": [
+                {
+                  "id": "sample",
+                  "text": "sample",
+                  "origin": "stated",
+                  "quote": "sample",
+                  "serves": [
+                    "sample"
+                  ],
+                  "disposition": "judged",
+                  "dispositionReason": "sample",
+                  "status": "unread",
+                  "readings": [
+                    {
+                      "checkId": "sample",
+                      "at": 0,
+                      "probabilityUnmet": 0,
+                      "verdict": "met",
+                      "outcome": "act",
+                      "severity": "critical",
+                      "decisionId": "sample"
+                    }
+                  ]
+                }
+              ],
+              "status": "pending",
+              "agentIds": [
+                "sample"
+              ],
+              "activeAgentId": "sample",
+              "route": {
+                "model": "sample",
+                "provider": "sample",
+                "fallbackModels": [
+                  "sample"
+                ],
+                "routing": {
+                  "providerSelection": "inherit-current",
+                  "providerFailurePolicy": "ordered-fallbacks",
+                  "fallbackModels": [
+                    "sample"
+                  ]
+                },
+                "reasoningEffort": "sample",
+                "reason": "sample"
+              },
+              "checks": [
+                {
+                  "id": "sample",
+                  "at": 0,
+                  "trigger": "turn-end",
+                  "claims": {
+                    "kind": "files_verified",
+                    "summary": "sample"
+                  },
+                  "gates": [
+                    {
+                      "gate": "sample",
+                      "passed": false,
+                      "output": "sample",
+                      "durationMs": 0,
+                      "skipped": false
+                    }
+                  ],
+                  "goal": {
+                    "probabilityUnmet": 0,
+                    "verdict": "met",
+                    "outcome": "act"
+                  },
+                  "quality": {
+                    "placeholder": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "tests_weakened": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "breaks_existing": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "out_of_scope": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "hidden_failure": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "unsupported_claims": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    }
+                  },
+                  "result": "pass",
+                  "problems": [
+                    "unmet"
+                  ],
+                  "qualityProblems": [
+                    "placeholder"
+                  ],
+                  "decisionIds": [
+                    "sample"
+                  ],
+                  "evidenceDigest": "sample"
+                }
+              ],
+              "nudges": [
+                {
+                  "id": "sample",
+                  "checkId": "sample",
+                  "at": 0,
+                  "kinds": [
+                    "unmet"
+                  ],
+                  "criterionIds": [
+                    "sample"
+                  ],
+                  "text": "sample",
+                  "delivery": "hold",
+                  "agentId": "sample",
+                  "consumedAt": 0
+                }
+              ],
+              "fixRounds": 0,
+              "freshAgents": 0,
+              "transportRetries": 0,
+              "touchedPaths": [
+                "sample"
+              ],
+              "baseline": {
+                "head": "sample",
+                "dirty": {}
+              },
+              "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0,
+                "llmCallCount": 0,
+                "turnCount": 0,
+                "toolCallCount": 0,
+                "costUsd": 0,
+                "costState": "priced",
+                "costSource": "user",
+                "pricingAsOf": "sample"
+              },
+              "answer": "sample",
+              "lastOutput": "sample",
+              "failureReason": "sample",
+              "attemptOf": "sample",
+              "attemptIndex": 0,
+              "attemptSelection": {
+                "engineGroupId": "sample",
+                "candidateIds": [
+                  "sample"
+                ],
+                "proposedId": "sample",
+                "outcome": "act",
+                "reasons": "sample",
+                "decisionId": "sample",
+                "pickedId": "sample"
+              }
+            }
+          ]
+        }
+      ],
+      "shape": {
+        "forbids_delegation": {
+          "verdict": "yes",
+          "probability": 0,
+          "outcome": "act"
+        },
+        "requests_parallel_agents": {
+          "verdict": "yes",
+          "probability": 0,
+          "outcome": "act"
+        },
+        "forbids_writing": {
+          "verdict": "yes",
+          "probability": 0,
+          "outcome": "act"
+        },
+        "asks_for_attempts": {
+          "verdict": "yes",
+          "probability": 0,
+          "outcome": "act"
+        },
+        "decisionIds": [
+          "sample"
+        ]
+      },
+      "status": "queued",
+      "statusBeforeOwner": "queued",
+      "resumeFrom": "queued",
+      "checks": [
+        {
+          "id": "sample",
+          "at": 0,
+          "trigger": "turn-end",
+          "claims": {
+            "kind": "files_verified",
+            "summary": "sample"
+          },
+          "gates": [
+            {
+              "gate": "sample",
+              "passed": false,
+              "output": "sample",
+              "durationMs": 0,
+              "skipped": false
+            }
+          ],
+          "goal": {
+            "probabilityUnmet": 0,
+            "verdict": "met",
+            "outcome": "act"
+          },
+          "quality": {
+            "placeholder": {
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "tests_weakened": {
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "breaks_existing": {
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "out_of_scope": {
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "hidden_failure": {
+              "verdict": "yes",
+              "outcome": "act"
+            },
+            "unsupported_claims": {
+              "verdict": "yes",
+              "outcome": "act"
+            }
+          },
+          "result": "pass",
+          "problems": [
+            "unmet"
+          ],
+          "qualityProblems": [
+            "placeholder"
+          ],
+          "decisionIds": [
+            "sample"
+          ],
+          "evidenceDigest": "sample"
+        }
+      ],
+      "fixRounds": 0,
+      "escalations": [
+        {
+          "id": "sample",
+          "at": 0,
+          "scope": "plan",
+          "targetId": "sample",
+          "reason": "plan-unresolved",
+          "question": "sample",
+          "unmetCriterionIds": [
+            "sample"
+          ],
+          "resolvedAt": 0,
+          "reply": {
+            "text": "sample",
+            "reading": "approve",
+            "outcome": "act",
+            "decisionId": "sample"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "id": "sample",
+          "at": 0,
+          "action": "created",
+          "targetId": "sample",
+          "reason": "sample",
+          "decisionIds": [
+            "sample"
+          ],
+          "route": {
+            "model": "sample",
+            "provider": "sample",
+            "fallbackModels": [
+              "sample"
+            ],
+            "routing": {
+              "providerSelection": "inherit-current",
+              "providerFailurePolicy": "ordered-fallbacks",
+              "fallbackModels": [
+                "sample"
+              ]
+            },
+            "reasoningEffort": "sample",
+            "reason": "sample"
+          }
+        }
+      ],
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "llmCallCount": 0,
+        "turnCount": 0,
+        "toolCallCount": 0,
+        "costUsd": 0,
+        "costState": "priced",
+        "costSource": "user",
+        "pricingAsOf": "sample"
+      },
+      "judgmentUsage": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "plannerAgentIds": [
+        "sample"
+      ],
+      "answer": "sample",
+      "statusLine": "sample",
+      "commit": {
+        "status": "committed",
+        "hash": "sample",
+        "note": "sample"
+      },
+      "failureKind": "transport",
+      "error": "sample",
+      "createdAt": 0,
+      "completedAt": 0
+    }
+  },
+  "contracts.list": {
+    "methodId": "contracts.list",
+    "http": {
+      "method": "GET",
+      "path": "/api/contracts"
+    },
+    "status": 200,
+    "body": {
+      "contracts": [
+        {
+          "id": "sample",
+          "schemaVersion": 0,
+          "sessionId": "sample",
+          "origin": "turn",
+          "ask": "sample",
+          "ownerAgentId": "sample",
+          "parentAgentId": "sample",
+          "projectRoot": "sample",
+          "isolation": "worktree",
+          "branch": "sample",
+          "worktreePath": "sample",
+          "baseBranch": "sample",
+          "baseline": {
+            "head": "sample",
+            "dirty": {}
+          },
+          "sessionMode": false,
+          "proposedUnits": [
+            {
+              "task": "sample",
+              "template": "sample"
+            }
+          ],
+          "draftPlan": {
+            "goal": "sample",
+            "units": [
+              {
+                "id": "sample",
+                "title": "sample",
+                "brief": "sample",
+                "dependsOn": [
+                  "sample"
+                ],
+                "files": [
+                  "sample"
+                ],
+                "attempts": 0
+              }
+            ]
+          },
+          "budget": {
+            "maxTokens": 0,
+            "maxCostUsd": 0
+          },
+          "goal": "sample",
+          "criteria": [
+            {
+              "id": "sample",
+              "text": "sample",
+              "origin": "stated",
+              "quote": "sample",
+              "serves": [
+                "sample"
+              ],
+              "disposition": "judged",
+              "dispositionReason": "sample",
+              "status": "unread",
+              "readings": [
+                {
+                  "checkId": "sample",
+                  "at": 0,
+                  "probabilityUnmet": 0,
+                  "verdict": "met",
+                  "outcome": "act",
+                  "severity": "critical",
+                  "decisionId": "sample"
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "id": "sample",
+              "title": "sample",
+              "goal": "sample",
+              "kind": "work",
+              "repairs": {
+                "scope": "unit",
+                "targetId": "sample",
+                "criterionIds": [
+                  "sample"
+                ]
+              },
+              "dependsOn": [
+                "sample"
+              ],
+              "criteria": [
+                {
+                  "id": "sample",
+                  "text": "sample",
+                  "origin": "stated",
+                  "quote": "sample",
+                  "serves": [
+                    "sample"
+                  ],
+                  "disposition": "judged",
+                  "dispositionReason": "sample",
+                  "status": "unread",
+                  "readings": [
+                    {
+                      "checkId": "sample",
+                      "at": 0,
+                      "probabilityUnmet": 0,
+                      "verdict": "met",
+                      "outcome": "act",
+                      "severity": "critical",
+                      "decisionId": "sample"
+                    }
+                  ]
+                }
+              ],
+              "unitIds": [
+                "sample"
+              ],
+              "status": "pending",
+              "checks": [
+                {
+                  "id": "sample",
+                  "at": 0,
+                  "trigger": "turn-end",
+                  "claims": {
+                    "kind": "files_verified",
+                    "summary": "sample"
+                  },
+                  "gates": [
+                    {
+                      "gate": "sample",
+                      "passed": false,
+                      "output": "sample",
+                      "durationMs": 0,
+                      "skipped": false
+                    }
+                  ],
+                  "goal": {
+                    "probabilityUnmet": 0,
+                    "verdict": "met",
+                    "outcome": "act"
+                  },
+                  "quality": {
+                    "placeholder": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "tests_weakened": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "breaks_existing": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "out_of_scope": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "hidden_failure": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "unsupported_claims": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    }
+                  },
+                  "result": "pass",
+                  "problems": [
+                    "unmet"
+                  ],
+                  "qualityProblems": [
+                    "placeholder"
+                  ],
+                  "decisionIds": [
+                    "sample"
+                  ],
+                  "evidenceDigest": "sample"
+                }
+              ],
+              "fixRounds": 0,
+              "baseline": {
+                "head": "sample",
+                "dirty": {}
+              },
+              "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0,
+                "llmCallCount": 0,
+                "turnCount": 0,
+                "toolCallCount": 0,
+                "costUsd": 0,
+                "costState": "priced",
+                "costSource": "user",
+                "pricingAsOf": "sample"
+              }
+            }
+          ],
+          "units": [
+            {
+              "id": "sample",
+              "groupId": "sample",
+              "title": "sample",
+              "goal": "sample",
+              "brief": "sample",
+              "role": "implement",
+              "dependsOn": [
+                "sample"
+              ],
+              "files": [
+                "sample"
+              ],
+              "attempts": 0,
+              "criteria": [
+                {
+                  "id": "sample",
+                  "text": "sample",
+                  "origin": "stated",
+                  "quote": "sample",
+                  "serves": [
+                    "sample"
+                  ],
+                  "disposition": "judged",
+                  "dispositionReason": "sample",
+                  "status": "unread",
+                  "readings": [
+                    {
+                      "checkId": "sample",
+                      "at": 0,
+                      "probabilityUnmet": 0,
+                      "verdict": "met",
+                      "outcome": "act",
+                      "severity": "critical",
+                      "decisionId": "sample"
+                    }
+                  ]
+                }
+              ],
+              "status": "pending",
+              "agentIds": [
+                "sample"
+              ],
+              "activeAgentId": "sample",
+              "route": {
+                "model": "sample",
+                "provider": "sample",
+                "fallbackModels": [
+                  "sample"
+                ],
+                "routing": {
+                  "providerSelection": "inherit-current",
+                  "providerFailurePolicy": "ordered-fallbacks",
+                  "fallbackModels": [
+                    "sample"
+                  ]
+                },
+                "reasoningEffort": "sample",
+                "reason": "sample"
+              },
+              "checks": [
+                {
+                  "id": "sample",
+                  "at": 0,
+                  "trigger": "turn-end",
+                  "claims": {
+                    "kind": "files_verified",
+                    "summary": "sample"
+                  },
+                  "gates": [
+                    {
+                      "gate": "sample",
+                      "passed": false,
+                      "output": "sample",
+                      "durationMs": 0,
+                      "skipped": false
+                    }
+                  ],
+                  "goal": {
+                    "probabilityUnmet": 0,
+                    "verdict": "met",
+                    "outcome": "act"
+                  },
+                  "quality": {
+                    "placeholder": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "tests_weakened": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "breaks_existing": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "out_of_scope": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "hidden_failure": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    },
+                    "unsupported_claims": {
+                      "verdict": "yes",
+                      "outcome": "act"
+                    }
+                  },
+                  "result": "pass",
+                  "problems": [
+                    "unmet"
+                  ],
+                  "qualityProblems": [
+                    "placeholder"
+                  ],
+                  "decisionIds": [
+                    "sample"
+                  ],
+                  "evidenceDigest": "sample"
+                }
+              ],
+              "nudges": [
+                {
+                  "id": "sample",
+                  "checkId": "sample",
+                  "at": 0,
+                  "kinds": [
+                    "unmet"
+                  ],
+                  "criterionIds": [
+                    "sample"
+                  ],
+                  "text": "sample",
+                  "delivery": "hold",
+                  "agentId": "sample",
+                  "consumedAt": 0
+                }
+              ],
+              "fixRounds": 0,
+              "freshAgents": 0,
+              "transportRetries": 0,
+              "touchedPaths": [
+                "sample"
+              ],
+              "baseline": {
+                "head": "sample",
+                "dirty": {}
+              },
+              "usage": {
+                "inputTokens": 0,
+                "outputTokens": 0,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0,
+                "llmCallCount": 0,
+                "turnCount": 0,
+                "toolCallCount": 0,
+                "costUsd": 0,
+                "costState": "priced",
+                "costSource": "user",
+                "pricingAsOf": "sample"
+              },
+              "answer": "sample",
+              "lastOutput": "sample",
+              "failureReason": "sample",
+              "attemptOf": "sample",
+              "attemptIndex": 0,
+              "attemptSelection": {
+                "engineGroupId": "sample",
+                "candidateIds": [
+                  "sample"
+                ],
+                "proposedId": "sample",
+                "outcome": "act",
+                "reasons": "sample",
+                "decisionId": "sample",
+                "pickedId": "sample"
+              },
+              "attemptUnits": [
+                {
+                  "id": "sample",
+                  "groupId": "sample",
+                  "title": "sample",
+                  "goal": "sample",
+                  "brief": "sample",
+                  "role": "implement",
+                  "dependsOn": [
+                    "sample"
+                  ],
+                  "files": [
+                    "sample"
+                  ],
+                  "attempts": 0,
+                  "criteria": [
+                    {
+                      "id": "sample",
+                      "text": "sample",
+                      "origin": "stated",
+                      "quote": "sample",
+                      "serves": [
+                        "sample"
+                      ],
+                      "disposition": "judged",
+                      "dispositionReason": "sample",
+                      "status": "unread",
+                      "readings": [
+                        {
+                          "checkId": "sample",
+                          "at": 0,
+                          "probabilityUnmet": 0,
+                          "verdict": "met",
+                          "outcome": "act",
+                          "severity": "critical",
+                          "decisionId": "sample"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "pending",
+                  "agentIds": [
+                    "sample"
+                  ],
+                  "activeAgentId": "sample",
+                  "route": {
+                    "model": "sample",
+                    "provider": "sample",
+                    "fallbackModels": [
+                      "sample"
+                    ],
+                    "routing": {
+                      "providerSelection": "inherit-current",
+                      "providerFailurePolicy": "ordered-fallbacks",
+                      "fallbackModels": [
+                        "sample"
+                      ]
+                    },
+                    "reasoningEffort": "sample",
+                    "reason": "sample"
+                  },
+                  "checks": [
+                    {
+                      "id": "sample",
+                      "at": 0,
+                      "trigger": "turn-end",
+                      "claims": {
+                        "kind": "files_verified",
+                        "summary": "sample"
+                      },
+                      "gates": [
+                        {
+                          "gate": "sample",
+                          "passed": false,
+                          "output": "sample",
+                          "durationMs": 0,
+                          "skipped": false
+                        }
+                      ],
+                      "goal": {
+                        "probabilityUnmet": 0,
+                        "verdict": "met",
+                        "outcome": "act"
+                      },
+                      "quality": {
+                        "placeholder": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        },
+                        "tests_weakened": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        },
+                        "breaks_existing": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        },
+                        "out_of_scope": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        },
+                        "hidden_failure": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        },
+                        "unsupported_claims": {
+                          "verdict": "yes",
+                          "outcome": "act"
+                        }
+                      },
+                      "result": "pass",
+                      "problems": [
+                        "unmet"
+                      ],
+                      "qualityProblems": [
+                        "placeholder"
+                      ],
+                      "decisionIds": [
+                        "sample"
+                      ],
+                      "evidenceDigest": "sample"
+                    }
+                  ],
+                  "nudges": [
+                    {
+                      "id": "sample",
+                      "checkId": "sample",
+                      "at": 0,
+                      "kinds": [
+                        "unmet"
+                      ],
+                      "criterionIds": [
+                        "sample"
+                      ],
+                      "text": "sample",
+                      "delivery": "hold",
+                      "agentId": "sample",
+                      "consumedAt": 0
+                    }
+                  ],
+                  "fixRounds": 0,
+                  "freshAgents": 0,
+                  "transportRetries": 0,
+                  "touchedPaths": [
+                    "sample"
+                  ],
+                  "baseline": {
+                    "head": "sample",
+                    "dirty": {}
+                  },
+                  "usage": {
+                    "inputTokens": 0,
+                    "outputTokens": 0,
+                    "cacheReadTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "reasoningTokens": 0,
+                    "llmCallCount": 0,
+                    "turnCount": 0,
+                    "toolCallCount": 0,
+                    "costUsd": 0,
+                    "costState": "priced",
+                    "costSource": "user",
+                    "pricingAsOf": "sample"
+                  },
+                  "answer": "sample",
+                  "lastOutput": "sample",
+                  "failureReason": "sample",
+                  "attemptOf": "sample",
+                  "attemptIndex": 0,
+                  "attemptSelection": {
+                    "engineGroupId": "sample",
+                    "candidateIds": [
+                      "sample"
+                    ],
+                    "proposedId": "sample",
+                    "outcome": "act",
+                    "reasons": "sample",
+                    "decisionId": "sample",
+                    "pickedId": "sample"
+                  }
+                }
+              ]
+            }
+          ],
+          "shape": {
+            "forbids_delegation": {
+              "verdict": "yes",
+              "probability": 0,
+              "outcome": "act"
+            },
+            "requests_parallel_agents": {
+              "verdict": "yes",
+              "probability": 0,
+              "outcome": "act"
+            },
+            "forbids_writing": {
+              "verdict": "yes",
+              "probability": 0,
+              "outcome": "act"
+            },
+            "asks_for_attempts": {
+              "verdict": "yes",
+              "probability": 0,
+              "outcome": "act"
+            },
+            "decisionIds": [
+              "sample"
+            ]
+          },
+          "status": "queued",
+          "statusBeforeOwner": "queued",
+          "resumeFrom": "queued",
+          "checks": [
+            {
+              "id": "sample",
+              "at": 0,
+              "trigger": "turn-end",
+              "claims": {
+                "kind": "files_verified",
+                "summary": "sample"
+              },
+              "gates": [
+                {
+                  "gate": "sample",
+                  "passed": false,
+                  "output": "sample",
+                  "durationMs": 0,
+                  "skipped": false
+                }
+              ],
+              "goal": {
+                "probabilityUnmet": 0,
+                "verdict": "met",
+                "outcome": "act"
+              },
+              "quality": {
+                "placeholder": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "tests_weakened": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "breaks_existing": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "out_of_scope": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "hidden_failure": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                },
+                "unsupported_claims": {
+                  "verdict": "yes",
+                  "outcome": "act"
+                }
+              },
+              "result": "pass",
+              "problems": [
+                "unmet"
+              ],
+              "qualityProblems": [
+                "placeholder"
+              ],
+              "decisionIds": [
+                "sample"
+              ],
+              "evidenceDigest": "sample"
+            }
+          ],
+          "fixRounds": 0,
+          "escalations": [
+            {
+              "id": "sample",
+              "at": 0,
+              "scope": "plan",
+              "targetId": "sample",
+              "reason": "plan-unresolved",
+              "question": "sample",
+              "unmetCriterionIds": [
+                "sample"
+              ],
+              "resolvedAt": 0,
+              "reply": {
+                "text": "sample",
+                "reading": "approve",
+                "outcome": "act",
+                "decisionId": "sample"
+              }
+            }
+          ],
+          "decisions": [
+            {
+              "id": "sample",
+              "at": 0,
+              "action": "created",
+              "targetId": "sample",
+              "reason": "sample",
+              "decisionIds": [
+                "sample"
+              ],
+              "route": {
+                "model": "sample",
+                "provider": "sample",
+                "fallbackModels": [
+                  "sample"
+                ],
+                "routing": {
+                  "providerSelection": "inherit-current",
+                  "providerFailurePolicy": "ordered-fallbacks",
+                  "fallbackModels": [
+                    "sample"
+                  ]
+                },
+                "reasoningEffort": "sample",
+                "reason": "sample"
+              }
+            }
+          ],
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 0,
+            "llmCallCount": 0,
+            "turnCount": 0,
+            "toolCallCount": 0,
+            "costUsd": 0,
+            "costState": "priced",
+            "costSource": "user",
+            "pricingAsOf": "sample"
+          },
+          "judgmentUsage": {
+            "calls": 0,
+            "inputTokens": 0,
+            "outputTokens": 0
+          },
+          "plannerAgentIds": [
+            "sample"
+          ],
+          "answer": "sample",
+          "statusLine": "sample",
+          "commit": {
+            "status": "committed",
+            "hash": "sample",
+            "note": "sample"
+          },
+          "failureKind": "transport",
+          "error": "sample",
+          "createdAt": 0,
+          "completedAt": 0
+        }
+      ]
+    }
+  },
+  "contracts.reply": {
+    "methodId": "contracts.reply",
+    "http": {
+      "method": "POST",
+      "path": "/api/contracts/{contractId}/reply"
+    },
+    "status": 200,
+    "body": {
+      "escalationId": "sample",
+      "reading": "approve",
+      "outcome": "act",
+      "action": "approved",
+      "nextEscalationId": "sample"
+    }
+  },
+  "contracts.start": {
+    "methodId": "contracts.start",
+    "http": {
+      "method": "POST",
+      "path": "/api/contracts"
+    },
+    "status": 200,
+    "body": {
+      "contract": {
+        "id": "sample",
+        "schemaVersion": 0,
+        "sessionId": "sample",
+        "origin": "turn",
+        "ask": "sample",
+        "ownerAgentId": "sample",
+        "parentAgentId": "sample",
+        "projectRoot": "sample",
+        "isolation": "worktree",
+        "branch": "sample",
+        "worktreePath": "sample",
+        "baseBranch": "sample",
+        "baseline": {
+          "head": "sample",
+          "dirty": {}
+        },
+        "sessionMode": false,
+        "proposedUnits": [
+          {
+            "task": "sample",
+            "template": "sample"
+          }
+        ],
+        "draftPlan": {
+          "goal": "sample",
+          "units": [
+            {
+              "id": "sample",
+              "title": "sample",
+              "brief": "sample",
+              "dependsOn": [
+                "sample"
+              ],
+              "files": [
+                "sample"
+              ],
+              "attempts": 0
+            }
+          ]
+        },
+        "budget": {
+          "maxTokens": 0,
+          "maxCostUsd": 0
+        },
+        "goal": "sample",
+        "criteria": [
+          {
+            "id": "sample",
+            "text": "sample",
+            "origin": "stated",
+            "quote": "sample",
+            "serves": [
+              "sample"
+            ],
+            "disposition": "judged",
+            "dispositionReason": "sample",
+            "status": "unread",
+            "readings": [
+              {
+                "checkId": "sample",
+                "at": 0,
+                "probabilityUnmet": 0,
+                "verdict": "met",
+                "outcome": "act",
+                "severity": "critical",
+                "decisionId": "sample"
+              }
+            ]
+          }
+        ],
+        "groups": [
+          {
+            "id": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "kind": "work",
+            "repairs": {
+              "scope": "unit",
+              "targetId": "sample",
+              "criterionIds": [
+                "sample"
+              ]
+            },
+            "dependsOn": [
+              "sample"
+            ],
+            "criteria": [
+              {
+                "id": "sample",
+                "text": "sample",
+                "origin": "stated",
+                "quote": "sample",
+                "serves": [
+                  "sample"
+                ],
+                "disposition": "judged",
+                "dispositionReason": "sample",
+                "status": "unread",
+                "readings": [
+                  {
+                    "checkId": "sample",
+                    "at": 0,
+                    "probabilityUnmet": 0,
+                    "verdict": "met",
+                    "outcome": "act",
+                    "severity": "critical",
+                    "decisionId": "sample"
+                  }
+                ]
+              }
+            ],
+            "unitIds": [
+              "sample"
+            ],
+            "status": "pending",
+            "checks": [
+              {
+                "id": "sample",
+                "at": 0,
+                "trigger": "turn-end",
+                "claims": {
+                  "kind": "files_verified",
+                  "summary": "sample"
+                },
+                "gates": [
+                  {
+                    "gate": "sample",
+                    "passed": false,
+                    "output": "sample",
+                    "durationMs": 0,
+                    "skipped": false
+                  }
+                ],
+                "goal": {
+                  "probabilityUnmet": 0,
+                  "verdict": "met",
+                  "outcome": "act"
+                },
+                "quality": {
+                  "placeholder": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "tests_weakened": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "breaks_existing": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "out_of_scope": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "hidden_failure": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "unsupported_claims": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  }
+                },
+                "result": "pass",
+                "problems": [
+                  "unmet"
+                ],
+                "qualityProblems": [
+                  "placeholder"
+                ],
+                "decisionIds": [
+                  "sample"
+                ],
+                "evidenceDigest": "sample"
+              }
+            ],
+            "fixRounds": 0,
+            "baseline": {
+              "head": "sample",
+              "dirty": {}
+            },
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0,
+              "llmCallCount": 0,
+              "turnCount": 0,
+              "toolCallCount": 0,
+              "costUsd": 0,
+              "costState": "priced",
+              "costSource": "user",
+              "pricingAsOf": "sample"
+            }
+          }
+        ],
+        "units": [
+          {
+            "id": "sample",
+            "groupId": "sample",
+            "title": "sample",
+            "goal": "sample",
+            "brief": "sample",
+            "role": "implement",
+            "dependsOn": [
+              "sample"
+            ],
+            "files": [
+              "sample"
+            ],
+            "attempts": 0,
+            "criteria": [
+              {
+                "id": "sample",
+                "text": "sample",
+                "origin": "stated",
+                "quote": "sample",
+                "serves": [
+                  "sample"
+                ],
+                "disposition": "judged",
+                "dispositionReason": "sample",
+                "status": "unread",
+                "readings": [
+                  {
+                    "checkId": "sample",
+                    "at": 0,
+                    "probabilityUnmet": 0,
+                    "verdict": "met",
+                    "outcome": "act",
+                    "severity": "critical",
+                    "decisionId": "sample"
+                  }
+                ]
+              }
+            ],
+            "status": "pending",
+            "agentIds": [
+              "sample"
+            ],
+            "activeAgentId": "sample",
+            "route": {
+              "model": "sample",
+              "provider": "sample",
+              "fallbackModels": [
+                "sample"
+              ],
+              "routing": {
+                "providerSelection": "inherit-current",
+                "providerFailurePolicy": "ordered-fallbacks",
+                "fallbackModels": [
+                  "sample"
+                ]
+              },
+              "reasoningEffort": "sample",
+              "reason": "sample"
+            },
+            "checks": [
+              {
+                "id": "sample",
+                "at": 0,
+                "trigger": "turn-end",
+                "claims": {
+                  "kind": "files_verified",
+                  "summary": "sample"
+                },
+                "gates": [
+                  {
+                    "gate": "sample",
+                    "passed": false,
+                    "output": "sample",
+                    "durationMs": 0,
+                    "skipped": false
+                  }
+                ],
+                "goal": {
+                  "probabilityUnmet": 0,
+                  "verdict": "met",
+                  "outcome": "act"
+                },
+                "quality": {
+                  "placeholder": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "tests_weakened": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "breaks_existing": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "out_of_scope": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "hidden_failure": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  },
+                  "unsupported_claims": {
+                    "verdict": "yes",
+                    "outcome": "act"
+                  }
+                },
+                "result": "pass",
+                "problems": [
+                  "unmet"
+                ],
+                "qualityProblems": [
+                  "placeholder"
+                ],
+                "decisionIds": [
+                  "sample"
+                ],
+                "evidenceDigest": "sample"
+              }
+            ],
+            "nudges": [
+              {
+                "id": "sample",
+                "checkId": "sample",
+                "at": 0,
+                "kinds": [
+                  "unmet"
+                ],
+                "criterionIds": [
+                  "sample"
+                ],
+                "text": "sample",
+                "delivery": "hold",
+                "agentId": "sample",
+                "consumedAt": 0
+              }
+            ],
+            "fixRounds": 0,
+            "freshAgents": 0,
+            "transportRetries": 0,
+            "touchedPaths": [
+              "sample"
+            ],
+            "baseline": {
+              "head": "sample",
+              "dirty": {}
+            },
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0,
+              "llmCallCount": 0,
+              "turnCount": 0,
+              "toolCallCount": 0,
+              "costUsd": 0,
+              "costState": "priced",
+              "costSource": "user",
+              "pricingAsOf": "sample"
+            },
+            "answer": "sample",
+            "lastOutput": "sample",
+            "failureReason": "sample",
+            "attemptOf": "sample",
+            "attemptIndex": 0,
+            "attemptSelection": {
+              "engineGroupId": "sample",
+              "candidateIds": [
+                "sample"
+              ],
+              "proposedId": "sample",
+              "outcome": "act",
+              "reasons": "sample",
+              "decisionId": "sample",
+              "pickedId": "sample"
+            },
+            "attemptUnits": [
+              {
+                "id": "sample",
+                "groupId": "sample",
+                "title": "sample",
+                "goal": "sample",
+                "brief": "sample",
+                "role": "implement",
+                "dependsOn": [
+                  "sample"
+                ],
+                "files": [
+                  "sample"
+                ],
+                "attempts": 0,
+                "criteria": [
+                  {
+                    "id": "sample",
+                    "text": "sample",
+                    "origin": "stated",
+                    "quote": "sample",
+                    "serves": [
+                      "sample"
+                    ],
+                    "disposition": "judged",
+                    "dispositionReason": "sample",
+                    "status": "unread",
+                    "readings": [
+                      {
+                        "checkId": "sample",
+                        "at": 0,
+                        "probabilityUnmet": 0,
+                        "verdict": "met",
+                        "outcome": "act",
+                        "severity": "critical",
+                        "decisionId": "sample"
+                      }
+                    ]
+                  }
+                ],
+                "status": "pending",
+                "agentIds": [
+                  "sample"
+                ],
+                "activeAgentId": "sample",
+                "route": {
+                  "model": "sample",
+                  "provider": "sample",
+                  "fallbackModels": [
+                    "sample"
+                  ],
+                  "routing": {
+                    "providerSelection": "inherit-current",
+                    "providerFailurePolicy": "ordered-fallbacks",
+                    "fallbackModels": [
+                      "sample"
+                    ]
+                  },
+                  "reasoningEffort": "sample",
+                  "reason": "sample"
+                },
+                "checks": [
+                  {
+                    "id": "sample",
+                    "at": 0,
+                    "trigger": "turn-end",
+                    "claims": {
+                      "kind": "files_verified",
+                      "summary": "sample"
+                    },
+                    "gates": [
+                      {
+                        "gate": "sample",
+                        "passed": false,
+                        "output": "sample",
+                        "durationMs": 0,
+                        "skipped": false
+                      }
+                    ],
+                    "goal": {
+                      "probabilityUnmet": 0,
+                      "verdict": "met",
+                      "outcome": "act"
+                    },
+                    "quality": {
+                      "placeholder": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      },
+                      "tests_weakened": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      },
+                      "breaks_existing": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      },
+                      "out_of_scope": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      },
+                      "hidden_failure": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      },
+                      "unsupported_claims": {
+                        "verdict": "yes",
+                        "outcome": "act"
+                      }
+                    },
+                    "result": "pass",
+                    "problems": [
+                      "unmet"
+                    ],
+                    "qualityProblems": [
+                      "placeholder"
+                    ],
+                    "decisionIds": [
+                      "sample"
+                    ],
+                    "evidenceDigest": "sample"
+                  }
+                ],
+                "nudges": [
+                  {
+                    "id": "sample",
+                    "checkId": "sample",
+                    "at": 0,
+                    "kinds": [
+                      "unmet"
+                    ],
+                    "criterionIds": [
+                      "sample"
+                    ],
+                    "text": "sample",
+                    "delivery": "hold",
+                    "agentId": "sample",
+                    "consumedAt": 0
+                  }
+                ],
+                "fixRounds": 0,
+                "freshAgents": 0,
+                "transportRetries": 0,
+                "touchedPaths": [
+                  "sample"
+                ],
+                "baseline": {
+                  "head": "sample",
+                  "dirty": {}
+                },
+                "usage": {
+                  "inputTokens": 0,
+                  "outputTokens": 0,
+                  "cacheReadTokens": 0,
+                  "cacheWriteTokens": 0,
+                  "reasoningTokens": 0,
+                  "llmCallCount": 0,
+                  "turnCount": 0,
+                  "toolCallCount": 0,
+                  "costUsd": 0,
+                  "costState": "priced",
+                  "costSource": "user",
+                  "pricingAsOf": "sample"
+                },
+                "answer": "sample",
+                "lastOutput": "sample",
+                "failureReason": "sample",
+                "attemptOf": "sample",
+                "attemptIndex": 0,
+                "attemptSelection": {
+                  "engineGroupId": "sample",
+                  "candidateIds": [
+                    "sample"
+                  ],
+                  "proposedId": "sample",
+                  "outcome": "act",
+                  "reasons": "sample",
+                  "decisionId": "sample",
+                  "pickedId": "sample"
+                }
+              }
+            ]
+          }
+        ],
+        "shape": {
+          "forbids_delegation": {
+            "verdict": "yes",
+            "probability": 0,
+            "outcome": "act"
+          },
+          "requests_parallel_agents": {
+            "verdict": "yes",
+            "probability": 0,
+            "outcome": "act"
+          },
+          "forbids_writing": {
+            "verdict": "yes",
+            "probability": 0,
+            "outcome": "act"
+          },
+          "asks_for_attempts": {
+            "verdict": "yes",
+            "probability": 0,
+            "outcome": "act"
+          },
+          "decisionIds": [
+            "sample"
+          ]
+        },
+        "status": "queued",
+        "statusBeforeOwner": "queued",
+        "resumeFrom": "queued",
+        "checks": [
+          {
+            "id": "sample",
+            "at": 0,
+            "trigger": "turn-end",
+            "claims": {
+              "kind": "files_verified",
+              "summary": "sample"
+            },
+            "gates": [
+              {
+                "gate": "sample",
+                "passed": false,
+                "output": "sample",
+                "durationMs": 0,
+                "skipped": false
+              }
+            ],
+            "goal": {
+              "probabilityUnmet": 0,
+              "verdict": "met",
+              "outcome": "act"
+            },
+            "quality": {
+              "placeholder": {
+                "verdict": "yes",
+                "outcome": "act"
+              },
+              "tests_weakened": {
+                "verdict": "yes",
+                "outcome": "act"
+              },
+              "breaks_existing": {
+                "verdict": "yes",
+                "outcome": "act"
+              },
+              "out_of_scope": {
+                "verdict": "yes",
+                "outcome": "act"
+              },
+              "hidden_failure": {
+                "verdict": "yes",
+                "outcome": "act"
+              },
+              "unsupported_claims": {
+                "verdict": "yes",
+                "outcome": "act"
+              }
+            },
+            "result": "pass",
+            "problems": [
+              "unmet"
+            ],
+            "qualityProblems": [
+              "placeholder"
+            ],
+            "decisionIds": [
+              "sample"
+            ],
+            "evidenceDigest": "sample"
+          }
+        ],
+        "fixRounds": 0,
+        "escalations": [
+          {
+            "id": "sample",
+            "at": 0,
+            "scope": "plan",
+            "targetId": "sample",
+            "reason": "plan-unresolved",
+            "question": "sample",
+            "unmetCriterionIds": [
+              "sample"
+            ],
+            "resolvedAt": 0,
+            "reply": {
+              "text": "sample",
+              "reading": "approve",
+              "outcome": "act",
+              "decisionId": "sample"
+            }
+          }
+        ],
+        "decisions": [
+          {
+            "id": "sample",
+            "at": 0,
+            "action": "created",
+            "targetId": "sample",
+            "reason": "sample",
+            "decisionIds": [
+              "sample"
+            ],
+            "route": {
+              "model": "sample",
+              "provider": "sample",
+              "fallbackModels": [
+                "sample"
+              ],
+              "routing": {
+                "providerSelection": "inherit-current",
+                "providerFailurePolicy": "ordered-fallbacks",
+                "fallbackModels": [
+                  "sample"
+                ]
+              },
+              "reasoningEffort": "sample",
+              "reason": "sample"
+            }
+          }
+        ],
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": 0,
+          "llmCallCount": 0,
+          "turnCount": 0,
+          "toolCallCount": 0,
+          "costUsd": 0,
+          "costState": "priced",
+          "costSource": "user",
+          "pricingAsOf": "sample"
+        },
+        "judgmentUsage": {
+          "calls": 0,
+          "inputTokens": 0,
+          "outputTokens": 0
+        },
+        "plannerAgentIds": [
+          "sample"
+        ],
+        "answer": "sample",
+        "statusLine": "sample",
+        "commit": {
+          "status": "committed",
+          "hash": "sample",
+          "note": "sample"
+        },
+        "failureKind": "transport",
+        "error": "sample",
+        "createdAt": 0,
+        "completedAt": 0
+      },
+      "ownerAgentId": "sample"
+    }
+  },
   "control.auth.current": {
     "methodId": "control.auth.current",
     "http": {
