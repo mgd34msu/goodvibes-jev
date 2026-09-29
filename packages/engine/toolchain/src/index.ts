@@ -1,5 +1,5 @@
 /**
- * @pellux/goodvibes-toolchain
+ * @goodvibes-jev/engine/toolchain
  *
  * Shared GoodVibes CI/CD tooling. The published library exports every tool as a
  * policy function with injectable effects (so callers and tests supply their own

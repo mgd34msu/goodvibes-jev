@@ -4,7 +4,7 @@
  *
  * ── The gap this closes ───────────────────────────────────────────────────
  *
- * `@pellux/goodvibes-sdk` declares thirty packages under
+ * `@goodvibes-jev/engine` declares thirty packages under
  * `optionalDependencies`. The SDK now reaches every one of them through a
  * dynamic import, so a RUNNING process without them reports the affected
  * feature unavailable and carries on. Measured against the real daemon binary
@@ -43,7 +43,7 @@ import type { FsReader } from './effects.js';
 
 /** One manifest's dependency declarations, as the compile path needs them. */
 export interface DependencyManifest {
-  /** Package the declarations came from, e.g. `@pellux/goodvibes-sdk`. */
+  /** Package the declarations came from, e.g. `@goodvibes-jev/engine`. */
   readonly name: string;
   /** Where it was read from, quoted in failure messages so the fix is locatable. */
   readonly path: string;
@@ -145,14 +145,22 @@ export function readDependencyManifest(fs: FsReader, path: string, fallbackName:
   const names = (value: unknown): string[] => (
     value !== null && typeof value === 'object' ? Object.keys(value as Record<string, unknown>) : []
   );
+  const dependencies = parsed.dependencies !== null && typeof parsed.dependencies === 'object'
+    ? parsed.dependencies as Record<string, unknown>
+    : {};
+  /** A local link: the specifier names a workspace, a path or a link rather than a registry version. */
+  const isLocalLink = (name: string): boolean => {
+    const specifier = dependencies[name];
+    return typeof specifier === 'string' && /^(workspace|file|link):/.test(specifier.trim());
+  };
   return {
     name: typeof parsed.name === 'string' ? parsed.name : fallbackName,
     path,
-    // Workspace and file protocols are local links, not registry installs; a
-    // build root that resolves them at all resolves them the same way it always
-    // did, and screening them here would only produce false failures in a
-    // monorepo checkout.
-    required: names(parsed.dependencies).filter((name) => !name.startsWith('@pellux/')),
+    // Workspace, file and link specifiers are local links, not registry
+    // installs; a build root that resolves them at all resolves them the same
+    // way it always did, and screening them here would only produce false
+    // failures in a monorepo checkout. The specifier says which they are.
+    required: names(parsed.dependencies).filter((name) => !isLocalLink(name)),
     optional: names(parsed.optionalDependencies),
   };
 }

@@ -40,16 +40,39 @@ export function readSdkPin(fs: FsReader, config: SdkPinConfig): string | null {
   return typeof pin === 'string' ? pin : null;
 }
 
-const escapeForPattern = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The path a relative specifier lands on, from the importing file, normalized; may start with `..`. */
+function resolveRelative(fromFile: string, specifier: string): string {
+  const parts = fromFile.split('/').slice(0, -1);
+  for (const segment of specifier.split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
+    else parts.push(segment);
+  }
+  return parts.join('/');
+}
+
+/**
+ * Whether a resolved path is inside the engine's source: under
+ * `packages/engine`, under an old `goodvibes-sdk` checkout, or, when it leaves
+ * the consumer's root, in a sibling `engine` package.
+ */
+function landsInEngine(resolved: string): boolean {
+  const segments = resolved.split('/');
+  if (segments.includes('goodvibes-sdk')) return true;
+  if (segments.some((segment, index) => segment === 'packages' && segments[index + 1] === 'engine')) return true;
+  const firstInside = segments.findIndex((segment) => segment !== '..');
+  return firstInside > 0 && segments[firstInside] === 'engine';
+}
 
 /**
  * Import specifiers that reach the engine: the package name itself, or a
- * relative path into the engine's source (`packages/engine/...`, or the old
- * `goodvibes-sdk` checkout), which bypasses the published entry points.
+ * relative path that resolves into the engine's source, which bypasses the
+ * published entry points. Relative specifiers are resolved against the
+ * importing file rather than matched as text, so `../engine/sdk` from a
+ * sibling package counts as well as `../../packages/engine/sdk`.
  */
 function collectImportSpecifiers(fs: FsReader, roots: readonly string[], sdkPackage: string): string[] {
-  const target = `${escapeForPattern(sdkPackage)}|packages/engine/|goodvibes-sdk`;
-  const pattern = new RegExp(`(?:from\\s+|require\\(|import\\()\\s*['"]([^'"]*(?:${target})[^'"]*)['"]`, 'g');
+  const pattern = /(?:from\s+|require\(|import\()\s*['"]([^'"]+)['"]/g;
   const found: string[] = [];
   const walk = (dir: string): void => {
     let entries: readonly string[];
@@ -60,14 +83,18 @@ function collectImportSpecifiers(fs: FsReader, roots: readonly string[], sdkPack
     }
     for (const entry of entries) {
       const path = `${dir}/${entry}`;
-      if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
+      if (fs.isDirectory(path)) {
+        walk(path);
+      } else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
         const text = fs.readText(path);
         for (const match of text.matchAll(pattern)) {
-          if (match[1]) found.push(match[1]);
+          const specifier = match[1];
+          if (specifier === undefined) continue;
+          const reachesEngine = specifier.startsWith('.')
+            ? landsInEngine(resolveRelative(path, specifier))
+            : specifier === sdkPackage || specifier.startsWith(`${sdkPackage}/`);
+          if (reachesEngine) found.push(specifier);
         }
-      } else if (!entry.includes('.')) {
-        // No extension → treat as a subdirectory to recurse into.
-        walk(path);
       }
     }
   };

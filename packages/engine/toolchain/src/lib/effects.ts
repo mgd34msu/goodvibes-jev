@@ -26,6 +26,8 @@ export interface FsReader {
   readonly readText: (path: string) => string;
   readonly readDir: (path: string) => readonly string[];
   readonly isExecutable: (path: string) => boolean;
+  /** Whether the path is a directory (false when it does not exist). */
+  readonly isDirectory: (path: string) => boolean;
 }
 
 /** An HTTP GET returning a parsed JSON body plus the transport status. */
@@ -77,6 +79,13 @@ export function realFsReader(root: string): FsReader {
     isExecutable: (path) => {
       try {
         return (statSync(at(path)).mode & 0o111) !== 0;
+      } catch {
+        return false;
+      }
+    },
+    isDirectory: (path) => {
+      try {
+        return statSync(at(path)).isDirectory();
       } catch {
         return false;
       }

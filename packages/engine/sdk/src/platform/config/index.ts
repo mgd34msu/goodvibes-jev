@@ -339,6 +339,7 @@ export {
   isSecretReferenceValue,
   SECRET_BEARING_CONFIG_PATHS,
 } from './secret-bearing-config-keys.js';
+export { configKeyDescription, readCredentialKey } from './credential-key-reading.js';
 export {
   describePlaintextSweep,
   secretReferenceFor,

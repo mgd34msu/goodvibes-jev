@@ -4,15 +4,19 @@
  * A support bundle is a file an owner emails to someone. Filing a credential
  * in the right store buys nothing if the diagnostic dump then prints it.
  *
- * The bug class this pins: `isSensitiveConfigPath` matched a config path by its
- * trailing WORD (`(^|\.)(…|password|token|…)$`), so a key whose last segment
- * merely CONTAINS the word, `caldavPassword`, `imapPassword`, `appPassword`,
- * `authToken`, matched nothing and was written to the bundle in the clear. The
- * declared key list in cli-redaction.ts is what closes it; these tests are what
- * keep it closed as keys are added.
+ * The bug class this pins: `isSensitiveConfigPath` once matched a config path
+ * by its trailing WORD, so a key whose last segment merely CONTAINS the word,
+ * `caldavPassword`, `imapPassword`, `appPassword`, `authToken`, was written to
+ * the bundle in the clear. Schema keys are now answered by the platform's
+ * declared secret-bearing list and every other path by the
+ * `config.credential-key` reading (faked here); these tests keep both paths
+ * honest as keys are added.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import {
   REDACTED_VALUE,
   collectSensitiveConfigValues,
@@ -21,6 +25,7 @@ import {
   redactSerializedSecrets,
   redactText,
 } from '@goodvibes-jev/engine/terminal-shell';
+
 
 /** Every credential-bearing config path a front-end's own config surface can hold. */
 const CREDENTIAL_PATHS: readonly string[] = [
@@ -74,6 +79,23 @@ const MIDDLE_WORD_PATHS: readonly string[] = [
   'surfaces.telephony.authToken',
 ];
 
+/** Stand-in for the model on the paths these tests use: a key naming a credential is one. */
+let answer: (key: string) => number = (key) => (/password|token|secret|apikey|card|cvv/i.test(key) ? 0.97 : 0.03);
+let asked: string[] = [];
+let previous: JudgmentPort | undefined;
+beforeEach(() => {
+  asked = [];
+  answer = (key) => (/password|token|secret|apikey|card|cvv/i.test(key) ? 0.97 : 0.03);
+  previous = installJudgmentPort(fakePort((_name, _question, state) => {
+    const key = (state as { key: string }).key;
+    asked.push(key);
+    return noulAnswer(answer(key));
+  }).port);
+});
+afterEach(() => {
+  installJudgmentPort(previous);
+});
+
 function nest(path: string, value: unknown): Record<string, unknown> {
   const parts = path.split('.');
   const root: Record<string, unknown> = {};
@@ -87,18 +109,19 @@ function nest(path: string, value: unknown): Record<string, unknown> {
 }
 
 describe('isSensitiveConfigPath', () => {
-  test('recognises every credential-bearing config path', () => {
-    const missed = CREDENTIAL_PATHS.filter((path) => !isSensitiveConfigPath(path));
+  test('recognises every credential-bearing config path', async () => {
+    const missed: string[] = [];
+    for (const path of CREDENTIAL_PATHS) if (!(await isSensitiveConfigPath(path))) missed.push(path);
     expect(missed).toEqual([]);
   });
 
-  test('names carrying the credential word in the middle are recognised, not just trailing ones', () => {
+  test('names carrying the credential word in the middle are recognised, not just trailing ones', async () => {
     for (const path of MIDDLE_WORD_PATHS) {
-      expect(isSensitiveConfigPath(path)).toBe(true);
+      expect(await isSensitiveConfigPath(path)).toBe(true);
     }
   });
 
-  test('ordinary settings are left alone', () => {
+  test('ordinary settings are left alone', async () => {
     for (const path of [
       'surfaces.email.host',
       'surfaces.email.imapHost',
@@ -111,23 +134,23 @@ describe('isSensitiveConfigPath', () => {
       'cloudflare.accountId',
       'cloudflare.zoneName',
     ]) {
-      expect(isSensitiveConfigPath(path)).toBe(false);
+      expect(await isSensitiveConfigPath(path)).toBe(false);
     }
   });
 });
 
 describe('redactConfig', () => {
-  test('masks every credential value and reports the path it masked', () => {
+  test('masks every credential value and reports the path it masked', async () => {
     for (const path of CREDENTIAL_PATHS) {
       const secret = `live-value-for-${path}`;
-      const result = redactConfig(nest(path, secret));
+      const result = await redactConfig(nest(path, secret));
       expect(result.redactedPaths).toContain(path);
       expect(JSON.stringify(result.value)).not.toContain(secret);
       expect(JSON.stringify(result.value)).toContain(REDACTED_VALUE);
     }
   });
 
-  test('the mail and calendar passwords the owner configures are masked', () => {
+  test('the mail and calendar passwords the owner configures are masked', async () => {
     const config = {
       surfaces: {
         email: {
@@ -145,7 +168,7 @@ describe('redactConfig', () => {
         },
       },
     };
-    const result = redactConfig(config);
+    const result = await redactConfig(config);
     const serialized = JSON.stringify(result.value);
     for (const secret of ['mailbox-pw', 'imap-pw', 'imap-nested-pw', 'smtp-pw', 'caldav-pw']) {
       expect(serialized).not.toContain(secret);
@@ -163,8 +186,8 @@ describe('redactConfig', () => {
     ].sort());
   });
 
-  test('a goodvibes:// secret reference is left readable: it is a pointer, not a value', () => {
-    const result = redactConfig(nest(
+  test('a goodvibes:// secret reference is left readable: it is a pointer, not a value', async () => {
+    const result = await redactConfig(nest(
       'surfaces.email.password',
       'goodvibes://secrets/goodvibes/GOODVIBES_SURFACES_EMAIL_PASSWORD',
     ));
@@ -172,13 +195,13 @@ describe('redactConfig', () => {
     expect(JSON.stringify(result.value)).toContain('GOODVIBES_SURFACES_EMAIL_PASSWORD');
   });
 
-  test('an empty credential is not reported as redacted', () => {
-    expect(redactConfig(nest('surfaces.calendar.caldavPassword', '')).redactedPaths).toEqual([]);
+  test('an empty credential is not reported as redacted', async () => {
+    expect((await redactConfig(nest('surfaces.calendar.caldavPassword', ''))).redactedPaths).toEqual([]);
   });
 });
 
 describe('collectSensitiveConfigValues', () => {
-  test('collects the middle-word credential values so the serialized bundle can be swept', () => {
+  test('collects the middle-word credential values so the serialized bundle can be swept', async () => {
     const config = {
       surfaces: {
         calendar: { caldavPassword: 'caldav-pw' },
@@ -187,15 +210,15 @@ describe('collectSensitiveConfigValues', () => {
         telephony: { authToken: 'twilio-token' },
       },
     };
-    expect([...collectSensitiveConfigValues(config)].sort())
+    expect([...(await collectSensitiveConfigValues(config))].sort())
       .toEqual(['caldav-pw', 'imap-pw', 'teams-pw', 'twilio-token']);
   });
 });
 
 describe('redactSerializedSecrets', () => {
-  test('sweeps a credential out of a diagnostic blob it was copied into', () => {
+  test('sweeps a credential out of a diagnostic blob it was copied into', async () => {
     const config = { surfaces: { calendar: { caldavPassword: 'caldav-pw-9times' } } };
-    const values = collectSensitiveConfigValues(config);
+    const values = await collectSensitiveConfigValues(config);
     const blob = JSON.stringify({
       config,
       diagnostics: { logTail: 'CalDAV auth failed for principal using caldav-pw-9times' },
@@ -246,8 +269,8 @@ describe('a support bundle never carries card material', () => {
     },
   };
 
-  test('every card field is redacted out of a bundled config', () => {
-    const { value } = redactConfig(CARD_CONFIG);
+  test('every card field is redacted out of a bundled config', async () => {
+    const { value } = await redactConfig(CARD_CONFIG);
     const payments = value.payments;
     expect(payments.cardNumber).toBe(REDACTED_VALUE);
     expect(payments.cardExpiry).toBe(REDACTED_VALUE);
@@ -255,22 +278,46 @@ describe('a support bundle never carries card material', () => {
     expect(payments.cardholderName).toBe(REDACTED_VALUE);
   });
 
-  test('the card number never survives anywhere in the serialised bundle', () => {
-    const { value } = redactConfig(CARD_CONFIG);
+  test('the card number never survives anywhere in the serialised bundle', async () => {
+    const { value } = await redactConfig(CARD_CONFIG);
     expect(JSON.stringify(value)).not.toContain('4111111111111111');
     expect(JSON.stringify(value)).not.toContain('A Chen');
   });
 
-  test('an ordinary payments setting is left alone, so this is not blanket masking', () => {
-    const { value } = redactConfig(CARD_CONFIG);
+  test('an ordinary payments setting is left alone, so this is not blanket masking', async () => {
+    const { value } = await redactConfig(CARD_CONFIG);
     expect(value.payments.currency).toBe('USD');
   });
 
-  test('each card field is recognised individually', () => {
+  test('each card field is recognised individually', async () => {
     for (const path of ['payments.cardNumber', 'payments.cardExpiry', 'payments.cardCvv', 'payments.cardholderName']) {
-      expect(isSensitiveConfigPath(path)).toBe(true);
+      expect(await isSensitiveConfigPath(path)).toBe(true);
       // ...and case-insensitively, because the lookup lowercases.
-      expect(isSensitiveConfigPath(path.toUpperCase())).toBe(true);
+      expect(await isSensitiveConfigPath(path.toUpperCase())).toBe(true);
     }
+  });
+});
+
+
+describe('which paths are read, and what the code does with the reading', () => {
+  test('a schema key is answered by the declaration and asks nothing', async () => {
+    expect(await isSensitiveConfigPath('surfaces.email.password')).toBe(true);
+    expect(await isSensitiveConfigPath('display.themeMode')).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  test('a path outside the schema is read, and only a confident no leaves it in the clear', async () => {
+    answer = () => 0.5;
+    expect(await isSensitiveConfigPath('mcp.servers.github.env.UNSURE_SETTING')).toBe(true);
+    answer = () => 0.03;
+    expect(await isSensitiveConfigPath('mcp.servers.fs.args.0')).toBe(false);
+    expect(asked).toEqual(['mcp.servers.github.env.UNSURE_SETTING', 'mcp.servers.fs.args.0']);
+  });
+
+  test('a user-named env key under an MCP server is masked when read as a credential', async () => {
+    const result = await redactConfig({ mcp: { servers: { github: { command: 'gh-mcp', env: { GITHUB_TOKEN: 'ghp-live' } } } } });
+    expect(result.redactedPaths).toContain('mcp.servers.github.env.GITHUB_TOKEN');
+    expect(JSON.stringify(result.value)).not.toContain('ghp-live');
+    expect(JSON.stringify(result.value)).toContain('gh-mcp');
   });
 });

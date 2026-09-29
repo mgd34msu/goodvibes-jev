@@ -55,13 +55,15 @@ function createDefaultFlags(): GoodVibesCliFlags {
 }
 
 /**
- * `provider:model` and `provider/model` name the provider inside the model
- * id. An explicit `--provider` always wins, the engine only calls this when
- * none was given.
+ * `provider:model` names the provider inside the model id; that is the
+ * platform's own model reference grammar. A slash is not: model ids such as
+ * `meta-llama/Llama-3.1-8B` carry a slash inside the model name, so a
+ * slash-form id is left for the model registry to resolve where the
+ * front-end loads it. An explicit `--provider` always wins; the engine only
+ * calls this when none was given.
  */
 function inferProviderFromModel(model: string): string | undefined {
   if (model.includes(':')) return model.split(':')[0];
-  if (model.includes('/')) return model.split('/')[0];
   return undefined;
 }
 

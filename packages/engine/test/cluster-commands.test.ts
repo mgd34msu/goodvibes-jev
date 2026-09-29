@@ -15,6 +15,9 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { Question } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import {
   parseClusterCommand,
@@ -278,6 +281,72 @@ describe('running a subcommand', () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.lines.join('\n')).toContain('joined "workshop"');
+  });
+});
+
+describe('which group a typed answer names', () => {
+  const base = {
+    configManager: CONFIG,
+    daemonHomeDir: '/nowhere',
+    readToken: () => TOKEN_FILE,
+    now: () => 1_000_000,
+    isTerminal: false,
+  };
+  const GROUPS = [
+    { groupId: 'gABC123', displayName: 'workshop', nodeCount: 1, version: '1.0.0', lastSeenAt: 999_000 },
+    { groupId: 'gXYZ789', displayName: 'studio', nodeCount: 3, version: '1.0.0', lastSeenAt: 999_000 },
+  ];
+
+  /** A port whose join-group reading picks `chosen` (or none) and says it fits. */
+  function selecting(chosen: string) {
+    return fakePort((name: string, question: Question) => {
+      if (name === 'pick') return choiceAnswer(question, chosen, 0.95);
+      return noulAnswer(chosen === 'none' ? 0.05 : 0.95);
+    });
+  }
+
+  async function joinWith(answer: string, chosen: string) {
+    const fake = selecting(chosen);
+    const previous = installJudgmentPort(fake.port);
+    const posted: unknown[] = [];
+    try {
+      const answers = [answer, 'gvj1-THEKEY'];
+      const result = await runClusterCommand({
+        ...base,
+        argv: ['join'],
+        prompt: async () => answers.shift() ?? '',
+        fetchImpl: async (url, init) => {
+          if (String(url).endsWith('/groups')) return jsonResponse({ ok: true, data: GROUPS });
+          posted.push(JSON.parse(String(init?.body)));
+          return jsonResponse({ ok: true, data: { groupId: 'x', groupName: 'y', memberCount: 2 } });
+        },
+      });
+      return { result, posted, asked: fake.requests.length };
+    } finally {
+      installJudgmentPort(previous);
+    }
+  }
+
+  test('a full id or a prefix of exactly one id is taken without asking', async () => {
+    const full = await joinWith('gXYZ789', 'none');
+    expect(full.posted).toEqual([{ groupId: 'gXYZ789', joinKey: 'gvj1-THEKEY' }]);
+    const prefix = await joinWith('gAB', 'none');
+    expect(prefix.posted).toEqual([{ groupId: 'gABC123', joinKey: 'gvj1-THEKEY' }]);
+    expect(full.asked + prefix.asked).toBe(0);
+  });
+
+  test('a name or description is the join-group reading', async () => {
+    const { posted, asked } = await joinWith('the studio one', 'gXYZ789');
+    expect(asked).toBe(1);
+    expect(posted).toEqual([{ groupId: 'gXYZ789', joinKey: 'gvj1-THEKEY' }]);
+  });
+
+  test('a prefix shared by two ids goes to the reading, and none refuses with the fix', async () => {
+    const { result, posted, asked } = await joinWith('g', 'none');
+    expect(asked).toBe(1);
+    expect(posted).toEqual([]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.lines.join('\n')).toContain('cluster groups');
   });
 });
 

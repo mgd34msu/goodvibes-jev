@@ -5,7 +5,7 @@
  * selected index, scroll offset, and pending action.
  */
 
-import type { BookmarkEntry, BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
+import { isSavedFileForLabel, type BookmarkEntry, type BookmarkManager } from '@goodvibes-jev/engine/sdk/platform/bookmarks';
 
 export class BookmarkModal {
   public static readonly DEFAULT_VISIBLE_ROWS = 8;
@@ -81,14 +81,10 @@ export class BookmarkModal {
   openSelectedFile(): string | null {
     const entry = this.getSelected();
     if (!entry) return null;
-    // Derive the filename from the key (saved as <timestamp>-<label>.txt)
-    // We list all saved files and look for one containing the entry key in the name
+    // Saved as <timestamp>-<slug of the label>.txt: match that name exactly,
+    // so a short label cannot open another bookmark's file.
     const files = this.bookmarkManager.listSavedFiles();
-    const match = files.find((f) => {
-      const base = f.split('/').pop() ?? '';
-      return base.includes(entry.key) ||
-        base.includes(entry.label.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').slice(0, 40));
-    });
+    const match = files.find((f) => isSavedFileForLabel(f.split('/').pop() ?? '', entry.label));
     if (!match) return null;
     const name = match.split('/').pop()!;
     return this.bookmarkManager.loadSavedFile(name);

@@ -21,6 +21,26 @@ export interface BookmarkEntry {
  * Bookmarks are stored in memory for the session. Saved block content is
  * written to the configured bookmarks directory.
  */
+/**
+ * The file name part a saved bookmark's label becomes: lowercase, runs of
+ * characters outside [a-z0-9_-] as one hyphen, no leading or trailing hyphen,
+ * at most 40 characters, `block` when nothing is left. A saved file is named
+ * `<timestamp>-<slug>.txt`, with a 19 character timestamp.
+ */
+export function bookmarkFileSlug(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'block';
+}
+
+/** Whether a saved file name is the one saveToFile writes for this label. */
+export function isSavedFileForLabel(fileName: string, label: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-/.test(fileName) && fileName.slice(20) === `${bookmarkFileSlug(label)}.txt`;
+}
+
 export class BookmarkManager {
   private bookmarks = new Map<string, BookmarkEntry>();
   private saveDir: string;
@@ -75,13 +95,7 @@ export class BookmarkManager {
   public saveToFile(content: string, label: string): string {
     mkdirSync(this.saveDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const sanitizedLabel = label
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'block';
-    const filename = `${timestamp}-${sanitizedLabel}.txt`;
+    const filename = `${timestamp}-${bookmarkFileSlug(label)}.txt`;
     const filePath = join(this.saveDir, filename);
     writeFileSync(filePath, content, 'utf-8');
     logger.debug('BookmarkManager: saved block content', { filePath });

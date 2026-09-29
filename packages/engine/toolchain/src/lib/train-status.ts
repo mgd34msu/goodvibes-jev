@@ -73,7 +73,7 @@ export interface RepoGathered {
   readonly entry: TrainStatusRepoEntry;
   /** `n/a` for repos with no package.json (e.g. a Python repo in the family). */
   readonly version: string;
-  /** The @pellux/goodvibes-sdk pin read from dependencies/devDependencies; null when absent or not an sdk-consumer. */
+  /** The @goodvibes-jev/engine pin read from dependencies/devDependencies; null when absent or not an sdk-consumer. */
   readonly sdkPin: string | null;
   readonly lastTag: string | null;
   readonly commitsSinceTag: number;
@@ -238,7 +238,7 @@ export function readPackageVersion(repoPath: string): string {
   }
 }
 
-/** Read the @pellux/goodvibes-sdk pin from dependencies or devDependencies. Null when absent. */
+/** Read the @goodvibes-jev/engine pin from dependencies or devDependencies. Null when absent. */
 export function readTrainStatusSdkPin(repoPath: string): string | null {
   const pkgPath = resolve(repoPath, 'package.json');
   if (!existsSync(pkgPath)) return null;

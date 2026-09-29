@@ -1,5 +1,5 @@
 /**
- * @pellux/goodvibes-terminal-shell
+ * @goodvibes-jev/engine/terminal-shell
  *
  * Shared terminal-shell plumbing for GoodVibes daemon front-ends. This is the
  * single home for the runtime wiring that two front-ends must keep identical:
@@ -22,7 +22,7 @@
  * against the same engine, not a forked parser.
  *
  * The startup reachability notice lives in the SDK core instead
- * (`@pellux/goodvibes-sdk/platform/runtime`, the `operations` namespace):
+ * (`@goodvibes-jev/engine/sdk/platform/runtime`, the `operations` namespace):
  * SDK-side code needs it too, and the SDK cannot import this package.
  *
  * Alongside the wiring sits the terminal IDIOM: the arithmetic and policy a

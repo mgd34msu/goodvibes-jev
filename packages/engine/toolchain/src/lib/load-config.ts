@@ -12,7 +12,7 @@ import { type ToolchainConfig, parseToolchainConfig } from '../config.js';
 export function loadToolchainConfig(root: string = process.cwd()): ToolchainConfig {
   const path = resolve(root, 'toolchain.config.json');
   if (!existsSync(path)) {
-    throw new Error(`toolchain.config.json not found at ${path}. See @pellux/goodvibes-toolchain docs for the contract.`);
+    throw new Error(`toolchain.config.json not found at ${path}. See the @goodvibes-jev/engine toolchain docs for the contract.`);
   }
   return parseToolchainConfig(readFileSync(path, 'utf8'));
 }

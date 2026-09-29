@@ -280,6 +280,12 @@ describe('session flags coexistence', () => {
     expect(f.model).toBe('anthropic:claude-sonnet-4-6');
     expect(f.provider).toBe('anthropic');
   });
+  test('a slash in a model id is part of the model name, not a provider', () => {
+    const f = flags(['--model', 'meta-llama/Llama-3.1-8B-Instruct']);
+    expect(f.model).toBe('meta-llama/Llama-3.1-8B-Instruct');
+    expect(f.provider).toBeUndefined();
+  });
+
 
   test('--resume and --yes can coexist', () => {
     const f = flags(['--resume', 'sess-abc', '--yes']);

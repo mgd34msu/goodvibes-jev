@@ -196,3 +196,22 @@ describe('BookmarkModal', () => {
     });
   });
 });
+
+describe('openSelectedFile()', () => {
+  test('opens the file saved for the selected label, not one whose name merely contains it', () => {
+    // 'api' sorts before 'p' and contains it, so a substring match opened it.
+    bookmarkManager.toggle('key_p', 'p');
+    bookmarkManager.saveToFile('the api notes', 'api');
+    bookmarkManager.saveToFile('the p notes', 'p');
+    modal.open();
+    expect(modal.getSelected()?.label).toBe('p');
+    expect(modal.openSelectedFile()).toBe('the p notes');
+  });
+
+  test('returns null when nothing was saved under the label', () => {
+    bookmarkManager.toggle('key_b', 'build log');
+    bookmarkManager.saveToFile('other', 'build-logs-archive');
+    modal.open();
+    expect(modal.openSelectedFile()).toBeNull();
+  });
+});

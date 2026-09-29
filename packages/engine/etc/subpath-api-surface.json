@@ -10958,6 +10958,16 @@
         "toggle"
       ],
       "text": "export declare class BookmarkManager { private bookmarks; private saveDir; constructor(baseDir: string); toggle(key: string, label?: string): boolean; isBookmarked(key: string): boolean; list(): BookmarkEntry[]; clear(): void; saveToFile(content: string, label: string): string; listSavedFiles(): string[]; loadSavedFile(name: string): string | null; }"
+    },
+    {
+      "name": "bookmarkFileSlug",
+      "kind": "function",
+      "text": "export declare function bookmarkFileSlug(label: string): string;"
+    },
+    {
+      "name": "isSavedFileForLabel",
+      "kind": "function",
+      "text": "export declare function isSavedFileForLabel(fileName: string, label: string): boolean;"
     }
   ],
   "./platform/browser": [
@@ -16998,6 +17008,11 @@
       "text": "export declare function compareReaderVersions(a: string, b: string): number;"
     },
     {
+      "name": "configKeyDescription",
+      "kind": "function",
+      "text": "export declare function configKeyDescription(key: string): string;"
+    },
+    {
       "name": "configKeyScope",
       "kind": "function",
       "text": "export declare function configKeyScope(key: string): ConfigScope;"
@@ -17386,6 +17401,11 @@
       "name": "readControlPlaneBinding",
       "kind": "function",
       "text": "export declare function readControlPlaneBinding(read: (key: string) => unknown, prefix?: string): ControlPlaneBinding;"
+    },
+    {
+      "name": "readCredentialKey",
+      "kind": "function",
+      "text": "export declare function readCredentialKey(state: CredentialKeyState, site: string): Promise<YesNoReading>; ;; via CredentialKeyState = export type CredentialKeyState = { readonly key: string; readonly description: string; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "readDaemonConfig",

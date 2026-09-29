@@ -782,7 +782,7 @@
     {
       "name": "collectSensitiveConfigValues",
       "kind": "function",
-      "text": "export declare function collectSensitiveConfigValues(config: unknown): readonly string[];"
+      "text": "export declare function collectSensitiveConfigValues(config: unknown): Promise<readonly string[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "computePromptContentWidth",
@@ -997,7 +997,7 @@
     {
       "name": "isSensitiveConfigPath",
       "kind": "function",
-      "text": "export declare function isSensitiveConfigPath(path: string): boolean;"
+      "text": "export declare function isSensitiveConfigPath(path: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "isTextBackspace",
@@ -1047,7 +1047,7 @@
     {
       "name": "redactConfig",
       "kind": "function",
-      "text": "export declare function redactConfig<T>(config: T): RedactedConfigResult<T>;"
+      "text": "export declare function redactConfig<T>(config: T): Promise<RedactedConfigResult<T>>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "redactSerializedSecrets",

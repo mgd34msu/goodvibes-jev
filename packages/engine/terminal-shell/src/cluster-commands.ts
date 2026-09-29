@@ -32,7 +32,10 @@ import {
   type DaemonFetch,
   type DaemonVerbOutcome,
 } from './cluster-remote-daemon-target.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { clusterJoinGroup } from './batteries/cluster-join-group.js';
 import {
+  describeAge,
   renderCreated,
   renderDiscovered,
   renderFailure,
@@ -363,8 +366,8 @@ async function runJoin(
       const answer = await ask('\nwhich group? (name or id, blank to cancel): ');
       if (answer.length === 0) return { lines: ['cancelled'], exitCode: 130 };
       const chosen = found.data.find((group) => group.groupId === answer)
-        ?? found.data.find((group) => group.displayName === answer)
-        ?? found.data.find((group) => group.groupId.startsWith(answer));
+        ?? uniqueIdPrefix(found.data, answer)
+        ?? await readJoinGroup(answer, found.data, now);
       if (!chosen) {
         return failure(`no group on this network matches '${answer}'`, 'run `cluster groups` to see them again', parsed.json);
       }
@@ -381,4 +384,34 @@ async function runJoin(
   return result.ok
     ? success(result.data, renderJoined(result.data), parsed.json)
     : failure(result.error, result.fix, parsed.json);
+}
+
+/** The decision site the join group reading is logged under. */
+export const CLUSTER_JOIN_GROUP_SITE = 'terminal-shell.cluster-join';
+
+/** A prefix that starts exactly one group's id abbreviates that id, the way a short commit hash does. */
+function uniqueIdPrefix(groups: readonly DiscoveredGroup[], answer: string): DiscoveredGroup | undefined {
+  const matches = groups.filter((group) => group.groupId.startsWith(answer));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * Which group a typed name or description refers to: the
+ * `terminal-shell.cluster-join-group` reading, taken only when it acts.
+ */
+async function readJoinGroup(answer: string, groups: readonly DiscoveredGroup[], now: number): Promise<DiscoveredGroup | undefined> {
+  const candidates = groups.map((group) => ({
+    id: group.groupId,
+    content: {
+      groupId: group.groupId,
+      displayName: group.displayName,
+      machines: group.nodeCount,
+      version: group.version,
+      seen: describeAge(group.lastSeenAt, now),
+    },
+  }));
+  const selection = await clusterJoinGroup.select(judgmentPort(CLUSTER_JOIN_GROUP_SITE), { answer }, candidates, { site: CLUSTER_JOIN_GROUP_SITE });
+  const picked = selection.outcome === 'act' ? groups.find((group) => group.groupId === selection.chosen) : undefined;
+  selection.recordAction(picked === undefined ? 'no group taken' : `joining ${picked.groupId}`);
+  return picked;
 }

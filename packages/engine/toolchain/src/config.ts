@@ -3,7 +3,7 @@
  *
  * Every GoodVibes repo keeps a small `toolchain.config.json` (or a
  * `toolchain.config.ts` that default-exports a {@link ToolchainConfig}) at its
- * root. The published `@pellux/goodvibes-toolchain` package holds the behavior;
+ * root. The published the `@goodvibes-jev/engine` toolchain package holds the behavior;
  * the config holds the repo-specific values (package names, binary matrix,
  * coverage floors, publish ordering) so one implementation serves every repo.
  *
@@ -129,7 +129,7 @@ export interface PerJobGreenConfig {
 
 /** The complete repo config. All sections are optional so a repo declares only the tools it uses. */
 export interface ToolchainConfig {
-  /** npm name of the repo's primary package, e.g. `@pellux/goodvibes-tui`. */
+  /** npm name of the repo's primary package, e.g. `@goodvibes-jev/engine`. */
   readonly packageName: string;
   readonly sdkPin?: SdkPinConfig;
   readonly build?: BuildConfig;

@@ -32,6 +32,7 @@ export function fakeFs(files: Record<string, string>, executable: readonly strin
       return [...set];
     },
     isExecutable: (p) => exec.has(p),
+    isDirectory: (p) => dirs.has(p),
   };
 }
 

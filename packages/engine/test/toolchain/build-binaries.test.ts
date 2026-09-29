@@ -204,16 +204,23 @@ describe('build-binaries dependency manifest reading', () => {
   test('reads dependencies and optionalDependencies, skipping workspace siblings', () => {
     const fs = fakeFs({
       'package.json': JSON.stringify({
-        name: '@pellux/goodvibes-tui',
-        dependencies: { '@pellux/goodvibes-sdk': '1.20.0', zustand: '^5.0.12' },
+        name: '@goodvibes-jev/tui',
+        dependencies: { '@goodvibes-jev/engine': 'workspace:*', '@goodvibes-jev/judgment': 'file:../judgment', zustand: '^5.0.12' },
         optionalDependencies: { jsdom: '^29.1.0' },
       }),
     });
     const manifest = readDependencyManifest(fs, 'package.json', 'fallback');
-    expect(manifest?.name).toBe('@pellux/goodvibes-tui');
-    // The SDK itself is resolved by the build root, not screened here.
+    expect(manifest?.name).toBe('@goodvibes-jev/tui');
+    // Local links are resolved by the build root, not screened here.
     expect(manifest?.required).toEqual(['zustand']);
     expect(manifest?.optional).toEqual(['jsdom']);
+  });
+
+  test('a sibling installed from the registry is screened like any dependency: the specifier decides, not the scope', () => {
+    const fs = fakeFs({
+      'package.json': JSON.stringify({ name: 'consumer', dependencies: { '@goodvibes-jev/engine': '2.0.23', 'local-thing': 'link:../thing' } }),
+    });
+    expect(readDependencyManifest(fs, 'package.json', 'fallback')?.required).toEqual(['@goodvibes-jev/engine']);
   });
 
   test('a missing or unparseable manifest screens nothing rather than failing the build', () => {

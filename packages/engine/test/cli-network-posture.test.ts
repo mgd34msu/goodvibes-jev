@@ -110,3 +110,17 @@ describe('isNetworkFacing', () => {
     expect(isNetworkFacing(true, { hostMode: 'local', host: '127.0.0.1' })).toBe(false);
   });
 });
+
+describe('loopback is parsed, not prefix-matched', () => {
+  test('every loopback spelling is loopback', () => {
+    for (const host of ['localhost', '127.0.0.1', '127.8.9.10', '::1', '0:0:0:0:0:0:0:1', '[::1]', '::ffff:127.0.0.1', '0000::0001']) {
+      expect(isLoopbackHost(host), host).toBe(true);
+    }
+  });
+
+  test('a DNS name starting with 127. and ordinary addresses are not', () => {
+    for (const host of ['127.example.com', '127.0.0.1.nip.io', '10.0.0.1', '::2', '::ffff:10.0.0.1', '0.0.0.0', '::']) {
+      expect(isLoopbackHost(host), host).toBe(false);
+    }
+  });
+});

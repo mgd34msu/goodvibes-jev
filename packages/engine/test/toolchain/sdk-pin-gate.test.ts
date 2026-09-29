@@ -63,6 +63,27 @@ describe('sdk-pin-gate', () => {
     expect(results.find((r) => r.id === 'npm-specifier-only-imports')?.ok).toBe(false);
   });
 
+  test('a relative import is resolved against its file, so a sibling engine package is caught', () => {
+    const files = baseFiles('1.10.1');
+    files['src/lib/deep.ts'] = `import { thing } from '../../../engine/sdk/src/index.ts';`;
+    const results = runSdkPinGate(fakeFs(files), {});
+    expect(results.find((r) => r.id === 'npm-specifier-only-imports')?.ok).toBe(false);
+  });
+
+  test('a directory with a dot in its name is still walked', () => {
+    const files = baseFiles('1.10.1');
+    files['src/v1.2/entry.ts'] = `import { thing } from '../../packages/engine/sdk/src/index.ts';`;
+    const results = runSdkPinGate(fakeFs(files), {});
+    expect(results.find((r) => r.id === 'npm-specifier-only-imports')?.ok).toBe(false);
+  });
+
+  test('a relative import that stays inside the consumer passes', () => {
+    const files = baseFiles('1.10.1');
+    files['src/index.ts'] = `import { local } from './engine/local.ts';`;
+    const results = runSdkPinGate(fakeFs(files), {});
+    expect(results.find((r) => r.id === 'npm-specifier-only-imports')?.ok).toBe(true);
+  });
+
   test('reads the pin from devDependencies when configured (agent variant)', () => {
     const fs = fakeFs({ 'package.json': JSON.stringify({ devDependencies: { [SDK]: '1.10.1' } }) });
     expect(readSdkPin(fs, resolveSdkPinConfig({ pinSource: 'devDependencies' }))).toBe('1.10.1');

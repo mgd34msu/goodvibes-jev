@@ -196,7 +196,7 @@ export interface ClusterCommandResult {
 export type ClusterSubcommand = (typeof CLUSTER_SUBCOMMANDS)[number];
 
 // @public (undocumented)
-export function collectSensitiveConfigValues(config: unknown): readonly string[];
+export function collectSensitiveConfigValues(config: unknown): Promise<readonly string[]>;
 
 // @public
 export type ColorCapability = 'none' | 'basic16' | 'ansi256' | 'truecolor';
@@ -641,7 +641,7 @@ export function isFeatureDefaultEnabled(featureId: string): boolean;
 // @public
 export function isFeatureValueEnabled(feature: FeatureSetting, value: unknown): boolean;
 
-// @public (undocumented)
+// @public
 export function isLoopbackHost(host: string): boolean;
 
 // @public (undocumented)
@@ -650,8 +650,8 @@ export function isNetworkFacing(enabled: unknown, binding: Pick<RuntimeEndpointB
 // @public (undocumented)
 export function isRedactedValue(value: unknown): boolean;
 
-// @public (undocumented)
-export function isSensitiveConfigPath(path: string): boolean;
+// @public
+export function isSensitiveConfigPath(path: string): Promise<boolean>;
 
 // @public
 export function isTextBackspace(key: string): boolean;
@@ -866,9 +866,9 @@ export interface Rect {
 }
 
 // @public (undocumented)
-export function redactConfig<T>(config: T): RedactedConfigResult<T>;
+export function redactConfig<T>(config: T): Promise<RedactedConfigResult<T>>;
 
-// @public
+// @public (undocumented)
 export const REDACTED_VALUE = "<redacted>";
 
 // @public (undocumented)
