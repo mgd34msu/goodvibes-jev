@@ -19,6 +19,7 @@ import { PluginQuarantineEngine, type QuarantineRecord } from '../runtime/plugin
 import { isHighRiskCapability, resolveCapabilityManifest } from '../runtime/plugins/manifest.js';
 import type { PluginCapability, PluginManifestV2 } from '../runtime/plugins/types.js';
 import { summarizeError } from '../utils/error-display.js';
+import { DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS, PluginInFlightTracker } from './in-flight.js';
 
 /**
  * PluginState, Persisted state for all plugins.
@@ -73,6 +74,18 @@ export interface PluginManagerOptions {
   readonly stateFilePath?: string | undefined;
 }
 
+/** Outcome of PluginManager.reload(). */
+export interface PluginReloadSummary {
+  reloaded: number;
+  /** Plugins that failed to load, plus every plugin in notDrained. */
+  failed: number;
+  /**
+   * Plugins left loaded on their current instance because calls into them
+   * were still running when the quiesce timeout passed.
+   */
+  notDrained: string[];
+}
+
 /**
  * PluginManager, orchestrates plugin discovery, loading, and persistence.
  */
@@ -80,6 +93,8 @@ export class PluginManager {
   private plugins = new Map<string, LoadedPlugin>();
   private state: PluginState = { ...DEFAULT_STATE, enabled: {}, config: {}, trust: {}, quarantine: {} };
   private deps: PluginLoaderDeps | undefined;
+  /** Counts calls into loaded plugins so a reload can drain them first. */
+  private inFlight = new PluginInFlightTracker();
 
   /** Trust store, manages tier records for all plugins. */
   private readonly trustStore = new PluginTrustStore();
@@ -102,7 +117,8 @@ export class PluginManager {
    * Loads state from disk, then discovers and loads all enabled plugins.
    */
   async init(deps: PluginLoaderDeps): Promise<void> {
-    this.deps = deps;
+    if (deps.inFlight) this.inFlight = deps.inFlight;
+    this.deps = { ...deps, inFlight: this.inFlight };
     this.loadState();
     await this.loadEnabledPlugins();
   }
@@ -360,40 +376,66 @@ export class PluginManager {
     return { ok: true };
   }
 
-  /** Reload all currently enabled plugins (deactivate then reactivate). */
-  async reload(): Promise<{ reloaded: number; failed: number }> {
+  /**
+   * Reload all currently enabled plugins (deactivate then reactivate). Each
+   * loaded plugin is quiesced first: new calls into it are refused and the
+   * calls already running get up to `quiesceTimeoutMs` to finish. A plugin
+   * still busy at the timeout is not reloaded; it stays on its current
+   * instance and is reported in `notDrained`.
+   */
+  async reload(options: { readonly quiesceTimeoutMs?: number | undefined } = {}): Promise<PluginReloadSummary> {
+    const quiesceTimeoutMs = options.quiesceTimeoutMs ?? DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS;
     const names = Object.keys(this.state.enabled).filter((n) => this.state.enabled[n]);
+    const loadedNames = names.filter((name) => this.plugins.has(name));
     let reloaded = 0;
     let failed = 0;
 
-    // Deactivate all
-    for (const name of names) {
-      const loaded = this.plugins.get(name);
-      if (loaded) {
-        await unloadPlugin(loaded);
-        this.plugins.delete(name);
-      }
+    const drains = await Promise.all(loadedNames.map(async (name) => ({
+      name,
+      drain: await this.inFlight.quiesce(name, quiesceTimeoutMs),
+    })));
+    const notDrained = new Set<string>();
+    for (const { name, drain } of drains) {
+      if (drain.drained) continue;
+      notDrained.add(name);
+      this.inFlight.resume(name);
+      logger.warn(`[plugins] ${name}: not reloaded, ${drain.inFlight} call(s) still running after ${quiesceTimeoutMs}ms`);
     }
 
-    // Reactivate with cache busting, append timestamp to force fresh import
-    if (this.deps) {
-      const discovered = this.discoverPlugins();
-      const cacheBust = Date.now();
-      for (const d of discovered) {
-        if (!this.isEnabled(d.manifest.name)) continue;
-        // Pass cacheBust so loadPlugin appends ?t=<timestamp> to the import URL,
-        // forcing Bun to bypass its module cache and re-execute the file.
-        const loaded = await loadPlugin(d, this.deps, cacheBust);
+    try {
+      // Deactivate every drained plugin
+      for (const name of names) {
+        if (notDrained.has(name)) continue;
+        const loaded = this.plugins.get(name);
         if (loaded) {
-          this.plugins.set(d.manifest.name, loaded);
-          reloaded++;
-        } else {
-          failed++;
+          await unloadPlugin(loaded);
+          this.plugins.delete(name);
         }
       }
+
+      // Reactivate with cache busting, append timestamp to force fresh import
+      if (this.deps) {
+        const discovered = this.discoverPlugins();
+        const cacheBust = Date.now();
+        for (const d of discovered) {
+          if (!this.isEnabled(d.manifest.name) || notDrained.has(d.manifest.name)) continue;
+          // Pass cacheBust so loadPlugin appends ?t=<timestamp> to the import URL,
+          // forcing Bun to bypass its module cache and re-execute the file.
+          const loaded = await loadPlugin(d, this.deps, cacheBust);
+          if (loaded) {
+            this.plugins.set(d.manifest.name, loaded);
+            reloaded++;
+          } else {
+            failed++;
+          }
+        }
+      }
+    } finally {
+      for (const { name } of drains) this.inFlight.resume(name);
     }
+    failed += notDrained.size;
     this.notifySubscribers();
-    return { reloaded, failed };
+    return { reloaded, failed, notDrained: [...notDrained] };
   }
 
   /** Returns whether a plugin is marked as enabled in persisted state. */

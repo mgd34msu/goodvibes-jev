@@ -13,6 +13,7 @@ import type { VoiceProviderRegistry } from '../voice/index.js';
 import type { MediaProviderRegistry } from '../media/index.js';
 import type { WebSearchProviderRegistry } from '../web-search/index.js';
 import { summarizeError } from '../utils/error-display.js';
+import type { PluginInFlightTracker } from './in-flight.js';
 
 export interface PluginPathOptions {
   readonly cwd: string;
@@ -179,6 +180,12 @@ export interface PluginLoaderDeps {
   getPluginConfig(name: string): Record<string, unknown>;
   /** Returns whether a plugin is enabled in persistent state. */
   isEnabled(name: string): boolean;
+  /**
+   * In-flight accounting for calls into loaded plugins. Required for a reload
+   * to drain a plugin before unloading it (runHotReload refuses to reload a
+   * plugin whose calls are not counted). PluginManager.init supplies one.
+   */
+  inFlight?: PluginInFlightTracker | undefined;
 }
 
 /**
@@ -263,6 +270,7 @@ export async function loadPlugin(
       webSearchProviderRegistry: deps.webSearchProviderRegistry,
       pluginConfig: deps.getPluginConfig(manifest.name),
       cleanup: loaded.cleanup,
+      inFlight: deps.inFlight,
     };
 
     const api = createPluginAPI(ctx);

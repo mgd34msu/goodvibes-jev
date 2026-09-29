@@ -153,6 +153,18 @@ export class ToolRegistry {
     }
   }
 
+  /**
+   * Remove a registered tool. When `expected` is given, the tool is removed
+   * only if it is still that exact registration (a later owner of the same
+   * name is left alone). Returns whether a tool was removed.
+   */
+  unregister(name: string, expected?: Tool): boolean {
+    const current = this.tools.get(name);
+    if (!current || (expected !== undefined && current !== expected)) return false;
+    this.tools.delete(name);
+    return true;
+  }
+
   /** Returns true if a tool with the given name is registered. */
   has(name: string): boolean {
     return this.tools.has(name);

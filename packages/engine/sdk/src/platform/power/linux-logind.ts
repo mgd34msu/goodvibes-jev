@@ -18,6 +18,16 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { PowerInhibitClass, PowerInhibitHandle, PowerPlatformSeam } from './types.js';
+import {
+  defaultSleepWatchSpawner,
+  onStdoutLines,
+  pidIsAlive,
+  trackSleepWatcher,
+  type OrphanReaperDeps,
+  type SleepWatchSpawner,
+} from './child-hygiene.js';
+
+export type { OrphanReaperDeps, SleepWatchSpawner } from './child-hygiene.js';
 
 /** Grace period for an inhibit child to prove it started (denials exit fast). */
 const START_PROBE_MS = 300;
@@ -50,79 +60,6 @@ function sleepWatchOwnerMatchRule(ownerPid: number): string {
 }
 
 const SLEEP_WATCH_OWNER_PID = /GoodvibesSleepWatchOwner(\d+)/;
-
-function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM means the pid exists but is not ours, alive.
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/**
- * Live sleep-edge dbus-monitor children spawned in this process. An exiting
- * process must never leave a watcher parented to init: an accumulation of
- * orphaned monitors exhausts the system D-Bus broker's per-uid connection
- * quota and can lock every process of that uid out of the system bus. The
- * registry + the once-only exit/signal hooks below guarantee every watcher
- * dies with us, the same discipline the inhibitor children get through the
- * PowerManager's process-exit cleanup.
- */
-const liveSleepWatchers = new Set<ChildProcess>();
-let sleepWatcherExitHooksInstalled = false;
-
-function killAllSleepWatchers(): void {
-  for (const child of liveSleepWatchers) {
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      // already gone
-    }
-  }
-  liveSleepWatchers.clear();
-}
-
-/**
- * Install process exit + SIGINT/SIGTERM/SIGHUP cleanup for sleep-edge watchers
- * ONCE per process. Mirrors the inhibitor exit-hook shape (see manager.ts): a
- * signal handler kills the watchers and re-raises the signal only when it was
- * the sole listener, so a host application that also handles the signal keeps
- * owning shutdown while this handler still reaps the watchers.
- */
-function ensureSleepWatcherExitHooks(): void {
-  if (sleepWatcherExitHooksInstalled) return;
-  sleepWatcherExitHooksInstalled = true;
-  process.on('exit', killAllSleepWatchers);
-  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-  for (const signal of signals) {
-    process.once(signal, () => {
-      killAllSleepWatchers();
-      if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
-    });
-  }
-}
-
-/**
- * Injectable spawner for the sleep-edge monitor child so unit tests can drive
- * the watcher's subscribe/parse/reap contract without launching a real
- * dbus-monitor. The default spawns the real read-only system-bus monitor.
- */
-export type SleepWatchSpawner = (command: string, args: readonly string[]) => ChildProcess;
-
-function defaultSleepWatchSpawner(command: string, args: readonly string[]): ChildProcess {
-  return spawn(command, [...args], { stdio: ['ignore', 'pipe', 'ignore'] });
-}
-
-/** Injectable process-table seams so the reaper is fixture-testable. */
-export interface OrphanReaperDeps {
-  /** List candidate processes: pid + full command line. Default: Linux /proc scan. */
-  readonly listProcesses?: (() => ReadonlyArray<{ pid: number; args: string }>) | undefined;
-  readonly isAlive?: ((pid: number) => boolean) | undefined;
-  readonly kill?: ((pid: number) => void) | undefined;
-  readonly selfPid?: number | undefined;
-}
 
 function defaultListProcesses(): ReadonlyArray<{ pid: number; args: string }> {
   if (!existsSync('/proc')) return [];
@@ -285,53 +222,35 @@ export function createLinuxLogindSeam(
       };
     },
     onPrepareForSleep(callback): () => void {
-      // Register the process-exit reaper before the first spawn so the watcher
-      // can never outlive us (see liveSleepWatchers).
-      ensureSleepWatcherExitHooks();
       const monitor = spawnMonitor('dbus-monitor', [
         '--system',
         "type='signal',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'",
         // Inert stamp rule carrying our pid so a leaked watcher is reapable.
         sleepWatchOwnerMatchRule(process.pid),
       ]);
-      liveSleepWatchers.add(monitor);
-      let sawSignalHeader = false;
-      monitor.stdout?.on('data', (chunk: Buffer) => {
-        for (const line of chunk.toString('utf-8').split('\n')) {
-          if (line.includes('member=PrepareForSleep')) {
-            sawSignalHeader = true;
-            continue;
-          }
-          if (!sawSignalHeader) continue;
-          const match = line.match(/boolean (true|false)/);
-          if (match) {
-            sawSignalHeader = false;
-            try {
-              callback(match[1] === 'true');
-            } catch (error) {
-              logger.warn('[power] PrepareForSleep callback failed', { error: summarizeError(error) });
-            }
-          }
-        }
-      });
-      monitor.once('error', (error) => {
-        liveSleepWatchers.delete(monitor);
+      // Registered before any output is read so the watcher can never outlive
+      // us (see child-hygiene.ts).
+      const stop = trackSleepWatcher(monitor, (error) => {
         logger.warn('[power] dbus-monitor unavailable; sleep-edge signal disabled', { error: summarizeError(error) });
       });
-      // Self-deregister if the monitor exits on its own so the registry never
-      // holds a dead child reference.
-      monitor.once('exit', () => {
-        liveSleepWatchers.delete(monitor);
-      });
-      monitor.unref?.();
-      return () => {
-        liveSleepWatchers.delete(monitor);
-        try {
-          monitor.kill('SIGTERM');
-        } catch {
-          // already gone
+      let sawSignalHeader = false;
+      onStdoutLines(monitor, (line) => {
+        if (line.includes('member=PrepareForSleep')) {
+          sawSignalHeader = true;
+          return;
         }
-      };
+        if (!sawSignalHeader) return;
+        const match = line.match(/boolean (true|false)/);
+        if (match) {
+          sawSignalHeader = false;
+          try {
+            callback(match[1] === 'true');
+          } catch (error) {
+            logger.warn('[power] PrepareForSleep callback failed', { error: summarizeError(error) });
+          }
+        }
+      });
+      return stop;
     },
   };
 }

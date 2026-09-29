@@ -1,7 +1,8 @@
 /**
  * power/runtime-wiring.ts, one-call composition of sleep ownership for the
- * runtime-services root: pick the platform seam (Linux logind on linux; the
- * honest unavailable seam elsewhere until the macOS IOKit seam lands), start
+ * runtime-services root: pick the platform seam (Linux logind on linux,
+ * caffeinate + the unified-log sleep-edge watcher on macOS, the honest
+ * unavailable seam elsewhere), start
  * the PowerManager (which re-applies a persisted keep-awake toggle), bind the
  * bus work signals (turns / agents / scheduled runs), register the sleep-edge
  * hooks, and broadcast every state change as runtime.ops
@@ -11,6 +12,7 @@ import { platform as osPlatform } from 'node:os';
 import { PowerManager, type PowerSleepEdgeHooks } from './manager.js';
 import { bindPowerWorkSignals, type PowerWorkSignalBus } from './work-signals.js';
 import { createLinuxLogindSeam } from './linux-logind.js';
+import { createDarwinCaffeinateSeam } from './darwin-caffeinate.js';
 import { createUnavailablePowerSeam, type PowerPlatformSeam } from './types.js';
 import { emitOpsPowerStateChanged } from '../runtime/emitters/ops.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -25,23 +27,24 @@ export interface RuntimePowerWiringInput {
   readonly sleepCheckpoint?: (() => void | Promise<void>) | undefined;
   /** Catch-up hooks for wake: re-arm timers, reconnect, deliver missed receipts. */
   readonly wakeCatchUp?: ReadonlyArray<() => void | Promise<void>> | undefined;
-  /** Injectable seam override (tests / future macOS IOKit wiring). */
+  /** Injectable seam override (tests, or a host that opts into the real OS seam). */
   readonly seam?: PowerPlatformSeam | undefined;
 }
 
 /**
- * The real host power seam for the current OS: Linux logind (which spawns the
- * systemd-inhibit inhibitor children and the read-only sleep-edge dbus-monitor
- * watcher) or the honest unavailable seam elsewhere. Spawning a real
- * sleep-edge watcher is a host-level side effect, so only the standalone
- * daemon opts into it, the generic runtime-services factory defaults to the
- * unavailable seam (no spawn) for test determinism, exactly like the
- * observe-external-agents host scan.
+ * The real host power seam for an OS (default: this one): Linux logind (which
+ * spawns the systemd-inhibit inhibitor children and the read-only sleep-edge
+ * dbus-monitor watcher), macOS caffeinate (which spawns the caffeinate
+ * inhibitor child and the read-only sleep-edge `log stream` watcher), or the
+ * honest unavailable seam elsewhere. Spawning a real sleep-edge watcher is a
+ * host-level side effect, so only the standalone daemon opts into it, the
+ * generic runtime-services factory defaults to the unavailable seam (no spawn)
+ * for test determinism, exactly like the observe-external-agents host scan.
  */
-export function createHostPowerSeam(): PowerPlatformSeam {
-  return osPlatform() === 'linux'
-    ? createLinuxLogindSeam()
-    : createUnavailablePowerSeam(`no power seam for ${osPlatform()} yet`);
+export function createHostPowerSeam(platform: NodeJS.Platform = osPlatform()): PowerPlatformSeam {
+  if (platform === 'linux') return createLinuxLogindSeam();
+  if (platform === 'darwin') return createDarwinCaffeinateSeam();
+  return createUnavailablePowerSeam(`no power seam for ${platform}`);
 }
 
 /** Compose and start the runtime's PowerManager. Never throws; never blocks startup. */

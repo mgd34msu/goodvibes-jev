@@ -2,7 +2,7 @@ import type { CommandRegistryLike, HostSlashCommand } from '../runtime/host-ui.j
 import type { ModelDefinition, ProviderRegistry, RuntimeProviderRegistration, TokenLimits, ModelTier } from '../providers/registry.js';
 import type { LLMProvider } from '../providers/interface.js';
 import type { ToolRegistry } from '../tools/registry.js';
-import type { ToolDefinition } from '../types/tools.js';
+import type { Tool, ToolDefinition } from '../types/tools.js';
 import type { RuntimeEventBus, AnyRuntimeEvent, RuntimeEventPayload } from '../runtime/events/index.js';
 import type { GatewayMethodCatalog, GatewayMethodDescriptor, GatewayMethodHandler } from '../control-plane/index.js';
 import {
@@ -17,6 +17,9 @@ import type { WebSearchProvider, WebSearchProviderRegistry } from '../web-search
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { reasoningEffortSpecFromLevels } from '../providers/reasoning-effort.js';
+import { GatewayVerbError } from '../control-plane/routes/gateway-verb-error.js';
+import { SDKErrorCodes } from '@goodvibes-jev/engine/errors';
+import { PluginQuiescingError, type PluginInFlightTracker } from './in-flight.js';
 
 /**
  * PluginProviderConfig, minimal config for registering a custom LLM provider
@@ -172,6 +175,12 @@ export interface PluginAPIContext {
   pluginConfig: Record<string, unknown>;
   /** Collect cleanup callbacks so the manager can teardown on disable/reload. */
   cleanup: Array<() => void>;
+  /**
+   * In-flight accounting for calls into this plugin. When present, every
+   * command, tool, gateway method and event hook the plugin registers is
+   * counted while it runs and refused while the plugin quiesces for a reload.
+   */
+  inFlight?: PluginInFlightTracker | undefined;
 }
 
 /**
@@ -179,6 +188,9 @@ export interface PluginAPIContext {
  * All registrations are tracked in `ctx.cleanup` so they can be undone on deactivation.
  */
 export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
+  const tracker = ctx.inFlight;
+  /** Run one call into plugin code through the in-flight tracker, when there is one. */
+  const track = <T>(call: () => T): T => (tracker ? tracker.track(ctx.pluginName, call) : call());
   return {
     registerCommand(name, description, handler) {
       // Namespace commands to avoid collisions: "plugin-<pluginName>-<name>"
@@ -188,8 +200,12 @@ export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
         description: `[${ctx.pluginName}] ${description}`,
         handler: async (args: string[]) => {
           try {
-            await handler(args);
+            await track(() => handler(args));
           } catch (err) {
+            if (err instanceof PluginQuiescingError) {
+              logger.warn(`[plugin:${ctx.pluginName}] Command '${name}' refused: ${err.message}`);
+              return;
+            }
             logger.error(`[plugin:${ctx.pluginName}] Command '${name}' threw: ${summarizeError(err)}`);
           }
         },
@@ -292,19 +308,21 @@ export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
         description: (schema.description as string) ?? `Plugin tool: ${name}`,
         parameters: schema,
       };
-      ctx.toolRegistry.register({
+      const tool: Tool = {
         definition,
-        execute: async (args) => {
+        execute: async (args: Record<string, unknown>) => {
           try {
-            return await handler(args);
+            return await track(() => handler(args));
           } catch (err) {
+            if (err instanceof PluginQuiescingError) return { success: false, error: err.message };
             return { success: false, error: summarizeError(err) };
           }
         },
-      });
-      // ToolRegistry has no unregister method. Track for cleanup awareness.
+      };
+      ctx.toolRegistry.register(tool);
+      // Removed on deactivate so a reloaded instance registers its own handler.
       ctx.cleanup.push(() => {
-        logger.warn(`[plugin:${ctx.pluginName}] Tool '${toolName}' cannot be unregistered on deactivate, it persists until process restart`);
+        ctx.toolRegistry.unregister(toolName, tool);
       });
     },
 
@@ -317,7 +335,16 @@ export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
         id: methodId,
         source: 'plugin',
         pluginId: ctx.pluginName,
-      }, handler);
+      }, (input) => {
+        try {
+          return track(() => handler(input));
+        } catch (err) {
+          if (err instanceof PluginQuiescingError) {
+            throw new GatewayVerbError(err.message, SDKErrorCodes.SERVICE_UNAVAILABLE, 503);
+          }
+          throw err;
+        }
+      });
       ctx.cleanup.push(unregister);
       logger.info(`[plugin:${ctx.pluginName}] Registered gateway method '${methodId}'`);
     },
@@ -367,7 +394,12 @@ export function createPluginAPI(ctx: PluginAPIContext): PluginAPI {
     onEvent(eventName, handler) {
       const unsub = ctx.runtimeBus.on(
         eventName,
-        (envelope) => handler(envelope.payload as RuntimeEventPayload<typeof eventName>),
+        (envelope) => {
+          // An event reaching a quiescing plugin is not delivered: the instance
+          // it would run on is about to be unloaded.
+          if (tracker?.isQuiescing(ctx.pluginName)) return;
+          track(() => handler(envelope.payload as RuntimeEventPayload<typeof eventName>));
+        },
       );
       ctx.cleanup.push(unsub);
       return unsub;

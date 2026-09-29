@@ -2,7 +2,7 @@
  * Safe hot-reload protocol for plugins.
  *
  * Implements the 6-phase hot-reload sequence:
- *   1. Quiesce  , stop accepting new work from the plugin
+ *   1. Quiesce  , refuse new calls into the plugin and drain in-flight ones
  *   2. Unregister, remove plugin's registrations (commands, tools, hooks)
  *   3. Unload    - deactivate and clean up the previous plugin instance
  *   4. Reload   , load the new version with a cache-bust timestamp
@@ -16,6 +16,7 @@ import type { LoadedPlugin } from '../../plugins/loader.js';
 import type { PluginHealthCheckResult, PluginManifestV2 } from './types.js';
 import type { PluginLifecycleManager } from './manager.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS } from '../../plugins/in-flight.js';
 
 /**
  * Options for a single plugin hot-reload operation.
@@ -51,6 +52,14 @@ export interface HotReloadOptions {
    * Defaults to 5000ms.
    */
   healthCheckTimeoutMs?: number | undefined;
+
+  /**
+   * Maximum time (ms) phase 1 waits for calls already running in the plugin to
+   * finish before unloading it. When it passes with calls still running, the
+   * reload stops with failedPhase 'quiesce' and the plugin stays loaded and
+   * serving. Defaults to DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS (30000ms).
+   */
+  quiesceTimeoutMs?: number | undefined;
 }
 
 /**
@@ -113,20 +122,39 @@ export async function runHotReload(
     };
   }
 
+  const tracker = deps.inFlight;
+  if (!tracker) {
+    return failure(
+      'quiesce',
+      `Plugin '${name}' calls are not counted (PluginLoaderDeps.inFlight is not set), so they cannot be drained before unload`,
+      startTs,
+    );
+  }
+  const quiesceTimeoutMs = options.quiesceTimeoutMs ?? DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS;
+  const mutableRecord = record as { reloading: boolean };
+  /** Accept calls again and clear the reloading flag (every exit path). */
+  const endReload = (): void => {
+    tracker.resume(name);
+    mutableRecord.reloading = false;
+  };
+
   logger.info(`[plugin-hot-reload] ${name}: starting hot-reload`);
 
   // ── Phase 1: Quiesce ────────────────────────────────────────────────────
-  // Mark the plugin as reloading to signal to callers to defer new work.
-  // (The PluginLifecycleRecord.reloading flag is set, but state is not changed.)
-  // In a future implementation this phase could drain in-flight requests.
-  try {
-    // Access via cast since reloading is a mutable field on the record.
-    const mutableRecord = record as { reloading: boolean };
-    mutableRecord.reloading = true;
-    logger.debug(`[plugin-hot-reload] ${name}: phase 1/6 quiesced`);
-  } catch (err) {
-    return failure('quiesce', summarizeError(err), startTs);
+  // Mark the plugin as reloading, refuse new calls into it (commands, tools,
+  // gateway methods and event hooks it registered), and wait for the calls
+  // already running to finish, bounded by quiesceTimeoutMs.
+  mutableRecord.reloading = true;
+  const drain = await tracker.quiesce(name, quiesceTimeoutMs);
+  if (!drain.drained) {
+    endReload();
+    return failure(
+      'quiesce',
+      `${drain.inFlight} call(s) into plugin '${name}' still running after ${quiesceTimeoutMs}ms; the plugin was left loaded and serving`,
+      startTs,
+    );
   }
+  logger.debug(`[plugin-hot-reload] ${name}: phase 1/6 quiesced (drained in ${drain.waitedMs}ms)`);
 
   // ── Phase 2: Prepare unregister ──────────────────────────────────────────
   // The existing plugin's cleanup callbacks handle un-registration during
@@ -143,6 +171,7 @@ export async function runHotReload(
     options.removeLoadedPlugin(name);
     logger.debug(`[plugin-hot-reload] ${name}: phase 3/6 unloaded`);
   } catch (err) {
+    endReload();
     return failure('unload', summarizeError(err), startTs);
   }
 
@@ -154,13 +183,18 @@ export async function runHotReload(
     const cacheBust = Date.now();
     reloadedPlugin = await loadPlugin({ manifest, pluginDir }, deps, cacheBust);
     if (!reloadedPlugin) {
+      endReload();
       return failure('reload', 'loadPlugin returned null', startTs);
     }
     options.storeLoadedPlugin(name, reloadedPlugin);
     logger.debug(`[plugin-hot-reload] ${name}: phases 4+5/6 reloaded + re-registered`);
   } catch (err) {
+    endReload();
     return failure('reload', summarizeError(err), startTs);
   }
+  // The new instance is registered: calls into it are accepted from here on,
+  // so the health check can exercise it.
+  tracker.resume(name);
 
   // ── Phase 6: Health check ────────────────────────────────────────────────
   let healthResult: PluginHealthCheckResult;
@@ -180,13 +214,7 @@ export async function runHotReload(
     };
   }
 
-  // Clear reloading flag.
-  try {
-    const mutableRecord = lcm.getRecord(name) as { reloading: boolean } | undefined;
-    if (mutableRecord) mutableRecord.reloading = false;
-  } catch (error) {
-    logger.warn(`[plugin-hot-reload] ${name}: failed to clear reloading flag`, { error: summarizeError(error) });
-  }
+  endReload();
 
   if (healthResult.healthy) {
     logger.info(`[plugin-hot-reload] ${name}: hot-reload complete, active (${Date.now() - startTs}ms)`);

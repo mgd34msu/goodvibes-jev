@@ -34,7 +34,8 @@ export interface IdlePowerServicesDeps {
   /**
    * Host power seam. SDK 1.9.0 makes wireRuntimePower default an absent seam to
    * the REAL host seam (createHostPowerSeam, which spawns systemd-inhibit and a
-   * dbus-monitor sleep-edge watcher). That spawn is a host-level side effect, so
+   * dbus-monitor sleep-edge watcher on Linux, caffeinate and a `log stream`
+   * sleep-edge watcher on macOS). That spawn is a host-level side effect, so
    * this fork mirrors the SDK's own createRuntimeServices: when no seam is passed
    * we default to the NON-spawning unavailable seam, keeping test-constructed
    * runtimes deterministic. Only the real long-lived compositions (the standalone

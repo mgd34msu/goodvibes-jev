@@ -5,7 +5,9 @@
 export { PowerManager, LID_SWITCH_HONEST_SPLIT } from './manager.js';
 export type { PowerState, PowerInhibitorView, PowerManagerOptions, PowerSleepEdgeHooks } from './manager.js';
 export { createLinuxLogindSeam, reapOrphanedInhibitors } from './linux-logind.js';
-export type { OrphanReaperDeps, SleepWatchSpawner } from './linux-logind.js';
+export type { OrphanReaperDeps, SleepWatchSpawner } from './child-hygiene.js';
+export { createDarwinCaffeinateSeam, reapOrphanedDarwinSleepWatchers } from './darwin-caffeinate.js';
+export type { DarwinCaffeinateSeamOptions, DarwinPowerSource } from './darwin-caffeinate.js';
 export { bindPowerWorkSignals } from './work-signals.js';
 export { wireRuntimePower, createHostPowerSeam } from './runtime-wiring.js';
 export type { RuntimePowerWiringInput } from './runtime-wiring.js';
