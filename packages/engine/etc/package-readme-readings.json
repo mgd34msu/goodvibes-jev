@@ -1,0 +1,8 @@
+{
+  "decision": "engine.gates.package-readme@1",
+  "model": "jev-1.13.0",
+  "readings": {
+    "45fadc622e402085": {"subject":"./README.md","answers":{"documents":{"verdict":"yes","outcome":"act","probability":0.96},"stale":{"verdict":"no","outcome":"act","probability":0.07}}},
+    "5c828f44217d495a": {"subject":"../judgment/README.md","answers":{"documents":{"verdict":"yes","outcome":"act","probability":0.97},"stale":{"verdict":"no","outcome":"act","probability":0.07}}}
+  }
+}

@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { checkBunPins, isExactVersion, type PinSource } from './bun-pin-rule.ts';
 import { SOURCE_CONDITION } from './export-conditions.ts';
 import { packageDirs, publicPackageDirs, REPO_ROOT } from './release-shared.ts';
+import { packageReadme } from './ci-readings/package-readme.ts';
+import { READINGS_PATH as README_READINGS_PATH, readmeProblems, readmeState } from './ci-readings/package-readmes.ts';
+import { currentReadings } from './ci-readings/stored-readings.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SDK_ROOT = resolve(__dirname, '..');
@@ -17,6 +20,8 @@ const requiredStringFields = [
   'license',
   'homepage',
 ];
+
+const readmeReadings = currentReadings(README_READINGS_PATH, packageReadme);
 
 const rootSharedMetadata = {
   license: rootPackage.license,
@@ -236,16 +241,16 @@ function assertBunPinAgreement(): void {
   }
 }
 
-function assertReadmePublicWording(dir: string, readme: string): void {
-  if (!publicPackageDirs.includes(dir)) return;
-  const stalePatterns = [
-    /Internal workspace package backing/,
-    /umbrella package/,
-    /umbrella SDK/,
-  ];
-  const stale = stalePatterns.find((pattern) => pattern.test(readme));
-  if (stale) {
-    throw new Error(`${dir}/README.md contains stale public package wording: ${stale.source}`);
+/**
+ * The README documents the package and, for a published package, does not
+ * describe it in stale internal or umbrella terms. Both are read through Jev
+ * (`engine.gates.package-readme`) by `bun run package-readmes:read`; this
+ * check compares the stored readings, offline (scripts/ci-readings/package-readmes.ts).
+ */
+function assertReadmeReadings(dir: string): void {
+  const problems = readmeProblems(dir, readmeState(resolve(SDK_ROOT, dir)), publicPackageDirs.includes(dir), readmeReadings);
+  if (problems.length > 0) {
+    throw new Error(problems.join('\n'));
   }
 }
 
@@ -330,11 +335,7 @@ for (const dir of packageDirs) {
   if (!existsSync(readmePath)) {
     throw new Error(`${dir} is missing README.md`);
   }
-  const readme = readFileSync(readmePath, 'utf8').trim();
-  if (readme.length < 200) {
-    throw new Error(`${dir}/README.md is too short to be considered package-level documentation`);
-  }
-  assertReadmePublicWording(dir, readme);
+  assertReadmeReadings(dir);
 }
 
 assertContractsGeneratedTypesReexported();

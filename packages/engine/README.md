@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-2.0.19-blue.svg)](https://github.com/mgd34msu/goodvibes-sdk)
 
-GoodVibes SDK is the typed TypeScript platform layer behind the GoodVibes products: sessions, provider/model routing, in-process agents, a knowledge and memory store, a control-plane HTTP and realtime API, and the transports that carry it all. The daemon is its own product, built on this SDK. Full-surface consumers, the GoodVibes terminal app and the GoodVibes agent, embed this runtime directly in a Bun process and connect to the daemon as clients. Companion consumers, the web UI, mobile clients, and the Home Assistant integration, connect to that same daemon as thin remote clients over HTTP, SSE, and WebSocket. One published package covers both: `@goodvibes-jev/engine/sdk` is a facade over a set of source-of-truth sibling packages, so consumers install one package and import only the entry points they need.
+GoodVibes SDK is the typed TypeScript platform layer behind the GoodVibes products: sessions, provider/model routing, in-process agents, a knowledge and memory store, a control-plane HTTP and realtime API, and the transports that carry it all. The daemon is its own product, built on this SDK. Full-surface consumers, the GoodVibes terminal app and the GoodVibes agent, embed this runtime directly in a Bun process and connect to the daemon as clients. Companion consumers, the web UI, mobile clients, and the Home Assistant integration, connect to that same daemon as thin remote clients over HTTP, SSE, and WebSocket. One published package covers both: `@goodvibes-jev/engine` carries the whole platform, and each part of it is a subpath of that one package (`@goodvibes-jev/engine/sdk`, `@goodvibes-jev/engine/contracts`, `@goodvibes-jev/engine/errors` and the rest), so consumers install one package and import only the entry points they need.
 
 Public contract, config keys, route paths, event shapes, and file layouts follow the semver policy in `docs/semver-policy.md`. Pin exact versions and read `CHANGELOG.md` before upgrading.
 
@@ -38,9 +38,9 @@ flowchart LR
 ## Install
 
 ```bash
-bun add @goodvibes-jev/engine/sdk
+bun add @goodvibes-jev/engine
 # or
-npm install @goodvibes-jev/engine/sdk
+npm install @goodvibes-jev/engine
 ```
 
 This installs one package; import only the entry points you need. For a Bun host (terminal app, agent, CLI, daemon), the root entry point talks to a reachable GoodVibes daemon:
@@ -77,15 +77,15 @@ React Native, Expo, and Cloudflare Worker bridges follow the same pattern from t
 
 ---
 
-## Package map
+## Entry point map
 
-| Package | What it is |
+| Entry point | What it is |
 | --- | --- |
-| [`@goodvibes-jev/engine/sdk`](./packages/sdk) | The published facade: the full platform runtime (sessions, agents, providers, knowledge, control plane, daemon route handlers) plus thin client factories for Bun, browser, React Native, Expo, and Cloudflare Workers. |
-| [`@goodvibes-jev/engine/toolchain`](./packages/toolchain) | The published CI/CD toolchain: release cut, npm publish, per-job-green verification, coverage and SBOM gates. Invoked as `bunx @goodvibes-jev/engine/toolchain <tool>` from every GoodVibes repo's release workflow. |
-| [`@goodvibes-jev/engine/contracts`](./packages/contracts) | Runtime-neutral operator and peer contract artifacts, generated method IDs, and lookup helpers that the `sdk` facade and every client surface share. |
+| [`@goodvibes-jev/engine/sdk`](./sdk) | The full platform runtime (sessions, agents, providers, knowledge, control plane, daemon route handlers) plus thin client factories for Bun, browser, React Native, Expo, and Cloudflare Workers. |
+| [`@goodvibes-jev/engine/toolchain`](./toolchain) | The CI/CD toolchain: release cut, npm publish, per-job-green verification, coverage and SBOM gates. Invoked as `bunx @goodvibes-jev/engine/toolchain <tool>` from every GoodVibes repo's release workflow. |
+| [`@goodvibes-jev/engine/contracts`](./contracts) | Runtime-neutral operator and peer contract artifacts, generated method IDs, and lookup helpers that the `sdk` entry points and every client surface share. |
 
-`sdk` also draws on further source-of-truth sibling packages: `errors`, `transport-core`, `transport-http`, `transport-realtime`, `daemon-sdk`, `operator-sdk`, `peer-sdk`, and `terminal-shell`. These are public dependencies rather than separate install steps for most consumers. The full package and entry-point matrix is [docs/packages.md](./docs/packages.md).
+The same install also carries `errors`, `transport-core`, `transport-http`, `transport-realtime`, `daemon-sdk`, `operator-sdk`, `peer-sdk`, and `terminal-shell`, each imported as `@goodvibes-jev/engine/<name>`; none is a separate install step. The full entry-point matrix is [docs/packages.md](./docs/packages.md).
 
 ### Entry points at a glance
 
