@@ -349,7 +349,7 @@ export class ArtifactStore {
     });
     const record: ArtifactRecord = {
       id,
-      kind: input.kind ?? inferArtifactKind(normalizeMimeType(input.mimeType, filename), filename),
+      kind: input.kind ?? await inferArtifactKind(normalizeMimeType(input.mimeType, filename), filename),
       mimeType: normalizeMimeType(input.mimeType, filename),
       filename,
       sizeBytes,
@@ -682,6 +682,11 @@ export class ArtifactStore {
     });
     const allowPrivateHosts = fetchMode === 'allow-private-hosts';
     if (result.tier === 'blocked' && (!allowPrivateHosts || !result.isSsrf)) {
+      throw new Error(`Artifact URI blocked by SSRF policy: ${result.reason}`);
+    }
+    // A loopback host is not a public host: 'public-only' refuses it, and
+    // only 'allow-private-hosts' lets the store reach this machine.
+    if (result.tier === 'localhost' && !allowPrivateHosts) {
       throw new Error(`Artifact URI blocked by SSRF policy: ${result.reason}`);
     }
   }

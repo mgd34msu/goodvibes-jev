@@ -1,3 +1,6 @@
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { artifactKind } from './batteries/artifact-kind.js';
+
 /** SDK-owned platform module. This implementation is maintained in goodvibes-sdk. */
 
 export type ArtifactKind = 'file' | 'image' | 'audio' | 'video' | 'document' | 'archive' | 'data';
@@ -123,44 +126,27 @@ export function guessMimeType(filename?: string): string {
   return EXTENSION_MIME_TYPES[ext] ?? 'application/octet-stream';
 }
 
-export function inferArtifactKind(mimeType: string, filename?: string): ArtifactKind {
+/** The decision site the artifact kind reading is logged under. */
+export const ARTIFACT_KIND_SITE = 'artifacts.kind';
+
+/**
+ * The kind of an artifact. Image, audio and video are the media type's own
+ * top-level registration, from the given type or the file name's registered
+ * type: code. Anything else is the `engine.artifacts.kind` reading over the
+ * media type and file name; a reading that does not reach act is `file`.
+ */
+export async function inferArtifactKind(mimeType: string, filename?: string): Promise<ArtifactKind> {
   const lower = mimeType.toLowerCase();
-  if (lower.startsWith('image/')) return 'image';
-  if (lower.startsWith('audio/')) return 'audio';
-  if (lower.startsWith('video/')) return 'video';
-  if (
-    lower === 'application/json'
-    || lower === 'text/csv'
-    || lower === 'text/tab-separated-values'
-    || lower === 'application/xml'
-    || lower === 'application/yaml'
-    || lower.includes('spreadsheetml')
-    || lower === 'application/vnd.ms-excel'
-  ) {
-    return 'data';
+  for (const type of [lower, guessMimeType(filename)]) {
+    if (type.startsWith('image/')) return 'image';
+    if (type.startsWith('audio/')) return 'audio';
+    if (type.startsWith('video/')) return 'video';
   }
-  if (
-    lower === 'application/pdf'
-    || lower.startsWith('text/')
-    || lower.includes('wordprocessingml')
-    || lower === 'application/msword'
-    || lower.includes('presentationml')
-    || lower === 'application/vnd.ms-powerpoint'
-  ) {
-    return 'document';
-  }
-  if (
-    lower === 'application/zip'
-    || lower === 'application/gzip'
-    || lower === 'application/x-tar'
-  ) {
-    return 'archive';
-  }
-  const fromFilename = guessMimeType(filename);
-  if (fromFilename !== 'application/octet-stream' && fromFilename !== lower) {
-    return inferArtifactKind(fromFilename, undefined);
-  }
-  return 'file';
+  const run = await artifactKind.run(judgmentPort(ARTIFACT_KIND_SITE), { mimeType: lower, filename: filename ?? '' }, { site: ARTIFACT_KIND_SITE });
+  const reading = run.readings.kind;
+  const kind: ArtifactKind = reading.outcome === 'act' ? reading.choice : 'file';
+  run.recordAction(`recorded ${kind}`);
+  return kind;
 }
 
 export function sanitizeArtifactFilename(filename: string | undefined, fallback = 'artifact'): string {

@@ -10,6 +10,9 @@ import type { DaemonKnowledgeRouteContext } from '../daemon-sdk/src/knowledge-ro
 import type { ArtifactStoreLike } from '../daemon-sdk/src/media-route-types.ts';
 import type { ArtifactStoreUploadLike } from '../daemon-sdk/src/artifact-upload.ts';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.ts';
+import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
+
+useArtifactKindReadings();
 
 /**
  * ArtifactStore.readContent() returns a `filename?: string` field that can be

@@ -17,6 +17,9 @@ import type { DaemonKnowledgeRouteContext } from '../daemon-sdk/dist/index.js';
 import { trackDisposables } from './_helpers/disposables.ts';
 import type { MemoryRegistry } from '../sdk/src/platform/state/memory-registry.js';
 import type { MemoryStore } from '../sdk/src/platform/state/memory-store.js';
+import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
+
+useArtifactKindReadings();
 
 /** None of these tests exercise the memory subsystem, KnowledgeService just needs the dependency present. */
 function fakeMemoryRegistry(): Pick<MemoryRegistry, 'add' | 'getAll' | 'getStore'> {

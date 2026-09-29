@@ -516,3 +516,29 @@ describe('defaultExportPath', () => {
     expect(defaultExportPath('md', HOME_ROOT)).toMatch(/^\//);
   });
 });
+
+describe('redaction reaches the title and nested tool arguments', () => {
+  const secret = 'sk-abcdefghijklmnopqrstuvwxyz0123';
+  const titled: ExportMetadata = { ...basicMeta, title: `debugging with ${secret}` };
+
+  test('the session title is redacted in all three formats', () => {
+    const messages = [userMsg('hello')];
+    for (const text of [
+      exportToJSON(messages, titled, { redact: true }),
+      exportToMarkdownExtended(messages, titled, { redact: true }),
+      exportToHTML(messages, titled, { redact: true }),
+    ]) {
+      expect(text).not.toContain(secret);
+    }
+    expect(exportToJSON(messages, titled)).toContain(secret);
+  });
+
+  test('strings inside arrays nested in arrays are redacted', () => {
+    const redacted = redactMessage({
+      role: 'assistant',
+      content: '',
+      toolCalls: [{ id: 't1', name: 'exec', arguments: { argv: [['curl', '-H', `Authorization: Bearer ${secret}`]] } }],
+    } as ExportMessage);
+    expect(JSON.stringify(redacted)).not.toContain(secret);
+  });
+});

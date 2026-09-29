@@ -94,7 +94,7 @@ export function exportToJSON(
     exportedAt: new Date().toISOString(),
     redacted: redact,
     metadata: {
-      ...(metadata ?? {}),
+      ...((redact ? redactMetadata(metadata) : metadata) ?? {}),
       ...(cost !== undefined ? { costUsd: cost } : {}),
     },
     tokenUsage: usage,
@@ -104,21 +104,24 @@ export function exportToJSON(
   return JSON.stringify(payload, null, 2);
 }
 
-/** Recursively redact string values inside tool arguments. */
+/** Recursively redact string values inside tool arguments, at any depth of objects and arrays. */
+function redactArgValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactSensitiveData(value);
+  if (Array.isArray(value)) return value.map(redactArgValue);
+  if (value !== null && typeof value === 'object') return redactArgs(value as Record<string, unknown>);
+  return value;
+}
+
 function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (typeof v === 'string') {
-      out[k] = redactSensitiveData(v);
-    } else if (Array.isArray(v)) {
-      out[k] = v.map(item => typeof item === 'string' ? redactSensitiveData(item) : (item !== null && typeof item === 'object' && !Array.isArray(item)) ? redactArgs(item as Record<string, unknown>) : item);
-    } else if (v !== null && typeof v === 'object') {
-      out[k] = redactArgs(v as Record<string, unknown>);
-    } else {
-      out[k] = v;
-    }
-  }
+  for (const [k, v] of Object.entries(args)) out[k] = redactArgValue(v);
   return out;
+}
+
+/** The session title is free text taken from the conversation, so it is redacted with the messages. */
+function redactMetadata(metadata: ExportMetadata | undefined): ExportMetadata | undefined {
+  if (metadata?.title === undefined) return metadata;
+  return { ...metadata, title: redactSensitiveData(metadata.title) };
 }
 
 // ── Markdown export (extended wrapper) ───────────────────────────────────────
@@ -136,7 +139,7 @@ export function exportToMarkdownExtended(
 
   const processedMessages = redact ? messages.map(redactMessage) : messages;
 
-  const md = exportToMarkdown(processedMessages, metadata);
+  const md = exportToMarkdown(processedMessages, redact ? redactMetadata(metadata) : metadata);
 
   // Append cost if provided
   if (cost !== undefined && cost > 0) {
@@ -184,7 +187,8 @@ export function exportToHTML(
 
   const now = new Date();
   const dateStr = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  const title = metadata?.title || metadata?.sessionId || 'Conversation';
+  const shown = redact ? redactMetadata(metadata) : metadata;
+  const title = shown?.title || shown?.sessionId || 'Conversation';
 
   const sections: string[] = [];
 
