@@ -128,6 +128,8 @@ describe('decideOwnerTerminalAccess', () => {
   const log = useToolReadings([
     ['send-keys -t main', { foreignTerminal: true }],
     ['tmux attach', { foreignTerminal: 'uncertain' }],
+    ['kill-server', { foreignTerminal: true }],
+    ['kill-session -t main', { foreignTerminal: true }],
   ], EXEC_GATE_TABLE);
 
   test('off, or no posture at all: nothing is read and every command is allowed', async () => {
@@ -148,6 +150,21 @@ describe('decideOwnerTerminalAccess', () => {
     const decision = await decideOwnerTerminalAccess('tmux attach', ENFORCED);
     expect(decision.allowed).toBe(false);
     expect(decision.refusal).toContain('could not be read as leaving the owner\'s terminal sessions alone');
+  });
+
+  test('wrapped tmux commands are read as written, so a wrapper does not get them past the guard', async () => {
+    for (const command of [
+      'sh -c \'tmux send-keys -t main "rm -rf build" Enter\'',
+      '/usr/bin/tmux kill-server',
+      'env TMUX_TMPDIR=/tmp tmux kill-session -t main',
+      'echo main | xargs tmux kill-session -t main',
+    ]) {
+      const decision = await decideOwnerTerminalAccess(command, ENFORCED);
+      expect(`${command}: ${decision.allowed}`).toBe(`${command}: false`);
+    }
+    const commands = log.requests.map((request) => (request.state as { command?: string }).command);
+    expect(commands).toContain('/usr/bin/tmux kill-server');
+    expect(commands).toContain('env TMUX_TMPDIR=/tmp tmux kill-session -t main');
   });
 
   test('a command read as leaving the owner\'s terminal alone runs', async () => {

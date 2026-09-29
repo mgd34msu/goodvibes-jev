@@ -132,6 +132,18 @@ export function withTurnSurface<T>(origin: TurnInputOrigin | undefined, fn: () =
   return turnSurfaceScope.run({ surface: turnSurfaceOf(origin) }, fn);
 }
 
+/**
+ * Who is acting in the current turn, for recording an approval the turn made:
+ * `owner` for owner-direct input (and outside a turn, the owner's own process),
+ * else `surface:<id>` for the surface the turn's input arrived on. It comes
+ * from the transport that received the input, never from tool arguments the
+ * model writes.
+ */
+export function currentTurnActor(): string {
+  const surface = currentTurnSurfaceId();
+  return surface === undefined ? 'owner' : `surface:${surface}`;
+}
+
 /** The current turn's input surface; undefined for owner-direct input or outside a turn. */
 export function currentTurnSurfaceId(): string | undefined {
   return turnSurfaceScope.getStore()?.surface;

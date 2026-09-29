@@ -1,4 +1,5 @@
 import type { Tool } from '../../types/tools.js';
+import { resolveCredentialEnvScrub, scrubCredentialEnv } from '../exec/credential-env.js';
 import type { ContractRunner } from '../../contract/runner.js';
 import { workflowSchema } from './schema.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -336,9 +337,22 @@ export class ScheduleManager {
     const parts = entry.command.split(/\s+/).filter(Boolean);
     if (parts.length === 0) return;
 
+    void this._spawnScheduled(name, entry.command, parts);
+  }
+
+  /**
+   * Starts a scheduled command with the environment the exec path gives a
+   * command: credential-bearing variables withheld (tools/exec/credential-env.ts,
+   * each name read once per process), plus GV_SCHEDULE_NAME. A failed start,
+   * including a scrub reading that could not be made, is logged and the
+   * command does not run.
+   */
+  private async _spawnScheduled(name: string, command: string, parts: string[]): Promise<void> {
     try {
+      const base = Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== undefined)) as Record<string, string>;
+      const { env } = await scrubCredentialEnv(base, resolveCredentialEnvScrub());
       const proc = Bun.spawn(parts, {
-        env: { ...process.env, GV_SCHEDULE_NAME: name },
+        env: { ...env, GV_SCHEDULE_NAME: name },
         stdout: 'ignore',
         stderr: 'ignore',
       });
@@ -357,7 +371,7 @@ export class ScheduleManager {
     } catch (error) {
       logger.warn('[workflow] scheduled command failed to start', {
         workflow: name,
-        command: entry.command,
+        command,
         error: summarizeError(error),
       });
     }

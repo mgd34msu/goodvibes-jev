@@ -197,6 +197,20 @@ describe('the fetch tool end to end', () => {
     expect(received['authorization']).toBeUndefined();
   });
 
+  test('a cross-origin redirect drops the api-key header the tool set from auth, under any header name', async () => {
+    const target = echo();
+    const redirect = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 302, headers: { location: target } }) });
+    servers.push(redirect);
+    for (const header of [undefined, 'X-Custom-Access']) {
+      const output = await executeFetchInput({
+        urls: [{ url: `http://127.0.0.1:${redirect.port}/start`, auth: { type: 'api-key', key: 'key-123', ...(header ? { header } : {}) } }],
+      }, deps);
+      const received = JSON.parse(output.results?.[0]?.content ?? '{}') as Record<string, string>;
+      expect(received[(header ?? 'X-API-Key').toLowerCase()]).toBeUndefined();
+      expect(JSON.stringify(received)).not.toContain('key-123');
+    }
+  });
+
   test('Accept asks for JSON only when the caller asked for JSON, and a caller\'s own Accept wins', async () => {
     const url = echo();
     const asJson = await executeFetchInput({ urls: [{ url, extract: 'json' }] }, deps);

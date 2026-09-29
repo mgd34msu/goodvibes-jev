@@ -64231,7 +64231,7 @@
         "list",
         "remove"
       ],
-      "text": "export declare class ScheduleManager { private schedules; private timers; private spawnedProcs; add(name: string, interval: string, command: string): ScheduleEntry; remove(name: string): boolean; enable(name: string): boolean; disable(name: string): boolean; list(): ScheduleEntry[]; destroy(): void; private _tick; private _clearTimer; } ;; via ScheduleEntry = export interface ScheduleEntry { name: string; interval: string; command: string; lastRun?: number | undefined; nextRun?: number | undefined; enabled: boolean; }"
+      "text": "export declare class ScheduleManager { private schedules; private timers; private spawnedProcs; add(name: string, interval: string, command: string): ScheduleEntry; remove(name: string): boolean; enable(name: string): boolean; disable(name: string): boolean; list(): ScheduleEntry[]; destroy(): void; private _tick; private _spawnScheduled; private _clearTimer; } ;; via ScheduleEntry = export interface ScheduleEntry { name: string; interval: string; command: string; lastRun?: number | undefined; nextRun?: number | undefined; enabled: boolean; }"
     },
     {
       "name": "SchemaFingerprintMeta",

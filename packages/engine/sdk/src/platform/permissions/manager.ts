@@ -8,6 +8,7 @@ import { categoryForSideEffectKind, classificationFromReading, readTouchesSecret
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import type { UntrustedContentLedger } from '../security/untrusted-content.js';
 import { currentTurnSurfaceId } from '../security/turn-boundary.js';
+import { isStateMutation } from '../gate/policy/state-policy.js';
 import { buildDurableRuleForDecision, buildRememberOptions, commandClassOf, matchDurableRules } from './approval-rules.js';
 import type { UserPermissionRuleStore } from './user-rule-store.js';
 import { extractCommandArgs } from '../runtime/permissions/rules/prefix.js';
@@ -517,6 +518,10 @@ export class PermissionManager {
     if (toolName === 'inspect' && args.mode === 'scaffold' && args.dryRun === false) {
       return 'write';
     }
+    // A state call that writes (a value, a memory, a hook registration, a mode
+    // change) is not the read the state tool's category names: it gets the
+    // gate's full reading. The state tool's own read-only surface decides.
+    if (toolName === 'state' && isStateMutation(args)) return 'write';
     return TOOL_CATEGORIES[toolName] ?? 'delegate';
   }
 

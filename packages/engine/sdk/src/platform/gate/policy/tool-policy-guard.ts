@@ -48,6 +48,14 @@ import type {
   ModeToolArgs,
   StateToolArgs,
 } from './tool-policy-guard-types.js';
+import {
+  isStateMutation,
+  READ_ONLY_STATE_ANALYTICS_ACTIONS,
+  READ_ONLY_STATE_HOOK_ACTIONS,
+  READ_ONLY_STATE_MEMORY_ACTIONS,
+  READ_ONLY_STATE_MODE_ACTIONS,
+  READ_ONLY_STATE_TOOL_MODES,
+} from './state-policy.js';
 
 const BLOCKED_MAIN_CONVERSATION_TOOL_NAMES = [] as const;
 const AGENT_EXEC_BACKGROUND_COMMAND = /^\s*bg_(?:list|status|output|stop)\b/;
@@ -77,11 +85,6 @@ const READ_ONLY_REMOTE_TOOL_MODES = ['pools', 'contracts', 'artifacts', 'review'
 const READ_ONLY_CHANNEL_TOOL_MODES = ['accounts', 'directory', 'resolve_target', 'capabilities', 'tools', 'agent_tools', 'actions'] as const;
 const READ_ONLY_MCP_TOOL_MODES = ['servers', 'tools', 'schema', 'resources', 'security', 'auth'] as const;
 const READ_ONLY_FETCH_METHODS = ['GET', 'HEAD', 'OPTIONS'] as const;
-const READ_ONLY_STATE_TOOL_MODES = ['get', 'list', 'budget', 'context', 'memory', 'telemetry', 'hooks', 'mode', 'analytics'] as const;
-const READ_ONLY_STATE_MEMORY_ACTIONS = ['list', 'get'] as const;
-const READ_ONLY_STATE_HOOK_ACTIONS = ['list'] as const;
-const READ_ONLY_STATE_MODE_ACTIONS = ['get', 'list'] as const;
-const READ_ONLY_STATE_ANALYTICS_ACTIONS = ['summary', 'query', 'dashboard'] as const;
 const READ_ONLY_TASK_TOOL_MODES = ['list', 'show', 'handoffs'] as const;
 const READ_ONLY_TEAM_TOOL_MODES = ['list', 'show'] as const;
 const READ_ONLY_WORKLIST_TOOL_MODES = ['list', 'show'] as const;
@@ -92,11 +95,6 @@ const READ_ONLY_REMOTE_TOOL_MODE_SET = new Set<string>(READ_ONLY_REMOTE_TOOL_MOD
 const READ_ONLY_CHANNEL_TOOL_MODE_SET = new Set<string>(READ_ONLY_CHANNEL_TOOL_MODES);
 const READ_ONLY_MCP_TOOL_MODE_SET = new Set<string>(READ_ONLY_MCP_TOOL_MODES);
 const READ_ONLY_FETCH_METHOD_SET = new Set<string>(READ_ONLY_FETCH_METHODS);
-const READ_ONLY_STATE_TOOL_MODE_SET = new Set<string>(READ_ONLY_STATE_TOOL_MODES);
-const READ_ONLY_STATE_MEMORY_ACTION_SET = new Set<string>(READ_ONLY_STATE_MEMORY_ACTIONS);
-const READ_ONLY_STATE_HOOK_ACTION_SET = new Set<string>(READ_ONLY_STATE_HOOK_ACTIONS);
-const READ_ONLY_STATE_MODE_ACTION_SET = new Set<string>(READ_ONLY_STATE_MODE_ACTIONS);
-const READ_ONLY_STATE_ANALYTICS_ACTION_SET = new Set<string>(READ_ONLY_STATE_ANALYTICS_ACTIONS);
 const READ_ONLY_TASK_TOOL_MODE_SET = new Set<string>(READ_ONLY_TASK_TOOL_MODES);
 const READ_ONLY_TEAM_TOOL_MODE_SET = new Set<string>(READ_ONLY_TEAM_TOOL_MODES);
 const READ_ONLY_WORKLIST_TOOL_MODE_SET = new Set<string>(READ_ONLY_WORKLIST_TOOL_MODES);
@@ -382,40 +380,7 @@ export function normalizeFetchToolInvocationForAgentPolicy(args: FetchToolArgs):
 }
 
 export function validateStateToolInvocationForAgentPolicy(args: StateToolArgs): string | null {
-  if (isPresent(args.values) || isPresent(args.clearKeys)) return STATE_MUTATION_DENIAL;
-  if (typeof args.mode === 'string' && !READ_ONLY_STATE_TOOL_MODE_SET.has(args.mode)) return STATE_MUTATION_DENIAL;
-
-  if (args.mode === 'memory') {
-    const action = typeof args.memoryAction === 'string' ? args.memoryAction : 'list';
-    if (!READ_ONLY_STATE_MEMORY_ACTION_SET.has(action) || isPresent(args.memoryValue)) return STATE_MUTATION_DENIAL;
-  }
-
-  if (args.mode === 'hooks') {
-    const action = typeof args.hookAction === 'string' ? args.hookAction : 'list';
-    if (!READ_ONLY_STATE_HOOK_ACTION_SET.has(action) || isPresent(args.hookDefinition)) return STATE_MUTATION_DENIAL;
-  }
-
-  if (args.mode === 'mode') {
-    const action = typeof args.modeAction === 'string' ? args.modeAction : 'get';
-    if (!READ_ONLY_STATE_MODE_ACTION_SET.has(action) || isPresent(args.modeName)) return STATE_MUTATION_DENIAL;
-  }
-
-  if (args.mode === 'analytics') {
-    const action = typeof args.analyticsAction === 'string' ? args.analyticsAction : 'summary';
-    if (!READ_ONLY_STATE_ANALYTICS_ACTION_SET.has(action)) return STATE_MUTATION_DENIAL;
-    if (
-      isPresent(args.analyticsTool)
-      || isPresent(args.analyticsArgs)
-      || isPresent(args.analyticsResult)
-      || isPresent(args.analyticsDuration)
-      || isPresent(args.analyticsTokens)
-      || isPresent(args.analyticsFormat)
-    ) {
-      return STATE_MUTATION_DENIAL;
-    }
-  }
-
-  return null;
+  return isStateMutation(args) ? STATE_MUTATION_DENIAL : null;
 }
 
 export function validateInspectToolInvocationForAgentPolicy(args: InspectToolArgs): string | null {

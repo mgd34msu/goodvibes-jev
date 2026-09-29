@@ -2,6 +2,7 @@ import type { Tool } from '../../types/tools.js';
 import type { McpDecisionRecord } from '../../runtime/mcp/types.js';
 import type { McpRegistry } from '../../mcp/registry.js';
 import { MCP_TOOL_SCHEMA, type McpToolInput } from './schema.js';
+import { currentTurnActor } from '../../security/turn-boundary.js';
 
 type McpServerSecurity = ReturnType<McpRegistry['listServerSecurity']>[number];
 
@@ -164,11 +165,15 @@ export function createMcpTool(mcpRegistry: McpRegistry): Tool {
     }
 
     if (input.mode === 'approve-quarantine') {
-      if (!input.serverName || !input.operatorId) {
-        return { success: false, error: 'approve-quarantine requires serverName and operatorId.' };
+      if (!input.serverName) {
+        return { success: false, error: 'approve-quarantine requires serverName.' };
       }
-      mcpRegistry.approveSchemaQuarantine(input.serverName, input.operatorId);
-      return { success: true, output: JSON.stringify({ serverName: input.serverName, approvedBy: input.operatorId }) };
+      // The approver is who is acting in this turn (the owner, or the surface
+      // the turn arrived on), taken from the turn boundary, never from the
+      // model's arguments. The call itself went through the gate first.
+      const approvedBy = currentTurnActor();
+      mcpRegistry.approveSchemaQuarantine(input.serverName, approvedBy);
+      return { success: true, output: JSON.stringify({ serverName: input.serverName, approvedBy }) };
     }
 
     if (input.mode === 'set-trust') {

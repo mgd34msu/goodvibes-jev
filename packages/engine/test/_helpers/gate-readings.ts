@@ -49,7 +49,7 @@ export interface GateCallReading {
   readonly catastrophic?: boolean | 'uncertain';
   /** The boundary battery: the call carries payment card details. */
   readonly cardDetails?: boolean;
-  /** The outward-taint battery: what the call sends derives from untrusted text. */
+  /** The content-derivation battery (security/content-taint.ts): a field of the call derives from untrusted text. */
   readonly derives?: boolean;
   /** The sandbox-needs battery. */
   readonly needsNetwork?: boolean;

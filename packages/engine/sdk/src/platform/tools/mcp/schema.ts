@@ -16,7 +16,6 @@ export const MCP_TOOL_SCHEMA: ToolDefinition = {
       },
       qualifiedName: { type: 'string' },
       serverName: { type: 'string' },
-      operatorId: { type: 'string' },
       trustMode: {
         type: 'string',
         enum: ['constrained', 'ask-on-risk', 'allow-all', 'blocked'],
@@ -36,7 +35,6 @@ export interface McpToolInput {
   readonly view?: 'descriptor' | 'preview' | 'full' | undefined;
   readonly qualifiedName?: string | undefined;
   readonly serverName?: string | undefined;
-  readonly operatorId?: string | undefined;
   readonly trustMode?: 'constrained' | 'ask-on-risk' | 'allow-all' | 'blocked' | undefined;
   readonly role?: 'general' | 'docs' | 'filesystem' | 'git' | 'database' | 'browser' | 'deploy' | 'automation' | undefined;
 }

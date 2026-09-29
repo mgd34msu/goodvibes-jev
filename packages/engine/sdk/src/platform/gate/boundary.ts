@@ -25,8 +25,10 @@
  * 4. Outward-effect taint (Jev, over a recorded fact). Whether the turn read
  *    untrusted text is a record the untrusted-content ledger holds (code: it is
  *    what happened, not an interpretation). Whether what the call sends derives
- *    from that text is `engine.gate.outward-taint`. When the ledger kept no text
- *    there is nothing to read, and the owner is asked.
+ *    from that text is `engine.security.content-derivation`, read for each
+ *    string field of the call against each recent source (security/content-taint.ts
+ *    findContentTaint, the same reading the outward send paths use). When the
+ *    ledger kept no text there is nothing to read, and the owner is asked.
  * 5. Trust-gated approval (code). A refusal from 3 (uncertain) or 4 is
  *    cleared only by an owner approval minted from the prompt the owner
  *    answered for this call: the check is that the approval names this action,
@@ -37,11 +39,10 @@
  *
  * Which calls are outward is Jev's `outward` reading alone.
  */
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { checkOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import { getProcessUntrustedContentLedger, type UntrustedContentLedger } from '../security/untrusted-content.js';
-import { outwardTaint } from './batteries/outward-taint.js';
-import { readingArguments, type GateReading } from './reading.js';
+import { findContentTaint } from '../security/content-taint.js';
+import type { GateReading } from './reading.js';
 import { effectPermittedForProvenance, type AgentEffect } from './surface-authority.js';
 
 /** The boundary's checks, in the order they run. */
@@ -101,13 +102,8 @@ function effectOf(reading: GateReading | null): AgentEffect {
   return reading.mutates ? 'write' : 'read';
 }
 
-/** The most recent untrusted sources one taint reading carries. */
+/** The most recent untrusted sources the call's fields are read against. */
 const MAX_UNTRUSTED_SOURCES = 8;
-
-/** Most characters of untrusted text one taint reading carries per source. */
-const MAX_UNTRUSTED_CHARS = 6_000;
-
-const clip = (text: string): string => (text.length <= MAX_UNTRUSTED_CHARS ? text : `${text.slice(0, MAX_UNTRUSTED_CHARS)} [${text.length - MAX_UNTRUSTED_CHARS} more characters]`);
 
 const APPROVAL_FIX = 'The owner can approve this exact call in the prompt the gate shows; nothing typed into the conversation clears it.';
 
@@ -129,27 +125,21 @@ async function outwardCheck(input: BoundaryInput, content: Record<string, string
       reason: `This turn read ${origins.join(', ')}, and none of that text was kept, so whether this ${input.toolName} call repeats it cannot be read. It needs the owner.`,
     };
   }
-  const site = 'engine.gate.outward-taint';
-  const run = await outwardTaint.run(judgmentPort(site), {
-    untrusted: sources.slice(-MAX_UNTRUSTED_SOURCES).map((source) => `${source.surface} ${source.origin}: ${clip(source.text)}`),
-    outgoing: { tool: input.toolName, ...(readingArguments(input.args) as Record<string, never>) },
-  }, { site });
-  const verdict = run.readings.derives.verdict;
-  if (verdict === 'no') {
-    run.recordAction('pass');
+  const findings = await findContentTaint(content, sources.slice(-MAX_UNTRUSTED_SOURCES));
+  if (findings.length === 0) {
     return { check: 'outward-effect', result: 'pass', detail: 'does not derive from untrusted text', approvable: false };
   }
   if (cleared()) {
-    run.recordAction('owner-approved');
     return { check: 'outward-effect', result: 'pass', detail: 'owner approved this exact content', approvable: false };
   }
-  run.recordAction(`refuse:${verdict}`);
+  const fields = [...new Set(findings.map((finding) => finding.field))].join(', ');
+  const from = [...new Set(findings.map((finding) => `${finding.surface} ${finding.origin}`))].join(', ');
   return {
     check: 'outward-effect',
     result: 'refuse',
-    detail: verdict === 'yes' ? `derives from ${origins.join(', ')}` : `may derive from ${origins.join(', ')}`,
+    detail: `${fields} may derive from ${from}`,
     approvable: true,
-    reason: `What this ${input.toolName} call sends ${verdict === 'yes' ? 'repeats or acts on' : 'may repeat or act on'} text read this turn from ${origins.join(', ')}, which anyone can write.`,
+    reason: `What this ${input.toolName} call sends (${fields}) may repeat or act on text read this turn from ${from}, which anyone can write.`,
   };
 }
 
