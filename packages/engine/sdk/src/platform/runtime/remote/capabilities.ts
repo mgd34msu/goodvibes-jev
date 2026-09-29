@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AcpConnection } from '../store/domains/acp.js';
 import type { RemoteRunnerContract } from './types.js';
 
@@ -17,6 +18,16 @@ export interface RemoteCapabilitySnapshot {
   readonly detail: string;
 }
 
+/**
+ * Whether a write scope path is equal to or under the workspace root. Both are
+ * resolved and normalized; a relative scope path is taken relative to the root.
+ */
+function isWithinWorkspaceRoot(scope: string, workspaceRoot: string): boolean {
+  const root = resolve(workspaceRoot);
+  const path = relative(root, resolve(root, scope));
+  return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
+}
+
 export function deriveRemoteCapabilities(
   contract?: RemoteRunnerContract | null,
   connection?: AcpConnection | null,
@@ -24,6 +35,7 @@ export function deriveRemoteCapabilities(
   const tools = new Set(contract?.capabilityCeiling.allowedTools ?? []);
   const writeScope = contract?.capabilityCeiling.writeScope ?? [];
   const transportState = connection?.transportState ?? contract?.transport.state ?? 'disconnected';
+  const workspaceRoot = contract?.workspaceRoot;
 
   return [
     {
@@ -60,7 +72,7 @@ export function deriveRemoteCapabilities(
     },
     {
       id: 'shared-sandbox',
-      supported: writeScope.some((scope) => scope.includes('.goodvibes') || scope.includes('/workspace')),
+      supported: workspaceRoot !== undefined && writeScope.some((scope) => isWithinWorkspaceRoot(scope, workspaceRoot)),
       source: 'contract',
       detail: 'workspace-projected sandbox attachment',
     },

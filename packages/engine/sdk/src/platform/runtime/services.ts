@@ -729,7 +729,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     approvalBridge: approvalBroker,
     automationBridge: automationManager,
   });
-  const remoteRunnerRegistry = new RemoteRunnerRegistry(agentManager);
+  const remoteRunnerRegistry = new RemoteRunnerRegistry(agentManager, workingDirectory);
   const remoteSupervisor = new RemoteSupervisor(remoteRunnerRegistry);
   const sandboxSessionRegistry = new SandboxSessionRegistry(workingDirectory);
   const mcpRegistry = new McpRegistry({

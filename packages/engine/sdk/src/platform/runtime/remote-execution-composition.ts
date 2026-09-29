@@ -47,7 +47,7 @@ export function createRemoteExecutionServices(options: {
   readonly configManager: ConfigManager;
   readonly runtimeBus: RuntimeEventBus;
 }): RemoteExecutionServices {
-  const remoteRunnerRegistry = new RemoteRunnerRegistry(options.agentManager);
+  const remoteRunnerRegistry = new RemoteRunnerRegistry(options.agentManager, options.workingDirectory);
   const remoteSupervisor = new RemoteSupervisor(remoteRunnerRegistry);
   const sandboxSessionRegistry = new SandboxSessionRegistry(options.workingDirectory);
   const mcpRegistry = new McpRegistry({

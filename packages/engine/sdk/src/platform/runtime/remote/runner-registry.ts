@@ -52,7 +52,7 @@ function summarizeOutput(agent: AgentRecord): string {
   return normalized.length <= 180 ? normalized : `${normalized.slice(0, 177)}...`;
 }
 
-function buildContract(agent: AgentRecord, connection?: AcpConnection, existing?: RemoteRunnerContract): RemoteRunnerContract {
+function buildContract(agent: AgentRecord, workspaceRoot: string | undefined, connection?: AcpConnection, existing?: RemoteRunnerContract): RemoteRunnerContract {
   return Object.freeze({
     id: `runner:${agent.id}`,
     runnerId: agent.id,
@@ -66,6 +66,7 @@ function buildContract(agent: AgentRecord, connection?: AcpConnection, existing?
     orchestrationGraphId: agent.orchestrationGraphId,
     orchestrationNodeId: agent.orchestrationNodeId,
     capabilityCeiling: buildCapabilityCeiling(agent),
+    workspaceRoot: workspaceRoot ?? existing?.workspaceRoot,
     createdAt: agent.startedAt,
     lastUpdatedAt: agent.completedAt ?? Date.now(),
     transport: Object.freeze({
@@ -184,7 +185,14 @@ export class RemoteRunnerRegistry {
   private readonly contracts = new Map<string, RemoteRunnerContract>();
   private readonly artifacts = new Map<string, RemoteExecutionArtifact>();
   private readonly pools = new Map<string, RemoteRunnerPool>();
-  constructor(private readonly agentManager: Pick<AgentManager, 'getStatus' | 'list'>) {
+  /**
+   * @param workspaceRoot The runtime's working directory, the workspace its
+   *   shared sandbox projects; carried on every contract this registry builds.
+   */
+  constructor(
+    private readonly agentManager: Pick<AgentManager, 'getStatus' | 'list'>,
+    private readonly workspaceRoot?: string | undefined,
+  ) {
   }
 
   private resolveConnection(agentId: string, store?: RuntimeStore): AcpConnection | undefined {
@@ -194,7 +202,7 @@ export class RemoteRunnerRegistry {
   upsertContractForAgent(agentId: string, store?: RuntimeStore): RemoteRunnerContract | null {
     const agent = this.agentManager.getStatus(agentId);
     if (!agent) return null;
-    const contract = buildContract(agent, this.resolveConnection(agentId, store), this.contracts.get(agentId) ?? undefined);
+    const contract = buildContract(agent, this.workspaceRoot, this.resolveConnection(agentId, store), this.contracts.get(agentId) ?? undefined);
     this.contracts.set(agentId, contract);
     if (contract.poolId) {
       this.assignRunnerToPool(contract.poolId, contract.runnerId);
@@ -292,7 +300,7 @@ export class RemoteRunnerRegistry {
     const agent = this.agentManager.getStatus(agentId);
     if (!agent) return null;
     const connection = this.resolveConnection(agentId, store);
-    const contract = this.upsertContractForAgent(agentId, store) ?? buildContract(agent, connection);
+    const contract = this.upsertContractForAgent(agentId, store) ?? buildContract(agent, this.workspaceRoot, connection);
     const artifact = buildArtifact(agent, contract, connection);
     this.artifacts.set(artifact.id, artifact);
     return artifact;
