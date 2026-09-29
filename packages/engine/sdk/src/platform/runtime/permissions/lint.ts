@@ -1,3 +1,6 @@
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { policyBreadth } from '../../gate/batteries/policy-breadth.js';
 import type { PermissionsConfig, PolicyRule } from './types.js';
 
 export type PolicyLintSeverity = 'info' | 'warn' | 'error';
@@ -12,19 +15,34 @@ function toArray(value: string | string[]): string[] {
   return Array.isArray(value) ? value : [value];
 }
 
-function isBroadPathPattern(pattern: string): boolean {
-  return pattern === '**' || pattern === '/' || pattern === '/*' || pattern === '/**';
+/** Patterns read at once. */
+const BREADTH_CONCURRENCY = 8;
+const BREADTH_SITE = 'engine.gate.policy-lint';
+
+/**
+ * Whether a path or host pattern grants a broader area than a scoped rule
+ * should: a Jev reading (`engine.gate.policy-breadth`). A pattern is broad
+ * unless the reading is a no that acts, so a doubtful one is shown to the
+ * owner. A JudgmentError propagates.
+ */
+async function isBroadPattern(kind: 'path' | 'host', pattern: string, effect: string): Promise<boolean> {
+  const item = kind === 'path' ? 'broad_path' : 'broad_host';
+  const run = await policyBreadth.run(judgmentPort(BREADTH_SITE), { kind, pattern, effect }, { site: BREADTH_SITE, only: [item] });
+  const reading = run.readings[item]!;
+  const broad = !(reading.verdict === 'no' && reading.outcome === 'act');
+  run.recordAction(broad ? 'flagged' : 'scoped');
+  return broad;
 }
 
-function isBroadHostPattern(pattern: string): boolean {
-  return pattern === '*' || pattern === '*.*' || pattern === '*.com' || pattern === '*:*';
+async function anyBroad(kind: 'path' | 'host', patterns: readonly string[], effect: string): Promise<boolean> {
+  return (await mapLimit(patterns, BREADTH_CONCURRENCY, (pattern) => isBroadPattern(kind, pattern, effect))).some(Boolean);
 }
 
-function lintRule(rule: PolicyRule): PolicyLintFinding[] {
+async function lintRule(rule: PolicyRule): Promise<PolicyLintFinding[]> {
   const findings: PolicyLintFinding[] = [];
 
   if (rule.type === 'path-scope') {
-    if (rule.pathPatterns.some(isBroadPathPattern)) {
+    if (await anyBroad('path', rule.pathPatterns, rule.effect)) {
       findings.push({
         severity: rule.effect === 'allow' ? 'error' : 'warn',
         ruleId: rule.id,
@@ -34,7 +52,7 @@ function lintRule(rule: PolicyRule): PolicyLintFinding[] {
   }
 
   if (rule.type === 'network-scope') {
-    if (rule.hostPatterns.some(isBroadHostPattern)) {
+    if (await anyBroad('host', rule.hostPatterns, rule.effect)) {
       findings.push({
         severity: rule.effect === 'allow' ? 'error' : 'warn',
         ruleId: rule.id,
@@ -53,6 +71,8 @@ function lintRule(rule: PolicyRule): PolicyLintFinding[] {
     }
   }
 
+  // `*` is the evaluator's own wildcard for every tool (rules/prefix.ts), so
+  // an allow on it with no command prefix allows everything: code.
   if (rule.type === 'prefix' && rule.effect === 'allow' && toArray(rule.toolPattern).includes('*') && !rule.commandPrefixes?.length) {
     findings.push({
       severity: 'error',
@@ -64,7 +84,7 @@ function lintRule(rule: PolicyRule): PolicyLintFinding[] {
   return findings;
 }
 
-export function lintPolicyConfig(config: PermissionsConfig): PolicyLintFinding[] {
+export async function lintPolicyConfig(config: PermissionsConfig): Promise<PolicyLintFinding[]> {
   const findings: PolicyLintFinding[] = [];
   const rules = config.rules ?? [];
   const seenIds = new Set<string>();
@@ -79,7 +99,7 @@ export function lintPolicyConfig(config: PermissionsConfig): PolicyLintFinding[]
     } else {
       seenIds.add(rule.id);
     }
-    findings.push(...lintRule(rule));
+    findings.push(...(await lintRule(rule)));
   }
 
   if (config.mode === 'allow-all' && rules.length > 0) {

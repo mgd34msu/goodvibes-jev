@@ -4,7 +4,7 @@ import type { PolicyPanelSnapshot } from '../diagnostics/panels/policy.js';
 import { PolicyPanel as PolicyDiagnosticsPanel } from '../diagnostics/panels/policy.js';
 import type { DivergenceDashboard } from './divergence-dashboard.js';
 import type { PermissionCheckResult } from '../../permissions/types.js';
-import { lintPolicyConfig } from './lint.js';
+import { lintPolicyConfig, type PolicyLintFinding } from './lint.js';
 import type { PolicySimulationSummary } from './simulation-scenarios.js';
 import type { PolicyPreflightReview } from './preflight.js';
 
@@ -36,6 +36,8 @@ export class PolicyRuntimeState {
   private _lastSimulationSummary: PolicySimulationSummary | null = null;
   private _lastPreflightReview: PolicyPreflightReview | null = null;
   private readonly _subscribers = new Set<() => void>();
+  /** The findings of the last lint read of the loaded bundles (refreshLint). */
+  private _lintFindings: readonly PolicyLintFinding[] = [];
 
   public constructor(registry: PolicyRegistry = new PolicyRegistry()) {
     this._registry = registry;
@@ -66,12 +68,7 @@ export class PolicyRuntimeState {
   }
 
   public getSnapshot(): PolicyPanelSnapshot {
-    const current = this._registry.getCurrent();
-    const candidate = this._registry.getCandidate();
-    const lintFindings = [
-      ...(current ? lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
-      ...(candidate ? lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
-    ];
+    const lintFindings = this._lintFindings;
     const panel = new PolicyDiagnosticsPanel(
       this._registry,
       this._divergencePanel,
@@ -81,6 +78,22 @@ export class PolicyRuntimeState {
       this._lastPreflightReview,
     );
     return panel.getSnapshot();
+  }
+
+  /**
+   * Reads the loaded bundles' lint findings (pattern breadth is a Jev
+   * reading) and keeps them for the snapshot. The /policy load, promote,
+   * rollback, lint and preflight commands call it; a JudgmentError propagates.
+   */
+  public async refreshLint(registry: PolicyRegistry = this._registry): Promise<readonly PolicyLintFinding[]> {
+    const current = registry.getCurrent();
+    const candidate = registry.getCandidate();
+    this._lintFindings = [
+      ...(current ? await lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
+      ...(candidate ? await lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
+    ];
+    this.notify();
+    return this._lintFindings;
   }
 
   public recordSimulationSummary(summary: PolicySimulationSummary): void {

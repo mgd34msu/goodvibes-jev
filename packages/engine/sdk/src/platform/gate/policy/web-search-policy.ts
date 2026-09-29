@@ -2,7 +2,9 @@
  * Main-conversation policy for the `web_search` tool: bounded, read-only web research only.
  *
  * Hoisted from the agent (src/tools/agent-web-search-policy.ts) into the engine gate. A fixed
- * allowlist over the tool's arguments: a deterministic boundary, kept as code.
+ * allowlist over the tool's arguments, kept as code because it is the Agent product's
+ * declaration of which options its web_search tool offers (and, for caps, how much it returns),
+ * not a reading of any call's content.
  */
 import type { Tool } from '../../types/tools.js';
 

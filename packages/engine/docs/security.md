@@ -344,7 +344,7 @@ Which calls are outward is Jev's `outward` reading alone; there is no fixed tool
 After the boundary, decisions the owner made explicitly stand as given:
 
 1. **`behavior.autoApprove`** (`config_policy` / `config_allow`): the owner's opt-out of the presets and prompts. It never bypasses the boundary.
-2. **Policy as code**, when the `permissions-policy-engine` feature is on: user and managed policy rules (`managed_policy`). Matching a rule the owner wrote carries out the owner's decision. The evaluator's mode layer is not consulted, and it has no safety layer: its old destructive-prefix, dangerous-pattern, path-traversal and SQL lists decided what a call does by spelling, and those questions are the gate's readings now.
+2. **Policy as code**, when the `permissions-policy-engine` feature is on: user and managed policy rules (`managed_policy`). Matching a rule the owner wrote carries out the owner's decision. The evaluator's mode layer is not consulted, and it has no safety layer: its old destructive-prefix, dangerous-pattern, path-traversal and SQL lists decided what a call does by spelling, and those questions are the gate's readings now. Rules that filter on a call's classification get it from the gate's reading (escalation by risk family, then network, destructive, write or read), not from lists of tool names. The policy linter reads whether each path or host pattern in a rule is broad (`engine.gate.policy-breadth`), replacing two four-spelling lists; `/policy lint` and `/policy preflight` show the findings, and a broad pattern in an allow rule blocks preflight.
 3. **The custom preset's per-tool settings** (`permissions.tools.*`): `allow`, `deny`, or `prompt` (always ask).
 4. **Remembered approvals**: the session cache (`session_override`) and durable rules (`user_rule`). A remembered allow does not carry a change into the plan preset.
 
@@ -393,7 +393,7 @@ What host access a sandboxed command needs (the network, host privileges) is Jev
 
 ### MCP tool calls
 
-`McpPermissionManager` reads each MCP call's capability class through the side-effect battery's `capability` question; the role, scope and trust-mode rules that consume it stay code. A server whose trust mode is `blocked` (the owner's setting), or whose schema is quarantined, is refused before any reading.
+`McpPermissionManager` reads each MCP call's capability class through the side-effect battery's `capability` question; the role and trust-mode rules that consume it stay code, as the owner's declarations. When the owner set allowed paths or hosts for a server, each string argument is read for whether it names a filesystem path the call touches or a network destination it reaches (`engine.gate.mcp-scope-arg`), whatever the argument is called; each such value must then lie inside the owner's scope, compared in code on real paths (`..` resolved, symlinks followed, whole path components) and on the URL grammar's host. A server whose trust mode is `blocked` (the owner's setting), or whose schema is quarantined, is refused before any reading.
 
 `checkDetailed()` returns a `PermissionCheckResult` with `approved`, `persisted`, `sourceLayer`, `reasonCode`, the `analysis`, and when present the `boundary` checks, the `reading`, the `preset` decision and a `detail` explaining a refusal.
 

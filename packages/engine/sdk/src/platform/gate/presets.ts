@@ -8,7 +8,7 @@
  * each value names a preset, so existing settings files, the Shift+Tab cycle
  * and the mode pill keep working unchanged.
  *
- * The deterministic boundary (gate/boundary.ts) runs before any preset and no
+ * The boundary (gate/boundary.ts) runs before any preset and no
  * preset can relax it. Explicit owner decisions (remembered approvals, user
  * and managed policy rules, and the custom preset's per-tool settings) are
  * applied before the reading and stand as given.

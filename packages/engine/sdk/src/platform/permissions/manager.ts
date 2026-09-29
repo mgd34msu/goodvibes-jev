@@ -188,17 +188,22 @@ const readingRecord = (reading: GateReading): GateReadingRecord => ({
 /**
  * PermissionManager, the gate: the one path every tool call takes.
  *
- *   1. The deterministic boundary (gate/boundary.ts): catastrophic commands,
- *      surface authority, card shapes and the outward-effect check. A refusal
- *      stands; a tainted outward call can only be cleared by the owner
- *      answering a prompt for that exact call (a single-use owner approval).
- *   2. The explicit owner opt-out (autoApprove) and explicit owner rules:
+ *   1. Jev reads the call (gate/reading.ts): a known read-only tool is asked
+ *      only whether it touches secrets; any other call gets the side-effect,
+ *      risk-family and boundary questions in parallel.
+ *   2. The boundary (gate/boundary.ts) on that reading: catastrophic commands
+ *      and card details (Jev), surface authority (the owner's declared
+ *      surfaces) and the outward-effect check (Jev over the untrusted-content
+ *      record). A refusal stands; an approvable one (card details uncertain,
+ *      an outward call derived from untrusted text) is cleared only by the
+ *      owner answering a prompt for that exact call (a single-use approval).
+ *   3. The explicit owner opt-out (autoApprove) and explicit owner rules:
  *      user and managed policy rules, the custom preset's per-tool settings,
  *      remembered approvals (session and durable).
- *   3. Known read-only tools run (credential-store reads still ask).
- *   4. Jev reads the call's stakes (gate/reading.ts), and the active preset
- *      (gate/presets.ts, selected by `permissions.mode`) allows, asks or denies.
- *   5. An ask goes to the owner through the surface's approval prompt.
+ *   4. Known read-only tools that do not touch secrets run.
+ *   5. The active preset (gate/presets.ts, selected by `permissions.mode`)
+ *      allows, asks or denies on the reading's stakes.
+ *   6. An ask goes to the owner through the surface's approval prompt.
  */
 export class PermissionManager {
   private sessionApprovals = new Map<string, boolean>();

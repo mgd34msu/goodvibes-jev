@@ -21,12 +21,14 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetCatastrophicReadings } from '../../sdk/src/platform/gate/reading.ts';
 import { forgetReadSecrets } from '../../sdk/src/platform/permissions/credential-read-defaults.ts';
 import { forgetCommandNeeds } from '../../sdk/src/platform/runtime/permissions/normalization/classifier.ts';
+import { forgetLedgerArgRoles } from '../../sdk/src/platform/gate/policy/execution-ledger.ts';
 
 /** Clears the readings the gate remembers per process, so one test's answers never serve another. */
 export function forgetGateReadings(): void {
   forgetCatastrophicReadings();
   forgetReadSecrets();
   forgetCommandNeeds();
+  forgetLedgerArgRoles();
 }
 import type { GateRiskFamily } from '../../sdk/src/platform/gate/batteries/risk-family.ts';
 import type { SideEffectKind } from '../../sdk/src/platform/gate/batteries/side-effect.ts';
@@ -55,6 +57,15 @@ export interface GateCallReading {
   /** The settings-hazard battery. */
   readonly hazard?: string;
   readonly requested?: boolean;
+  /** The MCP scope battery: the argument value names a path the call touches, or a destination it reaches. */
+  readonly names_path?: boolean | 'uncertain';
+  readonly names_host?: boolean | 'uncertain';
+  /** The policy-breadth battery: an owner rule's path or host pattern is broad. */
+  readonly broad_path?: boolean;
+  readonly broad_host?: boolean;
+  /** The ledger-arg battery: the argument carries a credential; it is what the call acts on. */
+  readonly holds_credential?: boolean;
+  readonly is_target?: boolean;
 }
 
 export type GateReadingTable = ReadonlyArray<readonly [text: string, reading: GateCallReading]>;
@@ -68,7 +79,7 @@ function defaultReading(state: unknown): GateCallReading {
   return { mutates: true, family: edits ? 'file-mutation' : 'generic', kind: edits ? 'write' : 'other' };
 }
 
-const YES_NO = ['mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'flagsRisk', 'catastrophic', 'cardDetails', 'derives', 'needsNetwork', 'needsPrivilege', 'requested'] as const;
+const YES_NO = ['mutates', 'outward', 'secrets', 'irreversible', 'beyondProject', 'weakensSecurity', 'obfuscated', 'flagsRisk', 'catastrophic', 'cardDetails', 'derives', 'needsNetwork', 'needsPrivilege', 'requested', 'names_path', 'names_host', 'broad_path', 'broad_host', 'holds_credential', 'is_target'] as const;
 
 /** A port answering the gate batteries from `table`, recording every request. */
 export function gateReadingsPort(table: GateReadingTable = []) {

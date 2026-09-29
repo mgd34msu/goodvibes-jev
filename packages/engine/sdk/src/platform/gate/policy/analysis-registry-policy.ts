@@ -2,7 +2,10 @@
  * Main-conversation policy for the `analyze` and `registry` tools: local static analysis and bounded registry discovery only.
  *
  * Hoisted from the agent (src/tools/agent-analysis-registry-policy.ts) into the engine gate. A fixed
- * allowlist over the tool's arguments: a deterministic boundary, kept as code.
+ * allowlist over the tool's arguments, kept as code because it is the Agent product's
+ * declaration of which modes its analyze and registry tools offer; the preview path rule
+ * names where the registry itself stores skill and agent definitions (.goodvibes/skills,
+ * .goodvibes/agents), not a reading of any call's content.
  */
 import type { Tool } from '../../types/tools.js';
 

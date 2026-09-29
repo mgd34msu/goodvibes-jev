@@ -19,7 +19,7 @@
  * The manager's own category lookup (`getCategory`) is not wrapped. It is
  * synchronous and cannot wait on a reading, and the engine's permission
  * manager already reads the kind of any tool its closed tool table does not
- * name before it decides (permissions/manager.ts, step 4), which is what the
+ * name before it decides (permissions/manager.ts, step 1), which is what the
  * agent's category override supplied.
  */
 import type { PermissionCategory, PermissionCheckResult } from '../../permissions/types.js';

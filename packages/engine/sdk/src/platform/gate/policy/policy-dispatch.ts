@@ -108,7 +108,7 @@ async function handleLoad(args: string[], context: PolicyCommandContext): Promis
   }
   const candidate = registry.getCandidate();
   if (candidate) {
-    policyState.notify();
+    await policyState.refreshLint(registry);
     context.print(bundleSummary('[policy] Candidate loaded', candidate));
     context.print('[policy] Next: run `/policy simulate` to collect divergence evidence before promoting.');
   }
@@ -224,8 +224,8 @@ async function handleLint(_args: string[], context: PolicyCommandContext): Promi
     return;
   }
   const findings = [
-    ...(current ? lintPolicyConfig({ mode: 'custom', rules: current.rules }).map((finding) => ({ scope: 'current', ...finding })) : []),
-    ...(candidate ? lintPolicyConfig({ mode: 'custom', rules: candidate.rules }).map((finding) => ({ scope: 'candidate', ...finding })) : []),
+    ...(current ? (await lintPolicyConfig({ mode: 'custom', rules: current.rules })).map((finding) => ({ scope: 'current', ...finding })) : []),
+    ...(candidate ? (await lintPolicyConfig({ mode: 'custom', rules: candidate.rules })).map((finding) => ({ scope: 'candidate', ...finding })) : []),
   ];
   if (findings.length === 0) {
     context.print('[policy] No lint findings for the active or candidate bundles.');
@@ -240,12 +240,7 @@ async function handleLint(_args: string[], context: PolicyCommandContext): Promi
 async function handlePreflight(_args: string[], context: PolicyCommandContext): Promise<void> {
   const registry = getRegistry(context);
   const policyState = getPolicyState(context);
-  const current = registry.getCurrent();
-  const candidate = registry.getCandidate();
-  const lintFindings = [
-    ...(current ? lintPolicyConfig({ mode: 'custom', rules: current.rules }) : []),
-    ...(candidate ? lintPolicyConfig({ mode: 'custom', rules: candidate.rules }) : []),
-  ];
+  const lintFindings = await policyState.refreshLint(registry);
   const review = buildPolicyPreflightReview({
     config: context.config(),
     lintFindings,
@@ -288,7 +283,7 @@ async function handlePromote(args: string[], context: PolicyCommandContext): Pro
     context.print(`[policy] Gate at promotion: ${result.gate.status}; divergence rate ${result.gate.divergenceRate !== undefined ? fmtRate(result.gate.divergenceRate) : 'unknown'} (threshold ${fmtRate(result.gate.threshold)}).`);
   }
   if (current) context.print(bundleSummary('[policy] Active bundle', current));
-  policyState.notify();
+  await policyState.refreshLint(registry);
 }
 
 async function handleRollback(_args: string[], context: PolicyCommandContext): Promise<void> {
@@ -303,7 +298,7 @@ async function handleRollback(_args: string[], context: PolicyCommandContext): P
   context.print(`[policy] Rolled back to bundle "${result.restoredBundleId}".`);
   if (current) context.print(bundleSummary('[policy] Active bundle', current));
   policyState.setDashboard(null);
-  policyState.notify();
+  await policyState.refreshLint(registry);
   context.print('[policy] Simulation dashboard cleared. Run `/policy simulate` for the restored bundle.');
 }
 

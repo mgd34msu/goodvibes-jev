@@ -13,7 +13,7 @@ export type PermissionCategory = 'read' | 'write' | 'execute' | 'delegate';
 export type PermissionRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
 export type PermissionDecisionSource =
-  // The gate's deterministic boundary refused the call
+  // The gate's boundary refused the call
   | 'boundary'
   // The active preset decided on Jev's stakes reading
   | 'stakes_preset'

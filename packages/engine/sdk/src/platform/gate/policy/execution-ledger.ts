@@ -14,13 +14,23 @@
  * order they arrived. When the reading itself fails, the record is still
  * added so the call is never lost, with the kind `other` and the failure
  * stated in `routeKindError`.
+ *
+ * Which arguments carry a credential (redacted from the preview) and which
+ * one the call acts on (the target preview) are read per tool and argument
+ * name (`engine.gate.ledger-arg`) and remembered for the process; they replace
+ * a key-name regex and a fixed key list. A name not read as a confident no is
+ * redacted, and when the reading fails every value is redacted and the
+ * failure is stated in `argsReadingError`.
  */
 import type { ToolEvent } from '../../../events/tools.js';
 import type { RuntimeEventBus } from '../../runtime/events/index.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 import type { SideEffectKind } from '../batteries/side-effect.js';
-import { readSideEffectKind } from '../reading.js';
+import { readSideEffectKind, shellCommandsIn } from '../reading.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { ledgerArg } from '../batteries/ledger-arg.js';
 
 /** The decision site the ledger's route-kind readings are logged under. */
 export const EXECUTION_LEDGER_SITE = 'engine.gate.execution-ledger';
@@ -42,6 +52,8 @@ export interface AgentExecutionRecord {
   readonly routeKind: AgentExecutionRouteKind;
   /** Why the route kind could not be read, when the reading failed. */
   readonly routeKindError?: string | undefined;
+  /** Why the argument roles could not be read; every argument value is redacted then. */
+  readonly argsReadingError?: string | undefined;
   readonly status: AgentExecutionStatus;
   readonly phase: ToolEvent['type'];
   readonly receivedAt: number;
@@ -65,6 +77,7 @@ interface MutableAgentExecutionRecord {
   tool: string;
   routeKind: AgentExecutionRouteKind;
   routeKindError?: string | undefined;
+  argsReadingError?: string | undefined;
   status: AgentExecutionStatus;
   phase: ToolEvent['type'];
   receivedAt: number;
@@ -91,37 +104,85 @@ export interface AgentExecutionLedgerSnapshot {
 }
 
 const DEFAULT_LIMIT = 500;
-const SECRET_KEY_PATTERN = /(?:api[_-]?key|authorization|bearer|client[_-]?secret|password|secret|token)/i;
+
+/** What one argument name is, for one tool (engine.gate.ledger-arg). */
+interface ArgRole {
+  readonly credential: boolean;
+  readonly target: boolean;
+}
+
+/** Roles read so far, by tool and argument name; bounded, the oldest leaves first. */
+const ARG_ROLES = new Map<string, ArgRole>();
+const ARG_ROLES_LIMIT = 1024;
+const ARG_READ_CONCURRENCY = 8;
+const roleKey = (tool: string, argument: string): string => `${tool}\u0000${argument}`;
+
+/** Every object key in the arguments, as deep as the preview shows them. */
+function argumentNames(value: unknown, depth = 0, names = new Set<string>()): Set<string> {
+  if (depth > 3 || !value || typeof value !== 'object') return names;
+  if (Array.isArray(value)) {
+    for (const entry of value.slice(0, 8)) argumentNames(entry, depth + 1, names);
+    return names;
+  }
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 16)) {
+    names.add(key);
+    argumentNames(entry, depth + 1, names);
+  }
+  return names;
+}
+
+/** Reads the roles of the argument names not read yet for this tool. A JudgmentError propagates. */
+async function readArgRoles(tool: string, args: Record<string, unknown>): Promise<ReadonlyMap<string, ArgRole>> {
+  const names = [...argumentNames(args)];
+  const unread = names.filter((name) => !ARG_ROLES.has(roleKey(tool, name)));
+  const port = unread.length > 0 ? judgmentPort(EXECUTION_LEDGER_SITE) : undefined;
+  await mapLimit(unread, ARG_READ_CONCURRENCY, async (argument) => {
+    const run = await ledgerArg.run(port!, { tool, argument }, { site: EXECUTION_LEDGER_SITE });
+    const credential = !(run.readings.holds_credential.verdict === 'no' && run.readings.holds_credential.outcome === 'act');
+    const target = run.readings.is_target.verdict === 'yes' && run.readings.is_target.outcome === 'act';
+    run.recordAction(credential ? 'redact' : target ? 'target' : 'show');
+    ARG_ROLES.set(roleKey(tool, argument), { credential, target });
+    if (ARG_ROLES.size > ARG_ROLES_LIMIT) ARG_ROLES.delete(ARG_ROLES.keys().next().value!);
+  });
+  return new Map(names.map((name) => [name, ARG_ROLES.get(roleKey(tool, name))!]));
+}
+
+/** Forgets the argument roles read so far (tests, and a model change). */
+export function forgetLedgerArgRoles(): void {
+  ARG_ROLES.clear();
+}
 
 function truncateText(value: string, max = 220): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length > max ? `${compact.slice(0, Math.max(0, max - 1))}...` : compact;
 }
 
-function redactValue(value: unknown, depth = 0): unknown {
+/** A value as the preview shows it: a key not read as a confident non-credential is redacted. */
+function redactValue(value: unknown, roles: ReadonlyMap<string, ArgRole> | null, depth = 0): unknown {
   if (depth > 3) return '[truncated]';
   if (typeof value === 'string') return truncateText(value);
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 8).map((entry) => redactValue(entry, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, 8).map((entry) => redactValue(entry, roles, depth + 1));
   if (!value || typeof value !== 'object') return String(value);
   const entries = Object.entries(value as Record<string, unknown>).slice(0, 16).map(([key, entry]) => (
-    [key, SECRET_KEY_PATTERN.test(key) ? '[redacted]' : redactValue(entry, depth + 1)] as const
+    [key, roles?.get(key)?.credential === false ? redactValue(entry, roles, depth + 1) : '[redacted]'] as const
   ));
   return Object.fromEntries(entries);
 }
 
-function argsPreview(args: Record<string, unknown>): string {
+function argsPreview(args: Record<string, unknown>, roles: ReadonlyMap<string, ArgRole> | null): string {
   try {
-    return truncateText(JSON.stringify(redactValue(args)), 360);
+    return truncateText(JSON.stringify(redactValue(args, roles)), 360);
   } catch {
     return '[unserializable args]';
   }
 }
 
-function stringArg(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === 'string' && value.trim()) return truncateText(value, 180);
+/** The first top-level string argument read as what the call acts on, and not as a credential. */
+function targetPreview(args: Record<string, unknown>, roles: ReadonlyMap<string, ArgRole> | null): string | undefined {
+  for (const [key, value] of Object.entries(args)) {
+    const role = roles?.get(key);
+    if (role?.target && !role.credential && typeof value === 'string' && value.trim()) return truncateText(value, 180);
   }
   return undefined;
 }
@@ -134,6 +195,17 @@ async function readRouteKind(tool: string, args: Record<string, unknown>): Promi
     const routeKindError = summarizeError(error);
     logger.warn('AgentExecutionLedger: route kind reading failed', { tool, error: routeKindError });
     return { routeKind: 'other', routeKindError };
+  }
+}
+
+/** The argument roles, or the failure stated when the reading fails (every value is then redacted). */
+async function readArgRolesReported(tool: string, args: Record<string, unknown>): Promise<{ roles: ReadonlyMap<string, ArgRole> | null; error?: string }> {
+  try {
+    return { roles: await readArgRoles(tool, args) };
+  } catch (error) {
+    const message = summarizeError(error);
+    logger.warn('AgentExecutionLedger: argument reading failed', { tool, error: message });
+    return { roles: null, error: message };
   }
 }
 
@@ -251,7 +323,8 @@ export class AgentExecutionLedger {
   }
 
   private async recordReceived(event: Extract<ToolEvent, { type: 'TOOL_RECEIVED' }>, timestamp: number): Promise<void> {
-    const route = await readRouteKind(event.tool, event.args);
+    const [route, roles] = await Promise.all([readRouteKind(event.tool, event.args), readArgRolesReported(event.tool, event.args)]);
+    const command = shellCommandsIn(event.args)[0];
     if (this.disposed) return;
     const record: MutableAgentExecutionRecord = {
       id: event.callId,
@@ -264,10 +337,11 @@ export class AgentExecutionLedger {
       phase: event.type,
       receivedAt: timestamp,
       updatedAt: timestamp,
-      argsPreview: argsPreview(event.args),
-      argsKeys: Object.keys(event.args).filter((key) => !SECRET_KEY_PATTERN.test(key)).sort(),
-      commandPreview: stringArg(event.args, ['command', 'cmd', 'script']),
-      targetPreview: stringArg(event.args, ['path', 'file', 'target', 'url', 'query', 'task']),
+      ...(roles.error !== undefined ? { argsReadingError: roles.error } : {}),
+      argsPreview: argsPreview(event.args, roles.roles),
+      argsKeys: Object.keys(event.args).filter((key) => roles.roles?.get(key)?.credential === false).sort(),
+      commandPreview: command !== undefined && command.trim() ? truncateText(command, 180) : undefined,
+      targetPreview: targetPreview(event.args, roles.roles),
     };
     this.records.set(record.id, record);
     this.order.push(record.id);

@@ -18,7 +18,12 @@ import {
 import { AgentExecutionLedger, EXECUTION_LEDGER_SITE } from '../sdk/src/platform/gate/policy/execution-ledger.ts';
 import { useGateReadings } from './_helpers/gate-readings.ts';
 
+// Argument roles (engine.gate.ledger-arg) are asked with state { tool, argument },
+// so their entries come first; the route-kind entries match the tool name.
 const readings = useGateReadings([
+  ['"argument":"apiKey"', { holds_credential: true }],
+  ['"argument":"authorization"', { holds_credential: true }],
+  ['"argument":"url"', { is_target: true }],
   ['"browser"', { kind: 'browser' }],
   ['"exec"', { kind: 'shell' }],
   ['"read"', { kind: 'read' }],
@@ -49,8 +54,9 @@ describe('AgentExecutionLedger', () => {
 
     const kinds = Object.fromEntries(ledger.getSnapshot().records.map((record) => [record.tool, record.routeKind]));
     expect(kinds).toEqual({ browser: 'browser', exec: 'shell', read: 'read', fetch: 'network', sleep: 'other' });
-    expect(readings.requests).toHaveLength(5);
-    expect(JSON.stringify(readings.requests[0])).toContain(EXECUTION_LEDGER_SITE);
+    const routeRequests = readings.requests.filter((request) => JSON.stringify(request.state).includes('"arguments"'));
+    expect(routeRequests).toHaveLength(5);
+    expect(JSON.stringify(routeRequests[0])).toContain(EXECUTION_LEDGER_SITE);
   });
 
   test('lifecycle events that arrive while the reading is pending apply after it, in order', async () => {

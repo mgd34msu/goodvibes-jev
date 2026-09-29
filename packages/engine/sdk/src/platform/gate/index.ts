@@ -1,7 +1,8 @@
 /**
- * The gate: the one path every side effect takes. A deterministic boundary
- * first (boundary.ts), then graduated autonomy: Jev reads each call's stakes
- * (reading.ts) and the active preset (presets.ts) allows, asks or denies. The
+ * The gate: the one path every side effect takes. Jev reads the call
+ * (reading.ts), the boundary refuses what no preset may allow (boundary.ts),
+ * then graduated autonomy: the active preset (presets.ts) allows, asks or
+ * denies on the reading's stakes. The
  * decision pipeline itself runs in permissions/manager.ts (PermissionManager).
  */
 export * from './boundary.js';

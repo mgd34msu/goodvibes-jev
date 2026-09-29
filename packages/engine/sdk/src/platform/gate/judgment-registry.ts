@@ -6,6 +6,9 @@ import { boundaryReading } from './batteries/boundary.js';
 import { outwardTaint } from './batteries/outward-taint.js';
 import { sandboxNeeds } from './batteries/sandbox-needs.js';
 import { settingsHazard } from './batteries/settings-hazard.js';
+import { mcpScopeArg } from './batteries/mcp-scope-arg.js';
+import { policyBreadth } from './batteries/policy-breadth.js';
+import { ledgerArg } from './batteries/ledger-arg.js';
 
 /**
  * Every named decision the gate makes, for calibration:
@@ -21,6 +24,9 @@ registry.register(boundaryReading);
 registry.register(outwardTaint);
 registry.register(sandboxNeeds);
 registry.register(settingsHazard);
+registry.register(mcpScopeArg);
+registry.register(policyBreadth);
+registry.register(ledgerArg);
 
 import { editTarget } from '../tools/batteries/edit-target.js';
 import { contentRank } from '../tools/batteries/content-rank.js';

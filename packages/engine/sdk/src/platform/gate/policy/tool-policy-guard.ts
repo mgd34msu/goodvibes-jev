@@ -4,12 +4,19 @@
  * main conversation can call.
  *
  * Hoisted from the agent (src/tools/agent-tool-policy-guard.ts) into the
- * engine gate. Every check is exact matching against a closed allowlist, a
- * deterministic boundary kept as code; the stakes of whatever the allowlists
- * let through are read by the gate (gate/reading.ts). The product-owned
- * pieces are passed in rather than imported: the `goodvibes_context` wrapper
- * and the session write ledger (AgentToolPolicyGuardOptions), and the MCP call
- * route's mode (AgentToolPolicyExplanationOptions).
+ * engine gate. The mode and argument allowlists stay code because they are
+ * the Agent product's declaration of which modes and options its
+ * main-conversation tools offer (a published tool surface), not a reading of
+ * any call's content; the safe fetch methods are the ones RFC 9110 defines as
+ * safe, and the `bg_*` commands are the exec tool's own documented background
+ * command grammar (tools/exec/schema.ts). The checks that did judge content
+ * (which reads touch secrets, which settings writes are hazardous and whether
+ * the request asks for them) are Jev readings in read-policy.ts and
+ * settings-write-policy.ts, and the stakes of whatever the allowlists let
+ * through are read by the gate (gate/reading.ts). The product-owned pieces
+ * are passed in rather than imported: the `goodvibes_context` wrapper
+ * (AgentToolPolicyGuardOptions) and the MCP call route's mode
+ * (AgentToolPolicyExplanationOptions).
  *
  * The agent tool's modes are allowlisted by name.
  */

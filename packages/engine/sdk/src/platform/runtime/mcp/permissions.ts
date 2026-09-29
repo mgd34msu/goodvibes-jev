@@ -4,8 +4,6 @@
  * McpPermissionManager tracks trust levels and per-tool allow/deny overrides
  * for every registered MCP server.
  */
-import { realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
 import type {
   McpTrustLevel,
   McpTrustMode,
@@ -23,6 +21,7 @@ import type {
 import { logger } from '../../utils/logger.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sideEffect } from '../../gate/batteries/side-effect.js';
+import { hostsInScope, pathsInScope, readScopedValues } from './scope.js';
 import { readingArguments, readToolCall } from '../../gate/reading.js';
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
@@ -96,55 +95,6 @@ function roleAllowsCapability(role: McpServerRole, capability: McpCapabilityClas
   }
 }
 
-/**
- * The path as the file system will resolve it: `..` and `.` segments removed
- * and symlinks followed for the part of the path that exists, so a request
- * for `/allowed/../elsewhere` or a link out of an allowed directory is judged
- * by where it lands, not by how it is spelled.
- */
-function realPathOf(path: string): string {
-  const absolute = resolve(path);
-  let existing = absolute;
-  const rest: string[] = [];
-  for (;;) {
-    try {
-      return join(realpathSync.native(existing), ...rest);
-    } catch {
-      const parent = dirname(existing);
-      if (parent === existing) return absolute;
-      rest.unshift(basename(existing));
-      existing = parent;
-    }
-  }
-}
-
-/**
- * Whether the call's path lies inside one of the owner's allowed directories.
- * Containment is a path-component comparison of real paths, so `/allowed-2`
- * is not inside `/allowed`.
- */
-function pathInScope(allowedPaths: string[], args: Record<string, unknown>): boolean {
-  if (allowedPaths.length === 0) return true;
-  const raw = typeof args['path'] === 'string' ? args['path'] : typeof args['file'] === 'string' ? args['file'] : '';
-  if (!raw) return true;
-  const target = realPathOf(raw);
-  return allowedPaths.some((allowed) => {
-    const root = realPathOf(allowed);
-    return target === root || target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
-  });
-}
-
-function hostInScope(allowedHosts: string[], args: Record<string, unknown>): boolean {
-  if (allowedHosts.length === 0) return true;
-  const raw = typeof args['url'] === 'string' ? args['url'] : '';
-  if (!raw) return true;
-  try {
-    const host = new URL(raw).hostname;
-    return allowedHosts.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
-  } catch {
-    return false;
-  }
-}
 
 function scopeLabel(items: readonly string[]): string {
   if (items.length === 0) return 'unbounded';
@@ -507,8 +457,9 @@ export class McpPermissionManager {
     const { capability, confident, riskLevel } = await readMcpCall(serverName, toolName, args);
     const capabilityAllowed = record.profile.allowedCapabilities.length === 0 || record.profile.allowedCapabilities.includes(capability);
     const coherentRole = roleAllowsCapability(record.profile.role, capability);
-    const pathScoped = pathInScope(record.profile.allowedPaths, args);
-    const hostScoped = hostInScope(record.profile.allowedHosts, args);
+    const scoped = await readScopedValues(serverName, toolName, args, { paths: record.profile.allowedPaths.length > 0, hosts: record.profile.allowedHosts.length > 0 });
+    const pathScoped = pathsInScope(record.profile.allowedPaths, scoped.paths);
+    const hostScoped = hostsInScope(record.profile.allowedHosts, scoped.hosts);
     const incoherent = !confident || !coherentRole || !capabilityAllowed || !pathScoped || !hostScoped;
 
     let assessment: McpCoherenceAssessment;
