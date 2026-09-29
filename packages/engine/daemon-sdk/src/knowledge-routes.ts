@@ -490,9 +490,6 @@ async function parseKnowledgeGraphqlRequest(
 async function handleKnowledgeGraphql(context: DaemonKnowledgeRouteContext, req: Request): Promise<Response> {
   const parsed = await parseKnowledgeGraphqlRequest(context, req);
   if (parsed instanceof Response) return parsed;
-  if (req.method === 'GET' && graphqlOperationLooksLikeMutation(parsed.query)) {
-    return jsonErrorResponse({ error: 'GraphQL mutations must use POST.' }, { status: 405 });
-  }
   const principal = context.resolveAuthenticatedPrincipal(req);
   if (!principal) {
     return jsonErrorResponse({ error: 'Unauthorized' }, { status: 401 });
@@ -503,6 +500,11 @@ async function handleKnowledgeGraphql(context: DaemonKnowledgeRouteContext, req:
     access = context.inspectGraphqlAccess(parsed.query, parsed.operationName);
   } catch (error) {
     return readJsonErrorResponse(error, { status: 400 });
+  }
+  // The operation that runs is the parsed one (operationName picks it), so a
+  // GET is refused on that, not on how the document starts.
+  if (req.method === 'GET' && access.operation === 'mutation') {
+    return jsonErrorResponse({ error: 'GraphQL mutations must use POST.' }, { status: 405 });
   }
 
   const scopeDenied = buildMissingScopeBody('knowledge GraphQL operation', access.requiredScopes, principal.scopes);
@@ -522,14 +524,6 @@ async function handleKnowledgeGraphql(context: DaemonKnowledgeRouteContext, req:
   });
   const status = result.errors?.length && !result.data ? 400 : 200;
   return Response.json(result, { status });
-}
-
-function graphqlOperationLooksLikeMutation(query: string): boolean {
-  const withoutComments = query.replace(/#[^\n\r]*/g, '');
-  const withoutStrings = withoutComments
-    .replace(/"""[\s\S]*?"""/g, ' ')
-    .replace(/"(?:\\.|[^"\\])*"/g, ' ');
-  return /^\s*mutation\b/.test(withoutStrings);
 }
 
 function buildKnowledgePrivateHostFetchOptions(

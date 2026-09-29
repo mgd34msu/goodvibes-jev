@@ -235,7 +235,7 @@ describe('artifact uploads and ingest', () => {
     const context = {
       artifactStore: store,
       configManager: { get: () => false },
-      inspectGraphqlAccess: () => ({ requiredScopes: [] }),
+      inspectGraphqlAccess: () => ({ operation: 'query', requiredScopes: [] }),
       normalizeAtSchedule: (value: number) => ({ kind: 'at', at: value }),
       normalizeCronSchedule: (expression: string) => ({ kind: 'cron', expression }),
       normalizeEverySchedule: (interval: number | string) => ({ kind: 'every', interval }),
@@ -279,7 +279,7 @@ describe('artifact uploads and ingest', () => {
     const context = {
       artifactStore: store,
       configManager: { get: () => false },
-      inspectGraphqlAccess: () => ({ requiredScopes: [] }),
+      inspectGraphqlAccess: () => ({ operation: 'query', requiredScopes: [] }),
       normalizeAtSchedule: (value: number) => ({ kind: 'at', at: value }),
       normalizeCronSchedule: (expression: string) => ({ kind: 'cron', expression }),
       normalizeEverySchedule: (interval: number | string) => ({ kind: 'every', interval }),

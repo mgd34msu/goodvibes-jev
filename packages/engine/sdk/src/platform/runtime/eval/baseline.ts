@@ -8,12 +8,13 @@
  */
 
 import type { EvalBaseline, EvalSuiteResult, BaselineSuiteSummary } from './types.js';
-import { resolve, normalize } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 function resolveBaselinePath(filePath: string, projectRoot: string): string {
-  const resolved = resolve(normalize(filePath));
-  const resolvedRoot = resolve(normalize(projectRoot));
-  if (!resolved.startsWith(resolvedRoot)) {
+  const resolved = resolve(filePath);
+  const fromRoot = relative(resolve(projectRoot), resolved);
+  // Inside the root when the relative path neither climbs out nor switches drive.
+  if (fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) {
     throw new Error('Baseline path must be within project directory');
   }
   return resolved;

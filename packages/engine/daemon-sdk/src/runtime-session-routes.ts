@@ -490,7 +490,7 @@ async function handlePostSharedSessionMessage(context: DaemonRuntimeRouteContext
   const body = await context.parseJsonBody(req);
   if (body instanceof Response) return body;
 
-  // Ordinary session messages default to conversation routing; callers must opt into kind='task' for agent/WRFC work.
+  // Ordinary session messages default to conversation routing; callers must opt into kind='task' for agent work run under a contract.
   const kind = body.kind === undefined ? 'message' : body.kind;
   if (kind !== 'task' && kind !== 'message' && kind !== 'followup') {
     return jsonErrorResponse(

@@ -5205,9 +5205,10 @@
       "name": "KnowledgeGraphqlAccessLike",
       "kind": "interface",
       "required": [
+        "operation",
         "requiredScopes"
       ],
-      "text": "export interface KnowledgeGraphqlAccessLike { readonly requiredScopes: readonly string[]; readonly adminRequired?: boolean | undefined; }"
+      "text": "export interface KnowledgeGraphqlAccessLike { readonly operation: 'query' | 'mutation'; readonly requiredScopes: readonly string[]; readonly adminRequired?: boolean | undefined; }"
     },
     {
       "name": "KnowledgeGraphqlResultLike",

@@ -15,7 +15,12 @@ import {
   EvalRunner,
   GATE_SUITES,
   captureBaseline,
+  loadBaseline,
+  writeBaseline,
 } from '../sdk/src/platform/runtime/eval/index.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('standing-gate eval suite', () => {
   test('every gate scenario clears its absolute per-dimension floor', async () => {
@@ -54,5 +59,28 @@ describe('standing-gate eval suite', () => {
     const gate = runner.evaluateGate(fresh, inflated);
     expect(gate.regressions.some((r) => r.scenarioId === firstId)).toBe(true);
     expect(gate.passed).toBe(false);
+  });
+});
+
+describe('baseline file location', () => {
+  test('a baseline inside the project root is written and read back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eval-baseline-'));
+    try {
+      const baseline = captureBaseline('main', []);
+      await writeBaseline(join(root, 'eval', 'baseline.json'), baseline, root);
+      expect(await loadBaseline(join(root, 'eval', 'baseline.json'), root)).toEqual(baseline);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a sibling directory that shares the root name as a prefix is refused', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eval-baseline-'));
+    try {
+      await expect(loadBaseline(`${root}-other/baseline.json`, root)).rejects.toThrow('within project directory');
+      await expect(loadBaseline(join(root, '..', 'baseline.json'), root)).rejects.toThrow('within project directory');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -277,6 +277,25 @@ describe('createDaemonIntegrationRouteHandlers per-request auth', () => {
     expect(Object.hasOwn(body, 'channelCount')).toBe(false);
     expect(() => AccountsSnapshotResponseSchema.parse(body)).not.toThrow();
   });
+
+  test('getEvents drops event domains the runtime does not define', async () => {
+    const ctx = makeContext();
+    const seen: unknown[] = [];
+    const handlers = createDaemonIntegrationRouteHandlers({
+      ...ctx,
+      integrationHelpers: {
+        ...ctx.integrationHelpers!,
+        createEventStream: (_req: Request, domains: readonly unknown[]) => {
+          seen.push([...domains]);
+          return new Response('', { status: 200 });
+        },
+      },
+    });
+
+    await handlers.getEvents(new Request('http://daemon.local/api/events?domains=session,not-a-domain,%20turn'));
+
+    expect(seen).toEqual([['session', 'turn']]);
+  });
 });
 
 // ---------------------------------------------------------------------------

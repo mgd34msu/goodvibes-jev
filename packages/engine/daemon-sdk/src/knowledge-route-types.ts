@@ -16,6 +16,8 @@ export interface AuthenticatedPrincipalLike {
 }
 
 export interface KnowledgeGraphqlAccessLike {
+  /** The operation the parsed document runs (operationName picks it among several). */
+  readonly operation: 'query' | 'mutation';
   readonly requiredScopes: readonly string[];
   readonly adminRequired?: boolean | undefined;
 }

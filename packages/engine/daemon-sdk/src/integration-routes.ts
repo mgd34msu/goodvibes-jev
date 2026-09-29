@@ -1,4 +1,5 @@
 import { MEMORY_RECORD_NOT_FOUND_CODE } from '@goodvibes-jev/engine/errors';
+import { isRuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import type { DaemonIntegrationRouteHandlers } from './context.js';
 import { jsonErrorResponse, readJsonErrorResponse } from './error-response.js';
 import type { DaemonIntegrationRouteContext, IntegrationHelperServiceLike, RuntimeEventDomain } from './integration-route-types.js';
@@ -332,7 +333,9 @@ export function createDaemonIntegrationRouteHandlers(
     getEvents: (req) => {
       const url = new URL(req.url);
       const rawDomains = url.searchParams.get('domains');
-      const domains = (rawDomains ? rawDomains.split(',').map((value) => value.trim()).filter(Boolean) : []) as RuntimeEventDomain[];
+      // Unknown domains are dropped here, as the control-plane stream does, instead of cast through.
+      const domains = (rawDomains ? rawDomains.split(',').map((value) => value.trim()).filter(Boolean) : [])
+        .filter(isRuntimeEventDomain);
       return withHelpers(context.integrationHelpers, (helpers) => helpers.createEventStream(req, domains));
     },
   };
