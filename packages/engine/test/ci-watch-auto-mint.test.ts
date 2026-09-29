@@ -56,6 +56,12 @@ describe('push detection', () => {
     expect(detectCiPushInCommand('gh pr create --fill')).toEqual({ kind: 'pr' });
     expect(detectCiPushInCommand('git status')).toBeNull();
     expect(detectCiPushInCommand('echo git push')).toBeNull();
+    // `push` counts only as git's subcommand, after any global options.
+    expect(detectCiPushInCommand('git stash push -m wip')).toBeNull();
+    expect(detectCiPushInCommand('git log --grep push')).toBeNull();
+    expect(detectCiPushInCommand('git -C ../repo push origin topic')).toEqual({ kind: 'push', branch: 'topic' });
+    expect(detectCiPushInCommand('git -c push.default=current push')).toEqual({ kind: 'push', branch: undefined });
+    expect(detectCiPushInCommand('git status | tee log && git push origin main')).toEqual({ kind: 'push', branch: 'main' });
   });
 
   test('parses GitHub slugs from ssh/https remotes and refuses non-GitHub', () => {

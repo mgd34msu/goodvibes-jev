@@ -12,6 +12,7 @@
  * Those are closed. This is the other half: the values already written.
  */
 
+import { useConfigReadings } from './_helpers/config-readings.js';
 import { describe, expect, test } from 'bun:test';
 import {
   describePlaintextSweep,
@@ -83,9 +84,15 @@ describe('the declared set is the rule, and the name pattern is only a backstop'
     }
   });
 
-  test('a key nobody declared is still caught by name rather than printed', () => {
+  test('a key nobody declared is not guessed at from its spelling', () => {
+    // The list is the only rule here; a site that must decide about an
+    // undeclared key reads it (config.credential-key), and the pre-commit
+    // credential-scope check refuses a schema key that reads as a credential
+    // and is not declared.
     expect(isDeclaredSecretBearingConfigKey('surfaces.somethingnew.botToken')).toBe(false);
-    expect(isSecretBearingConfigKey('surfaces.somethingnew.botToken')).toBe(true);
+    expect(isSecretBearingConfigKey('surfaces.somethingnew.botToken')).toBe(false);
+    // The old trailing-word pattern redacted this id; it is not a credential.
+    expect(isSecretBearingConfigKey('surfaces.telegram.discoveredBotTokenId')).toBe(false);
   });
 
   test('an ordinary setting is not treated as a credential', () => {
@@ -179,7 +186,12 @@ describe('the sweep moves a literal out of config, and never breaks it doing so'
     expect(JSON.stringify(report)).not.toContain('hunter2');
   });
 
-  test('a product may name a key the platform set does not', async () => {
+});
+
+describe('a product\'s own credential keys', () => {
+  const readings = useConfigReadings({ credentials: ['surfaces.custom.apiToken'] });
+
+  test('a product may name a key the platform set does not, when it reads as a credential', async () => {
     const config = fakeConfig({ 'surfaces.custom.apiToken': 'tok-test-only' });
     const secrets = fakeSecrets();
     const report = await sweepPlaintextCredentials(config, secrets, ['surfaces.custom.apiToken']);
@@ -192,6 +204,10 @@ describe('the sweep moves a literal out of config, and never breaks it doing so'
     const report = await sweepPlaintextCredentials(config, fakeSecrets(), ['display.theme']);
     expect(report.noop).toBe(true);
     expect(config.values['display.theme']).toBe('dark');
+  });
+  test('each extra key is read once, with the declared set never asked about', async () => {
+    await sweepPlaintextCredentials(fakeConfig({}), fakeSecrets(), ['surfaces.custom.apiToken', 'display.theme', 'surfaces.slack.botToken']);
+    expect(readings.requests.map((request) => (request.state as { key: string }).key)).toEqual(['surfaces.custom.apiToken', 'display.theme']);
   });
 });
 

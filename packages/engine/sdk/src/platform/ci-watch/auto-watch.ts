@@ -32,22 +32,37 @@ export interface DetectedCiPush {
 
 const PUSH_FLAG_WITH_VALUE = new Set(['-o', '--push-option', '--receive-pack', '--repo', '--exec']);
 
+/** git's global options (before the subcommand) that take their value as the next word. */
+const GIT_GLOBAL_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--super-prefix']);
+
+/** The index of git's subcommand: the first word after `git` that is not a global option or its value. */
+function gitSubcommandIndex(tokens: readonly string[]): number {
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (!token.startsWith('-')) return i;
+    if (GIT_GLOBAL_WITH_VALUE.has(token)) i += 1;
+  }
+  return -1;
+}
+
 /**
  * Detect a CI-relevant push in one exec command line: `git push ...` or
  * `gh pr create ...`. Only simple top-level forms are matched, a compound
  * line still matches when a segment starts with the command.
  */
 export function detectCiPushInCommand(command: string): DetectedCiPush | null {
-  // Split compound shells conservatively; each segment is inspected alone.
-  for (const segment of command.split(/&&|\|\||;/)) {
+  // Split compound shells and pipelines; each segment is inspected alone.
+  for (const segment of command.split(/&&|\|\||[;|\n]/)) {
     const tokens = segment.trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0) continue;
     if (tokens[0] === 'gh' && tokens[1] === 'pr' && tokens[2] === 'create') {
       return { kind: 'pr' };
     }
     if (tokens[0] !== 'git') continue;
-    const pushIndex = tokens.indexOf('push');
-    if (pushIndex === -1) continue;
+    // `push` must be git's subcommand, not a word later on the line
+    // (`git stash push`, `git log --grep push`).
+    const pushIndex = gitSubcommandIndex(tokens);
+    if (pushIndex === -1 || tokens[pushIndex] !== 'push') continue;
     // Positional args after `push`, skipping flags (and their values where known):
     // the first positional is the remote, the second the refspec/branch.
     const positionals: string[] = [];

@@ -881,6 +881,11 @@
       "text": "export type FailureCategory = keyof typeof CATEGORY_OPTIONS & DaemonErrorCategory;"
     },
     {
+      "name": "FailureClass",
+      "kind": "type",
+      "text": "export type FailureClass = 'retryable' | 'terminal';"
+    },
+    {
       "name": "FailureConclusions",
       "kind": "interface",
       "required": [
@@ -907,6 +912,16 @@
       "name": "FailureQuestion",
       "kind": "type",
       "text": "export type FailureQuestion = keyof typeof failureReading.items;"
+    },
+    {
+      "name": "FailureTransience",
+      "kind": "interface",
+      "required": [
+        "basis",
+        "detail",
+        "failureClass"
+      ],
+      "text": "export interface FailureTransience { readonly failureClass: FailureClass; readonly basis: TransienceBasis; readonly detail: string; }"
     },
     {
       "name": "FieldKind",
@@ -2388,6 +2403,11 @@
       "text": "TERMINAL_TURN_EVENT_TYPES: readonly string[]"
     },
     {
+      "name": "TRANSIENT_STATUS_CODES",
+      "kind": "const",
+      "text": "TRANSIENT_STATUS_CODES: readonly number[]"
+    },
+    {
       "name": "TURN_LIMIT_SOURCES",
       "kind": "const",
       "text": "TURN_LIMIT_SOURCES: readonly [\"default\", \"spawn-override\", \"policy-bound\"]"
@@ -2440,6 +2460,16 @@
         "kind"
       ],
       "text": "export interface ToolResultSummary { kind: string; byteSize: number; preview?: string | undefined; }"
+    },
+    {
+      "name": "TransienceBasis",
+      "kind": "type",
+      "text": "export type TransienceBasis = 'explicit' | 'retry-after' | 'status' | 'errno' | 'error-type' | 'reading' | 'no-wording';"
+    },
+    {
+      "name": "TransienceOptions",
+      "kind": "interface",
+      "text": "export interface TransienceOptions { readonly fromProvider?: boolean; readonly describe?: (error: unknown) => string; }"
     },
     {
       "name": "TransportActivityInfo",
@@ -3009,6 +3039,11 @@
       "text": "export declare function getStreamReconnectDelay(attempt: number, policy: ResolvedStreamReconnectPolicy): number;"
     },
     {
+      "name": "httpStatusOf",
+      "kind": "function",
+      "text": "export declare function httpStatusOf(error: unknown): number | undefined;"
+    },
+    {
       "name": "injectTraceparent",
       "kind": "function",
       "text": "export declare function injectTraceparent(headers: Record<string, string>): void; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
@@ -3174,6 +3209,11 @@
       "text": "export declare function readFailure(evidence: FailureEvidence, site: string): Promise<FailureConclusions>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "readFailureTransience",
+      "kind": "function",
+      "text": "export declare function readFailureTransience(error: unknown, site: string, options?: TransienceOptions): Promise<FailureTransience>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "readJsonBody",
       "kind": "function",
       "text": "export declare function readJsonBody(response: Response): Promise<unknown>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; }"
@@ -3227,6 +3267,16 @@
       "name": "splitClientArgs",
       "kind": "function",
       "text": "export declare function splitClientArgs<TInput, TOptions>(args: readonly unknown[]): readonly [TInput | undefined, TOptions | undefined];"
+    },
+    {
+      "name": "structuredTransience",
+      "kind": "function",
+      "text": "export declare function structuredTransience(error: unknown): FailureTransience | undefined;"
+    },
+    {
+      "name": "transienceFromReading",
+      "kind": "function",
+      "text": "export declare function transienceFromReading(failure: FailureConclusions): FailureTransience;"
     },
     {
       "name": "transportErrorFromUnknown",
@@ -6497,6 +6547,11 @@
       "text": "export type FailureCategory = keyof typeof CATEGORY_OPTIONS & DaemonErrorCategory;"
     },
     {
+      "name": "FailureClass",
+      "kind": "type",
+      "text": "export type FailureClass = 'retryable' | 'terminal';"
+    },
+    {
       "name": "FailureConclusions",
       "kind": "interface",
       "required": [
@@ -6523,6 +6578,16 @@
       "name": "FailureQuestion",
       "kind": "type",
       "text": "export type FailureQuestion = keyof typeof failureReading.items;"
+    },
+    {
+      "name": "FailureTransience",
+      "kind": "interface",
+      "required": [
+        "basis",
+        "detail",
+        "failureClass"
+      ],
+      "text": "export interface FailureTransience { readonly failureClass: FailureClass; readonly basis: TransienceBasis; readonly detail: string; }"
     },
     {
       "name": "GoodVibesSdkError",
@@ -6608,6 +6673,21 @@
       "text": "export interface StructuredDaemonErrorBody { readonly error: string; readonly hint?: string | undefined; readonly code?: string | undefined; readonly category?: DaemonErrorCategory | undefined; readonly source?: DaemonErrorSource | undefined; readonly recoverable?: boolean | undefined; readonly status?: number | undefined; readonly provider?: string | undefined; readonly operation?: string | undefined; readonly phase?: string | undefined; readonly requestId?: string | undefined; readonly providerCode?: string | undefined; readonly providerType?: string | undefined; readonly retryAfterMs?: number | undefined; }"
     },
     {
+      "name": "TRANSIENT_STATUS_CODES",
+      "kind": "const",
+      "text": "TRANSIENT_STATUS_CODES: readonly number[]"
+    },
+    {
+      "name": "TransienceBasis",
+      "kind": "type",
+      "text": "export type TransienceBasis = 'explicit' | 'retry-after' | 'status' | 'errno' | 'error-type' | 'reading' | 'no-wording';"
+    },
+    {
+      "name": "TransienceOptions",
+      "kind": "interface",
+      "text": "export interface TransienceOptions { readonly fromProvider?: boolean; readonly describe?: (error: unknown) => string; }"
+    },
+    {
       "name": "categoryDependsOnWording",
       "kind": "function",
       "text": "export declare function categoryDependsOnWording(fixed: DaemonErrorCategory | undefined, status: number | undefined, fromProvider: boolean): boolean;"
@@ -6643,6 +6723,11 @@
       "text": "export declare function forgetFailureReadings(): void;"
     },
     {
+      "name": "httpStatusOf",
+      "kind": "function",
+      "text": "export declare function httpStatusOf(error: unknown): number | undefined;"
+    },
+    {
       "name": "installJudgmentPort",
       "kind": "function",
       "text": "export declare function installJudgmentPort(port: JudgmentPort | undefined): JudgmentPort | undefined; ;; via JudgmentPort = export interface JudgmentPort { readonly model: string; ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>>; readonly recorder?: DecisionRecorder; }"
@@ -6673,9 +6758,24 @@
       "text": "export declare function readFailure(evidence: FailureEvidence, site: string): Promise<FailureConclusions>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "readFailureTransience",
+      "kind": "function",
+      "text": "export declare function readFailureTransience(error: unknown, site: string, options?: TransienceOptions): Promise<FailureTransience>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "settleCategory",
       "kind": "function",
       "text": "export declare function settleCategory(fixed: DaemonErrorCategory | undefined, status: number | undefined, fromProvider: boolean, failure: FailureConclusions | undefined): DaemonErrorCategory;"
+    },
+    {
+      "name": "structuredTransience",
+      "kind": "function",
+      "text": "export declare function structuredTransience(error: unknown): FailureTransience | undefined;"
+    },
+    {
+      "name": "transienceFromReading",
+      "kind": "function",
+      "text": "export declare function transienceFromReading(failure: FailureConclusions): FailureTransience;"
     }
   ],
   "./events": [
@@ -15642,6 +15742,7 @@
       "name": "ConfigManager",
       "kind": "class",
       "publicMembers": [
+        "announceUnknownSettingForms",
         "attachHookDispatcher",
         "attachProfileFallback",
         "constructor",
@@ -15672,7 +15773,7 @@
         "subscribe",
         "watchConfigFiles"
       ],
-      "text": "export declare class ConfigManager { private config; private readonly configDir; private readonly configPath; private readonly projectConfigPath; private readonly workingDirectory; private readonly homeDirectory; private readonly sharedTierPath; private readonly daemonTierPath; private readonly daemonTierOwner; private readonly sharedKeysPresent; private readonly daemonKeysPresent; private hookDispatcher; private profileFallback; private readonly _listeners; private _fileWatch; private ingestionNotices; constructor(overrides: ConfigOverrides); getControlPlaneConfigDir(): string; getWorkingDirectory(): string | null; getHomeDirectory(): string | null; getConfigPath(): string; getProjectConfigPath(): string | undefined; attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): void; attachProfileFallback(reader: ConfigProfileFallbackReader | null): void; private resolvePath; get<K extends ConfigKey>(key: K): ConfigValue<K>; set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; subscribe<K extends ConfigKey>(key: K, cb: ConfigChangeCallback<K>): ConfigUnsubscribe; watchConfigFiles(options?: { intervalMs?: number; }): () => void; stopWatchingConfigFiles(): void; private reloadFromDiskAndNotify; private notifyListeners; private emitConfigHook; setDynamic(key: ConfigKey, value: unknown, options?: ConfigSetOptions): void; getAll(): DeepReadonly<GoodVibesConfig>; getCategory<C extends keyof GoodVibesConfig>(category: C): Readonly<GoodVibesConfig[C]>; getRaw(): Readonly<GoodVibesConfig>; getSchema(): ConfigSetting[]; private persistGlobalKey; private writeRawGlobal; save(): void; private withoutDaemonOwned; saveProject(): void; getIngestionQuarantine(): readonly SettingsIngestionNotice[]; private ingestionSink; private ingest; private loadFailure; load(): void; private loadDaemonTier; getDaemonTierPath(): string | null; private loadSharedTier; getSharedTierPath(): string | null; describeConfigKeySource(key: ConfigKey): ConfigKeySource; private applyLoadMigrations; private migrationReceipt; mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void; removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void; private categoryIoDeps; reset(key?: ConfigKey): void; } ;; via ConfigChangeCallback = export type ConfigChangeCallback<K extends ConfigKey> = (newValue: ConfigValue<K>, oldValue: ConfigValue<K>) => void; ;; ConfigOverrides = export type ConfigOverrides = ConfigCliOverrides & ({ configDir: string; homeDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; } | { homeDir: string; configDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; }); ;; ConfigProfileFallbackReader = export type ConfigProfileFallbackReader = (key: string) => unknown; ;; ConfigSetOptions = export interface ConfigSetOptions { bypassManagedLock?: boolean | undefined; } ;; ConfigUnsubscribe = export type ConfigUnsubscribe = () => void; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+      "text": "export declare class ConfigManager { private config; private readonly configDir; private readonly configPath; private readonly projectConfigPath; private readonly workingDirectory; private readonly homeDirectory; private readonly sharedTierPath; private readonly daemonTierPath; private readonly daemonTierOwner; private readonly sharedKeysPresent; private readonly daemonKeysPresent; private hookDispatcher; private profileFallback; private readonly _listeners; private _fileWatch; private ingestionNotices; private readonly unknownSettingForms; constructor(overrides: ConfigOverrides); getControlPlaneConfigDir(): string; getWorkingDirectory(): string | null; getHomeDirectory(): string | null; getConfigPath(): string; getProjectConfigPath(): string | undefined; attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): void; attachProfileFallback(reader: ConfigProfileFallbackReader | null): void; private resolvePath; get<K extends ConfigKey>(key: K): ConfigValue<K>; set<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; setProjectValue<K extends ConfigKey>(key: K, value: ConfigValue<K>, options?: ConfigSetOptions): void; subscribe<K extends ConfigKey>(key: K, cb: ConfigChangeCallback<K>): ConfigUnsubscribe; watchConfigFiles(options?: { intervalMs?: number; }): () => void; stopWatchingConfigFiles(): void; private reloadFromDiskAndNotify; private notifyListeners; private emitConfigHook; setDynamic(key: ConfigKey, value: unknown, options?: ConfigSetOptions): void; getAll(): DeepReadonly<GoodVibesConfig>; getCategory<C extends keyof GoodVibesConfig>(category: C): Readonly<GoodVibesConfig[C]>; getRaw(): Readonly<GoodVibesConfig>; getSchema(): ConfigSetting[]; private persistGlobalKey; private writeRawGlobal; save(): void; private withoutDaemonOwned; saveProject(): void; getIngestionQuarantine(): readonly SettingsIngestionNotice[]; announceUnknownSettingForms(): Promise<void>; private ingestionSink; private ingest; private loadFailure; load(): void; private loadDaemonTier; getDaemonTierPath(): string | null; private loadSharedTier; getSharedTierPath(): string | null; describeConfigKeySource(key: ConfigKey): ConfigKeySource; private applyLoadMigrations; private migrationReceipt; mergeCategory<C extends keyof GoodVibesConfig>(category: C, patch: Partial<GoodVibesConfig[C]>): void; removeCategoryKey<C extends keyof GoodVibesConfig>(category: C, key: string): void; private categoryIoDeps; reset(key?: ConfigKey): void; } ;; via ConfigChangeCallback = export type ConfigChangeCallback<K extends ConfigKey> = (newValue: ConfigValue<K>, oldValue: ConfigValue<K>) => void; ;; ConfigOverrides = export type ConfigOverrides = ConfigCliOverrides & ({ configDir: string; homeDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; } | { homeDir: string; configDir?: string | undefined; sharedConfigPath?: string | undefined; sharedTierPath?: string | undefined; daemonTierPath?: string | undefined; }); ;; ConfigProfileFallbackReader = export type ConfigProfileFallbackReader = (key: string) => unknown; ;; ConfigSetOptions = export interface ConfigSetOptions { bypassManagedLock?: boolean | undefined; } ;; ConfigUnsubscribe = export type ConfigUnsubscribe = () => void; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
       "name": "ConfigReadRoute",
@@ -16742,9 +16843,10 @@
       "kind": "interface",
       "required": [
         "config",
-        "notices"
+        "notices",
+        "unknownKeys"
       ],
-      "text": "export interface SettingsIngestionResult { readonly config: Record<string, unknown>; readonly notices: readonly SettingsIngestionNotice[]; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface SettingsIngestionResult { readonly config: Record<string, unknown>; readonly notices: readonly SettingsIngestionNotice[]; readonly unknownKeys: readonly UnknownSettingKey[]; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; UnknownSettingKey = export interface UnknownSettingKey { readonly key: string; readonly section: string; readonly name: string; }"
     },
     {
       "name": "SettingsReaderFloor",
@@ -29348,7 +29450,7 @@
     {
       "name": "DeliveryFailureClass",
       "kind": "type",
-      "text": "export type DeliveryFailureClass = 'retryable' | 'terminal';"
+      "text": "export type DeliveryFailureClass = FailureClass; ;; via FailureClass = export type FailureClass = 'retryable' | 'terminal';"
     },
     {
       "name": "DeliveryMetrics",

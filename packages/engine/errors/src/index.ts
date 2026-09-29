@@ -1,3 +1,4 @@
+import { TRANSIENT_STATUS_CODES } from './failure-transience.js';
 import type {
   DaemonErrorCategory,
   DaemonErrorSource,
@@ -139,7 +140,8 @@ export interface GoodVibesSdkErrorOptions {
   readonly cause?: unknown | undefined;
 }
 
-export const RETRYABLE_STATUS_CODES: readonly number[] = [408, 429, 500, 502, 503, 504];
+/** HTTP statuses a retry can clear; one list shared with the transience decision (failure-transience.ts). */
+export const RETRYABLE_STATUS_CODES: readonly number[] = TRANSIENT_STATUS_CODES;
 
 function inferCategory(status?: number): ErrorCategory {
   if (status === 400) return 'bad_request';
@@ -678,3 +680,14 @@ export {
   type FailureEvidence,
   type FailureQuestion,
 } from './failure-reading.js';
+export {
+  httpStatusOf,
+  readFailureTransience,
+  structuredTransience,
+  transienceFromReading,
+  TRANSIENT_STATUS_CODES,
+  type FailureClass,
+  type FailureTransience,
+  type TransienceBasis,
+  type TransienceOptions,
+} from './failure-transience.js';

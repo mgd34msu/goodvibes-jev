@@ -34,7 +34,7 @@ import { clearDaemonTierForReset, daemonConfigPath, overlayDaemonTierFrom, persi
 import { describeKeySource, type ConfigKeySource } from './manager-key-source.js';
 import { DEFAULT_CONFIG_SNAPSHOT, cloneDefaultConfig, coerceSchemaValue, ensureSharedConfig, requireAbsoluteOwnedPath, sanitizeConfigShape } from './manager-bootstrap.js';
 import { resolveWithProfileFallback, type ConfigProfileFallbackReader } from './profile-fallback.js';
-import { ingestManagerSettings, toConfigLoadFailure, type IngestionNoticeSink, type SettingsIngestionNotice } from './manager-ingestion.js';
+import { ingestManagerSettings, toConfigLoadFailure, UnknownSettingFormsQueue, type IngestionNoticeSink, type SettingsIngestionNotice } from './manager-ingestion.js';
 import { persistCategoryKeyRemoval, persistCategoryPatch, type CategoryIoDeps } from './manager-category-io.js';
 
 /** Deep immutable type, prevents mutation of nested objects returned from getAll(). */
@@ -133,6 +133,7 @@ export class ConfigManager {
   private _fileWatch: ConfigFileWatchHandle | null = null;
   /** Settings the last load could not ingest. See ./settings-ingestion.ts. */
   private ingestionNotices: SettingsIngestionNotice[] = [];
+  private readonly unknownSettingForms = new UnknownSettingFormsQueue();
 
   constructor(overrides: ConfigOverrides) {
     const roots = overrides as ConfigRoots;
@@ -539,18 +540,17 @@ export class ConfigManager {
   getIngestionQuarantine(): readonly SettingsIngestionNotice[] {
     return this.ingestionNotices;
   }
+  /** Once a judgment port is installed: announces unknown keys that read as newer forms of known settings. */
+  announceUnknownSettingForms(): Promise<void> { return this.unknownSettingForms.start(this.ingestionSink()); }
   /** Where an ingestion notice is filed; see ./manager-ingestion.ts. */
   private ingestionSink(): IngestionNoticeSink {
     return {
       record: (entry) => { this.ingestionNotices.push(entry); },
       receipt: (id, text) => { this.migrationReceipt(id, text); },
+      unknown: (file, keys) => { this.unknownSettingForms.keep(file, keys, this.ingestionSink()); },
     };
   }
-  private ingest(
-    parsed: Record<string, unknown>,
-    file: string,
-    migrate?: (raw: Record<string, unknown>) => Record<string, unknown>,
-  ): Record<string, unknown> {
+  private ingest(parsed: Record<string, unknown>, file: string, migrate?: (raw: Record<string, unknown>) => Record<string, unknown>): Record<string, unknown> {
     return ingestManagerSettings(parsed, file, this.ingestionSink(), migrate);
   }
   private loadFailure(label: string, file: string, err: unknown): ConfigError {

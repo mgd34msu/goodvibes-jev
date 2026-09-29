@@ -8,6 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
 
 /** File name of the disclosure marker written beside the daemon config store. */
 export const DAEMON_CONFIG_MOVED_FILE = 'config-moved.json';
@@ -178,17 +179,18 @@ export function discoverSurfaceSettingsFiles(
   return found;
 }
 
-const SECRETISH_LEAF = /(token|secret|password|passphrase|apikey|credential)/i;
-
 /**
- * Redact a disclosed value when the key names a credential. A
+ * Redact a disclosed value when the key is a declared credential
+ * (secret-bearing-config-keys.ts). Every key this migration moves is a
+ * daemon-owned schema key, and every schema key holding a credential is in
+ * that list (the pre-commit credential-scope check refuses one that is not),
+ * so the list answers it exactly. A
  * `goodvibes://secrets/...` reference is not itself a secret, so it is shown
  * intact, that is exactly the detail a user needs to see when two stores
  * pointed at DIFFERENT secret names, which is what happened here.
  */
 export function discloseValue(key: string, value: unknown): unknown {
-  const leaf = key.split('.').pop() ?? key;
-  if (!SECRETISH_LEAF.test(leaf)) return value;
+  if (!isSecretBearingConfigKey(key)) return value;
   if (typeof value !== 'string') return value === '' ? value : '[redacted]';
   if (value === '') return '';
   if (value.startsWith('goodvibes://secrets/')) return value;

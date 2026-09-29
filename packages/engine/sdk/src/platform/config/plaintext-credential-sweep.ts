@@ -39,10 +39,10 @@
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import {
-  isSecretBearingConfigKey,
   isSecretReferenceValue,
   SECRET_BEARING_CONFIG_PATHS,
 } from './secret-bearing-config-keys.js';
+import { configKeyDescription, holdsCredential } from './credential-key-reading.js';
 import { daemonSecretKeyFor } from './daemon-secret-keys.js';
 import { SWEPT_CREDENTIAL_READER_FLOOR } from './settings-reader-floor.js';
 import type { SecretScope, SecretStorageMedium } from './secrets.js';
@@ -187,7 +187,14 @@ export async function sweepPlaintextCredentials(
    */
   recordReaderFloor?: ((minReaderVersion: string, setBy: string) => void) | undefined,
 ): Promise<PlaintextSweepReport> {
-  const keys = [...new Set([...SECRET_BEARING_CONFIG_PATHS, ...additionalKeys.filter(isSecretBearingConfigKey)])];
+  // A product's extra key is swept only when it holds a credential: declared,
+  // or read so from its key and description (config.credential-key), so an
+  // ordinary setting cannot be passed through this door and rewritten.
+  const extra: string[] = [];
+  for (const key of new Set(additionalKeys)) {
+    if (await holdsCredential(key, configKeyDescription(key), 'config.plaintext-sweep.key')) extra.push(key);
+  }
+  const keys = [...new Set([...SECRET_BEARING_CONFIG_PATHS, ...extra])];
   const entries: PlaintextSweepEntry[] = [];
 
   for (const configKey of keys) {

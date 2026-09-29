@@ -11,7 +11,8 @@ import {
   type GoodVibesExpiringTokenStore,
 } from '../sdk/src/auth.js';
 import type { AutoRefreshOptions } from '../sdk/src/auth.js';
-import { GoodVibesSdkError } from '../errors/src/index.js';
+import { forgetFailureReadings, GoodVibesSdkError, installJudgmentPort, JudgmentPortMissingError } from '../errors/src/index.js';
+import { useFailureReadings } from './_helpers/failure-readings.js';
 import type { SDKObserver } from '../sdk/src/observer/index.js';
 import type { OperatorSdk } from '../operator-sdk/src/index.js';
 import { installFrozenNow } from './_helpers/test-timeout.js';
@@ -332,7 +333,7 @@ describe('reactive 401 terminal: double 401 throws auth error', () => {
       autoRefresh: true,
       refreshLeewayMs: 60_000,
       refresh: async () => {
-        throw new Error('refresh backend unavailable');
+        throw Object.assign(new Error('refresh token revoked'), { status: 401 });
       },
       observer,
     });
@@ -499,7 +500,7 @@ describe('observer: onAuthTransition emitted on successful refresh', () => {
       autoRefresh: true,
       refreshLeewayMs: 60_000,
       refresh: async () => {
-        throw new Error('refresh server down');
+        throw Object.assign(new Error('invalid_grant'), { status: 400 });
       },
       observer,
     });
@@ -751,5 +752,93 @@ describe('is401Error: broadened error shapes', () => {
 
     expect(caught).toBe(notAuthError);
     expect(refreshCalled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refresh failures: whether another refresh could succeed decides whether the
+// token is cleared (structure first, then Jev's reading of the wording).
+// ---------------------------------------------------------------------------
+
+describe('refresh failure transience', () => {
+  const readings = useFailureReadings([
+    ['The refresh token has been revoked by the administrator', { category: 'authentication' }],
+    ['socket hang up', { category: 'network', transientNetwork: true }],
+  ]);
+
+  async function refreshFailingWith(error: unknown) {
+    const store = createMemoryTokenStore('near-expiry-token', Date.now() + 10_000);
+    const transitions: unknown[] = [];
+    const errors: GoodVibesSdkError[] = [];
+    const { AutoRefreshCoordinator } = await import('../sdk/src/client-auth/auto-refresh.js');
+    const coordinator = new AutoRefreshCoordinator({
+      tokenStore: store,
+      autoRefresh: true,
+      refreshLeewayMs: 60_000,
+      refresh: async () => {
+        throw error;
+      },
+      observer: {
+        onError: (err) => errors.push(err),
+        onAuthTransition: (transition) => transitions.push(transition),
+      },
+    });
+    return { store, transitions, errors, coordinator };
+  }
+
+  it('keeps the token when the auth server fails with a status a retry can clear, without a reading', async () => {
+    const run = await refreshFailingWith(Object.assign(new Error('Service Unavailable'), { status: 503 }));
+    await run.coordinator.ensureFreshToken();
+    expect(await run.store.getToken()).toBe('near-expiry-token');
+    expect(run.transitions).toEqual([]);
+    expect(run.errors[0]?.message).toContain('keeping the token');
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  it('keeps the token on a connection fault named by its errno code', async () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' });
+    const run = await refreshFailingWith(new TypeError('fetch failed', { cause }));
+    await run.coordinator.ensureFreshToken();
+    expect(await run.store.getToken()).toBe('near-expiry-token');
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  it('reads wording with no status: revoked credentials clear the token', async () => {
+    const run = await refreshFailingWith(new Error('The refresh token has been revoked by the administrator'));
+    await run.coordinator.ensureFreshToken();
+    expect(await run.store.getToken()).toBeNull();
+    expect(run.transitions).toContainEqual({ from: 'token', to: 'anonymous', reason: 'expire' });
+    expect(readings.requests).toHaveLength(1);
+  });
+
+  it('reads wording with no status: a dropped connection keeps the token', async () => {
+    const run = await refreshFailingWith(new Error('socket hang up'));
+    await run.coordinator.ensureFreshToken();
+    expect(await run.store.getToken()).toBe('near-expiry-token');
+    expect(run.transitions).toEqual([]);
+    expect(readings.requests).toHaveLength(1);
+  });
+});
+
+describe('refresh failure with no judgment port', () => {
+  it('rejects the refresh with the port error and leaves the token as it was', async () => {
+    forgetFailureReadings();
+    const previous = installJudgmentPort(undefined);
+    try {
+      const store = createMemoryTokenStore('near-expiry-token', Date.now() + 10_000);
+      const { AutoRefreshCoordinator } = await import('../sdk/src/client-auth/auto-refresh.js');
+      const coordinator = new AutoRefreshCoordinator({
+        tokenStore: store,
+        autoRefresh: true,
+        refreshLeewayMs: 60_000,
+        refresh: async () => {
+          throw new Error('something unusual happened');
+        },
+      });
+      await expect(coordinator.ensureFreshToken()).rejects.toBeInstanceOf(JudgmentPortMissingError);
+      expect(await store.getToken()).toBe('near-expiry-token');
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 });

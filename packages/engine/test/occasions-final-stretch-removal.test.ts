@@ -228,28 +228,21 @@ describe('the ingestion screen does not warn about a key the migration handles',
     expect(JSON.stringify(result.config)).not.toContain('finalStretchDays');
   });
 
-  test('the screen IS live in this section: it just has no prefix to catch', () => {
-    // The control, and the reason it is shaped this way. The screen announces an
-    // unknown key only when it looks like a newer FORM of a known one, matched
-    // by prefix in either direction; `finalStretchDays` shares a prefix with no
-    // remaining occasions key, so it would have gone unremarked even without the
-    // migration. That is worth pinning rather than assuming, because it says the
-    // migration is here to STRIP A DEAD KEY FROM HIS FILE, not to paper over a
-    // warning, and it fails loudly if someone later makes the screen broader
-    // and reintroduces a warning the migration is supposed to have handled.
-    const announced: string[] = [];
-    ingestSettingsFile(
+  test('the screen IS live in this section: without the migration the retired key would be read', () => {
+    // The control, and the reason it is shaped this way. The screen keeps every
+    // key it does not know in a section it does, and a reading
+    // (config.setting-form) decides which one to announce as a newer form of a
+    // known setting. Without the migration, `finalStretchDays` would reach that
+    // reading like any other unknown key; the migration is here to STRIP A DEAD
+    // KEY FROM HIS FILE before it gets that far, which the owner-path test below
+    // pins after a real load.
+    const result = ingestSettingsFile(
       { occasions: { leadDaysAhead: 14, finalStretchDays: 2 } },
       '/nowhere/settings.json',
-      {
-        write: () => undefined,
-        onNotice: (entry) => { announced.push(entry.key); },
-      },
+      { write: () => undefined },
     );
-    // A prefix-alike in the same section IS announced...
-    expect(announced).toContain('occasions.leadDaysAhead');
-    // ...and the retired key, in the same file and the same pass, is not.
-    expect(announced).not.toContain('occasions.finalStretchDays');
+    expect(result.notices).toEqual([]);
+    expect(result.unknownKeys.map((unknown) => unknown.key)).toEqual(['occasions.leadDaysAhead', 'occasions.finalStretchDays']);
   });
 
   test('the owner path is screened after its migration too, not only the reader path', () => {

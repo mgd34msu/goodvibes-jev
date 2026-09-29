@@ -91,33 +91,38 @@ export const SECRET_BEARING_CONFIG_PATHS: readonly string[] = [
   'surfaces.telephony.token',
   'surfaces.telephony.webhookSecret',
 
+  // Cloudflare tokens, held as references like `email.passwordRef` and for the
+  // same reason. Found by the credential-key readings (config.credential-key),
+  // which the old trailing-word pattern missed: none ends in `token`.
+  'cloudflare.apiTokenRef',
+  'cloudflare.workerTokenRef',
+  'cloudflare.workerClientTokenRef',
+  'cloudflare.tunnelTokenRef',
+  'cloudflare.accessServiceTokenRef',
+
   // Cluster key material.
   'cluster.groupMaterial',
   // The shared phrase nodes sign coordination messages with. Found by the
-  // declaration-coverage check rather than by anyone noticing: it was masked by
-  // the name-pattern backstop and declared nowhere, which is exactly the state
-  // that backstop exists to make survivable and must never be left in.
+  // declaration-coverage check rather than by anyone noticing: it was declared
+  // nowhere, the state the pre-commit credential-scope check now refuses.
   'cluster.secret',
 ];
 
 const SECRET_BEARING_SET = new Set<string>(SECRET_BEARING_CONFIG_PATHS);
 
 /**
- * A last-resort name pattern, kept ALONGSIDE the list and never instead of it.
- *
- * The list is the rule. This catches a key nobody has declared yet, a new
- * surface's token, a field added in a hurry, so an undeclared credential is
- * masked rather than printed while someone gets around to declaring it. It is
- * additive only: it can never un-mask something the list covers.
+ * True when this config key's value is credential material: exact membership
+ * in the declared list. A key the list does not name is not guessed at from
+ * its spelling here; a site that must decide about an undeclared key reads it
+ * through `readCredentialKey` (credential-key-reading.ts), and the pre-commit
+ * credential-scope check compares the stored readings of every schema key
+ * against this list.
  */
-const CREDENTIAL_NAME_PATTERN = /(^|\.)[a-z0-9]*(password|passphrase|secret|token|apikey|api_key|credential)$/i;
-
-/** True when this config key's value is credential material. */
 export function isSecretBearingConfigKey(key: string): boolean {
-  return SECRET_BEARING_SET.has(key) || CREDENTIAL_NAME_PATTERN.test(key);
+  return SECRET_BEARING_SET.has(key);
 }
 
-/** True when this key is DECLARED, rather than caught by the name pattern. */
+/** True when this key is DECLARED; the same test as {@link isSecretBearingConfigKey}. */
 export function isDeclaredSecretBearingConfigKey(key: string): boolean {
   return SECRET_BEARING_SET.has(key);
 }

@@ -17,7 +17,7 @@
  *   [what happened] · [why] · [what to do]
  */
 
-import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
+import { GoodVibesSdkError, readFailureTransience } from '@goodvibes-jev/engine/errors';
 import type { GoodVibesTokenStore } from './types.js';
 import type { SDKObserver } from '../observer/index.js';
 import { invokeObserver } from '../observer/index.js';
@@ -165,8 +165,14 @@ export class AutoRefreshCoordinator {
    * same promise, no duplicate refresh network calls.
    *
    * After a successful refresh, emits `onAuthTransition` reason='refresh'.
-   * After a failed refresh, emits `onAuthTransition` reason='expire' and
-   * clears the token (falls back to anonymous).
+   * After a failed refresh, reads whether another refresh could succeed
+   * (`readFailureTransience`: the error's HTTP status, errno or timeout class
+   * first, then Jev's reading of its wording). A failure that cannot clear
+   * (rejected or revoked credentials) clears the token and emits
+   * `onAuthTransition` reason='expire'; one that can (a network fault, a
+   * server failure) keeps the token for the next pre-flight or 401 refresh.
+   * Both report the error to `onError`. A failure that cannot be read at all
+   * rejects the refresh with that error and leaves the token as it was.
    */
   async #doRefresh(): Promise<void> {
     if (this.#refreshingPromise) {
@@ -196,23 +202,32 @@ export class AutoRefreshCoordinator {
           }),
         );
       } catch (err) {
+        const transience = await readFailureTransience(err, 'client-auth.refresh');
+        const terminal = transience.failureClass === 'terminal';
         const refreshError = err instanceof GoodVibesSdkError
           ? err
-          : new GoodVibesSdkError('Token refresh failed; clearing to anonymous.', {
-              code: 'SDK_AUTH_REFRESH_FAILED',
-              category: 'authentication',
-              source: 'runtime',
-              recoverable: true,
-              cause: err,
-            });
-        await this.#tokenStore.clearToken();
-        invokeObserver(() =>
-          this.#observer?.onAuthTransition?.({
-            from: 'token',
-            to: 'anonymous',
-            reason: 'expire',
-          }),
-        );
+          : new GoodVibesSdkError(
+              terminal
+                ? 'Token refresh failed; clearing to anonymous.'
+                : 'Token refresh failed; keeping the token to refresh again.',
+              {
+                code: 'SDK_AUTH_REFRESH_FAILED',
+                category: 'authentication',
+                source: 'runtime',
+                recoverable: true,
+                cause: err,
+              },
+            );
+        if (terminal) {
+          await this.#tokenStore.clearToken();
+          invokeObserver(() =>
+            this.#observer?.onAuthTransition?.({
+              from: 'token',
+              to: 'anonymous',
+              reason: 'expire',
+            }),
+          );
+        }
         invokeObserver(() => this.#observer?.onError?.(refreshError), { label: 'onError' });
       }
     })();

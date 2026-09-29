@@ -64,6 +64,7 @@ import {
   isSecretBearingConfigKey,
   isSecretReferenceValue,
 } from '../../config/secret-bearing-config-keys.js';
+import { configKeyDescription, holdsCredential } from '../../config/credential-key-reading.js';
 import { secretReferenceFor } from '../../config/plaintext-credential-sweep.js';
 import {
   describeSecretWriteScope,
@@ -134,10 +135,13 @@ function requireString(value: unknown, field: string): string {
  * every reader of that key would then fail to parse. `config.set` is the verb
  * for those, and the refusal says so.
  */
-function requireSecretBearingKey(key: string, additional: readonly string[]): void {
+async function requireSecretBearingKey(key: string, additional: readonly string[]): Promise<void> {
   if (isSecretBearingConfigKey(key) || additional.includes(key)) return;
+  // A key nothing declares: whether it holds a credential is read from the key
+  // and its schema description (config.credential-key), never its spelling.
+  if (await holdsCredential(key, configKeyDescription(key), 'control-plane.credentials.key')) return;
   throw invalid(
-    `${key} is not a credential-bearing setting, so it must not be stored as a secret: `
+    `${key} is not declared as a credential-bearing setting and does not read as one, so it must not be stored as a secret: `
     + 'this verb replaces the config value with a goodvibes://secrets/ reference, which is not a '
     + 'readable value for an ordinary setting. Use config.set for it.',
     'key',
@@ -175,7 +179,7 @@ export function createCredentialSetHandler(deps: CredentialWriteDeps): GatewayMe
     const params = readInvocationParams(invocation);
     const key = requireString(params['key'], 'key');
     const value = requireString(params['value'], 'value');
-    requireSecretBearingKey(key, additional);
+    await requireSecretBearingKey(key, additional);
     if (isSecretReferenceValue(value)) {
       throw invalid(
         'Invalid value: this is a goodvibes://secrets/ reference, not a credential. Storing a '
@@ -265,7 +269,7 @@ export function createCredentialDeleteHandler(deps: CredentialWriteDeps): Gatewa
   return async (invocation) => {
     const params = readInvocationParams(invocation);
     const key = requireString(params['key'], 'key');
-    requireSecretBearingKey(key, additional);
+    await requireSecretBearingKey(key, additional);
 
     const secretKey = daemonSecretKeyFor(key);
     const scope = resolveSecretWriteScope(secretKey);

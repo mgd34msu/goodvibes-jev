@@ -43,11 +43,7 @@ import {
   findCredentialScopeDeclaration,
 } from '../sdk/src/platform/config/credential-scope-registry.ts';
 import { daemonSecretKeyFor, listDaemonOwnedSecretKeys } from '../sdk/src/platform/config/daemon-secret-keys.ts';
-import {
-  isDeclaredSecretBearingConfigKey,
-  isSecretBearingConfigKey,
-} from '../sdk/src/platform/config/secret-bearing-config-keys.ts';
-import { CONFIG_SCHEMA } from '../sdk/src/platform/config/schema.ts';
+import { loadCredentialKeyReadings, undeclaredSchemaKeys } from './credential-key-readings.ts';
 
 const REPO_ROOT = process.env['CREDENTIAL_SCOPE_ROOT'] ?? resolve(import.meta.dir, '..');
 const DEFAULT_DIRS = ['sdk/src'];
@@ -334,33 +330,39 @@ function checkFile(path: string, constants: ReadonlyMap<string, string>): Findin
 }
 
 /**
- * The convention must never be load-bearing on its own.
+ * Every schema key that holds a credential must be declared.
  *
- * `secret-bearing-config-keys.ts` keeps a name pattern as an additive backstop,
- * so an undeclared credential is masked rather than printed. That is the right
- * default and the wrong place to stop: a backstop that silently covers for a
- * missing declaration is how a rule ends up enforced by convention and declared
- * nowhere, the same shape as a method catalog that requires a field it never
- * lists in `required`.
- *
- * So the pattern is turned around and used as a DETECTOR: any schema key it
- * recognises must also be declared. The convention finds the gap; the
- * declaration is still what does the work.
+ * `secret-bearing-config-keys.ts` decides by the declared list alone. Whether
+ * a schema key the list does not name holds a credential anyway is read
+ * through Jev (`config.credential-key`) by `bun run credential-keys:read`,
+ * which stores each reading with the description it was read from in
+ * etc/credential-key-readings.json. This check is offline: a key with no
+ * stored reading, or whose description changed since, must be read; a key
+ * whose reading says credential must be declared.
  */
-function checkDeclarationsCoverConvention(): Finding[] {
+function checkDeclarationsCoverCredentials(): Finding[] {
+  const file = 'etc/credential-key-readings.json';
+  const stored = loadCredentialKeyReadings();
   const findings: Finding[] = [];
-  for (const setting of CONFIG_SCHEMA) {
-    const key = setting.key;
-    if (!isSecretBearingConfigKey(key)) continue;
-    if (isDeclaredSecretBearingConfigKey(key)) continue;
-    findings.push({
-      file: 'sdk/src/platform/config/secret-bearing-config-keys.ts',
-      line: 0,
-      snippet: key,
-      reason:
-        `"${key}" reads as a credential but is not declared in SECRET_BEARING_CONFIG_PATHS. `
-        + 'It is currently masked by the name-pattern backstop only, which is not a declaration, add it to the list.',
-    });
+  for (const { key, description } of undeclaredSchemaKeys()) {
+    const reading = stored?.readings[key];
+    if (reading === undefined || reading.description !== description) {
+      findings.push({
+        file,
+        line: 0,
+        snippet: key,
+        reason: `"${key}" has no credential reading for its current description. Run \`bun run credential-keys:read\` and commit the result.`,
+      });
+      continue;
+    }
+    if (reading.verdict === 'yes') {
+      findings.push({
+        file: 'sdk/src/platform/config/secret-bearing-config-keys.ts',
+        line: 0,
+        snippet: key,
+        reason: `"${key}" reads as a credential (probability ${reading.probability}, ${reading.outcome}) but is not declared in SECRET_BEARING_CONFIG_PATHS; declare it.`,
+      });
+    }
   }
   return findings;
 }
@@ -420,7 +422,7 @@ function main(): void {
   const constants = buildConstantTable(files);
   const findings = [
     ...files.flatMap((file) => checkFile(file, constants)),
-    ...checkDeclarationsCoverConvention(),
+    ...checkDeclarationsCoverCredentials(),
     ...checkChannelSecretNamesAreClassified(),
   ];
   if (findings.length === 0) {

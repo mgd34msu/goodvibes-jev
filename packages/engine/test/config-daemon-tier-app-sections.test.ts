@@ -34,6 +34,7 @@ import {
   SAFETY_GATE_CONFIG_PREFIXES,
 } from '../sdk/src/platform/config/settings-ingestion.ts';
 import { CONFIG_SCHEMA } from '../sdk/src/platform/config/schema.ts';
+import { useConfigReadings } from './_helpers/config-readings.js';
 
 describe('resolveOrCreateDaemonPath', () => {
   test('creates a missing app-layer section instead of throwing', () => {
@@ -199,25 +200,35 @@ describe('settings ingestion: a value the reader rejects', () => {
 });
 
 describe('settings ingestion: a key form from a newer component', () => {
-  test('an unknown suffix on a known key is announced as one, and the file is left alone', () => {
+  const readings = useConfigReadings({ forms: { 'clientSecretRef@v2': 'clientSecretRef' } });
+
+  test('an unknown key read as a newer form of a known key is announced once the port can read it, and the file is left alone', async () => {
     const { manager, path } = managerOverDaemonTier({
       calendar: { google: { 'clientSecretRef@v2': { ref: 'goodvibes://secrets/goodvibes/x' } } },
     });
+    // Loading only kept the key: config loads before a composition's port exists.
+    expect(manager.getIngestionQuarantine()).toHaveLength(0);
+    expect(readings.requests).toHaveLength(0);
+
+    await manager.announceUnknownSettingForms();
     const [entry] = manager.getIngestionQuarantine();
     expect(entry?.key).toBe('calendar.google.clientSecretRef@v2');
     expect(entry?.action).toBe('skipped');
     expect(entry?.reason).toContain('newer form of calendar.google.clientSecretRef');
+    expect(readings.requests).toHaveLength(1);
     // Never deleted: the file is shared, and a component that understands the
     // newer form must still find it there.
     const onDisk = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
     expect(JSON.stringify(onDisk)).toContain('clientSecretRef@v2');
   });
 
-  test('a genuinely unrelated app-layer key is left unremarked', () => {
+  test('a genuinely unrelated app-layer key reads as a form of none and is left unremarked', async () => {
     // App-layer sections legitimately carry keys the SDK has never heard of.
     // Flagging those would be noise, not a signal.
     const { manager } = managerOverDaemonTier({ email: { imapHost: 'imap.example.com', someProductKey: 1 } });
+    await manager.announceUnknownSettingForms();
     expect(manager.getIngestionQuarantine()).toHaveLength(0);
+    expect(readings.requests).toHaveLength(1);
   });
 });
 

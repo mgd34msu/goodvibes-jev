@@ -643,7 +643,7 @@ export class TaskScheduler {
     try {
       nextDate = computeNextRun(task.cron, new Date(), task.timezone);
     } catch (err) {
-      logger.error('TaskScheduler: invalid cron, disabling task', { taskId: task.id, error: summarizeError(err) });
+      logger.error('TaskScheduler: invalid cron, task not scheduled', { taskId: task.id, error: summarizeError(err) });
       return;
     }
 

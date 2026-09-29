@@ -1703,6 +1703,9 @@ export type ExpoGoodVibesSdkOptions = ReactNativeGoodVibesSdkOptions;
 // @public (undocumented)
 export type FailureCategory = keyof typeof CATEGORY_OPTIONS & DaemonErrorCategory;
 
+// @public
+export type FailureClass = 'retryable' | 'terminal';
+
 // @public (undocumented)
 export interface FailureConclusions {
     // (undocumented)
@@ -1764,6 +1767,15 @@ readonly before_response: YesNoItem;
 
 // @public
 export function failureState(evidence: FailureEvidence): string;
+
+// @public
+export interface FailureTransience {
+    // (undocumented)
+    readonly basis: TransienceBasis;
+    readonly detail: string;
+    // (undocumented)
+    readonly failureClass: FailureClass;
+}
 
 // @public (undocumented)
 export type FieldKind = 'string' | 'number' | 'boolean' | 'string[]' | 'enum' | 'enum[]' | 'object' | 'object[]' | 'string|null';
@@ -2383,6 +2395,9 @@ export class HttpStatusError extends GoodVibesSdkError {
     static [Symbol.hasInstance](value: unknown): boolean;
     constructor(message: string, options?: GoodVibesSdkErrorOptions);
 }
+
+// @public
+export function httpStatusOf(error: unknown): number | undefined;
 
 // @public (undocumented)
 export type HttpTransport = HttpJsonTransport;
@@ -26367,6 +26382,9 @@ export interface ReactNativeGoodVibesSdkOptions extends GoodVibesSdkOptions {
 // @public
 export function readFailure(evidence: FailureEvidence, site: string): Promise<FailureConclusions>;
 
+// @public
+export function readFailureTransience(error: unknown, site: string, options?: TransienceOptions): Promise<FailureTransience>;
+
 // @public (undocumented)
 export function readJsonBody(response: Response): Promise<unknown>;
 
@@ -26492,7 +26510,7 @@ export function resolveHeaders(headers: HeadersInit | undefined, getHeaders?: He
 // @public (undocumented)
 export function resolveHttpRetryPolicy(defaultPolicy?: HttpRetryPolicy, override?: false | HttpRetryPolicy): ResolvedHttpRetryPolicy;
 
-// @public (undocumented)
+// @public
 export const RETRYABLE_STATUS_CODES: readonly number[];
 
 // @public
@@ -27116,6 +27134,9 @@ export interface StructuredDaemonErrorBody {
 }
 
 // @public
+export function structuredTransience(error: unknown): FailureTransience | undefined;
+
+// @public
 export const SURFACE_KINDS: readonly ["tui", "web", "slack", "discord", "ntfy", "webhook", "homeassistant", "telegram", "google-chat", "signal", "whatsapp", "telephony", "imessage", "msteams", "bluebubbles", "mattermost", "matrix", "service", "agent", "webui", "companion", "automation"];
 
 // @public (undocumented)
@@ -27410,6 +27431,21 @@ export interface ToolResultSummary {
     kind: string;
     preview?: string | undefined;
 }
+
+// @public
+export type TransienceBasis = 'explicit' | 'retry-after' | 'status' | 'errno' | 'error-type' | 'reading' | 'no-wording';
+
+// @public
+export function transienceFromReading(failure: FailureConclusions): FailureTransience;
+
+// @public (undocumented)
+export interface TransienceOptions {
+    readonly describe?: (error: unknown) => string;
+    readonly fromProvider?: boolean;
+}
+
+// @public
+export const TRANSIENT_STATUS_CODES: readonly number[];
 
 // @public
 export interface TransportActivityInfo {

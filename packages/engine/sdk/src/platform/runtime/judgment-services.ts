@@ -93,6 +93,11 @@ export interface JudgmentServices {
 }
 
 export interface JudgmentServicesInput extends JudgmentSettingsSource {
+  /**
+   * The composition's config, when it can read what waited for a port: the
+   * unknown settings keys its load kept (ConfigManager.announceUnknownSettingForms).
+   */
+  readonly config: JudgmentSettingsSource['config'] & { announceUnknownSettingForms?(): Promise<void> };
   /** The composition's state root; the decision log opens here. */
   readonly stateRoot: string;
   /** Closes the log and uninstalls the port when the composition is disposed. */
@@ -110,6 +115,8 @@ export function composeJudgment(input: JudgmentServicesInput): JudgmentServices 
   const decisionLog = openStateDecisionLog(input.stateRoot);
   const port = withDecisionLog(createSettingsJudgmentPort(input), decisionLog);
   const previous = installJudgmentPort(port);
+  // Config loaded before this port existed; what its load kept for a reading is read now.
+  void input.config.announceUnknownSettingForms?.();
   input.disposal.add('judgment port and decision log', () => {
     retired.add(port);
     const installed = installJudgmentPort(previous !== undefined && !retired.has(previous) ? previous : undefined);

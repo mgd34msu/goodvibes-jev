@@ -4,6 +4,7 @@ import { StoreWriteQueue } from '../state/store-write-queue.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { LLMProvider, ProviderBatchResult } from '../providers/interface.js';
+import { readFailureTransience } from '../integrations/delivery.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type {
@@ -29,6 +30,13 @@ const BATCH_JOB_STATUSES = new Set<DaemonBatchJob['status']>([
   'running',
   ...TERMINAL_JOB_STATUSES,
 ]);
+
+/**
+ * Submissions a job gets before a failure that could clear is given up on.
+ * A resource bound on paid provider calls, not a reading: each failure is
+ * still read for whether another submission could succeed at all.
+ */
+export const MAX_BATCH_SUBMIT_ATTEMPTS = 5;
 
 function now(): number {
   return Date.now();
@@ -268,9 +276,14 @@ export class DaemonBatchManager {
     };
     if (this.getMode() === 'off') return result;
     const loaded = await this.load();
-    await this.submitQueuedJobs(loaded, result, options.forceSubmit === true);
-    await this.pollProviderBatches(loaded, result);
-    await this.persist();
+    try {
+      await this.submitQueuedJobs(loaded, result, options.forceSubmit === true);
+      await this.pollProviderBatches(loaded, result);
+    } finally {
+      // A provider batch created earlier in this tick is written down even
+      // when a later failure cannot be read, so it is never submitted twice.
+      await this.persist();
+    }
     return result;
   }
 
@@ -349,18 +362,35 @@ export class DaemonBatchManager {
       result.submittedProviderBatches += 1;
       result.submittedJobs += jobs.length;
     } catch (error: unknown) {
+      // Whether another submission could succeed: the error's structure
+      // first, then Jev's reading of its wording (a provider's 429 is also
+      // read for a spent account). A failure that cannot be read propagates
+      // and fails the tick, leaving these jobs as they were.
+      const transience = await readFailureTransience(error, 'batch.submit', { fromProvider: true });
       const timestamp = now();
       for (const job of jobs) {
-        data.jobs[job.id] = {
-          ...job,
-          status: 'dead_lettered',
-          updatedAt: timestamp,
-          completedAt: timestamp,
-          attempts: job.attempts + 1,
-          error: { message: summarizeError(error) },
-        };
+        const attempts = job.attempts + 1;
+        const retry = transience.failureClass === 'retryable' && attempts < MAX_BATCH_SUBMIT_ATTEMPTS;
+        data.jobs[job.id] = retry
+          ? { ...job, updatedAt: timestamp, attempts, error: { message: summarizeError(error) } }
+          : {
+            ...job,
+            status: 'dead_lettered',
+            updatedAt: timestamp,
+            completedAt: timestamp,
+            attempts,
+            error: { message: summarizeError(error) },
+          };
+        if (!retry) result.failedJobs += 1;
       }
-      result.failedJobs += jobs.length;
+      logger.warn('Provider batch submission failed', {
+        provider: first.provider,
+        model: first.model,
+        jobs: jobs.length,
+        failureClass: transience.failureClass,
+        basis: transience.basis,
+        detail: transience.detail,
+      });
     }
   }
 
@@ -412,10 +442,23 @@ export class DaemonBatchManager {
           }
         }
       } catch (error: unknown) {
+        // Whether this provider batch is lost or only this poll failed. A
+        // batch still running at the provider (already paid for) is kept for
+        // the next tick's poll unless the failure cannot clear. A failure
+        // that cannot be read propagates and fails the tick.
+        const transience = await readFailureTransience(error, 'batch.poll', { fromProvider: true });
+        logger.warn('Provider batch poll failed', {
+          provider: first.provider,
+          providerBatchId: first.providerBatchId,
+          failureClass: transience.failureClass,
+          basis: transience.basis,
+          detail: transience.detail,
+        });
+        if (transience.failureClass === 'retryable') continue;
         const timestamp = now();
         for (const job of jobs) {
           data.jobs[job.id] = {
-            ...job,
+            ...(data.jobs[job.id] ?? job),
             status: 'dead_lettered',
             updatedAt: timestamp,
             completedAt: timestamp,

@@ -11,6 +11,8 @@
 
 import { ConfigError } from '../types/errors.js';
 import { summarizeError } from '../utils/error-display.js';
+import { logger } from '../utils/logger.js';
+import { readUnknownSettingForms } from './settings-unknown-forms.js';
 import {
   SettingsIngestionRefusal,
   announceIngestionNotice,
@@ -18,6 +20,7 @@ import {
   ingestSettingsFile,
   unreadableSettingsFileNotice,
   type SettingsIngestionNotice,
+  type UnknownSettingKey,
 } from './settings-ingestion.js';
 
 export type { SettingsIngestionNotice };
@@ -31,6 +34,8 @@ export interface IngestionNoticeSink {
    * skipped setting reaches a surface rather than dead-ending in a log file.
    */
   receipt(id: string, text: string): void;
+  /** Keeps unknown keys until a judgment port can read them; see {@link UnknownSettingFormsQueue}. */
+  unknown(file: string, keys: readonly UnknownSettingKey[]): void;
 }
 
 /**
@@ -44,19 +49,63 @@ export function ingestManagerSettings(
   /** The manager's load-time migrations; run before the screen. See IngestSettingsOptions.migrate. */
   migrate?: ((raw: Record<string, unknown>) => Record<string, unknown>) | undefined,
 ): Record<string, unknown> {
-  return ingestSettingsFile(parsed, file, {
-    ...(migrate ? { migrate } : {}),
-    onNotice: (entry) => {
-      sink.record(entry);
+  const result = ingestSettingsFile(parsed, file, { ...(migrate ? { migrate } : {}), onNotice: (entry) => { noticeTo(sink, entry); } });
+  if (result.unknownKeys.length > 0) sink.unknown(file, result.unknownKeys);
+  return result.config;
+}
+
+function noticeTo(sink: IngestionNoticeSink, entry: SettingsIngestionNotice): void {
+  sink.record(entry);
+  try {
+    sink.receipt(`settings-ingestion:${entry.key}:${entry.action}`, describeIngestionNotice(entry));
+  } catch {
+    // A receipt store that cannot be written must never escalate a skipped
+    // setting into a failed construction. It was already said on stderr and
+    // in the activity log, which is where the guarantee actually lives.
+  }
+}
+
+type PendingUnknownKeys = { readonly file: string; readonly keys: readonly UnknownSettingKey[] };
+
+/**
+ * Unknown settings keys waiting to be read for whether they are a newer form
+ * of a known setting (settings-unknown-forms.ts). Config loads before a
+ * composition's judgment port exists (the port is built from the judgment
+ * settings), so keys are kept until {@link start}, which the composition calls
+ * once its port is installed; keys from a later reload are read as they come.
+ * The keys stay in their files whatever the reading says; a reading that
+ * cannot be made is logged with the keys it was about.
+ */
+export class UnknownSettingFormsQueue {
+  private pending: PendingUnknownKeys[] = [];
+  private started = false;
+
+  keep(file: string, keys: readonly UnknownSettingKey[], sink: IngestionNoticeSink): void {
+    this.pending.push({ file, keys });
+    if (this.started) void this.drain(sink);
+  }
+
+  start(sink: IngestionNoticeSink): Promise<void> {
+    this.started = true;
+    return this.drain(sink);
+  }
+
+  private async drain(sink: IngestionNoticeSink): Promise<void> {
+    for (const { file, keys } of this.pending.splice(0)) {
       try {
-        sink.receipt(`settings-ingestion:${entry.key}:${entry.action}`, describeIngestionNotice(entry));
-      } catch {
-        // A receipt store that cannot be written must never escalate a skipped
-        // setting into a failed construction. It was already said on stderr and
-        // in the activity log, which is where the guarantee actually lives.
+        for (const entry of await readUnknownSettingForms(file, keys)) {
+          announceIngestionNotice(entry);
+          noticeTo(sink, entry);
+        }
+      } catch (error) {
+        logger.warn('goodvibes settings: whether unknown keys are newer forms of known settings could not be read', {
+          file,
+          keys: keys.map((unknown) => unknown.key),
+          error: summarizeError(error),
+        });
       }
-    },
-  }).config;
+    }
+  }
 }
 
 /**

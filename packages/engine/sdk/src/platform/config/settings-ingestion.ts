@@ -216,7 +216,7 @@ function knownIngestiblePaths(): ReadonlySet<string> {
 let knownPathCache: ReadonlySet<string> | null = null;
 
 /** Known leaf names grouped by the section that holds them. */
-function knownNamesBySection(): ReadonlyMap<string, ReadonlySet<string>> {
+export function knownSettingNamesBySection(): ReadonlyMap<string, ReadonlySet<string>> {
   if (knownNameCache) return knownNameCache;
   const sections = new Map<string, Set<string>>();
   for (const path of knownIngestiblePaths()) {
@@ -232,26 +232,12 @@ function knownNamesBySection(): ReadonlyMap<string, ReadonlySet<string>> {
 }
 let knownNameCache: ReadonlyMap<string, ReadonlySet<string>> | null = null;
 
-/**
- * The known setting this unknown name looks like a newer FORM of, or null.
- *
- * The observed case is `clientSecretRef` written where a reader knows
- * `clientSecret`, a migration adding a suffix to a key an older reader already
- * has. Prefix in either direction catches that, and catches nothing else: a
- * genuinely unrelated key in the same section shares no prefix with anything
- * and stays unremarked, because an app-layer section is allowed to carry keys
- * the SDK has never heard of.
- */
-function knownFormOf(section: string, name: string): string | null {
-  const known = knownNamesBySection().get(section);
-  if (!known || known.has(name)) return null;
-  const lower = name.toLowerCase();
-  for (const candidate of known) {
-    const other = candidate.toLowerCase();
-    if (other === lower) continue;
-    if (lower.startsWith(other) || other.startsWith(lower)) return `${section}.${candidate}`;
-  }
-  return null;
+/** A key this build does not know, in a section it does. */
+export interface UnknownSettingKey {
+  /** The dot-path key as it appears in the file. */
+  readonly key: string;
+  readonly section: string;
+  readonly name: string;
 }
 
 /**
@@ -358,20 +344,23 @@ function screenSecretReferences(
 }
 
 /**
- * Keys this reader does not know that look like a newer form of one it does.
+ * Keys this reader does not know, in a section it does know.
  *
  * These are NOT removed. An unknown key is data the reader cannot classify, and
  * the file may be shared with a component that understands it perfectly well,
- * deleting it would destroy a newer component's setting. It is announced,
- * because "ignored in silence" is how a migrated setting became a daemon that
- * looked configured and behaved as if it were not.
+ * deleting it would destroy a newer component's setting. Whether one is a
+ * newer form of a known setting, and so worth announcing, is read afterwards
+ * (settings-unknown-forms.ts), because "ignored in silence" is how a migrated
+ * setting became a daemon that looked configured and behaved as if it were not.
+ * The test here is exact: the path is neither a known setting nor a known
+ * section, and its parent section is known.
  */
-function screenUnknownForms(
+function collectUnknownKeys(
   raw: Record<string, unknown>,
-  file: string,
-  found: SettingsIngestionNotice[],
+  found: UnknownSettingKey[],
 ): void {
   const known = knownIngestiblePaths();
+  const sections = knownSettingNamesBySection();
   const walk = (node: Record<string, unknown>, prefix: string): void => {
     for (const [name, value] of Object.entries(node)) {
       const path = prefix ? `${prefix}.${name}` : name;
@@ -379,18 +368,9 @@ function screenUnknownForms(
       // `clientSecretRef` growing into a `{ ref, … }` record under a newer
       // component. Checking the path BEFORE descending is what catches that;
       // descending first only ever finds the leaves inside it.
-      if (!known.has(path)) {
-        const looksLike = knownFormOf(prefix, name);
-        if (looksLike) {
-          found.push({
-            file,
-            key: path,
-            reason: `is not a setting this build knows; it looks like a newer form of ${looksLike}`,
-            remedy: 'update this component, or remove the key if it is a typo; the value was left in the file untouched',
-            action: 'skipped',
-          });
-          continue;
-        }
+      if (!known.has(path) && !sections.has(path) && sections.has(prefix)) {
+        found.push({ key: path, section: prefix, name });
+        continue;
       }
       if (isPlainObject(value)) walk(value, path);
     }
@@ -403,6 +383,8 @@ export interface SettingsIngestionResult {
   /** The raw object with every unreadable key removed, safe to merge. */
   readonly config: Record<string, unknown>;
   readonly notices: readonly SettingsIngestionNotice[];
+  /** Keys this build does not know in sections it does; see settings-unknown-forms.ts. */
+  readonly unknownKeys: readonly UnknownSettingKey[];
 }
 
 /**
@@ -414,11 +396,12 @@ export function screenSettingsForIngestion(
   file: string,
 ): SettingsIngestionResult {
   const notices: SettingsIngestionNotice[] = [];
+  const unknownKeys: UnknownSettingKey[] = [];
   screenSectionShapes(raw, file, notices);
   screenSchemaValues(raw, file, notices);
   screenSecretReferences(raw, file, notices);
-  screenUnknownForms(raw, file, notices);
-  return { config: raw, notices };
+  collectUnknownKeys(raw, unknownKeys);
+  return { config: raw, notices, unknownKeys };
 }
 
 /**

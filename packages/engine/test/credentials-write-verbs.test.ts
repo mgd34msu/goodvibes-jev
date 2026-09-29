@@ -26,6 +26,7 @@ import {
   type CredentialWriteDeps,
 } from '../sdk/src/platform/control-plane/routes/credentials-write.ts';
 import { isGatewayVerbError } from '../sdk/src/platform/control-plane/routes/gateway-verb-error.ts';
+import { useConfigReadings } from './_helpers/config-readings.js';
 import { builtinGatewayAdminMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-admin.ts';
 import type { GatewayMethodInvocation } from '../sdk/src/platform/control-plane/method-catalog-shared.ts';
 
@@ -131,6 +132,8 @@ describe('credentials.set: the value goes to the store, the config gets a refere
 });
 
 describe('credentials.set: refusals leave the setting exactly as it was', () => {
+  const readings = useConfigReadings({ credentials: ['surfaces.pager.apiKey'] });
+
   test('a store that does not read back what was written fails and does NOT rewrite config', async () => {
     const h = harness({ breakReadBack: true });
     h.config.set(SECRET_CONFIG_KEY, 'the-previous-literal');
@@ -172,6 +175,19 @@ describe('credentials.set: refusals leave the setting exactly as it was', () => 
     expect(field).toBe('key');
     expect(h.secrets.size).toBe(0);
     expect(h.config.size).toBe(0);
+  });
+
+  test('an undeclared key is read, not matched by spelling: one that reads as a credential is stored', async () => {
+    const h = harness();
+    await createCredentialSetHandler(h.deps)(invocation({ key: 'surfaces.pager.apiKey', value: 'pager-key-test-only' }));
+    expect(h.secrets.size).toBe(1);
+    expect(readings.requests.map((request) => (request.state as { key: string }).key)).toEqual(['surfaces.pager.apiKey']);
+  });
+
+  test('a declared key is never read', async () => {
+    const h = harness();
+    await createCredentialSetHandler(h.deps)(invocation({ key: SECRET_CONFIG_KEY, value: 'bot-token-test-only' }));
+    expect(readings.requests).toHaveLength(0);
   });
 
   test('a value that is itself a goodvibes:// reference is refused (pointer to a pointer)', async () => {
