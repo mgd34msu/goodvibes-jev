@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import {
   redactSensitiveData,
   redactIssuerCredentials,
+  registerAccountIdentityRedaction,
 } from '../sdk/src/platform/utils/redaction.ts';
 import { redactAtRestLine } from '../sdk/src/platform/runtime/at-rest-persistence.ts';
 import { upsertMcpServerConfig } from '../sdk/src/platform/mcp/config.ts';
@@ -42,6 +43,7 @@ function mkTemp(): string {
   return dir;
 }
 afterEach(() => {
+  registerAccountIdentityRedaction(null);
   while (tmpDirs.length > 0) {
     try { rmSync(tmpDirs.pop()!, { recursive: true, force: true }); } catch { /* best effort */ }
   }
@@ -84,11 +86,13 @@ describe('at-rest redaction masks credentials without anonymising the owner', ()
     // session-export goes to someone who is not the owner, so his account name
     // is not theirs to have. This is the call site the identity patterns exist
     // for, and it must keep both halves.
+    registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/mike', userName: 'mike' }));
     const out = redactSensitiveData('/home/mike/Projects/x');
     expect(out).toBe('/home/[REDACTED]/Projects/x');
   });
 
   test('the at-rest and egress helpers agree on issuer formats, differ on identity', () => {
+    registerAccountIdentityRedaction(() => ({ homeDirectory: '/home/mike', userName: 'mike' }));
     const withSecret = 'token ghp_0123456789012345678901234567890123456789 here';
     expect(redactIssuerCredentials(withSecret)).toBe(redactSensitiveData(withSecret));
     expect(redactIssuerCredentials('/home/mike/x')).toBe('/home/mike/x');

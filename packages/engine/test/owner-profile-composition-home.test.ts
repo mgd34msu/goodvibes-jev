@@ -15,7 +15,9 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { redactSensitiveData } from '../sdk/src/platform/utils/redaction.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 import { composeOwnerProfile } from '../sdk/src/platform/control-plane/routes/owner-profile-composition.ts';
 import { GatewayMethodCatalog } from '../sdk/src/platform/control-plane/method-catalog.ts';
@@ -146,5 +148,19 @@ describe('owner-profile composition honours an injected home', () => {
     } finally {
       composed.dispose();
     }
+  });
+});
+
+describe('owner-profile composition registers the account identity for egress redaction', () => {
+  test('the running account\'s home is redacted while composed, and kept after dispose', () => {
+    const inHome = join(homedir(), 'work', 'notes.txt');
+    const composed = composeOwnerProfile(new GatewayMethodCatalog(), { configManager: configFor(), homeDir: makeProjectTempDir('gv-profile-identity') });
+    try {
+      expect(redactSensitiveData(inHome)).not.toContain(homedir());
+      expect(redactSensitiveData(inHome)).toContain('[REDACTED]');
+    } finally {
+      composed.dispose();
+    }
+    expect(redactSensitiveData(inHome)).toBe(inHome);
   });
 });

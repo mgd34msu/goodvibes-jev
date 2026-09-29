@@ -716,8 +716,16 @@ export const ConfiguredViaSchema: z.ZodEnum<{
     env: "env";
 }>;
 
+// Warning: (ae-forgotten-export) The symbol "CONNECTION_OPTIONS" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type ConnectionFailure = keyof typeof CONNECTION_OPTIONS;
+
 // @public
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed';
+
+// @public
+export function connectionSummary(connection: ConnectionFailure | undefined, provider?: string): string | undefined;
 
 // @public
 export type ConnectorTransportEvent = {
@@ -1713,6 +1721,7 @@ export interface FailureConclusions {
     // (undocumented)
     readonly billing: boolean;
     readonly category: FailureCategory;
+    readonly connection: ConnectionFailure;
     // (undocumented)
     readonly contextExceeded: boolean;
     // (undocumented)
@@ -1722,8 +1731,9 @@ export interface FailureConclusions {
     // (undocumented)
     readonly readings: {
         readonly category: ChoiceReading<FailureCategory>;
+        readonly connection_failure: ChoiceReading<ConnectionFailure>;
     } & {
-        readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading;
+        readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading;
     };
     // (undocumented)
     readonly transientNetwork: boolean;
@@ -1762,6 +1772,12 @@ readonly rate_limited: YesNoItem;
 readonly context_exceeded: YesNoItem;
 readonly transient_network: YesNoItem;
 readonly provider_unusable: YesNoItem;
+readonly connection_failure: ChoiceItem<    {
+readonly refused: "The connection was refused: nothing accepted the connection at that address and port";
+readonly timed_out: "The connection or the request timed out, or was aborted, before it completed";
+readonly dns_failed: "The host name could not be resolved: DNS lookup failed or the host was not found";
+readonly none: "None of these: the error is not one of these connection failures, or the server answered";
+}>;
 readonly before_response: YesNoItem;
 }>;
 
@@ -27136,6 +27152,9 @@ export interface StructuredDaemonErrorBody {
 
 // @public
 export function structuredTransience(error: unknown): FailureTransience | undefined;
+
+// @public
+export function summaryDependsOnWording(status: number | undefined): boolean;
 
 // @public
 export const SURFACE_KINDS: readonly ["tui", "web", "slack", "discord", "ntfy", "webhook", "homeassistant", "telegram", "google-chat", "signal", "whatsapp", "telephony", "imessage", "msteams", "bluebubbles", "mattermost", "matrix", "service", "agent", "webui", "companion", "automation"];

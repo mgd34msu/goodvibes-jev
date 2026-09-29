@@ -2,13 +2,15 @@ import {
   categoryDependsOnWording,
   categoryForCode,
   categoryForStatus,
-  DaemonErrorCategory,
+  connectionSummary,
+  type DaemonErrorCategory,
   type DaemonErrorSource,
   type FailureConclusions,
   GoodVibesSdkError,
   isStructuredDaemonErrorBody,
   readFailure,
   settleCategory,
+  summaryDependsOnWording,
   type StructuredDaemonErrorBody,
 } from '@goodvibes-jev/engine/errors';
 
@@ -72,24 +74,6 @@ interface ErrorPropertyLike {
   readonly retryAfterMs?: number | undefined;
 }
 
-const NETWORK_ERROR_PATTERNS: Array<{ pattern: RegExp; category: DaemonErrorCategory; message: (provider?: string) => string }> = [
-  {
-    pattern: /ECONNREFUSED/i,
-    category: DaemonErrorCategory.NETWORK,
-    message: (provider) => `Cannot connect to ${provider ?? 'the provider'}. Check whether the service is reachable.`,
-  },
-  {
-    pattern: /ETIMEDOUT|ECONNABORTED/i,
-    category: DaemonErrorCategory.TIMEOUT,
-    message: () => 'Connection timed out before the request completed.',
-  },
-  {
-    pattern: /ENOTFOUND|EAI_AGAIN/i,
-    category: DaemonErrorCategory.NETWORK,
-    message: (provider) => `DNS lookup failed for ${provider ?? 'the provider'}. Check the base URL and network.`,
-  },
-];
-
 function normalizeCategory(value: string | undefined): DaemonErrorCategory | undefined {
   return value === 'authentication'
     || value === 'authorization'
@@ -137,21 +121,19 @@ function readMessage(error: unknown, fallbackMessage?: string): string {
 }
 
 /**
- * The category structure fixes: an explicit category, an errno code in the
- * message, the HTTP status, a structured errno code, or a message that is
- * exactly an errno code. 400 and 429 stay provisional: providers report a
+ * The category structure fixes: an explicit category, the HTTP status, a
+ * structured errno code, or a message that is exactly an errno code. 400 and 429 stay provisional: providers report a
  * spent account under both, and `rate_limit` reads as retryable, so a caller
  * would wait out a condition that never clears. Whether one is really billing
  * is read from the wording (see settleCategory in the errors package).
  */
 function fixedCategory(
   explicit: DaemonErrorCategory | undefined,
-  network: { readonly category: DaemonErrorCategory } | undefined,
   status: number | undefined,
   code: string | undefined,
   message: string,
 ): DaemonErrorCategory | undefined {
-  return explicit ?? network?.category ?? categoryForStatus(status) ?? categoryForCode(code) ?? categoryForCode(message);
+  return explicit ?? categoryForStatus(status) ?? categoryForCode(code) ?? categoryForCode(message);
 }
 
 /**
@@ -227,18 +209,6 @@ function buildSummary(
   if (metadata.providerCode && !message.includes(metadata.providerCode)) tags.push(`code=${metadata.providerCode}`);
   if (metadata.requestId && !message.includes(metadata.requestId)) tags.push(`request_id=${metadata.requestId}`);
   return tags.length > 0 ? `${message} (${tags.join(', ')})` : message;
-}
-
-function getNetworkErrorMessage(message: string, provider?: string): { category: DaemonErrorCategory; summary: string } | undefined {
-  for (const entry of NETWORK_ERROR_PATTERNS) {
-    if (entry.pattern.test(message)) {
-      return {
-        category: entry.category,
-        summary: entry.message(provider),
-      };
-    }
-  }
-  return undefined;
 }
 
 function isStructuredErrorLike(error: unknown): error is StructuredErrorLike {
@@ -320,8 +290,7 @@ export function buildErrorResponseBody(
     const providerCode = error.providerCode;
     const phase = error.phase;
     const requestId = error.requestId;
-    const network = getNetworkErrorMessage(message, provider);
-    const fixed = fixedCategory(normalizeCategory(error.category), network, status, error.code ?? providerCode, message);
+    const fixed = fixedCategory(normalizeCategory(error.category), status, error.code ?? providerCode, message);
     const providerAttributed = isProviderAttributed({
       source: normalizeSource(error.source) ?? options.source,
       provider,
@@ -333,7 +302,7 @@ export function buildErrorResponseBody(
     // hint the error carried for that provisional category.
     const ownHint = category === fixed ? (error instanceof GoodVibesSdkError ? error.hint : error.hint ?? error.guidance) : undefined;
     const hint = ownHint ?? inferHint(category, status, providerAttributed);
-    const summary = buildSummary(network?.summary ?? message, {
+    const summary = buildSummary(connectionSummary(options.failure?.connection, provider) ?? message, {
       requestId,
       providerCode,
       phase,
@@ -372,14 +341,13 @@ export function buildErrorResponseBody(
     const providerType = readStringProperty(error.providerType);
     const retryAfterMs = readNumberProperty(error.retryAfterMs);
     const message = error.error.trim() || options.fallbackMessage || 'Unexpected error';
-    const network = getNetworkErrorMessage(message, provider);
-    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), network, status, code ?? providerCode, message);
+    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), status, code ?? providerCode, message);
     const providerAttributed = isProviderAttributed({ source: source ?? options.source, provider, providerCode, providerType });
     const category = settleCategory(fixed, status, providerAttributed, options.failure);
     const ownHint = category === fixed ? readStringProperty(error.hint) ?? readStringProperty(error.guidance) : undefined;
     const hint = ownHint ?? inferHint(category, status, providerAttributed);
     return {
-      error: buildSummary(network?.summary ?? message, { requestId, providerCode, phase }),
+      error: buildSummary(connectionSummary(options.failure?.connection, provider) ?? message, { requestId, providerCode, phase }),
       ...(hint ? { hint } : {}),
       ...(code ? { code } : {}),
       category,
@@ -397,11 +365,10 @@ export function buildErrorResponseBody(
     };
   }
   const message = readMessage(error, options.fallbackMessage);
-  const network = getNetworkErrorMessage(message);
-  const category = settleCategory(fixedCategory(undefined, network, options.status, undefined, message), options.status, options.source === 'provider', options.failure);
+  const category = settleCategory(fixedCategory(undefined, options.status, undefined, message), options.status, options.source === 'provider', options.failure);
   const hint = inferHint(category, options.status, options.source === 'provider');
   return {
-    error: network?.summary ?? message,
+    error: connectionSummary(options.failure?.connection) ?? message,
     ...(hint ? { hint } : {}),
     category,
     ...(options.source ? { source: options.source } : {}),
@@ -409,7 +376,12 @@ export function buildErrorResponseBody(
   };
 }
 
-/** What a reading of the error would be about, and whether structure leaves the category open. */
+/**
+ * What a reading of the error would be about, and whether structure leaves
+ * the category or the summary open: the category when nothing structural
+ * fixes it (or a provider's 400 or 429 may be billing), the summary when no
+ * HTTP response came back, so it may be a connection failure.
+ */
 interface Wording {
   readonly message: string;
   readonly status: number | undefined;
@@ -423,45 +395,45 @@ function wordingOf(error: unknown, options: JsonErrorResponseOptions): Wording |
   if (error instanceof GoodVibesSdkError || isStructuredErrorLike(error)) {
     const status = error instanceof GoodVibesSdkError ? error.status : error.status ?? error.statusCode;
     const code = error.code ?? error.providerCode;
-    const fixed = fixedCategory(normalizeCategory(error.category), getNetworkErrorMessage(error.message, error.provider), status, code, error.message);
+    const fixed = fixedCategory(normalizeCategory(error.category), status, code, error.message);
     const fromProvider = isProviderAttributed({
       source: normalizeSource(error.source) ?? options.source,
       provider: error.provider,
       providerCode: error.providerCode,
       providerType: error.providerType,
     });
-    return { message: error.message, status, code, errorName: error instanceof Error ? error.name : undefined, open: categoryDependsOnWording(fixed, status, fromProvider) };
+    return { message: error.message, status, code, errorName: error instanceof Error ? error.name : undefined, open: categoryDependsOnWording(fixed, status, fromProvider) || summaryDependsOnWording(status) };
   }
   if (isErrorPropertyLike(error)) {
     const rawStatus = readNumberProperty(error.status) ?? readNumberProperty(error.statusCode);
     const status = rawStatus !== undefined && rawStatus >= 100 && rawStatus <= 599 ? rawStatus : options.status;
     const code = readStringProperty(error.code) ?? readStringProperty(error.providerCode);
     const message = error.error.trim() || options.fallbackMessage || 'Unexpected error';
-    const provider = readStringProperty(error.provider);
-    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), getNetworkErrorMessage(message, provider), status, code, message);
+    const fixed = fixedCategory(normalizeCategory(readStringProperty(error.category)), status, code, message);
     const fromProvider = isProviderAttributed({
       source: normalizeSource(readStringProperty(error.source)) ?? options.source,
-      provider,
+      provider: readStringProperty(error.provider),
       providerCode: readStringProperty(error.providerCode),
       providerType: readStringProperty(error.providerType),
     });
-    return { message, status, code, errorName: undefined, open: categoryDependsOnWording(fixed, status, fromProvider) };
+    return { message, status, code, errorName: undefined, open: categoryDependsOnWording(fixed, status, fromProvider) || summaryDependsOnWording(status) };
   }
   const message = readMessage(error, options.fallbackMessage);
-  const fixed = fixedCategory(undefined, getNetworkErrorMessage(message), options.status, undefined, message);
+  const fixed = fixedCategory(undefined, options.status, undefined, message);
   return {
     message,
     status: options.status,
     code: undefined,
     errorName: error instanceof Error ? error.name : undefined,
-    open: categoryDependsOnWording(fixed, options.status, options.source === 'provider'),
+    open: categoryDependsOnWording(fixed, options.status, options.source === 'provider') || summaryDependsOnWording(options.status),
   };
 }
 
 /**
  * {@link buildErrorResponseBody} with the error's wording read by Jev when
  * structure leaves the category open (no category from status, code or the
- * error itself, or a 400 or 429 that may be a spent account). Otherwise no
+ * error itself, or a 400 or 429 that may be a spent account) or the error has
+ * no HTTP status, so its summary may be a connection failure's. Otherwise no
  * request is made.
  */
 export async function readErrorResponseBody(

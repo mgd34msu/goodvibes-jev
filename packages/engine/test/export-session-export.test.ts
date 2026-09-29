@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { afterEach, describe, test, expect } from 'bun:test';
 import {
   redactMessage,
   exportToJSON,
@@ -6,7 +6,7 @@ import {
   exportToMarkdownExtended,
   defaultExportPath,
 } from '@goodvibes-jev/engine/sdk/platform/export';
-import { redactSensitiveData } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { redactSensitiveData, registerAccountIdentityRedaction } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { ExportMessage, ExportMetadata } from '@goodvibes-jev/engine/sdk/platform/export';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -22,6 +22,13 @@ const toolMsg = (content: string, toolName = 'bash'): ExportMessage => ({
   content,
   toolName,
 });
+
+/** Registers `userName` as the running account, with its home at `homeDirectory`. */
+function runningAs(homeDirectory: string, userName: string): void {
+  registerAccountIdentityRedaction(() => ({ homeDirectory, userName }));
+}
+
+afterEach(() => registerAccountIdentityRedaction(null));
 
 const basicMeta: ExportMetadata = {
   model: 'gpt-4',
@@ -87,22 +94,45 @@ describe('redactSensitiveData', () => {
     expect(redactSensitiveData(key)).toContain('[REDACTED_AWS_KEY]');
   });
 
-  test('redacts Linux /home/ paths', () => {
+  test('redacts the account\'s Linux home path', () => {
+    runningAs('/home/alice', 'alice');
     const result = redactSensitiveData('file at /home/alice/projects/foo.ts');
     expect(result).toContain('/home/[REDACTED]');
     expect(result).not.toContain('/home/alice');
   });
 
-  test('redacts macOS /Users/ paths', () => {
+  test('redacts the account\'s macOS home path', () => {
+    runningAs('/Users/bob', 'bob');
     const result = redactSensitiveData('reading /Users/bob/Documents/secret.key');
     expect(result).toContain('/Users/[REDACTED]');
     expect(result).not.toContain('/Users/bob');
   });
 
-  test('redacts Windows C:\\Users\\ paths', () => {
+  test('redacts the account\'s Windows home path', () => {
+    runningAs('C:\\Users\\carol', 'carol');
     const result = redactSensitiveData('path C:\\Users\\carol\\AppData\\secret');
     expect(result).toContain('C:\\Users\\[REDACTED]');
     expect(result).not.toContain('carol');
+  });
+
+  test('another directory under /home is not the account\'s home and is left alone', () => {
+    runningAs('/home/alice', 'alice');
+    expect(redactSensitiveData('shared data in /home/projects-share/data.csv and /home/alice.old/x'))
+      .toBe('shared data in /home/projects-share/data.csv and /home/alice.old/x');
+  });
+
+  test('the account\'s home is matched wherever it lives, and the full stop after it ends the path', () => {
+    runningAs('/srv/users/alice', 'alice');
+    expect(redactSensitiveData('cwd is /srv/users/alice.')).toBe('cwd is /srv/users/[REDACTED].');
+  });
+
+  test('the account\'s login name is redacted as a whole name only', () => {
+    runningAs('/home/alice', 'alice');
+    expect(redactSensitiveData('logged in as alice@host; alicent and malice stay')).toBe('logged in as [REDACTED]@host; alicent and malice stay');
+  });
+
+  test('with no account registered, paths and names are kept', () => {
+    expect(redactSensitiveData('file at /home/alice/projects/foo.ts')).toBe('file at /home/alice/projects/foo.ts');
   });
 
   test('leaves clean text unchanged', () => {
@@ -137,6 +167,7 @@ describe('redactMessage', () => {
   });
 
   test('redacts ContentPart text parts', () => {
+    runningAs('/home/alice', 'alice');
     const msg: ExportMessage = {
       role: 'user',
       content: [
@@ -172,6 +203,7 @@ describe('redactMessage', () => {
   });
 
   test('redacts toolCall arguments', () => {
+    runningAs('/home/eve', 'eve');
     const msg: ExportMessage = {
       role: 'assistant',
       content: '',

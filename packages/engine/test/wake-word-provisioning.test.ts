@@ -594,9 +594,10 @@ describe('provisioning as part of installation', () => {
     // 2. It said so once, plainly, naming the recovery act and the retry.
     expect(outcome.message).toContain('installation continues');
     expect(outcome.message).toContain('/voice wake setup');
-    // The reason is the download layer's own plain-language summary, not a raw
-    // stack: this line is printed to a person installing a coding tool.
-    expect(outcome.message).toContain('DNS lookup failed');
+    // The reason is the error's summarized message, not a raw stack: this
+    // line is printed to a person installing a coding tool.
+    expect(outcome.message).toContain('getaddrinfo ENOTFOUND objects.githubusercontent.com');
+    expect(outcome.message).not.toContain('    at ');
     // 3. Nothing partial or unverified was left behind.
     const paths = resolveManagedWakePaths(root);
     expect(existsSync(paths.classifierPath)).toBe(false);

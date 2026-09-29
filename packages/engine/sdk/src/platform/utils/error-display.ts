@@ -1,40 +1,27 @@
 import {
   categoryDependsOnWording,
+  categoryForCode,
   categoryForStatus,
+  connectionSummary,
+  judgmentPort,
   readFailure,
   settleCategory,
+  summaryDependsOnWording,
   type FailureConclusions,
 } from '@goodvibes-jev/engine/errors';
 import { AppError, ProviderError, type PlatformErrorCategory, type PlatformErrorSource, type ProviderErrorOptions } from '../types/errors.js';
 import type { StructuredDaemonErrorBody } from '../types/daemon-error-contract.js';
 import { redactSensitiveData } from './redaction.js';
+import { displayPayload, MAX_DISPLAY_MESSAGE_CHARS, payloadSpans } from './batteries/display-payload.js';
 
 const MAX_ERROR_LENGTH = 240;
 
 // NOTE: Category rules (status and errno tables, the billing override, the Jev
-// failure reading) live once in the errors package and are shared with
-// daemon-sdk/src/error-response.ts. The summary and hint helpers below
-// (NETWORK_ERROR_PATTERNS, inferHint, buildSummary, getNetworkErrorMessage) are
-// still duplicated there because the two copies format different error
-// hierarchies (platform AppError/NormalizedError vs daemon GoodVibesSdkError);
-// keep them in sync.
-const NETWORK_ERROR_PATTERNS: Array<{ pattern: RegExp; category: PlatformErrorCategory; message: (provider?: string) => string }> = [
-  {
-    pattern: /ECONNREFUSED/i,
-    category: 'network',
-    message: (provider) => `Cannot connect to ${provider ?? 'the provider'}. Check whether the service is reachable.`,
-  },
-  {
-    pattern: /ETIMEDOUT|ECONNABORTED/i,
-    category: 'timeout',
-    message: () => 'Connection timed out before the request completed.',
-  },
-  {
-    pattern: /ENOTFOUND|EAI_AGAIN/i,
-    category: 'network',
-    message: (provider) => `DNS lookup failed for ${provider ?? 'the provider'}. Check the base URL and network.`,
-  },
-];
+// failure reading and its connection-failure summaries) live once in the errors
+// package and are shared with daemon-sdk/src/error-response.ts. The hint and
+// summary-tag helpers below (inferHint, buildSummary) are still duplicated there
+// because the two copies format different error hierarchies (platform
+// AppError/NormalizedError vs daemon GoodVibesSdkError); keep them in sync.
 
 export interface NormalizedError {
   readonly name: string;
@@ -60,8 +47,9 @@ export interface ErrorNormalizationOptions {
   readonly fallbackMessage?: string | undefined;
   readonly source?: PlatformErrorSource | undefined;
   /**
-   * What Jev read in the error's wording. Without it, category and source
-   * come from structure alone; {@link readNormalizedError} supplies it.
+   * What Jev read in the error's wording. Without it, category, source and
+   * summary come from structure and the error's own message alone;
+   * {@link readNormalizedError} supplies it.
    */
   readonly failure?: FailureConclusions | undefined;
 }
@@ -102,22 +90,16 @@ function extractStructuredMessage(msg: string): string | undefined {
   }
 }
 
-function stripJson(msg: string): string {
-  // The bracket pass must not eat [REDACTED*] placeholders from redaction.ts:
-  // stripping them turns e.g. /home/[REDACTED]/hooks.json into '/home/ /hooks.json',
-  // which reads as a real (and wrong) path in logs.
-  return msg
-    .replace(/\{[^{}]{0,500}\}/g, ' ')
-    .replace(/\[(?!REDACTED)[^\[\]]{0,500}\]/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    .trim();
-}
-
-function cleanMessage(msg: string, fallbackMessage?: string): string {
+/**
+ * The message to show. `display` is the message with its machine payload
+ * removed, which only {@link readNormalizedError} reads; without it the
+ * message is shown as the error carries it. A message that is all payload
+ * falls back to the message itself rather than to nothing.
+ */
+function cleanMessage(msg: string, fallbackMessage?: string, display?: string): string {
   const structured = extractStructuredMessage(msg);
   if (structured) return truncateMessage(structured);
-  const stripped = stripJson(msg);
-  if (stripped.length > 0) return truncateMessage(stripped);
+  if (display !== undefined && display.length > 0) return truncateMessage(display);
   if (msg.trim().length > 0) return truncateMessage(msg.trim());
   return fallbackMessage ?? 'Unexpected error';
 }
@@ -180,18 +162,6 @@ function buildSummary(
   return tags.length > 0 ? `${message} (${tags.join(', ')})` : message;
 }
 
-function getNetworkErrorMessage(message: string, provider?: string): { category: PlatformErrorCategory; summary: string } | undefined {
-  for (const entry of NETWORK_ERROR_PATTERNS) {
-    if (entry.pattern.test(message)) {
-      return {
-        category: entry.category,
-        summary: entry.message(provider),
-      };
-    }
-  }
-  return undefined;
-}
-
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -218,8 +188,9 @@ interface ErrorStructure {
   readonly rawMessage: string;
   readonly statusCode: number | undefined;
   readonly provider: string | undefined;
-  readonly network: { category: PlatformErrorCategory; summary: string } | undefined;
-  /** The category structure fixes: the error's own, an errno code in the message, or the status. */
+  /** A structured code the error carries: an errno name on `code`, or a provider's error code. */
+  readonly code: string | undefined;
+  /** The category structure fixes: the error's own, the status, or an errno on the structured code. */
   readonly fixed: PlatformErrorCategory | undefined;
   /** Whether a provider produced the error; only a provider's 400 or 429 can turn out to be billing. */
   readonly fromProvider: boolean;
@@ -236,22 +207,35 @@ function structureOf(error: unknown, options: ErrorNormalizationOptions): ErrorS
         ? (error as { status: number }).status
         : undefined;
   const provider = options.provider ?? (error instanceof AppError ? error.provider : undefined);
-  const network = getNetworkErrorMessage(rawMessage, provider);
+  const code = structuredCode(error);
   const own = error instanceof AppError && error.category ? error.category as PlatformErrorCategory : undefined;
-  const fixed = own && own !== 'unknown' ? own : network?.category ?? categoryForStatus(statusCode);
+  const fixed = own && own !== 'unknown'
+    ? own
+    : (categoryForStatus(statusCode) ?? categoryForCode(code)) as PlatformErrorCategory | undefined;
   const fromProvider = error instanceof ProviderError
     || options.source === 'provider'
     || (error instanceof AppError && error.source === 'provider')
     || provider !== undefined;
-  return { rawMessage, statusCode, provider, network, fixed, fromProvider };
+  return { rawMessage, statusCode, provider, code, fixed, fromProvider };
+}
+
+/** An AppError's provider code; any other error's string `code` (a Node errno such as ECONNREFUSED). */
+function structuredCode(error: unknown): string | undefined {
+  if (error instanceof AppError) return error.providerCode;
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && code.trim().length > 0 ? code : undefined;
 }
 
 export function normalizeError(error: unknown, options: ErrorNormalizationOptions = {}): NormalizedError {
-  const { rawMessage, statusCode, provider, network, fixed, fromProvider } = structureOf(error, options);
-  const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage);
+  return normalizeWith(error, options, undefined);
+}
+
+function normalizeWith(error: unknown, options: ErrorNormalizationOptions, display: string | undefined): NormalizedError {
+  const { rawMessage, statusCode, provider, fixed, fromProvider } = structureOf(error, options);
+  const cleanedMessage = cleanMessage(rawMessage, options.fallbackMessage, display);
   const category = settleCategory(fixed, statusCode, fromProvider, options.failure) as PlatformErrorCategory;
   const source = inferSource(error, options.source, options.failure);
-  const summary = buildSummary(network?.summary ?? cleanedMessage, {
+  const summary = buildSummary(connectionSummary(options.failure?.connection, provider) ?? cleanedMessage, {
     requestId: error instanceof AppError ? error.requestId : undefined,
     providerCode: error instanceof AppError ? error.providerCode : undefined,
     phase: error instanceof AppError ? error.phase : undefined,
@@ -283,24 +267,60 @@ export function normalizeError(error: unknown, options: ErrorNormalizationOption
 }
 
 /**
- * {@link normalizeError} with the error's wording read by Jev wherever the
- * wording can change the category or source. When structure already settles
- * both, no request is made.
+ * {@link normalizeError} with the error's wording read by Jev where it can
+ * change what is shown: the category or source when structure leaves them
+ * open, the connection-failure summary when no HTTP response came back, and
+ * which bracketed parts of the message are machine payload to leave out of
+ * the displayed message. When structure settles all of these, no request is
+ * made.
  */
 export async function readNormalizedError(
   error: unknown,
   options: ErrorNormalizationOptions & { readonly site: string },
 ): Promise<NormalizedError> {
-  const { rawMessage, statusCode, fixed, fromProvider } = structureOf(error, options);
-  const wordingMatters = categoryDependsOnWording(fixed, statusCode, fromProvider) || sourceDependsOnWording(error, options.source);
-  if (!wordingMatters || rawMessage.trim().length === 0) return normalizeError(error, options);
-  const failure = await readFailure({
-    message: rawMessage,
-    status: statusCode,
-    code: error instanceof AppError ? error.providerCode : undefined,
-    errorName: error instanceof Error ? error.name : undefined,
-  }, options.site);
-  return normalizeError(error, { ...options, failure });
+  const { rawMessage, statusCode, code, fixed, fromProvider } = structureOf(error, options);
+  if (rawMessage.trim().length === 0) return normalizeError(error, options);
+  const wordingMatters = categoryDependsOnWording(fixed, statusCode, fromProvider)
+    || sourceDependsOnWording(error, options.source)
+    || summaryDependsOnWording(statusCode);
+  const [failure, display] = await Promise.all([
+    wordingMatters
+      ? readFailure({
+        message: rawMessage,
+        status: statusCode,
+        code,
+        errorName: error instanceof Error ? error.name : undefined,
+      }, options.site)
+      : Promise.resolve(options.failure),
+    extractStructuredMessage(rawMessage) === undefined ? readDisplayMessage(rawMessage, options.site) : Promise.resolve(undefined),
+  ]);
+  return normalizeWith(error, { ...options, failure }, display);
+}
+
+/**
+ * The message with the bracketed parts Jev reads as machine payload removed
+ * (`engine.errors.display-payload`), spaces collapsed. Only a confident yes
+ * removes a part. A message longer than the display ever shows is read from
+ * its opening.
+ */
+async function readDisplayMessage(rawMessage: string, site: string): Promise<string> {
+  const message = rawMessage.slice(0, MAX_DISPLAY_MESSAGE_CHARS);
+  const spans = payloadSpans(message);
+  if (spans.length === 0) return message.trim();
+  const run = await displayPayload.read(judgmentPort(site), message, spans, { site });
+  const removed = spans.filter((span) => {
+    const reading = run.readings.get(span.number);
+    return reading?.verdict === 'yes' && reading.outcome === 'act';
+  });
+  let shown = '';
+  let at = 0;
+  for (const span of removed) {
+    shown += `${message.slice(at, span.start)} `;
+    at = span.end;
+  }
+  shown += message.slice(at);
+  run.recordAction(`removed ${removed.length} of ${spans.length} bracketed parts from the displayed message`);
+  return shown.replace(/ {2,}/g, ' ').trim();
 }
 
 export function summarizeError(error: unknown, options: ErrorNormalizationOptions = {}): string {

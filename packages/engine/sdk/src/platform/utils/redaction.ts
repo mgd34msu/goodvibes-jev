@@ -71,7 +71,7 @@ export function findCredentialCandidates(text: string): CredentialCandidate[] {
 }
 
 /**
- * Identity: the owner's account name, as it appears inside a home path.
+ * Identity: the running account's home directory and user name.
  *
  * This is ANONYMISATION, not secret-hiding, and it only earns its keep on text
  * that is about to leave the machine, a session export the owner hands to
@@ -80,21 +80,82 @@ export function findCredentialCandidates(text: string): CredentialCandidate[] {
  * order to hide their username from themselves, and the substitution cannot
  * be undone.
  *
- * Kept as a separate list rather than folded in with the credential patterns
- * because the two answer different questions and therefore have different
- * correct call sites. See `redactCredentialsOnly` below.
+ * Kept apart from the credential patterns because the two answer different
+ * questions and therefore have different correct call sites. See
+ * `redactIssuerCredentials` below.
+ *
+ * The values are the account's own, read from the operating system and
+ * supplied through {@link registerAccountIdentityRedaction}, and matched
+ * exactly. They are not guessed from path layout: a `/home/<segment>` pattern
+ * takes whatever follows `/home/` for a user name, which is wrong for every
+ * path under `/home` that is not this account's home and misses a home that
+ * lives anywhere else.
  */
-const IDENTITY_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /\/home\/[A-Za-z0-9_.-]+/g, replacement: '/home/[REDACTED]' },
-  { pattern: /\/Users\/[A-Za-z0-9_.-]+/g, replacement: '/Users/[REDACTED]' },
-  { pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9_.-]+/g, replacement: 'C:\\Users\\[REDACTED]' },
-];
+export interface AccountIdentity {
+  /** The account's home directory, e.g. `/home/alice`, `/Users/alice`, `C:\\Users\\alice`. */
+  readonly homeDirectory: string;
+  /** The account's login name, e.g. `alice`. */
+  readonly userName: string;
+}
 
-/** Credentials + identity. What egress wants. */
-const REDACT_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
-  ...CREDENTIAL_PATTERNS,
-  ...IDENTITY_PATTERNS,
-];
+/** Supplies the running account's identity. */
+export type AccountIdentityReader = () => AccountIdentity;
+
+let accountIdentityReader: AccountIdentityReader | null = null;
+let identityPatternCacheKey: string | null = null;
+let identityPatterns: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [];
+
+/**
+ * Register (or clear, with `null`) the reader that supplies the running
+ * account's home directory and user name.
+ *
+ * A registered reader rather than an `os` import, for the same reason as
+ * {@link registerProfileRedactionValues}: this module runs in browser, worker
+ * and mobile bundles that have no operating-system account. With nothing
+ * registered, text keeps its paths and names.
+ */
+export function registerAccountIdentityRedaction(reader: AccountIdentityReader | null): void {
+  accountIdentityReader = reader;
+  identityPatternCacheKey = null;
+  identityPatterns = [];
+}
+
+/**
+ * Where a path or name ends: at anything that cannot continue a path segment
+ * or a login name. A dot ends it only when no name character follows, so the
+ * full stop after `/home/alice.` ends the path and `/home/alice.old` is
+ * another directory.
+ */
+const NAME_END = '(?![\\p{L}\\p{N}_-]|\\.[\\p{L}\\p{N}_-])';
+const NAME_START = '(?<![\\p{L}\\p{N}_.-])';
+
+/**
+ * The home directory with its last segment replaced (`/home/[REDACTED]`), so
+ * a redacted path still reads as a path, then the user name on its own.
+ */
+function currentIdentityPatterns(): ReadonlyArray<{ pattern: RegExp; replacement: string }> {
+  if (accountIdentityReader === null) return [];
+  const { homeDirectory, userName } = accountIdentityReader();
+  const home = homeDirectory.replace(/[\\/]+$/, '');
+  const name = userName.trim();
+  const cacheKey = `${home}\u0000${name}`;
+  if (cacheKey !== identityPatternCacheKey) {
+    identityPatternCacheKey = cacheKey;
+    const separator = Math.max(home.lastIndexOf('/'), home.lastIndexOf('\\'));
+    const patterns: Array<{ pattern: RegExp; replacement: string }> = [];
+    if (separator >= 0 && separator < home.length - 1) {
+      patterns.push({
+        pattern: new RegExp(`${escapeRegExp(home)}${NAME_END}`, 'gu'),
+        replacement: `${home.slice(0, separator + 1).replace(/\$/g, '$$$$')}[REDACTED]`,
+      });
+    }
+    if (name.length > 0) {
+      patterns.push({ pattern: new RegExp(`${NAME_START}${escapeRegExp(name)}${NAME_END}`, 'gu'), replacement: '[REDACTED]' });
+    }
+    identityPatterns = patterns;
+  }
+  return identityPatterns;
+}
 
 const SECRET_KEY_PATTERN = /(^|[_-])(authorization|token|secret|password|passwd|cookie|credential|api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?(id|token)?)([_-]|$)/i;
 const CONTENT_KEY_PATTERN = /(^|[_-])(prompt|response|content|accumulated|body|text|stdout|stderr|output|input|reasoning|transcript|command|arguments|query|detail|summary|message)([_-]|$)/i;
@@ -255,8 +316,8 @@ function applyPatterns(
   for (const pattern of currentProfilePatterns()) {
     result = result.replace(pattern, '[REDACTED_PROFILE]');
   }
-  // Iterating the INJECTED list rather than the module constant: that is this
-  // lane's narrowing, and hard-coding REDACT_PATTERNS here would quietly ignore
+  // Iterating the INJECTED list rather than a module constant: that is this
+  // lane's narrowing, and hard-coding the egress list here would quietly ignore
   // whatever a caller passed.
   for (const { pattern, replacement } of patterns) {
     result = result.replace(pattern, replacement);
@@ -272,7 +333,7 @@ function applyPatterns(
  * is not theirs to have.
  */
 export function redactSensitiveData(text: string): string {
-  return applyPatterns(text, REDACT_PATTERNS);
+  return applyPatterns(text, [...CREDENTIAL_PATTERNS, ...currentIdentityPatterns()]);
 }
 
 /**

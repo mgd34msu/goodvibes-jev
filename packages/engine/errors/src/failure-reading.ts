@@ -14,8 +14,9 @@ import { judgmentPort } from './judgment-port.js';
  * regex phrase lists that used to guess it (types/errors.ts inferErrorCategory,
  * isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError,
  * isNonTransientProviderFailure; utils/error-display.ts
- * inferCategory and inferSource; daemon-sdk error-response.ts inferCategory and
- * inferCategoryFromMessage). Status codes and structured error codes stay code;
+ * inferCategory, inferSource and NETWORK_ERROR_PATTERNS; daemon-sdk
+ * error-response.ts inferCategory, inferCategoryFromMessage and
+ * NETWORK_ERROR_PATTERNS). Status codes and structured error codes stay code;
  * only the meaning of the message text is read here.
  *
  * Every question is asked about one error in a single request. Retry, backoff
@@ -41,10 +42,20 @@ const CATEGORY_OPTIONS = {
 
 export type FailureCategory = keyof typeof CATEGORY_OPTIONS & DaemonErrorCategory;
 
+/** Which connection failure an error describes, for the display summary and category. */
+const CONNECTION_OPTIONS = {
+  refused: 'The connection was refused: nothing accepted the connection at that address and port',
+  timed_out: 'The connection or the request timed out, or was aborted, before it completed',
+  dns_failed: 'The host name could not be resolved: DNS lookup failed or the host was not found',
+  none: 'None of these: the error is not one of these connection failures, or the server answered',
+} as const;
+
+export type ConnectionFailure = keyof typeof CONNECTION_OPTIONS;
+
 export const failureReading = defineBattery({
   name: 'engine.failure-reading',
-  version: 1,
-  description: 'What an error message says about the failure: its category, and whether it is a spent account, a rate limit, an over-long context, a transient network fault, a provider that cannot serve, or a failure before any response.',
+  version: 2,
+  description: 'What an error message says about the failure: its category, which connection failure it is if any, and whether it is a spent account, a rate limit, an over-long context, a transient network fault, a provider that cannot serve, or a failure before any response.',
   accuracyFloor: 0.9,
   items: {
     category: oneOf('Which kind of failure does this error describe?', CATEGORY_OPTIONS, LOW.confidence),
@@ -53,6 +64,7 @@ export const failureReading = defineBattery({
     context_exceeded: yesNo('Does this error say the prompt, input or conversation is too long for the model\'s context window?', LOW.yesNo),
     transient_network: yesNo('Does this error describe a network or connection failure, such as a refused, reset or dropped connection, a DNS failure, a closed socket, or a network timeout?', LOW.yesNo),
     provider_unusable: yesNo('Does this error show the provider cannot serve requests as configured: credentials rejected, no credit, access denied, or the service cannot be reached at all?', LOW.yesNo),
+    connection_failure: oneOf('Which connection failure does this error describe: the connection was refused, the connection or request timed out, the host name could not be resolved (DNS), or none of these?', CONNECTION_OPTIONS, LOW.confidence),
     before_response: yesNo('Did the request fail before any response came back from the server, as a network or fetch failure does, rather than the server answering with an error?', LOW.yesNo),
   },
   fixtures: [
@@ -69,7 +81,7 @@ export const failureReading = defineBattery({
     {
       name: 'per-minute rate limit',
       state: 'HTTP status: 429\nMessage: Rate limit reached for requests per minute. Please try again in 20s.',
-      expect: { category: 'rate_limit', billing: 'no', rate_limited: 'yes', context_exceeded: 'no', provider_unusable: 'no', before_response: 'no' },
+      expect: { category: 'rate_limit', billing: 'no', rate_limited: 'yes', context_exceeded: 'no', provider_unusable: 'no', before_response: 'no', connection_failure: 'none' },
     },
     {
       name: 'anthropic prompt too long',
@@ -94,7 +106,7 @@ export const failureReading = defineBattery({
     {
       name: 'connection refused',
       state: 'Message: connect ECONNREFUSED 127.0.0.1:11434',
-      expect: { category: 'network', transient_network: 'yes', provider_unusable: 'yes', before_response: 'yes' },
+      expect: { category: 'network', transient_network: 'yes', provider_unusable: 'yes', before_response: 'yes', connection_failure: 'refused' },
     },
     {
       name: 'invalid api key',
@@ -129,7 +141,7 @@ export const failureReading = defineBattery({
     {
       name: 'request timed out',
       state: 'Message: Request timed out after 60000ms',
-      expect: { category: 'timeout', transient_network: 'yes', billing: 'no' },
+      expect: { category: 'timeout', transient_network: 'yes', billing: 'no', connection_failure: 'timed_out' },
     },
     {
       name: 'package install cut off mid-download',
@@ -149,7 +161,42 @@ export const failureReading = defineBattery({
     {
       name: 'tool failure unrelated to transport',
       state: 'Message: File not writable: /etc/hosts is owned by root',
-      expect: { transient_network: 'no', before_response: 'no', rate_limited: 'no', provider_unusable: 'no' },
+      expect: { transient_network: 'no', before_response: 'no', rate_limited: 'no', provider_unusable: 'no', connection_failure: 'none' },
+    },
+    {
+      name: 'dns lookup failure',
+      state: 'Error code: ENOTFOUND\nMessage: getaddrinfo ENOTFOUND api.example-llm.invalid',
+      expect: { category: 'network', transient_network: 'yes', before_response: 'yes', connection_failure: 'dns_failed' },
+    },
+    {
+      name: 'temporary name resolution failure',
+      state: 'Message: getaddrinfo EAI_AGAIN openrouter.ai',
+      expect: { transient_network: 'yes', connection_failure: 'dns_failed' },
+    },
+    {
+      name: 'connect timeout errno',
+      state: 'Error code: ETIMEDOUT\nMessage: connect ETIMEDOUT 10.0.0.12:443',
+      expect: { category: 'timeout', transient_network: 'yes', connection_failure: 'timed_out' },
+    },
+    {
+      name: 'connection refused in words',
+      state: 'Message: Unable to connect. Is the computer able to access the url? The server at localhost:1234 refused the connection.',
+      expect: { transient_network: 'yes', connection_failure: 'refused' },
+    },
+    {
+      name: 'aborted request',
+      state: 'Error type: AbortError\nMessage: The operation was aborted due to timeout',
+      expect: { category: 'timeout', connection_failure: 'timed_out' },
+    },
+    {
+      name: 'server error names no connection failure',
+      state: 'HTTP status: 500\nMessage: Internal server error while processing the completion',
+      expect: { category: 'service', transient_network: 'no', connection_failure: 'none' },
+    },
+    {
+      name: 'model not found is not a host lookup failure',
+      state: 'HTTP status: 404\nMessage: model "llama3:70b" not found, try pulling it first',
+      expect: { category: 'not_found', connection_failure: 'none' },
     },
   ],
 });
@@ -175,9 +222,12 @@ export interface FailureConclusions {
   readonly transientNetwork: boolean;
   readonly providerUnusable: boolean;
   readonly beforeResponse: boolean;
+  /** The connection failure the wording describes; 'none' unless the reading is strong enough to act on. */
+  readonly connection: ConnectionFailure;
   readonly readings: {
     readonly category: ChoiceReading<FailureCategory>;
-  } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading };
+    readonly connection_failure: ChoiceReading<ConnectionFailure>;
+  } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading };
 }
 
 /** Long provider bodies say what they mean in their opening; the rest is request echo. */
@@ -227,6 +277,7 @@ export function readFailure(evidence: FailureEvidence, site: string): Promise<Fa
       transientNetwork: holds(r.transient_network),
       providerUnusable: holds(r.provider_unusable),
       beforeResponse: holds(r.before_response),
+      connection: r.connection_failure.outcome === 'act' ? r.connection_failure.choice : 'none',
       readings: r,
     };
   })());
@@ -290,11 +341,44 @@ export function categoryDependsOnWording(
   return fixed === undefined || fixed === 'unknown' || provisional(fixed, status, fromProvider);
 }
 
+/** The category a connection failure puts an error in. */
+const CONNECTION_CATEGORIES: Readonly<Record<Exclude<ConnectionFailure, 'none'>, DaemonErrorCategory>> = {
+  refused: 'network',
+  timed_out: 'timeout',
+  dns_failed: 'network',
+};
+
+/**
+ * The display summary for a connection failure the reading found, naming the
+ * provider when the error carries one; undefined for 'none', so the error's
+ * own message is shown.
+ */
+export function connectionSummary(connection: ConnectionFailure | undefined, provider?: string): string | undefined {
+  switch (connection) {
+    case 'refused':
+      return `Cannot connect to ${provider ?? 'the provider'}. Check whether the service is reachable.`;
+    case 'timed_out':
+      return 'Connection timed out before the request completed.';
+    case 'dns_failed':
+      return `DNS lookup failed for ${provider ?? 'the provider'}. Check the base URL and network.`;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Whether the wording can change the display summary: a connection failure
+ * gets no HTTP response, so only an error without a status can be one.
+ */
+export function summaryDependsOnWording(status: number | undefined): boolean {
+  return status === undefined;
+}
+
 /**
  * Settles a category from what structure fixed and what the wording says: a
  * billing reading turns a provider's provisional 400 or 429 into billing;
  * otherwise the structural category stands, and the reading fills in only
- * where structure says nothing.
+ * where structure says nothing, a connection failure it names first.
  */
 export function settleCategory(
   fixed: DaemonErrorCategory | undefined,
@@ -304,6 +388,7 @@ export function settleCategory(
 ): DaemonErrorCategory {
   if (failure?.billing === true && provisional(fixed, status, fromProvider)) return 'billing';
   if (fixed !== undefined && fixed !== 'unknown') return fixed;
+  if (failure !== undefined && failure.connection !== 'none') return CONNECTION_CATEGORIES[failure.connection];
   return failure?.category ?? 'unknown';
 }
 

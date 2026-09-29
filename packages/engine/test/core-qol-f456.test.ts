@@ -9,8 +9,13 @@ import {
   summarizeError,
   toProviderError,
 } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { useFailureReadings } from './_helpers/failure-readings.ts';
+
+/** What Jev reads in a refused connection's wording. */
+const REFUSED = [['ECONNREFUSED', { category: 'network', connection: 'refused', transientNetwork: true, beforeResponse: true }]] as const;
 
 describe('F6 - ProviderError semantics', () => {
+  useFailureReadings(REFUSED);
   it('keeps rate-limit retries recoverable and parses retry-after', () => {
     const err = new ProviderError('Rate limited retry-after: 30', 429);
     expect(err.category).toBe('rate_limit');
@@ -36,8 +41,8 @@ describe('F6 - ProviderError semantics', () => {
 
   it('classifies timeout and network failures without collapsing them together', async () => {
     expect(new ProviderError('Request Timeout', 408).category).toBe('timeout');
-    // With no status the error's own category stays open; the errno in the
-    // message settles it as network before any wording is read.
+    // With no status the error's own category stays open, and Jev reads a
+    // refused connection in the wording.
     const refused = new ProviderError('connect ECONNREFUSED 127.0.0.1:11434');
     expect((await readNormalizedError(refused, { site: 'test.f6' })).category).toBe('network');
   });
@@ -62,6 +67,7 @@ describe('F6 - ProviderError semantics', () => {
 });
 
 describe('F6 - error normalization and display', () => {
+  useFailureReadings(REFUSED);
   it('formats provider errors with preserved metadata and broad hints', () => {
     const err = new ProviderError('inceptionlabs chat request failed 401: token rejected by upstream', {
       statusCode: 401,
@@ -85,12 +91,15 @@ describe('F6 - error normalization and display', () => {
     expect(summary).toContain('model_not_found');
   });
 
-  it('normalizes network errors into a descriptive summary and category', () => {
-    const normalized = normalizeError(new Error('connect ECONNREFUSED 127.0.0.1:11434'), {
-      provider: 'ollama',
-    });
-    expect(normalized.category).toBe('network');
-    expect(normalized.summary).toContain('Cannot connect to ollama');
+  it('normalizes network errors into a descriptive summary and category where the wording is read', async () => {
+    const error = new Error('connect ECONNREFUSED 127.0.0.1:11434');
+    const read = await readNormalizedError(error, { provider: 'ollama', site: 'test.f6' });
+    expect(read.category).toBe('network');
+    expect(read.summary).toContain('Cannot connect to ollama');
+    // The synchronous path reads nothing: it shows the error's own message.
+    const shown = normalizeError(error, { provider: 'ollama' });
+    expect(shown.category).toBe('unknown');
+    expect(shown.summary).toBe('connect ECONNREFUSED 127.0.0.1:11434');
   });
 
   it('formats generic errors through the same display path', () => {
@@ -129,11 +138,13 @@ describe('F6 - error normalization and display', () => {
     });
 
     expect(err).toBeInstanceOf(ProviderError);
-    expect(err.category).toBe('network');
+    // Nothing structural names the failure, so the rewrapped error leaves the
+    // category for the wording to be read where it matters.
+    expect(err.category).toBe('unknown');
+    expect(err.message).toBe('connect ECONNREFUSED 127.0.0.1:11434');
     expect(err.provider).toBe('ollama');
     expect(err.operation).toBe('chat');
     expect(err.phase).toBe('request');
-    expect(err.guidance).toContain('Check connectivity');
   });
 
   it('preserves upstream provider metadata when rewrapping provider errors', () => {

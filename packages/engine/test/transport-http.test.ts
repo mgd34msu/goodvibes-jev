@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { ContractError, GoodVibesSdkError, HttpStatusError } from '../errors/dist/index.js';
 import { createHttpTransport, openServerSentEventStream } from '../transport-http/dist/index.js';
 import { createTransportError, createNetworkTransportError } from '../transport-http/src/http-core.js';
+import { normalizeTransportError } from '../transport-http/src/http.js';
+import { ConfigurationError as SourceConfigurationError, ContractError as SourceContractError } from '../errors/src/index.js';
 import { settleEvents } from './_helpers/test-timeout.js';
 
 function createFetchStub(factory: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): typeof fetch {
@@ -33,6 +35,22 @@ function createSseResponse(chunks: readonly string[], status = 200): Response {
     },
   });
 }
+
+describe('normalizeTransportError passes typed errors through and matches no message text', () => {
+  test('the typed configuration and path-parameter errors http-core throws come back as they are', () => {
+    const configuration = new SourceConfigurationError('Transport baseUrl is required. Pass a non-empty baseUrl string.');
+    const contract = new SourceContractError('Missing required path parameter "id". Ensure the input object includes it.');
+    expect(normalizeTransportError(configuration)).toBe(configuration);
+    expect(normalizeTransportError(contract)).toBe(contract);
+  });
+
+  test('a plain Error is returned unchanged whatever its message says', () => {
+    for (const message of ['Fetch implementation is required', 'Transport baseUrl is required', 'Missing required path parameter "id"']) {
+      const plain = new Error(message);
+      expect(normalizeTransportError(plain)).toBe(plain);
+    }
+  });
+});
 
 describe('transport-http structured throws', () => {
   test('createTransportError(404) returns HttpStatusError instance with kind not-found', () => {

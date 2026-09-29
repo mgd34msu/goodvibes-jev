@@ -8,7 +8,7 @@
  * - packages/daemon-sdk/src/http-policy.ts: resolveAuthenticatedPrincipal,
  *   buildMissingScopeBody, resolvePrivateHostFetchOptions (all branches)
  * - packages/daemon-sdk/src/error-response.ts: buildErrorResponseBody (all branches),
- *   jsonErrorResponse, summarizeErrorForRecord; network error patterns;
+ *   jsonErrorResponse, summarizeErrorForRecord; connection-failure readings;
  *   string/generic error path; GoodVibesSdkError path
  */
 import { describe, expect, test } from 'bun:test';
@@ -327,26 +327,47 @@ describe('error-response, buildErrorResponseBody, generic Error', () => {
   });
 });
 
-describe('error-response, buildErrorResponseBody, network error patterns', () => {
-  test('ECONNREFUSED pattern maps to network category', () => {
+describe('error-response, connection failures read by Jev', () => {
+  const log = useFailureReadings([
+    ['127.0.0.1:3210', { category: 'network', connection: 'refused' }],
+    ['handshake stalled', { category: 'timeout', connection: 'timed_out' }],
+    ['api.example.com', { category: 'network', connection: 'dns_failed' }],
+    ['upstream said no', { category: 'service', connection: 'none' }],
+  ]);
+
+  test('the synchronous body shows the error\'s own message and asks nothing', () => {
     const body = buildErrorResponseBody(new Error('ECONNREFUSED 127.0.0.1:3210'));
-    expect(body.category).toBe('network');
-    expect(body.error).toMatch(/Cannot connect/);
+    expect(body.error).toBe('ECONNREFUSED 127.0.0.1:3210');
+    expect(body.category).toBe('unknown');
+    expect(log.requests).toHaveLength(0);
   });
 
-  test('ETIMEDOUT pattern maps to timeout category', () => {
-    const body = buildErrorResponseBody(new Error('ETIMEDOUT: connection timed out'));
+  test('refused: network, with the cannot-connect summary', async () => {
+    const body = await readErrorResponseBody(new Error('connect ECONNREFUSED 127.0.0.1:3210'));
+    expect(body.category).toBe('network');
+    expect(body.error).toBe('Cannot connect to the provider. Check whether the service is reachable.');
+  });
+
+  test('timed out: timeout, with the timed-out summary', async () => {
+    const body = await readErrorResponseBody(new Error('companion handshake stalled'));
     expect(body.category).toBe('timeout');
+    expect(body.error).toBe('Connection timed out before the request completed.');
   });
 
-  test('ENOTFOUND pattern maps to network category', () => {
-    const body = buildErrorResponseBody(new Error('ENOTFOUND api.example.com'));
+  test('DNS failure: network, with the DNS summary', async () => {
+    const body = await readErrorResponseBody(new Error('lookup of api.example.com gave nothing'));
     expect(body.category).toBe('network');
-    expect(body.error).toMatch(/DNS lookup failed/);
+    expect(body.error).toMatch(/^DNS lookup failed for the provider/);
   });
 
-  test('network error with provider includes provider in message', () => {
-    const body = buildErrorResponseBody({
+  test('none: the error\'s own message stays the summary', async () => {
+    const body = await readErrorResponseBody(new Error('upstream said no'));
+    expect(body.category).toBe('service');
+    expect(body.error).toBe('upstream said no');
+  });
+
+  test('the summary names the provider the error carries', async () => {
+    const body = await readErrorResponseBody({
       message: 'ECONNREFUSED 127.0.0.1:3210',
       provider: 'inceptionlabs',
       code: 'CONN_ERR',
@@ -354,6 +375,19 @@ describe('error-response, buildErrorResponseBody, network error patterns', () =>
     });
     expect(body.category).toBe('network');
     expect(body.error).toMatch(/inceptionlabs/);
+  });
+
+  test('an explicit category stands; the connection reading only sets the summary', async () => {
+    const body = await readErrorResponseBody({ message: 'ECONNREFUSED 127.0.0.1:3210', category: 'config' });
+    expect(body.category).toBe('config');
+    expect(body.error).toMatch(/^Cannot connect/);
+  });
+
+  test('an error with an HTTP status is not a connection failure and is not read for one', async () => {
+    const body = await readErrorResponseBody({ message: 'ECONNREFUSED 127.0.0.1:3210 behind the proxy', status: 502 });
+    expect(body.category).toBe('service');
+    expect(body.error).toBe('ECONNREFUSED 127.0.0.1:3210 behind the proxy');
+    expect(log.requests).toHaveLength(0);
   });
 });
 

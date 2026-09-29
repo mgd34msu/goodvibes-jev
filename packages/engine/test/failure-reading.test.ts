@@ -18,6 +18,7 @@ import { readNormalizedError } from '../sdk/src/platform/utils/error-display.ts'
 function billingPort(category = 'billing', confidence = 0.95) {
   return fakePort((name: string, question: Question) => {
     if (name === 'category') return choiceAnswer(question, category, confidence);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', confidence);
     return noulAnswer(name === 'billing' || name === 'provider_unusable' ? 0.95 : 0.05);
   });
 }
@@ -77,7 +78,7 @@ describe('the reading', () => {
     const second = await readFailure(evidence, 'test.site');
     expect(requests).toHaveLength(1);
     expect(Object.keys(requests[0]!.questions).sort()).toEqual(
-      ['before_response', 'billing', 'category', 'context_exceeded', 'provider_unusable', 'rate_limited', 'transient_network'],
+      ['before_response', 'billing', 'category', 'connection_failure', 'context_exceeded', 'provider_unusable', 'rate_limited', 'transient_network'],
     );
     expect(requests[0]!.state).toBe('HTTP status: 400\nMessage: Your credit balance is too low to access the API.');
     expect(requests[0]!.context?.site).toBe('test.site');
@@ -97,7 +98,7 @@ describe('the reading', () => {
   });
 
   test('a billing reading turns only a provider\'s provisional 400 into billing', () => {
-    const failure = { billing: true, category: 'billing' } as Parameters<typeof settleCategory>[3];
+    const failure = { billing: true, category: 'billing', connection: 'none' } as Parameters<typeof settleCategory>[3];
     expect(settleCategory('bad_request', 400, true, failure)).toBe('billing');
     expect(settleCategory('bad_request', 400, false, failure)).toBe('bad_request');
     expect(settleCategory('authentication', 400, true, failure)).toBe('authentication');

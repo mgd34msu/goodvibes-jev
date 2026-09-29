@@ -6,13 +6,13 @@
  * Each entry pairs a piece of error wording with what Jev is expected to read
  * in it. A request is answered by the first entry whose wording appears in the
  * request's `Message:` line; wording no entry names reads as category
- * `unknown` with every yes/no question answered no. The readings are strong
+ * `unknown`, connection failure `none`, with every yes/no question answered no. The readings are strong
  * (well past the low-stakes bands), so the battery acts on every one.
  */
 import { afterEach, beforeEach } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { forgetFailureReadings, installJudgmentPort, type FailureCategory } from '@goodvibes-jev/engine/errors';
+import { forgetFailureReadings, installJudgmentPort, type ConnectionFailure, type FailureCategory } from '@goodvibes-jev/engine/errors';
 
 export interface FailureWordingReading {
   readonly category?: FailureCategory;
@@ -22,6 +22,7 @@ export interface FailureWordingReading {
   readonly transientNetwork?: boolean;
   readonly providerUnusable?: boolean;
   readonly beforeResponse?: boolean;
+  readonly connection?: ConnectionFailure;
 }
 
 export type FailureWordingTable = ReadonlyArray<readonly [wording: string, reading: FailureWordingReading]>;
@@ -47,6 +48,7 @@ export function failureReadingsPort(table: FailureWordingTable) {
     const message = messageOf(state);
     const reading = table.find(([wording]) => message.includes(wording))?.[1] ?? {};
     if (name === 'category') return choiceAnswer(question, reading.category ?? 'unknown', 0.95);
+    if (name === 'connection_failure') return choiceAnswer(question, reading.connection ?? 'none', 0.95);
     const key = YES_NO[name];
     return noulAnswer(key !== undefined && reading[key] === true ? 0.97 : 0.03);
   });

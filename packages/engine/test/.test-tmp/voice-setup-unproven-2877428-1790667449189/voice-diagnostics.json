@@ -1,0 +1,14 @@
+{
+  "entries": [
+    {
+      "at": "2026-09-29T07:37:29.189Z",
+      "operation": "provision-proof",
+      "route": "in-process",
+      "ok": false,
+      "provider": "piper + whisper-cpp",
+      "configSource": "the managed voice runtime just installed",
+      "error": "whisper-cli: No such file or directory",
+      "detail": "The managed speech-to-text engine (whisper-cpp) could not transcribe the spoken test phrase."
+    }
+  ]
+}

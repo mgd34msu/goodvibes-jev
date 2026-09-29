@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "at": "2026-09-29T03:07:40.246Z",
+      "operation": "provision-proof",
+      "route": "in-process",
+      "ok": true,
+      "provider": "piper + whisper-cpp",
+      "configSource": "the managed voice runtime just installed",
+      "detail": "Spoke the test phrase with piper and heard it back through whisper-cpp."
+    }
+  ]
+}

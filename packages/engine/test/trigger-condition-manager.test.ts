@@ -194,8 +194,8 @@ describe('the manager applies the ladder and the breaker to a failing check', ()
     const parked = manager.get('queue-depth');
     expect(parked?.state).toBe('circuit-open');
     expect(parked?.strikes).toBe(5);
-    // The stored error is the human-readable summary, not the raw code.
-    expect(parked?.lastError).toContain('Cannot connect');
+    // The stored error is the summarized message of the failing check.
+    expect(parked?.lastError).toBe('ECONNREFUSED');
     expect(parked?.runs.at(-1)?.detail).toContain('breaker opened');
   });
 

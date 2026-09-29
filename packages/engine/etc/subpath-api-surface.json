@@ -374,6 +374,11 @@
       "text": "ConfiguredViaSchema: z.ZodEnum<{ anonymous: \"anonymous\"; subscription: \"subscription\"; secrets: \"secrets\"; env: \"env\"; }> ;; via ZodEnum = export interface ZodEnum< out T extends util.EnumLike = util.EnumLike> extends _ZodType<core.$ZodEnumInternals<T>>, core.$ZodEnum<T> { \"~standard\": ZodStandardSchemaWithJSON<this>; enum: T; options: Array<T[keyof T]>; extract<const U extends readonly (keyof T)[]>(values: U, params?: string | core.$ZodEnumParams): ZodEnum<util.Flatten<Pick<T, U[number]>>>; exclude<const U extends readonly (keyof T)[]>(values: U, params?: string | core.$ZodEnumParams): ZodEnum<util.Flatten<Omit<T, U[number]>>>; }"
     },
     {
+      "name": "ConnectionFailure",
+      "kind": "type",
+      "text": "export type ConnectionFailure = keyof typeof CONNECTION_OPTIONS;"
+    },
+    {
       "name": "ConnectionState",
       "kind": "type",
       "text": "export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'failed';"
@@ -892,13 +897,14 @@
         "beforeResponse",
         "billing",
         "category",
+        "connection",
         "contextExceeded",
         "providerUnusable",
         "rateLimited",
         "readings",
         "transientNetwork"
       ],
-      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "FailureEvidence",
@@ -2799,6 +2805,11 @@
       "text": "export declare function computeBackoffDelay(attempt: number, policy: ResolvedBackoffPolicy): number;"
     },
     {
+      "name": "connectionSummary",
+      "kind": "function",
+      "text": "export declare function connectionSummary(connection: ConnectionFailure | undefined, provider?: string): string | undefined;"
+    },
+    {
       "name": "createBrowserGoodVibesSdk",
       "kind": "function",
       "text": "export declare function createBrowserGoodVibesSdk(options?: BrowserGoodVibesSdkOptions): GoodVibesSdk;"
@@ -2976,7 +2987,7 @@
     {
       "name": "failureReading",
       "kind": "const",
-      "text": "failureReading: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly category: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly authentication: \"Credentials were missing, invalid or expired (API key, token, login)\"; readonly authorization: \"The caller is known but not allowed: forbidden, access denied, no access to this model\"; readonly billing: \"The account cannot pay: credit balance too low, credits or funds exhausted, payment required, plan quota spent\"; readonly rate_limit: \"Too many requests or a temporary usage limit; waiting and retrying would succeed\"; readonly timeout: \"The request or connection timed out or passed a deadline\"; readonly network: \"The connection failed: refused, reset, host not found, DNS, TLS or certificate trouble, fetch failed\"; readonly not_found: \"The model, endpoint or resource does not exist or is not supported\"; readonly bad_request: \"The request itself was invalid: malformed input, bad argument, unsupported parameter, schema violation\"; readonly protocol: \"The response was incomplete or unreadable: invalid JSON, stream ended early, no response body\"; readonly service: \"The server failed or is overloaded or temporarily unavailable\"; readonly unknown: \"None of these, or the message does not say\"; }>; readonly billing: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly rate_limited: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly context_exceeded: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly transient_network: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly provider_unusable: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly before_response: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
+      "text": "failureReading: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly category: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly authentication: \"Credentials were missing, invalid or expired (API key, token, login)\"; readonly authorization: \"The caller is known but not allowed: forbidden, access denied, no access to this model\"; readonly billing: \"The account cannot pay: credit balance too low, credits or funds exhausted, payment required, plan quota spent\"; readonly rate_limit: \"Too many requests or a temporary usage limit; waiting and retrying would succeed\"; readonly timeout: \"The request or connection timed out or passed a deadline\"; readonly network: \"The connection failed: refused, reset, host not found, DNS, TLS or certificate trouble, fetch failed\"; readonly not_found: \"The model, endpoint or resource does not exist or is not supported\"; readonly bad_request: \"The request itself was invalid: malformed input, bad argument, unsupported parameter, schema violation\"; readonly protocol: \"The response was incomplete or unreadable: invalid JSON, stream ended early, no response body\"; readonly service: \"The server failed or is overloaded or temporarily unavailable\"; readonly unknown: \"None of these, or the message does not say\"; }>; readonly billing: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly rate_limited: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly context_exceeded: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly transient_network: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly provider_unusable: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly connection_failure: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly refused: \"The connection was refused: nothing accepted the connection at that address and port\"; readonly timed_out: \"The connection or the request timed out, or was aborted, before it completed\"; readonly dns_failed: \"The host name could not be resolved: DNS lookup failed or the host was not found\"; readonly none: \"None of these: the error is not one of these connection failures, or the server answered\"; }>; readonly before_response: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
     },
     {
       "name": "failureState",
@@ -3272,6 +3283,11 @@
       "name": "structuredTransience",
       "kind": "function",
       "text": "export declare function structuredTransience(error: unknown): FailureTransience | undefined;"
+    },
+    {
+      "name": "summaryDependsOnWording",
+      "kind": "function",
+      "text": "export declare function summaryDependsOnWording(status: number | undefined): boolean;"
     },
     {
       "name": "transienceFromReading",
@@ -5244,7 +5260,7 @@
     {
       "name": "JsonErrorResponseOptions",
       "kind": "interface",
-      "text": "export interface JsonErrorResponseOptions { readonly status?: number | undefined; readonly fallbackMessage?: string | undefined; readonly source?: DaemonErrorSource | undefined; readonly isPrivileged?: boolean | undefined; readonly failure?: FailureConclusions | undefined; } ;; via DaemonErrorSource = export type DaemonErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown'; ;; FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; }"
+      "text": "export interface JsonErrorResponseOptions { readonly status?: number | undefined; readonly fallbackMessage?: string | undefined; readonly source?: DaemonErrorSource | undefined; readonly isPrivileged?: boolean | undefined; readonly failure?: FailureConclusions | undefined; } ;; via DaemonErrorSource = export type DaemonErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown'; ;; FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; }"
     },
     {
       "name": "JsonRecord",
@@ -6513,6 +6529,11 @@
       "text": "export declare class ConfigurationError extends GoodVibesSdkError { static [Symbol.hasInstance](value: unknown): boolean; constructor(message: string, options?: GoodVibesSdkErrorOptions); }"
     },
     {
+      "name": "ConnectionFailure",
+      "kind": "type",
+      "text": "export type ConnectionFailure = keyof typeof CONNECTION_OPTIONS;"
+    },
+    {
       "name": "ContractError",
       "kind": "class",
       "publicMembers": [
@@ -6558,13 +6579,14 @@
         "beforeResponse",
         "billing",
         "category",
+        "connection",
         "contextExceeded",
         "providerUnusable",
         "rateLimited",
         "readings",
         "transientNetwork"
       ],
-      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+      "text": "export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; via ChoiceReading = export interface ChoiceReading<O extends string = string> { readonly kind: 'choice'; readonly choice: O; readonly confidence: number; readonly probabilities: Readonly<Record<O, number>>; readonly outcome: Outcome; } ;; Exclude = type Exclude<T, U> = T extends U ? never : T; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
     },
     {
       "name": "FailureEvidence",
@@ -6703,6 +6725,11 @@
       "text": "export declare function categoryForStatus(status: number | undefined): DaemonErrorCategory | undefined;"
     },
     {
+      "name": "connectionSummary",
+      "kind": "function",
+      "text": "export declare function connectionSummary(connection: ConnectionFailure | undefined, provider?: string): string | undefined;"
+    },
+    {
       "name": "createHttpStatusError",
       "kind": "function",
       "text": "export declare function createHttpStatusError(status: number, url: string, method: string, body: unknown, fallbackHint?: string): HttpStatusError;"
@@ -6710,7 +6737,7 @@
     {
       "name": "failureReading",
       "kind": "const",
-      "text": "failureReading: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly category: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly authentication: \"Credentials were missing, invalid or expired (API key, token, login)\"; readonly authorization: \"The caller is known but not allowed: forbidden, access denied, no access to this model\"; readonly billing: \"The account cannot pay: credit balance too low, credits or funds exhausted, payment required, plan quota spent\"; readonly rate_limit: \"Too many requests or a temporary usage limit; waiting and retrying would succeed\"; readonly timeout: \"The request or connection timed out or passed a deadline\"; readonly network: \"The connection failed: refused, reset, host not found, DNS, TLS or certificate trouble, fetch failed\"; readonly not_found: \"The model, endpoint or resource does not exist or is not supported\"; readonly bad_request: \"The request itself was invalid: malformed input, bad argument, unsupported parameter, schema violation\"; readonly protocol: \"The response was incomplete or unreadable: invalid JSON, stream ended early, no response body\"; readonly service: \"The server failed or is overloaded or temporarily unavailable\"; readonly unknown: \"None of these, or the message does not say\"; }>; readonly billing: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly rate_limited: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly context_exceeded: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly transient_network: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly provider_unusable: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly before_response: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
+      "text": "failureReading: import(\"@goodvibes-jev/judgment/decisions\").Battery<{ readonly category: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly authentication: \"Credentials were missing, invalid or expired (API key, token, login)\"; readonly authorization: \"The caller is known but not allowed: forbidden, access denied, no access to this model\"; readonly billing: \"The account cannot pay: credit balance too low, credits or funds exhausted, payment required, plan quota spent\"; readonly rate_limit: \"Too many requests or a temporary usage limit; waiting and retrying would succeed\"; readonly timeout: \"The request or connection timed out or passed a deadline\"; readonly network: \"The connection failed: refused, reset, host not found, DNS, TLS or certificate trouble, fetch failed\"; readonly not_found: \"The model, endpoint or resource does not exist or is not supported\"; readonly bad_request: \"The request itself was invalid: malformed input, bad argument, unsupported parameter, schema violation\"; readonly protocol: \"The response was incomplete or unreadable: invalid JSON, stream ended early, no response body\"; readonly service: \"The server failed or is overloaded or temporarily unavailable\"; readonly unknown: \"None of these, or the message does not say\"; }>; readonly billing: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly rate_limited: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly context_exceeded: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly transient_network: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly provider_unusable: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; readonly connection_failure: import(\"@goodvibes-jev/judgment/decisions\").ChoiceItem<{ readonly refused: \"The connection was refused: nothing accepted the connection at that address and port\"; readonly timed_out: \"The connection or the request timed out, or was aborted, before it completed\"; readonly dns_failed: \"The host name could not be resolved: DNS lookup failed or the host was not found\"; readonly none: \"None of these: the error is not one of these connection failures, or the server answered\"; }>; readonly before_response: import(\"@goodvibes-jev/judgment/decisions\").YesNoItem; }>"
     },
     {
       "name": "failureState",
@@ -6771,6 +6798,11 @@
       "name": "structuredTransience",
       "kind": "function",
       "text": "export declare function structuredTransience(error: unknown): FailureTransience | undefined;"
+    },
+    {
+      "name": "summaryDependsOnWording",
+      "kind": "function",
+      "text": "export declare function summaryDependsOnWording(status: number | undefined): boolean;"
     },
     {
       "name": "transienceFromReading",
@@ -66283,10 +66315,24 @@
     {
       "name": "readErrorFailure",
       "kind": "function",
-      "text": "export declare function readErrorFailure(err: Error, site: string): Promise<FailureConclusions>; ;; via Error = interface Error { name: string; message: string; stack?: string; } ;; FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function readErrorFailure(err: Error, site: string): Promise<FailureConclusions>; ;; via Error = interface Error { name: string; message: string; stack?: string; } ;; FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     }
   ],
   "./platform/utils": [
+    {
+      "name": "AccountIdentity",
+      "kind": "interface",
+      "required": [
+        "homeDirectory",
+        "userName"
+      ],
+      "text": "export interface AccountIdentity { readonly homeDirectory: string; readonly userName: string; }"
+    },
+    {
+      "name": "AccountIdentityReader",
+      "kind": "type",
+      "text": "export type AccountIdentityReader = () => AccountIdentity;"
+    },
     {
       "name": "ActivityLogger",
       "kind": "class",
@@ -66333,7 +66379,7 @@
     {
       "name": "ErrorNormalizationOptions",
       "kind": "interface",
-      "text": "export interface ErrorNormalizationOptions { readonly provider?: string | undefined; readonly fallbackMessage?: string | undefined; readonly source?: PlatformErrorSource | undefined; readonly failure?: FailureConclusions | undefined; } ;; via FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly readings: { readonly category: ChoiceReading<FailureCategory>; } & { readonly [K in Exclude<FailureQuestion, 'category'>]: YesNoReading; }; } ;; PlatformErrorSource = export type PlatformErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown';"
+      "text": "export interface ErrorNormalizationOptions { readonly provider?: string | undefined; readonly fallbackMessage?: string | undefined; readonly source?: PlatformErrorSource | undefined; readonly failure?: FailureConclusions | undefined; } ;; via FailureConclusions = export interface FailureConclusions { readonly category: FailureCategory; readonly billing: boolean; readonly rateLimited: boolean; readonly contextExceeded: boolean; readonly transientNetwork: boolean; readonly providerUnusable: boolean; readonly beforeResponse: boolean; readonly connection: ConnectionFailure; readonly readings: { readonly category: ChoiceReading<FailureCategory>; readonly connection_failure: ChoiceReading<ConnectionFailure>; } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading; }; } ;; PlatformErrorSource = export type PlatformErrorSource = 'provider' | 'tool' | 'transport' | 'config' | 'permission' | 'runtime' | 'render' | 'acp' | 'unknown';"
     },
     {
       "name": "FlushOptions",
@@ -66348,11 +66394,6 @@
         "workingDirectory"
       ],
       "text": "export interface LoadSystemPromptOptions { readonly workingDirectory: string; readonly homeDirectory: string; readonly getConfigPath?: (() => string | undefined) | undefined; readonly argv?: readonly string[] | undefined; }"
-    },
-    {
-      "name": "MIN_IMAGE_BYTES",
-      "kind": "const",
-      "text": "MIN_IMAGE_BYTES = 100"
     },
     {
       "name": "MarkdownDisclosure",
@@ -66600,6 +66641,11 @@
       "text": "export declare function interpolateColor(startHex: string, endHex: string, factor: number): string;"
     },
     {
+      "name": "isImageData",
+      "kind": "function",
+      "text": "export declare function isImageData(data: Uint8Array, mediaType: string): boolean; ;; via Uint8Array = interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> { readonly BYTES_PER_ELEMENT: number; readonly buffer: TArrayBuffer; readonly byteLength: number; readonly byteOffset: number; copyWithin(target: number, start: number, end?: number): this; every(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; fill(value: number, start?: number, end?: number): this; filter(predicate: (value: number, index: number, array: this) => any, thisArg?: any): Uint8Array<ArrayBuffer>; find(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number | undefined; findIndex(predicate: (value: number, index: number, obj: this) => boolean, thisArg?: any): number; forEach(callbackfn: (value: number, index: number, array: this) => void, thisArg?: any): void; indexOf(searchElement: number, fromIndex?: number): number; join(separator?: string): string; lastIndexOf(searchElement: number, fromIndex?: number): number; readonly length: number; map(callbackfn: (value: number, index: number, array: this) => number, thisArg?: any): Uint8Array<ArrayBuffer>; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduce<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number): number; reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: this) => number, initialValue: number): number; reduceRight<U>(callbackfn: (previousValue: U, currentValue: number, currentIndex: number, array: this) => U, initialValue: U): U; reverse(): this; set(array: ArrayLike<number>, offset?: number): void; slice(start?: number, end?: number): Uint8Array<ArrayBuffer>; some(predicate: (value: number, index: number, array: this) => unknown, thisArg?: any): boolean; sort(compareFn?: (a: number, b: number) => number): this; subarray(begin?: number, end?: number): Uint8Array<TArrayBuffer>; toLocaleString(): string; toString(): string; valueOf(): this; [index: number]: number; }"
+    },
+    {
       "name": "isNotebookFile",
       "kind": "function",
       "text": "export declare function isNotebookFile(filePath: string): boolean;"
@@ -66743,6 +66789,11 @@
       "name": "redactedErrorMessage",
       "kind": "function",
       "text": "export declare function redactedErrorMessage(error: unknown): string;"
+    },
+    {
+      "name": "registerAccountIdentityRedaction",
+      "kind": "function",
+      "text": "export declare function registerAccountIdentityRedaction(reader: AccountIdentityReader | null): void;"
     },
     {
       "name": "registerProfileRedactionValues",

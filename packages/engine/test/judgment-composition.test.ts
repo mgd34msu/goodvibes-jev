@@ -24,7 +24,7 @@ interface SystemOneCall {
   readonly body: { readonly model: string; readonly questions: Readonly<Record<string, { readonly type: string; readonly criteria?: unknown }>> };
 }
 
-/** A System One endpoint answering every failure question as a spent-account error. */
+/** A System One endpoint answering every failure question as a spent-account error (no connection failure). */
 function startFakeSystemOne(): { url: string; calls: SystemOneCall[]; stop(): void } {
   const calls: SystemOneCall[] = [];
   const server = Bun.serve({
@@ -37,8 +37,9 @@ function startFakeSystemOne(): { url: string; calls: SystemOneCall[]; stop(): vo
       const answers = Object.fromEntries(Object.entries(body.questions).map(([name, question]) => {
         if (question.type === 'choice') {
           const options = Object.keys(question.criteria as Record<string, string>);
-          const probabilities = Object.fromEntries(options.map((option) => [option, option === 'billing' ? 0.95 : 0.05 / (options.length - 1)]));
-          return [name, { type: 'choice', choice: 'billing', confidence: 0.95, probabilities }];
+          const chosen = name === 'connection_failure' ? 'none' : 'billing';
+          const probabilities = Object.fromEntries(options.map((option) => [option, option === chosen ? 0.95 : 0.05 / (options.length - 1)]));
+          return [name, { type: 'choice', choice: chosen, confidence: 0.95, probabilities }];
         }
         return [name, { type: 'noul', noul: name === 'billing' || name === 'provider_unusable' ? 0.96 : 0.03 }];
       }));
@@ -93,9 +94,15 @@ describe('the daemon composition installs the judgment port', () => {
     expect(failure.billing).toBe(true);
     expect(failure.transientNetwork).toBe(false);
 
-    expect(fake.calls).toHaveLength(1);
-    expect(fake.calls[0]!.authorization).toBe(`Bearer ${KEY}`);
-    expect(fake.calls[0]!.body.model).toBe(PINNED_MODEL);
+    // The booted daemon asks its own readings too (credential keys, watched
+    // config files); the failure reading is the one request carrying its
+    // questions. Every request goes out with the key and the pinned model.
+    const failureCalls = fake.calls.filter((call) => 'billing' in call.body.questions);
+    expect(failureCalls).toHaveLength(1);
+    for (const call of fake.calls) {
+      expect(call.authorization).toBe(`Bearer ${KEY}`);
+      expect(call.body.model).toBe(PINNED_MODEL);
+    }
 
     const path = decisionLogPath(join(work, '.goodvibes', 'goodvibes'));
     expect(existsSync(path)).toBe(true);

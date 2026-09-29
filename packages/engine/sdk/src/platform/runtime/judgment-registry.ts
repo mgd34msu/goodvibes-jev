@@ -62,6 +62,10 @@ import { trustNoteCaution } from './ecosystem/batteries/trust-note-caution.js';
 registry.register(catalogSearch);
 registry.register(trustNoteCaution);
 
+// Utils: error display.
+import { displayPayload } from '../utils/batteries/display-payload.js';
+registry.register(displayPayload);
+
 // Runtime: model picker.
 import { modelFamily } from './ui/model-picker/batteries/model-family.js';
 registry.register(modelFamily);

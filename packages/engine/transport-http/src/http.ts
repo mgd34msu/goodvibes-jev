@@ -1,4 +1,4 @@
-import { ConfigurationError, ContractError, GoodVibesSdkError, HttpStatusError, createHttpStatusError } from '@goodvibes-jev/engine/errors';
+import { GoodVibesSdkError, HttpStatusError, createHttpStatusError } from '@goodvibes-jev/engine/errors';
 import {
   type AuthTokenResolver,
   type HeaderResolver,
@@ -161,16 +161,6 @@ export function normalizeTransportError(error: unknown): Error {
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       },
     );
-  }
-  if (error instanceof Error) {
-    // Defensive string-match path for non-SDK errors that slip through.
-    // With structured throws in http-core.ts, these paths are rarely exercised.
-    if (error.message === 'Fetch implementation is required' || error.message === 'Transport baseUrl is required') {
-      return new ConfigurationError(error.message);
-    }
-    if (error.message.startsWith('Missing required path parameter')) {
-      return new ContractError(error.message);
-    }
   }
   return error instanceof Error
     ? error

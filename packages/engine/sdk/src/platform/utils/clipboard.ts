@@ -1,7 +1,40 @@
 import { logger } from './logger.js';
 import { summarizeError } from './error-display.js';
 
-export const MIN_IMAGE_BYTES = 100;
+/** Bytes that open a file of each image type, as each format defines it. */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const JPEG_SIGNATURE = [0xff, 0xd8, 0xff] as const;
+
+function startsWithBytes(data: Uint8Array, signature: readonly number[], offset = 0): boolean {
+  if (data.length < offset + signature.length) return false;
+  return signature.every((byte, index) => data[offset + index] === byte);
+}
+
+function startsWithText(data: Uint8Array, text: string, offset = 0): boolean {
+  return startsWithBytes(data, [...text].map((char) => char.charCodeAt(0)), offset);
+}
+
+/**
+ * isImageData - Whether `data` is image data of `mediaType`: it opens with the
+ * signature that format defines (PNG 89 50 4E 47 0D 0A 1A 0A, JPEG FF D8 FF,
+ * GIF "GIF87a" or "GIF89a", WebP "RIFF" with "WEBP" at byte 8). A clipboard
+ * tool that answers with an error text, an empty buffer or another format's
+ * bytes for the requested type is not an image of that type.
+ */
+export function isImageData(data: Uint8Array, mediaType: string): boolean {
+  switch (mediaType) {
+    case 'image/png':
+      return startsWithBytes(data, PNG_SIGNATURE);
+    case 'image/jpeg':
+      return startsWithBytes(data, JPEG_SIGNATURE);
+    case 'image/gif':
+      return startsWithText(data, 'GIF87a') || startsWithText(data, 'GIF89a');
+    case 'image/webp':
+      return startsWithText(data, 'RIFF') && startsWithText(data, 'WEBP', 8);
+    default:
+      return false;
+  }
+}
 
 /**
  * ClipboardWriteFunction - Type for surface-specific clipboard write implementations.
@@ -148,7 +181,7 @@ export function pasteImageFromClipboard(): { data: string; mediaType: string } |
         });
         if (wl.exitCode === 0 && wl.stdout) {
           const buf = Buffer.from(wl.stdout);
-          if (buf.length > MIN_IMAGE_BYTES) {
+          if (isImageData(buf, mediaType)) {
             return { data: buf.toString('base64'), mediaType };
           }
         }
@@ -164,7 +197,7 @@ export function pasteImageFromClipboard(): { data: string; mediaType: string } |
         });
         if (xclip.exitCode === 0 && xclip.stdout) {
           const buf = Buffer.from(xclip.stdout);
-          if (buf.length > MIN_IMAGE_BYTES) {
+          if (isImageData(buf, mediaType)) {
             return { data: buf.toString('base64'), mediaType };
           }
         }
@@ -180,7 +213,7 @@ export function pasteImageFromClipboard(): { data: string; mediaType: string } |
       });
       if (pp.exitCode === 0 && pp.stdout) {
         const ppBuf = Buffer.from(pp.stdout);
-        if (ppBuf.length > MIN_IMAGE_BYTES) {
+        if (isImageData(ppBuf, 'image/png')) {
           return { data: ppBuf.toString('base64'), mediaType: 'image/png' };
         }
       }
@@ -202,7 +235,7 @@ export function pasteImageFromClipboard(): { data: string; mediaType: string } |
         const match = raw.match(/«data PNGf([0-9a-fA-F]+)»/);
         if (match) {
           const osaBuf = Buffer.from(match[1]!, 'hex');
-          if (osaBuf.length > MIN_IMAGE_BYTES) {
+          if (isImageData(osaBuf, 'image/png')) {
             return { data: osaBuf.toString('base64'), mediaType: 'image/png' };
           }
         }

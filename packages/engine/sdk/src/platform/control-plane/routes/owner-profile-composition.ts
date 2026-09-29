@@ -28,6 +28,7 @@
  * necessarily construction-time: they decide whether a file is opened and which
  * one, and changing either genuinely needs the store rebuilt.
  */
+import { homedir, userInfo } from 'node:os';
 import type { GatewayMethodCatalog } from '../method-catalog.js';
 import type { ConfigManager } from '../../config/manager.js';
 import { OwnerProfileStore, resolveOwnerProfilePath } from '../../owner-profile/index.js';
@@ -36,6 +37,7 @@ import { registerOwnerProfileGatewayMethods } from './owner-profile.js';
 import { installOccasions, type OccasionsInstallDeps } from './occasions-composition.js';
 import type { PersonalCaptureHolder } from '../../personal-capture/index.js';
 import { logger } from '../../utils/logger.js';
+import { registerAccountIdentityRedaction, type AccountIdentity } from '../../utils/redaction.js';
 
 /** What the composition needs from the runtime graph. */
 export interface OwnerProfileCompositionDeps {
@@ -86,6 +88,22 @@ export interface OwnerProfileCompositionDeps {
   readonly personalCapture?: Pick<PersonalCaptureHolder, 'setPort'> | undefined;
 }
 
+/**
+ * The running account's home directory and login name, read once from the
+ * operating system for egress redaction. An account the system has no
+ * password entry for (a container running under a bare numeric uid) has no
+ * login name to hide, so only its home directory is redacted.
+ */
+function readAccountIdentity(): AccountIdentity {
+  let userName = '';
+  try {
+    userName = userInfo().username;
+  } catch {
+    // No password entry for this uid: there is no name.
+  }
+  return { homeDirectory: homedir(), userName };
+}
+
 /** The store, and the one call that unwires everything this installed. */
 export interface OwnerProfileComposition {
   readonly store: OwnerProfileStore;
@@ -121,6 +139,10 @@ export function composeOwnerProfile(
     discloseWrites: () => config.get('profile.discloseWrites'),
     discloseClosedTierReads: () => config.get('profile.discloseClosedTierReads'),
   });
+  // Beside the profile's own redaction values: egress anonymisation of the
+  // account's home directory and login name, matched exactly.
+  const accountIdentity = readAccountIdentity();
+  registerAccountIdentityRedaction(() => accountIdentity);
   const uninstallConsumers = installOwnerProfileConsumers(store, {
     attachProfileFallback: (reader) => config.attachProfileFallback(reader),
     consumerFallbackEnabled: () => config.get('profile.consumerFallback'),
@@ -157,6 +179,7 @@ export function composeOwnerProfile(
     dispose: (): void => {
       store.unwatch();
       uninstallConsumers();
+      registerAccountIdentityRedaction(null);
     },
   };
 }

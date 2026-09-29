@@ -368,8 +368,8 @@ describe('repeated update-check failures reach the owner', () => {
       expect(h.alerts[0]).toContain('v1.0.0');
       // The reason travels with the alert, in the summarized form the rest of
       // the platform reports errors in.
-      expect(h.alerts[0]).toContain('DNS lookup failed');
-      expect(h.updater.lastCheckFailure).toContain('DNS lookup failed');
+      expect(h.alerts[0]).toContain('getaddrinfo ENOTFOUND github.com');
+      expect(h.updater.lastCheckFailure).toContain('getaddrinfo ENOTFOUND github.com');
     } finally {
       rmSync(h.scratch, { recursive: true, force: true });
     }

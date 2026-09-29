@@ -124,7 +124,7 @@ describe('OpenAICompatProvider.refreshModels (gateway live discovery)', () => {
         const provider = makeProvider();
         const result = await provider.refreshModels();
         expect(result.source).toBe('dated-static');
-        expect(result.error).toContain('Cannot connect');
+        expect(result.error).toContain('connect ECONNREFUSED');
         expect(provider.models.length).toBeGreaterThan(0);
       },
     );
