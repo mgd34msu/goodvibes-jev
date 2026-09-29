@@ -14,11 +14,12 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { GitHubCopilotProvider } from '../sdk/src/platform/providers/github-copilot.js';
 import { GeminiProvider } from '../sdk/src/platform/providers/gemini.js';
 import { forgetProviderCacheReadings } from '../sdk/src/platform/routing/provider-cache-readings.js';
+import { decisionPort } from './helpers/decision-port.ts';
 
 let dir: string;
 let previousPort: ReturnType<typeof installJudgmentPort>;
@@ -42,7 +43,7 @@ afterEach(() => {
 
 /** A port answering one yes/no question with `probability`, recording every request. */
 function yesNoPort(question: string, probability: number) {
-  return fakePort((name) => {
+  return decisionPort(['routing.copilot-claude-model', 'routing.cache-minimum'], (name) => {
     if (name !== question) throw new Error(`unexpected question ${name}`);
     return noulAnswer(probability);
   });

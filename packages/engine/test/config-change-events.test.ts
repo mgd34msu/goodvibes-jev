@@ -21,7 +21,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { EntryType, Question } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   attachConfigEmitBridge,
@@ -34,6 +34,7 @@ import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { RUNTIME_EVENT_DOMAINS } from '../sdk/src/platform/runtime/events/index.ts';
 import type { ConfigEvent } from '../sdk/src/platform/runtime/events/index.ts';
 import { builtinGatewayEventDescriptors } from '../sdk/src/platform/control-plane/method-catalog-events.ts';
+import { decisionPort } from './helpers/decision-port.ts';
 
 /** A ConfigManager stand-in with the one seam the bridge uses. */
 function fakeConfig(): ConfigChangeSource & { change(key: string, value: unknown): void; watched(): number } {
@@ -66,7 +67,7 @@ async function flush(): Promise<void> {
 
 /** A port reading each key through `probability` (of holding a credential), recording every request. */
 function keyPort(probability: (key: string) => number) {
-  return fakePort((name: string, _question: Question, state: EntryType) => {
+  return decisionPort(['engine.runtime.config-event-credential-key'], (name: string, _question: Question, state: EntryType) => {
     if (name !== 'credential') throw new Error(`config key port: unexpected question ${name}`);
     return noulAnswer(probability((state as { key: string }).key));
   });
@@ -197,6 +198,24 @@ describe('an undeclared key is read through engine.runtime.config-event-credenti
     expect(requests).toHaveLength(1);
     expect(requests[0]!.state).toMatchObject({ key: 'acme.theme' });
     expect(seen.map((event) => [event.secret, event.value])).toEqual([[false, 'dark'], [false, 'light']]);
+    detach();
+  });
+
+  test('a reading another file started in the background does not count as this file\'s request', async () => {
+    const { port, requests } = keyPort(() => 0.03);
+    installJudgmentPort(port);
+    const bus = new RuntimeEventBus();
+    const config = fakeConfig();
+    const detach = attachConfigEmitBridge({ config, bus, additionalKeys: ['acme.theme'] });
+
+    // What a leaked background reading looks like when it lands on this port.
+    const stray = port.ask({ state: 'x', questions: { credential: { type: 'noul', instructions: 'q' } } as never, context: { battery: 'engine.state.watched-config' } })
+      .then(() => 'answered', (error: unknown) => String(error));
+    config.change('acme.theme', 'dark');
+    await flush();
+
+    expect(await stray).toContain('engine.state.watched-config');
+    expect(requests).toHaveLength(1);
     detach();
   });
 
