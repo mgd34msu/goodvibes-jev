@@ -7,8 +7,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readYesNo, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
-import { UNIT_JUDGE_BANDS } from '../../sdk/src/platform/contract/batteries/unit-judge.js';
-import { UNIT_QUALITY_BAND } from '../../sdk/src/platform/contract/batteries/unit-quality.js';
+import { DELIVERABLE_JUDGES, deliverableVerdict } from '../../sdk/src/platform/contract/batteries/deliverable-judge.js';
+import { GROUP_JUDGES, groupVerdict } from '../../sdk/src/platform/contract/batteries/group-judge.js';
+import { UNIT_JUDGE_BANDS, UNIT_JUDGES, criterionVerdict as unitJudgeVerdict } from '../../sdk/src/platform/contract/batteries/unit-judge.js';
+import { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, midRunNudgeItems, qualityVerdict as unitQualityVerdict } from '../../sdk/src/platform/contract/batteries/unit-quality.js';
+import { registry } from '../../sdk/src/platform/contract/judgment-registry.js';
+import { QUALITY_ITEMS, type QualityItem } from '../../sdk/src/platform/contract/types.js';
 import {
   applySeverities,
   applyUnitCheck,
@@ -34,7 +38,7 @@ function evidence(overrides: Partial<UnitEvidence> = {}): UnitEvidence {
     changedPaths: ['src/parser.ts'],
     diff: '+++ b/src/parser.ts\n+export function parse() {}',
     omitted: [],
-    claims: { claimedPaths: ['src/parser.ts'], foundPaths: ['src/parser.ts'], missingPaths: [], gitDiffDetected: null, kind: 'files_verified', verified: true, summary: '1/1 claimed paths found on disk; kind: files_verified' },
+    claims: { claimedPaths: ['src/parser.ts'], foundPaths: ['src/parser.ts'], missingPaths: [], changesDetected: true, kind: 'files_verified', verified: true, summary: '1/1 claimed paths found on disk; kind: files_verified' },
     gates: [{ gate: 'typecheck', passed: true, output: '', durationMs: 5, skipped: false }],
     commands: [{ command: 'bun test', success: true, head: '3 pass' }],
     ...overrides,
@@ -112,6 +116,38 @@ describe('readings to verdicts at the band edges (4.5)', () => {
   test('the declared bands are the design bands', () => {
     expect(UNIT_JUDGE_BANDS.high).toEqual({ yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.high.confidence });
     expect(UNIT_JUDGE_BANDS.critical).toEqual({ yes: STAKES_BANDS.medium.confidence, no: STAKES_BANDS.critical.confidence });
+  });
+
+  test('the mappings are declared beside the bands, and the group and deliverable judges reuse the unit mapping', () => {
+    expect(criterionVerdict).toBe(unitJudgeVerdict);
+    expect(qualityVerdict).toBe(unitQualityVerdict);
+    expect(groupVerdict).toBe(unitJudgeVerdict);
+    expect(deliverableVerdict).toBe(unitJudgeVerdict);
+  });
+
+  test('each acceptance-stakes instance of the three judges is its own registered decision', () => {
+    const judges = [UNIT_JUDGES, GROUP_JUDGES, DELIVERABLE_JUDGES];
+    expect(judges.map((byStakes) => [byStakes.high.name, byStakes.critical.name])).toEqual([
+      ['contract.unit-judge', 'contract.unit-judge.critical'],
+      ['contract.group-judge', 'contract.group-judge.critical'],
+      ['contract.deliverable-judge', 'contract.deliverable-judge.critical'],
+    ]);
+    for (const byStakes of judges) {
+      expect(registry.get(byStakes.high.name)).toBe(byStakes.high);
+      expect(registry.get(byStakes.critical.name)).toBe(byStakes.critical);
+      expect(byStakes.critical.fixtureCount).toBe(byStakes.high.fixtureCount);
+    }
+  });
+
+  test('the mid-run rule: only items marked mid-run, read yes at act', () => {
+    const at = (p: number) => readYesNo({ type: 'noul', noul: p }, UNIT_QUALITY_BAND);
+    const readings = (problems: Partial<Record<QualityItem, number>>) =>
+      Object.fromEntries(QUALITY_ITEMS.map((item) => [item, at(problems[item] ?? 0.05)])) as Record<QualityItem, ReturnType<typeof at>>;
+    expect([...MID_RUN_QUALITY_ITEMS]).toEqual(['tests_weakened', 'breaks_existing', 'out_of_scope']);
+    expect(midRunNudgeItems(readings({ tests_weakened: 0.9, out_of_scope: 0.8, placeholder: 0.95 }))).toEqual(['tests_weakened', 'out_of_scope']);
+    // A problem below act (a yes at confirm, a lean to yes that escalates) waits for the finished check.
+    expect(midRunNudgeItems(readings({ breaks_existing: 0.65, out_of_scope: 0.55 }))).toEqual([]);
+    expect(midRunNudgeItems(readings({}))).toEqual([]);
   });
 
   test('a check uses the band the acceptance stakes choose', async () => {
@@ -196,7 +232,7 @@ describe('check outcomes, in table order (4.6)', () => {
   });
 
   test('row 4: unverified claims nudge with the missing paths', async () => {
-    const claims = { claimedPaths: ['src/a.ts'], foundPaths: [], missingPaths: ['src/a.ts'], gitDiffDetected: false, kind: 'unverified' as const, verified: false, summary: 'missing' };
+    const claims = { claimedPaths: ['src/a.ts'], foundPaths: [], missingPaths: ['src/a.ts'], changesDetected: false, kind: 'unverified' as const, verified: false, summary: 'missing' };
     const outcome = await check({}, { evidence: evidence({ claims }) });
     expect(outcome.check.result).toBe('nudge');
     expect(outcome.nudge?.kinds).toEqual(['claims']);
@@ -204,7 +240,7 @@ describe('check outcomes, in table order (4.6)', () => {
   });
 
   test('row 4: no claims and no changes nudges a unit that must write, not one that reads', async () => {
-    const claims = { claimedPaths: [], foundPaths: [], missingPaths: [], gitDiffDetected: false, kind: 'unverifiable_no_claims' as const, verified: false, summary: 'none' };
+    const claims = { claimedPaths: [], foundPaths: [], missingPaths: [], changesDetected: false, kind: 'unverifiable_no_claims' as const, verified: false, summary: 'none' };
     const noWork = evidence({ claims, changedPaths: [], diff: '' });
     const writer = await check({}, { evidence: noWork });
     expect(writer.nudge?.kinds).toEqual(['claims']);
@@ -221,6 +257,9 @@ describe('check outcomes, in table order (4.6)', () => {
     expect(unitMustWrite(makeContract({ shape }), { role: 'implement' })).toBe(false);
     expect(unitMustWrite(makeContract(), { role: 'integration' })).toBe(true);
     expect(unitMustWrite(makeContract(), { role: 'design' })).toBe(false);
+    // Only a yes at act forbids writing: a yes below act leaves the unit writing.
+    const unsure = { forbids_writing: { verdict: 'yes', probability: 0.7, outcome: 'confirm' } } as unknown as RequestShape;
+    expect(unitMustWrite(makeContract({ shape: unsure }), { role: 'implement' })).toBe(true);
   });
 
   test('row 5: an unmet criterion nudges', async () => {
@@ -356,6 +395,19 @@ describe('severity of unmet criteria', () => {
 
     const second = await check({ criteria: [MET, UNMET] }, { unit });
     expect(second.nudge?.text).toContain('- [u1.c2] parse rejects empty input with an error (critical)');
+  });
+
+  test('the severity reading is named on the criterion reading whether or not it settled', () => {
+    const unit = twoCriterionUnit();
+    unit.criteria[0]!.readings.push({ checkId: 'u1.k1', at: 1, probabilityUnmet: 0.9, verdict: 'unmet', outcome: 'act', decisionId: 'judge-1' });
+    unit.criteria[1]!.readings.push({ checkId: 'u1.k1', at: 1, probabilityUnmet: 0.9, verdict: 'unmet', outcome: 'act', decisionId: 'judge-1' });
+    applySeverities(unit, 'u1.k1', new Map([
+      ['u1.c1', { severity: undefined, decisionId: 'severity-1' }],
+      ['u1.c2', { severity: 'major', decisionId: 'severity-2' }],
+    ]));
+    expect(unit.criteria[0]!.readings[0]).toMatchObject({ severityDecisionId: 'severity-1' });
+    expect(unit.criteria[0]!.readings[0]!.severity).toBeUndefined();
+    expect(unit.criteria[1]!.readings[0]).toMatchObject({ severity: 'major', severityDecisionId: 'severity-2' });
   });
 
   test('a severity below act stays unknown', async () => {

@@ -95,13 +95,13 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
     return null;
   }
 
-  function failUnit(run: ContractRun, unit: ContractUnit, kind: ContractFailureKind, reason: string): void {
+  function failUnit(run: ContractRun, unit: ContractUnit, kind: ContractFailureKind, reason: string, decisionIds: readonly string[] = []): void {
     if (run.terminal) return;
     if (!isTerminalUnitStatus(unit.status)) {
       unit.failureReason = reason;
       run.releaseHold(unit);
       run.moveUnit(unit, 'failed');
-      run.decide('failed', unit.id, reason);
+      run.decide('failed', unit.id, reason, decisionIds);
     }
     run.settle(unit, 'failed');
     // The selection reads the unit's attempts once all of them ended (design 6.2).
@@ -146,9 +146,11 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
   async function retryOrFail(run: ContractRun, unit: ContractUnit, message: string): Promise<void> {
     const runtime = run.runtime(unit);
     let network: boolean;
+    let readingIds: readonly string[];
     try {
       const reading = await readFailure({ message }, TRANSPORT_RETRY_SITE);
       network = reading.transientNetwork || reading.beforeResponse;
+      readingIds = reading.decisionId === undefined ? [] : [reading.decisionId];
     } catch (error) {
       if (run.terminal) return;
       const failure = failureFromError(error);
@@ -160,11 +162,11 @@ export function createUnitFailureHandling(deps: UnitFailureDeps): UnitFailureHan
     if (!network || unit.transportRetries >= config.transportRetryLimit) {
       const kind: ContractFailureKind = network ? 'transport' : 'other';
       const why = network ? `a transport failure after ${unit.transportRetries} retr${unit.transportRetries === 1 ? 'y' : 'ies'}` : 'a failure that is not transient';
-      failUnit(run, unit, kind, `unit ${unit.id} failed with ${why}: ${message}`);
+      failUnit(run, unit, kind, `unit ${unit.id} failed with ${why}: ${message}`, readingIds);
       return;
     }
     unit.transportRetries += 1;
-    run.decide('transport-retry', unit.id, `retry ${unit.transportRetries} of ${config.transportRetryLimit}: ${message}`);
+    run.decide('transport-retry', unit.id, `retry ${unit.transportRetries} of ${config.transportRetryLimit}: ${message}`, readingIds);
     await sleep(config.transportRetryDelayMs, runtime.abort.signal);
     if (run.terminal || isTerminalUnitStatus(unit.status)) return;
     deps.requeueUnit(run, unit, `transport retry ${unit.transportRetries}`, 'transport-retry');

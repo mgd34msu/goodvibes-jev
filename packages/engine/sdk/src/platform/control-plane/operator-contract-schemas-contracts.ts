@@ -89,6 +89,7 @@ const CRITERION_READING_SCHEMA = objectSchema({
   outcome: OUTCOME_SCHEMA,
   severity: enumSchema(CRITERION_SEVERITIES),
   decisionId: STRING_SCHEMA,
+  severityDecisionId: STRING_SCHEMA,
 }, ['checkId', 'at', 'probabilityUnmet', 'verdict', 'outcome']);
 
 const CRITERION_SCHEMA = objectSchema({
@@ -223,6 +224,7 @@ const ESCALATION_SCHEMA = objectSchema({
   reason: enumSchema(ESCALATION_REASONS),
   question: STRING_SCHEMA,
   unmetCriterionIds: STRING_LIST_SCHEMA,
+  decisionIds: STRING_LIST_SCHEMA,
   resolvedAt: NUMBER_SCHEMA,
   reply: objectSchema({
     text: STRING_SCHEMA,

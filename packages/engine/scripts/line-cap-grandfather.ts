@@ -173,8 +173,8 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
   },
   // registry.ts (providers) ~0.82k, provider registry, split candidate
   'sdk/src/platform/providers/registry.ts': {
-    ceiling: 838,
-    justification: 'provider registry crossed the cap with the context-window knowledge surface (user override + observed-limit delegates to ContextWindowOverrideStore, which owns the logic); model-listing vs provider-lifecycle split is the natural next cut; +16 for listDiscoveredServers() and the field it reads: a process may build a SECOND registry that has to see the same LOCAL models, which is exactly what the daemon does per hosted-session workspace, and without a way to read the discovered set back, a machine\'s own Ollama or LM Studio was routable for the daemon\'s agents and invisible to a hosted session on the same box',
+    ceiling: 846,
+    justification: 'provider registry crossed the cap with the context-window knowledge surface (user override + observed-limit delegates to ContextWindowOverrideStore, which owns the logic); model-listing vs provider-lifecycle split is the natural next cut; +16 for listDiscoveredServers() and the field it reads: a process may build a SECOND registry that has to see the same LOCAL models, which is exactly what the daemon does per hosted-session workspace, and without a way to read the discovered set back, a machine\'s own Ollama or LM Studio was routable for the daemon\'s agents and invisible to a hosted session on the same box; +8 for the route planner\'s reads of the settled catalog (contract runner R.13): the benchmarks getter and one-line delegates for modelDiscoverySettled and unreachableAtStartup, whose logic lives in StartupModelDiscovery (registry-live-model-discovery.ts)',
   },
   // session-broker.ts (control-plane) ~0.84k, control-plane session broker, post-split, shrink-only
   'sdk/src/platform/control-plane/session-broker.ts': {

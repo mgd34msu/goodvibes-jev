@@ -44,8 +44,12 @@ export function computeConfiguredProviderIds(
 
   const configApiKeys = loadConfiguredApiKeys();
   const configToCatalog: Record<string, string> = { gemini: 'google', inceptionlabs: 'inception' };
+  // A key configures the provider under the name it is registered by (its
+  // models carry that name, and the route planner matches models to configured
+  // providers by it) and under the catalog's name where that differs.
   for (const [configName, key] of Object.entries(configApiKeys)) {
     if (key) {
+      configured.add(configName);
       configured.add(configToCatalog[configName] ?? configName);
     }
   }

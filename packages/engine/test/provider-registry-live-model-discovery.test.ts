@@ -87,6 +87,44 @@ describe('ProviderRegistry.refreshLiveModelDiscovery: the picker-open re-check h
     else process.env['ANTHROPIC_API_KEY'] = ambientAnthropicKey;
   });
 
+  test('modelDiscoverySettled resolves once the startup sweep has put what the provider serves in the registry', async () => {
+    const registry = makeRegistry();
+    // No sweep started: settled at once.
+    await registry.modelDiscoverySettled();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await withMockedFetch(
+      async (url) => {
+        if (!url.includes('api.anthropic.com/v1/models')) return new Response('not found', { status: 404 });
+        await gate;
+        return new Response(JSON.stringify({ data: [...ANTHROPIC_DATED_STATIC_MODELS, 'claude-settled-model'].map((id) => ({ id })) }), { status: 200 });
+      },
+      async () => {
+        registry.initProviderModelDiscovery();
+        let settled = false;
+        const waiting = registry.modelDiscoverySettled().then(() => { settled = true; });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+        release();
+        await waiting;
+        expect(registry.listModels().some((m) => m.registryKey === 'anthropic:claude-settled-model')).toBe(true);
+      },
+    );
+  });
+
+  test('unreachableAtStartup lists a provider whose startup model listing failed, with the failure', async () => {
+    const registry = makeRegistry();
+    await withMockedFetch(
+      () => new Response('unavailable', { status: 503 }),
+      async () => {
+        registry.initProviderModelDiscovery();
+        await registry.modelDiscoverySettled();
+      },
+    );
+    expect(registry.unreachableAtStartup().has('anthropic')).toBe(true);
+    expect(registry.unreachableAtStartup().get('anthropic')).toContain('503');
+  });
+
   test('a brand-new model from a mocked Anthropic /v1/models response becomes selectable', async () => {
     const originalKey = process.env['ANTHROPIC_API_KEY'];
     process.env['ANTHROPIC_API_KEY'] = 'sk-test-key';

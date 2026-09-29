@@ -231,6 +231,13 @@ const RETRY_FIXED_DELAY = attempt(1, 'src/retry.ts | 10 ++++++++++', [
   '+}',
 ], 'fetchWithRetry retries up to 3 times, 200 ms apart.');
 
+/**
+ * What `createSelectAttemptJudge` sends for an engine outside any contract:
+ * the work item's task as the goal and no criteria (contract/best-of-n.ts `taskContext`).
+ */
+const SLUG_TASK = { goal: 'Add a slugify helper that turns article titles into URL slugs: lowercase, a single hyphen between words, no hyphen at either end.', criteria: [] };
+const BYTES_TASK = { goal: 'Add a formatBytes helper for the status line that shows sizes in B, KB, MB or GB, and shows 0 as "0 B".', criteria: [] };
+
 export const bestOfN = defineSelector({
   name: 'contract.best-of-n',
   version: 1,
@@ -249,5 +256,7 @@ export const bestOfN = defineSelector({
     { name: 'no attempt filters by date', context: EXPORT, candidates: [EXPORT_ALL_ONLY, EXPORT_IGNORES_SINCE], expect: 'none' },
     { name: 'no attempt meets both retry rules', context: RETRY, candidates: [RETRY_FOREVER, RETRY_FIXED_DELAY], expect: 'none' },
     { name: 'a single attempt that breaks quoted fields', context: CSV, candidates: [{ id: 'u1#a0', content: CSV_SPLIT.content }], expect: 'none' },
+    { name: 'outside a contract: the task alone, the attempt that does all it says', context: SLUG_TASK, candidates: [SLUG_CASE, SLUG_EDGES, SLUG_GOOD], expect: 'u1#a2' },
+    { name: 'outside a contract: the task alone, a single attempt that misses part of it', context: BYTES_TASK, candidates: [BYTES_NO_ZERO], expect: 'none' },
   ],
 });

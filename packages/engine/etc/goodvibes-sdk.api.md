@@ -1729,6 +1729,7 @@ export interface FailureConclusions {
     readonly connection: ConnectionFailure;
     // (undocumented)
     readonly contextExceeded: boolean;
+    readonly decisionId?: string | undefined;
     // (undocumented)
     readonly providerUnusable: boolean;
     // (undocumented)
@@ -12275,6 +12276,7 @@ export interface OperatorMethodOutputMap {
                 outcome: "act" | "confirm" | "escalate";
                 severity?: "critical" | "major" | "minor";
                 decisionId?: string;
+                severityDecisionId?: string;
             })[];
         })[];
         groups: readonly ({
@@ -12305,6 +12307,7 @@ export interface OperatorMethodOutputMap {
                     outcome: "act" | "confirm" | "escalate";
                     severity?: "critical" | "major" | "minor";
                     decisionId?: string;
+                    severityDecisionId?: string;
                 })[];
             })[];
             unitIds: readonly string[];
@@ -12410,6 +12413,7 @@ export interface OperatorMethodOutputMap {
                     outcome: "act" | "confirm" | "escalate";
                     severity?: "critical" | "major" | "minor";
                     decisionId?: string;
+                    severityDecisionId?: string;
                 })[];
             })[];
             status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -12555,6 +12559,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                         severity?: "critical" | "major" | "minor";
                         decisionId?: string;
+                        severityDecisionId?: string;
                     })[];
                 })[];
                 status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -12762,6 +12767,7 @@ export interface OperatorMethodOutputMap {
             reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
             question: string;
             unmetCriterionIds: readonly string[];
+            decisionIds?: readonly string[];
             resolvedAt?: number;
             reply?: {
                 text: string;
@@ -12881,6 +12887,7 @@ export interface OperatorMethodOutputMap {
                     outcome: "act" | "confirm" | "escalate";
                     severity?: "critical" | "major" | "minor";
                     decisionId?: string;
+                    severityDecisionId?: string;
                 })[];
             })[];
             groups: readonly ({
@@ -12911,6 +12918,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                         severity?: "critical" | "major" | "minor";
                         decisionId?: string;
+                        severityDecisionId?: string;
                     })[];
                 })[];
                 unitIds: readonly string[];
@@ -13016,6 +13024,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                         severity?: "critical" | "major" | "minor";
                         decisionId?: string;
+                        severityDecisionId?: string;
                     })[];
                 })[];
                 status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -13161,6 +13170,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                             severity?: "critical" | "major" | "minor";
                             decisionId?: string;
+                            severityDecisionId?: string;
                         })[];
                     })[];
                     status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -13368,6 +13378,7 @@ export interface OperatorMethodOutputMap {
                 reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
                 question: string;
                 unmetCriterionIds: readonly string[];
+                decisionIds?: readonly string[];
                 resolvedAt?: number;
                 reply?: {
                     text: string;
@@ -13496,6 +13507,7 @@ export interface OperatorMethodOutputMap {
                     outcome: "act" | "confirm" | "escalate";
                     severity?: "critical" | "major" | "minor";
                     decisionId?: string;
+                    severityDecisionId?: string;
                 })[];
             })[];
             groups: readonly ({
@@ -13526,6 +13538,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                         severity?: "critical" | "major" | "minor";
                         decisionId?: string;
+                        severityDecisionId?: string;
                     })[];
                 })[];
                 unitIds: readonly string[];
@@ -13631,6 +13644,7 @@ export interface OperatorMethodOutputMap {
                         outcome: "act" | "confirm" | "escalate";
                         severity?: "critical" | "major" | "minor";
                         decisionId?: string;
+                        severityDecisionId?: string;
                     })[];
                 })[];
                 status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -13776,6 +13790,7 @@ export interface OperatorMethodOutputMap {
                             outcome: "act" | "confirm" | "escalate";
                             severity?: "critical" | "major" | "minor";
                             decisionId?: string;
+                            severityDecisionId?: string;
                         })[];
                     })[];
                     status: "awaiting-owner" | "blocked" | "cancelled" | "checking" | "failed" | "fixing" | "held" | "held-merge" | "nudged" | "passed" | "pending" | "running";
@@ -13983,6 +13998,7 @@ export interface OperatorMethodOutputMap {
                 reason: "attempts-undecided" | "fix-rounds-exhausted" | "owner-decision-needed" | "plan-unresolved" | "stalled" | "unsettled" | "writing-unclear";
                 question: string;
                 unmetCriterionIds: readonly string[];
+                decisionIds?: readonly string[];
                 resolvedAt?: number;
                 reply?: {
                     text: string;

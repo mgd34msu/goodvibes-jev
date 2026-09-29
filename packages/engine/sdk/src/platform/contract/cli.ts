@@ -66,7 +66,7 @@ export type ContractCliRunner = Pick<ContractRunner, 'start' | 'get' | 'list' | 
 export interface ContractSessionDriver {
   /** True while a turn of the session is in flight. */
   isRunning(sessionId: string): boolean;
-  /** Submits one user turn to the session (created on first use); resolves when the turn ends. */
+  /** Submits one user turn to the session (created on first use); resolves when the turn ends, and rejects with the turn's error when it failed. */
   submit(sessionId: string, text: string): Promise<void>;
   /** Interrupts every turn in flight. */
   cancelAll(): void;

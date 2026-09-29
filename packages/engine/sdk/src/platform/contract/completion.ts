@@ -10,8 +10,12 @@
  *   correction.
  * - Deliverable check: when every group passed, Jev judges the deliverable
  *   (`contract.deliverable-judge`) against the judged contract criteria: the
- *   answer, the contract's diff, gates, and the unit verdicts behind each
- *   criterion. Pass at act commits; anything else goes to correction.
+ *   deliverable unit's whole final output and the answers of any units that
+ *   fixed the deliverable, the contract's diff, gates, and the unit verdicts
+ *   behind each criterion. Pass at act commits; anything else goes to
+ *   correction. A plan whose every criterion is excluded or met by structure
+ *   has none of the user's words left to judge (the judge pattern needs at
+ *   least one criterion), so it commits without a deliverable check.
  * - Commit: worktree mode merges the contract branch into the project's branch
  *   (no fast-forward) or applies it as uncommitted changes; shared mode commits
  *   exactly the touched paths (or everything, or nothing, by
@@ -30,7 +34,7 @@ import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
-import { describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
+import { deliverableOutput, describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
 import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { GROUP_JUDGES } from './batteries/group-judge.js';
 import { criterionVerdict, emptyJudgmentUsage, meteredPort } from './check.js';
@@ -267,7 +271,6 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (run.terminal) return;
     if (contract.status !== 'judging') run.moveContract('judging');
     context.ownerProgress(run);
-    const answer = renderContractAnswer(contract);
     const judgedCriteria = judged(contract.criteria);
     if (judgedCriteria.length > 0) {
       const reading = await readTarget(run, {
@@ -278,7 +281,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         checks: contract.checks,
         baseline: contract.baseline,
         unitIds: new Set(contract.units.map((unit) => unit.id)),
-        output: answer.length > 0 ? answer : CONTRACT_PASSED_WITHOUT_OUTPUT,
+        output: deliverableOutput(contract),
         summaries: judgedCriteria.map((criterion) => ({
           criterion: criterion.id,
           servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status })),

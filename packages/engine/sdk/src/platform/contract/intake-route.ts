@@ -2,10 +2,14 @@
  * Intake of a person's turn (docs/design/contract-runner.md 10.3). Once per
  * user turn, before the conversation model is called:
  *
- * 1. A session with an open escalation: the turn's text is the owner's reply,
- *    and goes to `runner.reply` (the newest open escalation of the session's
- *    contracts). The turn ends there.
- * 2. Otherwise `contract.request-route` reads the text. Route `contract` at act
+ * 1. A session with an open escalation (the newest open escalation of the
+ *    session's contracts): `contract.escalation-turn` reads whether the turn
+ *    responds to that escalation's question. Unless it reads no at act, the
+ *    turn is the owner's reply and goes to `runner.reply`, whose
+ *    `contract.owner-reply` reading asks again when the reply is unclear; the
+ *    turn ends there. A no at act leaves the escalation open and the turn goes
+ *    on to step 2 like any other turn.
+ * 2. `contract.request-route` reads the text. Route `contract` at act
  *    starts a contract with origin `turn` and the text as the ask, and the turn
  *    ends; the contract's answer arrives through its owner record's
  *    completion. Every other route, and any reading below act, leaves the turn
@@ -21,6 +25,7 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ToolResult } from '../types/tools.js';
 import { isRecord } from '../utils/record-coerce.js';
+import { ESCALATION_TURN_SITE, escalationTurn, turnIsUnrelated } from './batteries/escalation-turn.js';
 import { REQUEST_ROUTE_SITE, requestRoute } from './batteries/request-route.js';
 import type { OwnerReplyOutcome } from './escalation.js';
 import type { ContractRunner } from './runner.js';
@@ -60,12 +65,23 @@ export function openEscalation(contracts: readonly ContractView[]): { readonly c
 export function createContractIntake(deps: ContractIntakeDeps): ContractIntake {
   return {
     async intake(turn) {
+      const signal = turn.signal === undefined ? {} : { signal: turn.signal };
       const waiting = openEscalation(deps.runner.list({ sessionId: turn.sessionId }));
       if (waiting !== null) {
-        const outcome = await deps.runner.reply(waiting.contract.id, waiting.escalation.id, turn.text);
-        return { kind: 'replied', contractId: waiting.contract.id, outcome };
+        const read = await escalationTurn.run(
+          judgmentPort(ESCALATION_TURN_SITE),
+          { question: waiting.escalation.question, turn: turn.text },
+          { site: ESCALATION_TURN_SITE, ...signal },
+        );
+        const reading = read.readings.responds;
+        if (!turnIsUnrelated(reading)) {
+          read.recordAction(`the owner's reply to ${waiting.escalation.id} (${reading.verdict}, ${reading.outcome})`);
+          const outcome = await deps.runner.reply(waiting.contract.id, waiting.escalation.id, turn.text);
+          return { kind: 'replied', contractId: waiting.contract.id, outcome };
+        }
+        read.recordAction(`not a reply to ${waiting.escalation.id}: read as a request`);
       }
-      const routed = await requestRoute.route(judgmentPort(REQUEST_ROUTE_SITE), { request: turn.text }, { site: REQUEST_ROUTE_SITE, ...(turn.signal === undefined ? {} : { signal: turn.signal }) });
+      const routed = await requestRoute.route(judgmentPort(REQUEST_ROUTE_SITE), { request: turn.text }, { site: REQUEST_ROUTE_SITE, ...signal });
       if (routed.route !== 'contract' || routed.reading.outcome !== 'act') {
         routed.recordAction(`left to the conversation (${routed.route}, ${routed.reading.outcome})`);
         return { kind: 'turn' };

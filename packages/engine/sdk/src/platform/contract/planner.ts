@@ -311,6 +311,7 @@ class PlanningContext {
       reason,
       question,
       unmetCriterionIds: [],
+      ...(decisionIds.length === 0 ? {} : { decisionIds: [...decisionIds] }),
     };
     contract.escalations.push(escalation);
     this.move('awaiting-owner');
@@ -562,7 +563,13 @@ export async function acceptEscalatedPlan(
   try {
     const read = await readCriterionDispositions(parsed.plan, contract.ask, contract.shape, options);
     context.addJudgmentUsage(read.usage);
-    const decisionIds = [...contract.shape.decisionIds, ...read.decisionIds];
+    // The plan checks the owner settled, the owner's reply, and the dispositions read now.
+    const decisionIds = [
+      ...contract.shape.decisionIds,
+      ...(escalation.decisionIds ?? []),
+      ...(escalation.reply?.decisionId === undefined ? [] : [escalation.reply.decisionId]),
+      ...read.decisionIds,
+    ];
     acceptPlan(contract, parsed.plan, read.dispositions, context, decisionIds, 'approved by the owner as it stands');
     return { kind: 'accepted', plan: parsed.plan, decisionIds };
   } catch (error) {

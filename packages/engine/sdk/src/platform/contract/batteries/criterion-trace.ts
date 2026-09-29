@@ -86,5 +86,12 @@ export const criterionTrace = defineFidelityChecker({
       quote: 'confirm before running each command',
       expect: 'fabricated',
     },
+    {
+      name: 'quote reworded from the ask',
+      claim: traceClaim('The /v2 endpoint returns 50 results per page'),
+      source: API_ASK,
+      quote: 'return results in pages of 50',
+      expect: 'fabricated',
+    },
   ],
 });

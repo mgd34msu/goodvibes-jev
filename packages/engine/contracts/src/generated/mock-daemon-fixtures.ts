@@ -5347,7 +5347,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "verdict": "met",
               "outcome": "act",
               "severity": "critical",
-              "decisionId": "sample"
+              "decisionId": "sample",
+              "severityDecisionId": "sample"
             }
           ]
         }
@@ -5388,7 +5389,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -5515,7 +5517,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -5695,7 +5698,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -5946,6 +5950,9 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "unmetCriterionIds": [
             "sample"
           ],
+          "decisionIds": [
+            "sample"
+          ],
           "resolvedAt": 0,
           "reply": {
             "text": "sample",
@@ -6093,7 +6100,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -6134,7 +6142,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -6261,7 +6270,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -6441,7 +6451,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                           "verdict": "met",
                           "outcome": "act",
                           "severity": "critical",
-                          "decisionId": "sample"
+                          "decisionId": "sample",
+                          "severityDecisionId": "sample"
                         }
                       ]
                     }
@@ -6692,6 +6703,9 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "unmetCriterionIds": [
                 "sample"
               ],
+              "decisionIds": [
+                "sample"
+              ],
               "resolvedAt": 0,
               "reply": {
                 "text": "sample",
@@ -6855,7 +6869,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "verdict": "met",
                 "outcome": "act",
                 "severity": "critical",
-                "decisionId": "sample"
+                "decisionId": "sample",
+                "severityDecisionId": "sample"
               }
             ]
           }
@@ -6896,7 +6911,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                     "verdict": "met",
                     "outcome": "act",
                     "severity": "critical",
-                    "decisionId": "sample"
+                    "decisionId": "sample",
+                    "severityDecisionId": "sample"
                   }
                 ]
               }
@@ -7023,7 +7039,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                     "verdict": "met",
                     "outcome": "act",
                     "severity": "critical",
-                    "decisionId": "sample"
+                    "decisionId": "sample",
+                    "severityDecisionId": "sample"
                   }
                 ]
               }
@@ -7203,7 +7220,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                         "verdict": "met",
                         "outcome": "act",
                         "severity": "critical",
-                        "decisionId": "sample"
+                        "decisionId": "sample",
+                        "severityDecisionId": "sample"
                       }
                     ]
                   }
@@ -7452,6 +7470,9 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "reason": "plan-unresolved",
             "question": "sample",
             "unmetCriterionIds": [
+              "sample"
+            ],
+            "decisionIds": [
               "sample"
             ],
             "resolvedAt": 0,

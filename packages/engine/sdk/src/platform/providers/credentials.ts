@@ -47,8 +47,10 @@ export function getConfiguredProviderIds(
 
   const configApiKeys = loadConfiguredApiKeys();
   const configToCatalog: Record<string, string> = { gemini: 'google', inceptionlabs: 'inception' };
+  // Configured under its registered name (what its models carry) and the catalog's name where that differs.
   for (const [configName, key] of Object.entries(configApiKeys)) {
     if (key) {
+      configured.add(configName);
       configured.add(configToCatalog[configName] ?? configName);
     }
   }

@@ -10,6 +10,8 @@
  * `refreshModels()`), independent of the shared third-party model catalog.
  */
 
+import { summarizeError } from '../utils/error-display.js';
+import { logger } from '../utils/logger.js';
 import type { LLMProvider } from './interface.js';
 import type { ModelDefinition } from './registry-types.js';
 import {
@@ -90,4 +92,41 @@ export async function sweepLiveModelDiscovery(
     reports.push({ providerId: provider.name, ...result });
   }
   return { providerNativeModels: nextProviderNativeModels, reports };
+}
+
+/**
+ * The startup live model discovery sweep, as routing needs it: when it has
+ * settled (the sweep replaces providers' preliminary model lists with what
+ * they serve, so a model picked before it settles can be gone when an agent is
+ * spawned on it), and which providers' endpoints did not return their model
+ * list when it asked (a live fetch was attempted and failed: nothing
+ * listening, credentials refused, an unreadable answer). A provider the sweep
+ * skipped or answered from its fresh cache is not listed.
+ */
+export class StartupModelDiscovery {
+  #settled: Promise<void> = Promise.resolve();
+  readonly #unreachable = new Map<string, string>();
+
+  /** Starts the sweep; never rejects: a failed sweep is logged and leaves the lists it could not refresh. */
+  start(sweep: () => Promise<ReadonlyArray<{ readonly providerId: string } & LiveModelDiscoveryResult>>): void {
+    this.#settled = sweep().then(
+      (reports) => {
+        for (const report of reports) {
+          if (report.error !== undefined) this.#unreachable.set(report.providerId, report.error);
+          else this.#unreachable.delete(report.providerId);
+        }
+      },
+      (error: unknown) => { logger.warn('[provider-models] Background live model discovery failed', { error: summarizeError(error) }); },
+    );
+  }
+
+  /** Resolves when the sweep has finished; at once when none was started. */
+  settled(): Promise<void> {
+    return this.#settled;
+  }
+
+  /** Providers whose model listing failed in the sweep, with the failure. Read after `settled`. */
+  unreachable(): ReadonlyMap<string, string> {
+    return this.#unreachable;
+  }
 }

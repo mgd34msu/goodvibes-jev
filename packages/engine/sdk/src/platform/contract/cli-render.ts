@@ -44,7 +44,7 @@ function describeEvent(event: ContractEvent): string {
     case 'CONTRACT_UNIT_STATUS_CHANGED':
       return `unit ${event.unitId} ${event.from} -> ${event.to}${event.agentId === undefined ? '' : ` (agent ${event.agentId})`}`;
     case 'CONTRACT_UNIT_SPAWNED':
-      return `unit ${event.unitId} agent ${event.agentId} spawned (${event.purpose}) on ${event.route.provider}:${event.route.model}`;
+      return `unit ${event.unitId} agent ${event.agentId} spawned (${event.purpose}) on ${event.route.model}`;
     case 'CONTRACT_CHECKED': {
       const met = event.criteria.filter((criterion) => criterion.verdict === 'met').length;
       const open = event.criteria.filter((criterion) => criterion.verdict !== 'met').map((criterion) => `${criterion.criterionId} ${criterion.verdict}`);

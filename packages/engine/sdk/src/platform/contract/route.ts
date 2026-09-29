@@ -10,6 +10,11 @@
  * A planner failure (NoRouteError when no configured, healthy model fits, or a
  * Jev outage) is the selector's failure: nothing picks a model in its place,
  * and the runner fails the contract with the planner's message.
+ *
+ * A route is picked only from the settled catalog: when the composition's
+ * provider registry is still sweeping providers for the models they serve
+ * (startup discovery replaces their preliminary lists), the selector waits for
+ * the sweep, so no route names a model the sweep is about to remove.
  */
 import type { PlannedRoute, RoutePlanRequest } from '../routing/route-planner.js';
 import type { ContractRouteSelector, UnitRoute } from './types.js';
@@ -44,8 +49,14 @@ function briefFor(request: RouteRequest): string {
   return [`${unit.title}: ${unit.goal}`, unit.brief].filter((part) => part.length > 0).join('\n\n');
 }
 
-export function createRoutePlannerContractSelector(planner: ContractRoutePlanner): ContractRouteSelector {
+export interface ContractSelectorOptions {
+  /** Resolves when the catalog the route planner reads has settled (the provider registry's startup model discovery); awaited before every pick. */
+  readonly catalogSettled?: (() => Promise<void>) | undefined;
+}
+
+export function createRoutePlannerContractSelector(planner: ContractRoutePlanner, options: ContractSelectorOptions = {}): ContractRouteSelector {
   return async (request) => {
+    await options.catalogSettled?.();
     const planned = await planner.planRoute({ purpose: routingPurpose(request), brief: briefFor(request), requires: { toolCalling: true } });
     const route: UnitRoute = {
       model: planned.model,

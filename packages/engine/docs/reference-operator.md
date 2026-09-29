@@ -30825,6 +30825,9 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                 },
                 "decisionId": {
                   "type": "string"
+                },
+                "severityDecisionId": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -30995,6 +30998,9 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                         ]
                       },
                       "decisionId": {
+                        "type": "string"
+                      },
+                      "severityDecisionId": {
                         "type": "string"
                       }
                     },
@@ -31626,6 +31632,9 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                         ]
                       },
                       "decisionId": {
+                        "type": "string"
+                      },
+                      "severityDecisionId": {
                         "type": "string"
                       }
                     },
@@ -32435,6 +32444,9 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                               ]
                             },
                             "decisionId": {
+                              "type": "string"
+                            },
+                            "severityDecisionId": {
                               "type": "string"
                             }
                           },
@@ -33727,6 +33739,12 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
               "type": "string"
             }
           },
+          "decisionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "resolvedAt": {
             "type": "number"
           },
@@ -34379,6 +34397,9 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                       },
                       "decisionId": {
                         "type": "string"
+                      },
+                      "severityDecisionId": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -34549,6 +34570,9 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                               ]
                             },
                             "decisionId": {
+                              "type": "string"
+                            },
+                            "severityDecisionId": {
                               "type": "string"
                             }
                           },
@@ -35180,6 +35204,9 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                               ]
                             },
                             "decisionId": {
+                              "type": "string"
+                            },
+                            "severityDecisionId": {
                               "type": "string"
                             }
                           },
@@ -35989,6 +36016,9 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                                     ]
                                   },
                                   "decisionId": {
+                                    "type": "string"
+                                  },
+                                  "severityDecisionId": {
                                     "type": "string"
                                   }
                                 },
@@ -37281,6 +37311,12 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                     "type": "string"
                   }
                 },
+                "decisionIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
                 "resolvedAt": {
                   "type": "number"
                 },
@@ -38041,6 +38077,9 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                     },
                     "decisionId": {
                       "type": "string"
+                    },
+                    "severityDecisionId": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -38211,6 +38250,9 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                             ]
                           },
                           "decisionId": {
+                            "type": "string"
+                          },
+                          "severityDecisionId": {
                             "type": "string"
                           }
                         },
@@ -38842,6 +38884,9 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                             ]
                           },
                           "decisionId": {
+                            "type": "string"
+                          },
+                          "severityDecisionId": {
                             "type": "string"
                           }
                         },
@@ -39651,6 +39696,9 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                                   ]
                                 },
                                 "decisionId": {
+                                  "type": "string"
+                                },
+                                "severityDecisionId": {
                                   "type": "string"
                                 }
                               },
@@ -40938,6 +40986,12 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                 "type": "string"
               },
               "unmetCriterionIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "decisionIds": {
                 "type": "array",
                 "items": {
                   "type": "string"

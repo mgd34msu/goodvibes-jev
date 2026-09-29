@@ -228,6 +228,22 @@ async function handleAgentRunFailure(
   }
 }
 
+/**
+ * The configured default model, looked up only when something reads it: an
+ * agent without a model of its own runs on it, but an agent routed to its own
+ * model (every contract unit) must not fail because the default cannot be
+ * found, for example while the provider catalog is still loading.
+ */
+export function lazyCurrentModel(providerRegistry: { getCurrentModel(): { readonly id: string; readonly provider: string; readonly registryKey: string } }): { readonly id: string; readonly provider: string; readonly registryKey: string } {
+  let model: { readonly id: string; readonly provider: string; readonly registryKey: string } | undefined;
+  const resolve = () => (model ??= providerRegistry.getCurrentModel());
+  return {
+    get id() { return resolve().id; },
+    get provider() { return resolve().provider; },
+    get registryKey() { return resolve().registryKey; },
+  };
+}
+
 export async function runAgentTask(
   context: AgentOrchestratorRunContext,
   record: AgentRecord,
@@ -253,7 +269,7 @@ export async function runAgentTask(
 
   try {
     const providerRegistry = context.providerRegistry;
-    const currentModel = providerRegistry.getCurrentModel();
+    const currentModel = lazyCurrentModel(providerRegistry);
     const primaryRoute = context.resolveProviderForRecord(providerRegistry, record, currentModel);
     let activeRoute = primaryRoute;
     let fallbackRouteIndex = 0;

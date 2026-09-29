@@ -58,8 +58,8 @@ export type ProviderRegistryFactory = (options: ProviderRegistryConstructionOpti
  * Whether model discovery runs at construction.
  *
  * `run` (the default, and what every composition did before this option existed)
- * kicks off the provider model-discovery pass. `skip` exists because that pass
- * writes asynchronously and unawaited: a short-lived composition, a test
+ * kicks off the provider model-discovery pass and the benchmark leaderboard
+ * load. `skip` exists because those passes write asynchronously and unawaited: a short-lived composition, a test
  * against a temp workspace, a one-shot CLI subcommand, can be torn down before
  * the write lands, which surfaces as a write into a directory that no longer
  * exists. Skipping is a statement that this composition will not outlive the
@@ -79,7 +79,7 @@ export interface ProviderStackOptions {
   readonly surfaceRoot: string;
   /** How to construct the registry. Default: `new ProviderRegistry(...)`. */
   readonly providerRegistryFactory?: ProviderRegistryFactory | undefined;
-  /** Whether to run model discovery at construction. Default: `run`. */
+  /** Whether to run model discovery and the benchmark load at construction. Default: `run`. */
   readonly modelDiscovery?: ProviderModelDiscoveryMode | undefined;
 }
 
@@ -122,7 +122,12 @@ export function createProviderStack(options: ProviderStackOptions): ProviderStac
   providerRegistry.initCustomProviders();
   // Default `run`: every composition did this unconditionally before the option
   // existed, so an omitted option changes nothing.
-  if ((options.modelDiscovery ?? 'run') === 'run') providerRegistry.initProviderModelDiscovery();
+  // The benchmark leaderboard is the same kind of network pass: the route
+  // planner orders each tier's candidates by it, so it loads with discovery.
+  if ((options.modelDiscovery ?? 'run') === 'run') {
+    providerRegistry.initProviderModelDiscovery();
+    benchmarkStore.initBenchmarks();
+  }
   // ONE credential chain (env -> secrets -> subscription): boot applies secrets-backed keys; every secrets write/delete re-registers builtins LIVE (no restart); badges/picker/chat read the same instances.
   options.secretsManager.onDidChange(() => void providerRegistry.refreshProviderCredentials().catch((error) => logger.warn('live credential refresh failed', { error: summarizeError(error) })));
   void providerRegistry.refreshProviderCredentials().catch((error) => logger.warn('boot credential refresh failed', { error: summarizeError(error) }));

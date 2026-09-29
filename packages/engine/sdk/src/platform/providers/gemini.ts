@@ -37,6 +37,8 @@ import { readsAsBelowCacheMinimum } from '../routing/provider-cache-readings.js'
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_CACHE_TTL_SECONDS = 3600;
+/** Tool call thought signatures kept per provider before the oldest go; far more than any live tool-use loops hold at once. */
+const MAX_THOUGHT_SIGNATURES = 4096;
 const NOOP_CACHE_HIT_TRACKER: Pick<CacheHitTracker, 'recordTurn'> = {
   recordTurn: () => {},
 };
@@ -123,7 +125,12 @@ export class GeminiProvider implements LLMProvider {
   readonly adapterKind = 'gemini' as const;
   readonly credentialAuthority = 'resolver' as const;
   readonly modelSource: ProviderModelSource = { kind: 'live-discovery' };
-  /** Maps function call name → thoughtSignature for the current turn. */
+  /**
+   * Thought signatures by tool call id. One provider serves every agent that
+   * uses Gemini, so signatures are keyed by the call they came with, never by
+   * function name, and one agent's turn never drops another's. The oldest go
+   * once the map holds MAX_THOUGHT_SIGNATURES.
+   */
   private thoughtSignatures = new Map<string, string>();
 
   /**
@@ -293,25 +300,8 @@ export class GeminiProvider implements LLMProvider {
     const { messages, tools, model, maxTokens, signal, systemPrompt, onDelta, onRetry } = params;
 
     return (await instrumentedLlmCall(() => withRetry(async () => {
-      const { contents, systemInstruction } = toGeminiContents(messages, systemPrompt);
-
-      // Inject thoughtSignatures into both model functionCall parts and user functionResponse parts
-      // (Gemini thinking models require the signature on both sides of the round-trip)
-      for (const c of contents) {
-        for (const part of c.parts) {
-          const p = part as Record<string, unknown>;
-          if (p.functionCall) {
-            const fc = p.functionCall as { name: string };
-            const sig = this.thoughtSignatures.get(fc.name);
-            if (sig) p.thoughtSignature = sig;
-          }
-          if (p.functionResponse) {
-            const fr = p.functionResponse as { name: string };
-            const sig = this.thoughtSignatures.get(fr.name);
-            if (sig) p.thoughtSignature = sig;
-          }
-        }
-      }
+      // Gemini thinking models require each call's signature on both sides of the round-trip.
+      const { contents, systemInstruction } = toGeminiContents(messages, systemPrompt, (callId) => this.thoughtSignatures.get(callId));
 
       const body: Record<string, unknown> = { contents };
 
@@ -430,10 +420,6 @@ export class GeminiProvider implements LLMProvider {
               onDelta({ content: part.text });
             }
             if (part.functionCall) {
-              // Capture thoughtSignature if present (Gemini thinking models)
-              if ((part as Record<string, unknown>).thoughtSignature) {
-                this.thoughtSignatures.set(part.functionCall.name, (part as Record<string, unknown>).thoughtSignature as string);
-              }
               if (onDelta) {
                 onDelta({ toolCalls: [{ index: 0, name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args) }] });
               }
@@ -469,19 +455,17 @@ export class GeminiProvider implements LLMProvider {
       }
 
       // Use streamed text directly if available (avoids re-parsing duplicated text parts)
-      const { text: parsedText, toolCalls } = fromGeminiParts(allParts);
+      const { text: parsedText, toolCalls, signatures } = fromGeminiParts(allParts);
+      for (const [callId, signature] of signatures) {
+        this.thoughtSignatures.set(callId, signature);
+        if (this.thoughtSignatures.size > MAX_THOUGHT_SIGNATURES) this.thoughtSignatures.delete(this.thoughtSignatures.keys().next().value!);
+      }
       // Prefer streamedText for content; fall back to parsed if no streaming happened
       const text = streamedText || parsedText;
 
       let stopReason: ChatStopReason = toolCalls.length > 0
         ? 'tool_call'
         : mapGeminiStopReason(lastFinishReason);
-
-      // Clear stale signatures; fresh ones were captured from this response's functionCall parts.
-      // (kept across calls within a tool-use loop, cleared when no new functionCalls arrive)
-      if (toolCalls.length === 0) {
-        this.thoughtSignatures.clear();
-      }
 
       this.cacheHitTracker.recordTurn({
         inputTokens,

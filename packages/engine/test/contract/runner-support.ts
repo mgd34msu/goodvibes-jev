@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { withDecisionLog, type DecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { ContractEvent } from '../../sdk/src/events/contract.js';
@@ -187,6 +188,8 @@ export interface HarnessOptions {
    * left on disk, as after a restart); the harness then leaves it on dispose.
    */
   readonly root?: string;
+  /** Records every reading, so a test can check that the contract tree names them. */
+  readonly decisionLog?: DecisionLog;
 }
 
 const ROUTE: UnitRoute = { model: 'provider-a:model-a', provider: 'provider-a', reason: 'test tier' };
@@ -311,7 +314,7 @@ export function makeHarness(options: HarnessOptions): Harness {
   });
   runner.on((event) => events.push(event));
   const fake = runnerPort(options.port);
-  const previous = installJudgmentPort(fake.port);
+  const previous = installJudgmentPort(options.decisionLog === undefined ? fake.port : withDecisionLog(fake.port, options.decisionLog));
 
   return {
     root,

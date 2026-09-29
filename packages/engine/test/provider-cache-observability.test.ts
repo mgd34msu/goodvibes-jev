@@ -81,6 +81,7 @@ function makeRegistry(root: string): ProviderRegistry {
       getBenchmarks: () => undefined,
       getKnownBenchmarks: () => undefined,
       getTopBenchmarkModelIds: () => [],
+      benchmarksSettled: async () => {},
     },
     secretsManager: {} as unknown as ConstructorParameters<typeof ProviderRegistry>[0]['secretsManager'],
     serviceRegistry: {} as unknown as ConstructorParameters<typeof ProviderRegistry>[0]['serviceRegistry'],

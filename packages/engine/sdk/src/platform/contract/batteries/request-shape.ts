@@ -11,6 +11,18 @@
  * costs a slower or read-only contract, while a wrong "no" does work the user
  * told us not to do, so the no side carries the higher stakes. Parallel agents
  * and attempts only shape the plan, so both sides are low stakes.
+ *
+ * Below act: `requests_parallel_agents` and `asks_for_attempts` count as asked
+ * only when read yes at act (`saysYesAtAct`); a yes below act is treated as
+ * not asked, and the plan is shaped as if the user said nothing (planner.ts,
+ * plan-schema.ts and plan-checks.ts read them this way). Both are low stakes:
+ * a plan shaped without them is checked like any other.
+ * `forbids_delegation` allows delegating only on a no at act
+ * (`delegationForbidden`), and `forbids_writing` read on neither side at act
+ * asks the owner (`writingUnclear`).
+ *
+ * The owner's reply to that question is read with `forbids_writing` alone
+ * (`readForbidsWriting`), since the reply says nothing about the others.
  */
 import { defineBattery, STAKES_BANDS, yesNo, type JudgmentPort, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { RequestShape, ShapeReading } from '../types.js';
@@ -92,6 +104,13 @@ export const requestShape = defineBattery({
       state: { request: "Don't delegate this: look through the job logs and tell me why last night's export failed, but don't touch anything." },
       expect: { forbids_delegation: 'yes', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
     },
+    // The owner's reply to the writing-unclear question, read with forbids_writing alone (readForbidsWriting).
+    { name: 'reply: go ahead and change the files', state: { request: 'Yes, go ahead and change the files.' }, expect: { forbids_writing: 'no' } },
+    { name: 'reply: fix it in place', state: { request: 'Sure, fix it directly in the code.' }, expect: { forbids_writing: 'no' } },
+    { name: 'reply: edit what you need', state: { request: 'You can edit whatever you need to, that is fine.' }, expect: { forbids_writing: 'no' } },
+    { name: 'reply: no edits, say what you would do', state: { request: 'No edits, just tell me what you would do.' }, expect: { forbids_writing: 'yes' } },
+    { name: 'reply: only the plan, do not touch the repo', state: { request: 'Only write the plan to me, do not touch the repo.' }, expect: { forbids_writing: 'yes' } },
+    { name: 'reply: read only, report back', state: { request: 'Read only please. Report what you find and leave the files alone.' }, expect: { forbids_writing: 'yes' } },
   ],
 });
 
@@ -126,6 +145,23 @@ export async function readRequestShape(
     },
     usage: result.usage,
   };
+}
+
+/**
+ * Reads only `forbids_writing` about the owner's reply to a `writing-unclear`
+ * escalation: the one question the reply answers.
+ */
+export async function readForbidsWriting(
+  port: JudgmentPort,
+  reply: string,
+  options: { readonly signal?: AbortSignal | undefined } = {},
+): Promise<{ readonly reading: ShapeReading; readonly decisionId: string | undefined; recordAction(action: string): void }> {
+  const run = await requestShape.run(port, { request: reply }, {
+    site: REQUEST_SHAPE_SITE,
+    only: ['forbids_writing'],
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  return { reading: toShapeReading(run.readings.forbids_writing), decisionId: run.result.decisionId, recordAction: (action) => run.recordAction(action) };
 }
 
 /** A shape question read yes at act: the only reading code acts on as "the user asked for this". */

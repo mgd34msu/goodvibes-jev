@@ -45,7 +45,7 @@ import { assertProviderCredentialAuthority } from './credential-authority-contra
 import { resolveModelReference } from './model-id-resolution.js';
 import { ConfiguredModelFollower } from './registry-configured-model.js';
 import type { LiveModelDiscoveryResult } from './live-model-discovery.js';
-import { applyProviderNativeModelBaseline, removeProviderNativeModels, sweepLiveModelDiscovery } from './registry-live-model-discovery.js';
+import { applyProviderNativeModelBaseline, removeProviderNativeModels, StartupModelDiscovery, sweepLiveModelDiscovery } from './registry-live-model-discovery.js';
 import type {
   ModelDefinition, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
@@ -73,13 +73,14 @@ export class ProviderRegistry {
   private readonly runtimeCatalogSuppressedRegistryKeys = new Map<string, readonly string[]>();
   private _watcher: { close: () => void } | undefined;
   private _readyPromise: Promise<void> | null = null;
+  private readonly startupDiscovery = new StartupModelDiscovery();
   private readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>;
   private readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>;
   private readonly capabilityRegistry: ProviderCapabilityRegistry;
   private readonly cacheHitTracker: CacheHitTracker;
   private readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null;
   private readonly favoritesStore: Pick<FavoritesStore, 'load'>;
-  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds'>;
+  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds' | 'benchmarksSettled'>;
   private readonly modelLimitsService: ModelLimitsService;
   private readonly gatewayPricing: GatewayPricingService;
   private readonly runtimeMetadataDeps: ProviderRuntimeMetadataDeps;
@@ -749,6 +750,9 @@ export class ProviderRegistry {
   /** Model tier readings (routing.model-tier), for the route planner. */
   get modelTiers(): ModelTierStore { return this.routingReadings.tiers; }
 
+  /** The benchmark leaderboard, for the route planner's ordering of each tier's candidates. */
+  get benchmarks(): Pick<BenchmarkStore, 'getKnownBenchmarks' | 'benchmarksSettled'> { return this.benchmarkStore; }
+
   /**
    * Resolve the full capability record for a model.
    *
@@ -815,9 +819,13 @@ export class ProviderRegistry {
 
   /** Background, TTL-respecting live model discovery sweep (never blocks/throws); separate from initCatalog() so tests calling that without mocking a provider API aren't surprised by a live network call. Real callers invoke this once at startup too. */
   initProviderModelDiscovery(): void {
-    void this.refreshLiveModelDiscovery().catch((err) =>
-      logger.warn('[provider-models] Background live model discovery failed', { error: summarizeError(err) }));
+    this.startupDiscovery.start(() => this.refreshLiveModelDiscovery());
   }
+
+  /** When the startup sweep settled (StartupModelDiscovery); at once when none was started. */
+  modelDiscoverySettled(): Promise<void> { return this.startupDiscovery.settled(); }
+  /** Providers whose model listing failed in the startup sweep, with the failure (StartupModelDiscovery). */
+  unreachableAtStartup(): ReadonlyMap<string, string> { return this.startupDiscovery.unreachable(); }
 
   async refreshCatalog(): Promise<void> {
     await refreshProviderCatalog(this._catalogLifecycleCtx());

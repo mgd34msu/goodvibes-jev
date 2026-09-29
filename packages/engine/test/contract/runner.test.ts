@@ -11,6 +11,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { acquireSharedTree, sharedTreeWaiters } from '../../sdk/src/platform/contract/index.js';
 import { emitAgentCompleted, emitAgentFailed } from '../../sdk/src/platform/runtime/emitters/agents.js';
@@ -176,6 +178,29 @@ describe('transport retry through the failure reading', () => {
     expect(done.decisions.filter((decision) => decision.action === 'transport-retry')).toHaveLength(1);
   });
 
+  test('the retry decision names the failure reading in the decision log', async () => {
+    let agents = 0;
+    const h = use(makeHarness({
+      plan: oneUnitPlan(1),
+      scripts: {
+        u1: () => {
+          agents += 1;
+          return agents === 1
+            ? [{ text: 'starting', stop: { kind: 'error', message: 'fetch failed: ECONNRESET (decision-id case)' } }]
+            : [{ files: { 'src/csv.ts': 'ok\n' }, text: 'parser written' }];
+        },
+      },
+    }));
+    const log = new SqliteDecisionLog(':memory:');
+    installJudgmentPort(withDecisionLog(judgmentPort('test'), log));
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'the contract to end');
+    const retry = h.store.get(contract.id)!.decisions.find((decision) => decision.action === 'transport-retry')!;
+    expect(retry.decisionIds).toHaveLength(1);
+    expect(log.get(retry.decisionIds[0]!)?.context.site).toBe('contract.transport-retry');
+    log[Symbol.dispose]();
+  });
+
   test('a second transport failure fails the unit and the contract with failureKind transport', async () => {
     const h = use(makeHarness({
       plan: oneUnitPlan(1),
@@ -327,6 +352,30 @@ describe('the active-contract cap', () => {
 });
 
 describe('isolation', () => {
+  test('worktree mode on a detached HEAD: the contract is measured against the HEAD commit and its work lands on it', async () => {
+    const root = makeRepo();
+    // No branch named main, and nothing checked out by name.
+    spawnSync('git', ['-C', root, 'branch', '-m', 'main', 'trunk']);
+    const head = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).stdout.trim();
+    spawnSync('git', ['-C', root, 'checkout', '-q', '--detach', head]);
+    const h = use(makeHarness({
+      root,
+      plan: oneUnitPlan(1),
+      contract: { isolation: 'auto' },
+      scripts: { u1: () => [{ files: { 'src/csv.ts': 'export const parse = 1;\n' }, text: 'parser written' }] },
+    }));
+    const { contract } = startContract(h);
+    expect(contract.baseBranch).toBe(head);
+    await waitFor(() => terminal(h, contract.id), 'the contract to end', 15_000);
+    const done = h.store.get(contract.id)!;
+    expect(done.status).toBe('passed');
+    expect(done.commit?.status).toBe('committed');
+    expect(spawnSync('git', ['-C', root, 'show', 'HEAD:src/csv.ts'], { encoding: 'utf-8' }).stdout).toBe('export const parse = 1;\n');
+    h.dispose();
+    harness = undefined;
+    rmSync(root, { recursive: true, force: true });
+  }, 20_000);
+
   test('worktree mode: the unit works in its own worktree, passes once its branch merged into the contract branch, and the deliverable is merged into the base branch', async () => {
     const h = use(makeHarness({
       plan: oneUnitPlan(1),

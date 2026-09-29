@@ -6,10 +6,13 @@
  * the Jev context budget.
  *
  * Where the diff comes from:
- * - Worktree mode: the unit's item branch against its base (IsolatedWorktree.diff).
- * - Shared mode in git: paths whose working-tree hash differs from the unit's
- *   baseline (taken when its agent was spawned) or that are new, each diffed
- *   against the baseline HEAD, or shown whole when git has no diff for it.
+ * - In git (the unit's item worktree in worktree mode, the project root in
+ *   shared mode): paths whose working-tree hash differs from the unit's
+ *   baseline (taken in that tree when its agent was spawned), that are new, or
+ *   that commits since the baseline changed, each diffed against the baseline
+ *   HEAD, or shown whole when git has no diff for it. The agent's work is
+ *   uncommitted until the unit passes, so the item branch's commits alone
+ *   would show none of it.
  * - Outside git: the paths the unit's write and edit calls named, with their
  *   current text.
  *
@@ -18,13 +21,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { estimateTokens, type JsonValue } from '@goodvibes-jev/judgment';
-import type { IsolatedWorktree } from '../agents/worktree.js';
 import { GitService } from '../git/service.js';
 import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-guard.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
-import { parseUnitCompletionReport, verifyUnitClaims, type ClaimVerificationResult } from './claims.js';
+import type { CompletionReport } from '../agents/completion-report.js';
+import { verifyUnitClaims, type ClaimVerificationResult } from './claims.js';
 import type { ContractConfigReader } from './config.js';
 import { runContractGates, type QualityGateResult } from './gates.js';
 import type { CheckTrigger, ContractUnit, ContractView } from './types.js';
@@ -222,10 +225,16 @@ export interface UnitEvidenceSources {
   readonly turns: readonly ContractTurnRecord[];
   /** The unit's worktree path, or the project root in shared mode. */
   readonly cwd: string;
-  /** The unit's item worktree, in worktree mode. */
-  readonly worktree?: Pick<IsolatedWorktree, 'diff'> | undefined;
   readonly configManager: ContractConfigReader;
   readonly runtimeBus: RuntimeEventBus;
+  /**
+   * The completion report the agent's output ends with, null when it gave none.
+   * A check at completion parses it from `output`; a check after a restart reads
+   * the one stored on the unit, since `output` is then capped head and tail.
+   */
+  readonly report: CompletionReport | null;
+  /** Whether the unit's plan role has it change files (`unitMustWrite`), which decides whether its claims are checked. */
+  readonly mustWrite: boolean;
   /** When given, only these changed paths are evidence (a unit's re-check after a planned fix). */
   readonly paths?: ReadonlySet<string> | null | undefined;
 }
@@ -234,8 +243,7 @@ export interface UnitEvidenceSources {
 const GATED_TRIGGERS: ReadonlySet<CheckTrigger> = new Set(['completion', 'agent-failed', 'fix-passed', 'resume', 'owner-amend']);
 
 /** The changed files of a unit, from the source its isolation mode gives. */
-export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sources: Pick<UnitEvidenceSources, 'cwd' | 'turns' | 'worktree'>): Promise<FileChange[]> {
-  if (sources.worktree !== undefined) return splitUnifiedDiff((await sources.worktree.diff()).unifiedDiff);
+export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sources: Pick<UnitEvidenceSources, 'cwd' | 'turns'>): Promise<FileChange[]> {
   if (GitService.isGitRepo(sources.cwd)) return sharedTreeChanges(sources.cwd, unit.baseline);
   return writtenChanges(sources.cwd, sources.turns);
 }
@@ -253,8 +261,10 @@ export async function collectUnitEvidence(
   const collected = await collectChanges(unit, sources);
   const scope = sources.paths;
   const changes = scope === null || scope === undefined ? collected : collected.filter((change) => scope.has(change.path));
-  // A check after a restart reads the completion report the earlier agent left (design 7.2).
-  const claims = trigger === 'completion' || trigger === 'resume' ? verifyUnitClaims(parseUnitCompletionReport(sources.output), sources.cwd) : undefined;
+  // Claims are checked against the unit's own baseline-scoped changes (the same paths the evidence lists), not the whole tree.
+  const claims = trigger === 'completion' || trigger === 'resume'
+    ? verifyUnitClaims(sources.report, { cwd: sources.cwd, mustWrite: sources.mustWrite, changedPaths: changes.map((change) => change.path) })
+    : undefined;
   const gates = GATED_TRIGGERS.has(trigger)
     ? await runContractGates({
       configManager: sources.configManager,
@@ -277,6 +287,11 @@ export function listedPaths(paths: readonly string[]): string[] {
 }
 
 /** The evidence object the judge reads beside the output. */
+/** The gate results a check state carries. */
+function gateEvidence(gates: NonNullable<UnitEvidence['gates']>): JsonValue {
+  return gates.map((gate) => ({ gate: gate.gate, passed: gate.passed, skipped: gate.skipped === true, output: gate.output }));
+}
+
 export function judgeEvidence(evidence: UnitEvidence): JsonValue {
   return {
     changedPaths: listedPaths(evidence.changedPaths),
@@ -287,7 +302,7 @@ export function judgeEvidence(evidence: UnitEvidence): JsonValue {
       : { claims: { kind: evidence.claims.kind, summary: evidence.claims.summary, missingPaths: listedPaths(evidence.claims.missingPaths) } }),
     ...(evidence.gates === undefined
       ? {}
-      : { gates: evidence.gates.map((gate) => ({ gate: gate.gate, passed: gate.passed, skipped: gate.skipped === true, output: gate.output })) }),
+      : { gates: gateEvidence(evidence.gates) }),
     commands: evidence.commands.map((command) => ({ ...command })),
   };
 }
@@ -307,7 +322,10 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
     brief: unit.brief,
     changedPaths: listedPaths(evidence.changedPaths),
     diff: evidence.diff,
+    omitted: listedPaths(evidence.omitted),
     commands: evidence.commands.map((command) => ({ ...command })),
+    // A gate's result shows a claim such as "the tests pass" as well as a command the agent ran.
+    ...(evidence.gates === undefined ? {} : { gates: gateEvidence(evidence.gates) }),
     output: evidence.output,
   };
 }

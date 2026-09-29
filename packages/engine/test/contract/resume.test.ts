@@ -174,6 +174,38 @@ describe('units resume at their step', () => {
     expect(done.units[0]!.answer).toBe('Wrote the parser in src/csv.ts.');
   }, 30_000);
 
+  test('a resume check verifies the report stored on the unit, not the capped lastOutput', async () => {
+    const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts: { u1: writesThenHangs } }, running, 'u1 running after a check');
+    const report = { version: 1, archetype: 'engineer', summary: 'Wrote the parser.', filesCreated: ['src/csv.ts'], filesModified: [] };
+    editContract(root, id!, (contract) => {
+      contract.units[0]!.status = 'held';
+      // The head and tail of a long output: the report itself is not in it.
+      contract.units[0]!.lastOutput = 'Wrote the parser. ...(cut)... all done.';
+      contract.units[0]!.lastReport = report as never;
+    });
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: mustNotRun } });
+    await h.runner.resumeAll();
+    const done = await ended(h, id!);
+    expect(done.status).toBe('passed');
+    // Re-parsing lastOutput would find no report and claim nothing (verified_empty).
+    expect(done.units[0]!.checks.find((check) => check.trigger === 'resume')?.claims?.kind).toBe('files_verified');
+  }, 30_000);
+
+  test('a completion check stores the whole report on the unit though lastOutput is capped', async () => {
+    const report = { version: 1, archetype: 'engineer', summary: `Wrote the parser. ${'detail '.repeat(4_000)}`, filesCreated: ['src/csv.ts'], filesModified: [], filesDeleted: [] };
+    const text = `Finished.\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``;
+    const root = makeRepo();
+    roots.push(root);
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: () => [{ files: { 'src/csv.ts': 'export const parse = 1;\n' }, text }] } });
+    const id = startContract(h).contract.id;
+    const done = await ended(h, id);
+    expect(done.status).toBe('passed');
+    const u1 = done.units[0]!;
+    expect(u1.lastReport).toEqual(report as never);
+    expect(u1.lastOutput!.length).toBeLessThan(text.length);
+    expect(u1.checks.find((check) => check.trigger === 'completion')?.claims?.kind).toBe('files_verified');
+  }, 30_000);
+
   test('a nudged unit is checked again; the nudge goes to a fresh agent, which fixes the work', async () => {
     const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts: { u1: writesThenHangs } }, running, 'u1 running after a check');
     editContract(root, id!, (contract) => {

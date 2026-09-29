@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
+import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, terminal } from './steps-support.js';
 
@@ -123,6 +123,31 @@ describe('answer and status (6.5)', () => {
     expect(done.statusLine).toBe(`Contract ${contract.id} passed (2 of 2 criteria met, 0 corrections); ${done.commit!.note}`);
     expect(record.fullOutput).not.toContain('Contract ');
   }, 20_000);
+
+  test("the deliverable judge reads the integration unit's whole final output, and code never states success in its place", async () => {
+    const report = 'Wired parseCsv into convert.\n\n```json\n{"version":1,"archetype":"integrator","summary":"Wired the parser into convert.","filesCreated":[],"filesModified":["src/convert.ts"]}\n```';
+    for (const [integrationText, expected] of [[report, report], ['', '']] as const) {
+      const outputs: unknown[] = [];
+      const h = use(makeHarness({
+        scripts: { u1: finishes('parseCsv reads quoted fields'), u2: finishes(integrationText, 'src/convert.ts') },
+        port: ({ state }) => {
+          // The deliverable judge's evidence carries the per-criterion summaries; a group judge's carries its units.
+          const evidence = state['evidence'] as Record<string, unknown> | undefined;
+          if (evidence !== undefined && 'criteria' in evidence && 'output' in state) outputs.push(state['output']);
+          return undefined;
+        },
+      }));
+      const id = await run(h);
+      expect(contractOf(h, id).status).toBe('passed');
+      expect(outputs.length).toBeGreaterThan(0);
+      for (const output of outputs) {
+        expect(output).toBe(expected);
+        expect(output).not.toContain(CONTRACT_PASSED_WITHOUT_OUTPUT);
+      }
+      h.dispose();
+      harness = undefined;
+    }
+  }, 40_000);
 
   test('a structured completion report is reduced to its summary, and a passing contract with no answer says so', () => {
     const report = '```json\n{"version":1,"archetype":"integrator","summary":"Wired the parser into convert.","filesCreated":[],"filesModified":["src/convert.ts"]}\n```';

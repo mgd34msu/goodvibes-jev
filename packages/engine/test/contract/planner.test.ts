@@ -244,7 +244,7 @@ describe('planContract: acceptance', () => {
 
 describe('planContract: the repair loop', () => {
   test('sends every problem back with the previous plan, then accepts the repaired plan', async () => {
-    install(({ name, state }) => (name === 'narrows' && unitTitleOf(state) === 'Narrow parser' ? noulAnswer(0.9) : undefined));
+    install(({ name, state }) => (name.startsWith('narrows_') && unitTitleOf(state) === 'Narrow parser' ? noulAnswer(0.9) : undefined));
     const broken = validPlan();
     broken.criteria[1]!.quote = 'a YAML formatter';
     broken.groups[0]!.units[1]!.criteria[0]!.serves = ['c1'];
@@ -279,7 +279,7 @@ describe('planContract: the repair loop', () => {
   });
 
   test('stops at contract.planRepairLimit and asks the owner with every problem and the plan', async () => {
-    install(({ name }) => (name === 'uncovered_requirement' ? noulAnswer(0.9) : undefined));
+    install(({ name }) => (name === 'unquoted_2' ? noulAnswer(0.9) : undefined));
     const contract = shapedContract();
     const { deps, requests, events } = harness([plannerOutput(validPlan())], { planRepairLimit: 2 });
     const outcome = await planContract(contract, deps);
@@ -298,7 +298,7 @@ describe('planContract: the repair loop', () => {
   });
 
   test('a repair limit of zero asks the owner after the first plan', async () => {
-    install(({ name }) => (name === 'uncovered_requirement' ? noulAnswer(0.9) : undefined));
+    install(({ name }) => (name === 'unquoted_2' ? noulAnswer(0.9) : undefined));
     const { deps, requests } = harness([plannerOutput(validPlan())], { planRepairLimit: 0 });
     const outcome = await planContract(shapedContract(), deps);
     expect(requests).toHaveLength(1);
@@ -412,7 +412,7 @@ describe('planContract: failure, with no single-item fallback', () => {
 
 describe('acceptEscalatedPlan', () => {
   async function escalated() {
-    install(({ name }) => (name === 'uncovered_requirement' ? noulAnswer(0.9) : undefined));
+    install(({ name }) => (name === 'unquoted_2' ? noulAnswer(0.9) : undefined));
     const contract = shapedContract();
     const run = harness([plannerOutput(validPlan())], { planRepairLimit: 0 });
     await planContract(contract, run.deps);

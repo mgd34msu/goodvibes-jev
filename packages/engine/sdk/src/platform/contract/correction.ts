@@ -369,7 +369,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const judgedCriteria = judged(unit.criteria);
     const read = await readRoute(run, {
       unit: { goal: unit.goal, criteria: judgedCriteria.map((criterion) => `${criterion.id} ${criterion.text}`) },
-      unmet: [...unmet, ...unshown],
+      unmet,
+      unshown,
       lastNudges: unit.nudges.slice(-STALL_NUDGES).map((nudge) => nudge.text),
       checks: checkSummaries(judgedCriteria, unit.checks),
       lastOutput: headAndTail(record?.fullOutput ?? run.runtime(unit).lastAssistantText, OUTPUT_CAP_CHARS),
@@ -431,7 +432,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       const judgedCriteria = judged(target.criteria);
       const read = await readRoute(run, {
         unit: { goal: target.goal, criteria: judgedCriteria.map((criterion) => `${criterion.id} ${criterion.text}`) },
-        unmet: [...unmet, ...finding.unshown],
+        unmet,
+        unshown: finding.unshown,
         lastNudges: [],
         checks: checkSummaries(judgedCriteria, target.checks),
         lastOutput: headAndTail(finding.output, OUTPUT_CAP_CHARS),

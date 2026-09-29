@@ -30423,6 +30423,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         },
                         "decisionId": {
                           "type": "string"
+                        },
+                        "severityDecisionId": {
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -30593,6 +30596,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                 ]
                               },
                               "decisionId": {
+                                "type": "string"
+                              },
+                              "severityDecisionId": {
                                 "type": "string"
                               }
                             },
@@ -31224,6 +31230,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                 ]
                               },
                               "decisionId": {
+                                "type": "string"
+                              },
+                              "severityDecisionId": {
                                 "type": "string"
                               }
                             },
@@ -32033,6 +32042,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                       ]
                                     },
                                     "decisionId": {
+                                      "type": "string"
+                                    },
+                                    "severityDecisionId": {
                                       "type": "string"
                                     }
                                   },
@@ -33325,6 +33337,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                       "type": "string"
                     }
                   },
+                  "decisionIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
                   "resolvedAt": {
                     "type": "number"
                   },
@@ -33973,6 +33991,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                               },
                               "decisionId": {
                                 "type": "string"
+                              },
+                              "severityDecisionId": {
+                                "type": "string"
                               }
                             },
                             "required": [
@@ -34143,6 +34164,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                       ]
                                     },
                                     "decisionId": {
+                                      "type": "string"
+                                    },
+                                    "severityDecisionId": {
                                       "type": "string"
                                     }
                                   },
@@ -34774,6 +34798,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                       ]
                                     },
                                     "decisionId": {
+                                      "type": "string"
+                                    },
+                                    "severityDecisionId": {
                                       "type": "string"
                                     }
                                   },
@@ -35583,6 +35610,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                             ]
                                           },
                                           "decisionId": {
+                                            "type": "string"
+                                          },
+                                          "severityDecisionId": {
                                             "type": "string"
                                           }
                                         },
@@ -36875,6 +36905,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             "type": "string"
                           }
                         },
+                        "decisionIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
                         "resolvedAt": {
                           "type": "number"
                         },
@@ -37627,6 +37663,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             },
                             "decisionId": {
                               "type": "string"
+                            },
+                            "severityDecisionId": {
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -37797,6 +37836,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                     ]
                                   },
                                   "decisionId": {
+                                    "type": "string"
+                                  },
+                                  "severityDecisionId": {
                                     "type": "string"
                                   }
                                 },
@@ -38428,6 +38470,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                     ]
                                   },
                                   "decisionId": {
+                                    "type": "string"
+                                  },
+                                  "severityDecisionId": {
                                     "type": "string"
                                   }
                                 },
@@ -39237,6 +39282,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                                           ]
                                         },
                                         "decisionId": {
+                                          "type": "string"
+                                        },
+                                        "severityDecisionId": {
                                           "type": "string"
                                         }
                                       },
@@ -40524,6 +40572,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         "type": "string"
                       },
                       "unmetCriterionIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "decisionIds": {
                         "type": "array",
                         "items": {
                           "type": "string"

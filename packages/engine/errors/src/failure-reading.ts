@@ -228,6 +228,8 @@ export interface FailureConclusions {
     readonly category: ChoiceReading<FailureCategory>;
     readonly connection_failure: ChoiceReading<ConnectionFailure>;
   } & { readonly [K in Exclude<FailureQuestion, 'category' | 'connection_failure'>]: YesNoReading };
+  /** The decision-log entry of the reading (a repeated wording shares the first reading's), so a caller's decision can name it. */
+  readonly decisionId?: string | undefined;
 }
 
 /** Long provider bodies say what they mean in their opening; the rest is request echo. */
@@ -279,6 +281,7 @@ export function readFailure(evidence: FailureEvidence, site: string): Promise<Fa
       beforeResponse: holds(r.before_response),
       connection: r.connection_failure.outcome === 'act' ? r.connection_failure.choice : 'none',
       readings: r,
+      ...(run.result.decisionId === undefined ? {} : { decisionId: run.result.decisionId }),
     };
   })());
 }

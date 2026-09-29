@@ -180,6 +180,32 @@ describe('worktree-mode gates + dependency composition (BIG-3 items 2/3/5)', () 
     rmSync(root, { recursive: true, force: true });
   }, 40_000);
 
+  test('claims are checked by the phase kind, not by the archetype the agent names: an engineer phase that changed nothing fails the phantom-work guard', async () => {
+    const root = freshRepo();
+    const logDir = mkdtempSync(join(tmpdir(), 'wt-gates-log-'));
+    const h = makeHarness();
+    const engine = createOrchestrationEngine({
+      agentManager: h.agentManager,
+      // The gate's log goes outside the repository, so the tree stays unchanged.
+      configManager: makeGateConfig(join(logDir, 'gate-cwds.log')),
+      runtimeBus: h.bus,
+      projectRoot: root,
+      persist: false,
+    });
+    const ws = engine.createWorkstream(workstreamOf([{ id: 'a', title: 'A', task: 'do A' }]));
+    engine.start(ws.id);
+    await waitUntil(() => hasRunningAgentFor(h, 'a'));
+    // A report that calls itself something other than an engineer and names no files, with nothing changed on disk.
+    h.completeAgent(runningAgentFor(h, 'a'), '```json\n{"version":1,"archetype":"general","summary":"done","result":"done"}\n```');
+    await waitUntil(() => engine.getPhaseResults(ws.id).length > 0);
+    const [result] = engine.getPhaseResults(ws.id);
+    expect(result!.gate.passed).toBe(false);
+    expect(result!.gate.results.find((gate) => gate.gate === 'phantom-work-guard')?.passed).toBe(false);
+    engine.dispose();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  }, 20_000);
+
   test('shared mode: gates run in the project root, not in a per-item worktree', async () => {
     const root = freshRepo();
     const gateLog = join(root, 'gate-cwds.log');

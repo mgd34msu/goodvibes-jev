@@ -560,6 +560,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
     modeManager,
     processManager,
     agentMessageBus: agents.agentMessageBus,
+    agentManager: agents.agentManager,
     webSearchService,
     archetypeLoader: agents.archetypeLoader,
     configManager,

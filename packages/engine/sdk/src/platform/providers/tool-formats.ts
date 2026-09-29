@@ -233,6 +233,8 @@ export interface GeminiPart {
   inlineData?: { mimeType: string; data: string };
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: { name: string; response: { content: string } };
+  /** A thinking model's signature on a function call, sent back with the call and its response on the next request. */
+  thoughtSignature?: string | undefined;
 }
 
 export interface GeminiContent {
@@ -269,29 +271,36 @@ export function toGeminiFunctionDeclarations(
 export function fromGeminiParts(parts: GeminiPart[]): {
   text: string;
   toolCalls: ToolCall[];
+  /** Each call's thought signature, by the id this function gave the call. */
+  signatures: Map<string, string>;
 } {
   let text = '';
   const toolCalls: ToolCall[] = [];
+  const signatures = new Map<string, string>();
 
   for (const part of parts) {
     if (part.text) {
       text += part.text;
     } else if (part.functionCall) {
+      const id = crypto.randomUUID();
       toolCalls.push({
-        id: crypto.randomUUID(),
+        id,
         name: part.functionCall.name,
         arguments: part.functionCall.args,
       });
+      if (typeof part.thoughtSignature === 'string' && part.thoughtSignature.length > 0) signatures.set(id, part.thoughtSignature);
     }
   }
 
-  return { text, toolCalls };
+  return { text, toolCalls, signatures };
 }
 
 /** Convert internal ProviderMessages to Gemini contents array. */
 export function toGeminiContents(
   messages: ProviderMessage[],
   systemPrompt?: string,
+  /** The thought signature a tool call came with, by call id; attached to the call and to its response. */
+  signatureFor?: (callId: string) => string | undefined,
 ): { contents: GeminiContent[]; systemInstruction?: { parts: GeminiPart[] } | undefined } {
   const contents: GeminiContent[] = [];
   const systemInstruction = systemPrompt
@@ -326,16 +335,19 @@ export function toGeminiContents(
       if (msg.content) parts.push({ text: msg.content });
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
-          parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+          const signature = signatureFor?.(tc.id);
+          parts.push({ functionCall: { name: tc.name, args: tc.arguments }, ...(signature === undefined ? {} : { thoughtSignature: signature }) });
         }
       }
       contents.push({ role: 'model', parts });
     } else if (msg.role === 'tool') {
+      const signature = signatureFor?.(msg.callId);
       pendingFunctionResponses.push({
         functionResponse: {
           name: msg.name ?? msg.callId,
           response: { content: msg.content },
         },
+        ...(signature === undefined ? {} : { thoughtSignature: signature }),
       });
     }
   }

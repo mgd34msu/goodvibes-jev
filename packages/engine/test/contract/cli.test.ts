@@ -20,10 +20,13 @@ import {
   runContractCli,
 } from '../../sdk/src/platform/contract/cli.js';
 import { formatContractEvent } from '../../sdk/src/platform/contract/cli-render.js';
+import { submitSessionTurn } from '../../sdk/src/bin/contract-cli-host.js';
+import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
+import { emitTurnError } from '../../sdk/src/platform/runtime/emitters/turn.js';
 import type { ResumeReport } from '../../sdk/src/platform/contract/resume.js';
 import { SurfaceHomeInUseError } from '../../sdk/src/platform/runtime/home-single-writer.js';
 import { resumeContracts } from '../../sdk/src/platform/runtime/contract-composition.js';
-import { ALL_CONTRACT_EVENTS } from './event-samples.js';
+import { ALL_CONTRACT_EVENTS, CTR, SAMPLES } from './event-samples.js';
 import { CLI_SESSION, FakeIo, PROJECT, cliHarness, unitCheck, until } from './cli-support.js';
 import { makeContract, makeCriterion, makeUnit } from './fixtures.js';
 
@@ -179,6 +182,16 @@ describe('session mode', () => {
     const io = new FakeIo(false);
     expect(await runContractCli(['run', ASK], io, harness.deps)).toBe(EXIT_FAILED);
     expect(harness.sessions.submitted).toEqual([[CLI_SESSION, ASK]]);
+    expect(io.stderr.at(-1)).toContain('ended before its work was checked');
+  });
+
+  test('a turn that failed is reported with its error before following ends', async () => {
+    const harness = cliHarness();
+    sessionModeStart(harness);
+    harness.sessions.onTurn = () => { throw new Error('Anthropic API error 400: credit balance too low'); };
+    const io = new FakeIo(false);
+    expect(await runContractCli(['run', ASK], io, harness.deps)).toBe(EXIT_FAILED);
+    expect(io.stderr.some((line) => line.includes('failed: Anthropic API error 400: credit balance too low'))).toBe(true);
     expect(io.stderr.at(-1)).toContain('ended before its work was checked');
   });
 
@@ -416,6 +429,11 @@ test('every contract event formats as one plain line naming its contract', () =>
   }
 });
 
+test("a spawned unit's line names its route by the registry key the route carries, once", () => {
+  const line = formatContractEvent({ ...SAMPLES.CONTRACT_UNIT_SPAWNED, route: { model: 'gemini:gemini-2.5-pro', provider: 'gemini', reason: 'standard tier' } });
+  expect(line).toBe(`[${CTR}] unit u1 agent a1 spawned (unit) on gemini:gemini-2.5-pro`);
+});
+
 describe('resumeContracts', () => {
   test('repeated calls for one root return the same promise, resolving to the report; the runner resumes once', async () => {
     const root = mkdtempSync(join(tmpdir(), 'contract-resume-'));
@@ -441,5 +459,28 @@ describe('resumeContracts', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the CLI host\'s session turns', () => {
+  const settled = { modelDiscoverySettled: async () => {} };
+
+  test('a turn of the session that ends in TURN_ERROR rejects with the error; another session\'s error does not', async () => {
+    const bus = new RuntimeEventBus();
+    const fail = (sessionId: string) => emitTurnError(bus, { sessionId, traceId: 't', source: 'test' }, { turnId: 'turn-1', error: 'authentication failed', stopReason: 'provider_error' });
+    await expect(submitSessionTurn({ runtimeBus: bus, providerRegistry: settled }, 'cli-a', async () => { fail('cli-a'); })).rejects.toThrow('authentication failed');
+    await submitSessionTurn({ runtimeBus: bus, providerRegistry: settled }, 'cli-a', async () => { fail('cli-b'); });
+  });
+
+  test('the turn starts only once the provider catalog has settled', async () => {
+    let settle: () => void = () => {};
+    const catalog = new Promise<void>((resolve) => { settle = resolve; });
+    let started = false;
+    const submitting = submitSessionTurn({ runtimeBus: new RuntimeEventBus(), providerRegistry: { modelDiscoverySettled: () => catalog } }, 'cli-a', async () => { started = true; });
+    await Promise.resolve();
+    expect(started).toBe(false);
+    settle();
+    await submitting;
+    expect(started).toBe(true);
   });
 });

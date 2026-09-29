@@ -171,6 +171,8 @@ export class BenchmarkStore {
   private identityResolver: ModelIdentityResolver | null = null;
   private identityEntries: readonly BenchmarkEntry[] | null = null;
   private readonly refreshCallbacks = new Set<() => void>();
+  /** The refresh initBenchmarks started, when the cache was missing or stale; settled at once otherwise. */
+  private startupRefresh: Promise<void> = Promise.resolve();
 
   constructor(options: BenchmarkStoreOptions) {
     this.dir = options.dir;
@@ -195,10 +197,19 @@ export class BenchmarkStore {
     this.cache = this.loadCache();
     this.nameIndex = this.cache ? buildNameIndex(this.cache.entries) : null;
     if (!this.cache || this.isCacheStale(this.cache)) {
-      void this.refreshBenchmarks().catch((err) => {
+      this.startupRefresh = this.refreshBenchmarks().catch((err: unknown) => {
         logger.warn('[model-benchmarks] Background refresh failed', { error: summarizeError(err) });
       });
     }
+  }
+
+  /**
+   * Resolves when the refresh `initBenchmarks` started has finished, at once
+   * when it started none (the cache was fresh, or it was never called). Never
+   * rejects: a failed refresh is logged and keeps the cache it had.
+   */
+  benchmarksSettled(): Promise<void> {
+    return this.startupRefresh;
   }
 
   async refreshBenchmarks(): Promise<void> {

@@ -158,7 +158,7 @@ export {
 export type { EscalationInput, Escalations, OwnerReplyAction, OwnerReplyOutcome, Rejudge } from './escalation.js';
 export { amendTarget, buildAmendmentPrompt, buildAmendmentRequest, parseAmendment } from './amendment.js';
 export type { AmendmentOutcome } from './amendment.js';
-export { CONTRACT_PASSED_WITHOUT_OUTPUT, answerUnit, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from './answer.js';
+export { CONTRACT_PASSED_WITHOUT_OUTPUT, answerUnit, deliverableOutput, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from './answer.js';
 export {
   CONTRACT_TASK_STATUS,
   CONTRACT_WORK_PLAN_SOURCE,
@@ -256,17 +256,18 @@ export {
 } from './nudge.js';
 export type { NudgeDispatch, NudgeFindings, NudgeTargetState, NudgeTransport } from './nudge.js';
 export { UNIT_JUDGES, UNIT_JUDGE_BANDS, unitJudgeDecision } from './batteries/unit-judge.js';
-export { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, unitQuality } from './batteries/unit-quality.js';
+export { MID_RUN_QUALITY_ITEMS, UNIT_QUALITY_BAND, midRunNudgeItems, unitQuality } from './batteries/unit-quality.js';
 export { unmetSeverity } from './batteries/unmet-severity.js';
 export { STALL_ROUTE_OPTIONS, stallRoute } from './batteries/stall-route.js';
-export { GROUP_JUDGES, groupJudgeDecision } from './batteries/group-judge.js';
-export { DELIVERABLE_JUDGES, deliverableJudgeDecision } from './batteries/deliverable-judge.js';
+export { GROUP_JUDGES, groupJudgeDecision, groupVerdict } from './batteries/group-judge.js';
+export { DELIVERABLE_JUDGES, deliverableJudgeDecision, deliverableVerdict } from './batteries/deliverable-judge.js';
 export { ownerReply } from './batteries/owner-reply.js';
 export { ownerPick } from './batteries/owner-pick.js';
 export { BEST_OF_N_FIT_INSTRUCTIONS, BEST_OF_N_INSTRUCTIONS, bestOfN } from './batteries/best-of-n.js';
 // Planning (section 3).
 export {
   delegationForbidden,
+  readForbidsWriting,
   readRequestShape,
   requestShape,
   saysNoAtAct,
@@ -324,10 +325,11 @@ export { registry as contractJudgmentRegistry } from './judgment-registry.js';
 export { createContractIntake, describeIntake, openEscalation, toolResultStartedContract } from './intake-route.js';
 export type { ContractIntake, ContractIntakeDeps, TurnIntakeOutcome } from './intake-route.js';
 export { REQUEST_ROUTE_SITE, requestRoute } from './batteries/request-route.js';
+export { ESCALATION_TURN_BAND, ESCALATION_TURN_SITE, escalationTurn, turnIsUnrelated } from './batteries/escalation-turn.js';
 export { checkDraftFidelity, draftSection, numberDraft } from './draft-plan.js';
 export { createContractFleetControls, qualifyId, splitQualifiedId } from './fleet-controls.js';
 export type { ContractConflictItem, ContractFleetControls, ContractFleetControlsDeps } from './fleet-controls.js';
-export { createRoutePlannerContractSelector } from './route.js';
+export { createRoutePlannerContractSelector, type ContractSelectorOptions } from './route.js';
 export type { ContractPlannedRoute, ContractRoutePlanner } from './route.js';
 export {
   CONTRACT_WORK_STATUS,

@@ -6,7 +6,10 @@
  * runner here, so its dependencies are wired in one place.
  *
  * - The route selector is the routing subsystem's route planner over the
- *   provider registry's catalog, tier readings and live provider health.
+ *   provider registry's catalog, tier readings, benchmark leaderboard and
+ *   provider health (the runtime store's, and the providers the startup sweep
+ *   could not reach), and picks only once the registry's startup model
+ *   discovery and the leaderboard load have settled.
  * - The planner runs as a read-only sub-agent through the agent manager.
  * - Each contract gets its own orchestration engine (one per contract).
  * - The agent manager sends every spawn that is not outside a contract to the
@@ -29,6 +32,8 @@ import type { AgentMessageBus } from '../agents/message-bus.js';
 import { createAgentManagerDecompositionRunner } from '../agents/planner-decomposition-runner.js';
 import type { FleetCapacityFn } from '../orchestration/elastic-pool.js';
 import { createOrchestrationEngine } from '../orchestration/engine.js';
+import { compositeScore, type BenchmarkStore } from '../providers/model-benchmarks.js';
+import type { ModelDefinition } from '../providers/registry.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { createRoutePlanner } from '../routing/route-planner.js';
 import type { AgentManager } from '../tools/agent/index.js';
@@ -38,6 +43,7 @@ import { buildPricingSeams } from './cost/pricing-seams.js';
 import type { RuntimeEventBus } from './events/index.js';
 import { makeRuntimeFleetProbe } from './orchestration/fleet-count.js';
 import type { RuntimeStore } from './store/index.js';
+import type { ProviderStatus } from './store/domains/provider-health.js';
 
 export interface ContractRunnerCompositionOptions {
   readonly runtimeBus: RuntimeEventBus;
@@ -64,6 +70,36 @@ export function nativeAgentFleetCapacity(configManager: Pick<ConfigManager, 'get
   return makeRuntimeFleetProbe({ readConfig: (key) => configManager.get(key as never), agentManager, acpHost: { list: () => [] } });
 }
 
+/**
+ * A model's benchmark fact for the route planner: the leaderboard's composite
+ * score for the model, found by display name or id; null when the leaderboard
+ * does not list it.
+ */
+export function routeBenchmarkFor(benchmarks: Pick<BenchmarkStore, 'getKnownBenchmarks'>): (model: ModelDefinition) => number | null {
+  return (model) => {
+    const entry = benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id);
+    return entry === undefined ? null : compositeScore(entry.benchmarks);
+  };
+}
+
+/**
+ * The provider health the route planner filters on: the runtime store's
+ * provider health, and every provider whose endpoint did not return its model
+ * list in the registry's startup sweep marked unavailable, so no route names
+ * a model on a provider nothing is serving (a local proxy that is not running,
+ * credentials the provider refused).
+ */
+export function routeProviderHealth(
+  registry: Pick<ProviderRegistry, 'unreachableAtStartup'>,
+  runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined,
+): () => ReadonlyMap<string, { readonly status: ProviderStatus }> {
+  return () => {
+    const health = new Map<string, { readonly status: ProviderStatus }>(runtimeStore?.getState().providerHealth.providers ?? []);
+    for (const providerId of registry.unreachableAtStartup().keys()) health.set(providerId, { status: 'unavailable' });
+    return health;
+  };
+}
+
 /** The composed runner and its store; `dispose` releases both. */
 export interface ComposedContractRunner {
   readonly runner: ContractRunner;
@@ -77,7 +113,8 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
   const planner = createRoutePlanner({
     catalog: options.providerRegistry,
     tiers: options.providerRegistry.modelTiers,
-    ...(options.runtimeStore === undefined ? {} : { providerHealth: () => options.runtimeStore!.getState().providerHealth.providers }),
+    benchmarkFor: routeBenchmarkFor(options.providerRegistry.benchmarks),
+    providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   });
   const runner = createContractRunner({
     agentManager: options.agentManager,
@@ -85,7 +122,11 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     runtimeBus: options.runtimeBus,
     configManager: options.configManager,
     projectRoot: options.projectRoot,
-    routeSelector: createRoutePlannerContractSelector(planner),
+    routeSelector: createRoutePlannerContractSelector(planner, {
+      catalogSettled: async () => {
+        await Promise.all([options.providerRegistry.modelDiscoverySettled(), options.providerRegistry.benchmarks.benchmarksSettled()]);
+      },
+    }),
     decompositionRunner: createAgentManagerDecompositionRunner({ agentManager: options.agentManager }),
     createEngine: (input) => createOrchestrationEngine({
       agentManager: options.agentManager,

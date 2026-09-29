@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js';
 /**
  * Structured completion reports, per-archetype output contracts. Agents end
  * their final output with one as a fenced JSON block (the format the agent
- * prompt asks for, read here as a fixed format). The contract runner reads a
+ * prompt dictates, read here as a fixed format). The contract runner reads a
  * unit's report to verify its claims (contract/claims.ts) and to take its
  * summary as the unit's answer (contract/answer.ts).
  */
@@ -51,50 +51,26 @@ export interface GenericReport extends BaseCompletionReport {
 
 export type CompletionReport = EngineerReport | TesterReport | GenericReport;
 
-/** The report at the end of an agent's output: a fenced ```json block, else the object around its `"version"` key; null when there is none. */
+/** A fenced ```json block: the opening fence on its own line, the closing fence on its own line. */
+const JSON_FENCE = /^```json[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
+
+/**
+ * The report the agent prompt dictates: the LAST fenced ```json block of the
+ * output (the report ends the message), whose object has `version` 1 and a
+ * string `archetype`. Null when the last block is not such an object, or there
+ * is no block. Nothing is read out of prose.
+ */
 export function parseCompletionReport(rawOutput: string): CompletionReport | null {
-  // Strategy 1: Find ```json ... ``` block
-  const jsonBlockMatch = rawOutput.match(/```json\s*\n(\{[\s\S]*?\})\s*\n```/);
-  if (jsonBlockMatch) {
-    try {
-      const parsed = JSON.parse(jsonBlockMatch[1]!);
-      if (parsed.version === 1 && parsed.archetype) return parsed as CompletionReport;
-    } catch (error) {
-      logger.debug('Completion report fenced JSON parse failed', { error: summarizeError(error) });
-    }
+  let last: string | undefined;
+  for (const match of rawOutput.matchAll(JSON_FENCE)) last = match[1];
+  if (last === undefined) return null;
+  try {
+    const parsed: unknown = JSON.parse(last);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    const candidate = parsed as { version?: unknown; archetype?: unknown };
+    if (candidate.version === 1 && typeof candidate.archetype === 'string') return parsed as CompletionReport;
+  } catch (error) {
+    logger.debug('Completion report fenced JSON parse failed', { error: summarizeError(error) });
   }
-
-  // Strategy 2: Brace-counting extraction, find "version": 1, walk backward for opening {,
-  // then forward counting braces to find the matching }. Avoids greedy regex over-matching.
-  const versionIdx = rawOutput.indexOf('"version"');
-  if (versionIdx !== -1) {
-    // Walk backward to find opening brace
-    let openBrace = -1;
-    for (let i = versionIdx - 1; i >= 0; i--) {
-      if (rawOutput[i] === '{') { openBrace = i; break; }
-    }
-    if (openBrace !== -1) {
-      // Walk forward with brace counting to find matching close
-      let depth = 0;
-      let closeBrace = -1;
-      for (let i = openBrace; i < rawOutput.length; i++) {
-        if (rawOutput[i] === '{') depth++;
-        else if (rawOutput[i] === '}') {
-          depth--;
-          if (depth === 0) { closeBrace = i; break; }
-        }
-      }
-      if (closeBrace !== -1) {
-        const candidate = rawOutput.slice(openBrace, closeBrace + 1);
-        try {
-          const parsed = JSON.parse(candidate);
-          if (parsed.version === 1 && parsed.archetype) return parsed as CompletionReport;
-        } catch (error) {
-          logger.debug('Completion report brace-count JSON parse failed', { error: summarizeError(error) });
-        }
-      }
-    }
-  }
-
   return null;
 }

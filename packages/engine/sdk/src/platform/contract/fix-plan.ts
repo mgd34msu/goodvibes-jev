@@ -165,7 +165,14 @@ export function validateFixPlan(text: string, brief: FixBrief, limits: Pick<Cont
   return problems.length > 0 ? { plan, problems } : { plan, group, problems };
 }
 
-/** The most severe latest severity among the criteria a unit serves; major when none was read. */
+/**
+ * Where a fix unit goes in the serialization order of fix units that change
+ * the same file (orchestration/task-graph.ts): the most severe latest severity
+ * among the criteria it serves. A unit whose criteria have no severity read
+ * (unshown criteria, or a reading below act) takes the middle place, after one
+ * read critical and before one read only minor. The rank orders work and is
+ * reported nowhere.
+ */
 function severityOf(serves: readonly string[], criteria: readonly Criterion[]): TaskSeverity {
   const read = criteria.filter((criterion) => serves.includes(criterion.id)).map(latestSeverity);
   if (read.includes('critical')) return 'critical';

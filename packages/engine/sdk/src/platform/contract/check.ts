@@ -4,7 +4,9 @@
  *
  * Jev reads each criterion and the goal (`contract.unit-judge`) and the
  * quality items (`contract.unit-quality`) in two concurrent requests. Code
- * then maps each reading to a verdict by its band (4.5) and folds verdicts,
+ * then maps each reading to a verdict by its band (4.5, the mapping declared
+ * beside the bands in batteries/unit-judge.ts and batteries/unit-quality.ts)
+ * and folds verdicts,
  * gate results and claim verification into the result (4.6), with regression
  * and stall rules from progress.ts. Gates and claims are deterministic inputs:
  * a failing gate or an unverified claim is a nudge whatever the readings say.
@@ -15,10 +17,11 @@
  * Unmet criteria get a severity reading (`contract.unmet-severity`) after the
  * nudge goes out, so it never delays one.
  */
-import { hashState, leansYes, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
+import { hashState, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { UNIT_JUDGES } from './batteries/unit-judge.js';
-import { MID_RUN_QUALITY_ITEMS, unitQuality } from './batteries/unit-quality.js';
+import { saysYesAtAct } from './batteries/request-shape.js';
+import { criterionVerdict, UNIT_JUDGES } from './batteries/unit-judge.js';
+import { midRunNudgeItems, qualityVerdict, unitQuality, type QualityVerdict } from './batteries/unit-quality.js';
 import { unmetSeverity } from './batteries/unmet-severity.js';
 import type { ContractAcceptanceStakes, ContractConfig } from './config.js';
 import { judgeEvidence, judgeState, qualityState, type UnitEvidence } from './evidence.js';
@@ -70,30 +73,13 @@ export function checkSettings(config: ContractConfig): CheckSettings {
 
 // ── Readings to verdicts (4.5) ────────────────────────────────────────────────
 
-/**
- * A criterion or goal verdict from its judge reading, where yes means it
- * fails. Leaning yes (the reading's likelier side is "fails") is unmet at any
- * outcome, including a reading too weak to settle in the band: failing closed
- * costs one nudge. Met needs a no at act; a weaker no, or a reading leaning no
- * that did not settle, is unshown.
- */
-export function criterionVerdict(reading: YesNoReading): CriterionVerdict {
-  if (reading.verdict === 'yes' || (reading.verdict === 'uncertain' && leansYes(reading.probability))) return 'unmet';
-  return reading.verdict === 'no' && reading.outcome === 'act' ? 'met' : 'unshown';
-}
+// The mappings live beside the bands; re-exported for the modules that read verdicts through this one.
+export { criterionVerdict, qualityVerdict, type QualityVerdict };
 
-export type QualityVerdict = 'problem' | 'clean' | 'unshown';
-
-/** A quality item's verdict: a problem when it leans yes at any outcome, clean at a no at act, unshown otherwise. */
-export function qualityVerdict(reading: YesNoReading): QualityVerdict {
-  const verdict = criterionVerdict(reading);
-  return verdict === 'unmet' ? 'problem' : verdict === 'met' ? 'clean' : 'unshown';
-}
-
-/** Whether a unit has to change files: implementation and integration units do, unless the request forbids writing. */
+/** Whether a unit has to change files: implementation and integration units do, unless the request forbids writing (yes at act). */
 export function unitMustWrite(contract: Pick<ContractView, 'shape'>, unit: Pick<ContractUnit, 'role'>): boolean {
   const forbidsWriting = contract.shape?.forbids_writing;
-  const writingForbidden = forbidsWriting?.verdict === 'yes' && forbidsWriting.outcome === 'act';
+  const writingForbidden = forbidsWriting !== undefined && saysYesAtAct(forbidsWriting);
   return (unit.role === 'implement' || unit.role === 'integration') && !writingForbidden;
 }
 
@@ -202,7 +188,7 @@ function chooseResult(
   qualityReadings: Readonly<Record<QualityItem, YesNoReading>>,
 ): { readonly result: CheckResult; readonly nudgeKinds: readonly NudgeKind[]; readonly nudgeQuality: readonly QualityItem[] } {
   if (input.trigger === 'turn-end') {
-    const midRun = findings.qualityProblems.filter((item) => MID_RUN_QUALITY_ITEMS.has(item) && qualityReadings[item].outcome === 'act');
+    const midRun = midRunNudgeItems(qualityReadings);
     const nudgeKinds = problemKinds({
       unmet: false, unshown: false, gate: false, claims: false,
       regression: findings.regressions.length > 0,
@@ -411,9 +397,15 @@ export async function readUnmetSeverities(input: {
 /** Records severities on the readings of check `checkId`. */
 export function applySeverities(unit: ContractUnit, checkId: string, severities: ReadonlyMap<string, SeverityReading>): void {
   for (const criterion of unit.criteria) {
-    const severity = severities.get(criterion.id)?.severity;
-    if (severity === undefined) continue;
+    const read = severities.get(criterion.id);
+    if (read === undefined) continue;
     const index = criterion.readings.findIndex((reading) => reading.checkId === checkId);
-    if (index !== -1) criterion.readings[index] = { ...criterion.readings[index]!, severity };
+    if (index === -1) continue;
+    // The reading is named whether or not it settled; only a severity read at act is kept.
+    criterion.readings[index] = {
+      ...criterion.readings[index]!,
+      ...(read.severity === undefined ? {} : { severity: read.severity }),
+      ...(read.decisionId === undefined ? {} : { severityDecisionId: read.decisionId }),
+    };
   }
 }

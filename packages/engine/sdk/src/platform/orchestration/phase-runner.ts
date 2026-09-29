@@ -30,7 +30,7 @@ import type { AgentManager, AgentRecord } from '../tools/agent/manager.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { AgentWorktree, type CommitWorkingTreeResult } from '../agents/worktree.js';
-import { parseCompletionReport, type CompletionReport, type EngineerReport } from '../agents/completion-report.js';
+import { parseCompletionReport, type CompletionReport } from '../agents/completion-report.js';
 import { verifyUnitClaims } from '../contract/claims.js';
 import { contractUnitSpawn } from './contract-binding.js';
 import { runContractGates } from '../contract/gates.js';
@@ -39,7 +39,7 @@ import { readFailure } from '@goodvibes-jev/engine/errors';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { CancellationRegistry } from './cancellation.js';
-import { excludeUntouchedLaunchResidue, type DirtyLaunchSnapshot } from './dirty-guard.js';
+import { excludeUntouchedLaunchResidue, snapshotDirtyTree, type DirtyLaunchSnapshot } from './dirty-guard.js';
 import { classifyBookkeepingFailure } from './bookkeeping.js';
 import { mergeWorkItemUsage } from './types.js';
 import type { UnitRoute } from '../contract/types.js';
@@ -243,11 +243,22 @@ export function mergeUsage(a: WorkItemUsage, b: WorkItemUsage): WorkItemUsage {
   return mergeWorkItemUsage(a, b);
 }
 
+/** Phase kinds whose agents change files, so their reported claims are checked against what changed. */
+const WRITING_PHASE_KINDS: ReadonlySet<Phase['kind']> = new Set(['engineer', 'integrate']);
+
+/** The paths a phase changed: the item worktree's own changes, or the shared tree's less untouched launch residue. */
+function phaseChangedPaths(deps: Pick<PhaseRunnerDeps, 'projectRoot' | 'itemWorktree' | 'launchDirtySnapshot'>): readonly string[] {
+  const cwd = deps.itemWorktree?.path ?? deps.projectRoot;
+  const dirty = [...snapshotDirtyTree(cwd).keys()];
+  if (deps.itemWorktree !== undefined || deps.launchDirtySnapshot === undefined) return dirty;
+  return excludeUntouchedLaunchResidue(cwd, dirty, deps.launchDirtySnapshot).included;
+}
+
 /** Quality gates (global-config-driven) + phase-required-gate assertion + phantom guard, for an item that is not a contract unit. */
 async function evaluateGate(
   workstream: Workstream,
   phase: Phase,
-  report: CompletionReport,
+  report: CompletionReport | null,
   deps: PhaseRunnerDeps,
 ): Promise<GateOutcome> {
   const results = [...await runContractGates({
@@ -269,12 +280,16 @@ async function evaluateGate(
     results.push({ gate: name, passed: false, output: 'required gate is not configured/enabled', durationMs: 0 });
   }
 
-  if (report.archetype === 'engineer' && !deps.skipClaimVerification) {
-    // Worktree mode: the agent's files landed in the item's OWN worktree, not
-    // the shared projectRoot, verify claims (existence + `git diff`) against
-    // that worktree path, or every real change would be falsely flagged as
-    // phantom work (nothing to find at projectRoot).
-    const verification = verifyUnitClaims(report, deps.itemWorktree?.path ?? deps.projectRoot);
+  if (!deps.skipClaimVerification) {
+    // Whether claims are checked is the phase's kind, not the agent's own
+    // report. Worktree mode: the agent's files landed in the item's OWN
+    // worktree, not the shared projectRoot, so claims are checked there, or
+    // every real change would be falsely flagged as phantom work.
+    const verification = verifyUnitClaims(report, {
+      cwd: deps.itemWorktree?.path ?? deps.projectRoot,
+      mustWrite: WRITING_PHASE_KINDS.has(phase.kind),
+      changedPaths: phaseChangedPaths(deps),
+    });
     if (verification.kind === 'unverified' || verification.kind === 'unverifiable_no_claims') {
       results.push({ gate: 'phantom-work-guard', passed: false, output: verification.summary, durationMs: 0 });
     }
@@ -535,18 +550,19 @@ export async function runPhase(
     };
   }
 
-  const report = parseCompletionReport(outcome.record?.fullOutput ?? '') ?? genericReport(outcome.record?.fullOutput ?? '');
+  const parsed = parseCompletionReport(outcome.record?.fullOutput ?? '');
+  const report = parsed ?? genericReport(outcome.record?.fullOutput ?? '');
 
-  if (report.archetype === 'engineer') {
-    const engineerReport = report as EngineerReport;
-    for (const path of [...engineerReport.filesCreated, ...engineerReport.filesModified, ...engineerReport.filesDeleted]) {
-      if (!item.touchedPaths.includes(path)) item.touchedPaths.push(path);
-    }
+  // The files a report names, whatever the agent called its archetype.
+  const named = parsed as Partial<Record<'filesCreated' | 'filesModified' | 'filesDeleted', unknown>> | null;
+  for (const list of [named?.filesCreated, named?.filesModified, named?.filesDeleted]) {
+    if (!Array.isArray(list)) continue;
+    for (const path of list) if (typeof path === 'string' && !item.touchedPaths.includes(path)) item.touchedPaths.push(path);
   }
 
   // A contract unit only settles completed after its completion check passed,
   // which ran the gates and verified the claims; they are not run twice.
-  const gate: GateOutcome = unitSpawn ? { passed: true, results: [] } : await evaluateGate(workstream, phase, report, deps);
+  const gate: GateOutcome = unitSpawn ? { passed: true, results: [] } : await evaluateGate(workstream, phase, parsed, deps);
 
   let commitExclusion: CommitExclusion | undefined;
   let commit: PhaseCommitOutcome | undefined;

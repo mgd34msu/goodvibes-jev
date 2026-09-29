@@ -12,8 +12,12 @@
  * read at high stakes; the other readings at medium.
  */
 import { defineReplyReader, STAKES_BANDS } from '@goodvibes-jev/judgment';
+import type { EscalationReason } from '../types.js';
 
-const UNSETTLED = {
+/** An escalation as a reading sees it: its reason code and the question it put. */
+type SampleEscalation = { readonly reason: EscalationReason; readonly question: string };
+
+const UNSETTLED: SampleEscalation = {
   reason: 'unsettled',
   question: [
     'Contract ctr-1a2b3c4d needs your decision on unit "CSV parser".',
@@ -24,7 +28,7 @@ const UNSETTLED = {
   ].join('\n'),
 };
 
-const STALLED = {
+const STALLED: SampleEscalation = {
   reason: 'stalled',
   question: [
     'Contract ctr-5e6f7a8b needs your decision on unit "Refunds".',
@@ -35,7 +39,7 @@ const STALLED = {
   ].join('\n'),
 };
 
-const PLAN = {
+const PLAN: SampleEscalation = {
   reason: 'plan-unresolved',
   question: [
     'Contract ctr-9c0d1e2f needs your decision on plan "Export the monthly report in three formats".',
@@ -46,7 +50,7 @@ const PLAN = {
   ].join('\n'),
 };
 
-const WRITING = {
+const WRITING: SampleEscalation = {
   reason: 'writing-unclear',
   question: [
     'Contract ctr-3a4b5c6d needs your decision on the request "Look into why the nightly import is slow".',
@@ -55,7 +59,31 @@ const WRITING = {
   ].join('\n'),
 };
 
-const DELIVERABLE = {
+const ATTEMPTS: SampleEscalation = {
+  reason: 'attempts-undecided',
+  question: [
+    'Contract ctr-2b3c4d5e needs your decision on unit "formatBytes helper".',
+    'The attempts could not be chosen between with confidence.',
+    'Selection: chosen u1#a1 with confidence 0.78 (confirm); fits: u1#a0 no 0.35, u1#a1 yes 0.81',
+    'Candidates:',
+    '- u1#a0: Added formatBytes in src/bytes.ts.',
+    '- u1#a1 (proposed): Added formatBytes in src/bytes.ts; 0 returns "0 B" and values past GB stay in GB.',
+    'Reply to approve taking u1#a1, to name another attempt, or to stop the contract.',
+  ].join('\n'),
+};
+
+const DECISION: SampleEscalation = {
+  reason: 'owner-decision-needed',
+  question: [
+    'Contract ctr-6d7e8f9a needs your decision on unit "Invoice archiving".',
+    'This needs a decision only you can make.',
+    'Still not met:',
+    '- [u2.c2] The retention period follows the company policy (major)',
+    'Reply to approve (approval cannot pass unmet criteria: say what to change instead), to change what is required (say how), or to stop the contract.',
+  ].join('\n'),
+};
+
+const DELIVERABLE: SampleEscalation = {
   reason: 'fix-rounds-exhausted',
   question: [
     'Contract ctr-7e8f9a0b needs your decision on the deliverable "A convert command that reads CSV and writes JSON".',
@@ -64,6 +92,17 @@ const DELIVERABLE = {
     '- [c2] convert exits with status 1 and an error message when the input file does not exist (major)',
     'Reply to approve (approval cannot pass unmet criteria: say what to change instead), to change what is required (say how), or to stop the contract.',
   ].join('\n'),
+};
+
+/** One sample escalation per reason, as escalation.ts words them: fixtures for the batteries that read replies and turns. */
+export const SAMPLE_ESCALATIONS: Readonly<Record<EscalationReason, SampleEscalation>> = {
+  unsettled: UNSETTLED,
+  stalled: STALLED,
+  'plan-unresolved': PLAN,
+  'writing-unclear': WRITING,
+  'attempts-undecided': ATTEMPTS,
+  'owner-decision-needed': DECISION,
+  'fix-rounds-exhausted': DELIVERABLE,
 };
 
 export const ownerReply = defineReplyReader({
@@ -85,5 +124,15 @@ export const ownerReply = defineReplyReader({
     { name: 'a question back', proposal: UNSETTLED, reply: 'What does "not shown" mean here? Did the tests run?', expect: 'unclear' },
     { name: 'unrelated message', proposal: PLAN, reply: 'Also, can you remind me what time the standup is?', expect: 'unclear' },
     { name: 'noncommittal', proposal: STALLED, reply: 'Hmm, let me think about it.', expect: 'unclear' },
+    { name: 'take the proposed attempt', proposal: ATTEMPTS, reply: 'Yes, take the proposed one.', expect: 'approve' },
+    { name: 'name the other attempt', proposal: ATTEMPTS, reply: 'No, take u1#a0 instead.', expect: 'amend' },
+    { name: 'take the first attempt by position', proposal: ATTEMPTS, reply: 'I prefer the first attempt, use that one.', expect: 'amend' },
+    { name: 'stop instead of picking', proposal: ATTEMPTS, reply: 'Neither. Cancel the contract.', expect: 'reject' },
+    { name: 'a question about the attempts', proposal: ATTEMPTS, reply: 'Which of the two is faster?', expect: 'unclear' },
+    { name: 'approve on a decision', proposal: DECISION, reply: 'Approved, go ahead.', expect: 'approve' },
+    { name: 'settle the policy question', proposal: DECISION, reply: 'The policy is 7 years; change the criterion to say invoices older than 7 years are archived.', expect: 'amend' },
+    { name: 'drop the policy requirement', proposal: DECISION, reply: 'Remove the policy requirement, a 7 year period is fine as it is.', expect: 'amend' },
+    { name: 'stop on a decision', proposal: DECISION, reply: "Stop the contract, we're not archiving invoices after all.", expect: 'reject' },
+    { name: 'undecided on a decision', proposal: DECISION, reply: 'Let me check with finance and get back to you.', expect: 'unclear' },
   ],
 });

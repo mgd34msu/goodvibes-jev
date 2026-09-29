@@ -8,11 +8,16 @@
  * criteria that serve it.
  *
  * Bands: the unit judge's two declared bands, chosen by
- * `contract.acceptanceStakes`.
+ * `contract.acceptanceStakes`, and its mapping from readings to verdicts
+ * ({@link deliverableVerdict}).
  */
-import { defineJudge, type Judge, type JudgeFixture, type YesNoBand } from '@goodvibes-jev/judgment';
+import { defineJudge, type Judge, type JudgeFixture, type YesNoBand, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { ContractAcceptanceStakes } from '../config.js';
-import { UNIT_JUDGE_BANDS } from './unit-judge.js';
+import type { CriterionVerdict } from '../types.js';
+import { criterionVerdict, UNIT_JUDGE_BANDS } from './unit-judge.js';
+
+/** A deliverable criterion or goal verdict from its reading: the unit judge's mapping (section 4.5), since the bands are the same. */
+export const deliverableVerdict: (reading: YesNoReading) => CriterionVerdict = criterionVerdict;
 
 const CONVERT_GOAL = 'A convert command that reads a CSV file and writes it as JSON';
 const CONVERT_CRITERIA = [
@@ -120,11 +125,83 @@ const FIXTURES: readonly JudgeFixture[] = [
     },
     expect: { verdict: 'pass', unmet: [] },
   },
+  {
+    name: "the integration unit's full final output, ending in its completion report",
+    goal: CONVERT_GOAL,
+    criteria: CONVERT_CRITERIA,
+    output: [
+      'Combined the CSV parser and the JSON formatter into the convert command. `convert in.csv out.json` writes the rows as a JSON array of objects, and a missing input prints "input file not found: <path>" and exits 1. The whole suite passes.',
+      '',
+      '```json',
+      JSON.stringify({
+        version: 1,
+        archetype: 'engineer',
+        summary: 'Wired parseCsv and formatJson into the convert command.',
+        gatheredContext: ['parseCsv returns string[][] with the header row first', 'formatJson takes an array of records'],
+        plannedActions: ['map rows to records in src/cli/convert.ts', 'check the input file exists before reading'],
+        appliedChanges: ['convert maps CSV rows to records and writes them with formatJson', 'convert exits 1 with a message when the input file is missing'],
+        filesCreated: ['src/cli/convert.test.ts'],
+        filesModified: ['src/cli/convert.ts', 'src/index.ts'],
+        filesDeleted: [],
+        decisions: [{ what: 'exit code 1 for a missing file', why: 'the criterion asks for it' }],
+        issues: [],
+        uncertainties: [],
+      }, null, 2),
+      '```',
+    ].join('\n'),
+    evidence: {
+      changedPaths: ['src/csv.ts', 'src/json.ts', 'src/cli/convert.ts', 'src/cli/convert.test.ts', 'src/index.ts'],
+      diff: [
+        '+++ b/src/cli/convert.ts',
+        'export function convert(input: string, output: string): number {',
+        '+  if (!existsSync(input)) {',
+        '+    console.error(`input file not found: ${input}`);',
+        '+    return 1;',
+        '+  }',
+        "+  const [header, ...rows] = parseCsv(readFileSync(input, 'utf-8'));",
+        '+  writeFileSync(output, formatJson(rows.map((row) => Object.fromEntries(header.map((key, i) => [key, row[i]])))));',
+        '+  return 0;',
+        '+}',
+      ].join('\n'),
+      omitted: ['src/csv.ts', 'src/json.ts', 'src/cli/convert.test.ts', 'src/index.ts'],
+      gates: [{ gate: 'test', passed: true, output: ' 14 pass\n 0 fail' }],
+      commands: [
+        { command: 'bun run src/cli/index.ts convert fixtures/a.csv /tmp/a.json && cat /tmp/a.json', success: true, head: '[\n  {"name": "Ada", "age": "36"},\n  {"name": "Alan", "age": "41"}\n]' },
+        { command: 'bun run src/cli/index.ts convert missing.csv /tmp/b.json; echo "exit $?"', success: true, head: 'input file not found: missing.csv\nexit 1' },
+      ],
+      criteria: CONVERT_SERVED,
+    },
+    expect: { verdict: 'pass', unmet: [] },
+  },
+  {
+    name: 'every stated criterion holds but the backups cannot restore the data',
+    goal: 'A nightly database backup that the data can be restored from',
+    criteria: ['scripts/backup.sh writes a dump file into backups/', 'A cron entry runs scripts/backup.sh every night'],
+    output: 'scripts/backup.sh dumps the database into backups/ with the date in the name, and a cron entry runs it at 02:00 every night.',
+    evidence: {
+      changedPaths: ['scripts/backup.sh', 'deploy/crontab'],
+      diff: [
+        '+++ b/scripts/backup.sh',
+        '+#!/bin/sh',
+        '+pg_dump --schema-only "$DATABASE_URL" > "backups/app-$(date +%F).sql"',
+        '+++ b/deploy/crontab',
+        '+0 2 * * * /app/scripts/backup.sh',
+      ].join('\n'),
+      omitted: [],
+      gates: [],
+      commands: [{ command: 'sh scripts/backup.sh && ls backups && grep -c "INSERT\\|COPY" backups/*.sql', success: true, head: 'app-2026-09-28.sql\n0' }],
+      criteria: [
+        { criterion: 'c1', servedBy: [{ id: 'u1.c1', text: 'backup.sh writes a dump into backups/', verdict: 'met' }] },
+        { criterion: 'c2', servedBy: [{ id: 'u1.c2', text: 'cron runs backup.sh nightly', verdict: 'met' }] },
+      ],
+    },
+    expect: { verdict: 'fail', unmet: [] },
+  },
 ];
 
-function deliverableJudge(band: YesNoBand): Judge {
+function deliverableJudge(name: string, band: YesNoBand): Judge {
   return defineJudge({
-    name: 'contract.deliverable-judge',
+    name,
     version: 1,
     description: "Whether the finished deliverable meets each of the user's requirements, shown by the answer and the contract's evidence, and whether it achieves what the user asked for.",
     accuracyFloor: 0.9,
@@ -133,11 +210,11 @@ function deliverableJudge(band: YesNoBand): Judge {
   });
 }
 
-/** The deliverable judge under each acceptance-stakes band; the fixtures and questions are the same. */
+/** The deliverable judge under each acceptance-stakes band, each its own named decision; the fixtures and questions are the same. */
 export const DELIVERABLE_JUDGES: Readonly<Record<ContractAcceptanceStakes, Judge>> = {
-  high: deliverableJudge(UNIT_JUDGE_BANDS.high),
-  critical: deliverableJudge(UNIT_JUDGE_BANDS.critical),
+  high: deliverableJudge('contract.deliverable-judge', UNIT_JUDGE_BANDS.high),
+  critical: deliverableJudge('contract.deliverable-judge.critical', UNIT_JUDGE_BANDS.critical),
 };
 
-/** The registered instance: calibration checks answers, which do not depend on the band. */
+/** The instance at the default `high` stakes. */
 export const deliverableJudgeDecision = DELIVERABLE_JUDGES.high;

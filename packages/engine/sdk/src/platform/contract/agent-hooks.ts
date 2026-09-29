@@ -30,8 +30,9 @@ import type { AgentRecord } from '../tools/agent/index.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
-import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, runUnitCheck, type DecidedCheck, type UnitCheckOutcome } from './check.js';
+import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, runUnitCheck, unitMustWrite, type DecidedCheck, type UnitCheckOutcome } from './check.js';
 import type { ContractConfigReader } from './config.js';
+import { parseUnitCompletionReport } from './claims.js';
 import { collectUnitEvidence, headAndTail, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
 import { createNudge, dispatchNudge, type NudgeTargetState } from './nudge.js';
 import { engineItem, takeBaseline } from './group-runner.js';
@@ -201,9 +202,18 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       const record = runtime.session?.record ?? (unit.activeAgentId === undefined ? null : deps.agentManager.getStatus(unit.activeAgentId));
       output = given ?? (trigger === 'turn-end' ? runtime.lastAssistantText : (record?.fullOutput ?? runtime.lastAssistantText));
       // The agent's final report outlives its record only on the unit: a check after a restart reads it.
-      if (given === undefined && trigger !== 'turn-end' && output.trim().length > 0) unit.lastOutput = headAndTail(output, OUTPUT_CAP_CHARS);
+      // The report is stored whole with it: lastOutput is capped, so a long report is cut there.
+      const read = parseUnitCompletionReport(output).report;
+      if (given === undefined && trigger !== 'turn-end' && output.trim().length > 0) {
+        unit.lastOutput = headAndTail(output, OUTPUT_CAP_CHARS);
+        if (read === null) delete unit.lastReport;
+        else unit.lastReport = read;
+      }
       const evidence = await collectUnitEvidence(run.contract, unit, trigger, {
         output,
+        // A check after a restart reads the report stored on the unit (design 7.2), not the capped output.
+        report: trigger === 'resume' ? (unit.lastReport ?? null) : read,
+        mustWrite: unitMustWrite(run.contract, unit),
         turns: runtime.turns,
         cwd: runtime.cwd,
         configManager: deps.configManager,

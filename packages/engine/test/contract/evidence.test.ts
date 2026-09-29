@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CompletionReport } from '../../sdk/src/platform/agents/completion-report.js';
 import { estimateTokens, LIMITS, validateContextBudget } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { snapshotDirtyTree } from '../../sdk/src/platform/orchestration/dirty-guard.js';
@@ -23,6 +24,7 @@ import {
   EVIDENCE_TOKEN_BUDGET,
   evidenceTokens,
   GATE_OUTPUT_CAP_CHARS,
+  qualityState,
   headAndTail,
   MAX_COMMANDS,
   OUTPUT_CAP_CHARS,
@@ -102,9 +104,9 @@ describe('what the agent did, from its turns', () => {
 });
 
 describe('changed paths', () => {
-  test('worktree mode splits the branch diff per file', async () => {
+  test('a unified diff splits per file (best-of-N candidates read branch diffs)', () => {
     const unifiedDiff = 'diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n+one\ndiff --git a/src/b.ts b/src/b.ts\n+++ b/src/b.ts\n+two\n';
-    const changes = await collectChanges({}, { cwd: dir, turns: [], worktree: { diff: async () => ({ files: ['src/a.ts', 'src/b.ts'], unifiedDiff, stat: '' }) } });
+    const changes = splitUnifiedDiff(unifiedDiff);
     expect(changes.map((change) => change.path)).toEqual(['src/a.ts', 'src/b.ts']);
     expect(changes[1]!.diff).toBe('diff --git a/src/b.ts b/src/b.ts\n+++ b/src/b.ts\n+two');
     expect(splitUnifiedDiff('')).toEqual([]);
@@ -149,7 +151,7 @@ describe('changed paths', () => {
 
 describe('what each trigger collects', () => {
   const contract = makeContract();
-  const sources = () => ({ output: 'Done.', turns: TURNS, cwd: dir, configManager: noGates(), runtimeBus: new RuntimeEventBus() });
+  const sources = () => ({ output: 'Done.', report: null, mustWrite: true, turns: TURNS, cwd: dir, configManager: noGates(), runtimeBus: new RuntimeEventBus() });
 
   test('turn-end: no claims and no gates', async () => {
     const evidence = await collectUnitEvidence(contract, makeUnit(), 'turn-end', sources());
@@ -161,9 +163,38 @@ describe('what each trigger collects', () => {
   test('completion and resume: claims and gates (a check after a restart reads the report the earlier agent left)', async () => {
     for (const trigger of ['completion', 'resume'] as const) {
       const evidence = await collectUnitEvidence(contract, makeUnit(), trigger, sources());
-      expect(evidence.claims?.kind).toBe('unverifiable_no_claims');
+      // No report, but the unit's turns wrote files: work without listed files.
+      expect(evidence.claims?.kind).toBe('verified_empty');
       expect(evidence.gates).toEqual([]);
     }
+  });
+
+  test('claims read the report the caller gives, not the output', async () => {
+    writeFileSync(join(dir, 'made.ts'), 'export {}\n');
+    const report = { version: 1, archetype: 'engineer', summary: 'Made it.', filesCreated: ['made.ts'], filesModified: [] } as unknown as CompletionReport;
+    const evidence = await collectUnitEvidence(contract, makeUnit(), 'resume', { ...sources(), output: 'the capped tail of a long report', report });
+    expect(evidence.claims?.kind).toBe('files_verified');
+  });
+
+  test('a unit that must not write has no claims checked, whatever its report names', async () => {
+    const report = { version: 1, archetype: 'engineer', summary: 'Done.', filesCreated: ['ghost.ts'], filesModified: [] } as unknown as CompletionReport;
+    const evidence = await collectUnitEvidence(contract, makeUnit({ role: 'design' }), 'completion', { ...sources(), report, mustWrite: false });
+    expect(evidence.claims).toMatchObject({ kind: 'verified_empty', missingPaths: [] });
+  });
+
+  test('corroboration is the unit\'s own baseline-scoped changes: an untracked new file counts, launch residue does not', async () => {
+    gitRepo();
+    writeFileSync(join(dir, 'dirty.ts'), 'export const d = 2;\n'); // residue from before the unit started
+    const baseline = { head: git(dir, 'rev-parse', 'HEAD'), dirty: Object.fromEntries(snapshotDirtyTree(dir)) };
+    const gitSources = () => ({ ...sources(), turns: [] });
+    const untouched = await collectUnitEvidence(contract, makeUnit({ baseline }), 'completion', gitSources());
+    expect(untouched.changedPaths).toEqual([]);
+    expect(untouched.claims).toMatchObject({ kind: 'unverifiable_no_claims', changesDetected: false });
+
+    writeFileSync(join(dir, 'brand-new.ts'), 'export const n = 1;\n'); // untracked: `git diff --stat HEAD` never showed it
+    const worked = await collectUnitEvidence(contract, makeUnit({ baseline }), 'completion', gitSources());
+    expect(worked.changedPaths).toEqual(['brand-new.ts']);
+    expect(worked.claims).toMatchObject({ kind: 'verified_empty', changesDetected: true });
   });
 
   test('the other triggers run gates but not claims', async () => {
@@ -172,6 +203,25 @@ describe('what each trigger collects', () => {
       expect(evidence.claims).toBeUndefined();
       expect(evidence.gates).toEqual([]);
     }
+  });
+});
+
+describe('what the quality reading sees', () => {
+  test('the gate results and the omitted paths, so a claim a gate shows is not read as unsupported', () => {
+    const evidence = trimEvidence({
+      output: 'Added the parser. All tests pass.',
+      changes: [{ path: 'src/parse.ts', diff: '+export const parse = 1;\n' }],
+      gates: [{ gate: 'test', passed: true, output: ' 12 pass\n 0 fail', durationMs: 5, skipped: false }],
+      commands: [],
+    }, makeUnit());
+    const state = qualityState(makeUnit(), evidence);
+    expect(state['gates']).toEqual([{ gate: 'test', passed: true, skipped: false, output: ' 12 pass\n 0 fail' }]);
+    expect(state['omitted']).toEqual([]);
+  });
+
+  test('a mid-run state has no gates, since none ran', () => {
+    const evidence = trimEvidence({ output: '', changes: [], commands: [] }, makeUnit());
+    expect('gates' in qualityState(makeUnit(), evidence)).toBe(false);
   });
 });
 

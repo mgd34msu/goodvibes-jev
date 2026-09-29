@@ -39,6 +39,7 @@ import type {
   UnitRole,
   YesNoVerdict,
 } from '../../events/contract.js';
+import type { CompletionReport } from '../agents/completion-report.js';
 import type { BudgetCeiling, WorkItemUsage } from '../orchestration/types.js';
 import type { AgentManager, AgentRecord } from '../tools/agent/index.js';
 import type { AgentProviderRoutingPolicy } from '../tools/agent/schema.js';
@@ -188,6 +189,8 @@ export interface CriterionReading {
   readonly outcome: Outcome;
   readonly severity?: CriterionSeverity | undefined;
   readonly decisionId: string | undefined;
+  /** The `contract.unmet-severity` reading behind `severity` (recorded even when it did not settle, so the severity stayed unknown). */
+  readonly severityDecisionId?: string | undefined;
 }
 
 export interface Criterion {
@@ -290,6 +293,13 @@ export interface ContractUnit {
    * so a check after one reads this (design 7.2).
    */
   lastOutput?: string | undefined;
+  /**
+   * The completion report parsed from the output of the unit's last completion
+   * check, whole. `lastOutput` is capped head and tail, so a long report is cut
+   * there; a check after a restart reads this instead of re-parsing it
+   * (design 7.2). Absent when the output carried no report.
+   */
+  lastReport?: CompletionReport | undefined;
   failureReason?: string | undefined;
   /**
    * Best-of-N (design 6.2), on a plan unit with `attempts > 1` in worktree
@@ -351,6 +361,8 @@ export interface Escalation {
   /** Built in code (design 6.3). */
   readonly question: string;
   readonly unmetCriterionIds: readonly string[];
+  /** The decision-log ids of the readings behind the question (what the owner is asked to settle). */
+  readonly decisionIds?: readonly string[] | undefined;
   resolvedAt?: number | undefined;
   reply?: {
     readonly text: string;

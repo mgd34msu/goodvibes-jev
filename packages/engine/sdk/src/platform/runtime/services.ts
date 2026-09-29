@@ -882,6 +882,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     modeManager,
     processManager,
     agentMessageBus,
+    agentManager,
     webSearchService,
     channelRegistry: channelPlugins,
     remoteRunnerRegistry,

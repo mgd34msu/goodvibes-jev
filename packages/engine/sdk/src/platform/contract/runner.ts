@@ -154,10 +154,20 @@ export function resolveIsolation(setting: 'auto' | 'worktree' | 'shared', projec
   return head.status === 0 ? 'worktree' : 'shared';
 }
 
-function currentBranch(projectRoot: string): string {
+/**
+ * What the contract branch is measured and merged against: the branch checked
+ * out in the project root, or, on a detached HEAD, the commit HEAD names (a
+ * branch name the root is not on would measure the work against the wrong
+ * history, or against nothing).
+ */
+export function currentBase(projectRoot: string): string {
   const head = spawnSync('git', ['-C', projectRoot, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf-8' });
   const branch = head.status === 0 ? head.stdout.trim() : '';
-  return branch.length > 0 && branch !== 'HEAD' ? branch : 'main';
+  if (branch.length > 0 && branch !== 'HEAD') return branch;
+  const commit = spawnSync('git', ['-C', projectRoot, 'rev-parse', 'HEAD'], { encoding: 'utf-8' });
+  const hash = commit.status === 0 ? commit.stdout.trim() : '';
+  if (hash.length === 0) throw new Error(`cannot read HEAD in ${projectRoot}: ${(commit.stderr ?? '').trim()}`);
+  return hash;
 }
 
 /** The count of distinct files the contract's units changed, as their checks recorded them. */
@@ -426,7 +436,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       projectRoot: input.projectRoot,
       isolation,
       ...(isolation === 'worktree'
-        ? { branch: `contract/${short}`, worktreePath: join(input.projectRoot, '.goodvibes', '.worktrees', 'contract', short), baseBranch: currentBranch(input.projectRoot) }
+        ? { branch: `contract/${short}`, worktreePath: join(input.projectRoot, '.goodvibes', '.worktrees', 'contract', short), baseBranch: currentBase(input.projectRoot) }
         : {}),
       ...(input.budget === undefined ? {} : { budget: input.budget }),
       goal: '',

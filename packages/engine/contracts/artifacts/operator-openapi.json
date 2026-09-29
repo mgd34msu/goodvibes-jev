@@ -30440,6 +30440,9 @@
                                 },
                                 "decisionId": {
                                   "type": "string"
+                                },
+                                "severityDecisionId": {
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -30610,6 +30613,9 @@
                                         ]
                                       },
                                       "decisionId": {
+                                        "type": "string"
+                                      },
+                                      "severityDecisionId": {
                                         "type": "string"
                                       }
                                     },
@@ -31241,6 +31247,9 @@
                                         ]
                                       },
                                       "decisionId": {
+                                        "type": "string"
+                                      },
+                                      "severityDecisionId": {
                                         "type": "string"
                                       }
                                     },
@@ -32050,6 +32059,9 @@
                                               ]
                                             },
                                             "decisionId": {
+                                              "type": "string"
+                                            },
+                                            "severityDecisionId": {
                                               "type": "string"
                                             }
                                           },
@@ -33342,6 +33354,12 @@
                               "type": "string"
                             }
                           },
+                          "decisionIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "resolvedAt": {
                             "type": "number"
                           },
@@ -33999,6 +34017,9 @@
                                       },
                                       "decisionId": {
                                         "type": "string"
+                                      },
+                                      "severityDecisionId": {
+                                        "type": "string"
                                       }
                                     },
                                     "required": [
@@ -34169,6 +34190,9 @@
                                               ]
                                             },
                                             "decisionId": {
+                                              "type": "string"
+                                            },
+                                            "severityDecisionId": {
                                               "type": "string"
                                             }
                                           },
@@ -34800,6 +34824,9 @@
                                               ]
                                             },
                                             "decisionId": {
+                                              "type": "string"
+                                            },
+                                            "severityDecisionId": {
                                               "type": "string"
                                             }
                                           },
@@ -35609,6 +35636,9 @@
                                                     ]
                                                   },
                                                   "decisionId": {
+                                                    "type": "string"
+                                                  },
+                                                  "severityDecisionId": {
                                                     "type": "string"
                                                   }
                                                 },
@@ -36901,6 +36931,12 @@
                                     "type": "string"
                                   }
                                 },
+                                "decisionIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
                                 "resolvedAt": {
                                   "type": "number"
                                 },
@@ -37569,6 +37605,9 @@
                                     },
                                     "decisionId": {
                                       "type": "string"
+                                    },
+                                    "severityDecisionId": {
+                                      "type": "string"
                                     }
                                   },
                                   "required": [
@@ -37739,6 +37778,9 @@
                                             ]
                                           },
                                           "decisionId": {
+                                            "type": "string"
+                                          },
+                                          "severityDecisionId": {
                                             "type": "string"
                                           }
                                         },
@@ -38370,6 +38412,9 @@
                                             ]
                                           },
                                           "decisionId": {
+                                            "type": "string"
+                                          },
+                                          "severityDecisionId": {
                                             "type": "string"
                                           }
                                         },
@@ -39179,6 +39224,9 @@
                                                   ]
                                                 },
                                                 "decisionId": {
+                                                  "type": "string"
+                                                },
+                                                "severityDecisionId": {
                                                   "type": "string"
                                                 }
                                               },
@@ -40466,6 +40514,12 @@
                                 "type": "string"
                               },
                               "unmetCriterionIds": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "decisionIds": {
                                 "type": "array",
                                 "items": {
                                   "type": "string"

@@ -157,6 +157,20 @@ test('the daemon-grade graph still satisfies the shared part of the client shape
   expect(sharedView.userPermissionRuleStore).toBe(daemon.userPermissionRuleStore);
 });
 
+test('both compositions give their sub-agents a full tool registry, with the agent tool', () => {
+  // A sub-agent's tools are built from the orchestrator's tool dependencies on
+  // its first run. The contract runner's planner and units are sub-agents, so a
+  // composition whose dependencies cannot build the registry fails every
+  // contract at planning ("registerAllTools requires agentManager").
+  for (const services of [client, daemon]) {
+    const orchestrator = services.agentOrchestrator as unknown as { getFullRegistry(workingDirectory?: string): { list(): readonly { definition: { name: string } }[] } };
+    const names = orchestrator.getFullRegistry().list().map((tool) => tool.definition.name);
+    expect(names).toContain('agent');
+    expect(names).toContain('write');
+    expect(names).toContain('exec');
+  }
+});
+
 test('the inbound-dispatch seam takes the surface loop runner', async () => {
   // Default: a held dispatch, so a surface with no inbound source yet still
   // composes and can bind its runner for later.

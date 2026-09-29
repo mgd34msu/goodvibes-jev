@@ -90,6 +90,8 @@ type AgentOrchestratorToolDeps = {
   readonly modeManager: import('../state/mode-manager.js').ModeManager;
   readonly processManager: import('../tools/shared/process-manager.js').ProcessManager;
   readonly agentMessageBus: AgentMessageBus;
+  /** The agent manager the sub-agents' agent and workflow tools spawn through (registerAllTools requires it). */
+  readonly agentManager: import('../tools/agent/manager.js').AgentManager;
   readonly webSearchService?: import('../web-search/index.js').WebSearchService | undefined;
   readonly channelRegistry?: import('../channels/index.js').ChannelPluginRegistry | null | undefined;
   readonly remoteRunnerRegistry?: import('../runtime/remote/index.js').RemoteRunnerRegistry | undefined;

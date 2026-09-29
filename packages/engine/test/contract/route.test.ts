@@ -11,6 +11,8 @@ import type { RoutePlanRequest } from '../../sdk/src/platform/routing/route-plan
 import { NoRouteError } from '../../sdk/src/platform/routing/route-planner.js';
 import { createRoutePlannerContractSelector, type ContractPlannedRoute, type ContractRoutePlanner, type ContractRouteSelector } from '../../sdk/src/platform/contract/index.js';
 import { makeContract, makeUnit } from './fixtures.js';
+import { routeProviderHealth } from '../../sdk/src/platform/runtime/contract-composition.js';
+import type { RuntimeStore } from '../../sdk/src/platform/runtime/store/index.js';
 import { eventsOf, makeHarness, oneUnitPlan, startContract, waitFor, type Harness } from './runner-support.js';
 import { amendmentOutput, answers, contractOf, keepsFailing, replyAnswers, routeAnswer, stepPlanner, terminal } from './steps-support.js';
 
@@ -32,6 +34,20 @@ function fakePlanner(fallbacks: readonly string[]): { readonly planner: Contract
 }
 
 describe('createRoutePlannerContractSelector', () => {
+  test('a route is picked only once the catalog has settled', async () => {
+    const { planner, asked } = fakePlanner([]);
+    let settle: () => void = () => {};
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const picking = createRoutePlannerContractSelector(planner, { catalogSettled: () => settled })({ purpose: 'planner', contract: makeContract() });
+    await Promise.resolve();
+    await Promise.resolve();
+    // The provider registry is still sweeping for the models providers serve: nothing is picked from the preliminary lists.
+    expect(asked).toHaveLength(0);
+    settle();
+    expect((await picking).model).toBe('alpha:model-1');
+    expect(asked).toHaveLength(1);
+  });
+
   test('a unit is routed on its title, goal and brief, with the planner\'s choice, failover chain and reason', async () => {
     const { planner, asked } = fakePlanner(['beta:model-2', 'gamma:model-3']);
     const unit = makeUnit({ title: 'CSV parser', goal: 'Parse CSV', brief: 'Write src/csv.ts.' });
@@ -128,5 +144,22 @@ describe('the runner when the route planner finds no route', () => {
     expect(done.failureKind).toBe('other');
     expect(done.error).toContain(`the owner's reply to ${escalation.id} could not be acted on: ${noRoute.message}`);
     expect(planner.of('amend')).toEqual([]);
+  });
+});
+
+describe('routeProviderHealth', () => {
+  test('a provider whose startup model listing failed is unavailable to the route planner; the store health stays', () => {
+    // A partial store state: only the provider health domain is read.
+    const store = { getState: () => ({ providerHealth: { providers: new Map([['alpha', { status: 'healthy' }], ['beta', { status: 'rate_limited' }]]) } }) };
+    const registry = { unreachableAtStartup: () => new Map([['litellm', 'Unable to connect'], ['alpha', 'HTTP 401']]) };
+    const health = routeProviderHealth(registry, store as unknown as Pick<RuntimeStore, 'getState'>)();
+    expect(health.get('litellm')?.status).toBe('unavailable');
+    expect(health.get('alpha')?.status).toBe('unavailable');
+    expect(health.get('beta')?.status).toBe('rate_limited');
+  });
+
+  test('without a runtime store only the sweep speaks', () => {
+    const health = routeProviderHealth({ unreachableAtStartup: () => new Map([['sglang', 'Unable to connect']]) })();
+    expect([...health]).toEqual([['sglang', { status: 'unavailable' }]]);
   });
 });

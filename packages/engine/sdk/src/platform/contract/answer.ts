@@ -31,6 +31,25 @@ export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'
 }
 
 /**
+ * What the deliverable judge reads as the output: the deliverable unit's final
+ * output as recorded when it passed (its whole report, not the summary the
+ * person is shown), then the answers of the units that fixed the deliverable.
+ * Empty when nothing was recorded: the judge then reads the diff and gates
+ * alone, and code never states in its evidence that the work succeeded.
+ */
+export function deliverableOutput(contract: Pick<Contract, 'units' | 'groups'>): string {
+  const deliverableFixes = new Set(contract.groups.filter((group) => group.kind === 'fix' && group.repairs?.scope === 'deliverable').map((group) => group.id));
+  const parts = [
+    (answerUnit(contract)?.answer ?? '').trim(),
+    ...contract.units.filter((unit) => deliverableFixes.has(unit.groupId)).map((unit) => {
+      const answer = (unit.answer ?? '').trim();
+      return answer.length === 0 ? '' : `Fix ${unit.id} "${unit.title}":\n${answer}`;
+    }),
+  ];
+  return parts.filter((part) => part.length > 0).join('\n\n');
+}
+
+/**
  * The commit outcome as one honest line: a real commit (with any ignored
  * paths it skipped), or which of the "nothing was committed" cases happened.
  */

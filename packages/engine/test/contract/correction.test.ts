@@ -119,6 +119,21 @@ describe('routing a stalled unit (5.1)', () => {
     expect(eventsOf(h, 'CONTRACT_ESCALATED').map((event) => event.reason)).toEqual(['stalled']);
   }, 20_000);
 
+  test('the route reading sees the unmet and the unshown criteria as separate fields', async () => {
+    const asked: Record<string, unknown>[] = [];
+    // u1.c1 reads unmet; u1.c2 reads no at confirm, so it is not shown.
+    const failsAndUnshown: AgentScript = () => Array.from({ length: 3 }, (_, index) => ({ files: { 'src/csv.ts': `attempt ${index}\n` }, text: `[unmet] attempt ${index} [p=0.9,0.2]` }));
+    const h = use(makeHarness({ plan: oneUnitPlan(2), contract: { stallLimit: 2 }, scripts: { u1: failsAndUnshown }, port: routeAnswer('owner', asked) }));
+    const { contract } = startContract(h);
+    await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the owner to be asked', 15_000);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!['unmet']).toEqual(['u1.c1']);
+    expect(asked[0]!['unshown']).toEqual(['u1.c2']);
+    const escalation = contractOf(h, contract.id).escalations[0]!;
+    expect(escalation.unmetCriterionIds).toEqual(['u1.c1']);
+    expect(escalation.question).toContain('Not shown:\n- [u1.c2] parser property 2');
+  }, 20_000);
+
   test('a route read below act goes to the owner', async () => {
     const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { stallLimit: 2 }, scripts: { u1: keepsFailing(3) }, port: routeAnswer('split', [], 0.5) }));
     const { contract } = startContract(h);

@@ -20,12 +20,12 @@ import type { Outcome } from '@goodvibes-jev/judgment';
 import type { OwnerReplyAction, OwnerReplyReading } from '../../events/contract.js';
 import { ownerPick } from './batteries/owner-pick.js';
 import { ownerReply } from './batteries/owner-reply.js';
-import { readRequestShape, REQUEST_SHAPE_SITE, saysNoAtAct, saysYesAtAct } from './batteries/request-shape.js';
+import { readForbidsWriting, REQUEST_SHAPE_SITE, saysNoAtAct, saysYesAtAct } from './batteries/request-shape.js';
 import { acceptAttempt } from './best-of-n.js';
 import { emptyJudgmentUsage, meteredPort, type DecidedCheck } from './check.js';
 import { amendTarget } from './amendment.js';
 import { headAndTail } from './evidence.js';
-import { latestSeverity } from './nudge.js';
+import { latestSeverity, QUALITY_EVIDENCE_SENTENCES } from './nudge.js';
 import { lastFencedBlock } from './plan-schema.js';
 import { acceptEscalatedPlan, planContract, withOwnerWritingDecision } from './planner.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
@@ -34,10 +34,13 @@ import {
   type AttemptSelectionRecord,
   type Contract,
   type ContractStatus,
+  type ContractUnit,
   type Criterion,
   type Escalation,
   type EscalationReason,
   type EscalationScope,
+  type QualityItem,
+  type UnitCheck,
 } from './types.js';
 import { addJudgmentUsage } from './usage.js';
 
@@ -152,6 +155,25 @@ export function buildEscalationQuestion(contract: Contract, input: EscalationInp
   ].join('\n');
 }
 
+/**
+ * What else an `unsettled` check left unshown besides criteria: the unit's
+ * goal as a whole, and quality items that did not read clean. The check had no
+ * problem (it would have nudged), so every quality item not read "no" at act
+ * is one the agent was asked to show and did not. Approval accepts these too,
+ * so the question names them. Undefined when there are none.
+ */
+export function unsettledReadingsNote(unit: Pick<ContractUnit, 'goal'>, check: Pick<UnitCheck, 'goal' | 'quality'>): string | undefined {
+  const quality = (Object.keys(check.quality) as QualityItem[]).filter((item) => {
+    const reading = check.quality[item];
+    return reading !== undefined && !(reading.verdict === 'no' && reading.outcome === 'act');
+  });
+  const lines = [
+    ...(check.goal.verdict === 'unshown' ? [`Not shown for the unit as a whole: that it does what it is for (${titleOf(unit.goal)}).`] : []),
+    ...(quality.length > 0 ? ['Not shown about the quality of the work:', ...quality.map((item) => `- ${QUALITY_EVIDENCE_SENTENCES[item]}`)] : []),
+  ];
+  return lines.length === 0 ? undefined : lines.join('\n');
+}
+
 /** The attempts-undecided question: the proposal, if any, and every candidate with the head of its answer. */
 export function buildAttemptsQuestion(contract: Contract, unitId: string, selection: AttemptSelectionRecord): string {
   const unit = contract.units.find((candidate) => candidate.id === unitId);
@@ -217,6 +239,7 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
       reason: input.reason,
       question,
       unmetCriterionIds: [...input.unmetCriterionIds],
+      ...(input.decisionIds.length === 0 ? {} : { decisionIds: [...input.decisionIds] }),
     };
     if (input.scope === 'unit') {
       const unit = run.unit(input.targetId);
@@ -261,7 +284,16 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     if (unit === undefined || run.terminal) return;
     const unshown = [...check.verdicts].filter(([, verdict]) => verdict === 'unshown').map(([id]) => id);
     check.recordAction('escalated to the owner: unsettled');
-    raise(run, { scope: 'unit', targetId: unit.id, reason: 'unsettled', unmetCriterionIds: [], unshownCriterionIds: unshown, decisionIds: check.check.decisionIds });
+    const note = unsettledReadingsNote(unit, check.check);
+    raise(run, {
+      scope: 'unit',
+      targetId: unit.id,
+      reason: 'unsettled',
+      unmetCriterionIds: [],
+      unshownCriterionIds: unshown,
+      decisionIds: check.check.decisionIds,
+      ...(note === undefined ? {} : { note }),
+    });
   }
 
   async function attemptsUndecided(run: ContractRun, unitId: string, selection: AttemptSelectionRecord): Promise<void> {
@@ -305,7 +337,8 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
       criterion.status = 'met';
     }
     resume(run);
-    context.checks().passUnit(run, unit, unit.answer ?? '', 'passed: the owner confirmed the criteria that were not shown');
+    // The unit has not passed before, so its answer is the output its last completion check read.
+    context.checks().passUnit(run, unit, unit.answer ?? unit.lastOutput ?? '', 'passed: the owner confirmed the criteria that were not shown');
     return { action: 'approved' };
   }
 
@@ -323,21 +356,31 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
     await context.continuePlanning(run, outcome);
   }
 
-  async function writingDecided(run: ContractRun, forbidsWriting: boolean, how: string, ownerInstruction?: string): Promise<void> {
+  /** Settles writing as the owner said, recording the readings it rests on on the `shaped` decision, and plans. */
+  async function writingDecided(run: ContractRun, forbidsWriting: boolean, how: string, decisionIds: readonly string[] = [], ownerInstruction?: string): Promise<void> {
     const shape = run.contract.shape;
     if (shape === undefined) throw new Error(`contract ${run.id} has no request shape`);
     run.contract.shape = withOwnerWritingDecision(shape, forbidsWriting);
-    run.decide('shaped', run.id, `the owner settled writing: files ${forbidsWriting ? 'may not' : 'may'} change (${how})`);
+    run.decide('shaped', run.id, `the owner settled writing: files ${forbidsWriting ? 'may not' : 'may'} change (${how})`, decisionIds);
     await plan(run, ownerInstruction === undefined ? {} : { ownerInstruction });
   }
 
+  /** The owner's reply changes what is required about writing: read with `forbids_writing` alone. */
   async function amendWriting(run: ContractRun, escalation: Escalation, text: string): Promise<Handled> {
     const usage = emptyJudgmentUsage();
-    const read = await readRequestShape(meteredPort(judgmentPort(REQUEST_SHAPE_SITE), usage), text, { signal: run.abort.signal });
-    addJudgmentUsage(run.contract.judgmentUsage, usage);
-    const reading = read.shape.forbids_writing;
-    if (!saysYesAtAct(reading) && !saysNoAtAct(reading)) return { action: 'asked-again', next: askAgain(run, escalation, ASK_AGAIN_LINE) };
-    await writingDecided(run, saysYesAtAct(reading), 'read from the reply', text);
+    let read: Awaited<ReturnType<typeof readForbidsWriting>>;
+    try {
+      read = await readForbidsWriting(meteredPort(judgmentPort(REQUEST_SHAPE_SITE), usage), text, { signal: run.abort.signal });
+    } finally {
+      addJudgmentUsage(run.contract.judgmentUsage, usage);
+    }
+    const { reading } = read;
+    if (!saysYesAtAct(reading) && !saysNoAtAct(reading)) {
+      read.recordAction('writing not settled by the reply: asked again');
+      return { action: 'asked-again', next: askAgain(run, escalation, ASK_AGAIN_LINE) };
+    }
+    read.recordAction(`the owner settled writing: files ${saysYesAtAct(reading) ? 'may not' : 'may'} change`);
+    await writingDecided(run, saysYesAtAct(reading), 'read from the reply', read.decisionId === undefined ? [] : [read.decisionId], text);
     return { action: 'amended' };
   }
 

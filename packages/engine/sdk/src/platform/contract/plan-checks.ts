@@ -7,13 +7,13 @@
  * and criterion dispositions.
  */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import type { EntryType, JudgmentPort, YesNoReading } from '@goodvibes-jev/judgment';
+import { leansYes, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import type { PlanCheck } from '../../events/contract.js';
 import { criterionShape } from './batteries/criterion-shape.js';
 import { criterionTrace, traceClaim } from './batteries/criterion-trace.js';
-import { planCoverage } from './batteries/plan-coverage.js';
-import { saysYesAtAct } from './batteries/request-shape.js';
-import { unitShape, VERIFICATION_ROLES, type UnitShapeRole } from './batteries/unit-shape.js';
+import { planCoverage, type CoveragePart } from './batteries/plan-coverage.js';
+import { delegationForbidden, saysYesAtAct } from './batteries/request-shape.js';
+import { unitShape, unitShapeInput, VERIFICATION_ROLES, type RequirementReading, type UnitShapeInput, type UnitShapeRole } from './batteries/unit-shape.js';
 import { findParallelGroup, planUnits, type ContractPlan, type PlannedStatedCriterion, type PlannedUnit, type PlanProblem } from './plan-schema.js';
 import type { CriterionDisposition, RequestShape } from './types.js';
 
@@ -86,11 +86,6 @@ function callOptions(site: string, options: PlanCheckOptions): { readonly site: 
   return { site, ...(options.signal === undefined ? {} : { signal: options.signal }) };
 }
 
-/** A yes/no reading that clears only on a no at act. */
-function clearsOnlyOnNoAtAct(reading: YesNoReading): boolean {
-  return !(reading.verdict === 'no' && reading.outcome === 'act');
-}
-
 // ── Criteria trace to the user's words ────────────────────────────────────────
 
 function traceProblemMessage(criterion: PlannedStatedCriterion, fidelity: string): string {
@@ -124,28 +119,64 @@ async function checkTrace(port: JudgmentPort, plan: ContractPlan, ask: string, o
 
 // ── No stated requirement missing ─────────────────────────────────────────────
 
+/** How a criterion is named in a problem message. */
+const named = (criteria: readonly { readonly id: string; readonly text: string }[]): string =>
+  criteria.map((criterion) => `${criterion.id} ("${criterion.text}")`).join(', ');
+
+/** The planner's repair for one part of the request that did not clear. */
+function coverageProblem(part: CoveragePart): PlanProblem {
+  const sure = part.reading.verdict === 'yes';
+  if (part.kind === 'unquoted') {
+    return {
+      code: 'uncovered-requirement',
+      message: sure
+        ? `The user's words "${part.words}" state a requirement, limit or preference that no contract criterion quotes; add a criterion for it, quoting those words.`
+        : `It is not clear whether the user's words "${part.words}" state a requirement, limit or preference; if they do, add a criterion for it, quoting those words.`,
+    };
+  }
+  const plural = part.criteria.length > 1;
+  return {
+    code: 'uncovered-requirement',
+    targetId: part.criteria[0]!.id,
+    message: sure
+      ? `Contract ${plural ? 'criteria' : 'criterion'} ${named(part.criteria)} require${plural ? '' : 's'} less than the user's words "${part.words}" ask for; restate ${plural ? 'them' : 'it'} to require all of it, in the user's words.`
+      : `It is not clear that contract ${plural ? 'criteria' : 'criterion'} ${named(part.criteria)} require${plural ? '' : 's'} all that the user's words "${part.words}" ask for; restate ${plural ? 'them' : 'it'} in the user's words.`,
+  };
+}
+
+/**
+ * Coverage clears a part of the request only on a no at act or confirm: a
+ * reading that leans yes, or an uncertain one, is a problem naming the words
+ * (`contract.plan-coverage` gives the reasons). The action lists the parts
+ * that cleared at confirm.
+ */
 async function checkCoverage(port: JudgmentPort, plan: ContractPlan, ask: string, options: PlanCheckOptions): Promise<CheckOutput> {
   const output = emptyOutput();
-  const run = await planCoverage.run(port, { request: ask, criteria: plan.criteria.map((criterion) => criterion.text) }, callOptions(PLAN_CHECK_SITES['plan-coverage'], options));
-  record(output, run.result.decisionId, run.result.usage);
-  const reading = run.readings.uncovered_requirement;
-  const problem = clearsOnlyOnNoAtAct(reading);
-  run.recordAction(problem ? 'repair: uncovered requirement' : 'covered');
-  if (problem) {
-    output.problems.push({
-      code: 'uncovered-requirement',
-      message: reading.verdict === 'yes'
-        ? "The user's request states a requirement, limit or preference that no contract criterion covers; add a criterion for each one, quoting the user's words."
-        : "It is not clear that the contract criteria cover everything the user's request states; make sure every requirement, limit and preference in the request has its own criterion.",
-    });
-  }
+  const run = await planCoverage.read(port, { request: ask, criteria: plan.criteria }, callOptions(PLAN_CHECK_SITES['plan-coverage'], options));
+  record(output, run.decisionId, run.usage);
+  const open = run.parts.filter((part) => part.reading.verdict !== 'no');
+  const confirmed = run.parts.filter((part) => part.reading.verdict === 'no' && part.reading.outcome === 'confirm');
+  output.problems.push(...open.map(coverageProblem));
+  const cleared = confirmed.length === 0 ? '' : `; cleared at confirm: ${confirmed.map((part) => `"${part.words}"`).join(', ')}`;
+  run.recordAction(open.length > 0 ? `repair: uncovered requirement (${open.length} of ${run.parts.length} parts)${cleared}` : `covered${cleared}`);
   return output;
 }
 
 // ── Criterion is checkable and not topology-only ──────────────────────────────
 
-/** The disposition a topology-only criterion gets: met by the plan's parallel group when it honours a parallel request, else excluded. */
-function topologyRuling(plan: ContractPlan, shape: RequestShape): CriterionDispositionRuling {
+/** The reason a solo criterion is met in session mode. */
+export const SESSION_MODE_REASON = "met by the plan's structure: session mode, where the session does the work itself and no sub-agent is spawned";
+
+/**
+ * The disposition a topology-only criterion gets: met by structure when the
+ * plan's arrangement is the one it asks for, else excluded. A criterion asking
+ * for one agent to work alone (`solo` yes at act) is met when the contract
+ * runs in session mode, under the runner's own rule (`delegationForbidden`,
+ * section 6.6); any other is met by the plan's parallel group when the plan
+ * honours a parallel request.
+ */
+function topologyRuling(plan: ContractPlan, shape: RequestShape, solo: YesNoReading): CriterionDispositionRuling {
+  if (solo.verdict === 'yes' && solo.outcome === 'act' && delegationForbidden(shape)) return { disposition: 'met-by-structure', reason: SESSION_MODE_REASON };
   const parallel = saysYesAtAct(shape.requests_parallel_agents) ? findParallelGroup(plan) : undefined;
   return parallel === undefined
     ? { disposition: 'excluded', reason: EXCLUDED_TOPOLOGY_REASON }
@@ -167,11 +198,11 @@ async function readCriterionShapes(
   })));
   for (const { criterion, run } of runs) {
     record(output, run.result.decisionId, run.result.usage);
-    const { checkable, topology_only: topologyOnly } = run.readings;
+    const { checkable, topology_only: topologyOnly, solo } = run.readings;
     // A topology-only criterion is met or missed by the plan's shape, so it is
     // never judged; that it cannot be checked from the work is expected.
     if (topologyOnly.verdict === 'yes' && topologyOnly.outcome === 'act') {
-      const ruling = topologyRuling(plan, shape);
+      const ruling = topologyRuling(plan, shape, solo);
       output.dispositions.set(criterion.id, ruling);
       run.recordAction(ruling.disposition);
       continue;
@@ -197,14 +228,22 @@ function roleAgrees(planned: string, read: UnitShapeRole): boolean {
   return planned === read;
 }
 
-/** The state `contract.unit-shape` reads for one unit. */
-export function unitShapeState(plan: ContractPlan, unit: PlannedUnit): EntryType {
-  const served = new Set(unit.criteria.flatMap((criterion) => criterion.serves));
+/** What `contract.unit-shape` reads for one unit: the unit, the other units with their criteria, and the contract criteria it serves. */
+export function unitShapeState(plan: ContractPlan, unit: PlannedUnit): UnitShapeInput {
+  return unitShapeInput(plan.goal, plan.criteria, planUnits(plan), unit);
+}
+
+/** The planner's repair for a unit with requirements whose narrows reading leans yes. */
+function narrowsProblem(unit: PlannedUnit, leaning: readonly RequirementReading[]): PlanProblem {
+  const sure = leaning.some((entry) => entry.reading.verdict === 'yes');
+  const plural = leaning.length > 1;
+  const which = `contract ${plural ? 'criteria' : 'criterion'} ${named(leaning)}`;
   return {
-    goal: plan.goal,
-    criteria: plan.criteria.filter((criterion) => served.has(criterion.id)).map((criterion) => criterion.text),
-    unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map((criterion) => criterion.text) },
-    otherUnits: planUnits(plan).filter((other) => other !== unit).map((other) => ({ title: other.title, goal: other.goal })),
+    code: 'narrows',
+    targetId: unit.id,
+    message: sure
+      ? `Unit ${unit.id} ("${unit.title}") does less than ${which} require${plural ? '' : 's'} (fewer items, a smaller area or a weaker standard), and no other unit does the rest; widen it to all that ${plural ? 'they require' : 'it requires'}, or add the missing work.`
+      : `It is not clear that unit ${unit.id} ("${unit.title}") or another unit does all that ${which} require${plural ? '' : 's'}; state that full scope in the unit's brief and criteria.`,
   };
 }
 
@@ -213,11 +252,11 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   const site = PLAN_CHECK_SITES['unit-shape'];
   const runs = await Promise.all(planUnits(plan).map(async (unit) => ({
     unit,
-    run: await unitShape.run(port, unitShapeState(plan, unit), callOptions(site, options)),
+    run: await unitShape.read(port, unitShapeState(plan, unit), callOptions(site, options)),
   })));
   for (const { unit, run } of runs) {
-    record(output, run.result.decisionId, run.result.usage);
-    const { role, narrows } = run.readings;
+    record(output, run.decisionId, run.usage);
+    const { role, narrows } = run;
     const found: PlanProblem[] = [];
     if (role.outcome === 'act' && VERIFICATION_ROLES.includes(role.choice)) {
       found.push({
@@ -232,16 +271,13 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
         message: `Unit ${unit.id} ("${unit.title}") has role "${unit.role}", but its brief reads as ${role.choice} work; make the role and the brief agree.`,
       });
     }
-    if (clearsOnlyOnNoAtAct(narrows)) {
-      found.push({
-        code: 'narrows',
-        targetId: unit.id,
-        message: narrows.verdict === 'yes'
-          ? `Unit ${unit.id} ("${unit.title}") does less than the criteria it serves require (fewer items, a smaller area or a weaker standard), and no other unit makes up the difference; widen it or add the missing work.`
-          : `It is not clear that unit ${unit.id} ("${unit.title}") does all that the criteria it serves require; state its full scope in its brief and criteria.`,
-      });
-    }
-    run.recordAction(found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`);
+    // A narrows reading that leans yes is a problem; one that leans no clears its requirement at any outcome,
+    // since the deliverable check judges every contract criterion again (`contract.unit-shape` gives the reasons).
+    const leaning = narrows.filter((entry) => leansYes(entry.reading.probability));
+    if (leaning.length > 0) found.push(narrowsProblem(unit, leaning));
+    const belowAct = narrows.filter((entry) => !leansYes(entry.reading.probability) && entry.reading.outcome !== 'act');
+    const cleared = belowAct.length === 0 ? '' : `; scope cleared below act for ${belowAct.map((entry) => entry.id).join(', ')}, judged again at the deliverable check`;
+    run.recordAction(`${found.length === 0 ? 'unit accepted' : `repair: ${found.map((entry) => entry.code).join(', ')}`}${cleared}`);
     output.problems.push(...found);
   }
   return output;

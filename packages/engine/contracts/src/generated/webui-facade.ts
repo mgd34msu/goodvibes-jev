@@ -7672,7 +7672,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "verdict": "met",
               "outcome": "act",
               "severity": "critical",
-              "decisionId": "sample"
+              "decisionId": "sample",
+              "severityDecisionId": "sample"
             }
           ]
         }
@@ -7713,7 +7714,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -7840,7 +7842,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -8020,7 +8023,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -8271,6 +8275,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "unmetCriterionIds": [
             "sample"
           ],
+          "decisionIds": [
+            "sample"
+          ],
           "resolvedAt": 0,
           "reply": {
             "text": "sample",
@@ -8416,7 +8423,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   "verdict": "met",
                   "outcome": "act",
                   "severity": "critical",
-                  "decisionId": "sample"
+                  "decisionId": "sample",
+                  "severityDecisionId": "sample"
                 }
               ]
             }
@@ -8457,7 +8465,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -8584,7 +8593,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                       "verdict": "met",
                       "outcome": "act",
                       "severity": "critical",
-                      "decisionId": "sample"
+                      "decisionId": "sample",
+                      "severityDecisionId": "sample"
                     }
                   ]
                 }
@@ -8764,7 +8774,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                           "verdict": "met",
                           "outcome": "act",
                           "severity": "critical",
-                          "decisionId": "sample"
+                          "decisionId": "sample",
+                          "severityDecisionId": "sample"
                         }
                       ]
                     }
@@ -9015,6 +9026,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "unmetCriterionIds": [
                 "sample"
               ],
+              "decisionIds": [
+                "sample"
+              ],
               "resolvedAt": 0,
               "reply": {
                 "text": "sample",
@@ -9177,7 +9191,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                 "verdict": "met",
                 "outcome": "act",
                 "severity": "critical",
-                "decisionId": "sample"
+                "decisionId": "sample",
+                "severityDecisionId": "sample"
               }
             ]
           }
@@ -9218,7 +9233,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                     "verdict": "met",
                     "outcome": "act",
                     "severity": "critical",
-                    "decisionId": "sample"
+                    "decisionId": "sample",
+                    "severityDecisionId": "sample"
                   }
                 ]
               }
@@ -9345,7 +9361,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                     "verdict": "met",
                     "outcome": "act",
                     "severity": "critical",
-                    "decisionId": "sample"
+                    "decisionId": "sample",
+                    "severityDecisionId": "sample"
                   }
                 ]
               }
@@ -9525,7 +9542,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                         "verdict": "met",
                         "outcome": "act",
                         "severity": "critical",
-                        "decisionId": "sample"
+                        "decisionId": "sample",
+                        "severityDecisionId": "sample"
                       }
                     ]
                   }
@@ -9774,6 +9792,9 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "reason": "plan-unresolved",
             "question": "sample",
             "unmetCriterionIds": [
+              "sample"
+            ],
+            "decisionIds": [
               "sample"
             ],
             "resolvedAt": 0,

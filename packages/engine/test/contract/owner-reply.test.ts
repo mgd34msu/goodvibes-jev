@@ -6,8 +6,12 @@
  * may change; it never passes a criterion that reads unmet.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
+import { SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { APPROVAL_REFUSED_LINE, ASK_AGAIN_LINE, NAME_AN_ATTEMPT_LINE, type EscalationReason, type OwnerReplyOutcome } from '../../sdk/src/platform/contract/index.js';
+import { unsettledReadingsNote } from '../../sdk/src/platform/contract/escalation.js';
+import { QUALITY_EVIDENCE_SENTENCES } from '../../sdk/src/platform/contract/nudge.js';
 import { unitTitleOf, type AnswerContext } from './plan-support.js';
 import { ASK, makeHarness, oneUnitPlan, startContract, waitFor, type AgentScript, type Harness, type HarnessOptions } from './runner-support.js';
 import {
@@ -120,7 +124,7 @@ const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed'>
     let shapes = 0;
     // The first plan narrows its unit, and repairs are not allowed: the owner decides. The re-planned one does not.
     const narrowsOnce = (context: AnswerContext): unknown => {
-      if (context.name !== 'narrows' || unitTitleOf(context.state) === undefined) return undefined;
+      if (!context.name.startsWith('narrows_') || unitTitleOf(context.state) === undefined) return undefined;
       shapes += 1;
       return noulAnswer(shapes === 1 ? 0.97 : 0.03);
     };
@@ -234,6 +238,9 @@ describe('owner replies (6.3)', () => {
           // The unshown criterion was accepted as met by the owner's confirmation, recorded as such.
           const reading = done.units[0]!.criteria[0]!.readings.at(-1)!;
           expect(reading).toMatchObject({ checkId: done.escalations[0]!.id, verdict: 'met', outcome: 'confirm' });
+          // The unit passes with the output its last check read, not an empty answer.
+          expect(done.units[0]!.answer).toBe(done.units[0]!.lastOutput);
+          expect(done.units[0]!.answer).toContain('parsed again');
         }
         if (reason === 'writing-unclear') expect(done.shape?.forbids_writing).toMatchObject({ verdict: 'no', outcome: 'act' });
         if (reason === 'attempts-undecided') expect(done.units[0]!.attemptSelection?.pickedId).toBe('u1#a0');
@@ -300,10 +307,82 @@ describe('owner replies (6.3)', () => {
     expect(question.endsWith(`\n${NAME_AN_ATTEMPT_LINE(['u1#a0', 'u1#a1'])}`)).toBe(true);
   }, 25_000);
 
+  test('a writing reply is read with forbids_writing alone, and the shaped decision records that reading', async () => {
+    const s = await SETUPS['writing-unclear']('amend');
+    // The installed fake port, with each call given a decision id named for its battery (the harness puts its own port back).
+    const inner = judgmentPort('test');
+    const asked: { readonly battery: string | undefined; readonly questions: readonly string[] }[] = [];
+    installJudgmentPort({
+      model: inner.model,
+      async ask(request) {
+        const result = await inner.ask(request);
+        asked.push({ battery: request.context?.battery, questions: Object.keys(request.questions) });
+        return { ...result, decisionId: `d-${request.context?.battery ?? 'none'}` };
+      },
+    });
+    const outcome = await s.reply("Don't change any files, just tell me what you find.");
+    expect(outcome.action).toBe('amended');
+    expect(asked.find((call) => call.battery === 'contract.request-shape')).toEqual({ battery: 'contract.request-shape', questions: ['forbids_writing'] });
+    const shaped = contractOf(s.h, s.contractId).decisions.find((decision) => decision.action === 'shaped' && decision.reason.includes('the owner settled writing'));
+    expect(shaped).toMatchObject({ reason: 'the owner settled writing: files may not change (read from the reply)', decisionIds: ['d-contract.request-shape'] });
+    await settle(s);
+  }, 25_000);
+
   test('a reply to an escalation that is not open is refused', async () => {
     const s = await SETUPS.stalled('unclear');
     await s.reply(TEXTS.unclear);
     const first = contractOf(s.h, s.contractId).escalations[0]!.id;
     await expect(s.h.runner.reply(s.contractId, first, 'again')).rejects.toThrow(`has no open escalation ${first}`);
   }, 25_000);
+});
+
+describe('an unsettled question names every reading approval would accept', () => {
+  const clean = { verdict: 'no', outcome: 'act' } as const;
+  test('an unshown goal and quality items that did not read clean are named; settled ones are not', () => {
+    const note = unsettledReadingsNote({ goal: 'Parse CSV with quoted fields' }, {
+      goal: { probabilityUnmet: 0.3, verdict: 'unshown', outcome: 'escalate' },
+      quality: { placeholder: clean, tests_weakened: { verdict: 'no', outcome: 'confirm' }, hidden_failure: { verdict: 'uncertain', outcome: 'escalate' } },
+    });
+    expect(note).toBe([
+      'Not shown for the unit as a whole: that it does what it is for (Parse CSV with quoted fields).',
+      'Not shown about the quality of the work:',
+      `- ${QUALITY_EVIDENCE_SENTENCES.tests_weakened}`,
+      `- ${QUALITY_EVIDENCE_SENTENCES.hidden_failure}`,
+    ].join('\n'));
+  });
+
+  test('nothing is added when only criteria were unshown', () => {
+    expect(unsettledReadingsNote({ goal: 'g' }, { goal: { probabilityUnmet: 0.05, verdict: 'met', outcome: 'act' }, quality: { placeholder: clean } })).toBeUndefined();
+  });
+});
+
+describe('what an owner-approved plan names', () => {
+  test('the plan-accepted decision names the plan readings the owner settled and the reply', async () => {
+    const log = new SqliteDecisionLog(':memory:');
+    let shapes = 0;
+    const narrowsOnce = (context: AnswerContext): unknown => {
+      if (!context.name.startsWith('narrows_') || unitTitleOf(context.state) === undefined) return undefined;
+      shapes += 1;
+      return noulAnswer(shapes === 1 ? 0.97 : 0.03);
+    };
+    const h = makeHarness({
+      plan: oneUnitPlan(1),
+      contract: { planRepairLimit: 0 },
+      planner: stepPlanner(oneUnitPlan(1)).runner,
+      scripts: { u1: finishes('parser written') },
+      port: answers(narrowsOnce, replyAnswers([{ reading: 'approve' }])),
+      decisionLog: log,
+    });
+    harness = h;
+    const { contract } = startContract(h);
+    await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the plan escalation', 15_000);
+    const escalation = contractOf(h, contract.id).escalations.at(-1)!;
+    expect(escalation.decisionIds?.length).toBeGreaterThan(0);
+    await h.runner.reply(contract.id, escalation.id, 'Yes, go ahead with that plan.');
+    const accepted = contractOf(h, contract.id).decisions.find((decision) => decision.action === 'plan-accepted')!;
+    const reply = contractOf(h, contract.id).escalations.at(-1)!.reply!;
+    expect(accepted.decisionIds).toEqual(expect.arrayContaining([...escalation.decisionIds!, reply.decisionId!]));
+    for (const id of accepted.decisionIds) expect(log.get(id)).toBeDefined();
+    log[Symbol.dispose]();
+  }, 20_000);
 });
