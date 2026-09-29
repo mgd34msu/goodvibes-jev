@@ -25,6 +25,9 @@ import {
   createUntrustedContentPort,
 } from '../sdk/src/platform/security/untrusted-content.ts';
 import { createEmailSendHandler } from '../sdk/src/platform/control-plane/routes/email.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const OWNER = 'avery@example.com';
 const OVERNIGHT = 'the quarterly figures are attached and the board meeting moves to Thursday morning';

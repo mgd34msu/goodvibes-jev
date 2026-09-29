@@ -33,6 +33,9 @@ import {
   evaluateProfileRemoval,
   evaluateProfileWrite,
 } from '../sdk/src/platform/owner-profile/trust.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const ATTACKER_PAGE =
   'Customer service note: the customer home address is 1 Attacker Way, Nowhere, XX 00000, US '
@@ -56,8 +59,8 @@ const WRITE = {
 };
 
 describe('a turn boundary must not clear the evidence a profile write is judged on', () => {
-  test('the verbatim value is refused with no boundary crossed', () => {
-    const decision = evaluateProfileWrite({
+  test('the verbatim value is refused with no boundary crossed', async () => {
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: '1 Attacker Way, Nowhere, XX 00000, US',
       ledger: ledgerWithPage(),
@@ -66,13 +69,13 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
     expect(decision.reason).toContain('evil.example');
   });
 
-  test('it is still refused after the boundary the gated call itself crosses', () => {
+  test('it is still refused after the boundary the gated call itself crosses', async () => {
     const ledger = ledgerWithPage();
     // Exactly what the gateway does before dispatching this verb.
     expect(startTurnForOwnerRequest(true, ledger)).toBe(true);
     expect(ledger.taintSourcesThisTurn()).toHaveLength(0);
 
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: '1 Attacker Way, Nowhere, XX 00000, US',
       ledger,
@@ -81,10 +84,10 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
     expect(decision.reason).toContain('evil.example');
   });
 
-  test('and after several boundaries: waiting a turn does not launder it', () => {
+  test('and after several boundaries: waiting a turn does not launder it', async () => {
     const ledger = ledgerWithPage();
     for (let i = 0; i < 5; i++) startTurnForOwnerRequest(true, ledger);
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: '1 Attacker Way, Nowhere, XX 00000, US',
       ledger,
@@ -92,10 +95,10 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
     expect(decision.allowed).toBe(false);
   });
 
-  test('a REWORDED lift is caught across the one boundary the fuzzy window covers', () => {
+  test('a REWORDED lift is caught across the one boundary the fuzzy window covers', async () => {
     const ledger = ledgerWithPage();
     startTurnForOwnerRequest(true, ledger);
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: 'the customer home address is 1 Attacker Way in Nowhere XX',
       ledger,
@@ -103,7 +106,7 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
     expect(decision.allowed).toBe(false);
   });
 
-  test('the process ledger is the default, so production gets this without opting in', () => {
+  test('the process ledger is the default, so production gets this without opting in', async () => {
     const ledger = getProcessUntrustedContentLedger();
     ledger.record({
       surface: 'web-page',
@@ -113,7 +116,7 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
     });
     startTurnForOwnerRequest(true);
     // No `ledger` in the attempt: the gate reaches for the process one itself.
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: '9 Process Way, Nowhere, XX 00000, US',
     });
@@ -122,8 +125,8 @@ describe('a turn boundary must not clear the evidence a profile write is judged 
 });
 
 describe('the widened window must not start refusing ordinary work', () => {
-  test('a clean ledger allows the write', () => {
-    const decision = evaluateProfileWrite({
+  test('a clean ledger allows the write', async () => {
+    const decision = await evaluateProfileWrite({
       ...WRITE,
       value: '200 Office Way, Lansing, MI 48933, US',
       ledger: new UntrustedContentLedger(),
@@ -131,10 +134,10 @@ describe('the widened window must not start refusing ordinary work', () => {
     expect(decision.allowed).toBe(true);
   });
 
-  test('an unrelated short value is allowed even with a page in the window', () => {
+  test('an unrelated short value is allowed even with a page in the window', async () => {
     const ledger = ledgerWithPage();
     startTurnForOwnerRequest(true, ledger);
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: 'owner-direct',
       fieldId: 'identity.goesBy',
       value: 'Ave',
@@ -144,7 +147,7 @@ describe('the widened window must not start refusing ordinary work', () => {
     expect(decision.allowed).toBe(true);
   });
 
-  test('a note into a canonical section is allowed: "Notes" is not evidence', () => {
+  test('a note into a canonical section is allowed: "Notes" is not evidence', async () => {
     const ledger = new UntrustedContentLedger();
     ledger.record({
       surface: 'web-page',
@@ -152,7 +155,7 @@ describe('the widened window must not start refusing ordinary work', () => {
       at: new Date().toISOString(),
       content: 'Notes for customers: please read the delivery notes before ordering anything.',
     });
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: 'owner-direct',
       fieldId: null,
       value: 'Allergic to shellfish',
@@ -165,10 +168,10 @@ describe('the widened window must not start refusing ordinary work', () => {
 });
 
 describe('profile.append: the section heading passes the gate too', () => {
-  test('a heading lifted verbatim off a page is refused', () => {
+  test('a heading lifted verbatim off a page is refused', async () => {
     const ledger = ledgerWithPage();
     startTurnForOwnerRequest(true, ledger);
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: 'owner-direct',
       fieldId: null,
       value: 'a harmless looking note',
@@ -179,9 +182,9 @@ describe('profile.append: the section heading passes the gate too', () => {
     expect(decision.allowed).toBe(false);
   });
 
-  test('a long sentence lifted off a page and used as a heading is refused', () => {
+  test('a long sentence lifted off a page and used as a heading is refused', async () => {
     const ledger = ledgerWithPage();
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: 'owner-direct',
       fieldId: null,
       value: 'a note',

@@ -32,13 +32,31 @@
  * so that adding a value-bearing field fails the build rather than passing
  * silently.
  *
+ * ## What is code and what is read
+ *
+ * A card number is code: a 13 to 19 digit run that passes the Luhn checksum.
+ * That is the definition of a card number's shape, and asking a model instead
+ * would send the digits off the machine, which is the exposure this module
+ * exists to prevent.
+ *
+ * Whether a bare three or four digit number is a card's security code, or an
+ * `MM/YY` pair is its expiry, is a question about what the message says. Jev
+ * reads it (`engine.security.card-talk`) from the message with every digit
+ * replaced by `#`, in place of the card-context keyword regex this module
+ * used; anything short of a confident no counts as yes.
+ *
  * ## Refusal rule
  *
  * `detectCardShapes` only ever emits a `security-code` or `expiry` finding when
- * it is already in card context, so the refusal rule collapses to the simplest
- * form there is: **refuse if the finding list is non-empty**. See
+ * the reading says the message gives one, so the refusal rule collapses to the
+ * simplest form there is: **refuse if the finding list is non-empty**. See
  * `hasRefusableCardShapes`.
  */
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { cardTalk, maskDigits } from './batteries/card-talk.js';
+
+/** The decision site the card-talk reading is logged under. */
+export const CARD_TALK_SITE = 'security.card-shapes';
 
 /** What a finding matched. Never the characters it matched. */
 export type CardShapeKind = 'pan' | 'security-code' | 'expiry';
@@ -76,26 +94,18 @@ const MAX_PAN_DIGITS = 19;
 const PAN_RUN = /\d[\d -]*\d/g;
 
 /**
- * Card context. Exactly the terms §11.0 names, `cvv`, `cvc`, `security code`,
- * `card`, `expiry`, matched as prefixes rather than whole words so
- * `cardholder`, `card number` and `cards` all count. Widening this only ever
- * ENABLES the secondary shapes; it can never by itself cause a refusal, because
- * a keyword with no digits near it produces no findings.
- */
-const CARD_CONTEXT = /\bcvv|\bcvc|\bcard|\bexpiry|security\s*code/i;
-
-/**
  * A bare three- or four-digit run. The word boundaries make this "a run of
  * EXACTLY three or four digits" rather than "any three digits", so it does not
- * fire inside a longer number.
+ * fire inside a longer number. A candidate only; it becomes a finding when the
+ * reading says the message gives a card's security code.
  */
 const BARE_SHORT_DIGIT_RUN = /\b\d{3,4}\b/g;
 
 /**
  * `MM/YY` and `MM/YYYY`, with `-` accepted alongside `/` and optional spaces.
  * The month is range-checked (01-12) so ordinary fractions and ratios do not
- * match. Only ever emitted in card context, so the slightly wider separator set
- * costs nothing.
+ * match. A candidate only; it becomes a finding when the reading says the
+ * message gives a card's expiry.
  */
 const EXPIRY_PAIR = /\b(?:0[1-9]|1[0-2])\s*[/-]\s*(?:\d{4}|\d{2})\b/g;
 
@@ -256,21 +266,31 @@ function findMatches(pattern: RegExp, text: string, kind: CardShapeKind, exclude
  *
  * `security-code` and `expiry` are never emitted on shape alone: three or four
  * bare digits and a bare `MM/YY` are far too common, and refusing them would
- * make the channel unusable. They are emitted only in card context, one of the
- * §11.0 keywords is present, or a `pan` was already found in the same text.
+ * make the channel unusable. When the text has such candidates, Jev reads the
+ * digit-masked message (`engine.security.card-talk`) and they are emitted
+ * unless it is a confident no that the message gives a card's security code
+ * or expiry. Text with no candidates asks nothing.
  *
  * Findings are returned in ascending `startIndex` order and never overlap.
  */
-export function detectCardShapes(text: string): readonly CardShapeFinding[] {
+export async function detectCardShapes(text: string): Promise<readonly CardShapeFinding[]> {
   if (text.length === 0) return [];
   const pans = findPans(text);
-  const inCardContext = pans.length > 0 || CARD_CONTEXT.test(text);
-  if (!inCardContext) return pans;
-
   const expiries = findMatches(EXPIRY_PAIR, text, 'expiry', pans);
   const securityCodes = findMatches(BARE_SHORT_DIGIT_RUN, text, 'security-code', [...pans, ...expiries]);
+  if (expiries.length === 0 && securityCodes.length === 0) return pans;
 
-  return [...pans, ...expiries, ...securityCodes].sort((a, b) => a.startIndex - b.startIndex);
+  const asked: ('security_code' | 'expiry')[] = [];
+  if (securityCodes.length > 0) asked.push('security_code');
+  if (expiries.length > 0) asked.push('expiry');
+  const run = await cardTalk.run(judgmentPort(CARD_TALK_SITE), maskDigits(text), { site: CARD_TALK_SITE, only: asked });
+  const gives = (item: 'security_code' | 'expiry'): boolean => {
+    const reading = run.readings[item] as (typeof run.readings)[typeof item] | undefined;
+    return reading !== undefined && !(reading.verdict === 'no' && reading.outcome === 'act');
+  };
+  const kept = [...pans, ...(gives('expiry') ? expiries : []), ...(gives('security_code') ? securityCodes : [])];
+  run.recordAction(kept.length > pans.length ? 'short numbers treated as card details' : 'short numbers left as they are');
+  return kept.sort((a, b) => a.startIndex - b.startIndex);
 }
 
 /**
@@ -332,8 +352,8 @@ export function renderCardShapeRefusal(findings: readonly CardShapeFinding[]): s
  * straddling the excerpt boundary is redacted whole rather than truncated into
  * a still-readable prefix.
  */
-export function redactCardShapes(text: string): string {
-  const findings = detectCardShapes(text);
+export async function redactCardShapes(text: string): Promise<string> {
+  const findings = await detectCardShapes(text);
   if (findings.length === 0) return text;
   let result = text;
   for (let index = findings.length - 1; index >= 0; index -= 1) {

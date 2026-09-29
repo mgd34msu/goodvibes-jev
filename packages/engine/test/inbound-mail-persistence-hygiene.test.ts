@@ -32,6 +32,9 @@ import {
   resetPersistentStoreTempSweepThrottle,
 } from '../sdk/src/platform/state/persistent-store.ts';
 import type { VerificationExpectation } from '../sdk/src/platform/google/verification-expectations.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 let dir: string;
 let storePath: string;
@@ -513,7 +516,7 @@ describe('PersistentStore writes owner-only, durably, and leaves no litter', () 
    * such: it catches a removal or a reordering of the durability calls, which
    * is the realistic regression, and it does not and cannot prove durability.
    */
-  test('the persist path syncs the file before the rename and the directory after it', () => {
+  test('the persist path syncs the file before the rename and the directory after it', async () => {
     const source = readFileSync(
       join(import.meta.dir, '..', 'sdk/src/platform/state/persistent-store.ts'),
       'utf-8',
@@ -560,9 +563,16 @@ describe('two independent writers over one record file lose nothing', () => {
       '..',
       'sdk/src/platform/email/inbound/record-store.ts',
     ).replace(/\\/g, '/');
+    const errorsModule = join(import.meta.dir, '..', 'errors/src/index.ts').replace(/\\/g, '/');
+    const testingModule = join(import.meta.dir, '..', '..', 'judgment/src/testing/index.ts').replace(/\\/g, '/');
     const scriptPath = join(dir, 'writer.ts');
     writeFileSync(scriptPath, [
       `import { InboundMailStore } from ${JSON.stringify(storeModule)};`,
+      // The subjects carry four digit numbers, which the card-talk reading is
+      // asked about; the child answers "not card details" like the parent.
+      `import { installJudgmentPort } from ${JSON.stringify(errorsModule)};`,
+      `import { fakePort, noulAnswer } from ${JSON.stringify(testingModule)};`,
+      `installJudgmentPort(fakePort(() => noulAnswer(0.03)).port);`,
       `const path = process.argv[2]!;`,
       `const base = Number(process.argv[3]!);`,
       `const store = new InboundMailStore(path, { now: () => ${String(NOW)} });`,

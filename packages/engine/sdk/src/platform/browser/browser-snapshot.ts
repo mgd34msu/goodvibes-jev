@@ -1,6 +1,11 @@
 import type { Frame, FrameLocator, Locator, Page } from 'playwright-core';
+import { mapLimit } from '@goodvibes-jev/judgment';
 import { isCardFieldDescriptor } from '../security/card-fields.js';
+
 import type { BrowserElementRef, BrowserSnapshot, CardFieldGuard } from './browser-types.js';
+
+/** How many card-field readings a snapshot runs at once. */
+const CARD_FIELD_CONCURRENCY = 8;
 
 /**
  * Snapshot-and-ref addressing.
@@ -367,16 +372,11 @@ export async function takeSnapshot(
   const scrub = (text: string): string =>
     options.guard === undefined ? text : options.guard.redact(sessionId, pageId, text);
 
-  const elements: BrowserElementRef[] = raw.map((element, index) => {
-    // A payment field's value is never reported. Not masked, not truncated,
-    // absent, exactly as a password field's already is.
-    // Built defensively: `element` comes back from `frame.evaluate`, so its
-    // shape is whatever that frame produced. A host-backed frame, an older
-    // driver, or a frame whose evaluate partially failed can all hand back a
-    // record with no `control`, and a classifier that threw on one would take
-    // out EVERY snapshot, not just the payment case it was added for.
+  // One card-field reading per form control, a few at a time; links and
+  // buttons carry no value and are settled in code without a request.
+  const cardFields = await mapLimit(raw, CARD_FIELD_CONCURRENCY, (element) => {
     const control = element.control ?? undefined;
-    const cardField = isCardFieldDescriptor({
+    return isCardFieldDescriptor({
       tag: element.tag,
       type: control?.type ?? '',
       autocomplete: control?.autocomplete ?? '',
@@ -386,6 +386,17 @@ export async function takeSnapshot(
       ariaLabel: control?.ariaLabel ?? '',
       label: control?.label ?? '',
     });
+  });
+
+  const elements: BrowserElementRef[] = raw.map((element, index) => {
+    // A payment field's value is never reported. Not masked, not truncated,
+    // absent, exactly as a password field's already is.
+    // Built defensively: `element` comes back from `frame.evaluate`, so its
+    // shape is whatever that frame produced. A host-backed frame, an older
+    // driver, or a frame whose evaluate partially failed can all hand back a
+    // record with no `control`, and a classifier that threw on one would take
+    // out EVERY snapshot, not just the payment case it was added for.
+    const cardField = cardFields[index] === true;
     const value = cardField || element.value === null ? undefined : scrub(element.value);
     return {
       ref: `e${String(index + 1)}`,

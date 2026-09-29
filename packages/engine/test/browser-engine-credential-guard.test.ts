@@ -13,6 +13,9 @@ import type {
   UntrustedContentEnvelope,
   UntrustedContentPort,
 } from '../sdk/src/platform/browser/browser-types.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /**
  * The browser layer's own backstop against driving a sign-in page, one
@@ -55,11 +58,11 @@ class NoopUntrustedContentPort implements UntrustedContentPort {
     // Not exercised here, the outward-effect ledger has its own test file.
   }
 
-  evaluateOutwardEffect(_input: {
+  async evaluateOutwardEffect(_input: {
     readonly action: string;
     readonly description: string;
     readonly approval: OwnerApproval | null;
-  }): OutwardEffectDecision {
+  }): Promise<OutwardEffectDecision> {
     return { allowed: true, reason: null, fix: null, untrustedOrigins: [] };
   }
 }

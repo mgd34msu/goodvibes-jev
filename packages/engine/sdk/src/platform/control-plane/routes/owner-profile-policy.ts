@@ -113,7 +113,7 @@ export function applyOwnerProfilePolicy(
       if (!policy.autonomousWrites() && !isSettingsEdit(input.said)) {
         return refused(AUTONOMOUS_WRITES_OFF);
       }
-      const sectionRefusal = refuseTaintedSection(input);
+      const sectionRefusal = await refuseTaintedSection(input);
       if (sectionRefusal !== null) return sectionRefusal;
       return applyDisclosurePolicy(await service.append(input), policy.discloseWrites());
     },
@@ -133,8 +133,8 @@ export function applyOwnerProfilePolicy(
  * This is the same `evaluateProfileWrite` the store runs, with the same ledger
  * and the same two passes, not a second, weaker copy of the rule.
  */
-function refuseTaintedSection(input: AppendProfileProseInput): ProfileWriteResult | null {
-  const decision = evaluateProfileWrite({
+async function refuseTaintedSection(input: AppendProfileProseInput): Promise<ProfileWriteResult | null> {
+  const decision = await evaluateProfileWrite({
     authority: input.authority,
     fieldId: null,
     value: input.text,

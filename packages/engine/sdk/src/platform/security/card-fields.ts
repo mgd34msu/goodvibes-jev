@@ -11,20 +11,25 @@
  * It is also why `platform/browser/` still imports no product surface: this is
  * foundation, like link validation and the public-suffix list beside it.
  *
- * ── Why this is a classification and not a lookup ─────────────────────────
+ * ── How a field is recognised ──────────────────────────────────────────────
  *
- * There is no registry of merchants here and there must never be one. A rule
- * written against the standard `autocomplete` tokens works on every checkout
- * that wants browser autofill to function, which is every checkout that works
- * at all; the name and id patterns catch the rest. Neither needs to know which
- * site it is looking at.
+ * There is no registry of merchants here and there must never be one. A
+ * control whose `autocomplete` attribute carries one of the payment tokens the
+ * HTML standard defines has declared itself a payment field, and that
+ * declaration is taken as given. Every other form control is read by Jev
+ * (`engine.security.card-field`) from its name, id, placeholder and labels in
+ * whatever language the page uses; that reading replaced a list of
+ * multilingual name and label regexes.
  *
  * ── Erring toward yes ─────────────────────────────────────────────────────
  *
  * A false positive costs the model the contents of one form field, which it can
  * ask the owner about. A false negative hands it a card number. Those are not
- * comparable, so the patterns are broad and the tie goes to suppression.
+ * comparable, so a control is treated as a payment field unless the reading
+ * is a confident no.
  */
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { cardField } from './batteries/card-field.js';
 
 /**
  * Everything about one control the classification may look at.
@@ -64,41 +69,18 @@ const CARD_AUTOCOMPLETE_TOKENS: ReadonlySet<string> = new Set([
   'cc-type',
 ]);
 
-/**
- * For the pages that do not bother with autocomplete at all.
- *
- * Not English-only, and that is not a nicety. A German checkout names its field
- * `kreditkartennummer` and its verification field `pruefziffer`; against an
- * English-only list both read as ordinary text inputs and their contents get
- * reported like any other field. The word for "card" is the stem that travels,
- * so the patterns key on it in the languages a merchant is likely to use.
- */
-const CARD_NAME_PATTERNS: readonly RegExp[] = [
-  // card / karte / carte / carta / tarjeta / kaart / kort / kort
-  /(card|kart|carte|carta|tarjeta|kaart|kort)\w*.?(number|num|no|nummer|numero|número|nr)\b/i,
-  /\b(cc|credit.?card|debit.?card|kreditkarte|kredittkort|carte.?bancaire|tarjeta.?de.?credito)\w*/i,
-  /kreditkarte|bankkarte|zahlungskarte/i,
-  /\bpan\b/i,
-  // The verification value, by its many names.
-  /\b(cvv|cvc|csc|cvv2|cid|security.?code|card.?code)\b/i,
-  /pruefziffer|prüfziffer|sicherheitscode|kartenpruefnummer|kartenprüfnummer/i,
-  /cryptogramme|code.?de.?securite|codigo.?de.?seguridad|código.?de.?seguridad/i,
-  // Expiry, in the spellings that actually appear.
-  /\bexp(iry|iration)?.?(date|month|year|mm|yy)?\b/i,
-  /gueltig.?bis|gültig.?bis|verfallsdatum|ablaufdatum|scadenza|caducidad|validite|validité/i,
-  // The cardholder.
-  /cardholder|karteninhaber|titulaire|titular|intestatario/i,
-  /\bname.?on.?card\b/i,
-];
+/** The decision site the card-field reading is logged under. */
+export const CARD_FIELD_SITE = 'security.card-field';
 
 /** Whether this control is a payment field whose value must never be reported. */
-export function isCardFieldDescriptor(control: FormControlDescriptor): boolean {
+export async function isCardFieldDescriptor(control: FormControlDescriptor): Promise<boolean> {
   // Every field is coerced rather than trusted. This runs on data that came
   // back from inside a page, where a missing or oddly-typed property is an
   // ordinary occurrence, and a throw here would fail the whole snapshot, which
   // is a far worse outcome than misclassifying one control.
   const text = (value: unknown): string => (typeof value === 'string' ? value : '');
   const tag = text(control.tag).toLowerCase();
+  // Only these elements carry a value a snapshot could report.
   if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') return false;
 
   // `autocomplete="shipping cc-number"` and `section-pay cc-csc` are both legal
@@ -106,12 +88,17 @@ export function isCardFieldDescriptor(control: FormControlDescriptor): boolean {
   const tokens = text(control.autocomplete).toLowerCase().split(/\s+/).filter((token) => token.length > 0);
   if (tokens.some((token) => CARD_AUTOCOMPLETE_TOKENS.has(token))) return true;
 
-  const haystack = [
-    text(control.name),
-    text(control.id),
-    text(control.placeholder),
-    text(control.ariaLabel),
-    text(control.label),
-  ].join(' ');
-  return CARD_NAME_PATTERNS.some((pattern) => pattern.test(haystack));
+  const run = await cardField.run(judgmentPort(CARD_FIELD_SITE), {
+    tag,
+    type: text(control.type),
+    name: text(control.name),
+    id: text(control.id),
+    placeholder: text(control.placeholder),
+    ariaLabel: text(control.ariaLabel),
+    label: text(control.label),
+  }, { site: CARD_FIELD_SITE });
+  const reading = run.readings.card_field;
+  const ordinary = reading.verdict === 'no' && reading.outcome === 'act';
+  run.recordAction(ordinary ? 'value reported' : 'value suppressed');
+  return !ordinary;
 }

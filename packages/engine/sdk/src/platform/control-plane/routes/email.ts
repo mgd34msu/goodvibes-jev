@@ -280,13 +280,13 @@ function untrustedExposureDisclosure(ledger: UntrustedContentLedger): Record<str
  * derives from nothing anyone wrote at it and proceeds. Disclosure is kept for
  * the sends that do proceed, it stops being the only protection.
  */
-function refuseTaintedSend(
+async function refuseTaintedSend(
   ledger: UntrustedContentLedger,
   fields: Readonly<Record<string, string | undefined>>,
   description: string,
   replyToEnvelopeSenders: readonly string[] = [],
   ownerAddresses: ReadonlySet<string> = new Set(),
-): void {
+): Promise<void> {
   // The one exemption: a send whose EVERY recipient is the owner alone.
   //
   // The owner is the trust root, not a third party, and telling them what
@@ -304,18 +304,19 @@ function refuseTaintedSend(
   // Note what is NOT exempted: link validation, the confirmation gate, and the
   // explicit-user-request rule all still apply to a send to the owner.
   if (isSendToOwnerOnly(fields.to, ownerAddresses)) return;
-  const decision = evaluateOutwardEffect({
+  const decision = await evaluateOutwardEffect({
     request: { toolName: 'email', action: 'email.send', description },
     ledger,
     content: fields,
     taintOptions: {
-      // The recipient is where the mail GOES; length thresholds are the wrong
-      // instrument for it, so it is tested by containment.
+      // The recipient is where the mail GOES; its verbatim presence in what
+      // was read is a finding on its own, before any derivation reading.
       exactMatchFields: ['to'],
       // …with one exemption: replying to where a message actually came from,
       // established from delivery evidence rather than a From: header.
       replyToEnvelopeSenders,
-      // A reply quoting what it answers repeats it by design.
+      // A reply quoting what it answers repeats it by design; the reading
+      // leaves the quoted copy out.
       stripQuotedFields: ['body'],
     },
   });
@@ -359,7 +360,7 @@ export function createEmailSendHandler(
     // Before anything leaves the machine: does what is about to leave derive
     // from what was read? Recipient included, a redirected reply is as much
     // an injection outcome as a rewritten body.
-    refuseTaintedSend(ledger, { to, subject, body }, `sending mail to ${to}`, [], ownerAddresses);
+    await refuseTaintedSend(ledger, { to, subject, body }, `sending mail to ${to}`, [], ownerAddresses);
     const sent = await service.send({
       to,
       subject,

@@ -17,6 +17,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseProfileDocument } from '../sdk/src/platform/owner-profile/document.ts';
 import { OwnerProfileStore } from '../sdk/src/platform/owner-profile/store.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const dirs: string[] = [];
 function tempProfile(content: string): string {

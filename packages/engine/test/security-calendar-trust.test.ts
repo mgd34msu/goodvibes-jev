@@ -59,6 +59,9 @@ import type {
   CalDavHttpRequest,
   CalDavHttpResponse,
 } from '../sdk/src/platform/google/caldav-client.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CALENDAR_DIR = resolve(__dirname, '../sdk/src/platform/calendar');
@@ -682,7 +685,7 @@ describe('an invitation cannot compose an outward action', () => {
     ledger.startTurn();
     await readSubscribedInvite(ledger);
 
-    const decision = evaluateOutwardEffect({
+    const decision = await evaluateOutwardEffect({
       request: {
         toolName: 'email',
         action: 'email.send',
@@ -707,7 +710,7 @@ describe('an invitation cannot compose an outward action', () => {
     ledger.startTurn();
     await readSubscribedInvite(ledger);
 
-    const decision = evaluateOutwardEffect({
+    const decision = await evaluateOutwardEffect({
       request: { toolName: 'email', action: 'email.send', description: 'send the weekly note' },
       ledger,
       content: { to: 'avery@example.com', subject: 'Weekly note', body: 'Nothing to report.' },

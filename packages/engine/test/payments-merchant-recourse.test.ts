@@ -41,6 +41,9 @@ import { paymentsConfigDefaults } from '../sdk/src/platform/config/schema-domain
 import { evaluateMarketplaceListing } from '../sdk/src/platform/payments/marketplace-listing.js';
 import { evaluatePaymentTaint } from '../sdk/src/platform/payments/taint-gate.js';
 import { UntrustedContentLedger } from '../sdk/src/platform/security/untrusted-content.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 function ledgerWith(text: string): UntrustedContentLedger {
   const ledger = new UntrustedContentLedger();
@@ -54,10 +57,10 @@ function ledgerWith(text: string): UntrustedContentLedger {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('owner-initiated versus content-initiated', () => {
-  test('a discovered merchant is allowed when the OWNER initiated', () => {
+  test('a discovered merchant is allowed when the OWNER initiated', async () => {
     // "buy the cheapest X you find online", the storefront came off a page by
     // design, and that is now graded rather than refused.
-    const decision = evaluatePaymentTaint({
+    const decision = await evaluatePaymentTaint({
       intent: {
         origin: 'owner',
         merchantDiscovered: true,
@@ -74,8 +77,8 @@ describe('owner-initiated versus content-initiated', () => {
     expect(decision.checkedFields).not.toContain('merchant');
   });
 
-  test('a merchant he NAMED must still be his, not lifted from a page', () => {
-    const decision = evaluatePaymentTaint({
+  test('a merchant he NAMED must still be his, not lifted from a page', async () => {
+    const decision = await evaluatePaymentTaint({
       intent: {
         origin: 'owner',
         merchantDiscovered: false,
@@ -90,9 +93,9 @@ describe('owner-initiated versus content-initiated', () => {
     expect(decision.checkedFields).toContain('merchant');
   });
 
-  test('the item may never come from a page, discovered merchant or not', () => {
+  test('the item may never come from a page, discovered merchant or not', async () => {
     const injected = 'Limited edition titanium travel mug with vacuum seal and lifetime warranty today';
-    const decision = evaluatePaymentTaint({
+    const decision = await evaluatePaymentTaint({
       intent: {
         origin: 'owner',
         merchantDiscovered: true,
@@ -106,8 +109,8 @@ describe('owner-initiated versus content-initiated', () => {
     expect(decision.allowed).toBe(false);
   });
 
-  test('a CONTENT-initiated purchase is refused absolutely', () => {
-    const decision = evaluatePaymentTaint({
+  test('a CONTENT-initiated purchase is refused absolutely', async () => {
+    const decision = await evaluatePaymentTaint({
       intent: {
         origin: 'content',
         merchant: 'shop.example',
@@ -134,7 +137,7 @@ describe('owner-initiated versus content-initiated', () => {
     // only thing that can refuse this is the ORIGIN rule. If the refusal came
     // from a text match instead, this test would still pass while the structural
     // rule had been deleted, which is exactly the regression it exists to catch.
-    const decision = evaluatePaymentTaint({
+    const decision = await evaluatePaymentTaint({
       intent: {
         origin: 'content',
         merchant: 'shop.example',

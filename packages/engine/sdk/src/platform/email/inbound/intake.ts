@@ -560,7 +560,7 @@ export function createInboundMailIntake(
         // message is genuinely handled; announcing it again is the duplicate
         // the dedup cache exists to prevent and cannot, across a restart.
         ? { kind: 'settled', status: 'delivered' }
-        : planFor(
+        : await planFor(
           deps.notices.resolveBinding(),
           message,
           deliveredTo,
@@ -653,14 +653,14 @@ type NoticePlan =
   };
 
 /** Turn a route resolution into either a notice to send or a refusal to record. */
-function planFor(
+async function planFor(
   route: NoticeRouteResolution,
   message: InboundMailboxMessage,
   deliveredTo: ReturnType<typeof deliveredRecipientFromDeliveryHeaders>,
   match: VerificationMatch,
   receivedAt: ReturnType<typeof receiptTimestamp>,
   bodiesWithheld: boolean,
-): NoticePlan {
+): Promise<NoticePlan> {
   if (route.kind === 'unavailable') {
     // Recorded under the delivery layer's own vocabulary, `no-route-binding`
     // is what "there is no route" is called everywhere else, while the
@@ -674,7 +674,7 @@ function planFor(
   }
   return {
     kind: 'send',
-    notice: renderInboundMailNotice({
+    notice: await renderInboundMailNotice({
       senderDisplay: message.from,
       subject: message.subject,
       deliveredTo,

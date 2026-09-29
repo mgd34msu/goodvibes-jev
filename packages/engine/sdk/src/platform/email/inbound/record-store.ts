@@ -528,13 +528,13 @@ export class InboundMailStore {
       // while the subject beside it was redacted, so `"4111111111111111"
       // <a@b.test>` put a card number on disk for `retentionDays` and into the
       // owner's notice, through a field nobody thought of as content.
-      senderDisplay: redactCardShapes(input.senderDisplay).slice(0, MAX_SENDER_DISPLAY_CHARS),
+      senderDisplay: (await redactCardShapes(input.senderDisplay)).slice(0, MAX_SENDER_DISPLAY_CHARS),
       // The subject is persisted alongside the excerpt AND rendered to the
       // owner in the notice, so it is the same exposure by a different field.
       // Re-clamped after redacting because a marker is longer than the digits
       // it replaces, and a subject over 998 chars fails validation on load,
       // taking the whole record with it.
-      subject: redactCardShapes(input.subject).slice(0, MAX_SUBJECT_CHARS),
+      subject: (await redactCardShapes(input.subject)).slice(0, MAX_SUBJECT_CHARS),
       // Sender-chosen too, on the catch-all domain the aliases live on (§7.1):
       // the local part is whatever the message was addressed to, so a PAN can
       // arrive as the alias itself. Clamped by `clampDeliveryAddress` rather
@@ -542,7 +542,7 @@ export class InboundMailStore {
       // subject's re-clamp.
       deliveredToAddress: input.deliveredToAddress === null
         ? null
-        : clampDeliveryAddress(redactCardShapes(input.deliveredToAddress)),
+        : clampDeliveryAddress(await redactCardShapes(input.deliveredToAddress)),
       deliveryEvidenceSource: input.deliveryEvidenceSource,
       // Clamped, not trusted: `reason` is bounded per entry and the array is
       // bounded by count, because sixty-four unbounded strings is an unbounded
@@ -611,8 +611,8 @@ export class InboundMailStore {
       // pass over the truncated result is belt and braces: after this, the
       // stored string provably contains no detectable card shape, whatever the
       // first pass did to the offsets.
-      bodyExcerpt: redactCardShapes(
-        redactCardShapes(input.body).slice(0, this.policy.maxBodyExcerptChars),
+      bodyExcerpt: await redactCardShapes(
+        (await redactCardShapes(input.body)).slice(0, this.policy.maxBodyExcerptChars),
       ),
       receivedAt: input.receivedAt,
     };

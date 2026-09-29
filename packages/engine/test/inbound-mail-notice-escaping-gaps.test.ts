@@ -21,6 +21,9 @@ import {
 } from '../sdk/src/platform/email/inbound-notice-channels.ts';
 import { receiptTimestamp, renderInboundMailNotice } from '../sdk/src/platform/email/inbound-notice.ts';
 import type { StructuredNotice } from '../sdk/src/platform/email/inbound-notice.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /** Written as escapes on purpose: these are invisible in a source file. */
 const LINE_SEPARATOR = '\u2028';
@@ -180,11 +183,11 @@ describe('a capability reason quoting the server is escaped like any untrusted t
     expect(renderNoticeForChannel(notice, 'discord')).toContain('Read from envelope fields only.');
   });
 
-  test('the PRODUCER marks the server wording untrusted, not literal', () => {
+  test('the PRODUCER marks the server wording untrusted, not literal', async () => {
     // The test above proves the escapers handle an untrusted span correctly.
     // This one proves the producer actually emits one, without it, the fix
     // could be reverted in `inbound-notice.ts` and nothing would notice.
-    const produced = renderInboundMailNotice({
+    const produced = await renderInboundMailNotice({
       senderDisplay: 'someone@sender.test',
       subject: 'a subject',
       deliveredTo: null,

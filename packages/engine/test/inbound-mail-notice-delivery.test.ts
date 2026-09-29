@@ -23,6 +23,9 @@ import {
   renderInboundMailNotice,
 } from '../sdk/src/platform/email/inbound-notice.ts';
 import { DaemonSurfaceDeliveryHelper } from '../sdk/src/platform/daemon/surface-delivery.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 function binding(surfaceKind: string): never {
   return {
@@ -75,22 +78,22 @@ describe('a surface gets the escaper its own send site needs', () => {
 });
 
 describe('the rendered string is escaped for the destination, not for a guess', () => {
-  test('Discord gets its masked link neutralized, because content always parses markdown', () => {
-    const text = renderNoticeForSurface(noticeWith('[Approved](https://evil.example)'), 'discord');
+  test('Discord gets its masked link neutralized, because content always parses markdown', async () => {
+    const text = renderNoticeForSurface(await noticeWith('[Approved](https://evil.example)'), 'discord');
     expect(text).not.toContain('[Approved](https://evil.example)');
   });
 
-  test('Telegram gets the URL defanged and the markdown left alone', () => {
+  test('Telegram gets the URL defanged and the markdown left alone', async () => {
     // Both halves matter. The URL is the live risk on a no-parse_mode send;
     // the brackets are not, and escaping them would be noise the owner reads.
-    const text = renderNoticeForSurface(noticeWith('[Approved](https://evil.example)'), 'telegram');
+    const text = renderNoticeForSurface(await noticeWith('[Approved](https://evil.example)'), 'telegram');
     expect(text).toContain(`[Approved](https://${Z}evil.example)`);
     expect(text).not.toContain('\\[');
   });
 
-  test('an unverified surface gets fully-neutralized text, never the raw span', () => {
+  test('an unverified surface gets fully-neutralized text, never the raw span', async () => {
     const payload = '[Approved](https://evil.example) @everyone';
-    const text = renderNoticeForSurface(noticeWith(payload), 'matrix');
+    const text = renderNoticeForSurface(await noticeWith(payload), 'matrix');
     expect(text).not.toContain(payload);
     expect(text).not.toContain('@everyone');
     // The bare URL is defanged here too. The fallback is what every unmapped
@@ -103,14 +106,14 @@ describe('the rendered string is escaped for the destination, not for a guess', 
     expect(text).toContain('Approved');
   });
 
-  test('every surface renders SOMETHING; none produces an empty or raw notice', () => {
+  test('every surface renders SOMETHING; none produces an empty or raw notice', async () => {
     const payload = '[Approved](https://evil.example)';
     for (const surface of [
       'discord', 'slack', 'telegram', 'ntfy', 'webhook', 'homeassistant',
       'google-chat', 'signal', 'whatsapp', 'telephony', 'imessage',
       'msteams', 'bluebubbles', 'mattermost', 'matrix',
     ]) {
-      const text = renderNoticeForSurface(noticeWith(payload), surface);
+      const text = renderNoticeForSurface(await noticeWith(payload), surface);
       expect(text.length).toBeGreaterThan(0);
       expect(text).toContain('Subject:');
       // The one invariant that holds on every surface: the exact live form
@@ -144,7 +147,7 @@ describe('the delivery seam picks the escaper from the binding, not from the cal
       surfaceDeliveryEnabled: () => true,
     } as never);
 
-    const notice = noticeWith('[Approved](https://evil.example)');
+    const notice = await noticeWith('[Approved](https://evil.example)');
 
     const discord = await helper.deliverStructuredNotice(binding('discord'), notice);
     const telegram = await helper.deliverStructuredNotice(binding('telegram'), notice);
@@ -183,7 +186,7 @@ describe('the delivery seam picks the escaper from the binding, not from the cal
       surfaceDeliveryEnabled: () => true,
     } as never);
 
-    const outcome = await helper.deliverStructuredNotice(undefined, noticeWith('anything'));
+    const outcome = await helper.deliverStructuredNotice(undefined, await noticeWith('anything'));
     expect(outcome.delivered).toBe(false);
     // SurfaceNoticeDelivery is discriminated on `delivered`; only the false arm
     // carries a reason.

@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { useSecurityReadings, withSecurityReadings } from './helpers/security-readings.ts';
 import {
   MAX_REDIRECT_HOPS,
   followValidatedRedirects,
@@ -22,6 +23,8 @@ import {
 } from '../sdk/src/platform/security/public-suffix.ts';
 
 const TARGET = 'google.com';
+
+const readings = useSecurityReadings();
 
 describe('registrable domain: the comparison every naive check gets wrong', () => {
   test.each([
@@ -50,8 +53,8 @@ describe('registrable domain: the comparison every naive check gets wrong', () =
 });
 
 describe('refusals: each defeats a check somebody would otherwise have written', () => {
-  test('userinfo: reads as Google, opens evil.example', () => {
-    const result = validateLinkTarget('https://accounts.google.com@evil.example/verify', TARGET);
+  test('userinfo: reads as Google, opens evil.example', async () => {
+    const result = await validateLinkTarget('https://accounts.google.com@evil.example/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('contains-userinfo');
@@ -59,63 +62,63 @@ describe('refusals: each defeats a check somebody would otherwise have written',
     expect(result.message).toContain('evil.example');
   });
 
-  test('homograph: Cyrillic a in accounts', () => {
-    const result = validateLinkTarget('https://аccounts.google.com/verify', TARGET);
+  test('homograph: Cyrillic a in accounts', async () => {
+    const result = await validateLinkTarget('https://аccounts.google.com/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    expect(result.reason).toBe('mixed-script-host');
+    expect(result.reason).toBe('lookalike-host');
   });
 
-  test('suffix trick: google.com.evil.example', () => {
+  test('suffix trick: google.com.evil.example', async () => {
     // endsWith and includes both pass this.
-    const result = validateLinkTarget('https://google.com.evil.example/verify', TARGET);
+    const result = await validateLinkTarget('https://google.com.evil.example/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('domain-mismatch');
     expect(result.actualDomain).toBe('evil.example');
   });
 
-  test('lookalike registrations: google-verify.example and accounts-google.example', () => {
+  test('lookalike registrations: google-verify.example and accounts-google.example', async () => {
     for (const url of ['https://google-verify.example/v', 'https://accounts-google.example/v']) {
-      const result = validateLinkTarget(url, TARGET);
+      const result = await validateLinkTarget(url, TARGET);
       expect(result.ok, url).toBe(false);
       if (result.ok) throw new Error('unreachable');
       expect(result.reason).toBe('domain-mismatch');
     }
   });
 
-  test('http is refused, not upgraded', () => {
-    const result = validateLinkTarget('http://accounts.google.com/verify', TARGET);
+  test('http is refused, not upgraded', async () => {
+    const result = await validateLinkTarget('http://accounts.google.com/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('not-https');
   });
 
-  test('javascript: and data: are refused', () => {
+  test('javascript: and data: are refused', async () => {
     for (const url of ['javascript:alert(1)', 'data:text/html,<script>1</script>']) {
-      const result = validateLinkTarget(url, TARGET);
+      const result = await validateLinkTarget(url, TARGET);
       expect(result.ok, url).toBe(false);
       if (result.ok) throw new Error('unreachable');
       expect(result.reason).toBe('not-https');
     }
   });
 
-  test('a shortener is refused by name, because the address cannot say where it goes', () => {
-    const result = validateLinkTarget('https://bit.ly/3xYz', TARGET);
+  test('a shortener is refused by name, because the address cannot say where it goes', async () => {
+    const result = await validateLinkTarget('https://bit.ly/3xYz', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('known-redirector');
   });
 
-  test('a non-443 port is refused', () => {
-    const result = validateLinkTarget('https://accounts.google.com:8443/verify', TARGET);
+  test('a non-443 port is refused', async () => {
+    const result = await validateLinkTarget('https://accounts.google.com:8443/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('non-standard-port');
   });
 
-  test('a bare IP host is refused', () => {
-    const result = validateLinkTarget('https://192.0.2.10/verify', TARGET);
+  test('a bare IP host is refused', async () => {
+    const result = await validateLinkTarget('https://192.0.2.10/verify', TARGET);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
     expect(result.reason).toBe('ip-literal-host');
@@ -123,15 +126,15 @@ describe('refusals: each defeats a check somebody would otherwise have written',
 });
 
 describe('the positive case: a genuine link is opened', () => {
-  test('the real link on the exact registrable domain passes', () => {
-    const result = validateLinkTarget('https://accounts.google.com/verify?token=abc', TARGET);
+  test('the real link on the exact registrable domain passes', async () => {
+    const result = await validateLinkTarget('https://accounts.google.com/verify?token=abc', TARGET);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.message);
     expect(result.registrableDomain).toBe('google.com');
   });
 
-  test('a trailing-dot host still matches, rather than failing a person for a typo', () => {
-    expect(validateLinkTarget('https://accounts.google.com./verify', TARGET).ok).toBe(true);
+  test('a trailing-dot host still matches, rather than failing a person for a typo', async () => {
+    expect((await validateLinkTarget('https://accounts.google.com./verify', TARGET)).ok).toBe(true);
   });
 });
 
@@ -199,5 +202,34 @@ describe('redirect chains: the same attack one hop later', () => {
     expect(result.ok).toBe(false);
     expect(result.chain).toHaveLength(0);
     expect(result.refusal?.reason).toBe('domain-mismatch');
+  });
+});
+
+describe('what the code does with the link-host reading', () => {
+  test('code refusals come first and ask nothing', async () => {
+    await validateLinkTarget('http://accounts.google.com/verify', TARGET);
+    await validateLinkTarget('https://accounts.google.com@evil.example/verify', TARGET);
+    await validateLinkTarget('https://192.0.2.10/verify', TARGET);
+    expect(readings.requests).toHaveLength(0);
+  });
+
+  test('both questions go in one request with the rendered host', async () => {
+    await validateLinkTarget('https://аccounts.google.com/verify', TARGET);
+    expect(readings.requests).toHaveLength(1);
+    expect(Object.keys(readings.requests[0]!.questions).sort()).toEqual(['lookalike', 'shortener']);
+    expect(readings.requests[0]!.state).toMatchObject({ host: 'xn--ccounts-1fg.google.com', rendered: 'аccounts.google.com', authorizedDomain: 'google.com' });
+  });
+
+  test('an unsure lookalike reading refuses: only a confident no opens a link', async () => {
+    const result = await withSecurityReadings({ lookalike: () => 'unsure' }, () => validateLinkTarget('https://accounts.google.com/verify', TARGET));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toBe('lookalike-host');
+  });
+
+  test('a shortener the old list never named is refused by name when the reading says so', async () => {
+    const result = await withSecurityReadings({ shortener: (state) => state.registrableDomain === 't.ly' }, () => validateLinkTarget('https://t.ly/abc', TARGET));
+    if (result.ok) throw new Error('unreachable');
+    expect(result.reason).toBe('known-redirector');
   });
 });

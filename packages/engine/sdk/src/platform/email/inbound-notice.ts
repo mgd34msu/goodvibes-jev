@@ -357,27 +357,27 @@ function safeRegistrableDomain(rawHost: string): ValidatedRegistrableDomain {
  * by stripping first. Redacting first would leave that same number as two
  * halves too short for the detector, and pass both through.
  */
-function displaySafe(raw: string): string {
+function displaySafe(raw: string): Promise<string> {
   return redactCardShapes(stripControlAndLineBreaks(raw));
 }
 
-function senderField(senderDisplay: string): NoticeField {
-  const stripped = displaySafe(senderDisplay);
+async function senderField(senderDisplay: string): Promise<NoticeField> {
+  const stripped = await displaySafe(senderDisplay);
   return {
     label: 'From',
     value: [stripped.length > 0 ? untrusted(stripped) : literal('(unknown sender)')],
   };
 }
 
-function subjectField(subject: string): NoticeField {
-  const stripped = displaySafe(subject);
+async function subjectField(subject: string): Promise<NoticeField> {
+  const stripped = await displaySafe(subject);
   return {
     label: 'Subject',
     value: [stripped.length > 0 ? untrusted(stripped) : literal('(no subject)')],
   };
 }
 
-function deliveredToField(deliveredTo: DeliveredRecipient | null): NoticeField {
+async function deliveredToField(deliveredTo: DeliveredRecipient | null): Promise<NoticeField> {
   if (deliveredTo === null) {
     return { label: 'Delivered to', value: [literal('(no verified delivery evidence)')] };
   }
@@ -386,7 +386,7 @@ function deliveredToField(deliveredTo: DeliveredRecipient | null): NoticeField {
   // (including markup metacharacters) survives into the untrusted span
   // unmodified, to be escaped rather than stripped by whichever channel
   // renders this notice.
-  return { label: 'Delivered to', value: [untrusted(displaySafe(deliveredTo.address))] };
+  return { label: 'Delivered to', value: [untrusted(await displaySafe(deliveredTo.address))] };
 }
 
 function outcomeField(outcome: InboundOutcome): NoticeField {
@@ -483,12 +483,12 @@ function receivedAtField(receivedAt: ReceiptTimestamp): NoticeField {
  * (`New mail, LIMITED VIEW` rather than plain `New mail`) so a degraded
  * notice is never visually indistinguishable from a normal one.
  */
-export function renderInboundMailNotice(input: InboundMailNoticeInput): StructuredNotice {
+export async function renderInboundMailNotice(input: InboundMailNoticeInput): Promise<StructuredNotice> {
   const degraded = isCapabilityDegraded(input.outcome);
   const fields: NoticeField[] = [
-    senderField(input.senderDisplay),
-    subjectField(input.subject),
-    deliveredToField(input.deliveredTo),
+    await senderField(input.senderDisplay),
+    await subjectField(input.subject),
+    await deliveredToField(input.deliveredTo),
     outcomeField(input.outcome),
     ...input.links.map(linkField),
     receivedAtField(input.receivedAt),

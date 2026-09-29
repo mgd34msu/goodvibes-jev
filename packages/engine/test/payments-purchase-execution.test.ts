@@ -105,6 +105,9 @@ import {
   collectFixtureControls,
   fixtureSnapshotPage,
 } from './helpers/fixture-snapshot-page.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /** A recognised currency code, or a loud failure, never a silent cast. */
 function currency(code: string): CurrencyCode {

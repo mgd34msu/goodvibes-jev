@@ -22,6 +22,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { InboundMailStore } from '../sdk/src/platform/email/inbound/record-store.ts';
 import { detectCardShapes } from '../sdk/src/platform/security/card-shapes.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 let dir: string;
 let store: InboundMailStore;
@@ -72,12 +75,12 @@ const GROUPED = '5555 5555 5555 4444';
 const BARE = '5555555555554444';
 
 describe('no card shape survives into a stored body excerpt', () => {
-  test('the straddling-span case the window was built for still holds', () => {
+  test('the straddling-span case the window was built for still holds', async () => {
     // The original reason for redacting before truncating. Kept so the fix
     // cannot regress into truncate-then-redact.
     const body = `${'x'.repeat(CAP - 8)}${BARE} trailing`;
-    return excerptFor(body).then((excerpt) => {
-      expect(detectCardShapes(excerpt)).toEqual([]);
+    return excerptFor(body).then(async (excerpt) => {
+      expect(await detectCardShapes(excerpt)).toEqual([]);
       expect(excerpt).not.toContain('5555555555554444');
     });
   });
@@ -95,7 +98,7 @@ describe('no card shape survives into a stored body excerpt', () => {
     const excerpt = await excerptFor(body);
 
     expect(longestDigitRun(excerpt)).toBe(0);
-    expect(detectCardShapes(excerpt)).toEqual([]);
+    expect(await detectCardShapes(excerpt)).toEqual([]);
   });
 
   test('no digits survive across the whole construction space', async () => {

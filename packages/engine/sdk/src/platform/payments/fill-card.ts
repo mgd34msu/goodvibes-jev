@@ -162,7 +162,7 @@ export async function fillCard(
 
   // ── 2. The page must still be the merchant the purchase was decided for ──
   const pageUrl = await driver.url();
-  const validation = validateLinkTarget(pageUrl, checkout.merchantDomain);
+  const validation = await validateLinkTarget(pageUrl, checkout.merchantDomain);
   if (!validation.ok) {
     throw new FillCardRefusal(
       `Refused: this purchase was decided for "${checkout.merchantDomain}" and this page is not on it. `

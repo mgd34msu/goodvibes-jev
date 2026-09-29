@@ -26,6 +26,9 @@ import {
   type InboundMailRecordInput,
 } from '../sdk/src/platform/email/inbound/record-store.ts';
 import { MAX_BODY_EXCERPT_CHARS } from '../sdk/src/platform/email/inbound/types.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const CARD = '4111111111111111';
 const CARD_FRAGMENTS = [CARD, '4111 1111 1111 1111', '411111', '4111'];

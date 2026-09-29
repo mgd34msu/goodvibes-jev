@@ -124,10 +124,10 @@ export function describeContentInitiatedRefusal(): string {
  * browser's page reads and the mail surface's body reads both record into, so
  * "read a stranger's page, then buy something" is visible here as one act.
  */
-export function evaluatePaymentTaint(input: {
+export async function evaluatePaymentTaint(input: {
   readonly intent: PaymentIntent;
   readonly ledger: UntrustedContentLedger;
-}): PaymentTaintDecision {
+}): Promise<PaymentTaintDecision> {
   // ── The line that does not move ─────────────────────────────────────────
   if (input.intent.origin === 'content') {
     return {
@@ -155,8 +155,8 @@ export function evaluatePaymentTaint(input: {
   if (!intent.merchantDiscovered) {
     fields['merchant'] = intent.merchant;
     fields['checkoutUrl'] = intent.checkoutUrl;
-    // Short, high-signal fields whose entire value is the payload, length
-    // thresholds are the wrong instrument, so both are tested by containment.
+    // Short, high-signal fields whose entire value is the payload: found
+    // verbatim in what was read is a finding before any derivation reading.
     exactMatchFields.push('merchant', 'checkoutUrl');
   }
 
@@ -166,7 +166,7 @@ export function evaluatePaymentTaint(input: {
     return { allowed: true, findings: [], reason: null, checkedFields };
   }
 
-  const findings = findContentTaint(fields, sources, { exactMatchFields });
+  const findings = await findContentTaint(fields, sources, { exactMatchFields });
   if (findings.length === 0) {
     return { allowed: true, findings: [], reason: null, checkedFields };
   }
@@ -176,7 +176,7 @@ export function evaluatePaymentTaint(input: {
 /**
  * The refusal the owner reads.
  *
- * Names the field, the surface and the origin and shows the overlapping text,
+ * Names the field, the surface and the origin and shows the text in question,
  * because "refused: untrusted content" with no evidence is indistinguishable
  * from a bug and gets worked around.
  */
@@ -186,7 +186,7 @@ export function describePaymentTaint(findings: readonly TaintFinding[]): string 
   const fields = [...new Set(findings.map((finding) => finding.field))].join(', ');
   return (
     `Refused this purchase: its ${fields} derives from content read from ${first.surface} `
-    + `(${first.origin}), which anyone can write. The overlapping text is "${first.excerpt}". `
+    + `(${first.origin}), which anyone can write. The text in question is "${first.excerpt}". `
     + 'Content that arrived from outside cannot decide what gets bought or who gets paid. '
     + 'Tell me the item yourself and I will find it and price it against your budget.'
   );

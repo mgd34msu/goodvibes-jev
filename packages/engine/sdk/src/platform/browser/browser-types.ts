@@ -361,7 +361,7 @@ export interface UntrustedContentPort {
      * still guarded, by the coarse rule, rather than waved through.
      */
     readonly content?: Readonly<Record<string, string | undefined>> | undefined;
-    /** Field-level rules: exact-match recipients, quote stripping, reply exemptions. */
+    /** Field-level rules: exact-match recipients, reply fields, reply exemptions. */
     readonly taintOptions?: {
       readonly exactMatchFields?: readonly string[] | undefined;
       readonly replyToEnvelopeSenders?: readonly string[] | undefined;
@@ -371,5 +371,5 @@ export interface UntrustedContentPort {
     readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined;
     /** How the owner clears a refusal on this surface. Absent = no path wired. */
     readonly ownerRemedy?: { readonly gesture: string } | undefined;
-  }) => OutwardEffectDecision;
+  }) => Promise<OutwardEffectDecision>;
 }

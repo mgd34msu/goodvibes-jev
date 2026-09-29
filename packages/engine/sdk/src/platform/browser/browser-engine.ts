@@ -129,7 +129,7 @@ export class BrowserEngine {
   ): Promise<void> {
     const hadApproval = this.approval !== null;
     try {
-      const decision = this.untrusted.evaluateOutwardEffect({
+      const decision = await this.untrusted.evaluateOutwardEffect({
         action,
         description,
         approval: this.approval,

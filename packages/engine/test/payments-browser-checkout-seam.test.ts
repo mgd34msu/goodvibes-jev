@@ -66,6 +66,9 @@ import {
   registerPaymentsGatewayMethods,
   type PaymentsGatewayService,
 } from '../sdk/src/platform/control-plane/routes/payments.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 // ── The sentinel card ───────────────────────────────────────────────────────
 

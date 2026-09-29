@@ -11436,7 +11436,7 @@
         "recordIngest",
         "rule"
       ],
-      "text": "export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => OutwardEffectDecision; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => Promise<OutwardEffectDecision>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "UntrustedEffectError",
@@ -20519,7 +20519,7 @@
     {
       "name": "BrowserCompositionDeps",
       "kind": "interface",
-      "text": "export interface BrowserCompositionDeps { readonly homeDirectory?: string | undefined; readonly browserGateway?: DaemonBrowserGatewayService | undefined; readonly browserUntrusted?: UntrustedContentPort | undefined; readonly onBrowserCheckout?: ((seam: BrowserCheckoutSeam) => void) | undefined; readonly describeSubmission?: ((submission: CheckoutSubmission) => Promise<CheckoutSubmissionDescription>) | undefined; } ;; via CheckoutSubmission = export interface CheckoutSubmission { readonly url: string; readonly navigated: boolean; } ;; CheckoutSubmissionDescription = export interface CheckoutSubmissionDescription { readonly orderId: string | null; readonly challenge: CheckoutChallenge | null; readonly confirmed?: boolean | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; UntrustedContentPort = export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => OutwardEffectDecision; }"
+      "text": "export interface BrowserCompositionDeps { readonly homeDirectory?: string | undefined; readonly browserGateway?: DaemonBrowserGatewayService | undefined; readonly browserUntrusted?: UntrustedContentPort | undefined; readonly onBrowserCheckout?: ((seam: BrowserCheckoutSeam) => void) | undefined; readonly describeSubmission?: ((submission: CheckoutSubmission) => Promise<CheckoutSubmissionDescription>) | undefined; } ;; via CheckoutSubmission = export interface CheckoutSubmission { readonly url: string; readonly navigated: boolean; } ;; CheckoutSubmissionDescription = export interface CheckoutSubmissionDescription { readonly orderId: string | null; readonly challenge: CheckoutChallenge | null; readonly confirmed?: boolean | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; UntrustedContentPort = export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => Promise<OutwardEffectDecision>; }"
     },
     {
       "name": "CLIENT_COMPATIBILITY_FLOOR",
@@ -36531,7 +36531,7 @@
         "reason",
         "taint"
       ],
-      "text": "export interface ProfileWriteDecision { readonly allowed: boolean; readonly reason: string | null; readonly taint: readonly TaintFinding[]; } ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'shared-words' | 'shared-span'; }"
+      "text": "export interface ProfileWriteDecision { readonly allowed: boolean; readonly reason: string | null; readonly taint: readonly TaintFinding[]; } ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'exact-value' | 'derived'; }"
     },
     {
       "name": "ProfileWriteResult",
@@ -36604,7 +36604,7 @@
     {
       "name": "evaluateProfileWrite",
       "kind": "function",
-      "text": "export declare function evaluateProfileWrite(input: ProfileWriteAttempt): ProfileWriteDecision;"
+      "text": "export declare function evaluateProfileWrite(input: ProfileWriteAttempt): Promise<ProfileWriteDecision>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "findProfileSection",
@@ -38115,7 +38115,7 @@
         "findings",
         "reason"
       ],
-      "text": "export interface PaymentTaintDecision { readonly allowed: boolean; readonly findings: readonly TaintFinding[]; readonly reason: string | null; readonly checkedFields: readonly string[]; } ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'shared-words' | 'shared-span'; }"
+      "text": "export interface PaymentTaintDecision { readonly allowed: boolean; readonly findings: readonly TaintFinding[]; readonly reason: string | null; readonly checkedFields: readonly string[]; } ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'exact-value' | 'derived'; }"
     },
     {
       "name": "PaymentsConfigReader",
@@ -38559,7 +38559,7 @@
     {
       "name": "describePaymentTaint",
       "kind": "function",
-      "text": "export declare function describePaymentTaint(findings: readonly TaintFinding[]): string; ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'shared-words' | 'shared-span'; }"
+      "text": "export declare function describePaymentTaint(findings: readonly TaintFinding[]): string; ;; via TaintFinding = export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'exact-value' | 'derived'; }"
     },
     {
       "name": "detectRecurringCharge",
@@ -38579,7 +38579,7 @@
     {
       "name": "evaluatePaymentTaint",
       "kind": "function",
-      "text": "export declare function evaluatePaymentTaint(input: { readonly intent: PaymentIntent; readonly ledger: UntrustedContentLedger; }): PaymentTaintDecision;"
+      "text": "export declare function evaluatePaymentTaint(input: { readonly intent: PaymentIntent; readonly ledger: UntrustedContentLedger; }): Promise<PaymentTaintDecision>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "extractCheckout",
@@ -38609,7 +38609,7 @@
     {
       "name": "isCardFieldDescriptor",
       "kind": "function",
-      "text": "export declare function isCardFieldDescriptor(control: FormControlDescriptor): boolean;"
+      "text": "export declare function isCardFieldDescriptor(control: FormControlDescriptor): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "isCardFieldName",
@@ -61508,6 +61508,11 @@
       "text": "export type AuthoritySurface = 'owner-direct' | UntrustedSurface;"
     },
     {
+      "name": "CONTENT_DERIVATION_SITE",
+      "kind": "const",
+      "text": "CONTENT_DERIVATION_SITE = \"security.content-taint\""
+    },
+    {
       "name": "DEFAULT_ROTATION_CADENCE_MS",
       "kind": "const",
       "text": "DEFAULT_ROTATION_CADENCE_MS: number"
@@ -61531,16 +61536,6 @@
         "users"
       ],
       "text": "export interface LocalAuthSnapshot { readonly userStorePath: string; readonly bootstrapCredentialPath: string; readonly persisted: boolean; readonly bootstrapCredentialPresent: boolean; readonly userCount: number; readonly sessionCount: number; readonly users: readonly AuthUserRecord[]; readonly sessions: readonly AuthSessionRecord[]; } ;; via AuthSessionRecord = export interface AuthSessionRecord { readonly tokenFingerprint: string; readonly username: string; readonly expiresAt: number; } ;; AuthUserRecord = export interface AuthUserRecord { readonly username: string; readonly roles: readonly string[]; }"
-    },
-    {
-      "name": "MIN_SHARED_CHARS",
-      "kind": "const",
-      "text": "MIN_SHARED_CHARS = 40"
-    },
-    {
-      "name": "MIN_SHARED_WORDS",
-      "kind": "const",
-      "text": "MIN_SHARED_WORDS = 8"
     },
     {
       "name": "OPERATOR_SESSION_COOKIE_NAME",
@@ -61679,7 +61674,7 @@
         "origin",
         "surface"
       ],
-      "text": "export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'shared-words' | 'shared-span'; }"
+      "text": "export interface TaintFinding { readonly field: string; readonly surface: string; readonly origin: string; readonly excerpt: string; readonly kind: 'exact-value' | 'derived'; }"
     },
     {
       "name": "TaintOptions",
@@ -61875,7 +61870,7 @@
     {
       "name": "createUntrustedContentPort",
       "kind": "function",
-      "text": "export declare function createUntrustedContentPort(options: UntrustedContentPortOptions): UntrustedContentPort; ;; via UntrustedContentPort = export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => OutwardEffectDecision; }"
+      "text": "export declare function createUntrustedContentPort(options: UntrustedContentPortOptions): UntrustedContentPort; ;; via UntrustedContentPort = export interface UntrustedContentPort { readonly rule: string; readonly originOf: (url: string) => string; readonly label: (input: { readonly origin: string; readonly text: string; readonly truncated?: boolean; }) => UntrustedContentEnvelope; readonly recordIngest: (input: { readonly origin: string; readonly at: string; readonly content?: string | undefined; }) => void; readonly evaluateOutwardEffect: (input: { readonly action: string; readonly description: string; readonly approval: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: { readonly exactMatchFields?: readonly string[] | undefined; readonly replyToEnvelopeSenders?: readonly string[] | undefined; readonly stripQuotedFields?: readonly string[] | undefined; } | undefined; readonly requestedBy?: 'owner-direct' | 'web-page' | 'email' | 'channel-message' | 'document' | undefined; readonly ownerRemedy?: { readonly gesture: string; } | undefined; }) => Promise<OutwardEffectDecision>; }"
     },
     {
       "name": "describeContentTaint",
@@ -61900,7 +61895,7 @@
     {
       "name": "evaluateOutwardEffect",
       "kind": "function",
-      "text": "export declare function evaluateOutwardEffect(input: { readonly request: OutwardEffectRequest; readonly ledger: UntrustedContentLedger; readonly approval?: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: TaintOptions | undefined; readonly requestedBy?: AuthoritySurface | undefined; readonly ownerRemedy?: OwnerRemedy | undefined; readonly now?: () => Date; }): OutwardEffectDecision; ;; via Date = interface Date { toString(): string; toDateString(): string; toTimeString(): string; toLocaleString(): string; toLocaleDateString(): string; toLocaleTimeString(): string; valueOf(): number; getTime(): number; getFullYear(): number; getUTCFullYear(): number; getMonth(): number; getUTCMonth(): number; getDate(): number; getUTCDate(): number; getDay(): number; getUTCDay(): number; getHours(): number; getUTCHours(): number; getMinutes(): number; getUTCMinutes(): number; getSeconds(): number; getUTCSeconds(): number; getMilliseconds(): number; getUTCMilliseconds(): number; getTimezoneOffset(): number; setTime(time: number): number; setMilliseconds(ms: number): number; setUTCMilliseconds(ms: number): number; setSeconds(sec: number, ms?: number): number; setUTCSeconds(sec: number, ms?: number): number; setMinutes(min: number, sec?: number, ms?: number): number; setUTCMinutes(min: number, sec?: number, ms?: number): number; setHours(hours: number, min?: number, sec?: number, ms?: number): number; setUTCHours(hours: number, min?: number, sec?: number, ms?: number): number; setDate(date: number): number; setUTCDate(date: number): number; setMonth(month: number, date?: number): number; setUTCMonth(month: number, date?: number): number; setFullYear(year: number, month?: number, date?: number): number; setUTCFullYear(year: number, month?: number, date?: number): number; toUTCString(): string; toISOString(): string; toJSON(key?: any): string; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function evaluateOutwardEffect(input: { readonly request: OutwardEffectRequest; readonly ledger: UntrustedContentLedger; readonly approval?: OwnerApproval | null; readonly content?: Readonly<Record<string, string | undefined>> | undefined; readonly taintOptions?: TaintOptions | undefined; readonly requestedBy?: AuthoritySurface | undefined; readonly ownerRemedy?: OwnerRemedy | undefined; readonly now?: () => Date; }): Promise<OutwardEffectDecision>; ;; via Date = interface Date { toString(): string; toDateString(): string; toTimeString(): string; toLocaleString(): string; toLocaleDateString(): string; toLocaleTimeString(): string; valueOf(): number; getTime(): number; getFullYear(): number; getUTCFullYear(): number; getMonth(): number; getUTCMonth(): number; getDate(): number; getUTCDate(): number; getDay(): number; getUTCDay(): number; getHours(): number; getUTCHours(): number; getMinutes(): number; getUTCMinutes(): number; getSeconds(): number; getUTCSeconds(): number; getMilliseconds(): number; getUTCMilliseconds(): number; getTimezoneOffset(): number; setTime(time: number): number; setMilliseconds(ms: number): number; setUTCMilliseconds(ms: number): number; setSeconds(sec: number, ms?: number): number; setUTCSeconds(sec: number, ms?: number): number; setMinutes(min: number, sec?: number, ms?: number): number; setUTCMinutes(min: number, sec?: number, ms?: number): number; setHours(hours: number, min?: number, sec?: number, ms?: number): number; setUTCHours(hours: number, min?: number, sec?: number, ms?: number): number; setDate(date: number): number; setUTCDate(date: number): number; setMonth(month: number, date?: number): number; setUTCMonth(month: number, date?: number): number; setFullYear(year: number, month?: number, date?: number): number; setUTCFullYear(year: number, month?: number, date?: number): number; toUTCString(): string; toISOString(): string; toJSON(key?: any): string; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "extractOperatorAuthToken",
@@ -61910,7 +61905,12 @@
     {
       "name": "findContentTaint",
       "kind": "function",
-      "text": "export declare function findContentTaint(fields: Readonly<Record<string, string | undefined>>, sources: readonly TaintSource[], options?: TaintOptions): readonly TaintFinding[]; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function findContentTaint(fields: Readonly<Record<string, string | undefined>>, sources: readonly TaintSource[], options?: TaintOptions): Promise<readonly TaintFinding[]>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "findExactContainment",
+      "kind": "function",
+      "text": "export declare function findExactContainment(fields: Readonly<Record<string, string | undefined>>, sources: readonly TaintSource[], options?: TaintOptions): readonly TaintFinding[]; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "fingerprintOutwardContent",
@@ -61981,11 +61981,6 @@
       "name": "startTurnForOwnerRequest",
       "kind": "function",
       "text": "export declare function startTurnForOwnerRequest(explicitUserRequest: boolean | undefined, ledger?: UntrustedContentLedger): boolean;"
-    },
-    {
-      "name": "stripQuotedRegions",
-      "kind": "function",
-      "text": "export declare function stripQuotedRegions(body: string): string;"
     },
     {
       "name": "surfaceHasCommandAuthority",

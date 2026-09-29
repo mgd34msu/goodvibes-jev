@@ -5,6 +5,9 @@ import { CardMaterialRedactor } from '../sdk/src/platform/payments/card-redactio
 import { CheckoutRegistry, MemoryCheckoutJournal, type InFlightCheckout } from '../sdk/src/platform/payments/checkout-registry.js';
 import type { CardMaterial, CardMaterialStore } from '../sdk/src/platform/payments/card-material.js';
 import type { CheckoutPageDriver, PageIdentity } from '../sdk/src/platform/payments/checkout-page.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /**
  * fill-card-field-attribution.test.ts (SF-6).

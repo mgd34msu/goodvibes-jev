@@ -438,7 +438,7 @@ function describeApprovalMismatch(mismatch: ApprovalMismatch): string {
  * an outward action without the owner saying so on a surface that carries
  * command authority.
  */
-export function evaluateOutwardEffect(input: {
+export async function evaluateOutwardEffect(input: {
   readonly request: OutwardEffectRequest;
   readonly ledger: UntrustedContentLedger;
   readonly approval?: OwnerApproval | null;
@@ -472,7 +472,7 @@ export function evaluateOutwardEffect(input: {
   /** How the owner clears this on THIS surface. Absent = no path is wired here. */
   readonly ownerRemedy?: OwnerRemedy | undefined;
   readonly now?: () => Date;
-}): OutwardEffectDecision {
+}): Promise<OutwardEffectDecision> {
   const origins = input.ledger.originsThisTurn();
   if (origins.length === 0) {
     return { allowed: true, reason: null, fix: null, untrustedOrigins: [], taint: [] };
@@ -485,7 +485,7 @@ export function evaluateOutwardEffect(input: {
   // composed nothing from a stranger proceed, while refusing a send whose body
   // repeats what was just read.
   if (input.content !== undefined && input.ledger.hasTaintSourcesThisTurn()) {
-    const taint = findContentTaint(input.content, input.ledger.taintSourcesThisTurn(), input.taintOptions);
+    const taint = await findContentTaint(input.content, input.ledger.taintSourcesThisTurn(), input.taintOptions);
     if (taint.length === 0) {
       // The allowed case this whole mechanism exists to protect: exposure in
       // the turn, but nothing of it in what is about to leave. It proceeds

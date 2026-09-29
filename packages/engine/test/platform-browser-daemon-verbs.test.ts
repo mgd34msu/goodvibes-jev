@@ -27,6 +27,9 @@ import {
   UntrustedContentLedger,
   createUntrustedContentPort,
 } from '../sdk/src/platform/security/untrusted-content.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 interface RecordedCall {
   readonly method: string;

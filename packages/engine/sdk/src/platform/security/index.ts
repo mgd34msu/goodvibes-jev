@@ -65,11 +65,10 @@ export {
   startTurnForOwnerRequest,
 } from './turn-boundary.js';
 export {
-  MIN_SHARED_CHARS,
-  MIN_SHARED_WORDS,
+  CONTENT_DERIVATION_SITE,
   describeContentTaint,
   findContentTaint,
-  stripQuotedRegions,
+  findExactContainment,
 } from './content-taint.js';
 export type { TaintFinding, TaintOptions, TaintSource } from './content-taint.js';
 export {

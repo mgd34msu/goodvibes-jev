@@ -29,6 +29,9 @@ import type {
   UntrustedContentEnvelope,
   UntrustedContentPort,
 } from '../sdk/src/platform/browser/browser-types.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 // BrowserEngine.screenshot() does a real mkdirSync(screenshotDirectory, ...),
 // no test here currently calls .screenshot(), so this is not an active leak,
@@ -107,11 +110,11 @@ class TestUntrustedContentPort implements UntrustedContentPort {
     return [...new Set(this.ingests.slice(this.turnStartIndex))];
   }
 
-  evaluateOutwardEffect(input: {
+  async evaluateOutwardEffect(input: {
     readonly action: string;
     readonly description: string;
     readonly approval: OwnerApproval | null;
-  }): OutwardEffectDecision {
+  }): Promise<OutwardEffectDecision> {
     const origins = this.originsThisTurn();
     if (origins.length === 0) return { allowed: true, reason: null, fix: null, untrustedOrigins: [] };
     if (input.approval && input.approval.action === input.action) {

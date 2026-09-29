@@ -33,6 +33,7 @@
 import {
   describeContentTaint,
   findContentTaint,
+  findExactContainment,
   type TaintFinding,
 } from '../security/content-taint.js';
 import {
@@ -106,26 +107,22 @@ function noAuthority(action: string, authority: AuthoritySurface, verb: string):
  * Layer 2, run as TWO passes over the same sources, refusing if either finds
  * derivation.
  *
- * The two passes exist because `findContentTaint` treats a field named in
- * `exactMatchFields` by exact containment and then skips the length checks for
- * it entirely. Listing a field there is therefore strictly WEAKER for long
- * values, a reworded postal address would clear exact containment and never
- * reach the span check. Running both passes means no value's only defence is
- * exact string equality, and no value is exempt from exact containment either.
- *
- *  - Pass 1 catches the long payloads: a postal address, a note, an instruction
- *    lifted from a page, including reworded and partly-quoted forms.
- *  - Pass 2 catches the short high-signal ones: an email address, a phone
- *    number, an agent alias, all under both the 8-word and 40-character
- *    thresholds, where the whole value IS the payload.
+ *  - Pass 1 is the Jev derivation reading (security/content-taint.ts) over a
+ *    window one turn boundary wide: does the value, the owner's quoted words
+ *    or the section heading carry an instruction, claim or specific value
+ *    lifted from a page or message, including reworded and partly quoted
+ *    forms?
+ *  - Pass 2 is exact containment of the value over EVERYTHING retained: an
+ *    email address, a phone number or an alias found verbatim in something a
+ *    stranger wrote.
  */
-function findProfileTaint(
+async function findProfileTaint(
   value: string,
   said: string,
   section: string | undefined,
   ledger: UntrustedContentLedger,
-): readonly TaintFinding[] {
-  // Pass 1, length-based derivation, over a window one turn boundary wide.
+): Promise<readonly TaintFinding[]> {
+  // Pass 1, the derivation reading, over a window one turn boundary wide.
   //
   // NOT `taintSourcesThisTurn()`. The gateway starts a turn as the first
   // statement of `invokeGatewayMethodCall`, before dispatch, so a `profile.set`
@@ -137,38 +134,37 @@ function findProfileTaint(
   //
   // `section` rides pass 1 rather than pass 2 on purpose: a canonical heading
   // is one short word, and exact containment of "Notes" against any page that
-  // happens to use that word would refuse every legitimate note. The 8-word /
-  // 40-character thresholds here cannot fire on a short heading, and do fire on
-  // a sentence lifted off a page and used as one.
+  // happens to use that word would refuse every legitimate note, while the
+  // reading can tell a common heading from a sentence lifted off a page.
   const recent = ledger.taintSourcesSinceLastTurnBoundary();
   if (recent.length > 0) {
-    const lengthBased = findContentTaint(
+    const derived = await findContentTaint(
       section === undefined ? { value, said } : { value, said, section },
       recent,
       {},
     );
-    if (lengthBased.length > 0) return lengthBased;
+    if (derived.length > 0) return derived;
   }
 
   // Pass 2, exact containment, over EVERYTHING retained.
   //
   // A value that appears verbatim inside something a stranger wrote is not a
   // coincidence however many turns ago it was read, and scoping this one to a
-  // turn would let an attacker defeat it by waiting. It is safe to widen only
-  // because it is exact: the fuzzy check above stays bounded so it cannot start
-  // refusing ordinary work and get itself switched off.
+  // turn would let an attacker defeat it by waiting. It is widened only
+  // because it is exact and asks no reading: running the derivation reading
+  // over a thousand retained pages would be a thousand requests per write.
   //
   // A non-canonical section is included here too, a made-up heading lifted
-  // verbatim is the case pass 1's length floor cannot see, while a canonical
-  // one is left out for the "Notes" reason above.
+  // verbatim is a value like any other, while a canonical one is left out for
+  // the "Notes" reason above.
   const retained = ledger.taintSourcesRetained();
   if (retained.length === 0) return [];
   const madeUpSection = section !== undefined && canonicalProfileSection(section) === null
     ? section
     : undefined;
   return madeUpSection === undefined
-    ? findContentTaint({ value }, retained, { exactMatchFields: ['value'] })
-    : findContentTaint(
+    ? findExactContainment({ value }, retained, { exactMatchFields: ['value'] })
+    : findExactContainment(
       { value, section: madeUpSection },
       retained,
       { exactMatchFields: ['value', 'section'] },
@@ -182,7 +178,7 @@ function findProfileTaint(
  * `web-page` claim never reaches the taint check, and a write with no quote is
  * refused whether or not anything untrusted was read.
  */
-export function evaluateProfileWrite(input: ProfileWriteAttempt): ProfileWriteDecision {
+export async function evaluateProfileWrite(input: ProfileWriteAttempt): Promise<ProfileWriteDecision> {
   // Layer 1, authority.
   if (!surfaceHasCommandAuthority(input.authority)) {
     return refuse(
@@ -193,7 +189,7 @@ export function evaluateProfileWrite(input: ProfileWriteAttempt): ProfileWriteDe
 
   // Layer 2, derivation, which does not take the caller's word for layer 1.
   const ledger = input.ledger ?? getProcessUntrustedContentLedger();
-  const taint = findProfileTaint(input.value, input.said, input.section, ledger);
+  const taint = await findProfileTaint(input.value, input.said, input.section, ledger);
   if (taint.length > 0) {
     return refuse(describeContentTaint(describeTarget(input.fieldId), taint), taint);
   }

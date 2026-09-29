@@ -58,6 +58,9 @@ import type { PurchaseRecord } from '../sdk/src/platform/payments/checkout-flow.
 
 import { startFixtureMerchant, type FixtureMerchant } from './helpers/fixture-merchant.js';
 import { FixtureCheckoutDriver, readFixtureCheckout } from './helpers/fixture-checkout-driver.js';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /** Obviously fake. No real card material appears in this repository. */
 const SENTINEL = {

@@ -291,13 +291,13 @@ export async function runCheckout(
     item: request.item,
     requestedMax: request.requestedMax,
   };
-  const taint = evaluatePaymentTaint({ intent, ledger: deps.untrusted });
+  const taint = await evaluatePaymentTaint({ intent, ledger: deps.untrusted });
   if (!taint.allowed) {
     return refused('derived-from-untrusted-content', taint.reason ?? 'Refused: this purchase derives from page content.');
   }
 
   // ── 0c. The checkout url must resolve, and must be the domain claimed ───
-  const link = validateLinkTarget(request.checkoutUrl, request.merchantDomain);
+  const link = await validateLinkTarget(request.checkoutUrl, request.merchantDomain);
   if (!link.ok) return refused('link-validation-failed', link.message);
   // The identity the owner is shown is computed by us from the validated url,
   // never a name the page claimed for itself.

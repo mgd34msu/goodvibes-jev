@@ -511,7 +511,7 @@ export class OwnerProfileStore {
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: input.authority,
       fieldId: input.fieldId,
       value: input.value,
@@ -534,7 +534,7 @@ export class OwnerProfileStore {
     const projection = this.writableProjection();
     if ('reason' in projection) return refusal(projection.reason);
 
-    const decision = evaluateProfileWrite({
+    const decision = await evaluateProfileWrite({
       authority: input.authority,
       fieldId: null,
       value: input.text,

@@ -74,7 +74,7 @@ export async function refuseCardShapedIngress(
   const text = input.text;
   if (typeof text !== 'string' || text.length === 0) return null;
 
-  const findings = detectCardShapes(text);
+  const findings = await detectCardShapes(text);
   if (findings.length === 0) return null;
 
   const kinds = cardShapeKinds(findings);

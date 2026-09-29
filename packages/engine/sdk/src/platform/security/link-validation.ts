@@ -17,9 +17,11 @@
  *  - **scheme**. `javascript:` and `data:` execute; `http:` is
  *    interceptable and a downgrade. Only `https:` is opened.
  *  - **homograph**. `аccounts.google.com` with a Cyrillic `а` is a different
- *    host that renders identically. Mixed script in a label is refused rather
- *    than scored for similarity, a similarity threshold is a number an
- *    attacker can sit just underneath.
+ *    host that renders identically. Whether a label is built from lookalike
+ *    characters is read by Jev (`engine.security.link-host`, `lookalike`)
+ *    from the encoded and rendered host, in place of the old "more than one
+ *    Unicode script in a label" rule, which refused honest mixed labels and
+ *    passed single-script lookalikes.
  *  - **registrable domain**. `google.com.evil.example`, `google-verify.example`
  *    and `accounts-google.example` all pass at least one substring or
  *    `endsWith` check. Comparison is on eTLD+1 (see public-suffix.ts).
@@ -29,14 +31,20 @@
  *  - **shorteners**. By construction their host is not the service, so they can
  *    never satisfy an exact registrable-domain match. Named as a refusal reason
  *    rather than left to fail incidentally, because "why did this fail" matters
- *    when a person has to finish the job by hand.
+ *    when a person has to finish the job by hand. Whether a domain is a
+ *    shortener is read by Jev (`shortener`, same request) in place of a fixed
+ *    list of 21 shortener domains.
  *
  * Refusal is loud and carries both domains, because a refused verification link
  * is often something the owner must complete themselves.
  */
 
-import { toUnicode } from 'node:punycode';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { linkHost, linkHostView, renderedHost } from './batteries/link-host.js';
 import { registrableDomain } from './public-suffix.js';
+
+/** The decision site the link-host reading is logged under. */
+export const LINK_HOST_SITE = 'security.link-validation';
 
 /** Hop ceiling for a redirect chain. Beyond this the chain is refused. */
 export const MAX_REDIRECT_HOPS = 5;
@@ -47,7 +55,7 @@ export type LinkRefusalReason =
   | 'ip-literal-host'
   | 'non-standard-port'
   | 'malformed-url'
-  | 'mixed-script-host'
+  | 'lookalike-host'
   | 'known-redirector'
   | 'domain-mismatch'
   | 'redirect-left-domain'
@@ -74,55 +82,7 @@ export interface LinkRefused {
 
 export type LinkValidation = LinkAccepted | LinkRefused;
 
-/**
- * Hosts whose entire purpose is to point somewhere else.
- *
- * Listed so the refusal says "this is a shortener" rather than the less useful
- * "domain mismatch", but note the list is a courtesy, not the defence: an
- * unlisted shortener still fails the registrable-domain check, because its host
- * is not the service's host.
- */
-const KNOWN_REDIRECTORS: ReadonlySet<string> = new Set([
-  'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'buff.ly', 'rebrand.ly',
-  'is.gd', 'cutt.ly', 'shorturl.at', 'rb.gy', 'tiny.cc', 'lnkd.in', 'trib.al',
-  'dlvr.it', 'ift.tt', 'bl.ink', 's.id', 'short.io', 'smarturl.it', 'linktr.ee',
-]);
-
 const IPV4_LITERAL = /^\d{1,3}(\.\d{1,3}){3}$/;
-
-/** Script families that must not be mixed inside one label. */
-const SCRIPT_PATTERNS: readonly { readonly name: string; readonly pattern: RegExp }[] = [
-  { name: 'latin', pattern: /\p{Script=Latin}/u },
-  { name: 'cyrillic', pattern: /\p{Script=Cyrillic}/u },
-  { name: 'greek', pattern: /\p{Script=Greek}/u },
-  { name: 'han', pattern: /\p{Script=Han}/u },
-  { name: 'arabic', pattern: /\p{Script=Arabic}/u },
-  { name: 'hebrew', pattern: /\p{Script=Hebrew}/u },
-];
-
-/**
- * Decode a host to Unicode and report a label that mixes scripts.
- *
- * Mixing is the signal because a homograph attack needs at least one character
- * from another script sitting among Latin ones. A wholly non-Latin domain is
- * legitimate and is not refused.
- */
-function mixedScriptLabel(host: string): string | null {
-  for (const label of host.split('.')) {
-    let decoded = label;
-    if (label.startsWith('xn--')) {
-      try {
-        decoded = toUnicode(label);
-      } catch {
-        return label; // undecodable punycode is not something to open
-      }
-    }
-    const normalized = decoded.normalize('NFKC');
-    const present = SCRIPT_PATTERNS.filter((script) => script.pattern.test(normalized));
-    if (present.length > 1) return decoded;
-  }
-  return null;
-}
 
 /** Normalize a host for comparison: lowercase, no trailing dot, NFKC. */
 export function normalizeHost(host: string): string {
@@ -146,7 +106,7 @@ function refuse(
  * is on the registrable domain of both, so a subdomain of the authorized
  * domain passes and a lookalike does not.
  */
-export function validateLinkTarget(rawUrl: string, authorizedDomain: string): LinkValidation {
+export async function validateLinkTarget(rawUrl: string, authorizedDomain: string): Promise<LinkValidation> {
   const expected = registrableDomain(normalizeHost(authorizedDomain));
   if (expected === null) {
     return refuse(
@@ -198,23 +158,30 @@ export function validateLinkTarget(rawUrl: string, authorizedDomain: string): Li
     );
   }
 
-  const mixed = mixedScriptLabel(host);
-  if (mixed !== null) {
+  const actual = registrableDomain(host);
+  if (actual === null) {
+    return refuse('malformed-url', `Refused: "${host}" has no registrable domain to check.`, expected, null);
+  }
+
+  // One request, two questions about the host's meaning; the domain
+  // comparison below stays code. Anything short of a confident no refuses.
+  const run = await linkHost.run(judgmentPort(LINK_HOST_SITE), linkHostView(host, actual, expected), { site: LINK_HOST_SITE });
+  const refusesOn = (reading: (typeof run.readings)['lookalike']): boolean =>
+    !(reading.verdict === 'no' && reading.outcome === 'act');
+
+  if (refusesOn(run.readings.lookalike)) {
+    run.recordAction('refused as lookalike');
     return refuse(
-      'mixed-script-host',
-      `Refused: the link's host contains a label mixing character scripts ("${mixed}"), which is how a `
+      'lookalike-host',
+      `Refused: the link's host ("${renderedHost(host)}") uses characters chosen to look like a different name, which is how a `
       + 'lookalike domain is built to render identically to a real one.',
       expected,
       null,
     );
   }
 
-  const actual = registrableDomain(host);
-  if (actual === null) {
-    return refuse('malformed-url', `Refused: "${host}" has no registrable domain to check.`, expected, null);
-  }
-
-  if (KNOWN_REDIRECTORS.has(actual)) {
+  if (refusesOn(run.readings.shortener)) {
+    run.recordAction('refused as shortener');
     return refuse(
       'known-redirector',
       `Refused: "${actual}" is a link shortener, so the address does not say where it goes. `
@@ -223,6 +190,7 @@ export function validateLinkTarget(rawUrl: string, authorizedDomain: string): Li
       actual,
     );
   }
+  run.recordAction(actual === expected ? 'accepted' : 'refused as domain mismatch');
 
   if (actual !== expected) {
     return refuse(
@@ -266,7 +234,7 @@ export async function followValidatedRedirects(
   probe: RedirectProbe,
   maxHops: number = MAX_REDIRECT_HOPS,
 ): Promise<RedirectChainResult> {
-  const first = validateLinkTarget(rawUrl, authorizedDomain);
+  const first = await validateLinkTarget(rawUrl, authorizedDomain);
   if (!first.ok) return { ok: false, chain: [], finalUrl: null, refusal: first };
 
   const chain: string[] = [first.url];
@@ -294,7 +262,7 @@ export async function followValidatedRedirects(
       };
     }
 
-    const validated = validateLinkTarget(next, authorizedDomain);
+    const validated = await validateLinkTarget(next, authorizedDomain);
     if (!validated.ok) {
       return {
         ok: false,

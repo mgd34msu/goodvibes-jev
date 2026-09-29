@@ -47,6 +47,9 @@ import {
 } from '../sdk/src/platform/email/inbound-notice.ts';
 import { renderNoticeForSurface } from '../sdk/src/platform/email/inbound-notice-channels.ts';
 import type { DeliveredRecipient } from '../sdk/src/platform/google/delivery-evidence.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 /** Luhn-valid, the canonical test PAN. */
 const PAN = '4111111111111111';
@@ -190,8 +193,8 @@ describe('the record still survives its own validator: §11.0\'s re-clamp rule',
 });
 
 describe('what reaches the owner', () => {
-  test('a PAN in the From display name does not reach the notice on any surface', () => {
-    const notice = renderInboundMailNotice({
+  test('a PAN in the From display name does not reach the notice on any surface', async () => {
+    const notice = await renderInboundMailNotice({
       senderDisplay: `"${PAN}" <a@b.test>`,
       subject: 'ordinary subject',
       deliveredTo: null,
@@ -204,8 +207,8 @@ describe('what reaches the owner', () => {
     }
   });
 
-  test('a PAN in the alias does not reach the notice on any surface', () => {
-    const notice = renderInboundMailNotice({
+  test('a PAN in the alias does not reach the notice on any surface', async () => {
+    const notice = await renderInboundMailNotice({
       senderDisplay: 'verify@service.test',
       subject: 'ordinary subject',
       deliveredTo: delivered(`${PAN}@his-catchall.test`),
@@ -218,8 +221,8 @@ describe('what reaches the owner', () => {
     }
   });
 
-  test('a PAN in the subject does not reach the notice either', () => {
-    const notice = renderInboundMailNotice({
+  test('a PAN in the subject does not reach the notice either', async () => {
+    const notice = await renderInboundMailNotice({
       senderDisplay: 'verify@service.test',
       subject: `Order ${PAN} confirmed`,
       deliveredTo: null,
@@ -232,13 +235,13 @@ describe('what reaches the owner', () => {
     }
   });
 
-  test('a card number written across two lines is still caught, because stripping runs first', () => {
+  test('a card number written across two lines is still caught, because stripping runs first', async () => {
     // `stripControlAndLineBreaks` rewrites the break as a SPACE, and a space is
     // a separator the detector joins across. Redacting BEFORE stripping would
     // leave two halves too short to detect and pass both through.
     const split = '4111 1111\n1111 1111';
-    expect(detectCardShapes(split)).toHaveLength(0); // undetectable as written
-    const notice = renderInboundMailNotice({
+    expect(await detectCardShapes(split)).toHaveLength(0); // undetectable as written
+    const notice = await renderInboundMailNotice({
       senderDisplay: split,
       subject: 'ordinary subject',
       deliveredTo: null,
@@ -249,8 +252,8 @@ describe('what reaches the owner', () => {
     expect(renderNoticeForSurface(notice, 'telegram')).not.toContain('1111 1111');
   });
 
-  test('an ordinary notice is unchanged: the sender and alias still read normally', () => {
-    const notice = renderInboundMailNotice({
+  test('an ordinary notice is unchanged: the sender and alias still read normally', async () => {
+    const notice = await renderInboundMailNotice({
       senderDisplay: '"GitHub" <noreply@github.com>',
       subject: 'Verify your email',
       deliveredTo: delivered('signup-a1b2@his-catchall.test'),

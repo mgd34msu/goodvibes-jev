@@ -25,6 +25,9 @@ import { handleNtfySurfacePayload } from '../sdk/src/platform/adapters/ntfy/inde
 import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import { trackDisposables } from './_helpers/disposables.ts';
+import { useSecurityReadings } from './helpers/security-readings.ts';
+
+useSecurityReadings();
 
 const disposables = trackDisposables();
 
@@ -642,7 +645,7 @@ describe('every remote adapter call site is covered by the shared hook', () => {
     return ungated;
   }
 
-  test('the call-site check catches an ungated spawn that a per-file check waves through', () => {
+  test('the call-site check catches an ungated spawn that a per-file check waves through', async () => {
     // The counter-example the old check passed. One gated handler and one
     // ungated one in the SAME file: both strings are present, so "contains
     // both somewhere" says clean, and the second spawn is wide open.
@@ -663,7 +666,7 @@ describe('every remote adapter call site is covered by the shared hook', () => {
     expect(ungatedSpawnSites('mixed.ts', mixed)).toEqual(['mixed.ts:7']);
   });
 
-  test('the call-site check accepts a gate in an enclosing scope, not only the same block', () => {
+  test('the call-site check accepts a gate in an enclosing scope, not only the same block', async () => {
     const nested = [
       "export async function handler(context: C): Promise<void> {",
       "  const decision = await context.authorizeSurfaceIngress({ surface: 'x' });",
