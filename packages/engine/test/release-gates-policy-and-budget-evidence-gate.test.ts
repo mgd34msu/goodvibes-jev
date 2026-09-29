@@ -7,9 +7,9 @@ import { ForensicsRegistry } from './_helpers/runtime-seam.ts';
 import { PhasedToolExecutor } from './_helpers/runtime-seam.ts';
 import type { ToolRuntimeContext } from './_helpers/runtime-seam.ts';
 import type { Tool, ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
+import { useFailureReadings } from './_helpers/failure-readings.ts';
 
 // Drain queued microtasks so bus.emit() listeners (OBS-14 async dispatch) run before assertions.
-const flushMicrotasks = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 
 async function emitTurn(
   bus: RuntimeEventBus,
@@ -25,7 +25,8 @@ async function emitTurn(
       { sessionId, source: 'test', traceId },
     ),
   );
-  await flushMicrotasks();
+  // The report is built after the failure and phase readings resolve.
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function makeContext(
@@ -68,6 +69,8 @@ function makeContext(
 }
 
 describe('policy and budget evidence gate', () => {
+  // Reports read their phases' slowness; this port reads every phase as not slow.
+  useFailureReadings([]);
   test('permission-denied tool failure carries permission evidence into the forensic bundle', async () => {
     const bus = new RuntimeEventBus();
     const registry = new ForensicsRegistry();

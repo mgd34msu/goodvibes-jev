@@ -8,7 +8,7 @@ import {
   configSnapshot,
   defaultStore,
   getConfigControlPlaneDir,
-  inferRisk,
+  readBundleRisk,
   makeRollbackToken,
   readStore,
   sourcePriority,
@@ -197,11 +197,11 @@ export function resolveSettingsSyncConflict(
   return true;
 }
 
-export function stageManagedSettingsBundle(
+export async function stageManagedSettingsBundle(
   configManager: ConfigManager,
   bundle: ManagedSettingsBundle,
   path: string,
-): StagedManagedBundle {
+): Promise<StagedManagedBundle> {
   const current = configSnapshot(configManager);
   const changes: ManagedBundleChange[] = [];
   for (const [rawKey, nextValue] of Object.entries(bundle.settings)) {
@@ -225,7 +225,7 @@ export function stageManagedSettingsBundle(
     path,
     importedAt: Date.now(),
     changeCount: changes.filter((entry) => entry.changed).length,
-    risk: inferRisk(changes),
+    risk: await readBundleRisk(changes, 'runtime.settings.stage-bundle-risk'),
     changes,
   };
   const store = readStore(getConfigControlPlaneDir(configManager));
@@ -243,10 +243,10 @@ export function stageManagedSettingsBundle(
   return stage;
 }
 
-export function applyStagedManagedBundle(
+export async function applyStagedManagedBundle(
   configManager: ConfigManager,
   selectedKeys?: readonly ConfigKey[],
-): { rollbackToken: string; appliedCount: number; remainingCount: number } {
+): Promise<{ rollbackToken: string; appliedCount: number; remainingCount: number }> {
   const store = readStore(getConfigControlPlaneDir(configManager));
   const stage = store.stagedManagedBundle;
   if (!stage) {
@@ -291,7 +291,7 @@ export function applyStagedManagedBundle(
     ? {
         ...stage,
         changeCount: remainingChanges.filter((entry) => entry.changed).length,
-        risk: inferRisk(remainingChanges),
+        risk: await readBundleRisk(remainingChanges, 'runtime.settings.remaining-bundle-risk'),
         changes: remainingChanges,
       }
     : undefined;
@@ -532,12 +532,12 @@ export function formatStagedManagedBundleReview(configManager: ConfigManager): s
   return lines.join('\n');
 }
 
-export function inspectManagedSettingsBundle(
+export async function inspectManagedSettingsBundle(
   configManager: ConfigManager,
   bundle: ManagedSettingsBundle,
   path: string,
-): string {
-  const stage = stageManagedSettingsBundle(configManager, bundle, path);
+): Promise<string> {
+  const stage = await stageManagedSettingsBundle(configManager, bundle, path);
   const changePreview = stage.changes.slice(0, 8).map((change) =>
     `  ${change.key}  ${change.changed ? 'change' : 'same'}  source=${change.source}`);
   return [

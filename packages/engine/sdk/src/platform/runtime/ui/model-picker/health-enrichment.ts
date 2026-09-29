@@ -11,6 +11,7 @@ import type { BenchmarkStore } from '../../../providers/model-benchmarks.js';
 import type { ProviderHealthDomainState, ProviderHealthRecord } from '../../store/domains/provider-health.js';
 import type { ModelDomainState } from '../../store/domains/model.js';
 import { getQualityTier, getQualityTierFromScore, compositeScore } from '../../../providers/model-benchmarks.js';
+import { modelFamilyReadings } from './model-family-readings.js';
 import type {
   ModelPickerEntry,
   ModelPickerGroup,
@@ -30,29 +31,6 @@ const STATUS_ORDER: Record<string, number> = {
   auth_error: 4,
   unavailable: 5,
 };
-
-const FAMILY_PATTERNS: Array<{ pattern: RegExp; family: ModelFamily }> = [
-  { pattern: /claude/i, family: 'Claude' },
-  { pattern: /gpt|\bo1\b|\bo3\b|\bo4\b/i, family: 'GPT' },
-  { pattern: /gemini/i, family: 'Gemini' },
-  { pattern: /llama/i, family: 'Llama' },
-  { pattern: /qwen/i, family: 'Qwen' },
-  { pattern: /glm|chatglm/i, family: 'GLM' },
-  { pattern: /minimax|abab/i, family: 'MiniMax' },
-  { pattern: /deepseek/i, family: 'DeepSeek' },
-  { pattern: /mistral|mixtral/i, family: 'Mistral' },
-  { pattern: /command|cohere/i, family: 'Command' },
-  { pattern: /grok/i, family: 'Grok' },
-  { pattern: /kimi|moonshot/i, family: 'Kimi' },
-];
-
-function detectFamily(model: ModelDefinition): ModelFamily {
-  const haystack = `${model.id} ${model.displayName}`;
-  for (const { pattern, family } of FAMILY_PATTERNS) {
-    if (pattern.test(haystack)) return family;
-  }
-  return 'Other';
-}
 
 function tierToCategoryFilter(tier: string | undefined): CategoryFilter {
   if (tier === 'free') return 'free';
@@ -161,6 +139,7 @@ function buildFallbackPositionMap(modelState: ModelDomainState): Map<string, num
  * @param healthState - Current provider health domain state.
  * @param modelState - Current model domain state.
  * @param pinnedIds - Set of pinned/favorited model registry keys.
+ * @param familyOf - A model's family as read by `engine.runtime.model-family` (undefined until read).
  * @returns Sorted, enriched ModelPickerEntry array.
  */
 export function enrichModelEntries(
@@ -170,6 +149,7 @@ export function enrichModelEntries(
   pinnedIds: ReadonlySet<string>,
   benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>,
   providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>,
+  familyOf: (model: ModelDefinition) => ModelFamily | undefined = (model) => modelFamilyReadings.known(model),
 ): ModelPickerEntry[] {
   const fallbackPositions = buildFallbackPositionMap(modelState);
 
@@ -202,7 +182,7 @@ export function enrichModelEntries(
       modelId: model.id,
       providerId: model.provider,
       displayName: model.displayName,
-      family: detectFamily(model),
+      family: familyOf(model),
       pricingTier: tierToCategoryFilter(model.tier),
       qualityTier,
       benchmarkScore,

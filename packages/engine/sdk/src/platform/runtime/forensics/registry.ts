@@ -134,9 +134,7 @@ export class ForensicsRegistry {
         permissionDecisionCount: report.permissionEvidence.length,
         deniedPermissionCount: report.permissionEvidence.filter((entry) => entry.approved === false).length,
         budgetBreachCount: report.budgetBreaches.length,
-        slowPhases: report.phaseTimings
-          .filter((phase) => (phase.durationMs ?? 0) >= 1_000)
-          .map((phase) => phase.phase),
+        slowPhases: [...report.slowPhases],
         jumpLinkCount: report.jumpLinks.length,
         relatedIds: {
           turnId: report.turnId,

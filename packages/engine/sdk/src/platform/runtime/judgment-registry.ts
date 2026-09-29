@@ -55,11 +55,19 @@ registry.register(catalogSearch);
 registry.register(trustNoteCaution);
 
 // Runtime: model picker.
+import { modelFamily } from './ui/model-picker/batteries/model-family.js';
+registry.register(modelFamily);
 
 // Runtime: tool output policy.
+import { outputKind } from './tools/batteries/output-kind.js';
+registry.register(outputKind);
 
 // Runtime: settings control plane.
+import { settingsRisk } from './settings/batteries/settings-risk.js';
+registry.register(settingsRisk);
 
 // Runtime: forensics.
+import { forensicsSlowPhase } from './forensics/batteries/slow-phase.js';
+registry.register(forensicsSlowPhase);
 
 // Runtime: observed fleet agents.

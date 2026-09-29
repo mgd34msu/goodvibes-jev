@@ -81,8 +81,8 @@ export interface ModelPickerEntry {
   readonly providerId: string;
   /** Human-readable display name. */
   readonly displayName: string;
-  /** Model family (GPT, Claude, Gemini, …). */
-  readonly family: ModelFamily;
+  /** Model family (GPT, Claude, Gemini, …), as read by `engine.runtime.model-family`; undefined until the reading lands or when it did not settle. */
+  readonly family?: ModelFamily | undefined;
   /** Pricing tier bucket. */
   readonly pricingTier: CategoryFilter;
 

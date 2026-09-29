@@ -1,6 +1,8 @@
 import type { ToolResult } from '../../types/tools.js';
 import { OverflowHandler } from '../../tools/shared/overflow.js';
 import type { SpillBackendType } from '../../tools/shared/overflow.js';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { outputKind } from './batteries/output-kind.js';
 
 // ─── Tool Class ─────────────────────────────────────────────────────────────
 
@@ -180,7 +182,7 @@ export function getPolicy(toolClass: ToolClass): ToolOutputPolicy {
  * Apply the configured truncation mode to `content`, cutting to `maxBytes`.
  * Returns the truncated string.
  */
-function truncate(content: string, maxBytes: number, mode: ToolOutputPolicy['truncationMode']): string {
+async function truncate(content: string, maxBytes: number, mode: ToolOutputPolicy['truncationMode']): Promise<string> {
   const encoder = new TextEncoder();
   const encoded = encoder.encode(content);
 
@@ -210,7 +212,7 @@ function truncate(content: string, maxBytes: number, mode: ToolOutputPolicy['tru
       return start + `\n[... ${dropped} bytes omitted ...]\n` + end;
     }
     case 'summary':
-      return summarizeOutput(content, maxBytes, byteLen);
+      return await summarizeOutput(content, maxBytes, byteLen);
     case 'tail':
     default: {
       // Keep the head, slice at string level to avoid corrupting multi-byte chars.
@@ -223,11 +225,11 @@ function truncate(content: string, maxBytes: number, mode: ToolOutputPolicy['tru
   }
 }
 
-function summarizeOutput(content: string, maxBytes: number, byteLen: number): string {
+async function summarizeOutput(content: string, maxBytes: number, byteLen: number): Promise<string> {
   const encoder = new TextEncoder();
   const lineCount = content.length === 0 ? 0 : content.split(/\r\n|\r|\n/).length;
   const trimmed = content.trim();
-  const type = classifyOutput(trimmed);
+  const type = await classifyOutput(trimmed);
   const summary = [
     '[output summarized by policy]',
     `type: ${type}`,
@@ -252,15 +254,32 @@ function summarizeOutput(content: string, maxBytes: number, byteLen: number): st
   return compact.slice(0, maxBytes - 3) + '...';
 }
 
-function classifyOutput(trimmed: string): string {
+const OUTPUT_KIND_SITE = 'runtime.tools.output-kind';
+
+/** Characters of the output's beginning and end shown to the kind reading. */
+const KIND_SAMPLE_HEAD = 1500;
+const KIND_SAMPLE_TAIL = 500;
+
+/**
+ * The kind named in an output summary. Empty output and output that parses
+ * as JSON are facts; any other kind is read by `engine.runtime.output-kind`
+ * from the output's beginning and end, and a reading that does not settle is
+ * named `unknown`.
+ */
+async function classifyOutput(trimmed: string): Promise<string> {
   if (trimmed.length === 0) return 'empty';
-  if (looksLikeJson(trimmed)) return 'json';
-  if (looksLikeXml(trimmed)) return 'xml';
-  if (looksBinaryLike(trimmed)) return 'binary-like';
-  return 'text';
+  if (parsesAsJson(trimmed)) return 'json';
+  const sample = trimmed.length <= KIND_SAMPLE_HEAD + KIND_SAMPLE_TAIL
+    ? trimmed
+    : `${trimmed.slice(0, KIND_SAMPLE_HEAD)}\n...\n${trimmed.slice(-KIND_SAMPLE_TAIL)}`;
+  const run = await outputKind.run(judgmentPort(OUTPUT_KIND_SITE), { sample, characters: trimmed.length }, { site: OUTPUT_KIND_SITE });
+  const reading = run.readings.kind;
+  const kind = reading.outcome === 'act' ? reading.choice : 'unknown';
+  run.recordAction(kind);
+  return kind;
 }
 
-function looksLikeJson(trimmed: string): boolean {
+function parsesAsJson(trimmed: string): boolean {
   if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']')))) {
     return false;
   }
@@ -270,16 +289,6 @@ function looksLikeJson(trimmed: string): boolean {
   } catch {
     return false;
   }
-}
-
-function looksLikeXml(trimmed: string): boolean {
-  return /^<\?xml[\s>]/.test(trimmed) || /^<[A-Za-z][\s\S]*>$/.test(trimmed);
-}
-
-function looksBinaryLike(trimmed: string): boolean {
-  if (trimmed.includes('\u0000')) return true;
-  const controlChars = trimmed.match(/[\u0001-\u0008\u000B\u000C\u000E-\u001F]/g)?.length ?? 0;
-  return controlChars > Math.max(4, trimmed.length * 0.02);
 }
 
 // ─── Policy Enforcement ──────────────────────────────────────────────────────
@@ -294,14 +303,17 @@ function looksBinaryLike(trimmed: string): boolean {
  *
  * @param result - The raw tool result to enforce limits on.
  * @param policy - The policy to apply (obtain via `getPolicy`).
+ * Under a `summary` truncation mode the output's kind is read by
+ * `engine.runtime.output-kind`; a missing judgment port propagates.
+ *
  * @returns The mutated result with `_policyAudit` attached, plus a standalone
  *          `OutputPolicyResult` audit record.
  */
-export function applyOutputPolicy(
+export async function applyOutputPolicy(
   result: ToolResult,
   policy: ToolOutputPolicy,
   overflowHandler: OverflowHandler,
-): { result: ToolResultWithAudit; audit: OutputPolicyResult } {
+): Promise<{ result: ToolResultWithAudit; audit: OutputPolicyResult }> {
   const output = typeof result.output === 'string' ? result.output : '';
   const encoder = new TextEncoder();
   const originalSize = encoder.encode(output).length;
@@ -354,7 +366,7 @@ export function applyOutputPolicy(
 
     case 'inline':
     default: {
-      result.output = truncate(output, policy.maxBytes, policy.truncationMode);
+      result.output = await truncate(output, policy.maxBytes, policy.truncationMode);
       audit.actionTaken = 'truncated';
       audit.resultSize = encoder.encode(result.output as string).length;
       break;

@@ -74,13 +74,12 @@ export interface SignatureValidationResult {
  *
  * The signature field in PluginManifestV2 is expected to be a base64-encoded
  * HMAC-SHA256 of the canonical manifest JSON (name + version + capabilities
- * sorted and serialised). For production use, callers should supply a real
- * key; this implementation uses a structural check so external tooling can
- * provide real crypto without requiring Node.js crypto APIs at import time.
+ * sorted and serialised). A signature is valid only when it equals the HMAC
+ * computed with the verification key: its shape alone proves nothing about
+ * who signed it, so with no key the manifest is not verified.
  *
  * @param manifest  - The raw manifest object containing the `signature` field.
- * @param publicKey - Optional verification key. When omitted, structural
- *                    validity only is checked (suitable for CI/test).
+ * @param publicKey - The verification key. Without it the signature cannot be verified.
  */
 export function validatePluginSignature(
   manifest: { name: string; version: string; capabilities?: string[] | undefined; signature?: string | undefined },
@@ -92,34 +91,31 @@ export function validatePluginSignature(
     return { valid: false, reason: 'No signature field present in manifest' };
   }
 
-  // Structural check: signature must be a non-empty hex or base64 string.
-  const isStructurallyValid = /^[A-Za-z0-9+/=]{32,}$/.test(signature.trim());
-  if (!isStructurallyValid) {
-    return { valid: false, reason: 'Signature field does not match expected format (base64/hex, min 32 chars)' };
+  // The signature must be base64 text before it can be decoded and compared.
+  if (!/^[A-Za-z0-9+/=]{32,}$/.test(signature.trim())) {
+    return { valid: false, reason: 'Signature field does not match expected format (base64, min 32 chars)' };
+  }
+  if (!publicKey) {
+    return { valid: false, reason: 'No verification key was supplied, so the signature cannot be verified' };
   }
 
   // Canonical payload that should have been signed.
   const sortedCapabilities = [...capabilities].sort();
   const payload = JSON.stringify({ name, version, capabilities: sortedCapabilities });
-
-  // When a public key is provided, perform full HMAC verification.
-  if (publicKey) {
-    const expected = createHmac('sha256', publicKey)
-      .update(payload)
-      .digest('base64');
-    const sigBuf = Buffer.from(signature.trim(), 'base64');
-    const expBuf = Buffer.from(expected, 'base64');
-    if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
-      return { valid: false, reason: 'HMAC mismatch' };
-    }
+  const expected = createHmac('sha256', publicKey)
+    .update(payload)
+    .digest('base64');
+  const sigBuf = Buffer.from(signature.trim(), 'base64');
+  const expBuf = Buffer.from(expected, 'base64');
+  if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+    return { valid: false, reason: 'HMAC mismatch' };
   }
 
   // Derive a short fingerprint for record keeping.
   const fingerprint = signature.trim().slice(0, 16);
 
   logger.debug(
-    `[plugin-trust] Manifest signature validated, plugin=${name} fingerprint=${fingerprint}` +
-    (publicKey ? ' (full HMAC)' : ' (structural only)'),
+    `[plugin-trust] Manifest signature validated, plugin=${name} fingerprint=${fingerprint}`,
   );
 
   return { valid: true, fingerprint };

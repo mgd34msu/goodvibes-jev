@@ -24,6 +24,7 @@ function makeFailureReport(overrides: Partial<FailureReport> = {}): FailureRepor
     classification: 'unknown',
     summary: 'Failure summary',
     phaseTimings: [],
+    slowPhases: [],
     phaseLedger: [],
     causalChain: [],
     cascadeEvents: [],

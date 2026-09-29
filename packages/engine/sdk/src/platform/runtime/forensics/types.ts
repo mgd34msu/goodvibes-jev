@@ -136,6 +136,8 @@ export interface FailureReport {
   readonly agentId?: string | undefined;
   /** Ordered phase timings from the originating turn or task execution. */
   readonly phaseTimings: readonly PhaseTimingEntry[];
+  /** Phases read as unusually long for their kind (`engine.runtime.forensics-slow-phase`), in phase order. */
+  readonly slowPhases: readonly string[];
   /** Ordered phase transition ledger for explicit runtime reconstruction. */
   readonly phaseLedger: readonly PhaseLedgerEntry[];
   /** Causal chain from root cause to terminal state (root cause first). */

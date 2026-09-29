@@ -28,6 +28,7 @@ import type {
   BudgetBreachEvidence,
 } from './types.js';
 import { classifyFailure, summariseFailure } from './classifier.js';
+import { readSlowPhases } from './slow-phases.js';
 import type { ForensicsRegistry } from './registry.js';
 import { emitForensicsReportCreated } from '../emitters/forensics.js';
 
@@ -87,9 +88,7 @@ interface TaskTracker {
   _phaseSeq: number;
 }
 
-// ---------------------------------------------------------------------------
-// ForensicsCollector
-// ---------------------------------------------------------------------------
+// ── ForensicsCollector ─────────────────────────────────────────────────────
 
 export class ForensicsCollector {
   private readonly _bus: RuntimeEventBus;
@@ -596,6 +595,7 @@ export class ForensicsCollector {
       errorMessage,
       turnId: tracker.turnId,
       phaseTimings: tracker.phaseTimings,
+      slowPhases: await readSlowPhases('turn', tracker.phaseTimings, 'runtime.forensics.turn-slow-phases'),
       phaseLedger: tracker.phaseLedger,
       causalChain: tracker.causalChain,
       cascadeEvents: tracker.cascadeEvents,
@@ -650,6 +650,7 @@ export class ForensicsCollector {
       taskId: tracker.taskId,
       agentId: tracker.agentId,
       phaseTimings: tracker.phaseTimings,
+      slowPhases: await readSlowPhases('task', tracker.phaseTimings, 'runtime.forensics.task-slow-phases'),
       phaseLedger: tracker.phaseLedger,
       causalChain: tracker.causalChain,
       cascadeEvents: tracker.cascadeEvents,

@@ -15,6 +15,9 @@ import type { ProviderHealthDomainState } from '../../store/domains/provider-hea
 import type { ModelDomainState } from '../../store/domains/model.js';
 import { enrichModelEntries, groupEntriesByProvider } from './health-enrichment.js';
 import type { ModelPickerData, ModelPickerEntry } from './types.js';
+import { modelFamilyReadings } from './model-family-readings.js';
+import { logger } from '../../../utils/logger.js';
+import { summarizeError } from '../../../utils/error-display.js';
 
 /** Options for constructing a ModelPickerDataProvider. */
 export interface ModelPickerDataProviderOptions {
@@ -54,6 +57,7 @@ export class ModelPickerDataProvider {
   private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>;
   private readonly providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>;
   private readonly _subscribers = new Set<() => void>();
+  private _disposed = false;
 
   constructor(
     models: readonly ModelDefinition[],
@@ -68,6 +72,7 @@ export class ModelPickerDataProvider {
     this.benchmarkStore = options.benchmarkStore;
     this.providerRegistry = options.providerRegistry;
     this._snapshot = this._buildSnapshot();
+    this._readFamilies();
   }
 
   /**
@@ -94,6 +99,7 @@ export class ModelPickerDataProvider {
   public updateModels(models: readonly ModelDefinition[]): void {
     this._models = models;
     this._rebuild();
+    this._readFamilies();
   }
 
   /**
@@ -128,6 +134,7 @@ export class ModelPickerDataProvider {
    * Does not clear internal state, getSnapshot() remains usable after disposal.
    */
   public dispose(): void {
+    this._disposed = true;
     this._subscribers.clear();
   }
 
@@ -136,6 +143,15 @@ export class ModelPickerDataProvider {
   private _rebuild(): void {
     this._snapshot = this._buildSnapshot();
     this._notify();
+  }
+
+  /** Reads the family of every model not read yet, and rebuilds when any lands. */
+  private _readFamilies(): void {
+    const models = this._models;
+    void modelFamilyReadings.read(models).then(
+      (changed) => { if (changed && !this._disposed && this._models === models) this._rebuild(); },
+      (error: unknown) => { logger.warn('model picker: model family readings did not complete', { error: summarizeError(error) }); },
+    );
   }
 
   private _buildSnapshot(): ModelPickerData {

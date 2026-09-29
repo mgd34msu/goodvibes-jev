@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { ConfigManager } from '../../config/manager.js';
 import { CONFIG_SCHEMA } from '../../config/index.js';
 import type { ConfigKey } from '../../config/index.js';
+import type { JsonValue } from '@goodvibes-jev/judgment';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { settingsRisk, type SettingsRisk } from './batteries/settings-risk.js';
 
 export type SyncSurface = 'profiles' | 'managed' | 'settings-sync';
 export type SyncDirection = 'export' | 'import' | 'apply' | 'pull' | 'push' | 'rollback';
@@ -227,14 +230,41 @@ export function sourcePriority(source: SettingsSource): number {
   }
 }
 
-export function inferRisk(changes: readonly ManagedBundleChange[]): 'low' | 'medium' | 'high' {
-  if (changes.some((change) => change.key.startsWith('danger.') || change.key.startsWith('permissions.') || change.key.startsWith('sandbox.'))) {
-    return 'high';
-  }
-  if (changes.some((change) => change.key.startsWith('provider.') || change.key.startsWith('storage.') || change.key.startsWith('orchestration.'))) {
-    return 'medium';
-  }
-  return 'low';
+/**
+ * The risk shown for a staged managed bundle: the highest
+ * `engine.runtime.settings-risk` reading over its changed settings, one
+ * choice per change, all sent together. A reading that does not settle counts
+ * as high. A bundle with no changed setting is low: applying it changes
+ * nothing.
+ */
+export async function readBundleRisk(
+  changes: readonly ManagedBundleChange[],
+  site: string,
+): Promise<SettingsRisk> {
+  const changed = changes.filter((change) => change.changed);
+  if (changed.length === 0) return 'low';
+  const port = judgmentPort(site);
+  const readings = await Promise.all(changed.map(async (change) => {
+    const description = CONFIG_SCHEMA.find((entry) => entry.key === change.key)?.description ?? '';
+    const run = await settingsRisk.run(port, {
+      key: change.key,
+      description,
+      previousValue: toJsonValue(change.previousValue),
+      nextValue: toJsonValue(change.nextValue),
+    }, { site });
+    const reading = run.readings.risk;
+    const risk: SettingsRisk = reading.outcome === 'act' ? reading.choice : 'high';
+    run.recordAction(`risk-${risk}`);
+    return risk;
+  }));
+  return readings.reduce<SettingsRisk>((highest, risk) => (RISK_RANK[risk] > RISK_RANK[highest] ? risk : highest), 'low');
+}
+
+const RISK_RANK: Readonly<Record<SettingsRisk, number>> = { low: 0, medium: 1, high: 2 };
+
+/** A setting value as JSON the reading can carry (undefined reads as null). */
+function toJsonValue(value: unknown): JsonValue {
+  return value === undefined ? null : JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 export function makeRollbackToken(): string {

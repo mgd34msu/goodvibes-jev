@@ -18,6 +18,7 @@ describe('buildIncidentMemoryAddOptions', () => {
         turnId: 'turn-1',
         taskId: 'task-1',
         phaseTimings: [],
+        slowPhases: [],
         phaseLedger: [],
         causalChain: [],
         cascadeEvents: [],
