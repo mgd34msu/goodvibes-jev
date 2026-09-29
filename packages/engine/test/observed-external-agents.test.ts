@@ -69,6 +69,12 @@ describe('detect: classifyExternalKind (argv shapes)', () => {
   test('opencode CLI', () => expect(classifyExternalKind('opencode run')).toBe('opencode'));
   test('goodvibes plugin MCP node process is NOT an agent', () => expect(classifyExternalKind(PLUGIN_MCP_NODE)).toBeNull());
   test('a plain shell is not an agent', () => expect(classifyExternalKind('-bash')).toBeNull());
+  test('an agent named only in the arguments is not that agent', () => {
+    expect(classifyExternalKind('grep -r @openai/codex src')).toBeNull();
+    expect(classifyExternalKind('rg @anthropic-ai/claude-code node_modules')).toBeNull();
+    expect(classifyExternalKind('nvim /home/u/opencode/notes.md')).toBeNull();
+  });
+  test('opencode npm package path', () => expect(classifyExternalKind('node /x/node_modules/opencode-ai/bin/run.js')).toBe('opencode'));
   test('empty argv', () => expect(classifyExternalKind('')).toBeNull());
 });
 
