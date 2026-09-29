@@ -522,10 +522,11 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   const admitExpensiveWork = (label: string): { allowed: boolean; reason?: string | undefined } =>
     admitExpensiveWorkRef.current?.(label) ?? { allowed: true };
   const codeIndexStore = new CodeIndexStore(workingDirectory, codeIndexDbPath, memoryEmbeddingRegistry);
-  codeIndexStore.init();
-  if (options.autoStartCodeIndex) {
-    codeIndexStore.scheduleBuild();
-  }
+  // init never rejects; it is async because a failed extension load is read
+  // by Jev (sqlite-vec-loader.ts). The build starts once the store is open.
+  void codeIndexStore.init().then(() => {
+    if (options.autoStartCodeIndex) codeIndexStore.scheduleBuild();
+  });
   // Stage B: tool-site incremental reindex. Gated on autoStartCodeIndex AND the
   // built-state check inside the scheduler, an unbuilt index is a no-op.
   const codeInjectionSettingEnabled = (): boolean => options.autoStartCodeIndex === true;

@@ -123,6 +123,21 @@ describe('memory projection commits only to a repository it owns (real git)', ()
     expect(git(['log', '--oneline'], projectionDir).split('\n').length).toBe(1);
   });
 
+  test('with changes staged, a commit git refuses is a failure, whatever git printed', () => {
+    const scratch = makeScratch();
+    const projectionDir = join(scratch, 'projection');
+    mkdirSync(projectionDir, { recursive: true });
+    git(['init'], projectionDir);
+    // Signing through a program that always fails makes git refuse the commit.
+    git(['config', 'commit.gpgsign', 'true'], projectionDir);
+    git(['config', 'gpg.program', 'false'], projectionDir);
+
+    expect(() => projectMemoryToFiles([record()], projectionDir, {
+      now: 1000,
+      git: createMemoryProjectionGit(),
+    })).toThrow('memory projection git commit failed');
+  });
+
   test('a projection dir in no repository at all gets its own repository', () => {
     const scratch = makeScratch();
     const projectionDir = join(scratch, 'standalone-projection');

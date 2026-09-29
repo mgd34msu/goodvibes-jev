@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import {
   MemoryEmbeddingProviderRegistry,
   MemoryStore,
@@ -20,7 +23,30 @@ import { ConfigManager } from '../sdk/src/platform/config/manager.js';
  * the precedence caveat is preserved, a persona edit via a record changes the
  * projected block, and persona records round-trip through the normal MemoryStore
  * bundle seam (the file demoted to an import/export format).
+ *
+ * Whether a non-bullet line is a persona instruction is read by Jev
+ * (engine.state.vibe-persona-line); the fake port below answers with the
+ * probability `lineAnswer` gives, a no for every line unless a test says
+ * otherwise.
  */
+
+let lineAnswer: (line: string) => number = () => 0.03;
+let lineRequests: ReturnType<typeof fakePort>['requests'] = [];
+let previousPort: JudgmentPort | undefined;
+
+beforeEach(() => {
+  lineAnswer = () => 0.03;
+  const fake = fakePort((name, _question, state) => {
+    if (name !== 'instruction') throw new Error(`unexpected question ${name}`);
+    return noulAnswer(lineAnswer((state as { line: string }).line));
+  });
+  lineRequests = fake.requests;
+  previousPort = installJudgmentPort(fake.port);
+});
+
+afterEach(() => {
+  installJudgmentPort(previousPort);
+});
 
 const tmpRoots: string[] = [];
 
@@ -48,8 +74,8 @@ const SAMPLE_VIBE = [
 ].join('\n');
 
 describe('VIBE body imported as constraint records (file demoted to format)', () => {
-  test('each bullet becomes one persona constraint record', () => {
-    const options = vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project', sourceRef: '/repo/VIBE.md' });
+  test('each bullet becomes one persona constraint record; the other lines are read and a no leaves them out', async () => {
+    const options = await vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project', sourceRef: '/repo/VIBE.md' });
     expect(options.length).toBe(2);
     expect(options.every((o) => o.cls === 'constraint')).toBe(true);
     expect(options.every((o) => o.scope === 'project')).toBe(true);
@@ -59,13 +85,45 @@ describe('VIBE body imported as constraint records (file demoted to format)', ()
       'Prefer visible, reversible actions.',
     ]);
     expect(options[0]!.provenance?.[0]).toEqual({ kind: 'file', ref: '/repo/VIBE.md' });
+    // The heading and the template line are read, the bullets and blank lines never are.
+    expect(lineRequests.map((request) => request.state)).toEqual([
+      { line: '# VIBE.md', body: SAMPLE_VIBE },
+      { line: 'Describe how GoodVibes Agent should feel and work with you.', body: SAMPLE_VIBE },
+    ]);
   });
 
-  test('a prose-only body (no bullets) becomes a single record', () => {
-    const options = vibeBodyToConstraintOptions('Keep things calm and clear.', { name: 'Calm' });
+  test('a line read yes in a bulleted body becomes its own record, in document order', async () => {
+    const body = ['# Persona', 'Always answer in British English.', '', '## Tone', '- Keep replies short.', '# Talk to me like a colleague'].join('\n');
+    lineAnswer = (line) => (line === 'Always answer in British English.' || line.startsWith('# Talk') ? 0.97 : 0.03);
+    const options = await vibeBodyToConstraintOptions(body);
+    expect(options.map((o) => o.summary)).toEqual([
+      'Always answer in British English.',
+      'Keep replies short.',
+      'Talk to me like a colleague',
+    ]);
+  });
+
+  test('a yes too weak to act on leaves the line out', async () => {
+    lineAnswer = (line) => (line === 'Always answer in British English.' ? 0.58 : 0.03);
+    const options = await vibeBodyToConstraintOptions(['Always answer in British English.', '- Keep replies short.'].join('\n'));
+    expect(options.map((o) => o.summary)).toEqual(['Keep replies short.']);
+  });
+
+  test('a prose-only body (no bullets) becomes a single record, with no line read when it has no headings', async () => {
+    const options = await vibeBodyToConstraintOptions('Keep things calm and clear.', { name: 'Calm' });
     expect(options.length).toBe(1);
     expect(options[0]!.detail).toBe('Keep things calm and clear.');
     expect(options[0]!.tags).toContain('Calm');
+    expect(lineRequests).toHaveLength(0);
+  });
+
+  test('in a prose body, a heading read yes stays in the detail and a heading read no is dropped', async () => {
+    const body = ['# My vibe', '## Never apologise, just fix it', 'Keep things calm and clear.'].join('\n');
+    lineAnswer = (line) => (line.includes('Never apologise') ? 0.97 : 0.03);
+    const options = await vibeBodyToConstraintOptions(body);
+    expect(options).toHaveLength(1);
+    expect(options[0]!.detail).toBe('## Never apologise, just fix it\nKeep things calm and clear.');
+    expect(lineRequests).toHaveLength(2);
   });
 });
 
@@ -75,7 +133,7 @@ describe('renderVibeProjection (records -> prompt block)', () => {
     tmpRoots.push(root);
     const store = openStore(root);
     await store.init();
-    for (const opts of vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
+    for (const opts of await vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
       await store.add(opts);
     }
     // A non-persona constraint must NOT leak into the projection.
@@ -101,7 +159,7 @@ describe('renderVibeProjection (records -> prompt block)', () => {
     const store = openStore(root);
     await store.init();
     const created = [];
-    for (const opts of vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
+    for (const opts of await vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
       created.push(await store.add(opts));
     }
     store.update(created[0]!.id, { summary: 'Be extremely direct about tradeoffs.' });
@@ -121,7 +179,7 @@ describe('persona records round-trip through the bundle seam', () => {
 
     const storeA = openStore(rootA);
     await storeA.init();
-    for (const opts of vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
+    for (const opts of await vibeBodyToConstraintOptions(SAMPLE_VIBE, { scope: 'project' })) {
       await storeA.add(opts);
     }
     const projectionA = renderVibeProjection(await storeA.search({}));

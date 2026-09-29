@@ -56,9 +56,9 @@ function makeCountingRegistry(root: string): { registry: MemoryEmbeddingProvider
   return { registry, callCount: () => calls };
 }
 
-function makeStore(root: string, registry: MemoryEmbeddingProviderRegistry): CodeIndexStore {
+async function makeStore(root: string, registry: MemoryEmbeddingProviderRegistry): Promise<CodeIndexStore> {
   const store = new CodeIndexStore(root, ':memory:', registry);
-  store.init();
+  await store.init();
   return store;
 }
 
@@ -80,7 +80,7 @@ describe('CodeIndexStore: chunking determinism', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     const stats = await store.buildFull();
     // foo (function), Bar (class), baz (constant), method() is nested, not top-level.
@@ -97,12 +97,12 @@ describe('CodeIndexStore: chunking determinism', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     await store.buildFull();
     const first = (await store.search('foo bar baz', { limit: 10 })).map((r) => r.chunk.chunkId).sort();
 
-    const store2 = makeStore(root, registry);
+    const store2 = await makeStore(root, registry);
     await store2.buildFull();
     const second = (await store2.search('foo bar baz', { limit: 10 })).map((r) => r.chunk.chunkId).sort();
 
@@ -115,7 +115,7 @@ describe('CodeIndexStore: incremental reindex', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     const { registry, callCount } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     await store.buildFull();
     const firstCallCount = callCount();
@@ -130,7 +130,7 @@ describe('CodeIndexStore: incremental reindex', () => {
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     writeFileSync(join(root, 'b.ts'), 'export function untouched(): number {\n  return 9;\n}\n');
     const { registry, callCount } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     await store.buildFull();
     const bChunksBefore = (await store.search('untouched', { limit: 10 })).filter((r) => r.chunk.path === 'b.ts');
@@ -156,7 +156,7 @@ describe('CodeIndexStore: incremental reindex', () => {
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     writeFileSync(join(root, 'gone.ts'), 'export const removeMe = 1;\n');
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     const first = await store.buildFull();
     expect(first.filesIndexed).toBe(2);
@@ -175,7 +175,7 @@ describe('CodeIndexStore: incremental reindex', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
     await store.buildFull();
 
     writeFileSync(join(root, 'a.ts'), 'export function onlyOne(): number {\n  return 1;\n}\n');
@@ -194,7 +194,7 @@ describe('CodeIndexStore: never silently drops a non-empty file', () => {
     const longRustFile = Array.from({ length: 80 }, (_, i) => `fn f${i}() {}`).join('\n');
     writeFileSync(join(root, 'a.rs'), longRustFile);
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     const stats = await store.buildFull();
     expect(stats.skip.chunkedByWindow).toBe(1);
@@ -206,7 +206,7 @@ describe('CodeIndexStore: never silently drops a non-empty file', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'barrel.ts'), Array.from({ length: 30 }, (_, i) => `export { x${i} } from './x${i}.js';`).join('\n'));
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     const stats = await store.buildFull();
     expect(stats.skip.chunkedByWindow).toBe(1);
@@ -217,7 +217,7 @@ describe('CodeIndexStore: never silently drops a non-empty file', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'empty.ts'), '');
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
 
     const stats = await store.buildFull();
     expect(stats.skip.chunkedByWindow).toBe(0);
@@ -230,7 +230,7 @@ describe('CodeIndexStore: chunk shape', () => {
     const root = makeRoot();
     writeFileSync(join(root, 'a.ts'), TS_FIXTURE);
     const { registry } = makeCountingRegistry(root);
-    const store = makeStore(root, registry);
+    const store = await makeStore(root, registry);
     await store.buildFull();
 
     const results = await store.search('foo', { limit: 10 });

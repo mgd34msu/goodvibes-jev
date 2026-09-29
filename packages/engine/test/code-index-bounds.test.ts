@@ -39,7 +39,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'kept.ts'), 'export const kept = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.skip.ignoredByGitignore).toBe(1);
@@ -56,7 +56,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'small.ts'), 'export const small = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry, { maxFileBytes: 200 });
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.skip.tooLarge).toBe(1);
@@ -72,7 +72,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'c.ts'), 'export const c = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry, { maxFiles: 1 });
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.filesScanned).toBe(3);
@@ -90,7 +90,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'c.ts'), 'export const cccccccccc = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry, { maxTotalBytes: 50 });
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.filesScanned).toBe(3);
@@ -109,7 +109,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'top.ts'), 'export const top = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.skip.ignoredByGitignore).toBe(1);
@@ -126,7 +126,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'kept.ts'), 'export const kept = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     expect(stats.skip.binary).toBe(1);
@@ -139,7 +139,7 @@ describe('CodeIndexStore: bounds honesty', () => {
     writeFileSync(join(root, 'kept.ts'), 'export const kept = 1;\n');
     const registry = makeRegistry(root);
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const stats = await store.buildFull();
     // Every counter is a real, non-negative, reportable number, never undefined/NaN.

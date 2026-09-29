@@ -67,10 +67,11 @@ function samePath(left: string, right: string): boolean {
  * and tolerates an unchanged tree.
  */
 export function createMemoryProjectionGit(): MemoryProjectionGit {
-  const run = (args: readonly string[]): { ok: boolean; stdout: string; stderr: string } => {
+  const run = (args: readonly string[]): { ok: boolean; status: number | null; stdout: string; stderr: string } => {
     const result = spawnSync('git', [...args], { encoding: 'utf-8', timeout: 30_000 });
     return {
       ok: result.status === 0,
+      status: result.status,
       stdout: (result.stdout ?? '').trim(),
       stderr: (result.stderr ?? '').trim(),
     };
@@ -93,13 +94,22 @@ export function createMemoryProjectionGit(): MemoryProjectionGit {
       }
     },
     commit(dir: string, message: string): void {
+      // `diff --cached --quiet` exits 0 when nothing is staged and 1 when
+      // something is: an unchanged tree skips the commit, and any commit
+      // failure after that is a failure (git's messages are localized, so
+      // they are never matched).
+      const staged = run(['-C', dir, 'diff', '--cached', '--quiet']);
+      if (staged.status === 0) return;
+      if (staged.status !== 1) {
+        throw new Error(`memory projection git diff failed for ${dir}: ${staged.stderr || staged.stdout}`);
+      }
       const result = run([
         '-C', dir,
         '-c', 'user.name=GoodVibes Memory Projection',
         '-c', 'user.email=memory-projection@goodvibes.local',
         'commit', '--no-verify', '-m', message,
       ]);
-      if (!result.ok && !/nothing to commit|nothing added to commit|no changes added/i.test(`${result.stdout}\n${result.stderr}`)) {
+      if (!result.ok) {
         throw new Error(`memory projection git commit failed for ${dir}: ${result.stderr || result.stdout}`);
       }
     },

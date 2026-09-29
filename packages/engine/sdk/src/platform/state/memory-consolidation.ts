@@ -8,9 +8,10 @@
  * injected `MemoryConsolidationRegistry` seam; `MemoryRegistry` satisfies it
  * structurally.
  *
- * Whether two records are duplicates, a contradiction or unrelated is read by
+ * Whether two records are duplicates, a contradiction or unrelated, and which
+ * of two contradicting records is a later correction of the other, is read by
  * Jev (batteries/memory-alignment.ts); which pairs are compared, which record
- * survives and every write stay code.
+ * survives a merge, the review-rank guard and every write stay code.
  *
  * The pass performs only REVERSIBLE operations on existing records: it merges
  * duplicate records into a survivor and marks the losers stale (never deletes),
@@ -24,7 +25,7 @@
 
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { mapLimit } from '@goodvibes-jev/judgment';
-import { alignmentContent, memoryAgreement, memoryAlignment } from './batteries/memory-alignment.js';
+import { agreementContent, alignmentContent, memoryAgreement, memoryAlignment, type MemoryReplacement } from './batteries/memory-alignment.js';
 import type { MemoryRecord, MemoryReviewPatch, MemoryScope } from './memory-store.js';
 import type { ResolvedMemoryConsolidationConfig } from './memory-consolidation-config.js';
 
@@ -162,6 +163,16 @@ interface MergePlanResult {
 export type MemoryPairRelation = 'duplicate' | 'contradiction' | 'unrelated';
 
 /**
+ * A pair's reading: how the records relate, and which one, if either, the
+ * `replaces` reading names as a later correction of the other. `replacement`
+ * is 'neither' unless that reading's outcome is act.
+ */
+export interface MemoryPairReading {
+  readonly relation: MemoryPairRelation;
+  readonly replacement: MemoryReplacement;
+}
+
+/**
  * Candidate pairs, grouped structurally: only records of the same class are
  * compared (any scope, so cross-scope collisions surface). Within a class the
  * newest records pair first; at most MAX_PAIR_READINGS_PER_RUN pairs overall.
@@ -192,34 +203,40 @@ function candidatePairs(active: readonly MemoryRecord[]): Array<readonly [Memory
 /**
  * How two records relate, composed from two readings (see
  * batteries/memory-alignment.ts for the mapping): the aligner rules distinct
- * pairs out, then the agreement reading tells a duplicate from a
- * contradiction. Code acts on a yes only when the reading's outcome is act; a
- * conflict wins over a restatement, since a contradiction goes to a person.
+ * pairs out, then the agreement reading, in one request, tells a duplicate
+ * from a contradiction and names which record, if either, is a later
+ * correction of the other. Code acts on a yes or a choice only when the
+ * reading's outcome is act; a conflict wins over a restatement. The action
+ * recorded here is the relation; planAndApplyMerges records nothing further,
+ * and what it did with the pair is in the run receipt.
  */
-export async function classifyMemoryPair(a: MemoryRecord, b: MemoryRecord): Promise<MemoryPairRelation> {
+export async function classifyMemoryPair(a: MemoryRecord, b: MemoryRecord): Promise<MemoryPairReading> {
   const port = judgmentPort(SITE);
   const aligned = await memoryAlignment.align(port, alignmentContent(a), alignmentContent(b), { site: SITE });
   if (aligned.alignment === 'distinct') {
     aligned.recordAction('unrelated');
-    return 'unrelated';
+    return { relation: 'unrelated', replacement: 'neither' };
   }
-  const run = await memoryAgreement.run(port, { record_a: alignmentContent(a), record_b: alignmentContent(b) }, { site: SITE });
-  const { restates, conflicts } = run.readings;
+  const run = await memoryAgreement.run(port, { record_a: agreementContent(a), record_b: agreementContent(b) }, { site: SITE });
+  const { restates, conflicts, replaces } = run.readings;
   const relation: MemoryPairRelation = conflicts.verdict === 'yes' && conflicts.outcome === 'act'
     ? 'contradiction'
     : restates.verdict === 'yes' && restates.outcome === 'act' ? 'duplicate' : 'unrelated';
+  const replacement: MemoryReplacement = replaces.outcome === 'act' ? replaces.choice : 'neither';
   aligned.recordAction(relation);
-  run.recordAction(relation);
-  return relation;
+  run.recordAction(relation === 'contradiction' && replacement !== 'neither' ? `${relation}:${replacement}` : relation);
+  return { relation, replacement };
 }
 
 const CURATOR_ROUTE = 'memory action:"curator" query:"consolidation"';
 
 /**
  * Read candidate pairs and act on them: a same-scope duplicate is merged into
- * a survivor; a contradiction is resolved newer-verified-wins, else both
- * records are flagged contradicted and proposed for a person; any pair that
- * spans scopes is only proposed, never merged automatically.
+ * a survivor; a same-scope contradiction where the reading names one record a
+ * later correction of the other, and that record is at least as reviewed, is
+ * resolved by marking the replaced record stale; any other contradiction
+ * flags both records contradicted and proposes them for a person; any pair
+ * that spans scopes is only proposed, never merged automatically.
  */
 async function planAndApplyMerges(input: MemoryConsolidationInput, active: readonly MemoryRecord[]): Promise<MergePlanResult> {
   const proposals: MemoryConsolidationProposal[] = [];
@@ -229,10 +246,10 @@ async function planAndApplyMerges(input: MemoryConsolidationInput, active: reado
   const merges = new Map<string, { survivor: MemoryRecord; tags: Set<string>; duplicateIds: string[] }>();
 
   const pairs = candidatePairs(active);
-  const relations = await mapLimit(pairs, PAIR_CONCURRENCY, ([a, b]) => classifyMemoryPair(a, b));
+  const readings = await mapLimit(pairs, PAIR_CONCURRENCY, ([a, b]) => classifyMemoryPair(a, b));
 
   pairs.forEach(([a, b], index) => {
-    const relation = relations[index]!;
+    const { relation, replacement } = readings[index]!;
     if (relation === 'unrelated' || resolved.has(a.id) || resolved.has(b.id)) return;
 
     if (a.scope !== b.scope && relation === 'duplicate') {
@@ -255,17 +272,22 @@ async function planAndApplyMerges(input: MemoryConsolidationInput, active: reado
       return;
     }
 
-    const survivor = chooseSurvivor([a, b]);
+    // A duplicate keeps the more trusted record; a contradiction the reading
+    // settles keeps the record it names as the later correction.
+    const replacer = replacement === 'a_replaces_b' ? a : replacement === 'b_replaces_a' ? b : undefined;
+    const survivor = relation === 'contradiction' && replacer ? replacer : chooseSurvivor([a, b]);
     const loser = survivor.id === a.id ? b : a;
     // A record that already absorbed others this run stays their survivor.
     if (merges.has(loser.id)) return;
     const sameScope = a.scope === b.scope;
-    const supersedes = relation === 'contradiction' && sameScope
-      && verifiedRank(survivor) >= verifiedRank(loser) && survivor.updatedAt > loser.updatedAt;
+    // Automation never overturns a person's review: the replacing record must
+    // be at least as reviewed as the one it replaces.
+    const supersedes = relation === 'contradiction' && sameScope && replacer !== undefined
+      && verifiedRank(survivor) >= verifiedRank(loser);
 
     if (relation === 'contradiction' && !supersedes) {
       const reason = sameScope
-        ? 'Records disagree about the same fact and neither is a clearly-newer verified winner.'
+        ? 'Records disagree about the same fact and neither is a later correction at least as reviewed as the other.'
         : 'Records in different scopes disagree about the same fact; resolving across scope needs review.';
       proposals.push({ kind: 'contradiction', ids: [survivor.id, loser.id], route: CURATOR_ROUTE, reason });
       // The proposal REACHES the review machinery: both disagreeing records
@@ -296,7 +318,7 @@ async function planAndApplyMerges(input: MemoryConsolidationInput, active: reado
     } else {
       input.memoryRegistry.review(loser.id, {
         state: 'stale',
-        staleReason: `Superseded by newer verified record ${survivor.id}; resolved by idle consolidation.`,
+        staleReason: `Superseded by ${survivor.id}, a later correction or update of it; resolved by idle consolidation.`,
         reviewedBy: 'consolidation',
       });
     }

@@ -8,13 +8,13 @@
  * scenarios read naturally: a record "matches" when it shares a word of four
  * or more letters with the query, task or response, and two records are the
  * same fact when their summaries are equal (then duplicates when their
- * details agree, contradictory when they differ), and any record not yet
- * reviewed needs review. Tests that pin a specific
+ * details agree, contradictory when they differ, with neither a later
+ * correction of the other), and any record not yet reviewed needs review. Tests that pin a specific
  * reading pass their own function.
  */
 import { afterEach, beforeEach } from 'bun:test';
 import type { Question } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
 export interface RecordText {
@@ -37,6 +37,10 @@ export interface PairReading {
   /** A boolean reads as a strong yes or no; a number is the probability itself. */
   readonly restates: boolean | number;
   readonly conflicts: boolean | number;
+  /** Which record is a later correction of the other; 'neither' when absent. */
+  readonly replaces?: 'a_replaces_b' | 'b_replaces_a' | 'neither';
+  /** The replaces reading's confidence; 0.95 when absent. */
+  readonly replacesConfidence?: number;
 }
 
 export interface MemoryReadingTable {
@@ -106,6 +110,7 @@ function answer(table: Required<MemoryReadingTable>, name: string, question: Que
   }
   if ('record_a' in state) {
     const reading = table.pair(state.record_a as RecordText, state.record_b as RecordText);
+    if (name === 'replaces') return choiceAnswer(question, reading.replaces ?? 'neither', reading.replacesConfidence ?? 0.95);
     const value = name === 'restates' ? reading.restates : reading.conflicts;
     return noulAnswer(typeof value === 'number' ? value : value ? YES : NO);
   }

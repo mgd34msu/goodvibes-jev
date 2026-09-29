@@ -20,7 +20,15 @@
  * secret-handling rules. Demoting the file to a projection must not drop that.
  */
 
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { vibePersonaLine } from './batteries/vibe-persona-line.js';
 import type { MemoryAddOptions, MemoryRecord, MemoryScope } from './memory-store.js';
+
+const VIBE_LINE_SITE = 'state.vibe-projection';
+
+/** Line readings in flight at once. */
+const VIBE_LINE_CONCURRENCY = 8;
 
 /** Tag marking a constraint record as a VIBE.md persona/preference line. */
 export const VIBE_PERSONA_TAG = 'vibe';
@@ -98,6 +106,41 @@ export interface VibeImportOptions {
 }
 
 const BULLET_PREFIX = /^\s*[-*]\s+/;
+const HEADING_PREFIX = /^\s*#+\s*/;
+
+/** A bullet line's text, or undefined when the line is not a bullet with text (markdown list grammar). */
+function bulletText(line: string): string | undefined {
+  if (!BULLET_PREFIX.test(line)) return undefined;
+  const text = line.replace(BULLET_PREFIX, '').trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function isHeading(line: string): boolean {
+  return line.trimStart().startsWith('#');
+}
+
+/**
+ * Reads the lines at `indices` through `engine.state.vibe-persona-line` (one
+ * request per line) and returns the indices of those read as a persona
+ * instruction the band allows acting on. The action is recorded on each
+ * reading.
+ */
+async function readPersonaLines(lines: readonly string[], indices: readonly number[], body: string): Promise<Set<number>> {
+  const port = judgmentPort(VIBE_LINE_SITE);
+  const kept = await mapLimit(indices, VIBE_LINE_CONCURRENCY, async (index) => {
+    const run = await vibePersonaLine.run(port, { line: lines[index]!, body }, { site: VIBE_LINE_SITE });
+    const { instruction } = run.readings;
+    const keep = instruction.verdict === 'yes' && instruction.outcome === 'act';
+    run.recordAction(keep ? 'kept' : 'dropped');
+    return keep;
+  });
+  return new Set(indices.filter((_, position) => kept[position]));
+}
+
+/** Indices of the lines that pass `test`. */
+function indicesWhere(lines: readonly string[], test: (line: string) => boolean): number[] {
+  return lines.flatMap((line, index) => (test(line) ? [index] : []));
+}
 
 /**
  * Turn a VIBE.md body into constraint MemoryAddOptions, the file demoted to an
@@ -105,13 +148,17 @@ const BULLET_PREFIX = /^\s*[-*]\s+/;
  * single record later changes exactly one line of the projected block. A body
  * with no bullets becomes a single record carrying the whole body as detail.
  *
- * Heading lines (starting with '#') and blank lines are dropped; they carry no
- * persona instruction.
+ * Whether a line outside the bullets carries a persona instruction is read by
+ * Jev (batteries/vibe-persona-line.ts): in a bulleted body each other
+ * non-blank line (headings included) is read, and one read as an instruction
+ * becomes its own record, in document order; in a body with no bullets each
+ * heading is read, and one read as an instruction stays in the prose. Blank
+ * lines carry nothing and are never read.
  */
-export function vibeBodyToConstraintOptions(
+export async function vibeBodyToConstraintOptions(
   body: string,
   options: VibeImportOptions = {},
-): MemoryAddOptions[] {
+): Promise<MemoryAddOptions[]> {
   const scope: MemoryScope = options.scope ?? 'project';
   const tags = options.name ? [VIBE_PERSONA_TAG, options.name] : [VIBE_PERSONA_TAG];
   const provenance = options.sourceRef
@@ -119,13 +166,18 @@ export function vibeBodyToConstraintOptions(
     : undefined;
 
   const lines = body.split('\n');
-  const bullets = lines
-    .filter((line) => BULLET_PREFIX.test(line))
-    .map((line) => line.replace(BULLET_PREFIX, '').trim())
-    .filter((line) => line.length > 0);
+  const bulleted = lines.some((line) => bulletText(line) !== undefined);
 
-  if (bullets.length > 0) {
-    return bullets.map((summary) => ({
+  if (bulleted) {
+    const others = indicesWhere(lines, (line) => !BULLET_PREFIX.test(line) && line.trim().length > 0);
+    const instructions = await readPersonaLines(lines, others, body);
+    const summaries: string[] = [];
+    lines.forEach((line, index) => {
+      const bullet = bulletText(line);
+      if (bullet !== undefined) summaries.push(bullet);
+      else if (instructions.has(index)) summaries.push(line.replace(HEADING_PREFIX, '').trim());
+    });
+    return summaries.map((summary) => ({
       scope,
       cls: 'constraint' as const,
       summary,
@@ -134,8 +186,10 @@ export function vibeBodyToConstraintOptions(
     }));
   }
 
+  const headings = indicesWhere(lines, isHeading);
+  const keptHeadings = await readPersonaLines(lines, headings, body);
   const prose = lines
-    .filter((line) => !line.trimStart().startsWith('#'))
+    .filter((line, index) => !isHeading(line) || keptHeadings.has(index))
     .join('\n')
     .trim();
   if (!prose) return [];

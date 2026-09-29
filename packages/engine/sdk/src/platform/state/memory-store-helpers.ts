@@ -143,13 +143,6 @@ export function isReviewFlagged(record: MemoryRecord): boolean {
   return record.reviewState === 'stale' || record.reviewState === 'contradicted';
 }
 
-export function isReviewCandidate(record: MemoryRecord): boolean {
-  return record.reviewState === 'fresh'
-    || record.reviewState === 'reviewed'
-    || record.reviewState === 'stale'
-    || record.reviewState === 'contradicted';
-}
-
 /**
  * Retrieval order when there is no query to rank against: records not flagged
  * for review first, then higher confidence, then most recently updated. A

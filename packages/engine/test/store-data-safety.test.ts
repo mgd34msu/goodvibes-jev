@@ -51,24 +51,24 @@ function readUserVersion(dbPath: string): number {
 }
 
 describe('every store the platform writes carries PRAGMA user_version', () => {
-  test('code index store stamps its schema version at open', () => withScratch((dir) => {
+  test('code index store stamps its schema version at open', () => withScratch(async (dir) => {
     const configManager = new ConfigManager({ configDir: join(dir, 'config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const dbPath = join(dir, 'code-index.sqlite');
     const store = new CodeIndexStore(dir, dbPath, registry);
-    store.init();
+    await store.init();
     const status = store.stats();
     store.close();
     expect(status.available).toBe(true);
     expect(readUserVersion(dbPath)).toBe(1);
   }));
 
-  test('memory vector index stamps its schema version at open', () => withScratch((dir) => {
+  test('memory vector index stamps its schema version at open', () => withScratch(async (dir) => {
     const configManager = new ConfigManager({ configDir: join(dir, 'config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const dbPath = resolveMemoryVectorDbPath(join(dir, 'memory.sqlite'));
     const index = new SqliteVecMemoryIndex(dbPath, undefined, registry);
-    index.init();
+    await index.init();
     index.close();
     expect(readUserVersion(dbPath)).toBe(1);
   }));
@@ -122,7 +122,7 @@ describe('downgrade guard: an older binary refuses a newer schema honestly', () 
     db.close();
   }));
 
-  test('the code index store surfaces the downgrade refusal as an honest unavailable state', () => withScratch((dir) => {
+  test('the code index store surfaces the downgrade refusal as an honest unavailable state', () => withScratch(async (dir) => {
     const dbPath = join(dir, 'code-index.sqlite');
     const seeded = new Database(dbPath);
     seeded.run('PRAGMA user_version = 9');
@@ -131,7 +131,7 @@ describe('downgrade guard: an older binary refuses a newer schema honestly', () 
     const configManager = new ConfigManager({ configDir: join(dir, 'config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const store = new CodeIndexStore(dir, dbPath, registry);
-    store.init();
+    await store.init();
     const status = store.stats();
     store.close();
     expect(status.available).toBe(false);

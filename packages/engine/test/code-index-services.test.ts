@@ -62,12 +62,14 @@ async function waitUntilNotBuilding(store: { isBuilding(): boolean }, timeoutMs 
 }
 
 describe('createCodeIndexServices: real CodeIndexStore wiring', () => {
-  test('constructs a store rooted under the surface-scoped code-index.sqlite, schema-initialized but with no build run', () => {
+  test('constructs a store rooted under the surface-scoped code-index.sqlite, schema-initialized but with no build run', async () => {
     const workingDirectory = makeScratchWorkingDirectory();
     const configManager = makeConfigManager(workingDirectory);
     const memoryEmbeddingRegistry = new MemoryEmbeddingProviderRegistry({ configManager });
 
     const { codeIndexStore } = createCodeIndexServices({ workingDirectory, surfaceRoot: SURFACE_ROOT, configManager, memoryEmbeddingRegistry });
+    // The open started by construction; awaiting init again waits for it.
+    await codeIndexStore.init();
 
     expect(codeIndexDbPath(workingDirectory, SURFACE_ROOT)).toBe(join(workingDirectory, '.goodvibes', SURFACE_ROOT, 'code-index.sqlite'));
     expect(existsSync(codeIndexDbPath(workingDirectory, SURFACE_ROOT))).toBe(true);
@@ -105,6 +107,9 @@ describe('createCodeIndexServices: real CodeIndexStore wiring', () => {
 
     const memoryEmbeddingRegistry = new MemoryEmbeddingProviderRegistry({ configManager });
     const { codeIndexStore } = createCodeIndexServices({ workingDirectory, surfaceRoot: SURFACE_ROOT, configManager, memoryEmbeddingRegistry });
+    // The build is scheduled once the open started by construction settles.
+    await codeIndexStore.init();
+    expect(codeIndexStore.isBuilding()).toBe(true);
 
     await waitUntilNotBuilding(codeIndexStore);
     const stats = codeIndexStore.stats();

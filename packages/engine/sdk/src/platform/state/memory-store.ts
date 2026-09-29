@@ -27,7 +27,6 @@ import {
   clampConfidence,
   compareByTrust,
   createSchema,
-  isReviewCandidate,
   isReviewFlagged,
   normalizeReviewState,
   normalizeScope,
@@ -231,7 +230,7 @@ export class MemoryStore {
     if (this.ready) return;
     await this.sqlite.init(createSchema as Parameters<SQLiteStore['init']>[0], { storeName: 'memory store', schemaVersion: 1 });
     this.ready = true;
-    this.vectorIndex?.init();
+    await this.vectorIndex?.init();
     this.rebuildVectorIndex();
     logger.info('MemoryStore: initialized', { ready: true });
   }
@@ -448,7 +447,7 @@ export class MemoryStore {
 
   /** Records to review: the least trusted records, ordered by the memory-review-priority reading. */
   async reviewQueue(limit = 10, scope?: MemoryScope): Promise<MemoryRecord[]> {
-    const leastTrustedFirst = this.retrieve(scope ? { scope } : {}).filter((record) => isReviewCandidate(record)).reverse();
+    const leastTrustedFirst = this.retrieve(scope ? { scope } : {}).reverse();
     return rankReviewQueue(leastTrustedFirst.slice(0, Math.max(limit * 4, 25)), limit);
   }
 

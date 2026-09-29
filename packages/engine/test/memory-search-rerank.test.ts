@@ -11,6 +11,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { MemoryEmbeddingProviderRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
+import type { MemoryRecord } from '../sdk/src/platform/state/index.js';
+import { SqliteVecMemoryIndex } from '../sdk/src/platform/state/memory-vector-store.js';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { useMemoryReadings } from './_helpers/memory-readings.ts';
 
@@ -141,6 +143,25 @@ describe('MemoryStore.searchSemantic', () => {
     expect(results.map((entry) => entry.score)).toEqual([70]);
     expect(readings.requests).toHaveLength(0);
     store.close();
+  });
+});
+
+describe('SqliteVecMemoryIndex staleOnly', () => {
+  test('returns only records flagged stale or contradicted, never a fresh low-confidence one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gv-memory-vector-stale-'));
+    roots.push(root);
+    const registry = new MemoryEmbeddingProviderRegistry({ configManager: new ConfigManager({ configDir: join(root, 'config') }) });
+    const index = new SqliteVecMemoryIndex(join(root, 'memory.vec.sqlite'), undefined, registry);
+    await index.init();
+    const record = (id: string, reviewState: MemoryRecord['reviewState'], confidence: number): MemoryRecord => ({
+      id, scope: 'project', cls: 'fact', summary: `deploy note ${id}`, tags: [], provenance: [], reviewState, confidence, createdAt: 1, updatedAt: 1,
+    });
+    const records = [record('stale', 'stale', 90), record('contradicted', 'contradicted', 90), record('fresh-low', 'fresh', 20)];
+    await index.syncAsync(records, { force: true });
+    expect(index.stats().available).toBe(true);
+    const ids = index.search('deploy note', { staleOnly: true }).map((candidate) => candidate.id).sort();
+    expect(ids).toEqual(['contradicted', 'stale']);
+    index.close();
   });
 });
 

@@ -179,16 +179,87 @@ describe('runMemoryConsolidation: pair readings', () => {
     });
   });
 
-  test('a review-level pair is still checked for agreement, and a newer verified record supersedes a conflicting older one', async () => {
-    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true }) });
-    const newer = rec({ id: 'newer', reviewState: 'reviewed', summary: 'The daemon listens on port 3421 by default', updatedAt: NOW });
+  test('a review-level pair is still checked for agreement, and a record read as a later correction supersedes the one it replaces', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'a_replaces_b' }) });
+    const newer = rec({ id: 'newer', reviewState: 'reviewed', summary: 'The daemon port moved from 8080 to 3421 in v2', updatedAt: NOW });
     const older = rec({ id: 'older', reviewState: 'fresh', summary: 'Daemon default port is 8080', updatedAt: NOW - DAY_MS });
     const reg = new FakeRegistry([newer, older]);
     const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
     expect(receipt.merged).toEqual([{ survivorId: 'newer', duplicateIds: ['older'], scope: 'project', cls: 'fact' }]);
     expect(reg.records.get('older')!.reviewState).toBe('stale');
-    expect(reg.records.get('older')!.staleReason).toContain('Superseded by newer verified record newer');
+    expect(reg.records.get('older')!.staleReason).toContain('Superseded by newer, a later correction or update of it');
     expect(reg.records.get('newer')!.reviewState).toBe('reviewed');
+  });
+
+  test('the agreement request carries each record\'s created and updated dates', async () => {
+    readings.use({ pair: () => ({ link: 2, restates: false, conflicts: false }) });
+    const a = rec({ id: 'a', summary: 'tests run with bun test', createdAt: Date.UTC(2026, 0, 5), updatedAt: Date.UTC(2026, 2, 9) });
+    const b = rec({ id: 'b', summary: 'tests run with vitest', createdAt: Date.UTC(2025, 11, 1), updatedAt: Date.UTC(2025, 11, 1) });
+    await runMemoryConsolidation({ memoryRegistry: new FakeRegistry([a, b]), config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    const agreement = readings.requests.find((request) => 'record_a' in (request.state as object))!;
+    expect(agreement.state).toEqual({
+      record_a: { class: 'fact', summary: 'tests run with bun test', tags: [], created: '2026-01-05', updated: '2026-03-09' },
+      record_b: { class: 'fact', summary: 'tests run with vitest', tags: [], created: '2025-12-01', updated: '2025-12-01' },
+    });
+    expect(Object.keys(agreement.questions).sort()).toEqual(['conflicts', 'replaces', 'restates']);
+  });
+
+  test('b_replaces_a stales the replaced record even when it is the newer one by timestamp', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'b_replaces_a' }) });
+    const a = rec({ id: 'a', summary: 'The daemon listens on port 8080', updatedAt: NOW });
+    const b = rec({ id: 'b', summary: 'The daemon port moved from 8080 to 3421', updatedAt: NOW - DAY_MS });
+    const reg = new FakeRegistry([a, b]);
+    const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    expect(receipt.merged).toEqual([{ survivorId: 'b', duplicateIds: ['a'], scope: 'project', cls: 'fact' }]);
+    expect(reg.records.get('a')!.reviewState).toBe('stale');
+    expect(reg.records.get('a')!.staleReason).toContain('Superseded by b');
+    expect(reg.records.get('b')!.reviewState).toBe('fresh');
+  });
+
+  test('neither: a newer, more reviewed record does not win on its date; both go to a person', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'neither' }) });
+    const newer = rec({ id: 'newer', reviewState: 'reviewed', summary: 'Tests run with vitest', updatedAt: NOW });
+    const older = rec({ id: 'older', reviewState: 'fresh', summary: 'Tests run with bun test', updatedAt: NOW - DAY_MS });
+    const reg = new FakeRegistry([newer, older]);
+    const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    expect(receipt.merged).toEqual([]);
+    expect(receipt.proposed.map((p) => p.kind)).toEqual(['contradiction']);
+    expect(reg.records.get('newer')!.reviewState).toBe('contradicted');
+    expect(reg.records.get('older')!.reviewState).toBe('contradicted');
+  });
+
+  test('a replacement the reading is not sure enough of goes to a person', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'a_replaces_b', replacesConfidence: 0.65 }) });
+    const a = rec({ id: 'a', summary: 'The daemon port moved to 3421', updatedAt: NOW });
+    const b = rec({ id: 'b', summary: 'The daemon listens on port 8080', updatedAt: NOW - DAY_MS });
+    const reg = new FakeRegistry([a, b]);
+    const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    expect(receipt.merged).toEqual([]);
+    expect(receipt.proposed.map((p) => p.kind)).toEqual(['contradiction']);
+    expect(reg.records.get('a')!.reviewState).toBe('contradicted');
+    expect(reg.records.get('b')!.reviewState).toBe('contradicted');
+  });
+
+  test('a correction less reviewed than the record it replaces does not overturn the review', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'a_replaces_b' }) });
+    const a = rec({ id: 'a', reviewState: 'fresh', summary: 'The daemon port moved to 3421', updatedAt: NOW });
+    const b = rec({ id: 'b', reviewState: 'reviewed', summary: 'The daemon listens on port 8080', updatedAt: NOW - DAY_MS });
+    const reg = new FakeRegistry([a, b]);
+    const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    expect(receipt.merged).toEqual([]);
+    expect(receipt.proposed.map((p) => p.kind)).toEqual(['contradiction']);
+    expect(reg.records.get('b')!.reviewState).toBe('contradicted');
+  });
+
+  test('a replacement across scopes is only proposed', async () => {
+    readings.use({ pair: () => ({ link: 1, restates: false, conflicts: true, replaces: 'a_replaces_b' }) });
+    const a = rec({ id: 'a', scope: 'project', summary: 'The daemon port moved to 3421', updatedAt: NOW });
+    const b = rec({ id: 'b', scope: 'team', summary: 'The daemon listens on port 8080', updatedAt: NOW - DAY_MS });
+    const reg = new FakeRegistry([a, b]);
+    const receipt = await runMemoryConsolidation({ memoryRegistry: reg, config: cfg(), now: NOW, trigger: 'idle', idle: true });
+    expect(receipt.merged).toEqual([]);
+    expect(receipt.proposed.map((p) => p.kind)).toEqual(['contradiction']);
+    expect(receipt.proposed[0]!.reason).toContain('different scopes');
   });
 
   test('a restatement the reading is not sure of changes nothing', async () => {

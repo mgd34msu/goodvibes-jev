@@ -50,7 +50,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     expect(registry.getDefaultProviderId()).toBe(HASHED_MEMORY_EMBEDDING_PROVIDER.id);
 
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     expect(store.hasSemanticProvider()).toBe(false);
     const reason = store.describeDegradation();
@@ -68,7 +68,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     const configManager = new ConfigManager({ configDir: join(root, '.config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
     await store.buildFull();
 
     const results = await store.search('foo', { limit: 10 });
@@ -84,7 +84,7 @@ describe('CodeIndexStore: no-embedding-provider degradation (Stage A)', () => {
     const configManager = new ConfigManager({ configDir: join(root, '.config') });
     const registry = new MemoryEmbeddingProviderRegistry({ configManager });
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const realProvider: MemoryEmbeddingProvider = {
       id: 'fake-real-provider',

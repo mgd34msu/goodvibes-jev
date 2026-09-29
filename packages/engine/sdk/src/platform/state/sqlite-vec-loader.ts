@@ -3,11 +3,14 @@
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { Database } from 'bun:sqlite';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { sqliteVecLoadFailureView, sqliteVecRefusal } from './batteries/sqlite-vec-refusal.js';
+
+const SQLITE_VEC_REFUSAL_SITE = 'state.sqlite-vec-loader';
 
 /**
- * `sqlite-vec` is an optionalDependency and this loader is reached from
- * synchronous store constructors, so it cannot be awaited. Resolved through
- * `createRequire` at the one call that needs it instead, the same technique,
+ * `sqlite-vec` is an optionalDependency, resolved through `createRequire` at
+ * the one call that needs it rather than imported statically, the same technique,
  * and for the same reason, as the `bun:sqlite` resolution in
  * knowledge/browser-history/readers.ts: a static import puts the specifier on
  * the module graph, and a graph that cannot link is a process that dies at
@@ -38,9 +41,13 @@ function requireSqliteVecLoad(): (db: Database) => void {
  * code-index-store.ts (the repo source-tree code index; see CHANGELOG 0.38.0) so both
  * indexes load the exact same native extension the exact same way.
  */
+/** Whether this is a Bun compiled binary: Bun's virtual bundle filesystem is marked `$bunfs` in module URLs. */
+function isBundledRun(): boolean {
+  return import.meta.url.includes('$bunfs');
+}
+
 export function resolveSqliteVecPath(): string {
-  const isBundled = import.meta.url.includes('$bunfs');
-  if (isBundled) {
+  if (isBundledRun()) {
     const os = process.platform === 'win32' ? 'windows' : process.platform;
     const arch = process.arch;
     const suffix = process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so';
@@ -72,13 +79,21 @@ export class SqliteVecPlatformUnsupportedError extends Error {
   }
 }
 
-/** True when a loadExtension throw is the platform capability refusal, not a packaging defect. */
-function isExtensionLoadingRefusal(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  // Apple's SQLite refuses with an authorization message; a build with
-  // SQLITE_OMIT_LOAD_EXTENSION names the capability. A missing file surfaces
-  // as ENOENT/dlopen-no-such-file and must stay a loud defect.
-  return /not authorized|omit.*load.*extension|extension loading is disabled|does not support dynamic extension loading/i.test(message);
+/**
+ * Whether a load failure is the platform refusing extension loading, read by
+ * Jev (`engine.state.sqlite-vec-refusal`, batteries/sqlite-vec-refusal.ts):
+ * true only on a yes the band allows acting on. The action is recorded.
+ */
+async function readsAsPlatformRefusal(message: string): Promise<boolean> {
+  const run = await sqliteVecRefusal.run(
+    judgmentPort(SQLITE_VEC_REFUSAL_SITE),
+    sqliteVecLoadFailureView(message, process.platform, isBundledRun()),
+    { site: SQLITE_VEC_REFUSAL_SITE },
+  );
+  const refuses = run.readings.platform_refuses;
+  const platformLimit = refuses.verdict === 'yes' && refuses.outcome === 'act';
+  run.recordAction(platformLimit ? 'platform-limit' : 'rethrown');
+  return platformLimit;
 }
 
 /**
@@ -87,8 +102,9 @@ function isExtensionLoadingRefusal(err: unknown): boolean {
  *
  * Throws SqliteVecPlatformUnsupportedError when the platform itself refuses
  * extension loading (see the class doc); rethrows everything else untouched.
+ * The refusal is read by Jev only when loading fails.
  */
-export function loadSqliteVecExtension(db: Database): void {
+export async function loadSqliteVecExtension(db: Database): Promise<void> {
   const bundledPath = resolveSqliteVecPath();
   try {
     if (bundledPath) {
@@ -97,8 +113,9 @@ export function loadSqliteVecExtension(db: Database): void {
       requireSqliteVecLoad()(db);
     }
   } catch (err) {
-    if (isExtensionLoadingRefusal(err)) {
-      throw new SqliteVecPlatformUnsupportedError(err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    if (await readsAsPlatformRefusal(message)) {
+      throw new SqliteVecPlatformUnsupportedError(message);
     }
     throw err;
   }

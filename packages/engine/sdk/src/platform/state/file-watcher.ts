@@ -1,33 +1,25 @@
-import { existsSync, statSync, watch, watchFile, unwatchFile, type Stats } from 'fs';
+import { existsSync, readdirSync, statSync, watch, watchFile, unwatchFile, type Stats } from 'fs';
 import type { FSWatcher } from 'fs';
 import { join, resolve } from 'path';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { recordAction } from '@goodvibes-jev/judgment';
 import { logger } from '../utils/logger.js';
+import { rootEntryCandidate, WATCHED_CONFIG_QUERY, watchedConfig } from './batteries/watched-config.js';
 import type { FileStateCache } from './file-cache.js';
 import type { ProjectIndex } from './project-index.js';
 import type { HookDispatcher } from '../hooks/dispatcher.js';
 import type { HookEvent } from '../hooks/types.js';
 import { summarizeError } from '../utils/error-display.js';
 
-/**
- * Default paths to watch relative to project root.
- * Glob-like patterns are expanded manually.
- */
-const DEFAULT_WATCH_PATHS = [
-  'package.json',
-  'tsconfig.json',
-];
-
-/** .env* files to watch (checked for existence on start) */
-const DEFAULT_ENV_GLOBS = [
-  '.env',
-  '.env.local',
-  '.env.development',
-  '.env.production',
-  '.env.test',
-];
+const WATCHED_CONFIG_SITE = 'state.file-watcher';
 
 /**
  * FileWatcher, watches key project files and invalidates caches on change.
+ *
+ * Which root files are project configuration or environment files worth
+ * watching is read by Jev (`engine.state.watched-config`,
+ * batteries/watched-config.ts) over the names of the regular files in the
+ * project root, once per start().
  *
  * Uses Node.js/Bun-native `fs.watch`. Debounces events per-file (100ms).
  * On change:
@@ -73,19 +65,25 @@ export class FileWatcher {
 
   /**
    * Start watching all registered paths.
-   * Adds default paths (package.json, tsconfig.json, .env*, .goodvibes/**).
-   * Also watches all files currently in ProjectIndex.
+   * Adds the root files read as project configuration or environment files,
+   * and .goodvibes/**. Also watches all files currently in ProjectIndex.
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this.watching) return;
     this.watching = true;
 
-    // Register default config paths
-    for (const rel of DEFAULT_WATCH_PATHS) {
-      this.addPath(join(this.projectRoot, rel));
+    let configFiles: string[];
+    try {
+      configFiles = await this.readConfigFiles();
+    } catch (err) {
+      this.watching = false;
+      throw err;
     }
-    for (const rel of DEFAULT_ENV_GLOBS) {
-      this.addPath(join(this.projectRoot, rel));
+    // stop() ran while the root was being read.
+    if (!this.watching) return;
+
+    for (const name of configFiles) {
+      this.addPath(join(this.projectRoot, name));
     }
 
     // Watch .goodvibes/ directory tree (recursive)
@@ -105,6 +103,34 @@ export class FileWatcher {
     }
 
     logger.debug('FileWatcher: started', { watched: this.watchedPaths.size });
+  }
+
+  /**
+   * The names of the regular files in the project root read as project
+   * configuration or environment files, each on its own yes/no; only a yes
+   * the band allows acting on is watched. The action is recorded per entry.
+   */
+  private async readConfigFiles(): Promise<string[]> {
+    let names: string[];
+    try {
+      names = readdirSync(this.projectRoot, { withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => entry.name)
+        .sort();
+    } catch (err) {
+      logger.warn('FileWatcher: project root listing failed', { projectRoot: this.projectRoot, error: summarizeError(err) });
+      return [];
+    }
+    if (names.length === 0) return [];
+    const port = judgmentPort(WATCHED_CONFIG_SITE);
+    const { ranked } = await watchedConfig.rerank(port, WATCHED_CONFIG_QUERY, names.map(rootEntryCandidate), { site: WATCHED_CONFIG_SITE });
+    const watched: string[] = [];
+    for (const entry of ranked) {
+      const isConfig = entry.reading.verdict === 'yes' && entry.reading.outcome === 'act';
+      recordAction(port, entry.decisionId, isConfig ? 'watched' : 'not-watched');
+      if (isConfig) watched.push(entry.id);
+    }
+    return watched.sort();
   }
 
   /**

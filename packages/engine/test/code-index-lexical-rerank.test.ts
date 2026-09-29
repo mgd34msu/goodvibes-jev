@@ -54,7 +54,7 @@ beforeEach(async () => {
   const registry = new MemoryEmbeddingProviderRegistry({ configManager: new ConfigManager({ configDir: join(root, '.config') }) });
   registry.register(provider('prov-x'), { makeDefault: true });
   store = new CodeIndexStore(root, ':memory:', registry);
-  store.init();
+  await store.init();
   await store.buildFull();
   registry.register(provider('prov-y'), { makeDefault: true });
   expect(store.stats().embeddingProviderMismatch).toBeDefined();

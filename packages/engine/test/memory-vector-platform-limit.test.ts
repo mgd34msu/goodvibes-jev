@@ -4,8 +4,11 @@
  * degrade with platformLimitReason set and NO error field, while a genuine
  * packaging defect (missing extension file) must stay a loud error.
  */
-import { describe, expect, test } from 'bun:test';
-import { SqliteVecPlatformUnsupportedError } from '../sdk/src/platform/state/sqlite-vec-loader.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { loadSqliteVecExtension, SqliteVecPlatformUnsupportedError } from '../sdk/src/platform/state/sqlite-vec-loader.ts';
 
 describe('sqlite-vec platform-limit classification', () => {
   test('the typed platform error carries the honest literal-fallback wording', () => {
@@ -25,17 +28,56 @@ describe('sqlite-vec platform-limit classification', () => {
   });
 });
 
-import { loadSqliteVecExtension } from '../sdk/src/platform/state/sqlite-vec-loader.ts';
-
-describe('refusal classification against the real messages', () => {
-  const fakeDb = (msg: string) => ({ loadExtension: () => { throw new Error(msg); } });
-  test('darwin system-sqlite refusal → platform limit', () => {
-    // Force the bundled path off; loadSqliteVec delegates and throws our fake's message
-    expect(() => loadSqliteVecExtension(fakeDb('This build of sqlite3 does not support dynamic extension loading') as never))
-      .toThrow(SqliteVecPlatformUnsupportedError);
+/**
+ * Whether a load failure is the platform's refusal is read by Jev
+ * (engine.state.sqlite-vec-refusal); this fake port answers it with the
+ * probability the test sets, so each answer's handling is pinned.
+ */
+describe('a load failure is classified by the refusal reading', () => {
+  let probability = 0.97;
+  let requests: ReturnType<typeof fakePort>['requests'] = [];
+  let previous: JudgmentPort | undefined;
+  beforeEach(() => {
+    const fake = fakePort((name) => {
+      if (name !== 'platform_refuses') throw new Error(`unexpected question ${name}`);
+      return noulAnswer(probability);
+    });
+    requests = fake.requests;
+    previous = installJudgmentPort(fake.port);
   });
-  test('missing file stays a loud defect', () => {
-    expect(() => loadSqliteVecExtension(fakeDb('dlopen failed: no such file or directory') as never))
-      .not.toThrow(SqliteVecPlatformUnsupportedError);
+  afterEach(() => {
+    installJudgmentPort(previous);
+  });
+
+  const fakeDb = (msg: string) => ({ loadExtension: () => { throw new Error(msg); } });
+
+  test('a yes throws the platform-limit error carrying the refusal', async () => {
+    probability = 0.97;
+    const refusal = 'This build of sqlite3 does not support dynamic extension loading';
+    const failure = await loadSqliteVecExtension(fakeDb(refusal) as never).catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(SqliteVecPlatformUnsupportedError);
+    expect((failure as Error).message).toContain(refusal);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.state).toEqual({ message: refusal, platform: process.platform, bundled: false });
+  });
+
+  test('a no rethrows the original error, a loud defect', async () => {
+    probability = 0.03;
+    const missing = 'dlopen failed: no such file or directory';
+    const failure = await loadSqliteVecExtension(fakeDb(missing) as never).catch((err: unknown) => err);
+    expect(failure).not.toBeInstanceOf(SqliteVecPlatformUnsupportedError);
+    expect((failure as Error).message).toBe(missing);
+  });
+
+  test('a yes too weak to act on rethrows the original error', async () => {
+    probability = 0.65;
+    const failure = await loadSqliteVecExtension(fakeDb('not authorized') as never).catch((err: unknown) => err);
+    expect(failure).not.toBeInstanceOf(SqliteVecPlatformUnsupportedError);
+    expect((failure as Error).message).toBe('not authorized');
+  });
+
+  test('a successful load asks nothing', async () => {
+    await loadSqliteVecExtension({ loadExtension: () => undefined } as never);
+    expect(requests).toHaveLength(0);
   });
 });

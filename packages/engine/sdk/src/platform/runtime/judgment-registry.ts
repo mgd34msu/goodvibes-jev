@@ -48,6 +48,14 @@ registry.register(systemMessagePriority);
 import { codeSearchRerank } from '../state/batteries/code-search-rerank.js';
 registry.register(codeSearchRerank);
 
+// State: file watching, the sqlite-vec loader, VIBE.md import.
+import { sqliteVecRefusal } from '../state/batteries/sqlite-vec-refusal.js';
+import { vibePersonaLine } from '../state/batteries/vibe-persona-line.js';
+import { watchedConfig } from '../state/batteries/watched-config.js';
+registry.register(watchedConfig);
+registry.register(sqliteVecRefusal);
+registry.register(vibePersonaLine);
+
 // Runtime: ecosystem catalog search and review.
 import { catalogSearch } from './ecosystem/batteries/catalog-search.js';
 import { trustNoteCaution } from './ecosystem/batteries/trust-note-caution.js';

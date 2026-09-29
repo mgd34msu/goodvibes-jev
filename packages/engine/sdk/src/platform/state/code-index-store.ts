@@ -177,6 +177,8 @@ export class CodeIndexStore {
   private available = false;
   private error: string | undefined;
   private platformLimitReason: string | undefined;
+  /** The open in flight, so concurrent init calls share it. */
+  private opening: Promise<void> | null = null;
   private building = false;
   private buildStartedAtMs: number | null = null;
   private buildPromise: Promise<CodeIndexBuildStats> | null = null;
@@ -208,14 +210,29 @@ export class CodeIndexStore {
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
 
-  init(): void {
-    if (this.db) return;
+  /**
+   * Opens the store. Never rejects: a failure leaves the store unavailable
+   * with platformLimitReason or error set. Loading the extension reads a
+   * load failure through Jev (sqlite-vec-loader.ts), hence async.
+   * Idempotent: a later call waits for an open still in flight, so a holder
+   * that did not start the open can await it.
+   */
+  init(): Promise<void> {
+    if (this.opening) return this.opening;
+    if (this.db) return Promise.resolve();
+    this.opening = this.open().finally(() => {
+      this.opening = null;
+    });
+    return this.opening;
+  }
+
+  private async open(): Promise<void> {
     try {
       if (this.dbPath !== ':memory:') {
         mkdirSync(dirname(this.dbPath), { recursive: true });
       }
       this.db = new (bunSqliteDatabase())(this.dbPath);
-      loadSqliteVecExtension(this.db);
+      await loadSqliteVecExtension(this.db);
       this.available = true;
       // Schema versioning: pre-migration snapshot, auto-restore on failure,
       // and a downgrade guard (an older binary refuses a newer schema).
@@ -262,6 +279,8 @@ export class CodeIndexStore {
    * store originally.
    */
   async reroot(newRootDir: string, newDbPath: string): Promise<void> {
+    // An open still in flight finishes at the old path before it is closed.
+    if (this.opening) await this.opening;
     this.epoch++;
     this.close();
     this.buildPromise = null;
@@ -271,7 +290,7 @@ export class CodeIndexStore {
     this.progress = null;
     this.rootDir = newRootDir;
     this.dbPath = newDbPath;
-    this.init();
+    await this.init();
   }
 
   // ── Status ───────────────────────────────────────────────────────────────

@@ -103,7 +103,7 @@ describe('CodeIndexStore: reroot()-during-build race (epoch abort)', () => {
     registry.register(gatedProvider, { makeDefault: true });
 
     const store = new CodeIndexStore(rootA, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const buildPromise = store.buildFull();
     await firstEmbedStarted;
@@ -139,7 +139,7 @@ describe('CodeIndexStore: embedding-provider mismatch honesty', () => {
     registry.register(providerX, { makeDefault: true });
 
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
     await store.buildFull();
 
     // Same provider: vector path, semantic label, no mismatch reported.
@@ -191,7 +191,7 @@ describe('CodeIndexStore: chunk accounting honesty', () => {
     registry.register(provider, { makeDefault: true });
 
     const store = new CodeIndexStore(root, ':memory:', registry);
-    store.init();
+    await store.init();
 
     const first = await store.buildFull();
     expect(first.chunksIndexed).toBe(3);

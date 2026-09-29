@@ -131,6 +131,8 @@ export class SqliteVecMemoryIndex {
   private available = false;
   private error: string | undefined;
   private platformLimitReason: string | undefined;
+  /** The open in flight, so concurrent init calls share it. */
+  private opening: Promise<void> | null = null;
   private static readonly rebuildBatchSize = 25;
 
   constructor(
@@ -139,14 +141,29 @@ export class SqliteVecMemoryIndex {
     private readonly embeddingRegistry: MemoryEmbeddingProviderRegistry,
   ) {}
 
-  init(): void {
-    if (this.db) return;
+  /**
+   * Opens the index. Never rejects: a failure leaves the index unavailable
+   * with platformLimitReason or error set. Loading the extension reads a
+   * load failure through Jev (sqlite-vec-loader.ts), hence async.
+   * Idempotent: a later call waits for an open still in flight, so a holder
+   * that did not start the open can await it.
+   */
+  init(): Promise<void> {
+    if (this.opening) return this.opening;
+    if (this.db) return Promise.resolve();
+    this.opening = this.open().finally(() => {
+      this.opening = null;
+    });
+    return this.opening;
+  }
+
+  private async open(): Promise<void> {
     try {
       if (this.dbPath !== ':memory:') {
         mkdirSync(dirname(this.dbPath), { recursive: true });
       }
       this.db = new (bunSqliteDatabase())(this.dbPath);
-      loadSqliteVecExtension(this.db);
+      await loadSqliteVecExtension(this.db);
       this.available = true;
       this.enabled = true;
       // Schema versioning: pre-migration snapshot, auto-restore on failure,
@@ -352,7 +369,7 @@ export class SqliteVecMemoryIndex {
       params.push(filter.minConfidence);
     }
     if (filter.staleOnly) {
-      where.push("(review_state = 'stale' OR review_state = 'contradicted' OR confidence < 70)");
+      where.push("(review_state = 'stale' OR review_state = 'contradicted')");
     } else {
       where.push("review_state != 'contradicted'");
     }

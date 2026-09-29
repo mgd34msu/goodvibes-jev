@@ -140,11 +140,11 @@ export function isCodeIndexAutoStartEnabled(configManager: Pick<ConfigManager, '
 
 /**
  * Constructs the CodeIndexStore. Schema-init runs unconditionally
- * (init() never throws, it degrades to an honest `available: false` +
+ * (init() never rejects, it degrades to an honest `available: false` +
  * recorded error on failure, mirrored by CodeIndexStats/describeDegradation);
- * the initial full build only fires when isCodeIndexAutoStartEnabled() is
- * true, via the SAME fire-and-forget scheduleBuild() an explicit
- * `/codebase build` invocation uses.
+ * once it settles, the initial full build only fires when
+ * isCodeIndexAutoStartEnabled() is true, via the SAME fire-and-forget
+ * scheduleBuild() an explicit `/codebase build` invocation uses.
  */
 export function createCodeIndexServices(deps: CodeIndexServicesDeps): CodeIndexServices {
   const codeIndexStore = new CodeIndexStore(
@@ -153,10 +153,11 @@ export function createCodeIndexServices(deps: CodeIndexServicesDeps): CodeIndexS
     deps.memoryEmbeddingRegistry,
     { maxFiles: CODE_INDEX_MAX_FILES, maxFileBytes: CODE_INDEX_MAX_FILE_BYTES, maxTotalBytes: CODE_INDEX_MAX_TOTAL_BYTES },
   );
-  codeIndexStore.init();
-  if (isCodeIndexAutoStartEnabled(deps.configManager)) {
-    codeIndexStore.scheduleBuild();
-  }
+  // init never rejects; it is async because a failed extension load is read
+  // by Jev (sqlite-vec-loader.ts). The build starts once the store is open.
+  void codeIndexStore.init().then(() => {
+    if (isCodeIndexAutoStartEnabled(deps.configManager)) codeIndexStore.scheduleBuild();
+  });
   const codeIndexReindexScheduler = new CodeIndexReindexScheduler({
     target: codeIndexStore,
     workingDirectory: deps.workingDirectory,
