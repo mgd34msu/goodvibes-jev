@@ -328,6 +328,7 @@ export { checkDraftFidelity, draftSection, numberDraft } from './draft-plan.js';
 export { createContractFleetControls, qualifyId, splitQualifiedId } from './fleet-controls.js';
 export type { ContractConflictItem, ContractFleetControls, ContractFleetControlsDeps } from './fleet-controls.js';
 export { createRoutePlannerContractSelector } from './route.js';
+export type { ContractPlannedRoute, ContractRoutePlanner } from './route.js';
 export { ContractExternalWorkBridge } from './external.js';
 export type {
   ContractExternalWorkAdapter,

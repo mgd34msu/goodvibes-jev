@@ -209,7 +209,9 @@ describe('best-of-N on the contract runner', () => {
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'the contract to end', 20_000);
     expect(h.store.get(contract.id)!.status).toBe('passed');
-    expect(asked.filter((entry) => entry.startsWith('unit:'))).toEqual(['unit:u1', 'unit:u1#a0', 'unit:u1#a1']);
+    // The plan unit runs no agent of its own, so only its attempts are routed.
+    expect(asked.filter((entry) => entry.startsWith('unit:'))).toEqual(['unit:u1#a0', 'unit:u1#a1']);
+    expect(h.store.get(contract.id)!.units[0]!.route).toBeUndefined();
     const spawned = eventsOf(h, 'CONTRACT_UNIT_SPAWNED').map((event) => [event.unitId, event.route.model, event.route.reason]);
     expect(spawned.sort()).toEqual([
       ['u1#a0', 'provider-a:model-u1#a0', 'picked for u1#a0'],

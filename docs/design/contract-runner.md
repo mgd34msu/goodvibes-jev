@@ -146,6 +146,14 @@ export interface UnitRoute {
 }
 ```
 
+Points resolved when this was built (R.11):
+
+- **The selector is the route planner.** `createRoutePlannerContractSelector(planner)` (`contract/route.ts`) takes a `ContractRoutePlanner`, the part of the routing subsystem's `RoutePlanner` it reads (`model`, `provider`, `fallbackModels`, `reason` of a `PlannedRoute`), and is built over `createRoutePlanner` in `runtime/contract-composition.ts`. Every host reaches that one composition: `createRuntimeServices` (the daemon, its CLI and `bootDaemon`, which the embed entry re-exports), `createClientRuntimeServices` (whose runner a hosted-session floor carries, 10.2), and `createAgentGraph` (`agent-graph-composition.ts`). The contract module names no vendor and no model, and no route in it is picked outside the planner.
+- **What the route records.** The route's `reason` is the planner's own words: the tier the work needs and why, the request readings, the tier chosen from when it differs, the model chosen, how many candidates it was chosen from, and the pick's confidence and outcome. The planner's other fitting models are the route's `fallbackModels`. The reason is copied onto the unit's `spawned` decision, `CONTRACT_UNIT_SPAWNED` and `AgentRecord.routeReason`.
+- **Purpose.** The planner is told the runner's purpose, except that every agent of an integration unit (its first agent, a fresh agent after a stall, and each of its attempts) is routed as `integration`, so the routing policy's floor for integration work holds for all of them.
+- **Best-of-N.** Each attempt unit is routed on its own request, so each attempt's route is the planner's own pick for it (6.2). The plan unit of a best-of-N unit runs no agent and is not routed; its fleet row shows its attempts' models.
+- **No route.** A `NoRouteError` (no configured, healthy model fits) or a Jev outage in the planner is the selector's error, and nothing picks a model in its place. The contract fails where the route was asked for: planning fails with `planning`, or `judgment-unavailable` when Jev could not answer; a group that cannot route its units fails the contract as it starts; a correction step fails it through its guard; and an owner reply whose amendment cannot be routed fails the contract (the escalation is already answered, so the contract is not left waiting) and the reply call rejects with the error.
+
 ### 2.3 Data model (`contract/types.ts`)
 
 Ids: `ctr-<8 hex>` for contracts, `g<n>` and `u<n>` inside a contract (planner-assigned, validated unique), `c<n>` for contract criteria, `<unitId>.c<n>` for unit criteria, `<groupId>.c<n>` for group criteria. The group id is also the id of the orchestration workstream that runs it; the unit id is also the work item id. That one-to-one mapping means `fleet.graph.get`, `fleet.attempts.*` and `fleet.conflicts.*` keep working with the group id as their `workstreamId`.

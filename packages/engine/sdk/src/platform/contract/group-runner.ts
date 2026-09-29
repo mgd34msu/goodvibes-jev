@@ -180,16 +180,14 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
         }
         run.sharedTreeReleases.set(group.id, release);
       }
-      for (const unit of units) {
+      for (const unit of units) expandAttempts(run, unit);
+      // Every unit that runs an agent is routed before it spawns: a unit on its
+      // own, or each attempt of a best-of-N unit (each its own pick). A plan
+      // unit with attempts runs no agent, so it is not routed.
+      const runsAgent = units.flatMap((unit) => unit.attemptUnits ?? [unit]);
+      for (const unit of runsAgent) {
         if (unit.route !== undefined) continue;
         unit.route = await deps.routeSelector({ purpose: unit.role === 'integration' ? 'integration' : 'unit', contract: run.view(), unit: structuredClone(unit) });
-        if (run.terminal) return;
-      }
-      for (const unit of units) expandAttempts(run, unit);
-      // Each attempt is its own try: the route selector picks its model too.
-      for (const attempt of units.flatMap((unit) => unit.attemptUnits ?? [])) {
-        if (attempt.route !== undefined) continue;
-        attempt.route = await deps.routeSelector({ purpose: 'unit', contract: run.view(), unit: structuredClone(attempt) });
         if (run.terminal) return;
       }
       rollUpContractUsage(contract, deps.getStatus, deps.pricing);

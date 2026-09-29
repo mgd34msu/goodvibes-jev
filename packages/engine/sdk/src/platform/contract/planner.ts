@@ -468,7 +468,10 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   try {
     route = await deps.routeSelector({ purpose: 'planner', contract });
   } catch (error) {
-    if (signal?.aborted) return { kind: 'cancelled' };
+    if (isAbort(error, signal)) return { kind: 'cancelled' };
+    // The route planner reads the work through Jev: an outage is the judgment's, not the planning's.
+    const unavailable = judgmentFailureReason(error);
+    if (unavailable !== undefined) return context.fail('judgment-unavailable', `no route for the planner: ${unavailable}`);
     return context.fail('planning', `no route for the planner: ${summarizeError(error)}`);
   }
   context.decide('spawned', `planner route: ${route.reason}`, [], route);

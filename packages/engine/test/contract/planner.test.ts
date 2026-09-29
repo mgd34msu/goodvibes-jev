@@ -21,6 +21,7 @@ import {
   withOwnerWritingDecision,
   type ContractPlannerDeps,
 } from '../../sdk/src/platform/contract/planner.js';
+import { NoRouteError } from '../../sdk/src/platform/routing/route-planner.js';
 import { parseContractPlan, unitToolContract } from '../../sdk/src/platform/contract/plan-schema.js';
 import type { ContractEvent } from '../../sdk/src/events/contract.js';
 import type { Contract } from '../../sdk/src/platform/contract/index.js';
@@ -352,12 +353,24 @@ describe('planContract: failure, with no single-item fallback', () => {
     expect(contract.units).toEqual([]);
   });
 
-  test('a route selector that cannot route fails the contract with planning', async () => {
+  test('no route for the planner fails the contract with planning and the route planner\'s reason, and no planner agent runs', async () => {
     install();
     const contract = shapedContract();
     const { deps, requests } = harness([plannerOutput(validPlan())]);
-    const outcome = await planContract(contract, { ...deps, routeSelector: async () => { throw new Error('no model for planner'); } });
+    const noRoute = new NoRouteError('No configured, healthy provider serves a model that meets this work\'s requirements (tool calling, context window, image input).');
+    const outcome = await planContract(contract, { ...deps, routeSelector: async () => { throw noRoute; } });
     expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'planning' });
+    expect(contract.error).toBe(`no route for the planner: ${noRoute.message}`);
+    expect(requests).toHaveLength(0);
+  });
+
+  test('a Jev outage while routing the planner fails the contract as judgment-unavailable', async () => {
+    install();
+    const contract = shapedContract();
+    const { deps, requests } = harness([plannerOutput(validPlan())]);
+    const outcome = await planContract(contract, { ...deps, routeSelector: async () => { throw new JudgmentError('unavailable', 'endpoint down'); } });
+    expect(outcome).toMatchObject({ kind: 'failed', failureKind: 'judgment-unavailable' });
+    expect(contract.error).toBe('no route for the planner: Jev could not answer: endpoint down');
     expect(requests).toHaveLength(0);
   });
 

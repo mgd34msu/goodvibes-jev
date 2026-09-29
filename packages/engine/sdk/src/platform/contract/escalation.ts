@@ -470,7 +470,18 @@ export function createEscalations(context: StepContext, rejudge: Rejudge): Escal
       run.contract.failureKind = 'owner-rejected';
       run.control.cancel('stopped by the owner');
     } else {
-      handled = reading === 'approve' ? await approve(run, escalation, read.decisionId) : await amend(run, escalation, text, read.decisionId);
+      try {
+        handled = reading === 'approve' ? await approve(run, escalation, read.decisionId) : await amend(run, escalation, text, read.decisionId);
+      } catch (error) {
+        // The escalation is already answered, so a step that cannot run (no
+        // route for the amendment planner, a Jev outage) fails the contract
+        // rather than leaving it waiting on an owner who has replied.
+        if (!run.terminal && !isAbortError(error, run.abort.signal)) {
+          const failure = failureFromError(error);
+          run.control.fail(failure.kind, `the owner's reply to ${escalation.id} could not be acted on: ${failure.reason}`);
+        }
+        throw error;
+      }
       replied(handled.action);
     }
     return {

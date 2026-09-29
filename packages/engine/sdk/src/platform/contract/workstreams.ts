@@ -62,7 +62,10 @@ export function remainingBudget(ceiling: BudgetCeiling | undefined, used: WorkIt
 /** The work item for one unit: its brief (with "Previous checks" once it was checked), route, tool contract and binding. */
 export function unitWorkItem(contract: Contract, group: ContractGroup, unit: ContractUnit): WorkItemSpec {
   if (contract.shape === undefined) throw new Error(`contract ${contract.id} has no request shape`);
-  if (unit.route === undefined) throw new Error(`unit ${unit.id} has no route; the route selector must pick one before its agent is spawned`);
+  // A unit runs its own agent, or (best-of-N in worktree mode) one agent per attempt; each is routed before it spawns.
+  for (const routed of unit.attemptUnits ?? [unit]) {
+    if (routed.route === undefined) throw new Error(`unit ${routed.id} has no route; the route selector must pick one before its agent is spawned`);
+  }
   const tools = unitToolContract(unit.role, contract.shape);
   const groupUnitIds = new Set(group.unitIds);
   return {
@@ -72,7 +75,7 @@ export function unitWorkItem(contract: Contract, group: ContractGroup, unit: Con
     dependsOn: unit.dependsOn.filter((id) => groupUnitIds.has(id)),
     contractId: contract.id,
     contractUnitId: unit.id,
-    route: unit.route,
+    ...(unit.route === undefined ? {} : { route: unit.route }),
     ...(tools.tools === undefined ? {} : { tools: [...tools.tools] }),
     restrictTools: tools.restrictTools,
     template: unitTemplate(unit.role),
