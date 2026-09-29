@@ -18,8 +18,8 @@ import type { SharedApprovalRecord } from '../control-plane/index.js';
 import { SlackIntegration, DiscordIntegration, NtfyIntegration } from '../integrations/index.js';
 import { logger } from '../utils/logger.js';
 import { postToPublicWebhook, validatePublicWebhookUrl } from '../utils/url-safety.js';
+import type { HostResolver } from '../tools/fetch/pinned-request.js';
 import { summarizeError } from '../utils/error-display.js';
-import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 
 type RouteBinding = import('../automation/routes.js').AutomationRouteBinding;
 
@@ -32,6 +32,8 @@ export interface SurfaceApprovalDeliveryDeps {
   readonly resolveSlackWebhookUrl: () => Promise<string | null>;
   readonly resolveSlackBotToken: () => Promise<string | null>;
   readonly signWebhookPayload: (body: string, secret: string) => string;
+  /** Resolves a delivery host before posting; the system resolver when absent (utils/url-safety.ts). */
+  readonly resolveHost?: HostResolver | undefined;
 }
 
 /** 'pending' and 'claimed' both still want the approve/deny affordance. */
@@ -65,7 +67,8 @@ export async function deliverSlackApprovalUpdate(
     : undefined;
   const text = isPending ? `Approval required: ${summary}` : `Approval ${approval.status}: ${summary}`;
   if (typeof binding.metadata.responseUrl === 'string' && binding.metadata.responseUrl.startsWith('https://')) {
-    await instrumentedFetch(binding.metadata.responseUrl, {
+    // Held to the webhook rules: resolved, every answer checked, pinned, no redirects.
+    await postToPublicWebhook(binding.metadata.responseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -73,7 +76,7 @@ export async function deliverSlackApprovalUpdate(
         text,
         ...(blocks ? { blocks } : {}),
       }),
-    }).catch((error) => logger.warn('Slack approval response delivery failed', {
+    }, { resolveHost: deps.resolveHost }).catch((error) => logger.warn('Slack approval response delivery failed', {
       approvalId: approval.id,
       error: summarizeError(error),
     }));
@@ -178,7 +181,7 @@ export async function deliverWebhookApprovalUpdate(
     method: 'POST',
     headers,
     body: payload,
-  }).catch((error) => logger.warn('Webhook approval update failed', {
+  }, { resolveHost: deps.resolveHost }).catch((error) => logger.warn('Webhook approval update failed', {
     approvalId: approval.id,
     error: summarizeError(error),
   }));

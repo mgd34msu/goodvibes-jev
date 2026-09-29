@@ -25,8 +25,8 @@ import type { AgentManager } from '../tools/agent/index.js';
 import { SlackIntegration, DiscordIntegration, NtfyIntegration } from '../integrations/index.js';
 import { logger } from '../utils/logger.js';
 import { postToPublicWebhook, validatePublicWebhookUrl } from '../utils/url-safety.js';
+import type { HostResolver } from '../tools/fetch/pinned-request.js';
 import { resolveReachableBaseUrl } from '../utils/reachable-base-url.js';
-import { instrumentedFetch } from '../utils/fetch-with-timeout.js';
 import type { PendingSurfaceReply } from './types.js';
 
 export interface SurfaceDirectDeliveryDeps {
@@ -38,6 +38,8 @@ export interface SurfaceDirectDeliveryDeps {
   /** surfaces.webhook.defaultTarget, resolved when it is a secret reference. */
   readonly resolveWebhookDefaultTarget: () => Promise<string | null>;
   readonly signWebhookPayload: (body: string, secret: string) => string;
+  /** Resolves a delivery host before posting; the system resolver when absent (utils/url-safety.ts). */
+  readonly resolveHost?: HostResolver | undefined;
 }
 
 /**
@@ -55,14 +57,16 @@ export async function deliverSurfaceProgress(
     const botToken = await deps.resolveSlackBotToken();
     const slack = new SlackIntegration(webhookUrl ?? undefined, botToken ?? undefined);
     if (pending.responseUrl) {
-      await instrumentedFetch(pending.responseUrl, {
+      // A response URL arrives with the inbound request, so it is held to the
+      // webhook rules: https, resolved, every answer checked, pinned, no redirects.
+      await postToPublicWebhook(pending.responseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           response_type: 'in_channel',
           text: `Progress for ${pending.agentId}: ${progress.slice(0, 180)}`,
         }),
-      });
+      }, { resolveHost: deps.resolveHost });
       return;
     }
     if (pending.channelId) {
@@ -114,14 +118,15 @@ export async function deliverSlackAgentReply(
   const botToken = await deps.resolveSlackBotToken();
   const slack = new SlackIntegration(webhookUrl ?? undefined, botToken ?? undefined);
   if (pending.responseUrl) {
-    await instrumentedFetch(pending.responseUrl, {
+    // Held to the webhook rules: https, resolved, every answer checked, pinned, no redirects.
+    await postToPublicWebhook(pending.responseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         response_type: 'in_channel',
         blocks: slack.formatAgentResult(pending.agentId, pending.task, message),
       }),
-    });
+    }, { resolveHost: deps.resolveHost });
     return;
   }
   if (pending.channelId) {
@@ -222,5 +227,5 @@ export async function deliverWebhookAgentReply(
     headers,
     signal: AbortSignal.timeout(timeoutMs),
     body,
-  });
+  }, { resolveHost: deps.resolveHost });
 }
