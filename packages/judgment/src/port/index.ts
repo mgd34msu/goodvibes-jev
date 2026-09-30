@@ -6,6 +6,9 @@ export {
   judgmentConfigFromEnv,
   type JudgmentConfig,
   type JudgmentEndpoint,
+  type JudgmentFallback,
+  validEndpointURL,
+  isPinnedJudgmentModel,
 } from './config.ts';
 export { JudgmentError, type JudgmentErrorKind } from './errors.ts';
 export { LIMITS, estimateTokens, validateContextBudget, validateQuestions } from './limits.ts';

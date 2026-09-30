@@ -45,3 +45,38 @@ The decision log keeps every call with what the decision concluded (a `readings`
 ## License
 
 MIT
+
+## Explicit endpoint failover
+
+`createSystemOnePort` still accepts the existing single `endpoint`, `model`,
+`timeoutMs` and `retry` configuration. Add `fallbacks: [{ endpoint, model }]` to
+try other explicitly configured **System One** endpoints in order. Each endpoint
+uses the same `POST /v1/systemone` protocol, including owner-run loopback servers.
+A chat/completions provider is not a compatible substitute. Redirects are refused.
+
+The transport owns retries, with SDK retries disabled. The default is two extra
+attempts per endpoint, capped at ten. It honors bounded Retry-After guidance,
+uses capped exponential backoff, and has a `totalTimeoutMs` deadline (120 seconds
+by default) across every attempt and delay. Connection failures, timeouts, 408,
+429 and 5xx can retry and fail over. Authentication, other 4xx, invalid requests
+and invalid responses fail immediately. Cancellation stops retries and failover.
+No reading or heuristic answer is returned when the chain is exhausted. Each
+request may supply a tighter `totalTimeoutMs`; it cannot extend the configured
+deadline. State and questions are snapshotted once so retries cannot evaluate
+a mutated payload under the original logical reading.
+
+Failover requires pinned `jev-X.Y.Z` model identifiers, with optional version
+suffixes. A fallback is eligible only when its model equals the logical request's
+model exactly. A different returned version fails closed because the thresholds
+have not been calibrated for it. Moving aliases retain their previous behavior
+only in single-endpoint mode. Configuring a different version does not establish
+calibration: run the relevant batteries against that version before selecting it.
+
+Results and failures contain `lineage`: one logical request ID and ordered wire
+attempts with endpoint index/kind, model, latency, HTTP status, outcome and safe
+server request ID. `withDecisionLog` stores this in the one answered/failed entry
+for the logical reading. It never records endpoint URLs, credentials, upstream
+error bodies or causes as attempt metadata. `port.health()` reports per-target
+observed attempts, consecutive failures and last outcome without changing order.
+
+Engine-managed persisted failover settings are a separate integration. Until that integration is enabled, pass the complete explicit chain to `createSystemOnePort`.

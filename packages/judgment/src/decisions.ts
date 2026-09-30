@@ -7,3 +7,4 @@
 export * from './batteries/index.ts';
 export * from './readings/index.ts';
 export * from './port/types.ts';
+export { isPinnedJudgmentModel, validEndpointURL } from './port/endpoint-validation.ts';

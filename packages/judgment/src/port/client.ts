@@ -2,30 +2,28 @@ import { APIConnectionError, APIError, APIUserAbortError, TypeSafeClient, TypeSa
 import type { JudgmentConfig } from './config.ts';
 import { JudgmentError } from './errors.ts';
 import { recordingRequestIds } from './request-id.ts';
-
-const RETRYABLE_STATUS = (status: number): boolean => status === 408 || status === 429 || status >= 500;
+import { transientStatus } from './retry.ts';
 
 export function toJudgmentError(error: unknown): JudgmentError {
   if (error instanceof JudgmentError) return error;
   if (error instanceof APIUserAbortError) {
-    return new JudgmentError('aborted', 'the judgment call was cancelled', { cause: error });
+    return new JudgmentError('aborted', 'the judgment call was cancelled');
   }
   if (error instanceof APIError) {
-    const { status, message, requestId } = error;
-    const kind = RETRYABLE_STATUS(status) ? 'unavailable' : 'rejected';
-    return new JudgmentError(kind, `System One answered HTTP ${status}: ${message}`, {
-      cause: error,
+    const { status, requestId } = error;
+    const kind = transientStatus(status) ? 'unavailable' : 'rejected';
+    return new JudgmentError(kind, `System One answered HTTP ${status}`, {
       status,
       ...(requestId === undefined ? {} : { requestId }),
     });
   }
   if (error instanceof APIConnectionError) {
-    return new JudgmentError('unavailable', `System One could not be reached: ${error.message}`, { cause: error });
+    return new JudgmentError('unavailable', 'System One could not be reached');
   }
   if (error instanceof TypeSafeError) {
-    return new JudgmentError('invalid-request', error.message, { cause: error });
+    return new JudgmentError('invalid-request', 'System One rejected the client request configuration');
   }
-  return new JudgmentError('unavailable', error instanceof Error ? error.message : String(error), { cause: error });
+  return new JudgmentError('unavailable', 'System One did not return a usable response');
 }
 
 /** An SDK client for the configured endpoint, recording each response's request id. */
@@ -33,6 +31,6 @@ export function clientFor(config: JudgmentConfig): TypeSafeClient {
   const { endpoint, model, timeoutMs, retry } = config;
   const { apiKey, baseURL } = endpoint;
   const base: Fetch = config.fetch ?? ((input, init) => fetch(input, init));
-  return new TypeSafeClient({ apiKey, baseURL, defaultModel: model, timeout: timeoutMs, retry, logLevel: 'off', fetch: recordingRequestIds(base) });
+  return new TypeSafeClient({ apiKey, baseURL, defaultModel: model, timeout: timeoutMs, retry, logLevel: 'off', fetch: recordingRequestIds((input, init) => base(input, { ...init, redirect: 'error' })) });
 }
 

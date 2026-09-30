@@ -22,13 +22,15 @@ const asFailure = (error: unknown): JudgmentError =>
  */
 export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () => Date = () => new Date()): JudgmentPort {
   return {
-    model: inner.model,
+    get model() { return inner.model; },
+    ...(inner.health ? { health: () => inner.health!() } : {}),
     recorder: {
       recordReadings: (id, readings) => recorded(() => log.attach(id, { kind: 'readings', readings })),
       recordAction: (id, action) => recorded(() => log.attach(id, { kind: 'action', action })),
     },
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();
+      const requestedModel = request.model ?? inner.model;
       const call = {
         at: isoTime(now()),
         context: request.context ?? {},
@@ -43,9 +45,10 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         const entry: NewDecisionEntry = {
           ...call,
           status: 'failed',
-          requestedModel: request.model ?? inner.model,
+          requestedModel: failure.lineage?.attempts[0]?.requestedModel ?? requestedModel,
           latencyMs: performance.now() - started,
           requestId: failure.requestId,
+          lineage: failure.lineage ?? { logicalRequestId: crypto.randomUUID(), attempts: [] },
           error: { kind: failure.kind, message: failure.message },
         };
         recorded(() => log.record(entry));
@@ -61,6 +64,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
           latencyMs: result.latencyMs,
           usage: result.usage,
           requestId: result.requestId,
+          lineage: result.lineage ?? { logicalRequestId: crypto.randomUUID(), attempts: [] },
         }),
       );
       return { ...result, decisionId };
