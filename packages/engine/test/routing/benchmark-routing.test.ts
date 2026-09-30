@@ -9,13 +9,15 @@ import type { ModelDefinition } from '../../sdk/src/platform/providers/registry-
 import { prepareRouteBenchmarks, routeBenchmarkFor } from '../../sdk/src/platform/runtime/contract-composition.ts';
 import { createRoutePlanner, type RoutePlannerCatalog } from '../../sdk/src/platform/routing/route-planner.ts';
 import { ModelTierStore } from '../../sdk/src/platform/routing/model-tiers.ts';
-import { BENCHMARK_READ_CONCURRENCY, CHOICE_SHORTLIST } from '../../sdk/src/platform/routing/policy.ts';
+import { BENCHMARK_PREPARATION_ATTEMPTS, BENCHMARK_READ_CONCURRENCY, CHOICE_SHORTLIST } from '../../sdk/src/platform/routing/policy.ts';
 
 const dirs: string[] = [];
+const originalFetch = globalThis.fetch;
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => {
   installJudgmentPort(previous);
+  globalThis.fetch = originalFetch;
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -212,4 +214,174 @@ test('cancelling one route does not cancel another route waiting on the same ide
   await second;
   expect(requests).toHaveLength(1);
   expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.85);
+});
+
+function gate(): { waiting: Promise<void>; release: () => void } {
+  let release = (): void => {};
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  return { waiting, release };
+}
+
+function refreshWith(benchmarks: BenchmarkStore, entries: readonly BenchmarkEntry[]): Promise<void> {
+  // Never delegate to a real transport, including for an unexpected URL.
+  globalThis.fetch = Object.assign(async () => Response.json(entries.map((candidate) => ({
+    id: candidate.modelId, name: candidate.name, organization: candidate.organization,
+    swe: candidate.benchmarks.swe, gpqa: candidate.benchmarks.gpqa,
+  }))), { preconnect: originalFetch.preconnect });
+  return benchmarks.refreshBenchmarks();
+}
+
+test('a route retries benchmark preparation when refresh replaces an awaited identity generation', async () => {
+  const benchmarks = store();
+  const { port: judgment, requests } = port();
+  const started = gate();
+  const paused = gate();
+  let identityReads = 0;
+  installJudgmentPort({ ...judgment, ask: async (request) => {
+    if (request.questions.pick?.type === 'choice' && canonical in request.questions.pick.criteria) {
+      identityReads++;
+      if (identityReads === 1) { started.release(); await paused.waiting; }
+    }
+    return judgment.ask(request);
+  } });
+  const control = { ...entry, modelId: 'tiny-control', name: 'Tiny Control', benchmarks: { swe: 0.1 } };
+  const planner = createRoutePlanner({
+    catalog: catalog([model(alias), model(control.modelId)]), tiers: new ModelTierStore(),
+    benchmarkFor: routeBenchmarkFor(benchmarks),
+    prepareBenchmarks: (models, signal) => prepareRouteBenchmarks(benchmarks, models, signal),
+  });
+  const routing = planner.planRoute({ brief: 'Implement a parser.', purpose: 'planner' });
+  await started.waiting;
+  await refreshWith(benchmarks, [{ ...entry, benchmarks: { swe: 0.4 } }, control]);
+  paused.release();
+  expect((await routing).model).toBe(`configured:${alias}`);
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.4);
+  expect(identityReads).toBe(2);
+  expect(JSON.stringify(requests.at(-1)!.state)).toContain('"benchmark_composite":0.4');
+});
+
+test('a refresh retries the whole batch, including an alias prepared before another identity waited', async () => {
+  const benchmarks = store();
+  const { port: judgment } = port();
+  installJudgmentPort(judgment);
+  await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+  const otherAlias = 'vendor/balanced-model-3-alternate';
+  const started = gate();
+  const paused = gate();
+  let identityReads = 0;
+  installJudgmentPort({ ...judgment, ask: async (request) => {
+    if (request.questions.pick?.type === 'choice' && canonical in request.questions.pick.criteria) {
+      identityReads++;
+      if (identityReads === 1) { started.release(); await paused.waiting; }
+    }
+    return judgment.ask(request);
+  } });
+  const planner = createRoutePlanner({
+    catalog: catalog([model(alias), model(otherAlias)]), tiers: new ModelTierStore(),
+    benchmarkFor: routeBenchmarkFor(benchmarks),
+    prepareBenchmarks: (models, signal) => prepareRouteBenchmarks(benchmarks, models, signal),
+  });
+  const routing = planner.planRoute({ brief: 'Implement a parser.', purpose: 'planner' });
+  await started.waiting;
+  await refreshWith(benchmarks, [{ ...entry, benchmarks: { swe: 0.4 } }]);
+  paused.release();
+  await routing;
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.4);
+  expect(routeBenchmarkFor(benchmarks)(model(otherAlias))).toBeCloseTo(0.4);
+  expect(identityReads).toBe(3); // Old pending alias, its retry, and the earlier alias's retry.
+});
+
+for (const refreshedId of [canonical, 'balanced-model-4']) test(`readBenchmarks returns the current ${refreshedId} entry after an in-flight generation changes`, async () => {
+  const benchmarks = store();
+  const { port: judgment } = port();
+  const started = gate();
+  const paused = gate();
+  let calls = 0;
+  installJudgmentPort({ ...judgment, ask: async (request) => {
+    if (++calls === 1) { started.release(); await paused.waiting; }
+    return judgment.ask(request);
+  } });
+  const reading = benchmarks.readBenchmarks(alias);
+  await started.waiting;
+  await refreshWith(benchmarks, [{ ...entry, modelId: refreshedId, benchmarks: { swe: 0.4 } }]);
+  paused.release();
+  expect(await reading).toMatchObject({ modelId: refreshedId, benchmarks: { swe: 0.4 } });
+  expect(benchmarks.getKnownBenchmarks(alias)?.benchmarks).toEqual({ swe: 0.4 });
+  expect(calls).toBe(2);
+});
+
+test('an empty leaderboard does not cache an alias miss across a later refresh', async () => {
+  const benchmarks = store([]);
+  const { port: judgment, requests } = port();
+  installJudgmentPort(judgment);
+  await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();
+  expect(requests).toHaveLength(0);
+  await refreshWith(benchmarks, [entry]);
+  await prepareRouteBenchmarks(benchmarks, [model(alias)]);
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.85);
+  expect(requests).toHaveLength(1);
+});
+
+test('cancelling one route during refresh preserves the shared reading and the other route retries', async () => {
+  const benchmarks = store();
+  const { port: judgment, requests } = port();
+  const started = gate();
+  const paused = gate();
+  let calls = 0;
+  installJudgmentPort({ ...judgment, ask: async (request) => {
+    if (++calls === 1) { started.release(); await paused.waiting; }
+    return judgment.ask(request);
+  } });
+  const controller = new AbortController();
+  const reason = new Error('cancel the first route during refresh');
+  const first = prepareRouteBenchmarks(benchmarks, [model(alias)], controller.signal);
+  const second = prepareRouteBenchmarks(benchmarks, [model(alias)]);
+  await started.waiting;
+  await refreshWith(benchmarks, [{ ...entry, benchmarks: { swe: 0.4 } }]);
+  controller.abort(reason);
+  await expect(first).rejects.toBe(reason);
+  paused.release();
+  await second;
+  expect(requests).toHaveLength(2);
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeCloseTo(0.4);
+});
+
+test('continuous leaderboard churn refuses an identity after bounded attempts', async () => {
+  const benchmarks = store();
+  const { port: judgment, requests } = port();
+  installJudgmentPort({ ...judgment, ask: async (request) => {
+    await refreshWith(benchmarks, [entry]);
+    return judgment.ask(request);
+  } });
+  await expect(benchmarks.readBenchmarks(alias)).rejects.toThrow('Benchmark leaderboard kept changing during identity preparation');
+  expect(requests).toHaveLength(BENCHMARK_PREPARATION_ATTEMPTS);
+  expect(routeBenchmarkFor(benchmarks)(model(alias))).toBeNull();
+});
+
+test('continuous batch refresh refuses routing before facts and releases its subscription', async () => {
+  const { port: judgment } = port();
+  installJudgmentPort(judgment);
+  let notify = (): void => {};
+  let subscribed = false;
+  let reads = 0;
+  let facts = 0;
+  const benchmarks = {
+    getKnownBenchmarks: () => undefined,
+    readBenchmarks: async () => { reads++; notify(); return entry; },
+    onRefreshed: (callback: () => void) => {
+      subscribed = true;
+      notify = callback;
+      return () => { subscribed = false; notify = () => {}; };
+    },
+  };
+  const planner = createRoutePlanner({
+    catalog: catalog([model(alias)]), tiers: new ModelTierStore(),
+    benchmarkFor: () => { facts++; return null; },
+    prepareBenchmarks: (models, signal) => prepareRouteBenchmarks(benchmarks, models, signal),
+  });
+  await expect(planner.planRoute({ brief: 'Implement a parser.', purpose: 'planner' })).rejects.toThrow('Benchmark leaderboard kept changing during route preparation');
+  expect(reads).toBe(BENCHMARK_PREPARATION_ATTEMPTS);
+  expect(facts).toBe(0);
+  expect(subscribed).toBe(false);
 });

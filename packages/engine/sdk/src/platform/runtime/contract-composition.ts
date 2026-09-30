@@ -37,7 +37,7 @@ import { compositeScore, type BenchmarkStore } from '../providers/model-benchmar
 import type { ModelDefinition } from '../providers/registry.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { createRoutePlanner } from '../routing/route-planner.js';
-import { BENCHMARK_READ_CONCURRENCY } from '../routing/policy.js';
+import { BENCHMARK_PREPARATION_ATTEMPTS, BENCHMARK_READ_CONCURRENCY } from '../routing/policy.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -87,31 +87,43 @@ export function routeBenchmarkFor(benchmarks: Pick<BenchmarkStore, 'getKnownBenc
 /**
  * Resolve each eligible model's leaderboard identity before the first tier
  * shortlist is sorted. Exact names and remembered readings need no Jev call;
- * new aliases are read with bounded concurrency. A failed reading rejects
- * the route instead of silently sorting by price with unknown identities.
+ * new aliases are read with bounded concurrency. A refresh retries the whole
+ * batch, including aliases already read. Failed readings or repeated refreshes
+ * reject the route instead of silently sorting by price with unknown identities.
  */
 export async function prepareRouteBenchmarks(
-  benchmarks: Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks'>,
+  benchmarks: Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks'> & Partial<Pick<BenchmarkStore, 'onRefreshed'>>,
   models: readonly ModelDefinition[],
   signal?: AbortSignal,
 ): Promise<void> {
   signal?.throwIfAborted();
   const stop = new AbortController();
   const readingSignal = signal === undefined ? stop.signal : AbortSignal.any([signal, stop.signal]);
+  let refreshed = false;
+  const unsubscribe = benchmarks.onRefreshed?.(() => { refreshed = true; });
   try {
-    await mapLimit(models, BENCHMARK_READ_CONCURRENCY, async (model) => {
+    for (let attempt = 0; attempt < BENCHMARK_PREPARATION_ATTEMPTS; attempt++) {
+      refreshed = false;
+      await mapLimit(models, BENCHMARK_READ_CONCURRENCY, async (model) => {
+        readingSignal.throwIfAborted();
+        if (benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id)) return;
+        const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
+        readingSignal.throwIfAborted();
+        if (entry === undefined && model.id !== model.displayName) {
+          await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
+        }
+      });
       readingSignal.throwIfAborted();
-      if (benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id)) return;
-      const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
-      readingSignal.throwIfAborted();
-      if (entry === undefined && model.id !== model.displayName) {
-        await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
-      }
-    });
-    readingSignal.throwIfAborted();
+      // A refresh can invalidate aliases that finished before a sibling's
+      // awaited reading. Prepare the whole batch again, not just that sibling.
+      if (!refreshed) return;
+    }
+    throw new Error('Benchmark leaderboard kept changing during route preparation');
   } catch (error) {
     stop.abort(error);
     throw error;
+  } finally {
+    unsubscribe?.();
   }
 }
 
