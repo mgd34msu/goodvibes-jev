@@ -1,4 +1,5 @@
 /** Explicit plumbing readings for synthetic answer fixtures, not a semantic evaluator. */
+import { answerObjectFixtureReading, type AnswerObjectFixtureReadings } from './answer-object-fixture-readings.js';
 import { afterEach, beforeEach } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
@@ -9,6 +10,7 @@ export interface AnswerFixtureReadings {
   repairProfile?: RepairProfileFixtureValues;
   /** Exact authored claim title, summary and source evidence for repair usefulness. */
   repairUseful?: RepairUsefulFixtureValues;
+  objectAlignment?: readonly AnswerObjectFixtureReadings[];
   /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
   activation?: ReadonlyArray<readonly [string, number]>;
   initialEvidence?: ReadonlyArray<readonly [string, number]>;
@@ -28,7 +30,7 @@ export interface AnswerFixtureReadings {
   quality?: ReadonlyArray<readonly [string, number]>;
   authorities?: ReadonlyArray<readonly [string, 'official-vendor' | 'vendor' | 'secondary' | 'unverified']>;
 }
-export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful'> = {}) {
+export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful' | 'objectAlignment'> = {}) {
   let previous: JudgmentPort | undefined;
   let table: AnswerFixtureReadings = {};
   let activation: AnswerFixtureReadings['activation'] = [];
@@ -39,6 +41,8 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
         table.repairProfile ?? defaults.repairProfile, table.repairUseful ?? defaults.repairUseful));
       const profile = repairProfileFixtureReading(name, state, table.repairProfile ?? defaults.repairProfile);
       if (profile !== undefined) return noulAnswer(profile);
+      const alignment = answerObjectFixtureReading(name, state, table.objectAlignment ?? defaults.objectAlignment);
+      if (alignment !== undefined) return noulAnswer(alignment);
       if (name === 'serve') {
         const title = (state as { candidate?: { title?: string } }).candidate?.title;
         const probability = (table.activation ?? activation)?.find(([candidateTitle]) => candidateTitle === title)?.[1];

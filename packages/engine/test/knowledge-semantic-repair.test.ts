@@ -23,7 +23,13 @@ import {
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
 
-const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
+  { query: 'what features does the LG 86NANO90UNA have?', objects: [
+    { title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 },
+    { title: 'LG webOS TV integration', concreteObject: 0.99, integrationObject: 0.99, aligned: 0.01 },
+  ] },
+  { query: 'What refresh rate and HDR features does the TV have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+] });
 useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {

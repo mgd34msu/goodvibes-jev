@@ -114,6 +114,7 @@ export interface KnowledgeSemanticAnswerInput {
   readonly candidateSourceIds?: readonly string[] | undefined;
   readonly candidateNodeIds?: readonly string[] | undefined;
   readonly strictCandidates?: boolean | undefined;
+  /** Current local context candidates, including search-derived associations; never selected targets or operator authority. */
   readonly linkedObjects?: readonly KnowledgeNodeRecord[] | undefined;
   readonly noMatchMessage?: string | undefined;
   readonly autoRepairGaps?: boolean | undefined;

@@ -17,6 +17,9 @@ export function projectAnswerFactClaim(fact: AnswerFactRecord, claimSubjects: re
     }),
     subjects: uniqueStrings([...(fact.subjectIds ?? []), ...readStringArray(fact.metadata.subjectIds), ...readStringArray(fact.metadata.linkedObjectIds)])
       .map((id) => claimSubjects.find((node) => node.id === id))
-      .filter((node): node is KnowledgeNodeRecord => Boolean(node)).map((node) => ({ title: node.title, summary: node.summary, kind: node.kind })),
+      .filter((node): node is KnowledgeNodeRecord => Boolean(node)).map((node) => ({ title: node.title, summary: node.summary, kind: node.kind,
+      // prepareAnswerEvidence also transmits these subject identity fields. Keep
+      // source-fact preflight complete when a strict window omits the subject node.
+      aliases: node.aliases, model: readString(node.metadata.model), manufacturer: readString(node.metadata.manufacturer) })),
   };
 }

@@ -3,6 +3,7 @@ import type {
   KnowledgeNodeRecord,
 } from '../types.js';
 import type { KnowledgeStore } from '../store.js';
+import { isActiveKnowledgeEdge } from '../projection-utils.js';
 import { normalizeKnowledgeSpaceId, getKnowledgeSpaceId, isHomeAssistantKnowledgeSpace } from '../spaces.js';
 import type {
   KnowledgeSemanticAnswerInput,
@@ -14,9 +15,6 @@ import {
   readStringArray,
   uniqueStrings,
 } from './utils.js';
-import {
-  isSemanticAnswerLinkedObject,
-} from './fact-quality.js';
 import { concreteAnswerGapSpaceId } from './answer-space.js';
 import { answerNeedsEvidenceGap, answerConfidence } from './answer-quality.js';
 import { prepareAnswerEvidence } from './answer-verification/evidence.js';
@@ -26,6 +24,8 @@ import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-inp
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
 import { KnowledgeEvidenceRelevanceHeldError } from './evidence-ranking/reader.js';
+import { prepareAnswerLinkedObjects, type PreparedAnswerLinkedObjects } from './answer-object-alignment/prepare.js';
+import { KnowledgeAnswerObjectAlignmentHeldError } from './answer-object-alignment/reader.js';
 import { renderFallbackAnswer } from './answer-fallback.js';
 import { rankAnswerSources, KnowledgeSourceRankingHeldError } from './answer-source-ranking.js';
 import {
@@ -38,10 +38,7 @@ import {
 } from './answer-fact-selection.js';
 import {
   collectAnswerEvidence,
-  filterAnswerLinkedObjects,
   includeOfficialLinkedEvidence,
-  inferObjectLinkedObjects,
-  shouldUseEvidenceLinkedObjects,
   toSearchResult,
   uniqueNodes,
   withAnswerSourceAliases,
@@ -66,6 +63,8 @@ export async function answerKnowledgeQuery(
     if (error instanceof KnowledgeAnswerQualityHeldError || error instanceof JudgmentInputError) throw error;
     if (error instanceof KnowledgeSourceRankingHeldError || error instanceof KnowledgeFactSelectionHeldError) throw new KnowledgeAnswerQualityHeldError('uncertain');
     if (error instanceof KnowledgeSourceQualityHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason === 'aborted' ? 'aborted' : 'stale');
+    if (error instanceof KnowledgeAnswerObjectAlignmentHeldError) throw new KnowledgeAnswerQualityHeldError(
+      error.reason === 'unconfigured' ? 'unavailable' : error.reason);
     if (error instanceof KnowledgeEvidenceRelevanceHeldError) throw new KnowledgeAnswerQualityHeldError(
       error.reason === 'unsettled' ? 'uncertain' : error.reason === 'unconfigured' ? 'unavailable' : error.reason);
     throw new KnowledgeAnswerQualityHeldError('unavailable');
@@ -83,20 +82,25 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const mode = input.mode ?? 'standard';
   const limit = Math.max(1, input.limit ?? 8);
   const objectProfiles = context.objectProfiles ?? [];
-  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, check);
+  // Protect the full structural candidate universe before the first evidence reading.
+  const objects = input.includeLinkedObjects === false ? undefined
+    : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
+  const checkReadSet = () => { check(); objects?.assertCurrent(); };
+  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, objects);
   check();
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
 
   let evidence = evidenceResolution.evidence;
   let rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
-  check();
-  const linkedObjects = resolveAnswerLinkedObjects(context, input, spaceId, evidence, rawFacts, objectProfiles);
+  checkReadSet();
+  const linkedObjects = (await objects?.read(evidence, rawFacts))?.linkedObjects ?? [];
+  checkReadSet();
   evidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
-  check();
+  checkReadSet();
   rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
-  check();
+  checkReadSet();
   const rankedSources = await rankAnswerSources(evidence, rawFacts, input.query, signal);
-  check();
+  checkReadSet();
   const acceptedSourceIds = new Set(rankedSources.map((source) => source.id));
   evidence = evidence.filter((item) => !item.source || acceptedSourceIds.has(item.source.id));
   rawFacts = rawFacts.filter((fact) => {
@@ -115,6 +119,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const gapSpaceId = concreteAnswerGapSpaceId(spaceId, evidence, sources, linkedObjects);
   const claimSubjects = uniqueNodes([...linkedObjects, ...linkedObjectsFromFacts(context.store, rawFacts)])
     .filter((node) => getKnowledgeSpaceId(node) === spaceId || (spaceId === 'homeassistant' && isHomeAssistantKnowledgeSpace(getKnowledgeSpaceId(node))));
+  checkReadSet();
   const prepared = prepareAnswerEvidence({ store: context.store, spaceId, query: input.query, sources: rankedSources.slice(0, limit), facts: rawFacts, subjects: claimSubjects, signal });
   const gapIds = answerGapRecordIds(gapSpaceId, input.query, linkedObjects[0]?.title, linkedObjects[0]?.id);
   prepared.guard.node(gapIds.nodeId);
@@ -128,9 +133,10 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const candidateClaims = facts.map((fact) => projectAnswerFactClaim(fact, claimSubjects));
   assertJudgmentInput({ query: input.query, facts: candidateClaims });
   const candidateFacts = candidateClaims.map((claim) => JSON.stringify(claim));
+  checkReadSet(); prepared.assertCurrent();
   const generated = prepared.evidence.length ? await synthesizeAnswer(context.llm ?? null, input.query, mode, prepared.evidence,
     { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) }) : null;
-  check(); prepared.assertCurrent();
+  checkReadSet(); prepared.assertCurrent();
   const rendered = renderFallbackAnswer(input.query, mode, prepared.evidence.map((row) => ({ title: row.title ?? row.reference, excerpt: row.text })), facts);
   const candidates: AnswerCandidate[] = [
     ...(generated ? [{ id: 'generated' as const, text: generated, facts: candidateFacts }] : []),
@@ -138,12 +144,12 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   ];
   const selection = await verifyKnowledgeAnswer({ query: input.query, evidence: prepared.evidence, candidates },
     { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
-  check(); prepared.assertCurrent();
+  checkReadSet(); prepared.assertCurrent();
   const missingExtraction = selection.quality.status === 'no-evidence';
   const evidenceGap = answerNeedsEvidenceGap(selection.quality) || missingExtraction
     ? await persistAnswerGap(context.store, gapSpaceId, input.query, missingExtraction
       ? 'Matching sources have no extracted evidence available for verification.'
-      : 'Verified evidence does not establish every requested detail consistently.', { sources, linkedObjects, signal, assertCurrent: () => { check(); prepared.assertCurrent(); } })
+      : 'Verified evidence does not establish every requested detail consistently.', { sources, linkedObjects, signal, assertCurrent: () => { checkReadSet(); prepared.assertCurrent(); } })
     : null;
   check();
   const text = selection.candidate?.text ?? (selection.quality.status === 'no-evidence'
@@ -184,6 +190,7 @@ async function resolveAnswerEvidence(
   objectProfiles: ObjectProfiles,
   signal: AbortSignal,
   check: () => void,
+  objects?: PreparedAnswerLinkedObjects,
 ): Promise<AnswerEvidenceResolution> {
   // Snapshot absence as well as selected records: a late indexing/operator change
   // cannot turn an earlier no-match observation into a repair write.
@@ -198,9 +205,8 @@ async function resolveAnswerEvidence(
   if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
   if (evidence.length > 0) return { kind: 'matched', evidence };
 
-  const linkedObjects = input.includeLinkedObjects === false
-    ? []
-    : filterAnswerLinkedObjects(spaceId, input.query, [...(input.linkedObjects ?? [])], objectProfiles);
+  const linkedObjects = (await objects?.read([], []))?.linkedObjects ?? [];
+  check(); guard.assertCurrent();
   const linkedEvidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
   check(); guard.assertCurrent();
   if (linkedEvidence.length > 0) return { kind: 'matched', evidence: linkedEvidence };
@@ -237,30 +243,6 @@ async function collectRawAnswerFacts(query: string, evidence: readonly EvidenceI
   return (await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal)).slice(0, 24);
 }
 
-function resolveAnswerLinkedObjects(
-  context: KnowledgeAnswerContext,
-  input: KnowledgeSemanticAnswerInput,
-  spaceId: string,
-  evidence: readonly EvidenceItem[],
-  rawFacts: readonly KnowledgeNodeRecord[],
-  objectProfiles: ObjectProfiles,
-): readonly KnowledgeNodeRecord[] {
-  if (input.includeLinkedObjects === false) return [];
-  const inferredObjectLinkedObjects = inferObjectLinkedObjects(context.store, spaceId, input.query, objectProfiles);
-  const evidenceLinkedObjects = shouldUseEvidenceLinkedObjects(spaceId, input, inferredObjectLinkedObjects)
-    ? evidence.flatMap((item) => item.node ? [item.node] : [])
-    : [];
-  const rawLinkedObjects = uniqueNodes([
-    ...(input.linkedObjects ?? []),
-    ...evidenceLinkedObjects,
-    ...inferredObjectLinkedObjects,
-    ...linkedObjectsFromFacts(context.store, rawFacts),
-  ])
-    .filter(isSemanticAnswerLinkedObject)
-    .slice(0, 24);
-  return filterAnswerLinkedObjects(spaceId, input.query, rawLinkedObjects, objectProfiles);
-}
-
 function withAnswerFactContract(
   store: KnowledgeStore,
   facts: readonly KnowledgeNodeRecord[],
@@ -271,7 +253,7 @@ function withAnswerFactContract(
   const result: AnswerFactRecord[] = [];
   for (const fact of facts) {
     const source = fact.sourceId ? store.getSource(fact.sourceId) : null;
-    const discovery = readRecord(source?.metadata.sourceDiscovery);
+    const discovery = readRecord(source && getKnowledgeSpaceId(source) === getKnowledgeSpaceId(fact) ? source.metadata.sourceDiscovery : undefined);
     const metadataLinkedIds = uniqueStrings([
       ...readStringArray(fact.metadata.linkedObjectIds),
       ...readStringArray(fact.metadata.subjectIds),
@@ -283,7 +265,7 @@ function withAnswerFactContract(
     ]);
     const subjects = subjectIds
       .map((id) => linkedObjects.find((node) => node.id === id) ?? store.getNode(id))
-      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active'));
+      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active' && getKnowledgeSpaceId(node) === getKnowledgeSpaceId(fact)));
     if (subjects.length === 0) {
       result.push(fact as AnswerFactRecord);
       continue;
@@ -312,25 +294,15 @@ function linkedObjectsFromFacts(
   store: KnowledgeStore,
   facts: readonly KnowledgeNodeRecord[],
 ): KnowledgeNodeRecord[] {
-  if (facts.length === 0) return [];
-  const factIds = new Set(facts.map((fact) => fact.id));
-  const objectIds = new Set<string>();
-  for (const fact of facts) {
-    for (const id of [
-      ...readStringArray(fact.metadata.linkedObjectIds),
-      ...readStringArray(fact.metadata.subjectIds),
-    ]) {
-      objectIds.add(id);
-    }
-  }
-  for (const edge of store.listEdges()) {
-    if (edge.fromKind === 'node' && edge.toKind === 'node' && factIds.has(edge.fromId) && edge.relation === 'describes') {
-      objectIds.add(edge.toId);
-    }
-  }
-  return [...objectIds]
-    .map((id) => store.getNode(id))
-    .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active'));
+  return uniqueNodes(facts.flatMap((fact) => {
+    const spaceId = getKnowledgeSpaceId(fact);
+    const ids = uniqueStrings([...(fact.subjectIds ?? []), ...(fact.linkedObjectIds ?? []),
+      ...readStringArray(fact.metadata.linkedObjectIds), ...readStringArray(fact.metadata.subjectIds),
+      ...store.edgesFor('node', fact.id).filter((edge) => isActiveKnowledgeEdge(edge) && getKnowledgeSpaceId(edge) === spaceId
+        && edge.fromKind === 'node' && edge.fromId === fact.id && edge.toKind === 'node' && edge.relation === 'describes').map((edge) => edge.toId)]);
+    return ids.map((id) => store.getNode(id)).filter((node): node is KnowledgeNodeRecord => Boolean(node
+      && node.status === 'active' && getKnowledgeSpaceId(node) === spaceId));
+  }));
 }
 
 function factSubjectIdsFromGraph(
@@ -339,12 +311,19 @@ function factSubjectIdsFromGraph(
   linkedObjects: readonly KnowledgeNodeRecord[],
 ): string[] {
   if (linkedObjects.length === 0) return [];
-  const linkedIds = new Set(linkedObjects.map((node) => node.id));
+  const spaceId = getKnowledgeSpaceId(fact);
+  const linkedIds = new Set(linkedObjects.filter((node) => node.status === 'active' && getKnowledgeSpaceId(node) === spaceId).map((node) => node.id));
   const factSourceId = readString(fact.metadata.sourceId) ?? fact.sourceId;
   const sourcesSupportingFact = new Set<string>();
   const sourcesLinkedToSubject = new Map<string, Set<string>>();
   const directSubjectIds = new Set<string>();
   for (const edge of store.listEdges()) {
+    if (!isActiveKnowledgeEdge(edge) || getKnowledgeSpaceId(edge) !== spaceId) continue;
+    const sourceId = edge.fromKind === 'source' ? edge.fromId : edge.toKind === 'source' ? edge.toId : undefined;
+    if (sourceId) {
+      const source = store.getSource(sourceId);
+      if (!source || getKnowledgeSpaceId(source) !== spaceId) continue;
+    }
     if (edge.fromKind === 'node' && edge.fromId === fact.id && edge.toKind === 'node' && linkedIds.has(edge.toId) && edge.relation === 'describes') {
       directSubjectIds.add(edge.toId);
     }
@@ -362,7 +341,8 @@ function factSubjectIdsFromGraph(
       sourcesLinkedToSubject.set(edge.toId, current);
     }
   }
-  if (factSourceId) sourcesSupportingFact.add(factSourceId);
+  const factSource = factSourceId ? store.getSource(factSourceId) : undefined;
+  if (factSource && getKnowledgeSpaceId(factSource) === spaceId) sourcesSupportingFact.add(factSource.id);
   for (const sourceId of sourcesSupportingFact) {
     for (const subjectId of sourcesLinkedToSubject.get(sourceId) ?? []) directSubjectIds.add(subjectId);
   }

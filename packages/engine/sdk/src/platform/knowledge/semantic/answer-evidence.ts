@@ -37,15 +37,9 @@ import {
 } from './utils.js';
 import {
   isLowValueFeatureOrSpecText,
-  isSemanticAnswerLinkedObject,
 } from './fact-quality.js';
-import {
-  inferAnswerObjectScope,
-} from './object-scope.js';
-import { canonicalRepairSubjectNodes } from './repair-subjects.js';
 import { readAnswerSourceRanking } from './answer-source-ranking.js';
 import {
-  GENERIC_ANSWER_INTENT_TOKENS,
   isBroadKnowledgeSpaceAlias,
   type EvidenceItem,
 } from './answer-common.js';
@@ -201,7 +195,7 @@ function initialEvidenceCandidate(item: EvidenceItem, reference: string, text: s
       && !(typeof value === 'number' && Number.isFinite(value))) throw new KnowledgeEvidenceRelevanceHeldError('malformed');
     const requiredIds = new Set([...readStringArray(fact.metadata.subjectIds), ...readStringArray(fact.metadata.linkedObjectIds)]);
     const graph = guard.watch(`initial-fact-relations:${fact.id}`, () => store.edgesFor('node', fact.id));
-    const relatedIds = new Set([...requiredIds, ...graph.filter((edge) => edgeIsActive(edge) && edge.fromKind === 'node'
+    const relatedIds = new Set([...requiredIds, ...graph.filter((edge) => edgeIsActive(edge) && getKnowledgeSpaceId(edge) === getKnowledgeSpaceId(fact) && edge.fromKind === 'node'
       && edge.fromId === fact.id && edge.toKind === 'node' && edge.relation === 'describes').map((edge) => edge.toId)]);
     if (relatedIds.size > 32) throw new KnowledgeEvidenceRelevanceHeldError('budget');
     const subjects = [...relatedIds].flatMap((id) => {
@@ -223,46 +217,6 @@ function initialEvidenceCandidate(item: EvidenceItem, reference: string, text: s
     ...(item.node ? { nodeKind: item.node.kind,
       claimedProvenance: JSON.stringify({ extractor: readString(item.node.metadata.extractor), sourceAuthority: readString(item.node.metadata.sourceAuthority) }) } : {}),
   };
-}
-
-export function inferObjectLinkedObjects(
-  store: KnowledgeStore,
-  spaceId: string,
-  query: string,
-  objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): KnowledgeNodeRecord[] {
-  const tokens = expandQueryTokens(tokenizeSemanticQuery(query));
-  const subjectTokens = tokens.filter((token) => !GENERIC_ANSWER_INTENT_TOKENS.has(token));
-  const scope = inferAnswerObjectScope(store, spaceId, query, subjectTokens, objectProfiles);
-  if (!scope || scope.anchorNodeIds.size === 0) return [];
-  return listAnswerNodes(store, spaceId)
-    .filter((node) => scope.anchorNodeIds.has(node.id))
-    .filter((node) => belongsToAnswerSpace(node, spaceId))
-    .filter(isSemanticAnswerLinkedObject);
-}
-
-export function filterAnswerLinkedObjects(
-  spaceId: string,
-  query: string,
-  nodes: readonly KnowledgeNodeRecord[],
-  objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): readonly KnowledgeNodeRecord[] {
-  const canonical = canonicalRepairSubjectNodes({ nodes, text: query, objectProfiles });
-  if (canonical.length > 0) return canonical.slice(0, 24);
-  const integrationIntent = /\b(integration|platform|add-?on|addon|plugin|service|api|setup|configure|configuration|auth|credential|rate limit)\b/i.test(query);
-  return nodes.filter((node) => integrationIntent || !/integration/i.test(node.kind)).slice(0, 24);
-}
-
-export function shouldUseEvidenceLinkedObjects(
-  spaceId: string,
-  input: KnowledgeSemanticAnswerInput,
-  inferredObjectLinkedObjects: readonly KnowledgeNodeRecord[],
-): boolean {
-  if (input.linkedObjects?.length) return true;
-  if (isBroadKnowledgeSpaceAlias(spaceId) || isHomeAssistantKnowledgeSpace(normalizeKnowledgeSpaceId(spaceId))) {
-    return inferredObjectLinkedObjects.length > 0;
-  }
-  return true;
 }
 
 export async function includeOfficialLinkedEvidence(

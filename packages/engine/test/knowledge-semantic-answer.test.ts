@@ -3,7 +3,12 @@ import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_hel
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
 
-const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues, objectAlignment: [
+  { query: 'what features does the living room tv have?', objects: [{ title: 'Living Room TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+  { query: 'what features does the TV have?', objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+  { query: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the TV have?',
+    objects: [{ title: 'LG webOS Smart TV', concreteObject: 0.99, integrationObject: 0.01, aligned: 0.99 }] },
+] });
 useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
