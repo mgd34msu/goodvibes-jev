@@ -194,6 +194,34 @@
       "targets": [
         "products/daemon/src/runtime/disposal-wiring.ts"
       ]
+    },
+    {
+      "source": "src/runtime/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/index.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/fleet-services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/fleet-services.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/browser-checkout-seam-holder.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/browser-checkout-seam-holder.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/conversation-rewind-port.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/conversation-rewind-port.ts"
+      ]
     }
   ],
   "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
