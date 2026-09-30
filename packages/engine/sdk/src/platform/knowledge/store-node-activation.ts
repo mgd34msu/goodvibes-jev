@@ -12,6 +12,13 @@ import type { KnowledgeStore } from './store.js';
 import type { KnowledgeNodeRecord, KnowledgeNodeUpsertInput } from './types.js';
 
 export interface KnowledgePreparedNodeWrites { readonly count: number; }
+/** Internal read overlay: proposed evidence is detached; live read sets remain guarded. */
+export interface KnowledgeNodeActivationStage {
+  readonly evidenceFor: (record: KnowledgeNodeRecord) => readonly ActivationEvidence[];
+  readonly assertCurrent: () => void;
+  /** Hidden observation dependencies cannot be proven unchanged by an import. */
+  readonly invalidatesRetainedObservations?: boolean | undefined;
+}
 export interface NodeMutationDraft {
   readonly input: KnowledgeNodeUpsertInput;
   readonly existing: KnowledgeNodeRecord | undefined;
@@ -21,8 +28,8 @@ export interface NodeMutationDraft {
   readonly restoration?: (() => void) | undefined;
   readonly observation?: ReturnType<typeof resolveKnowledgeNodeObservation>;
 }
-interface PreparedNode extends NodeMutationDraft { readonly observationEvidence?: ObservedEvidence | undefined; readonly evidence: readonly ActivationEvidence[]; readonly evidenceHash: string; readonly subjects: readonly ActivationSubject[]; readonly observed: ReturnType<typeof getKnowledgeNodeObservation>; }
-interface PreparedPass { readonly store: KnowledgeStore; readonly scope: object; readonly nodes: readonly PreparedNode[]; readonly written: Set<number>; readonly committed: Map<string, KnowledgeNodeRecord>; readonly port: JudgmentPort | undefined; readonly model: string | undefined; readonly signal?: AbortSignal | undefined; readonly expires: number; }
+interface PreparedNode extends NodeMutationDraft { readonly preserveObservation: boolean; readonly observationEvidence?: ObservedEvidence | undefined; readonly evidence: readonly ActivationEvidence[]; readonly evidenceHash: string; readonly subjects: readonly ActivationSubject[]; readonly observed: ReturnType<typeof getKnowledgeNodeObservation>; }
+interface PreparedPass { readonly store: KnowledgeStore; readonly scope: object; readonly nodes: readonly PreparedNode[]; readonly written: Set<number>; readonly committed: Map<string, KnowledgeNodeRecord>; readonly port: JudgmentPort | undefined; readonly model: string | undefined; readonly signal?: AbortSignal | undefined; readonly expires: number; readonly stage?: KnowledgeNodeActivationStage | undefined; }
 const retainedWrites = new WeakMap<KnowledgeNodeRecord, { readonly store: KnowledgeStore; readonly scope: object; readonly check: () => void }>();
 /** Only an exact locally committed object can authorize compensation, never a serialized receipt. */
 export function knowledgeNodeRestorationGuard(store: KnowledgeStore, record: KnowledgeNodeRecord, scope: object): (() => void) | undefined {
@@ -39,7 +46,8 @@ function unchanged(draft: NodeMutationDraft): boolean {
 }
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
-export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: readonly NodeMutationDraft[], options: KnowledgeNodeActivationOptions, ownerConfidenceFloor: number | undefined, scope: object): Promise<KnowledgePreparedNodeWrites> {
+export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: readonly NodeMutationDraft[], options: KnowledgeNodeActivationOptions, ownerConfidenceFloor: number | undefined, scope: object, stage?: KnowledgeNodeActivationStage): Promise<KnowledgePreparedNodeWrites> {
+  stage?.assertCurrent();
   if (drafts.length > LIMITS.nodes) throw new Held('budget');
   const identities = new Map<string, string>();
   for (const { record } of drafts) {
@@ -51,15 +59,19 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
   const proposed = new Map(drafts.map((draft) => [draft.record.id, draft.record]));
   let localBytes = 0;
   const nodes = drafts.map((draft) => {
-    const actualEvidence = draft.authority || draft.observation || draft.restoration ? [] : evidenceFor(store, draft.record);
+    const actualEvidence = draft.authority || draft.observation || draft.restoration ? [] : stage?.evidenceFor(draft.record) ?? evidenceFor(store, draft.record);
     const references = actualEvidence.map(({ source, extraction }) => captureKnowledgeSourceReferences(store, source, extraction));
     const evidence = snapshotNodeInput(actualEvidence);
-    const observed = draft.authority || draft.observation || draft.restoration ? undefined : getKnowledgeNodeObservation(draft.existing, draft.record);
+    const changedEvidence = stage !== undefined
+      && (activationEvidenceHash(stage.evidenceFor(draft.record)) !== activationEvidenceHash(evidenceFor(store, draft.record))
+        || (stage.invalidatesRetainedObservations === true && draft.existing?.metadata.nodeObservation !== undefined));
+    // Retained observations describe their original evidence, never a staged replacement.
+    const observed = draft.authority || draft.observation || draft.restoration || changedEvidence ? undefined : getKnowledgeNodeObservation(draft.existing, draft.record);
     observed?.assertCurrent();
     const subjects = draft.authority || draft.observation || draft.restoration ? [] : snapshotNodeInput(activationSubjectIds(draft.record).map((id) => ({ id, node: store.getNode(id) })));
     localBytes += new TextEncoder().encode(JSON.stringify({ input: draft.input, evidence, subjects })).byteLength;
     if (localBytes > LIMITS.bytes * 4) throw new Held('budget');
-    return { ...draft, references, evidence, evidenceHash: supportHash({ evidence, subjects: subjects.map(({ id, node }) => ({ id,
+    return { ...draft, preserveObservation: !changedEvidence, references, evidence, evidenceHash: supportHash({ evidence, subjects: subjects.map(({ id, node }) => ({ id,
       content: proposed.has(id) ? activationContent(proposed.get(id)!) : node ? activationContent(node) : null })), observed: observed?.record }), subjects, observed };
   });
   const requests: ReturnType<typeof projectNodeActivation>[] = [];
@@ -81,7 +93,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
         reviewProvenance: { state: input.status === 'draft' ? 'pending-review' : 'explicit', reason: `Explicit non-serving status '${input.status ?? 'stale'}'`, decidedAt: draft.now } } });
     }
     const receipt = existing?.metadata.nodeActivation;
-    if (existing?.status === 'active' && unchanged(draft)
+    if (existing?.status === 'active' && unchanged(draft) && draft.preserveObservation
       && (!isRecord(receipt) || receipt.evidenceHash === draft.evidenceHash)) return existing;
     // Both projection and complete protected-input preflight run for every selected
     // synthesized candidate before the reader can send the first request.
@@ -103,6 +115,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     if (reading.outcome !== 'accepted' && (draft.existing?.status === 'active' || options.requireAccepted)) throw new Held(reading.reason === 'missing-evidence' && draft.existing?.metadata.nodeObservation !== undefined ? 'observation-revalidation' : reading.reason ?? 'uncertain');
     const accepted = reading.outcome === 'accepted';
     const record = retainKnowledgeNodeRecord({ ...draft.record, status: accepted ? 'active' : 'draft', metadata: { ...draft.record.metadata,
+      ...(!draft.preserveObservation ? { nodeObservation: undefined } : {}),
       reviewProvenance: { state: accepted ? 'auto-accepted' : 'pending-review',
         reason: accepted ? 'Settled serving-without-review judgment; untrusted origin retained; not an operator review'
           : `Pending review: serving judgment ${reading.reason ?? 'uncertain'}`, decidedAt: draft.now },
@@ -115,7 +128,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     return { ...draft, record };
   });
   const token = Object.freeze({ count: resolved.length });
-  prepared.set(token, { store, scope, nodes: resolved, written: new Set(), committed: new Map(), port, model, signal: options.signal, expires: Date.now() + 30_000 });
+  prepared.set(token, { store, scope, nodes: resolved, written: new Set(), committed: new Map(), port, model, signal: options.signal, expires: Date.now() + 30_000, stage });
   assertPreparedNodeWrites(store, token, scope);
   return token;
 }
@@ -126,12 +139,13 @@ export function assertPreparedNodeWrites(store: KnowledgeStore, token: Knowledge
   if (pass.signal?.aborted) throw new Held('aborted');
   if (Date.now() > pass.expires) throw new Held('stale');
   if (currentPort() !== pass.port || pass.port?.model !== pass.model) throw new Held('stale');
+  pass.stage?.assertCurrent();
   for (const [index, draft] of pass.nodes.entries()) {
     const sameSlug = store.getNodeByKindAndSlug(draft.record.kind, draft.record.slug);
     if (sameSlug && sameSlug.id !== draft.record.id) throw new Held('stale');
     const current = draft.input.id ? store.getNode(draft.input.id) : store.getNodeByKindAndSlug(draft.input.kind, draft.input.slug);
     if (supportHash(current ?? null) !== supportHash(pass.committed.get(draft.record.id) ?? draft.existing ?? null)
-      || (!draft.authority && !draft.observation && !draft.restoration && activationEvidenceHash(evidenceFor(store, draft.record)) !== activationEvidenceHash(draft.evidence))) throw new Held('stale');
+      || (!draft.authority && !draft.observation && !draft.restoration && activationEvidenceHash(pass.stage?.evidenceFor(draft.record) ?? evidenceFor(store, draft.record)) !== activationEvidenceHash(draft.evidence))) throw new Held('stale');
     for (const subject of draft.subjects) {
       if (supportHash(store.getNode(subject.id)) !== supportHash(pass.committed.get(subject.id) ?? subject.node)) throw new Held('stale');
     }
