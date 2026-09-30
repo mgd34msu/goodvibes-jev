@@ -3,7 +3,8 @@ import { snapshotNodeInput } from './activation/projection.js';
 import { knowledgeIngestGuard } from './ingest-preparation.js';
 import { KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
 import { stableText } from './store-schema.js';
-import { prepareStagedObservedKnowledgeNodeInput, upsertObservedKnowledgeNode } from './store-node-observation.js';
+import { prepareStagedObservedKnowledgeNodeInput } from './store-node-observation.js';
+import { supportHash } from './semantic/verification/projection.js';
 import {
   emitKnowledgeCompileCompleted,
   emitKnowledgeExtractionCompleted,
@@ -11,7 +12,6 @@ import {
 } from '../runtime/emitters/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
-import { extractKnowledgeArtifact } from './extractors.js';
 import { prepareKnowledgeExtraction, consumeKnowledgeExtraction, type PreparedKnowledgeExtraction } from './prepared-extraction.js';
 import { knowledgeExtractionNeedsRefresh } from './extraction-policy.js';
 import {
@@ -22,9 +22,10 @@ import {
   slugify,
 } from './shared.js';
 import type { KnowledgeIngestContext } from './ingest-context.js';
-import { readKnowledgeEntityAliases } from './entity-aliases.js';
+import { KnowledgeEntityAliasHoldError, readKnowledgeEntityAliases } from './entity-aliases.js';
 import type {
   KnowledgeExtractionRecord,
+  KnowledgeExtractionUpsertInput,
   KnowledgeNodeRecord,
   KnowledgeSourceRecord,
   KnowledgeSourceType,
@@ -136,51 +137,91 @@ function readKnowledgeSpaceId(metadata: Record<string, unknown>): string | undef
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-export async function recompileKnowledgeSource(context: KnowledgeIngestContext, source: KnowledgeSourceRecord): Promise<void> {
-  const extraction = source.id ? context.store.getExtractionBySourceId(source.id) : null;
-  if (source.artifactId && await knowledgeExtractionNeedsRefresh(extraction)) {
-    const content = await context.artifactStore.readContent(source.artifactId);
-    const extracted = await extractKnowledgeArtifact(content.record, content.buffer);
-    await context.store.upsertExtraction({
-      sourceId: source.id,
-      artifactId: source.artifactId,
-      extractorId: extracted.extractorId,
-      format: extracted.format,
-      title: extracted.title,
-      summary: extracted.summary,
-      excerpt: extracted.excerpt,
-      sections: extracted.sections,
-      links: extracted.links,
-      estimatedTokens: extracted.estimatedTokens,
-      structure: extracted.structure,
-      metadata: extracted.metadata,
-    });
+interface KnowledgeCompileOptions { readonly signal?: AbortSignal | undefined; }
+
+export async function recompileKnowledgeSource(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
+  { signal }: KnowledgeCompileOptions = {}): Promise<void> {
+  source = snapshotNodeInput(source);
+  await context.store.init();
+  const extraction = snapshotNodeInput(context.store.getExtractionBySourceId(source.id));
+  const assertCurrent = knowledgeCompileGuard(context, source, extraction, signal);
+  let refreshed: KnowledgeExtractionUpsertInput | undefined;
+  let assertExtractionCurrent = () => {};
+  if (source.artifactId && await abortableCompileRead(knowledgeExtractionNeedsRefresh(extraction), signal)) {
+    assertCurrent();
+    const token = await abortableCompileRead(prepareKnowledgeExtraction(context, source.id, source.artifactId), signal);
+    const prepared = consumeKnowledgeExtraction(context, token, source.id, source.artifactId);
+    assertExtractionCurrent = prepared.assertCurrent;
+    refreshed = { ...prepared.extracted, sourceId: source.id, artifactId: source.artifactId };
   }
-  await compileKnowledgeSource(context, context.store.getSource(source.id) ?? source, context.store.getExtractionBySourceId(source.id));
+  const check = () => { assertCurrent(); assertExtractionCurrent(); };
+  check();
+  await commitKnowledgeCompilation(context, source, extraction, false, signal, check, refreshed);
 }
 
 export async function compileKnowledgeSource(
   context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
+  { signal }: KnowledgeCompileOptions = {},
 ): Promise<void> {
-  const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction);
-  await compileKnowledgeSourceWithHints(context, source, extraction, entityHints);
+  source = snapshotNodeInput(source);
+  extraction = snapshotNodeInput(extraction);
+  await context.store.init();
+  await commitKnowledgeCompilation(context, source, extraction, false, signal,
+    knowledgeCompileGuard(context, source, extraction, signal));
 }
 
-async function compileKnowledgeSourceWithHints(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
-  extraction: KnowledgeExtractionRecord | null | undefined, entityHints: readonly CompiledEntityHint[]): Promise<void> {
-  const initialNodeCount = context.store.status().nodeCount;
-  const initialEdgeCount = context.store.status().edgeCount;
-  await context.store.batch(async () => {
-    await compileKnowledgeSourceRecords(context, source, extraction, entityHints);
-  });
+/** Caller snapshots must still describe retained evidence before gaining observation authority. */
+function knowledgeCompileGuard(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
+  extraction: KnowledgeExtractionRecord | null | undefined, signal?: AbortSignal): () => void {
+  if (supportHash(source) !== supportHash(context.store.getSource(source.id))
+    || (extraction && supportHash(extraction) !== supportHash(context.store.getExtractionBySourceId(source.id)))) {
+    throw new KnowledgeEntityAliasHoldError();
+  }
+  const check = knowledgeIngestGuard(context, source.id, source.canonicalUri, signal);
+  check();
+  return check;
+}
 
+/** Extraction readers can finish in the background after cancellation, but never publish. */
+async function abortableCompileRead<T>(read: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return read;
+  let abort = () => {};
+  const stopped = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(new KnowledgeEntityAliasHoldError());
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([read, stopped]); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
+async function commitKnowledgeCompilation(context: KnowledgeIngestContext, source: KnowledgeSourceRecord,
+  extraction: KnowledgeExtractionRecord | null | undefined, structuredOnly: boolean, signal: AbortSignal | undefined,
+  assertEvidenceCurrent: () => void, refreshed?: KnowledgeExtractionUpsertInput): Promise<void> {
+  const initialStatus = context.store.status();
+  let assertAliasesCurrent = () => {};
+  const assertCurrent = () => { assertEvidenceCurrent(); assertAliasesCurrent(); };
+  assertCurrent();
+  await context.store.applyPreparedIngest({ sources: [], extractions: refreshed ? [refreshed] : [], nodes: [], edges: [], issues: [] }, async (stage) => {
+    assertCurrent();
+    const nextExtraction = stage.extractions[0] ?? extraction;
+    const hints = await prepareKnowledgeStructuredEntityHints(source, nextExtraction, signal, (guard) => { assertAliasesCurrent = guard; });
+    const check = () => { assertCurrent(); stage.assertCurrent(); };
+    check();
+    const draft = stagedCompileWriter(context, check);
+    if (structuredOnly) await writeKnowledgeStructuredEntityHints(source, hints, draft.writer);
+    else await compileKnowledgeSourceRecords(context, source, nextExtraction, hints, draft.writer);
+    check();
+    return { nodes: [...draft.nodes.values()], edges: draft.edges, issues: [], assertCurrent };
+  }, { signal });
+  if (structuredOnly) return;
   const finalStatus = context.store.status();
   context.emitIfReady((bus, ctx) => emitKnowledgeCompileCompleted(bus, ctx, {
     sourceId: source.id,
-    nodeCount: Math.max(0, finalStatus.nodeCount - initialNodeCount),
-    edgeCount: Math.max(0, finalStatus.edgeCount - initialEdgeCount),
+    nodeCount: Math.max(0, finalStatus.nodeCount - initialStatus.nodeCount),
+    edgeCount: Math.max(0, finalStatus.edgeCount - initialStatus.edgeCount),
   }), source.sessionId);
 }
 
@@ -189,14 +230,6 @@ interface KnowledgeCompileWriter {
   observed(input: KnowledgeNodeUpsertInput, evidence: unknown, readEvidence: () => unknown): Promise<{ readonly id: string }>;
   edge(input: KnowledgeEdgeUpsertInput): Promise<unknown>;
 }
-function retainedCompileWriter(context: KnowledgeIngestContext): KnowledgeCompileWriter {
-  return {
-    node: (input) => context.store.upsertNode(input),
-    observed: (input, evidence, readEvidence) => upsertObservedKnowledgeNode(context.store, input, 'catalog-structure', evidence, readEvidence),
-    edge: (input) => context.store.upsertEdge(input),
-  };
-}
-
 function stagedCompileWriter(context: KnowledgeIngestContext, assertCurrent: () => void) {
   const nodes = new Map<string, KnowledgeNodeUpsertInput>();
   const edges: KnowledgeEdgeUpsertInput[] = [];
@@ -222,7 +255,7 @@ async function compileKnowledgeSourceRecords(
   source: KnowledgeSourceRecord,
   extraction: KnowledgeExtractionRecord | null | undefined,
   entityHints: readonly CompiledEntityHint[],
-  writer: KnowledgeCompileWriter = retainedCompileWriter(context),
+  writer: KnowledgeCompileWriter,
 ): Promise<void> {
   const spaceId = getKnowledgeSpaceId(source);
   if (source.artifactId) {
@@ -322,7 +355,7 @@ async function compileKnowledgeSourceRecords(
     });
   }
 
-  await writeKnowledgeStructuredEntityHints(context, source, entityHints, writer);
+  await writeKnowledgeStructuredEntityHints(source, entityHints, writer);
 
   if (extraction) {
     const tagSlugs = new Set(source.tags.map((tag) => slugify(tag)));
@@ -391,9 +424,13 @@ export async function compileKnowledgeStructuredEntityHints(
   context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
+  { signal }: KnowledgeCompileOptions = {},
 ): Promise<void> {
-  const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction);
-  await writeKnowledgeStructuredEntityHints(context, source, entityHints);
+  source = snapshotNodeInput(source);
+  extraction = snapshotNodeInput(extraction);
+  await context.store.init();
+  await commitKnowledgeCompilation(context, source, extraction, true, signal,
+    knowledgeCompileGuard(context, source, extraction, signal));
 }
 
 interface CompiledEntityHint {
@@ -494,10 +531,9 @@ async function prepareKnowledgeStructuredEntityHints(
 }
 
 async function writeKnowledgeStructuredEntityHints(
-  context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
   entities: readonly CompiledEntityHint[],
-  writer: KnowledgeCompileWriter = retainedCompileWriter(context),
+  writer: KnowledgeCompileWriter,
 ): Promise<void> {
   const spaceId = getKnowledgeSpaceId(source);
   for (const entity of entities) {

@@ -36,14 +36,12 @@ Catalog projections still use their genuine observed-record capabilities. Their
 precommit guard checks the original retained state; the committed observation
 checks actual live source/extraction records against the staged evidence. Copied
 JSON gains no observation authority. The ordinary import and standalone compile
-contracts keep their existing policy.
+contracts keep their existing judgment policy.
 
-This atomic boundary covers `ingestKnowledgeArtifact`, `ingestKnowledgeUrl`, and
-their `finalizeKnowledgeIngestedSource` path. `recompileKnowledgeSource` still
-writes a refreshed extraction before invoking the standalone compiler. The
-standalone `compileKnowledgeSource` prepares aliases before graph writes but
-still awaits ordinary node writes inside a persistence batch. This change does
-not claim atomic recompilation or rollback for those separate callers.
+This change's atomic boundary covers `ingestKnowledgeArtifact`,
+`ingestKnowledgeUrl`, and their `finalizeKnowledgeIngestedSource` path. The
+separate standalone compilation and refresh gaps identified here are repaired in
+[THE-44](THE-44-atomic-knowledge-compilation.md), which reuses this staged boundary.
 
 ## Verification
 
