@@ -611,7 +611,10 @@ export class KnowledgeStore {
   /** Merge one node into another, re-pointing cross-reference edges. (Invariant 7.) */
   async mergeNodes(loserId: string, winnerId: string): Promise<{ merged: boolean; repointedEdges: number }> {
     await this.init();
-    return mergeKnowledgeNodes(this, loserId, winnerId);
+    return mergeKnowledgeNodes(this, loserId, winnerId, {
+      sqlite: this.sqlite, nodes: this.nodes, edges: this.edges,
+      nodeRevisions: this.nodeRevisions, nodeActivationScope: this.nodeActivationScope,
+    });
   }
 
   getSemanticEnrichmentState(sourceId: string): KnowledgeSemanticEnrichmentStateRecord | null {

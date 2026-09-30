@@ -94,3 +94,28 @@ reviewed-content/status changes, rejection regeneration, exact stale snapshots,
 replacement/compensation, legacy records, partial-field scope/value binding,
 explicit node/issue/Home Graph review and the public HTTP import/review paths.
 No live judgment or network calls are used; HTTP error formatting uses a test port.
+
+## Atomic node merge follow-up (THE-40)
+
+`mergeNodes` prepares the loser's complete stale/mergedInto mutation through the
+ordinary node gate before touching any edges. Full operator reviews therefore
+hold the whole merge; a field-only correction keeps its exact scope and values.
+After preparation, the loser, winner and captured edge set are revalidated. A
+concurrent review or edge edit causes a stale hold and remains intact. No merge
+operation creates an operator capability or transfers the winner's review.
+
+Repointed/deduplicated edges, the merged_into marker, the stale loser and its
+revision commit in one synchronous SQL savepoint. A SQL mutation failure rolls
+back the entire plan; node, edge and revision caches publish only after release.
+Successful merges then use SQLiteStore's ordinary save contract, including
+outer batch-save deferral. This does not turn asynchronous batches into global
+transactions or promise rollback of filesystem I/O failures after SQL commit.
+Repeated completed merges with no new incident edges preserve timestamps and
+revision history.
+
+`knowledge-node-merge-atomicity.test.ts` uses real temporary SQLite databases and
+reopens them after operator/stale holds, successful merges and SQL abort triggers
+at marker, node and revision writes. A second save/reopen proves rejected writes
+were also rolled back in SQLite memory. Tests cover cache visibility during SQL
+commit, deduplication/self-loops, review provenance, repeated calls and retaining
+unrelated successful work in an outer save batch. No live provider calls occur.
