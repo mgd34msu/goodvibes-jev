@@ -396,6 +396,7 @@ jobs:
       - build
       - platform-matrix
       - types-resolution-check
+      - types-resolution-shards
       - publint-check
       - sbom-check
       - artifact-lane
