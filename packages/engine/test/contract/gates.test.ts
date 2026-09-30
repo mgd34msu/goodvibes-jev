@@ -4,7 +4,7 @@
  * `contract.gates` with CONTRACT_GATE_RESULT events, and failing-gate selection.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RuntimeEventBus } from '../../sdk/src/platform/runtime/events/index.js';
@@ -88,6 +88,27 @@ describe('executeGateCommand', () => {
     expect(Date.now() - started).toBeLessThan(4_000);
     expect(result.passed).toBe(false);
     expect(result.output).toContain('Gate timed out after 100 ms');
+  });
+
+  test('the deadline still stops descendants after their shell exits', async () => {
+    const started = Date.now();
+    const result = await executeGateCommand('sleep 5 &', dir, 100);
+    expect(Date.now() - started).toBeLessThan(4_000);
+    expect(result.passed).toBe(false);
+    expect(result.output).toContain('Gate timed out after 100 ms');
+  });
+
+  test('a timed-out descendant cannot ignore termination and keep changing the worktree', async () => {
+    const result = await executeGateCommand("sh -c 'trap \"\" TERM; sleep 0.3; touch escaped' & wait", dir, 50);
+    expect(result.passed).toBe(false);
+    await Bun.sleep(400);
+    expect(existsSync(join(dir, 'escaped'))).toBe(false);
+  });
+
+  test('stdout and stderr are drained while a large-output gate is running', async () => {
+    const result = await executeGateCommand("bun -e 'process.stdout.write(\"x\".repeat(262144)); process.stderr.write(\"y\".repeat(262144))'", dir, 4_000);
+    expect(result.passed).toBe(true);
+    expect(result.output).toBe(`${'x'.repeat(262144)}\n${'y'.repeat(262144)}`);
   });
 });
 

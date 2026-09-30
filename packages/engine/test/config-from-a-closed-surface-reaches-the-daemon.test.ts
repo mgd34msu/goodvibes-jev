@@ -50,6 +50,8 @@ import { secretWriteTarget } from '../sdk/src/platform/config/secrets-store-path
 import { ensureConnectorConfigSections } from '../sdk/src/platform/config/connector-config-sections.ts';
 import { migrateDaemonNeededCredentials } from '../sdk/src/platform/config/daemon-credential-migration.ts';
 import { daemonSecretKeyFor } from '../sdk/src/platform/config/daemon-secret-keys.ts';
+import { CONFIG_KEYS } from '../sdk/src/platform/config/schema.ts';
+import { CARD_MATERIAL_FIELDS, cardSecretKey } from '../sdk/src/platform/payments/host/card-store.ts';
 import {
   isDaemonNeededSecretKey,
 } from '../sdk/src/platform/config/credential-scope-registry.ts';
@@ -899,88 +901,82 @@ describe("a mail account configured on a surface is the daemon's to send with", 
 });
 
 // ===========================================================================
-// 6. The payment card, and the classification it does not have here.
+// 6. Payment card material belongs to the daemon, whichever surface wrote it.
 // ===========================================================================
 
 /**
- * The card-entry round is on a branch that predates this one, and the two have
- * not met yet. Read-only, from `/home/buzzkill/Projects/.gv-worktrees/payments-
- * agent` and `payments-tui`:
- *
- *   - `src/input/payments-config.ts` maps four card fields onto config keys
- *     `payments.cardNumber`, `payments.cardExpiry`, `payments.cardCvv`,
- *     `payments.cardholderName`, whose values are `goodvibes://secrets/...`
- *     references.
- *   - `src/config/secret-config.ts` derives the store keys
- *     `GOODVIBES_PAYMENTS_CARD_NUMBER` and siblings, and writes them with an
- *     explicit `{ scope: 'daemon' }`.
- *   - The TUI settings modal reaches the same keys through its own app-local
- *     `defaultSecretBackedScope(key)`, which answers `daemon` because
- *     `DAEMON_OWNED_CONFIG_PREFIXES` contains `payments.`.
- *
- * So on that branch the card lands at daemon scope by two independent routes
- * that agree, and the owner's rule holds for it there.
- *
- * What these tests pin is the seam BETWEEN the branches, which is where the
- * three defects tonight all lived. On this branch, the one that introduced the
- * registry and the gate, nothing about a payment card is classified, and the
- * card keys are app-local synthetic names the SDK's config-path derivation
- * cannot reach. Neither of those is a defect in isolation. Together they are a
- * merge hazard with a silent failure mode, and it is cheaper to hold it here
- * than to rediscover it after the merge.
+ * The payment host now stores card material under a declared secret-key
+ * family, rather than putting it in config. Exercise the actual key builder
+ * and every stored field: a test of only the number would miss a stranded
+ * expiry, CVV or cardholder name just as surely as no test at all.
  */
-describe('the payment card across the branch seam', () => {
-  const CARD_CONFIG_KEYS = [
+describe('payment card material survives the surface closing', () => {
+  const LEGACY_CARD_CONFIG_KEYS = [
     'payments.cardNumber',
     'payments.cardExpiry',
     'payments.cardCvv',
     'payments.cardholderName',
   ] as const;
 
-  test('no card field is declared secret-bearing on this branch', () => {
-    // `secret-bearing-config-keys.ts` names `cardNumber`, `cardExpiry` and
-    // `cardholderName` in its own header, as the worked example of keys every
-    // trailing-word pattern misses, and then declares none of them. The
-    // plaintext sweep is driven by that declaration, so a card number written
-    // into a settings file by any path the payments round did not close would
-    // be swept by nothing and stay in the clear.
-    for (const key of CARD_CONFIG_KEYS) {
+  test('card material is not a setting: none of the old card config paths is published', () => {
+    for (const key of LEGACY_CARD_CONFIG_KEYS) {
+      expect(CONFIG_KEYS.has(key)).toBe(false);
       expect(isSecretBearingConfigKey(key)).toBe(false);
     }
   });
 
-  test('the derived card store keys are not daemon-needed by this registry', () => {
-    // The registry's derivation walks daemon-owned CONFIG paths. `payments.*`
-    // is not in this branch's CONFIG_SCHEMA, so the derivation cannot see the
-    // card keys and the registry does not claim them.
-    for (const key of CARD_CONFIG_KEYS) {
-      expect(isDaemonNeededSecretKey(daemonSecretKeyFor(key))).toBe(false);
+  test('every key the card store builds is daemon-needed, without capturing unrelated secrets', () => {
+    for (const id of ['card_abc123', 'another-card']) {
+      for (const field of CARD_MATERIAL_FIELDS) {
+        expect(isDaemonNeededSecretKey(cardSecretKey(id, field))).toBe(true);
+      }
     }
-    // Stated as the payments branch names them, not only as derived here.
-    expect(isDaemonNeededSecretKey('GOODVIBES_PAYMENTS_CARD_NUMBER')).toBe(false);
-    expect(isDaemonNeededSecretKey('GOODVIBES_PAYMENTS_CARD_CVV')).toBe(false);
+    // Earlier surfaces used these two spellings. The same declared prefix
+    // keeps their values reachable while those products are being ported.
+    expect(isDaemonNeededSecretKey(daemonSecretKeyFor('payments.cardNumber'))).toBe(true);
+    expect(isDaemonNeededSecretKey(daemonSecretKeyFor('payments.cardCvv'))).toBe(true);
+    expect(isDaemonNeededSecretKey('GOODVIBES_PAYMENTS_UNRELATED_SECRET')).toBe(false);
   });
 
-  test('so a card written without an explicit scope would not be relocated here', async () => {
+  test('default, user and project writes all land in the daemon tier and remain readable after the surface closes', async () => {
     const home = throwawayHome();
     const surface = managers(home, 'agent');
 
-    // The payments round always passes `{ scope: 'daemon' }`, so this is not
-    // today's behaviour on that branch, it is what the safety net underneath
-    // it does if that argument is ever dropped, defaulted, or refactored away.
-    // For every key the registry DOES classify, the net catches it. For a card,
-    // it does not.
-    await surface.secretsManager.set('GOODVIBES_PAYMENTS_CARD_NUMBER', '4242424242424242', { scope: 'user' });
-    expect(await storedScope(surface.secretsManager, 'GOODVIBES_PAYMENTS_CARD_NUMBER')).toBe('user');
+    for (const scope of [undefined, 'user', 'project'] as const) {
+      for (const field of CARD_MATERIAL_FIELDS) {
+        const key = cardSecretKey(`card_${scope ?? 'default'}`, field);
+        const value = `TEST-ONLY-${scope ?? 'default'}-${field}`;
+        await surface.secretsManager.set(key, value, scope === undefined ? undefined : { scope });
+        expect(await storedScope(surface.secretsManager, key)).toBe('daemon');
+        expect(readStore(storeFile(home, 'agent', 'user'))[key]).toBeUndefined();
+        expect(readStore(storeFile(home, 'agent', 'project'))[key]).toBeUndefined();
+      }
+    }
 
-    // Which means the daemon, the process that runs a purchase, cannot read it.
-    const daemon = managers(home, 'daemon');
-    expect(await daemon.secretsManager.get('GOODVIBES_PAYMENTS_CARD_NUMBER')).toBeNull();
+    // No surface object is used from here on. The daemon boots normally and
+    // resolves the same material from its own store.
+    const daemon = await bootDaemon(home);
+    for (const scope of [undefined, 'user', 'project'] as const) {
+      for (const field of CARD_MATERIAL_FIELDS) {
+        const key = cardSecretKey(`card_${scope ?? 'default'}`, field);
+        expect(await daemon.secretsManager.get(key)).toBe(`TEST-ONLY-${scope ?? 'default'}-${field}`);
+      }
+    }
+  });
 
-    // The contrast, same store, same call, a key the registry knows.
-    await surface.secretsManager.set('SLACK_BOT_TOKEN', 'xoxb-TEST-ONLY', { scope: 'user' });
-    expect(await storedScope(surface.secretsManager, 'SLACK_BOT_TOKEN')).toBe('daemon');
-    expect(await daemon.secretsManager.get('SLACK_BOT_TOKEN')).toBe('xoxb-TEST-ONLY');
+  test('daemon boot recovers every card field stranded in a closed surface store', async () => {
+    const home = throwawayHome();
+    for (const field of CARD_MATERIAL_FIELDS) {
+      strandInSurfaceStore(home, 'tui', cardSecretKey('card_stranded', field), `TEST-ONLY-${field}`);
+    }
+
+    const daemon = await bootDaemon(home);
+    for (const field of CARD_MATERIAL_FIELDS) {
+      const key = cardSecretKey('card_stranded', field);
+      expect(await daemon.secretsManager.get(key)).toBe(`TEST-ONLY-${field}`);
+      expect(await storedScope(daemon.secretsManager, key)).toBe('daemon');
+      expect(readStore(storeFile(home, 'tui', 'user'))[key]).toBeUndefined();
+    }
   });
 });
 

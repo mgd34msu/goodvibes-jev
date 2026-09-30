@@ -22,6 +22,7 @@ import { CompactionManager } from '../sdk/src/platform/runtime/compaction/index.
 import type { ChatResponse, LLMProvider } from '../sdk/src/platform/providers/interface.ts';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry.ts';
 import type { PermissionPromptDecision } from '../sdk/src/platform/permissions/prompt.ts';
+import { installHostedSessionReadings } from './_helpers/hosted-session-readings.ts';
 
 const PROVIDER = 'stub';
 const MODEL = 'stub-1';
@@ -31,6 +32,7 @@ const WINDOW = 8192;
 let root: string;
 let services: ClientRuntimeServices;
 let runtimeBus: RuntimeEventBus;
+let readings: ReturnType<typeof installHostedSessionReadings>;
 
 function stubProvider(): LLMProvider {
   return {
@@ -86,9 +88,11 @@ beforeEach(() => {
   });
   services.providerRegistry.registerRuntimeProvider({ provider: stubProvider(), models: [stubModel()], replace: true });
   services.providerRegistry.setCurrentModel(`${PROVIDER}:${MODEL}`);
+  readings = installHostedSessionReadings();
 });
 
 afterEach(() => {
+  readings.restore();
   services.dispose();
   rmSync(root, { recursive: true, force: true });
 });
@@ -120,6 +124,8 @@ test('a session bootstrap creates the CompactionManager and a compaction in the 
   await session.submit('one more');
   off();
 
+  // Small-window compaction is deterministic; only the turn's intake is read.
+  expect(readings.requests.map((request) => request.context?.battery)).toEqual(['contract.request-route']);
   expect(seen.map((e) => e.type)).toEqual([
     'COMPACTION_CHECK',
     'COMPACTION_MICROCOMPACT',

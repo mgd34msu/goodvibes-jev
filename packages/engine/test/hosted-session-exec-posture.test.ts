@@ -30,10 +30,13 @@ import {
 import { createHostedSessionRuntime } from '../sdk/src/platform/hosted-sessions/session-runtime.ts';
 import type { HostedSessionExecPosture } from '../sdk/src/platform/hosted-sessions/exec-posture.ts';
 import type { PermissionPromptDecision } from '../sdk/src/platform/permissions/prompt.ts';
+import { installHostedSessionReadings } from './_helpers/hosted-session-readings.ts';
+import { EXEC_GATE_TABLE } from './_helpers/gate-readings.ts';
 
 let root: string;
 let workspace: string;
 let services: ClientRuntimeServices;
+let readings: ReturnType<typeof installHostedSessionReadings>;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'hosted-posture-'));
@@ -62,9 +65,14 @@ beforeEach(() => {
     requestApproval: approveEverything,
     modelDiscovery: 'skip',
   });
+  readings = installHostedSessionReadings({
+    tools: [['tmux send-keys -t main', { foreignTerminal: true }]],
+    gate: EXEC_GATE_TABLE,
+  });
 });
 
 afterEach(() => {
+  readings.restore();
   services.dispose();
   rmSync(root, { recursive: true, force: true });
 });
@@ -108,6 +116,11 @@ test('a hosted session with NO posture stated is contained: an uncontained comma
   expect(outcome.stderr).toContain('requires commands to run inside the exec boundary');
   expect(outcome.stderr).toContain('daemon-hosted conversational turn');
   expect(outcome.stdout).not.toContain('reached-the-host');
+  expect(readings.requests.filter((request) => request.context?.battery === 'engine.tools.owner-terminal')
+    .map((request) => request.state)).toEqual([{
+    command: 'echo reached-the-host',
+    owned_sessions: 'every session whose name begins with "goodvibes-" (such as goodvibes-build)',
+  }]);
   session.dispose();
 });
 
@@ -151,5 +164,6 @@ test("reading tmux state is not touching it: a workstream may still look", async
   const session = hostedSession('workstream');
   const outcome = await runExec(session, 'tmux list-sessions');
   expect(outcome.stderr).not.toContain("owner's terminal is untouchable");
+  expect(readings.requests.some((request) => request.context?.battery === 'engine.tools.owner-terminal')).toBe(true);
   session.dispose();
 });
