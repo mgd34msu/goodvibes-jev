@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { RUNNER_ENV_FLAG } from './test-run-tmp.ts';
 
 export const NETWORK_VIOLATIONS_ENV = 'GOODVIBES_TEST_NETWORK_VIOLATIONS';
 
@@ -9,6 +10,8 @@ const INHERITED = new Set([
   'PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'COMSPEC',
   'SHELL', 'TERM', 'COLORTERM', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ',
   'CI', 'GITHUB_ACTIONS', 'NO_COLOR', 'FORCE_COLOR', 'TMPDIR', 'TMP', 'TEMP',
+  RUNNER_ENV_FLAG,
+  'GOODVIBES_SDK_DEV_ROUNDTRIP_TEST',
 ]);
 
 /** Isolate persisted user state while allowing tests to declare fixture env explicitly. */
