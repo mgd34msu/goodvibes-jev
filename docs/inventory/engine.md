@@ -1331,6 +1331,24 @@ Built new for this subsystem in E.16 (new files, not goodvibes-sdk sources, so n
 
 ## gate (replaces permissions)
 
+Pre-judgment privacy follow-up: `sdk/src/platform/gate/judgment-input.ts` is a new
+PORT boundary, not a semantic judgment replacement. It checks declared
+credential/config/card fields and operation envelopes, explicit authentication
+syntax, existing deterministic PAN shapes, and JSON/resource limits before any
+hosted request or permission preview. `gate/reading.ts` (including direct readers
+and read-only secret questions), `permissions/manager.ts` (foreground, background,
+and read access), MCP capability reading and the execution ledger share this
+boundary. `security/card-shapes.ts` exports its existing local PAN finder without
+invoking card-talk. Protected taint sources are withheld from derivation judgment
+and require the existing owner approval over the original full outgoing content;
+ordinary sources still use Jev. The typed boundary check is `judgment-input`, with
+permission reason `boundary_judgment_input`. This is bounded structural privacy,
+not generic PII detection, credential-value inference, or a judgment fallback.
+See `packages/engine/docs/security.md` “Hosted gate judgment input” for exact
+supported classes and intentionally unchanged secure setup paths. Captured fake
+port regression coverage lives in `test/gate-judgment-input.test.ts`.
+
+
 | File | Disposition | Note |
 |---|---|---|
 | `sdk/src/platform/agents/background-permission-gate.ts` | JEV | Brokers a background agent's tool call through the gate (PermissionManager.checkDetailed), honouring the `permissions.backgroundAgents: 'allow-all'` escape hatch only for calls that pass the gate's boundary, and turns a refusal into a ToolDenial and error string. Checks: L55 whether a permission manager is wired, presence test: code, it tests whether a field exists (isolated contexts leave the call ungated). L56 whether the owner set the escape hatch, `getBackgroundAgentsMode() === 'allow-all'`: code, string equality with the owner's own setting value. L56 whether the call passes the boundary, `manager.passesBoundary`: Jev, the site reads through the gate's boundary (manager.ts readCall then gate/boundary.ts: `engine.gate.boundary` catastrophic and cardDetails, `engine.gate.outward-taint` derives), so the hatch never skips a catastrophic, card-detail or tainted outward call. L61, L65 whether the record carries a template and the result carries modifiedArgs: code, field presence. L64 whether the gate approved: code, reads the boolean the gate returned. |

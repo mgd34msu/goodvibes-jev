@@ -2,7 +2,7 @@ import { getConfigSnapshot, isAutoApproveEnabled } from '../config/index.js';
 import type { PermissionAction, PermissionsToolConfig, PermissionMode, BackgroundAgentsMode } from '../config/schema.js';
 import type { PermissionAttribution, PermissionRequestHandler } from './prompt.js';
 import { analyzePermissionRequest, withReading } from './analysis.js';
-import { runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
+import { judgmentInputBoundary, runBoundary, type BoundaryCheckName, type BoundaryVerdict } from '../gate/boundary.js';
 import { decideByPreset, presetForMode, type GatePreset } from '../gate/presets.js';
 import { categoryForSideEffectKind, classificationFromReading, readTouchesSecrets, readToolCall, shellCommandsIn, type GateReading } from '../gate/reading.js';
 import { grantOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
@@ -158,6 +158,7 @@ const isKnownReadOnly = (toolName: string, category: PermissionCategory): boolea
   category === 'read' && toolName !== 'fetch' && TOOL_CATEGORIES[toolName] !== undefined;
 
 const BOUNDARY_REASON: Readonly<Record<BoundaryCheckName, PermissionDecisionReasonCode>> = {
+  'judgment-input': 'boundary_judgment_input',
   catastrophic: 'boundary_catastrophic',
   'surface-authority': 'boundary_surface_authority',
   'card-details': 'boundary_card_details',
@@ -189,6 +190,8 @@ const readingRecord = (reading: GateReading): GateReadingRecord => ({
 /**
  * PermissionManager, the gate: the one path every tool call takes.
  *
+ *   0. The local judgment-input boundary refuses inline protected material
+ *      before hooks, request recording or any hosted reading.
  *   1. Jev reads the call (gate/reading.ts): a known read-only tool is asked
  *      only whether it touches secrets; any other call gets the side-effect,
  *      risk-family and boundary questions in parallel.
@@ -247,6 +250,15 @@ export class PermissionManager {
    * render which background agent (or server, or sandbox) is asking.
    */
   async checkDetailed(toolName: string, args: Record<string, unknown>, attribution?: PermissionAttribution): Promise<PermissionCheckResult> {
+    const privacy = judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined);
+    if (!privacy.passed) {
+      // Do not build an argument preview, fire hooks or export request/decision
+      // records from a refused input. Even the tool name is untrusted here.
+      return this.result(false, false, 'boundary', 'boundary_judgment_input', {
+        classification: 'protected-input', riskLevel: 'critical',
+        summary: 'Protected input refused before judgment', reasons: [privacy.reason],
+      }, { boundary: boundaryRecord(privacy), detail: privacy.reason });
+    }
     let category = this.getCategory(toolName, args);
     let analysis = analyzePermissionRequest(toolName, args, category);
     const callId = crypto.randomUUID();
@@ -345,6 +357,7 @@ export class PermissionManager {
    * uses it: exempt from presets and prompts, never from the boundary.
    */
   async passesBoundary(toolName: string, args: Record<string, unknown>): Promise<boolean> {
+    if (!judgmentInputBoundary(toolName, args, this.configReader.getWorkingDirectory() ?? undefined).passed) return false;
     const reading = await this.readCall(toolName, args, this.getCategory(toolName, args));
     return (await this.runGateBoundary(toolName, args, reading)).passed;
   }
@@ -473,6 +486,7 @@ export class PermissionManager {
   async readAccess(rawPath: string): Promise<'allow' | 'restricted'> {
     if (typeof rawPath !== 'string' || rawPath.length === 0) return 'allow';
     const args: Record<string, unknown> = { path: rawPath };
+    if (!judgmentInputBoundary('read', args, this.configReader.getWorkingDirectory() ?? undefined).passed) return 'restricted';
     if (this.configReader.isAutoApproveEnabled()) return 'allow';
     const permsConfig = this.configReader.getSnapshot().permissions;
     const mode = permsConfig?.mode ?? 'prompt';

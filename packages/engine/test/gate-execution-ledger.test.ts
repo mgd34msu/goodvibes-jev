@@ -96,7 +96,7 @@ describe('AgentExecutionLedger', () => {
     expect(snapshot.records[0]?.cancelReason).toBe('user stopped it');
   });
 
-  test('secret-looking argument keys are redacted from the preview and the key list', async () => {
+  test('declared credential input is withheld before readings and previews', async () => {
     const bus = new RuntimeEventBus();
     const ledger = new AgentExecutionLedger(bus);
     received(bus, 'c1', 'fetch', { url: 'https://api.example.org', apiKey: 'sk-live-123', headers: { authorization: 'Bearer x' } });
@@ -105,9 +105,11 @@ describe('AgentExecutionLedger', () => {
     const [record] = ledger.getSnapshot().records;
     expect(record?.argsPreview).not.toContain('sk-live-123');
     expect(record?.argsPreview).not.toContain('Bearer x');
-    expect(record?.argsPreview).toContain('[redacted]');
-    expect(record?.argsKeys).toEqual(['headers', 'url']);
-    expect(record?.targetPreview).toBe('https://api.example.org');
+    expect(record?.argsPreview).toContain('[redacted: protected input]');
+    expect(record?.argsKeys).toEqual([]);
+    expect(record?.targetPreview).toBeUndefined();
+    expect(record?.routeKindError).toContain('Refused before judgment');
+    expect(readings.requests).toEqual([]);
   });
 
   test('the ledger keeps the newest records up to its limit', async () => {

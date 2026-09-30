@@ -199,12 +199,17 @@ function panCandidates(groups: readonly DigitGroup[]): PanCandidate[] {
   if (groups.length > 1) push(0, groups.length - 1);
 
   for (let from = 0; from < groups.length; from += 1) {
+    let digitCount = groups[from]?.digits.length ?? 0;
     for (let to = from + 1; to < groups.length; to += 1) {
       const group = groups[to];
       const start = groups[from];
       if (!group || !start) break;
       if (start.digits.length < MIN_GROUPED_PAN_GROUP || start.digits.length > MAX_GROUPED_PAN_GROUP) break;
       if (group.digits.length < MIN_GROUPED_PAN_GROUP || group.digits.length > MAX_GROUPED_PAN_GROUP) break;
+      digitCount += group.digits.length;
+      // Longer windows can never be PANs; avoid building every suffix of a
+      // large input while the pre-judgment guard scans the complete text.
+      if (digitCount > MAX_PAN_DIGITS) break;
       push(from, to);
     }
   }
@@ -228,7 +233,7 @@ function panCandidates(groups: readonly DigitGroup[]): PanCandidate[] {
  * digit string is deliberately not caught: the threat model here is the owner
  * pasting their own card, not an adversary evading the check.
  */
-function findPans(text: string): CardShapeFinding[] {
+export function findCardNumberShapes(text: string, maxFindings = Number.POSITIVE_INFINITY): CardShapeFinding[] {
   const accepted: CardShapeFinding[] = [];
   PAN_RUN.lastIndex = 0;
   for (let match = PAN_RUN.exec(text); match !== null; match = PAN_RUN.exec(text)) {
@@ -245,6 +250,8 @@ function findPans(text: string): CardShapeFinding[] {
       const span: Span = { startIndex: hit.startIndex, length: hit.endIndex - hit.startIndex };
       if (overlaps(span, accepted)) continue;
       accepted.push({ kind: 'pan', ...span });
+      // A refusing caller needs only existence, not every possible span.
+      if (accepted.length >= maxFindings) return accepted;
     }
   }
   return accepted.sort((a, b) => a.startIndex - b.startIndex);
@@ -275,7 +282,7 @@ function findMatches(pattern: RegExp, text: string, kind: CardShapeKind, exclude
  */
 export async function detectCardShapes(text: string): Promise<readonly CardShapeFinding[]> {
   if (text.length === 0) return [];
-  const pans = findPans(text);
+  const pans = findCardNumberShapes(text);
   const expiries = findMatches(EXPIRY_PAIR, text, 'expiry', pans);
   const securityCodes = findMatches(BARE_SHORT_DIGIT_RUN, text, 'security-code', [...pans, ...expiries]);
   if (expiries.length === 0 && securityCodes.length === 0) return pans;

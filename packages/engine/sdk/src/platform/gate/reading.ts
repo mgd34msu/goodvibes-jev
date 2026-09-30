@@ -7,6 +7,7 @@
  * Code reads an uncertain fact as true: a reading that does not reach a
  * confident no counts as yes. Doubt raises the stakes; it never lowers them.
  */
+import { assertJudgmentInput } from './judgment-input.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, Stakes, YesNoReading } from '@goodvibes-jev/judgment';
 import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
@@ -77,24 +78,31 @@ export function stakesFromFacts(facts: GateFacts): Stakes {
 /** How long a string argument may be before the reading shows only its head. */
 const MAX_STRING_CHARS = 4000;
 
-/** The arguments as JSON, with very long strings cut to a head and a marker naming the dropped length. */
-export function readingArguments(value: unknown): JsonValue {
+/** Already privacy-checked JSON, with long strings cut to a head and a dropped-length marker. */
+function boundedArguments(value: unknown): JsonValue {
   if (typeof value === 'string') {
     return value.length <= MAX_STRING_CHARS ? value : `${value.slice(0, MAX_STRING_CHARS)} [${value.length - MAX_STRING_CHARS} more characters]`;
   }
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
-  if (Array.isArray(value)) return value.map(readingArguments);
+  if (Array.isArray(value)) return value.map(boundedArguments);
   if (typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).map(([k, v]) => [k, readingArguments(v)]));
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).map(([k, v]) => [k, boundedArguments(v)]));
   }
   return String(value);
 }
 
+/** Privacy-checked arguments; scan the complete input before applying size caps. */
+export function readingArguments(value: unknown): JsonValue {
+  assertJudgmentInput(value);
+  return boundedArguments(value);
+}
+
 /** The state a gate battery reads: the tool, its arguments and the working directory. */
 export function readingState(toolName: string, args: Record<string, unknown>, workingDirectory?: string): { [key: string]: JsonValue } {
+  assertJudgmentInput({ args, workingDirectory }, toolName);
   return {
     tool: toolName,
-    arguments: readingArguments(args),
+    arguments: boundedArguments(args),
     ...(workingDirectory ? { workingDirectory } : {}),
   };
 }
@@ -118,8 +126,8 @@ export const GATE_SITE = 'engine.gate';
 
 /** Reads one tool call through the gate's two batteries, in parallel. */
 export async function readToolCall(input: ReadToolCallInput, site: string = GATE_SITE): Promise<GateReading> {
-  const port = judgmentPort(site);
   const state = readingState(input.toolName, input.args, input.workingDirectory);
+  const port = judgmentPort(site);
   const signal = input.signal === undefined ? {} : { signal: input.signal };
   const shell = input.askObfuscated === true;
   const [effect, risk, edge] = await Promise.all([
@@ -214,7 +222,8 @@ export function categoryForSideEffectKind(kind: SideEffectKind): PermissionCateg
 
 /** Reads only the side-effect kind of a call (the execution ledger's route kind). */
 export async function readSideEffectKind(toolName: string, args: Record<string, unknown>, site: string): Promise<{ readonly kind: SideEffectKind; readonly confident: boolean }> {
-  const run = await sideEffect.run(judgmentPort(site), readingState(toolName, args), { site, only: ['kind'] });
+  const state = readingState(toolName, args);
+  const run = await sideEffect.run(judgmentPort(site), state, { site, only: ['kind'] });
   return { kind: run.readings.kind.choice, confident: run.readings.kind.outcome === 'act' };
 }
 
@@ -254,9 +263,10 @@ export async function readCatastrophic(
   command: string,
   site = 'engine.gate.exec-time',
 ): Promise<{ readonly verdict: YesNoReading['verdict']; readonly readByGate: boolean }> {
+  const state = readingState('exec', { command });
   const seen = CATASTROPHIC_SEEN.get(command);
   if (seen !== undefined) return { verdict: seen, readByGate: true };
-  const run = await boundaryReading.run(judgmentPort(site), readingState('exec', { command }), { site, only: ['catastrophic'] });
+  const run = await boundaryReading.run(judgmentPort(site), state, { site, only: ['catastrophic'] });
   const verdict = run.readings.catastrophic.verdict;
   run.recordAction(`exec-time:${verdict}`);
   return { verdict, readByGate: false };

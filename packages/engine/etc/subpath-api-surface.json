@@ -25475,7 +25475,7 @@
     {
       "name": "BoundaryCheckName",
       "kind": "type",
-      "text": "export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
+      "text": "export type BoundaryCheckName = 'judgment-input' | 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
     },
     {
       "name": "BoundaryInput",
@@ -25699,6 +25699,11 @@
       "name": "isPlanMode",
       "kind": "function",
       "text": "export declare function isPlanMode(mode: PermissionModeValue | string | undefined): boolean;"
+    },
+    {
+      "name": "judgmentInputBoundary",
+      "kind": "function",
+      "text": "export declare function judgmentInputBoundary(toolName: string, args: Record<string, unknown>, workingDirectory?: string): BoundaryVerdict; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "listCommandAuthoritySurfaces",
@@ -39521,7 +39526,7 @@
         "checks",
         "passed"
       ],
-      "text": "export interface GateBoundaryRecord { readonly passed: boolean; readonly refusedBy?: BoundaryCheckName | undefined; readonly checks: readonly BoundaryCheck[]; } ;; via BoundaryCheck = export interface BoundaryCheck { readonly check: BoundaryCheckName; readonly result: 'pass' | 'refuse' | 'skipped'; readonly detail?: string | undefined; } ;; BoundaryCheckName = export type BoundaryCheckName = 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
+      "text": "export interface GateBoundaryRecord { readonly passed: boolean; readonly refusedBy?: BoundaryCheckName | undefined; readonly checks: readonly BoundaryCheck[]; } ;; via BoundaryCheck = export interface BoundaryCheck { readonly check: BoundaryCheckName; readonly result: 'pass' | 'refuse' | 'skipped'; readonly detail?: string | undefined; } ;; BoundaryCheckName = export type BoundaryCheckName = 'judgment-input' | 'catastrophic' | 'surface-authority' | 'card-details' | 'outward-effect';"
     },
     {
       "name": "GateOptions",
@@ -39630,7 +39635,7 @@
     {
       "name": "PermissionDecisionReasonCode",
       "kind": "type",
-      "text": "export type PermissionDecisionReasonCode = 'boundary_catastrophic' | 'boundary_surface_authority' | 'boundary_card_details' | 'boundary_outward_effect' | 'preset_allow' | 'preset_deny' | 'owner_approved_outward' | 'config_allow' | 'config_deny' | 'managed_policy_allow' | 'managed_policy_deny' | 'safety_guardrail' | 'mode_allow_all' | 'mode_denied' | 'plan_mode' | 'mode_accept_edits' | 'session_cached_allow' | 'session_cached_deny' | 'user_rule_allow' | 'user_rule_deny' | 'user_approved' | 'user_denied';"
+      "text": "export type PermissionDecisionReasonCode = 'boundary_judgment_input' | 'boundary_catastrophic' | 'boundary_surface_authority' | 'boundary_card_details' | 'boundary_outward_effect' | 'preset_allow' | 'preset_deny' | 'owner_approved_outward' | 'config_allow' | 'config_deny' | 'managed_policy_allow' | 'managed_policy_deny' | 'safety_guardrail' | 'mode_allow_all' | 'mode_denied' | 'plan_mode' | 'mode_accept_edits' | 'session_cached_allow' | 'session_cached_deny' | 'user_rule_allow' | 'user_rule_deny' | 'user_approved' | 'user_denied';"
     },
     {
       "name": "PermissionDecisionSource",
