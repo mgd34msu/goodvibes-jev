@@ -105,6 +105,9 @@
       "dependencies": {
         "@goodvibes-jev/engine": "workspace:*",
       },
+      "devDependencies": {
+        "@goodvibes-jev/judgment": "workspace:*",
+      },
     },
   },
   "overrides": {
