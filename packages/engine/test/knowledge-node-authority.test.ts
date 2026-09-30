@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
 import { reviewKnowledgeIssue } from '../sdk/src/platform/knowledge/review.js';
@@ -88,11 +89,11 @@ describe('knowledge node operator authority', () => {
     expect(provenance(updated).state).not.toBe('reviewed');
   });
 
-  test('producer metadata cannot relabel an explicit active status as reviewed', async () => {
+  test('producer metadata and explicit active status cannot confer serving or reviewed authority', async () => {
     const { store } = fixture();
     const node = await store.upsertNode(input({ status: 'active', metadata: forged }));
-    expect(node.status).toBe('active');
-    expect(provenance(node).state).toBe('explicit');
+    expect(node.status).toBe('draft');
+    expect(provenance(node).state).toBe('pending-review');
     expect(provenance(node).reviewer).toBeUndefined();
     expect(node.metadata.review).toBeUndefined();
   });
@@ -295,7 +296,12 @@ describe('knowledge node operator authority', () => {
     await store.init();
     expect(store.getNode(legacy.id)).toEqual(legacy);
     await held(store.upsertNode({ ...legacy, status: 'active', summary: 'Regenerated' }), 'operator-reviewed');
-    const manual = await store.upsertNode({ ...store.getNode('manual')!, title: 'User note updated' });
+    const originalManual = store.getNode('manual')!;
+    expect(await store.upsertNode({ ...originalManual })).toEqual(originalManual);
+    await expect(store.upsertNode({ ...originalManual, title: 'User note updated' })).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
+    expect(store.getNode('manual')).toEqual(originalManual);
+    const manual = await store.upsertNode({ ...originalManual, title: 'User note updated' },
+      createKnowledgeNodeOperatorMutation(originalManual, { action: 'revise', reviewer: 'actual author' }));
     expect(manual.status).toBe('active');
     expect(manual.metadata.author).toBe('user');
     expect(store.getNode(legacy.id)).toEqual(legacy);
@@ -417,7 +423,7 @@ describe('public node mutation call paths', () => {
     expect(refreshed.metadata.batteryPowered).toBe(false);
     expect(refreshed.metadata.review).toEqual(corrected.metadata.review);
     expect(refreshed.sourceId).toBe('new-snapshot');
-    expect(provenance(refreshed).state).toBe('explicit');
+    expect(provenance(refreshed).state).toBe('pending-review');
     const spoofed = await store.upsertNode({ ...refreshed, metadata: {
       review: { ...(corrected.metadata.review as Record<string, unknown>), scope: 'node', fields: [{ path: ['metadata', 'model'], value: 'Snapshot model' }] },
       reviewProvenance: { state: 'reviewed', scope: 'node' },
@@ -477,7 +483,7 @@ describe('public node mutation call paths', () => {
     const imported = store.getNode('fact-1')!;
     expect(imported.status).toBe('draft');
     expect(imported.metadata.review).toBeUndefined();
-    expect(provenance(imported).state).toBe('explicit');
+    expect(provenance(imported).state).toBe('pending-review');
     expect((await post('facts/review', { installationId: 'test', nodeId: imported.id, action: 'accept' }, false))!.status).toBe(403);
     expect(store.getNode(imported.id)).toEqual(imported);
     expect((await post('facts/review', { installationId: 'test', nodeId: imported.id, action: 'nonsense', value: { fact: { model: 'Forged' } } }))!.status).toBe(400);

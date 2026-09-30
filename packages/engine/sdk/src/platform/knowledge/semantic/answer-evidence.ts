@@ -126,7 +126,7 @@ export async function collectAnswerEvidence(
     });
 
   const nodeItems = listAnswerNodes(store, spaceId)
-    .filter((node) => belongsToAnswerSpace(node, spaceId) && node.status !== 'stale')
+    .filter((node) => belongsToAnswerSpace(node, spaceId) && node.status === 'active')
     .filter((node) => node.metadata.semanticKind !== 'fact' || factHasUsableSource(node, usableSourceIds))
     .filter((node) => nodeInAnswerObjectScope(node, objectScope))
     .filter((node) => !strictCandidates
@@ -288,7 +288,7 @@ function buildSourceFactIndex(
   usableSourceIds: ReadonlySet<string>,
 ): Map<string, KnowledgeNodeRecord[]> {
   const facts = listAnswerNodes(store, spaceId).filter((node) => (
-    node.status !== 'stale' && node.metadata.semanticKind === 'fact' && belongsToAnswerSpace(node, spaceId)
+    node.status === 'active' && node.metadata.semanticKind === 'fact' && belongsToAnswerSpace(node, spaceId)
   ));
   const factsById = new Map(facts.map((fact) => [fact.id, fact]));
   const bySource = new Map<string, KnowledgeNodeRecord[]>();
@@ -355,7 +355,7 @@ function listAnswerNodes(store: KnowledgeStore, spaceId: string): KnowledgeNodeR
     edges: store.listEdges(),
   };
   return nodes
-    .filter((node) => node.status !== 'stale')
+    .filter((node) => node.status === 'active' && node.kind !== 'knowledge_gap' && node.metadata.semanticKind !== 'gap')
     .filter((node) => knowledgeNodeMatchesScope(node, answerEvidenceScope(spaceId), lookup));
 }
 

@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
 /** Temporary SQLite stores and explicit promises only: no provider or user state. */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -24,7 +25,7 @@ async function fixture() {
   const { store, artifactStore } = createStores();
   const spaceId = 'terminal-fixture';
   const source = await store.upsertSource({ id: 'manual', connectorId: 'manual', sourceType: 'document', title: 'Synthetic device manual', status: 'indexed', metadata: { knowledgeSpaceId: spaceId } });
-  const gap = await store.upsertNode({ id: 'manual-gap', kind: 'knowledge_gap', slug: 'manual-gap', title: 'What ports does this device provide?', status: 'active', confidence: 90, sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'manual' } });
+  const gap = await upsertObservedKnowledgeNode(store, { id: 'manual-gap', kind: 'knowledge_gap', slug: 'manual-gap', title: 'What ports does this device provide?', status: 'active', confidence: 90, sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'manual' } }, 'research-task', source, () => store.getSource(source.id));
   const service = new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: {
     async add() { throw new Error('Unexpected memory write'); }, getAll() { return []; }, getStore() { throw new Error('Unexpected memory read'); },
   } });
@@ -83,8 +84,8 @@ describe('terminal knowledge refinement decisions', () => {
 
   test('cancellation during promotion judgment prevents late fact writes through the complete repair path', async () => {
     const h = await fixture(); const started = deferred(); const release = deferred();
-    const subject = await h.store.upsertNode({ kind: 'ha_device', slug: 'lg-tv', title: 'LG 86NANO90UNA', status: 'active', metadata: { knowledgeSpaceId: h.input.knowledgeSpaceId, manufacturer: 'LG', model: '86NANO90UNA' } });
-    await h.store.upsertNode({ ...h.gap, metadata: { ...h.gap.metadata, linkedObjectIds: [subject.id] } });
+    const subject = await upsertObservedKnowledgeNode(h.store, { kind: 'ha_device', slug: 'lg-tv', title: 'LG 86NANO90UNA', status: 'active', metadata: { knowledgeSpaceId: h.input.knowledgeSpaceId, manufacturer: 'LG', model: '86NANO90UNA' } }, 'home-assistant-snapshot', h.source, () => h.store.getSource(h.source.id));
+    await upsertObservedKnowledgeNode(h.store, { ...h.gap, metadata: { ...h.gap.metadata, linkedObjectIds: [subject.id] } }, 'research-task', h.gap, () => h.store.getNode(h.gap.id));
     await h.store.upsertExtraction({ sourceId: h.source.id, extractorId: 'synthetic', format: 'text', structure: { searchText: 'LG 86NANO90UNA has four HDMI inputs and supports HDMI eARC.' }, excerpt: 'LG 86NANO90UNA has four HDMI inputs and supports HDMI eARC.' });
     const fake = fakePort((name, question) => name === 'authority' ? choiceAnswer(question, 'secondary', 0.99) : noulAnswer(0.99));
     const previous = installJudgmentPort({ ...fake.port, async ask(request) { started.resolve(); await release.promise; return fake.port.ask(request); } });

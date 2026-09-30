@@ -1,3 +1,9 @@
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
+import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -120,17 +126,16 @@ describe('knowledge wiki honesty: revision history (Defect 1)', () => {
 });
 
 describe('knowledge wiki honesty: confidence scale + non-finite guard (Findings 4 & 5)', () => {
-  test('a non-finite (NaN) confidence resolves to the auto-accept default, never a silent draft (Finding 5)', async () => {
+  test('a non-finite producer confidence is descriptive zero and cannot activate a node', async () => {
     const store = createStore();
-    // NaN slips past `??` (which only catches null/undefined); before the fix the
-    // inline min/max left confidence = NaN and `NaN >= autoAccept` is false → draft.
+    // Invalid producer scores cannot substitute for evidence or serving authority.
     const node = await store.upsertNode({ kind: 'topic', slug: 'nanconf', title: 'NaN conf', confidence: Number.NaN });
     expect(Number.isFinite(node.confidence)).toBe(true);
-    expect(node.confidence).toBe(40); // DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE
-    expect(node.status).toBe('active');
+    expect(node.confidence).toBe(0);
+    expect(node.status).toBe('draft');
   });
 
-  test('an LLM that answers confidence as a 0-1 probability scales to 0-100, so a strong node is not held as a draft (Finding 4)', async () => {
+  test('an LLM fractional score stays on its declared scale while a supported node activates by judgment', async () => {
     const store = createStore();
     const source = await store.upsertSource({
       connectorId: 'manual', sourceType: 'manual', title: 'Widget manual',
@@ -156,15 +161,15 @@ describe('knowledge wiki honesty: confidence scale + non-finite guard (Findings 
       },
       async completeText(): Promise<string | null> { return null; },
     };
+    // These fixture claims are explicitly supported by the synthetic Widget extraction.
+    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
     const semantic = new KnowledgeSemanticService(store, { llm: probabilityLlm });
     const result = await semantic.enrichSource(source.id, { force: true });
 
     expect(result?.extractor).toBe('llm');
     const entity = result?.entities.find((node) => node.title === 'Widget');
     expect(entity).toBeDefined();
-    // Before the fix: clampConfidence(round(0.9)) = 1 → below the auto-accept floor →
-    // draft. After: 0.9 is recognized as a probability and scaled to 90 → active.
-    expect(entity!.confidence).toBe(90);
+    expect(entity!.confidence).toBe(0.9);
     expect(entity!.status).toBe('active');
   });
 });
@@ -177,30 +182,39 @@ describe('knowledge wiki honesty: review gate (Defect 2)', () => {
     expect(reviewState(node)).toBe('pending-review');
   });
 
-  test('a high-confidence node auto-accepts with honest provenance', async () => {
+  test('a supported node auto-accepts with honest judgment provenance', async () => {
     const store = createStore();
-    const node = await store.upsertNode({ kind: 'topic', slug: 'strong', title: 'Strong', confidence: 90 });
+    const source = await store.upsertSource({ id: 'synthetic-strong', connectorId: 'synthetic', sourceType: 'manual', status: 'indexed' });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: 'Strong is the name of this documented topic.' });
+    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    const node = await store.upsertNode({ kind: 'topic', slug: 'strong', title: 'Strong', confidence: 90, sourceId: source.id });
     expect(node.status).toBe('active');
     expect(reviewState(node)).toBe('auto-accepted');
   });
 
-  test('a configurable higher threshold holds an otherwise-default node for review', async () => {
+  test('an explicit owner score restriction remains a one-way hold after a positive reading', async () => {
     const store = createStore('knowledge.sqlite', { nodeAutoAcceptConfidence: 95 });
-    const node = await store.upsertNode({ kind: 'topic', slug: 'mid', title: 'Mid', confidence: 70 });
+    const source = await store.upsertSource({ id: 'synthetic-mid', connectorId: 'synthetic', sourceType: 'manual', status: 'indexed' });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: 'Mid is the name of this documented topic.' });
+    installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+    const node = await store.upsertNode({ kind: 'topic', slug: 'mid', title: 'Mid', confidence: 70, sourceId: source.id });
+    expect(node.metadata.nodeActivation).toMatchObject({ reason: 'owner-confidence-floor', probability: 0.99 });
     expect(node.status).toBe('draft');
     expect(reviewState(node)).toBe('pending-review');
   });
 
-  test('an already-active node stays active and is labelled pre-gate on the first restamp', async () => {
-    const store = createStore();
-    // seed an active node directly (simulating a pre-gate migration record)
-    await store.replaceNodeRecord({
+  test('a legacy active record is preserved without a migration but new unreviewed content cannot inherit its status', async () => {
+    const initial = createStore(); await initial.init();
+    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema);
+    const legacy: KnowledgeNodeRecord = {
       id: 'legacy-1', kind: 'topic', slug: 'legacy', title: 'Legacy', aliases: [], status: 'active',
       confidence: 10, metadata: {}, createdAt: 1, updatedAt: 1,
-    });
-    const updated = await store.upsertNode({ id: 'legacy-1', kind: 'topic', slug: 'legacy', title: 'Legacy v2', confidence: 10 });
-    expect(updated.status).toBe('active');
-    expect(reviewState(updated)).toBe('pre-gate');
+    };
+    writeKnowledgeNodeRow(sqlite, legacy); await sqlite.save();
+    const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init();
+    expect(await store.upsertNode({ ...legacy })).toEqual(legacy);
+    await expect(store.upsertNode({ ...legacy, title: 'Legacy v2' })).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
+    expect(store.getNode(legacy.id)).toEqual(legacy);
   });
 
   test('reviewNode accepts a draft into active with reviewed provenance', async () => {
@@ -218,7 +232,8 @@ describe('knowledge wiki honesty: review gate (Defect 2)', () => {
     const { store, artifactStore } = createStores();
     const service = disposables.add(new KnowledgeService(store, artifactStore, undefined, { memoryRegistry: fakeMemoryRegistry() }), disposeKnowledgeService);
     const draft = await store.upsertNode({ kind: 'topic', slug: 'zephyr-draft', title: 'Zephyr draft note', confidence: 10 });
-    const active = await store.upsertNode({ kind: 'topic', slug: 'zephyr-active', title: 'Zephyr active note', confidence: 90 });
+    const proposed = await store.upsertNode({ kind: 'topic', slug: 'zephyr-active', title: 'Zephyr active note', confidence: 90 });
+    const active = (await service.reviewNode({ id: proposed.id, decision: 'accept', reviewer: 'test operator' })).node!;
     const ids = service.search('zephyr', 20).map((hit) => hit.id);
     expect(ids).toContain(active.id);
     expect(ids).not.toContain(draft.id);

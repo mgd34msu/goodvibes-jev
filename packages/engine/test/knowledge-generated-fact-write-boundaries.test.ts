@@ -1,3 +1,7 @@
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
+import type { KnowledgeNodeRecord } from '../sdk/src/platform/knowledge/types.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,6 +44,13 @@ async function fixture() {
     classification: { kind: 'specification', title: 'HDMI inputs', summary: 'AC-7 has four HDMI inputs.', value: 'four HDMI inputs', labels: ['HDMI'], aliases: ['HDMI inputs'] }, extractor: 'synthetic',
   };
   return { store, subject, source, extraction, input };
+}
+/** Simulate records already on disk before the serving gate, not new automatic approvals. */
+async function loadLegacyFacts(store: KnowledgeStore, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeStore> {
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema);
+  for (const fact of facts) writeKnowledgeNodeRow(sqlite, fact);
+  await sqlite.save();
+  const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;
 }
 function snapshot(store: KnowledgeStore) {
   return JSON.stringify({ sources: store.listSources(), extractions: store.listExtractions(), nodes: store.listNodes(), edges: store.listEdges(), issues: store.listIssues() });
@@ -138,13 +149,16 @@ describe('generated fact support persistence boundaries', () => {
     released.resolve(extractionResult()); await settleEvents(10);
     expect(snapshot(store)).toBe(before); expect(fake.requests).toHaveLength(0);
   });
-  test('a later unsupported existing fact prevents all subject-link rewrites', async () => {
-    const { store, source, subject } = await fixture();
+  test('a later unsupported legacy active fact prevents all subject-link rewrites', async () => {
+    const fixtureState = await fixture(); const { source, subject } = fixtureState;
+    const legacy = ['HDMI inputs', 'Invented Bluetooth'].map((title, index): KnowledgeNodeRecord => ({
+      id: `legacy-${index}`, kind: 'fact', slug: title, title, summary: index === 0 ? 'AC-7 has four HDMI inputs.' : 'AC-7 supports Bluetooth.',
+      aliases: [], confidence: 90, status: 'active', sourceId: source.id, createdAt: 1, updatedAt: 1,
+      metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'specification', sourceIds: [source.id] },
+    }));
+    const store = await loadLegacyFacts(fixtureState.store, legacy);
     const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'AC-7 specifications', metadata: { knowledgeSpaceId: spaceId } });
-    for (const title of ['HDMI inputs', 'Invented Bluetooth']) {
-      const fact = await store.upsertNode({ kind: 'fact', slug: title, title, summary: title === 'HDMI inputs' ? 'AC-7 has four HDMI inputs.' : 'AC-7 supports Bluetooth.', sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'specification', sourceIds: [source.id] } });
-      await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: fact.id, relation: 'supports_fact', metadata: { knowledgeSpaceId: spaceId } });
-    }
+    for (const fact of legacy) await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: fact.id, relation: 'supports_fact', metadata: { knowledgeSpaceId: spaceId } });
     readings((_name, state) => (state as { claim: { title: string } }).claim.title === 'Invented Bluetooth' ? 0.01 : 0.99);
     const before = snapshot(store);
     await expect(writeSupportedRepairSubjectLinks({ store, spaceId, gap, subjects: [subject], sourceIds: [source.id], candidate: () => true })).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
@@ -172,11 +186,12 @@ describe('generated fact support persistence boundaries', () => {
   });
 
   test('legacy metadata-only source links do not bypass support verification', async () => {
-    const { store, source, subject } = await fixture();
-    const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'AC-7 specifications', metadata: { knowledgeSpaceId: spaceId } });
-    await store.upsertNode({ kind: 'fact', slug: 'unverified', title: 'Invented Bluetooth', summary: 'AC-7 supports Bluetooth.',
+    const fixtureState = await fixture(); const { source, subject } = fixtureState;
+    const store = await loadLegacyFacts(fixtureState.store, [{ id: 'legacy-unverified', kind: 'fact', slug: 'unverified', title: 'Invented Bluetooth', summary: 'AC-7 supports Bluetooth.',
+      aliases: [], status: 'active', confidence: 90, createdAt: 1, updatedAt: 1,
       metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'specification', sourceIds: [source.id], subjectIds: [subject.id] },
-    });
+    }]);
+    const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'AC-7 specifications', metadata: { knowledgeSpaceId: spaceId } });
     const fake = readings(() => 0.01); const before = snapshot(store);
     await expect(writeSupportedRepairSubjectLinks({ store, spaceId, gap, subjects: [subject], sourceIds: [source.id], candidate: () => true })).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
     expect(fake.requests.length).toBeGreaterThan(0); expect(snapshot(store)).toBe(before);
@@ -233,7 +248,7 @@ describe('generated fact support persistence boundaries', () => {
     const prepared = await prepareSourceLinkedRepairProfileFacts([input]);
     await store.upsertNode({ ...fact!, status: 'stale' }, createKnowledgeNodeOperatorMutation(fact!, { action: 'reject' }));
     const before = snapshot(store);
-    await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeNodeMutationHeldError);
+    await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError); // Whole-pass snapshot sees the operator decision first.
     expect(snapshot(store)).toBe(before);
   });
 

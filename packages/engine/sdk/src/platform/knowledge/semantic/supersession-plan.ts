@@ -50,12 +50,12 @@ export function prepareSemanticSupersession(
         : { ...node, status: 'stale', metadata: { ...node.metadata, supersededAt, supersededInSpaceId: spaceId } };
       return { node, primarySourceId, input };
     });
-    for (const write of writes) await store.assertNodeMutation(write.input);
+    const activation = await store.prepareNodeWrites(writes.map((write) => write.input), { requireAccepted: true });
     return async () => {
-      for (const write of writes) await store.assertNodeMutation(write.input);
-      for (const { node, primarySourceId, input } of writes) {
+      store.assertPreparedNodeWrites(activation);
+      for (const [index, { node, primarySourceId }] of writes.entries()) {
         // Recheck authority before removing a retained fact's previous support.
-        await store.upsertNode(input);
+        await store.upsertPreparedNode(activation, index);
         if (primarySourceId) await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt);
       }
     };

@@ -302,3 +302,7 @@ export type {
   BrowserKnowledgeProfile,
   BrowserKnowledgeSourceKind,
 } from './browser-history/index.js';
+
+export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
+export type { KnowledgeNodeActivationOptions, NodeActivationReason } from './activation/types.js';
+export { KnowledgeNodeActivationHeldError } from './activation/types.js';

@@ -73,13 +73,13 @@ export async function writeSupportedRepairSubjectLinks(input: {
     }) };
     return { ...draft, supportMetadata, nodeInput };
   });
-  for (const plan of plans) await store.assertNodeMutation(plan.nodeInput);
+  const activation = await store.prepareNodeWrites(plans.map((plan) => plan.nodeInput), { signal: input.signal, requireAccepted: true });
   await store.batch(async () => {
-    for (const plan of plans) await store.assertNodeMutation(plan.nodeInput);
+    store.assertPreparedNodeWrites(activation);
     guard.assertCurrent();
-    for (const { fact, primarySourceId, supportMetadata, nodeInput } of plans) {
+    for (const [index, { fact, primarySourceId, supportMetadata }] of plans.entries()) {
       assertSemanticWriteAllowed(input.signal, input.shouldStop);
-      await store.upsertNode(nodeInput);
+      await store.upsertPreparedNode(activation, index);
       for (const object of subjects) await store.upsertEdge({
         fromKind: 'node', fromId: fact.id, toKind: 'node', toId: object.id,
         relation: 'describes', weight: 0.82,

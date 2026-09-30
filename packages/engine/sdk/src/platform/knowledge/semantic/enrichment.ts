@@ -1,3 +1,5 @@
+import { createSemanticNodeSlugPlanner } from './node-slug.js';
+import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { enrichmentFactNodeInput, enrichmentGapNodeInput } from './enrichment-node-plans.js';
 import { prepareEnrichmentFactDrafts, resolveEnrichmentSpaceId } from './enrichment-fact-drafts.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
@@ -6,9 +8,7 @@ import { freezeSupport } from './verification/projection.js';
 import { createGeneratedFactWritePlanner, generatedFactSupportMetadata } from './fact-support-write-plan.js';
 import { persistWikiPage, prepareWikiPageNodeInput, renderDeterministicWikiPage } from './wiki-page-persistence.js';
 import type { KnowledgeStore } from '../store.js';
-// Shared clamp: normalizes a 0-1 probability to 0-100 and a non-finite value to the
-// auto-accept default, so an LLM ignoring the prompt's 0-100 contract (below) does
-// not silently draft a high-confidence node. One definition, not a divergent copy.
+// Descriptive producer scores stay on the declared 0-100 scale. They never authorize activation.
 import { clampConfidence } from '../store-node-history.js';
 import { knowledgeSourceMatchesScope } from '../scope-records.js';
 import type {
@@ -346,6 +346,8 @@ async function persistSemanticExtraction(
   },
 ): Promise<PersistedSemanticExtraction> {
   const spaceId = options.knowledgeSpaceId ?? sourceKnowledgeSpace(source);
+  // Preflight every complete generated field before any verification/primary-source request.
+  assertJudgmentInput(semantic);
   const guard = createSemanticWriteGuard(store, options.signal, options.shouldStop);
   guard.watch(`source:${source.id}`, () => store.getSource(source.id), source);
   guard.watch(`extraction:${source.id}`, () => store.getExtractionBySourceId(source.id), extraction);
@@ -355,6 +357,7 @@ async function persistSemanticExtraction(
   const facts: KnowledgeNodeRecord[] = [];
   const gaps: KnowledgeNodeRecord[] = [];
 
+  const nodeSlug = createSemanticNodeSlugPlanner(store);
   const entityPlans = semantic.entities.slice(0, 60).map((entity) => ({
       id: `sem-entity-${semanticHash(spaceId, source.id, entity.title)}`,
       kind: 'knowledge_entity' as const,
@@ -373,7 +376,7 @@ async function persistSemanticExtraction(
         extractor: semantic.extractor,
         textHash: options.textHash,
       }),
-  }));
+  })).map(nodeSlug);
   const entityIds = new Set(entityPlans.map((entity) => entity.id));
   for (const id of entityIds) guard.node(id);
   guard.watch('source-subject-edges', () => store.listEdges().filter((edge) => edge.fromKind === 'source' && edge.fromId === source.id));
@@ -407,27 +410,31 @@ async function persistSemanticExtraction(
       virtualSupport.get(draft.factId) ?? draft.existingFact?.metadata.generatedFactSupport);
     virtualSupport.set(draft.factId, supportMetadata);
     const plan = { ...draft, supportMetadata, primarySourceId: await draft.resolve() };
-    factPlans.push({ ...plan, nodeInput: enrichmentFactNodeInput(plan, spaceId, extraction, semantic, options.textHash) });
+    factPlans.push({ ...plan, nodeInput: nodeSlug(enrichmentFactNodeInput(plan, spaceId, extraction, semantic, options.textHash)) });
   }
   const applySupersession = await resolveSupersession();
-  const gapPlans = semantic.gaps.slice(0, 32).map((gap) => ({ gap, nodeInput: enrichmentGapNodeInput(gap, source,
-    extraction, semantic, spaceId, options.textHash, store.getNode(`sem-gap-${semanticHash(spaceId, source.id, gap.question)}`)),
+  const gapPlans = semantic.gaps.slice(0, 32).map((gap) => ({ gap, nodeInput: prepareObservedKnowledgeNodeInput(store, nodeSlug(enrichmentGapNodeInput(gap, source,
+    extraction, semantic, spaceId, options.textHash, store.getNode(`sem-gap-${semanticHash(spaceId, source.id, gap.question)}`))), 'research-task', { source, extraction },
+      () => ({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) })),
   }));
-  const wikiInput = prepareWikiPageNodeInput(source, semantic, spaceId, options.textHash);
-  for (const input of [...entityPlans, ...factPlans.map((plan) => plan.nodeInput),
-    ...gapPlans.map((plan) => plan.nodeInput), ...(wikiInput ? [wikiInput] : [])]) await store.assertNodeMutation(input);
+  const wikiDraft = prepareWikiPageNodeInput(source, semantic, spaceId, options.textHash);
+  const wikiInput = wikiDraft ? nodeSlug(wikiDraft) : undefined;
+  const activation = await store.prepareNodeWrites([...entityPlans, ...factPlans.map((plan) => plan.nodeInput),
+    ...gapPlans.map((plan) => plan.nodeInput), ...(wikiInput ? [wikiInput] : [])], { signal: options.signal, requireAccepted: true });
+  let activationIndex = 0;
   guard.assertCurrent();
+  store.assertPreparedNodeWrites(activation);
 
   for (const input of entityPlans) {
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
-    const node = await store.upsertNode(input);
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     entities.push(node);
     await linkSourceToNode(store, source.id, node.id, 'mentions_entity', spaceId, semantic.extractor);
   }
   for (const plan of factPlans) {
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
     const { factLinkedObjects, supportMetadata } = plan;
-    const node = await store.upsertNode(plan.nodeInput);
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     facts.push(node);
     await linkSourceToNode(store, source.id, node.id, 'supports_fact', spaceId, semantic.extractor, { generatedFactSupport: supportMetadata });
     await linkFactToSourceLinkedObjects(store, source.id, node, factLinkedObjects, spaceId, semantic.extractor, supportMetadata);
@@ -441,7 +448,7 @@ async function persistSemanticExtraction(
 
   for (const { gap, nodeInput } of gapPlans) {
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
-    const node = await store.upsertNode(nodeInput);
+    const node = await store.upsertPreparedNode(activation, activationIndex++);
     gaps.push(node);
     await linkSourceToNode(store, source.id, node.id, 'has_gap', spaceId, semantic.extractor);
     await store.upsertIssue({
@@ -461,7 +468,7 @@ async function persistSemanticExtraction(
   }
 
   assertSemanticWriteAllowed(options.signal, options.shouldStop);
-  const wikiPage = await persistWikiPage(store, source, semantic, spaceId, wikiInput);
+  const wikiPage = await persistWikiPage(store, source, semantic, spaceId, wikiInput, wikiInput ? () => store.upsertPreparedNode(activation, activationIndex++) : undefined);
   await applySupersession();
   return { source, skipped: false, extractor: semantic.extractor, facts, entities, gaps, ...(wikiPage ? { wikiPage } : {}) };
 }

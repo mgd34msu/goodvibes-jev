@@ -1,3 +1,5 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
+import { snapshotNodeInput } from '../activation/projection.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
@@ -42,7 +44,8 @@ export async function runHomeGraphSnapshotSync(input: {
   readonly artifactStore: ArtifactStore;
   readonly snapshot: HomeGraphSnapshotInput;
 }): Promise<HomeGraphSyncResult> {
-  const { store, artifactStore, snapshot } = input;
+  const { store, artifactStore } = input;
+  const snapshot = snapshotNodeInput(input.snapshot);
   return await store.batch(async () => {
     const { spaceId, installationId } = resolveHomeGraphSpace(snapshot);
     const capturedAt = snapshot.capturedAt ?? Date.now();
@@ -131,7 +134,7 @@ async function upsertHomeNode(
   installationId: string,
   input: HomeGraphSnapshotInput,
 ): Promise<KnowledgeNodeRecord> {
-  return store.upsertNode({
+  return upsertObservedKnowledgeNode(store, {
     id: homeGraphNodeId(spaceId, 'ha_home', input.homeId ?? installationId),
     kind: 'ha_home',
     slug: `${spaceId.replace(/[^a-z0-9]+/gi, '-')}-home`,
@@ -143,7 +146,7 @@ async function upsertHomeNode(
     metadata: buildHomeGraphMetadata(spaceId, installationId, {
       homeAssistant: { installationId, objectKind: 'home', objectId: input.homeId ?? installationId },
     }),
-  });
+  }, 'home-assistant-snapshot', input, () => input);
 }
 
 async function upsertSnapshotObjects(
@@ -171,7 +174,8 @@ async function upsertSnapshotObjects(
       await yieldEvery(index, 16);
       const object = normalizeHomeGraphObjectInput(kind, rawObject);
       const nodeInput = buildHomeGraphNodeInput(spaceId, installationId, kind, object);
-      const node = await store.upsertNode({ ...nodeInput, sourceId, status: 'active', confidence: 90 });
+      const node = await upsertObservedKnowledgeNode(store, { ...nodeInput, sourceId, status: 'active', confidence: 90 },
+        'home-assistant-snapshot', store.getSource(sourceId), () => store.getSource(sourceId));
       activeNodeIds.add(node.id);
       await store.upsertEdge({
         fromKind: 'node',

@@ -1,3 +1,4 @@
+import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { writeSupportedRepairSubjectLinks } from './repair-subject-write-plan.js';
 import { withSupportBudget } from './support-budget.js';
 import { sleep, yieldEvery, yieldToEventLoop } from '../cooperative.js';
@@ -408,21 +409,22 @@ export async function prepareSourceLinkedRepairProfileFacts(
     virtualSupport.set(factId, writeData.factMetadata.generatedFactSupport);
     plans.push(Object.freeze({ input, factId, sourceIds: Object.freeze([...sourceIds]), primarySourceId, writeData }));
   }
-  for (const plan of plans) await store.assertNodeMutation(repairProfileNodeInput(plan));
+  const nodeSlug = createSemanticNodeSlugPlanner(store);
+  const activation = await store.prepareNodeWrites(plans.map(repairProfileNodeInput).map(nodeSlug), { signal: options.signal, requireAccepted: true });
   guard.assertCurrent();
   return {
     plans: Object.freeze(plans),
-    assertCurrent: guard.assertCurrent,
+    assertCurrent: () => { guard.assertCurrent(); store.assertPreparedNodeWrites(activation); },
     async write(observer?: RepairProfileWriteObserver): Promise<KnowledgeNodeRecord[]> {
       // Callers may have awaited other prepared work since this plan resolved.
       // Validate once at entry, before this pass intentionally changes its rows.
-      for (const plan of plans) await store.assertNodeMutation(repairProfileNodeInput(plan));
       guard.assertCurrent();
+      store.assertPreparedNodeWrites(activation);
       const facts: KnowledgeNodeRecord[] = [];
-      for (const plan of plans) {
+      for (const [index, plan] of plans.entries()) {
         assertSemanticWriteAllowed(options.signal, options.shouldStop);
         facts.push(await writeResolvedSourceLinkedRepairProfileFact(plan, observer,
-          () => assertSemanticWriteAllowed(options.signal, options.shouldStop)));
+          () => assertSemanticWriteAllowed(options.signal, options.shouldStop), () => store.upsertPreparedNode(activation, index)));
       }
       return facts;
     },
@@ -448,12 +450,13 @@ export async function upsertSourceLinkedRepairProfileFact(input: SourceLinkedRep
 async function writeResolvedSourceLinkedRepairProfileFact(
   plan: PreparedSourceLinkedRepairProfileFact, observer?: RepairProfileWriteObserver,
   assertActive: () => void = () => {},
+  writePrepared?: (() => Promise<KnowledgeNodeRecord>) | undefined,
 ): Promise<KnowledgeNodeRecord> {
   const { input, writeData } = plan;
   const supportWeight = input.supportWeight ?? (input.authority === 'official-vendor' ? 0.96 : 0.84);
   const describesWeight = input.describesWeight ?? (input.authority === 'official-vendor' ? 0.95 : 0.82);
   assertActive();
-  const fact = await input.store.upsertNode(repairProfileNodeInput(plan));
+  const fact = await (writePrepared ? writePrepared() : input.store.upsertNode(repairProfileNodeInput(plan)));
   observer?.nodeWritten?.(fact);
   assertActive();
   const supportEdge = await input.store.upsertEdge({
@@ -536,7 +539,7 @@ function countUsableRepairFacts(
     sourceIdsByFactId.set(edge.toId, current);
   }
   return [...graph.nodesById.values()]
-    .filter((node) => node.kind === 'fact' && node.status !== 'stale')
+    .filter((node) => node.kind === 'fact' && node.status === 'active')
     .filter((node) => getKnowledgeSpaceId(node) === spaceId)
     .filter((node) => factSourceIds(node, sourceIdsByFactId).some((sourceId) => sources.has(sourceId)))
     .filter(isUsableRepairFact)

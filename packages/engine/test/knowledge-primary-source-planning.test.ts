@@ -1,3 +1,6 @@
+import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
+import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
+import { KnowledgeNodeActivationHeldError } from '../sdk/src/platform/knowledge/activation/types.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
@@ -21,7 +24,7 @@ afterEach(() => { installJudgmentPort(previous); });
 function readings(value: (purpose: string, title: string) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
     const input = state as { purpose: string; candidate: { title: string } };
-    if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
+    if (name === 'supported' || name === 'attached' || name === 'serve') return noulAnswer(0.99); // Authored faithful synthetic claims in addSource below.
     if (name === 'useful') return noulAnswer(value(input.purpose, input.candidate.title));
     if (name === 'authority') return choiceAnswer(question, 'secondary', 0.97);
     throw new Error(`Unexpected question ${name}`);
@@ -31,7 +34,11 @@ function readings(value: (purpose: string, title: string) => number = () => 0.97
 }
 async function fixture() {
   const { store } = createStores();
-  const subject = await store.upsertNode({ id: 'subject', kind: 'knowledge_entity', slug: 'synthetic-device', title: 'Synthetic TV-123', status: 'active', metadata: { knowledgeSpaceId: spaceId, entityKind: 'device' } });
+  const identitySource = await store.upsertSource({ id: 'subject-identity', connectorId: 'synthetic', sourceType: 'manual', status: 'indexed', metadata: { knowledgeSpaceId: spaceId } });
+  await store.upsertExtraction({ sourceId: identitySource.id, extractorId: 'synthetic', format: 'text', excerpt: 'Synthetic TV-123 is a device.', metadata: { knowledgeSpaceId: spaceId } });
+  const originalPort = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
+  const subject = await store.upsertNode({ sourceId: identitySource.id, id: 'subject', kind: 'knowledge_entity', slug: 'synthetic-device', title: 'Synthetic TV-123', status: 'active', metadata: { knowledgeSpaceId: spaceId, entityKind: 'device' } });
+  installJudgmentPort(originalPort);
   const source = await addSource(store, 'current', subject.id);
   const a = await addSource(store, 'a', subject.id);
   const b = await addSource(store, 'b', subject.id);
@@ -52,7 +59,9 @@ async function addSource(store: KnowledgeStore, id: string, subjectId: string, s
 function claim(title: string): KnowledgeSemanticFactInput { return { kind: 'note', title, summary: `${title} claim supported by the synthetic reference.`, evidence: `${title} evidence`, confidence: 90 }; }
 async function seedFact(store: KnowledgeStore, subject: KnowledgeNodeRecord, fact: KnowledgeSemanticFactInput, sources: readonly KnowledgeSourceRecord[]) {
   const id = semanticFactId({ spaceId, kind: fact.kind, title: fact.title, summary: fact.summary, value: fact.value, subjectIds: [subject.id], fallbackScope: sources[0]!.id });
+  const originalPort = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
   const node = await store.upsertNode({ id, kind: 'fact', slug: id, title: fact.title, summary: fact.summary, status: 'active', sourceId: sources[0]!.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: fact.kind, subjectIds: [subject.id], sourceIds: sources.map((source) => source.id) } });
+  installJudgmentPort(originalPort);
   for (const source of sources) await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: id, relation: 'supports_fact', metadata: { knowledgeSpaceId: spaceId } });
   return node;
 }
@@ -181,14 +190,15 @@ describe('primary source persistence preplanning', () => {
   });
 
   test('prepared duplicate canonical facts preserve source union, per-source supports and last-writer fields', async () => {
-    const { store, subject, source, a, b } = await fixture(); readings();
+    const { store, subject, source, a, b } = await fixture(); const fake = readings();
     const inputs = [source, a, b].map((candidate, index) => ({ ...profileInput(store, candidate, subject), evidence: `Evidence ${index}`, confidence: 70 + index, factMetadata: { lastWriter: index } }));
     const before = graph(store); const prepared = await prepareSourceLinkedRepairProfileFacts(inputs);
     expect(graph(store)).toBe(before); expect(new Set(prepared.plans.map((plan) => plan.factId)).size).toBe(1);
     inputs[2]!.evidence = 'Changed caller input after preparation';
     expect(Object.isFrozen(prepared.plans[2]!.input.classification)).toBe(true);
-    prepared.assertCurrent(); installJudgmentPort(undefined); // Applying resolved plans never rereads a judgment.
+    prepared.assertCurrent(); const requestsBeforeWrite = fake.requests.length; // Applying resolved plans never rereads a judgment.
     const written = await store.batch(() => prepared.write());
+    expect(fake.requests).toHaveLength(requestsBeforeWrite);
     const fact = store.getNode(written[0]!.id)!;
     expect(fact.metadata.sourceIds).toEqual([source.id, a.id, b.id]); expect(fact.metadata.evidence).toBe('Evidence 2');
     expect(fact.metadata.lastWriter).toBe(2); expect(fact.confidence).toBe(72);
@@ -213,11 +223,9 @@ describe('primary source persistence preplanning', () => {
         const node = store.getNode(prepared.plans[0]!.factId)!;
         missingId = change === 'missing' ? 'newly-arrived' : a.id;
         if (change === 'excluded') await store.replaceSourceRecord({ ...a, status: 'failed' });
-        await store.upsertNode({ ...node, metadata: { ...node.metadata, sourceIds: [source.id, missingId] } });
-      }
-      if (change === 'missing' || change === 'excluded') {
         const before = graph(store);
-        await expect(prepareSourceLinkedRepairProfileFacts([input])).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+        // The activation boundary now refuses this invalid support replacement earlier.
+        await expect(store.upsertNode({ ...node, metadata: { ...node.metadata, sourceIds: [source.id, missingId] } })).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
         expect(graph(store)).toBe(before);
         continue;
       }
@@ -238,9 +246,9 @@ describe('primary source persistence preplanning', () => {
     const sources = [source];
     for (let index = 0; index < 50; index++) sources.push(await addSource(store, `bounded-${index}`, subject.id));
     const fact = store.getNode(prepared.plans[0]!.factId)!;
-    await store.upsertNode({ ...fact, metadata: { ...fact.metadata, sourceIds: sources.map((candidate) => candidate.id) } });
     const before = graph(store); const fake = readings();
-    await expect(prepareSourceLinkedRepairProfileFacts([input])).rejects.toBeInstanceOf(JudgmentInputError);
+    // Refuse the oversized support update before it can become durable serving state.
+    await expect(store.upsertNode({ ...fact, metadata: { ...fact.metadata, sourceIds: sources.map((candidate) => candidate.id) } })).rejects.toBeInstanceOf(KnowledgeNodeActivationHeldError);
     const controller = new AbortController(); controller.abort();
     await expect(prepareSourceLinkedRepairProfileFacts([input], { signal: controller.signal })).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
     await expect(prepareSourceLinkedRepairProfileFacts([], { signal: controller.signal })).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
@@ -259,7 +267,8 @@ describe('primary source persistence preplanning', () => {
   test('promotion propagates a quality hold without its enrichment fallback writes', async () => {
     readings();
     const { store, subject, source } = await fixture();
-    const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'Full device specifications', metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } });
+    const gapInput = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: 'Full device specifications', metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } };
+    const gap = await upsertObservedKnowledgeNode(store, gapInput, 'research-task', gapInput, () => gapInput);
     const task = await store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
     const beforeTask = store.getRefinementTask(task.id); let graphAtHold = '';
     await expect(promoteRepairSources({ store, enrichSource: async () => { graphAtHold = graph(store); throw new KnowledgeSourceQualityHeldError(); } }, spaceId, gap, [source.id], task, Date.now() + 20_000)).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
@@ -268,13 +277,14 @@ describe('primary source persistence preplanning', () => {
   test('a repair intent or operator state change is not treated as a timestamp-only refresh', async () => {
     for (const change of ['title', 'status', 'provenance'] as const) {
       const { store, subject, source } = await fixture();
-      const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'Full device specifications', status: 'active', metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } });
+      const gapInput = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: 'Full device specifications', status: 'active' as const, metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } };
+      const gap = await upsertObservedKnowledgeNode(store, gapInput, 'research-task', gapInput, () => gapInput);
       const task = await store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
-      await store.upsertNode({ ...gap,
+      if (change === 'provenance') await reviewKnowledgeNodeRecord(store, { id: gap.id, decision: 'reject' });
+      else await upsertObservedKnowledgeNode(store, { ...gap,
         ...(change === 'title' ? { title: 'Changed repair question' } : {}),
         ...(change === 'status' ? { status: 'stale' as const } : {}),
-        ...(change === 'provenance' ? { metadata: { ...gap.metadata, operatorReview: 'rejected' } } : {}),
-      });
+        }, 'research-task', gap, () => store.getNode(gap.id));
       const before = graph(store); const beforeTask = store.getRefinementTask(task.id);
       const fake = readings();
       await expect(promoteRepairSources({ store }, spaceId, gap, [source.id], task, Date.now() + 20_000)).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
@@ -299,7 +309,7 @@ describe('primary source persistence preplanning', () => {
       const { store, subject, source } = await fixture();
       const prepared = await prepareSourceLinkedRepairProfileFacts([profileInput(store, source, subject)]);
       if (change === 'source') await store.upsertSource({ ...source, summary: 'Concurrent corrected source content.' });
-      else await store.upsertNode({ ...subject, metadata: { ...subject.metadata, operatorReview: 'rejected' } });
+      else await reviewKnowledgeNodeRecord(store, { id: subject.id, decision: 'reject' });
       const before = graph(store);
       await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
       expect(graph(store)).toBe(before);

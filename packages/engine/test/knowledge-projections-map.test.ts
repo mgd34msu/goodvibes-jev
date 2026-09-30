@@ -669,7 +669,8 @@ describe('knowledge generated projections and maps', () => {
       sources: [],
       issues: [],
       missingFields: [],
-      semanticFacts: [fact, rawOnlyFact],
+      // Exercise legacy active snapshots too, so the raw-fragment defense cannot pass merely by excluding drafts.
+      semanticFacts: [{ ...fact, status: 'active' }, { ...rawOnlyFact, status: 'active' }],
     });
 
     expect(markdown).toContain('- Display features: Dolby Vision');

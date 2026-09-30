@@ -1,3 +1,7 @@
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
+import { writeKnowledgeNodeRow } from '../sdk/src/platform/knowledge/store-node-history.js';
+import type { KnowledgeNodeRecord } from '../sdk/src/platform/knowledge/types.js';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,8 +25,17 @@ async function fixture(extracted = true) {
   const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
   const source = await store.upsertSource({ id: 'source-local', connectorId: 'synthetic', sourceType: 'manual', title: 'AC-7 manual', status: 'indexed', metadata: { knowledgeSpaceId: 'fixture-space', sourceDiscovery: { trustReason: 'official-vendor-domain' } } });
   if (extracted) await store.upsertExtraction({ id: 'extraction-local', sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: 'AC-7 has four HDMI ports. It does not support Bluetooth. Its power draw is not specified.', metadata: { knowledgeSpaceId: 'fixture-space' } });
+  // The initial fact is an authored faithful fixture when actual extraction exists.
+  const oldPort = installJudgmentPort(fakePort(() => noulAnswer(0.99)).port);
   const fact = await store.upsertNode({ id: 'fact-local', kind: 'fact', slug: 'ports', title: 'AC-7 HDMI ports', summary: 'AC-7 has four HDMI ports.', sourceId: source.id, metadata: { knowledgeSpaceId: 'fixture-space', semanticKind: 'fact', value: 'four HDMI ports' } });
+  installJudgmentPort(oldPort);
   return { store, source, fact, input: { knowledgeSpaceId: 'fixture-space', query: 'How many HDMI ports does AC-7 have?', strictCandidates: true, candidateSourceIds: [source.id], autoRepairGaps: false } };
+}
+/** The answer boundary must also reject invalid active facts left by pre-gate versions. */
+async function legacyFact(store: KnowledgeStore, fact: KnowledgeNodeRecord): Promise<KnowledgeStore> {
+  const sqlite = new SQLiteStore(store.storagePath); await sqlite.init(createSchema);
+  writeKnowledgeNodeRow(sqlite, fact); await sqlite.save();
+  const reloaded = new KnowledgeStore({ dbPath: store.storagePath }); await reloaded.init(); return reloaded;
 }
 function snapshot(store: KnowledgeStore) { return { sources: store.listSources(), nodes: store.listNodes(), issues: store.listIssues(), edges: store.listEdges() }; }
 function readings(options: { enough?: number; complete?: number; generated?: 'supported' | 'contradicted' | 'unsupported'; rendered?: 'supported' | 'contradicted' | 'unsupported'; confidence?: number } = {}) {
@@ -31,6 +44,7 @@ function readings(options: { enough?: number; complete?: number; generated?: 'su
     if (name === 'preferred') return choiceAnswer(question, 'generated', 0.97);
     if (name === 'enough') return noulAnswer(options.enough ?? 0.97);
     if (name === 'complete') return noulAnswer(options.complete ?? 0.97);
+    if (name === 'serve') return noulAnswer(0.99); // Faithful synthetic fixture content; not an answer-quality verdict.
     if (name === 'features' || name === 'match') return noulAnswer(0.97);
     throw new Error(`Unexpected fixture question ${name}`);
   }); installJudgmentPort(fake.port); return fake;
@@ -111,29 +125,32 @@ describe('end-to-end answer quality barrier', () => {
     expect(store.getIssue(issue.id)?.status).toBe('resolved'); expect(store.getNode(nodeBefore.id)).toEqual(nodeBefore);
   });
   test('returned fact subject descriptions are included in fidelity input', async () => {
-    const { store, fact, input } = await fixture();
-    const subject = await store.upsertNode({ id: 'subject-local', kind: 'knowledge_entity', slug: 'ac7', title: 'AC-7', summary: 'The AC-7 receiver.', metadata: { knowledgeSpaceId: 'fixture-space', semanticKind: 'entity' } });
+    const { store, fact, input, source } = await fixture();
+    readings();
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: 'AC-7 is a receiver with four HDMI ports.', metadata: { knowledgeSpaceId: 'fixture-space' } });
+    const subject = await store.upsertNode({ sourceId: source.id, id: 'subject-local', kind: 'knowledge_entity', slug: 'ac7', title: 'AC-7', summary: 'The AC-7 receiver.', metadata: { knowledgeSpaceId: 'fixture-space', semanticKind: 'entity' } });
     await store.upsertNode({ ...fact, metadata: { ...fact.metadata, subjectIds: [subject.id], linkedObjectIds: [subject.id] } });
     const fake = readings(); await answerKnowledgeQuery({ store }, { ...input, linkedObjects: [subject] });
     const request = fake.requests.find((entry) => 'fidelity' in entry.questions)!;
     expect(JSON.stringify((request.state as { candidate: unknown }).candidate)).toContain('The AC-7 receiver.');
   });
   test('unknown returned subject references hold rather than silently removing their meaning', async () => {
-    const { store, fact, input } = await fixture();
-    await store.upsertNode({ ...fact, metadata: { ...fact.metadata, subjectIds: ['unknown-subject'] } });
+    const initial = await fixture(); const { fact, input } = initial;
+    const store = await legacyFact(initial.store, { ...fact, metadata: { ...fact.metadata, subjectIds: ['unknown-subject'] } });
     const fake = readings(); let generations = 0; const before = snapshot(store);
     await held(answerKnowledgeQuery({ store, llm: llm(async () => { generations++; return 'Four ports.'; }) }, input), 'malformed');
     expect(generations).toBe(0); expect(fake.requests.some((request) => 'fidelity' in request.questions)).toBe(false); expect(snapshot(store)).toEqual(before);
   });
   test('unknown-origin target hint IDs keep the normal protected-input gate', async () => {
-    const { store, fact, input } = await fixture();
-    await store.upsertNode({ ...fact, metadata: { ...fact.metadata, targetHints: [{ id: 'Authorization: Bearer synthetic-protected-hint' }] } });
+    const initial = await fixture(); const { fact, input } = initial;
+    const store = await legacyFact(initial.store, { ...fact, metadata: { ...fact.metadata, targetHints: [{ id: 'Authorization: Bearer synthetic-protected-hint' }] } });
     const fake = readings(); let generations = 0;
     await expect(answerKnowledgeQuery({ store, llm: llm(async () => { generations++; return 'Four ports.'; }) }, input)).rejects.toBeInstanceOf(JudgmentInputError);
     expect(generations).toBe(0); expect(fake.requests.some((request) => 'fidelity' in request.questions)).toBe(false); expect(store.listIssues()).toEqual([]);
   });
   test('numeric returned values remain claims instead of disappearing from fidelity input', async () => {
     const { store, fact, input } = await fixture();
+    readings();
     await store.upsertNode({ ...fact, metadata: { ...fact.metadata, value: 4 } });
     const fake = readings(); const result = await answerKnowledgeQuery({ store }, input);
     const request = fake.requests.find((entry) => 'fidelity' in entry.questions)!;

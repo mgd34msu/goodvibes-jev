@@ -344,14 +344,14 @@ function uniqueStrings(values: readonly (string | undefined)[]): readonly string
 }
 
 function readOnlyMetadataKeys(metadata: Record<string, unknown>): readonly string[] {
-  // 'reviewProvenance' is system bookkeeping stamped by the node review gate, not
+  // Review, activation and observation receipts are system bookkeeping, not
   // content, excluded so it never changes a node's content-shape classification.
-  return Object.keys(metadata).filter((key) => !['knowledgeSpaceId', 'namespace', 'reviewProvenance'].includes(key));
+  return Object.keys(metadata).filter((key) => !['knowledgeSpaceId', 'namespace', 'reviewProvenance', 'nodeActivation', 'nodeObservation'].includes(key));
 }
 
 function metadataSearchText(metadata: Record<string, unknown>): string {
   return Object.entries(metadata)
-    .filter(([key]) => !['content', 'raw', 'html', 'reviewProvenance'].includes(key))
+    .filter(([key]) => !['content', 'raw', 'html', 'reviewProvenance', 'nodeActivation', 'nodeObservation'].includes(key))
     .flatMap(([, value]) => flattenMetadataText(value))
     .join(' ');
 }

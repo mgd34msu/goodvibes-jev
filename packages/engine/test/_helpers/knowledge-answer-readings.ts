@@ -4,6 +4,8 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 export interface AnswerFixtureReadings {
+  /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
+  activation?: ReadonlyArray<readonly [string, number]>;
   /** Authored fixture expectations keyed by exact device title, never a keyword classifier. */
   homeGraph?: ReadonlyArray<readonly [string, Readonly<Partial<Record<'batteryApplicable' | 'manualApplicable' | 'manufacturerPresent' | 'modelPresent' | 'batteryTypePresent', number>>>]>;
   fidelity?: 'supported' | 'contradicted' | 'unsupported';
@@ -22,9 +24,16 @@ export interface AnswerFixtureReadings {
 export function useKnowledgeAnswerReadings() {
   let previous: JudgmentPort | undefined;
   let table: AnswerFixtureReadings = {};
+  let activation: AnswerFixtureReadings['activation'] = [];
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (name === 'serve') {
+        const title = (state as { candidate?: { title?: string } }).candidate?.title;
+        const probability = (table.activation ?? activation)?.find(([candidateTitle]) => candidateTitle === title)?.[1];
+        if (probability === undefined) throw new Error(`Unscripted activation fixture: ${title ?? '<missing title>'}`);
+        return noulAnswer(probability);
+      }
       if (['batteryApplicable', 'manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) {
         const subject = (state as { subject?: { title?: string } }).subject;
         const scripted = table.homeGraph?.find(([title]) => title === subject?.title)?.[1];
@@ -60,7 +69,9 @@ export function useKnowledgeAnswerReadings() {
       return noulAnswer(readings?.find(([snippet]) => text.includes(snippet))?.[1] ?? 0.97);
     });
   }
-  beforeEach(() => { table = {}; fake = makePort(); previous = installJudgmentPort(fake.port); });
+  beforeEach(() => { table = {}; activation = []; fake = makePort(); previous = installJudgmentPort(fake.port); });
   afterEach(() => { installJudgmentPort(previous); });
-  return { set(readings: AnswerFixtureReadings) { table = readings; }, get requests() { return fake.requests; } };
+  return { set(readings: AnswerFixtureReadings) { table = readings; },
+    setActivation(readings: NonNullable<AnswerFixtureReadings['activation']>) { activation = readings; },
+    get requests() { return fake.requests; } };
 }

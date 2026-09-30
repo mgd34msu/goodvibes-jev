@@ -1,6 +1,9 @@
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 
 const answerReadings = useKnowledgeAnswerReadings();
+useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -214,7 +217,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     const { store } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const spaceId = homeAssistantKnowledgeSpaceId('house');
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'living-room-tv',
       title: 'Living Room TV',

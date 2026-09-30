@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import type { ArtifactDescriptor } from '../../artifacts/types.js';
@@ -29,8 +30,7 @@ import {
 import {
   findHomeAssistantNode,
   missingDevicePassportFields,
-  readHomeGraphState,
-  renderHomeGraphState,
+  readHomeGraphServingState,
   safeHomeGraphFilename,
 } from './state.js';
 import {
@@ -72,7 +72,7 @@ interface DevicePassportSourceLookup {
   readonly sourcesById: ReadonlyMap<string, KnowledgeSourceRecord>;
   readonly sourceIdsByNodeId: ReadonlyMap<string, ReadonlySet<string>>;
 }
-type HomeGraphStateSnapshot = ReturnType<typeof readHomeGraphState>;
+type HomeGraphStateSnapshot = ReturnType<typeof readHomeGraphServingState>;
 type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getExtractionBySourceId']>>;
 
 export async function generateAutomaticHomeGraphPages(
@@ -136,7 +136,7 @@ async function generateHomeGraphPagesWithinBudget(
     ? Date.now() + Math.max(1_000, Math.trunc(effectiveOptions.maxRunMs))
     : undefined;
 
-  const state = readHomeGraphState(context.store, context.spaceId);
+  const state = readHomeGraphServingState(context.store, context.spaceId);
   if (effectiveOptions.devicePassports !== false) {
     const allDevices = prioritizeNodesForGeneratedPages(
       state.nodes.filter((node) => node.kind === 'ha_device' && node.status !== 'stale'),
@@ -236,9 +236,9 @@ export async function refreshHomeGraphDevicePassport(
       operation: 'homegraph.refreshDevicePassport',
     });
   }
-  const state = context.state ?? readHomeGraphState(store, spaceId);
+  const state = context.state ?? readHomeGraphServingState(store, spaceId);
   const writeGuard = createSemanticWriteGuard(store, context.signal);
-  writeGuard.watch('page-state', () => readHomeGraphState(store, spaceId), state);
+  writeGuard.watch('page-state', () => readHomeGraphServingState(store, spaceId), state);
   for (const source of state.sources) writeGuard.extraction(source.id);
   throwIfAborted(context.signal);
   const device = findHomeAssistantNode(state.nodes, 'ha_device', input.deviceId);
@@ -305,7 +305,7 @@ export async function refreshHomeGraphDevicePassport(
     }
     let passport: KnowledgeNodeRecord | undefined;
     try {
-      passport = await store.upsertNode({
+      passport = await upsertObservedKnowledgeNode(store, {
         id: passportId,
         kind: 'ha_device_passport',
         slug: `${device.slug}-passport`,
@@ -323,7 +323,7 @@ export async function refreshHomeGraphDevicePassport(
             ? previousRefreshedAt
             : Date.now(),
         }),
-      });
+      }, 'generated-page-index', device, () => store.getNode(device.id));
       writtenNodeIds.add(passport.id);
       await store.upsertEdge({
         fromKind: 'node',
@@ -499,9 +499,9 @@ export async function generateHomeGraphRoomPage(
   context: HomeGraphPageContext & { readonly input: HomeGraphProjectionInput; readonly signal?: AbortSignal | undefined },
 ): Promise<HomeGraphProjectionResult & { readonly artifactCreated: boolean }> {
   const { store, artifactStore, spaceId, installationId, input } = context;
-  const state = readHomeGraphState(store, spaceId);
+  const state = readHomeGraphServingState(store, spaceId);
   const writeGuard = createSemanticWriteGuard(store, context.signal);
-  writeGuard.watch('page-state', () => readHomeGraphState(store, spaceId), state);
+  writeGuard.watch('page-state', () => readHomeGraphServingState(store, spaceId), state);
   const areaId = input.areaId ?? input.roomId;
   const title = input.title ?? resolveRoomTitle(state.nodes, areaId) ?? 'Home Graph Room';
   const sourceReader = createHomeGraphPageSourceReader(context.signal);
@@ -548,7 +548,7 @@ export async function generateHomeGraphPacket(
 ): Promise<HomeGraphProjectionResult & { readonly artifactCreated: boolean }> {
   const { store, artifactStore, spaceId, installationId, input } = context;
   const title = input.title ?? `${input.packetKind ?? 'home'} packet`;
-  const markdown = renderPacketPage(renderHomeGraphState(store, spaceId, title), input);
+  const markdown = renderPacketPage({ ...readHomeGraphServingState(store, spaceId), title }, input);
   const generated = await materializeGeneratedMarkdown({
     store,
     artifactStore,

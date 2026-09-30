@@ -182,7 +182,7 @@ export function buildGeneratedKnowledgePageGraph(
   for (const source of generatedSources) {
     const targetId = generatedPageTargetNodeId(source, activeEdges, nodesById);
     const target = targetId ? nodesById.get(targetId) : undefined;
-    if (target && target.status !== 'stale') targetBySourceId.set(source.id, target);
+    if (target && target.status === 'active') targetBySourceId.set(source.id, target);
   }
   return {
     nodesById,
@@ -191,7 +191,7 @@ export function buildGeneratedKnowledgePageGraph(
       const targetId = generatedPageTargetNodeId(source, activeEdges, nodesById);
       if (!targetId) return true;
       const target = nodesById.get(targetId);
-      return Boolean(target && target.status !== 'stale');
+      return Boolean(target && target.status === 'active');
     }),
     targetBySourceId,
   };
@@ -214,7 +214,7 @@ function generatedPageTargetNodeId(
   ));
   const activeTarget = targetEdges.find((edge) => {
     const target = nodesById.get(edge.toId);
-    return Boolean(target && target.status !== 'stale');
+    return Boolean(target && target.status === 'active');
   });
   return activeTarget?.toId ?? targetEdges[0]?.toId;
 }
@@ -298,7 +298,7 @@ function pushNeighbor<TNode extends GeneratedKnowledgePageGraphNode>(
 }
 
 function defaultIsPageSubjectNode(node: KnowledgeNodeRecord): boolean {
-  if (node.status === 'stale') return false;
+  if (node.status !== 'active') return false;
   if (node.metadata.semanticKind) return false;
   return !['fact', 'knowledge_gap', 'wiki_page'].includes(node.kind);
 }

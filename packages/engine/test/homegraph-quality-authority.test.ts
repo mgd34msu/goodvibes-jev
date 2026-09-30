@@ -1,3 +1,4 @@
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,13 +21,20 @@ const roots: string[] = [];
 const spaceId = 'homeassistant:quality-fixture', installationId = 'quality-fixture';
 beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
-function readings(battery = 0.99, manual = 0.99) { const fake = fakePort((name) => noulAnswer(name === 'batteryApplicable' ? battery : manual)); installJudgmentPort(fake.port); return fake; }
+function readings(battery = 0.99, manual = 0.99) {
+  const fake = fakePort((name) => {
+    if (name === 'batteryApplicable') return noulAnswer(battery);
+    if (['manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(manual);
+    throw new Error(`Unexpected quality fixture question: ${name}`);
+  });
+  installJudgmentPort(fake.port); return fake;
+}
 async function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'goodvibes-quality-')); roots.push(root);
   const dbPath = join(root, 'knowledge.sqlite'), store = new KnowledgeStore({ dbPath });
   const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
-  const node = await store.upsertNode({ id: 'LOCAL_DEVICE', kind: 'ha_device', slug: 'lamp', title: 'Mains service hub', summary: 'Physical equipment with internal backup battery.', aliases: [], status: 'active', metadata: { knowledgeSpaceId: spaceId, homeAssistant: { objectKind: 'device', objectId: 'lamp' }, private: 'DO_NOT_TRANSMIT' } });
-  const entity = await store.upsertNode({ id: 'LOCAL_ENTITY', kind: 'ha_entity', slug: 'sensor', title: 'Telemetry', status: 'active', metadata: { knowledgeSpaceId: spaceId, homeAssistant: { entityId: 'binary_sensor.lamp' } } });
+  const node = await seedHomeAssistantObservation(store, { id: 'LOCAL_DEVICE', kind: 'ha_device', slug: 'lamp', title: 'Mains service hub', summary: 'Physical equipment with internal backup battery.', aliases: [], status: 'active', metadata: { knowledgeSpaceId: spaceId, homeAssistant: { objectKind: 'device', objectId: 'lamp' }, private: 'DO_NOT_TRANSMIT' } });
+  const entity = await seedHomeAssistantObservation(store, { id: 'LOCAL_ENTITY', kind: 'ha_entity', slug: 'sensor', title: 'Telemetry', status: 'active', metadata: { knowledgeSpaceId: spaceId, homeAssistant: { entityId: 'binary_sensor.lamp' } } });
   await store.upsertEdge({ fromKind: 'node', fromId: entity.id, toKind: 'node', toId: node.id, relation: 'belongs_to_device', metadata: { knowledgeSpaceId: spaceId } });
   const run = (signal?: AbortSignal) => refreshHomeGraphQualityIssues(store, spaceId, installationId, { signal });
   const snapshot = () => JSON.stringify(readHomeGraphState(store, spaceId));
@@ -59,7 +67,7 @@ describe('Home Graph whole-pass quality authority', () => {
       const { store, node, run, snapshot } = await fixture(); readings(); await run(); const fake = readings(0.01, 0.5); const controller = new AbortController();
       if (mode === 'unavailable') installJudgmentPort({ ...fake.port, ask: async () => { throw new Error('offline'); } });
       if (mode === 'missing') installJudgmentPort(undefined);
-      if (mode === 'protected') await store.upsertNode({ ...node, summary: 'Authorization: Bearer synthetic' });
+      if (mode === 'protected') await seedHomeAssistantObservation(store, { ...node, summary: 'Authorization: Bearer synthetic' });
       if (mode === 'cancelled') installJudgmentPort({ ...fake.port, async ask(request) { const result = await fake.port.ask(request); controller.abort(); return result; } });
       const before = snapshot(); await expect(run(controller.signal)).rejects.toThrow(); expect(snapshot()).toBe(before);
       if (mode === 'protected') expect(fake.requests).toHaveLength(0);
@@ -67,7 +75,7 @@ describe('Home Graph whole-pass quality authority', () => {
   });
   test('full selected-device preflight refuses a later protected device before the first request', async () => {
     const { store, run } = await fixture();
-    await store.upsertNode({ id: 'LATE_DEVICE', kind: 'ha_device', slug: 'late', title: 'Late', summary: 'Authorization: Bearer synthetic', metadata: { knowledgeSpaceId: spaceId } });
+    await seedHomeAssistantObservation(store, { id: 'LATE_DEVICE', kind: 'ha_device', slug: 'late', title: 'Late', summary: 'Authorization: Bearer synthetic', metadata: { knowledgeSpaceId: spaceId } });
     const fake = readings(); await expect(run()).rejects.toThrow(); expect(fake.requests).toHaveLength(0);
   });
   test('snapshots nodes, entities, relations, source membership and operator issues before awaited reads', async () => {
@@ -77,7 +85,7 @@ describe('Home Graph whole-pass quality authority', () => {
       installJudgmentPort({ ...fake.port, async ask(request) {
         const result = await fake.port.ask(request);
         if (!done) { done = true; try {
-          if (changed === 'node' || changed === 'entity') { const current = changed === 'node' ? node : entity; await store.upsertNode({ ...current, summary: 'Concurrent correction.' }); }
+          if (changed === 'node' || changed === 'entity') { const current = changed === 'node' ? node : entity; await seedHomeAssistantObservation(store, { ...current, summary: 'Concurrent correction.' }); }
           if (changed === 'edge') await store.upsertEdge({ fromKind: 'node', fromId: entity.id, toKind: 'node', toId: node.id, relation: 'related_to', metadata: { knowledgeSpaceId: spaceId } });
           if (changed === 'source') await store.upsertSource({ connectorId: 'manual', sourceType: 'manual', title: 'New source', status: 'indexed', canonicalUri: 'manual://new-source', metadata: { knowledgeSpaceId: spaceId } });
           if (changed === 'review') await reviewHomeGraphFact(store, spaceId, installationId, { knowledgeSpaceId: spaceId, issueId: issues[0]!.id, action: 'accept', reviewer: 'owner' });
@@ -153,9 +161,9 @@ describe('Home Graph whole-pass quality authority', () => {
       const { store, node, entity, run } = await fixture(); readings(); const [issue] = await run();
       await reviewHomeGraphFact(store, spaceId, installationId, { issueId: issue!.id, action: 'accept', reviewer: 'owner' });
       const resolved = store.getIssue(issue!.id)!; await run(); expect(store.getIssue(issue!.id)).toEqual(resolved);
-      if (change === 'entity') await store.upsertNode({ ...entity, summary: 'New evidence about physical operating controls.' });
-      if (change === 'summary') await store.upsertNode({ ...node, summary: 'New evidence about physical operating controls.' });
-      if (change === 'aliases') await store.upsertNode({ ...node, aliases: ['New exact variant name'] });
+      if (change === 'entity') await seedHomeAssistantObservation(store, { ...entity, summary: 'New evidence about physical operating controls.' });
+      if (change === 'summary') await seedHomeAssistantObservation(store, { ...node, summary: 'New evidence about physical operating controls.' });
+      if (change === 'aliases') await seedHomeAssistantObservation(store, { ...node, aliases: ['New exact variant name'] });
       await run(); const reopened = store.getIssue(issue!.id)!;
       expect(reopened.status).toBe('open'); expect(reopened.metadata.review).toBeUndefined();
       expect(reopened.metadata.subjectFingerprint).not.toBe(resolved.metadata.subjectFingerprint);
@@ -163,7 +171,7 @@ describe('Home Graph whole-pass quality authority', () => {
   });
   test('literal declarations need no port or unrelated protected semantics and never claim judgment provenance', async () => {
     const { store, node, run } = await fixture();
-    await store.upsertNode({ ...node, summary: 'Authorization: Bearer synthetic', metadata: { batteryPowered: 'yes', manualRequired: 'false' } });
+    await seedHomeAssistantObservation(store, { ...node, summary: 'Authorization: Bearer synthetic', metadata: { batteryPowered: 'yes', manualRequired: 'false' } });
     const [issue] = await run(); expect(issue!.code).toBe('homegraph.device.unknown_battery');
     expect(issue!.metadata.qualityReading).toEqual({ origin: 'declared-fields' });
   });
@@ -197,22 +205,22 @@ describe('Home Graph whole-pass quality authority', () => {
       if (reopen) await reviewHomeGraphFact(store, spaceId, installationId, { issueId: issue.id, action: 'edit', reviewer: 'owner' });
       const before = JSON.stringify(store.getIssue(issue.id)); readings(0.01, 0.99); await run();
       expect(JSON.stringify(store.getIssue(issue.id))).toBe(before);
-      await store.upsertNode({ ...node, metadata: { model: 'Changed physical variant' } });
+      await seedHomeAssistantObservation(store, { ...node, metadata: { model: 'Changed physical variant' } });
       await run(); expect(JSON.stringify(store.getIssue(issue.id))).toBe(before); // Legacy hashes cannot prove a semantic change.
     }
   });
   test('equivalent declared-flag spellings do not clear a versioned explicit review', async () => {
     const { store, node, run } = await fixture();
-    await store.upsertNode({ ...node, metadata: { batteryPowered: true, manualRequired: true } });
+    await seedHomeAssistantObservation(store, { ...node, metadata: { batteryPowered: true, manualRequired: true } });
     const issues = await run();
     for (const issue of issues) await reviewHomeGraphFact(store, spaceId, installationId, { issueId: issue.id, action: 'accept', reviewer: 'owner' });
     const before = JSON.stringify(store.listIssuesInSpace(spaceId));
-    await store.upsertNode({ ...node, metadata: { batteryPowered: 'yes', manualRequired: '1' } }); await run();
+    await seedHomeAssistantObservation(store, { ...node, metadata: { batteryPowered: 'yes', manualRequired: '1' } }); await run();
     expect(JSON.stringify(store.listIssuesInSpace(spaceId))).toBe(before);
   });
   test('same-name devices keep distinct evidence and exact local issue subjects', async () => {
     const { store, node, run } = await fixture();
-    const other = await store.upsertNode({ ...node, id: 'OTHER_DEVICE', slug: 'other', summary: 'Software-only namesake.' });
+    const other = await seedHomeAssistantObservation(store, { ...node, id: 'OTHER_DEVICE', slug: 'other', summary: 'Software-only namesake.' });
     installJudgmentPort(fakePort((_name, _question, state) => noulAnswer((state as { subject: { summary: string } }).subject.summary === 'Software-only namesake.' ? 0.01 : 0.99)).port);
     const issues = await run(); expect(issues).toHaveLength(2); expect(issues.every((issue) => issue.nodeId === node.id)).toBe(true);
     expect(issues.some((issue) => issue.nodeId === other.id)).toBe(false);
@@ -229,7 +237,7 @@ describe('Home Graph whole-pass quality authority', () => {
   test('all declared boolean-like mappings work end to end without a judgment port', async () => {
     for (const [value, expected] of [[true, 2], ['true', 2], ['yes', 2], ['1', 2], [false, 0], ['false', 0], ['no', 0], ['0', 0], ['none', 0], ['not_applicable', 0], ['not applicable', 0]] as const) {
       const { store, node, run } = await fixture();
-      await store.upsertNode({ ...node, metadata: { batteryPowered: value, manualRequired: value } });
+      await seedHomeAssistantObservation(store, { ...node, metadata: { batteryPowered: value, manualRequired: value } });
       const issues = await run(); expect(issues).toHaveLength(expected);
       expect(issues.every((issue) => (issue.metadata.qualityReading as { origin: string }).origin === 'declared-fields')).toBe(true);
     }

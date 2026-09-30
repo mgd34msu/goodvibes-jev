@@ -32,7 +32,7 @@ export interface KnowledgeNodeRevisionRecord {
 /**
  * The review provenance stamped on a node whenever it becomes (or stays) active.
  * Makes activation honest: a node is never silently active, it is either
- * auto-accepted above the configured confidence threshold, held pending review,
+ * auto-accepted by a settled serving judgment, held pending review,
  * explicitly reviewed, or (for nodes that predate the gate) marked 'pre-gate'.
  */
 export type KnowledgeNodeReviewState = 'auto-accepted' | 'pending-review' | 'reviewed' | 'pre-gate' | 'explicit';
@@ -41,6 +41,7 @@ export interface KnowledgeNodeReviewProvenance {
   readonly state: KnowledgeNodeReviewState;
   readonly reason: string;
   readonly decidedAt: number;
+  /** @deprecated Legacy numeric-gate audit metadata only. */
   readonly threshold?: number | undefined;
   readonly reviewer?: string | undefined;
 }

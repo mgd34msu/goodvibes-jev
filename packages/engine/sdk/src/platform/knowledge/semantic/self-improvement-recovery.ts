@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
@@ -42,7 +43,7 @@ export async function recoverNoRepairerTasks(store: KnowledgeStore, spaceId: str
       if (task.gapId) {
         const gap = store.getNode(task.gapId);
         if (gap && getKnowledgeSpaceId(gap) === spaceId && readString(gap.metadata.repairStatus) === 'no_repairer') {
-          await store.upsertNode({
+          await upsertObservedKnowledgeNode(store, {
             id: gap.id,
             kind: gap.kind,
             slug: gap.slug,
@@ -59,7 +60,7 @@ export async function recoverNoRepairerTasks(store: KnowledgeStore, spaceId: str
               nextRepairAttemptAt: undefined,
               knowledgeSpaceId: spaceId,
             },
-          });
+          }, 'research-task', gap, () => store.getNode(gap.id));
         }
       }
       await upsertRecoveredTask(

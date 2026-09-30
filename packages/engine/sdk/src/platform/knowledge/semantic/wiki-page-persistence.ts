@@ -30,9 +30,10 @@ export function prepareWikiPageNodeInput(
 export async function persistWikiPage(
   store: KnowledgeStore, source: KnowledgeSourceRecord, semantic: KnowledgeSemanticExtraction,
   spaceId: string, input: KnowledgeNodeUpsertInput | undefined,
+  writePrepared?: (() => Promise<KnowledgeNodeRecord>) | undefined,
 ): Promise<KnowledgeNodeRecord | undefined> {
   if (!input) return undefined;
-  const page = await store.upsertNode(input);
+  const page = await (writePrepared ? writePrepared() : store.upsertNode(input));
   await store.upsertEdge({ fromKind: 'source', fromId: source.id, toKind: 'node', toId: page.id,
     relation: 'compiled_into_page', weight: semantic.extractor === 'llm' ? 1 : 0.6,
     metadata: semanticMetadata(spaceId, { extractor: semantic.extractor }),

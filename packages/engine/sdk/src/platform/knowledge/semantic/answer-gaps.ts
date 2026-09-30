@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
@@ -57,7 +58,7 @@ export async function persistAnswerGap(
   return store.batch(async () => {
     assertAnswerVerificationActive(context.signal);
     context.assertCurrent?.();
-    const node = await store.upsertNode({
+    const node = await upsertObservedKnowledgeNode(store, {
       id,
       kind: 'knowledge_gap',
       slug: `answer-gap-${fingerprint}`,
@@ -81,7 +82,7 @@ export async function persistAnswerGap(
         visibility: 'refinement',
         displayRole: 'knowledge-gap',
       }),
-    });
+    }, 'research-task', { query, reason, sources, linkedObjects }, () => { context.assertCurrent?.(); return { query, reason, sources, linkedObjects }; });
     for (const source of sources) {
       assertAnswerVerificationActive(context.signal);
       await store.upsertEdge({

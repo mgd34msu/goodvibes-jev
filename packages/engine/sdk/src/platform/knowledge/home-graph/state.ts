@@ -37,6 +37,16 @@ export function readHomeGraphState(store: KnowledgeStore, spaceId: string): Home
   return { spaceId, sources, nodes, edges, issues, extractions };
 }
 
+/** Serving projections exclude pending review nodes while administrative state retains them. */
+export function readHomeGraphServingState(store: KnowledgeStore, spaceId: string): HomeGraphState {
+  const state = readHomeGraphState(store, spaceId);
+  const nodes = state.nodes.filter((node) => node.status === 'active');
+  const ids = new Set(nodes.map((node) => node.id));
+  return { ...state, nodes, edges: state.edges.filter((edge) =>
+    (edge.fromKind !== 'node' || ids.has(edge.fromId)) && (edge.toKind !== 'node' || ids.has(edge.toId))),
+    issues: state.issues.filter((issue) => !issue.nodeId || ids.has(issue.nodeId)) };
+}
+
 export function renderHomeGraphState(store: KnowledgeStore, spaceId: string, title: string): HomeGraphRenderState {
   const state = readHomeGraphState(store, spaceId);
   return {

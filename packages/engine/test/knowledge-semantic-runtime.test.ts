@@ -1,5 +1,8 @@
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-useKnowledgeAnswerReadings();
+const answerReadings = useKnowledgeAnswerReadings();
+useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -131,7 +134,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv',
       title: 'LG webOS Smart TV',
@@ -173,7 +176,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         throw new Error('Semantic gap repair exceeded its run budget.');
       },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-budget',
       title: 'LG webOS Smart TV',
@@ -181,7 +184,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'budget-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -238,7 +241,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         sourceDiscovery: { purpose: 'semantic-gap-repair' },
       },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv',
       title: 'LG webOS Smart TV',
@@ -262,7 +265,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'feature-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA LG webOS Smart TV?',
@@ -303,7 +306,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
         return { searched: true, ingestedSourceIds: [], skippedUrls: [] };
       },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'living-room-tv',
       title: 'Living Room TV',
@@ -311,7 +314,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, batteryPowered: false, batteryType: 'none' },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'battery-gap',
       title: 'What battery does the Living Room TV use?',
@@ -346,7 +349,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
     for (let i = 0; i < 60; i += 1) {
-      await store.upsertNode({
+      await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap',
         slug: `broad-gap-${i}`,
         title: `What are the complete features and specifications for device ${i}?`,
@@ -393,7 +396,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-overlap-limit',
       title: 'LG webOS Smart TV',
@@ -409,7 +412,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    await store.upsertNode({
+    await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'coalesced-limit-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',
@@ -451,7 +454,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv',
       title: 'LG webOS Smart TV',
@@ -469,7 +472,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     });
     const gaps = [];
     for (let i = 0; i < 2; i += 1) {
-      const gap = await store.upsertNode({
+      const gap = await seedKnowledgeResearchTask(store, {
         kind: 'knowledge_gap',
         slug: `no-repairer-gap-${i}`,
         title: `What are the complete features and specifications for LG 86NANO90UNA ${i}?`,
@@ -535,7 +538,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-overlap',
       title: 'LG webOS Smart TV',
@@ -551,7 +554,7 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       relation: 'source_for',
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'overlap-gap',
       title: 'What are the complete features and specifications for LG 86NANO90UNA?',

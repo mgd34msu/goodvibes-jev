@@ -124,7 +124,7 @@ export function factCoverage(facts: readonly KnowledgeNodeRecord[]): { readonly 
 }
 
 export function isUsableSelfImprovementFact(fact: KnowledgeNodeRecord, subjectIds: ReadonlySet<string> = new Set()): boolean {
-  if (fact.status === 'stale') return false;
+  if (fact.status !== 'active') return false;
   if (fact.metadata.semanticKind !== 'fact') return false;
   const kind = readString(fact.metadata.factKind);
   if (!['feature', 'capability', 'specification', 'compatibility', 'configuration', 'identity'].includes(kind ?? '')) return false;

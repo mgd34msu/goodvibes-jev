@@ -37,7 +37,7 @@ export async function readAnswerSourceRanking(
     content: {
       ...sourceRankingContent(source),
       excerpts: evidence.filter((item) => item.source?.id === source.id && item.excerpt).map((item) => item.excerpt!),
-      facts: facts.filter((fact) => fact.status !== 'stale' && uniqueStrings([
+      facts: facts.filter((fact) => fact.status === 'active' && uniqueStrings([
         ...readStringArray(fact.metadata.sourceIds), readString(fact.metadata.sourceId), fact.sourceId,
       ]).includes(source.id)).map((fact) => ({
         title: fact.title, summary: fact.summary ?? '',

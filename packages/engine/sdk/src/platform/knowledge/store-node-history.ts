@@ -1,11 +1,9 @@
 import type { SQLiteStore } from '../state/sqlite-store.js';
 import { nowMs } from './store-schema.js';
-import { DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE } from './store-config.js';
 import type { KnowledgeStore } from './store.js';
 import { resolveKnowledgeNodeOperatorMutation, type KnowledgeNodeMutationContext } from './store-node-authority.js';
 import type {
   KnowledgeNodeRecord,
-  KnowledgeNodeReviewProvenance,
   KnowledgeNodeRevisionChangeKind,
   KnowledgeNodeRevisionRecord,
   KnowledgeNodeUpsertInput,
@@ -33,89 +31,24 @@ export function writeKnowledgeNodeRow(sqlite: SQLiteStore, record: KnowledgeNode
   ]);
 }
 
+/** Descriptive 0-100 producer score. Missing/nonfinite values never become evidence. */
 export function clampConfidence(value: number): number {
-  // A non-finite value (NaN/Infinity, slips past a `??` guard, which only catches
-  // null/undefined) resolves to the auto-accept default rather than poisoning the
-  // gate with `NaN >= threshold === false` and silently drafting the node forever.
-  if (!Number.isFinite(value)) return DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE;
-  // Confidence is a 0-100 score everywhere. A fractional value below 1 (e.g. 0.9) is
-  // almost certainly a 0-1 probability a producer/LLM emitted despite that contract,
-  // scale it up so 0.9 → 90 instead of Math.round truncating it to a draft-holding 1.
-  const scaled = value > 0 && value < 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(scaled)));
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readNodeProvenanceState(metadata: Record<string, unknown>): string | undefined {
-  const provenance = metadata.reviewProvenance;
-  if (!isPlainRecord(provenance)) return undefined;
-  return typeof provenance.state === 'string' ? provenance.state : undefined;
-}
-
-function stampNodeProvenance(
-  metadata: Record<string, unknown>,
-  provenance: KnowledgeNodeReviewProvenance,
-): Record<string, unknown> {
-  return { ...metadata, reviewProvenance: provenance };
-}
-
-/** Explicit operator authority precedes ordinary producer activation policy. */
+/** Synchronous authority preflight. Model reads belong to the prepared activation pass. */
 export function resolveNodeActivation(args: {
   readonly input: KnowledgeNodeUpsertInput;
   readonly candidate: KnowledgeNodeRecord;
   readonly existing: KnowledgeNodeRecord | undefined;
   readonly mutation?: KnowledgeNodeMutationContext | undefined;
   readonly now: number;
-  readonly autoAcceptConfidence: number;
-}): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } {
-  const { input, candidate, existing, mutation, now, autoAcceptConfidence } = args;
-  const { confidence, metadata } = candidate;
-  const reviewed = resolveKnowledgeNodeOperatorMutation(candidate, existing, mutation, now);
-  if (reviewed) return reviewed;
-  if (input.status) {
-    return {
-      status: input.status,
-      metadata: stampNodeProvenance(metadata, {
-        state: 'explicit',
-        reason: `explicit: producer set status '${input.status}'`,
-        decidedAt: now,
-      }),
-    };
-  }
-  if (existing && existing.status === 'active') {
-    if (readNodeProvenanceState(metadata)) return { status: 'active', metadata };
-    return {
-      status: 'active',
-      metadata: stampNodeProvenance(metadata, {
-        state: 'pre-gate',
-        reason: 'pre-gate: node was active before the review gate; left active',
-        decidedAt: now,
-      }),
-    };
-  }
-  if (confidence >= autoAcceptConfidence) {
-    return {
-      status: 'active',
-      metadata: stampNodeProvenance(metadata, {
-        state: 'auto-accepted',
-        reason: `auto-accepted: confidence ${confidence} >= auto-accept threshold ${autoAcceptConfidence}`,
-        decidedAt: now,
-        threshold: autoAcceptConfidence,
-      }),
-    };
-  }
-  return {
-    status: 'draft',
-    metadata: stampNodeProvenance(metadata, {
-      state: 'pending-review',
-      reason: `pending review: confidence ${confidence} < auto-accept threshold ${autoAcceptConfidence}`,
-      decidedAt: now,
-      threshold: autoAcceptConfidence,
-    }),
-  };
+}): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } | undefined {
+  return resolveKnowledgeNodeOperatorMutation(args.candidate, args.existing, args.mutation, args.now);
 }
 
 /**

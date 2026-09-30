@@ -1,3 +1,6 @@
+import { upsertObservedKnowledgeNode } from '../sdk/src/platform/knowledge/store-node-observation.js';
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
+import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { describe, expect, test } from 'bun:test';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 import {
@@ -19,7 +22,8 @@ import {
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
 
-useKnowledgeAnswerReadings();
+const answerReadings = useKnowledgeAnswerReadings();
+useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {
   test('web gap repair ingests at least two distinct sources for answer gaps', async () => {
@@ -315,7 +319,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       },
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-promote',
       title: 'LG webOS Smart TV',
@@ -323,15 +327,15 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 90,
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
-    const passport = await store.upsertNode({
+    const passport = await upsertObservedKnowledgeNode(store, {
       kind: 'ha_device_passport',
       slug: 'lg-tv-passport',
       title: 'LG webOS Smart TV passport',
       aliases: [],
       confidence: 80,
       metadata: { knowledgeSpaceId: spaceId },
-    });
-    const integration = await store.upsertNode({
+    }, 'generated-page-index', device, () => store.getNode(device.id));
+    const integration = await seedHomeAssistantObservation(store, {
       kind: 'ha_integration',
       slug: 'webostv',
       title: 'LG webOS TV integration',
@@ -339,7 +343,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       confidence: 80,
       metadata: { knowledgeSpaceId: spaceId },
     });
-    const gap = await store.upsertNode({
+    const gap = await seedKnowledgeResearchTask(store, {
       kind: 'knowledge_gap',
       slug: 'official-source-gap',
       title: 'What refresh rate, HDR formats, HDMI 2.1 or gaming features, and smart TV features does the LG 86NANO90UNA have?',
@@ -397,7 +401,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-strict',
       title: 'LG webOS Smart TV',
@@ -504,7 +508,7 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
-    const device = await store.upsertNode({
+    const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-unlinked-answer-tv',
       title: 'LG webOS Smart TV',

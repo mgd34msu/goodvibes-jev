@@ -1,3 +1,5 @@
+import { createKnowledgeNodeOperatorMutation } from '../sdk/src/platform/knowledge/store-node-authority.js';
+import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,6 +44,7 @@ type ReadingState = {
 function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
     if (['batteryApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01); // Authored reference-device fixture: these fields are absent and battery tracking does not apply.
+    if (name === 'serve' && ['Network and wireless capabilities', 'Display and picture specifications', 'Input and output ports', 'Gaming and HDMI features', 'Audio capabilities', 'Display resolution'].includes((state as ReadingState).candidate.title)) return noulAnswer(0.99); // Authored synthetic reference-document claims.
     if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
     if (name === 'useful') return noulAnswer(probability(state as ReadingState));
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.97);
@@ -82,12 +85,12 @@ async function fixture() {
   const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
   const artifactStore = new ArtifactStore({ rootDir: join(root, 'artifacts') });
   await store.init();
-  const area = await store.upsertNode({
+  const area = await seedHomeAssistantObservation(store, {
     id: homeGraphNodeId(spaceId, 'ha_area', areaId), kind: 'ha_area', slug: areaId,
     title: 'Living Room', status: 'active',
     metadata: metadata({ homeAssistant: { objectId: areaId, objectKind: 'area' } }),
   });
-  const device = await store.upsertNode({
+  const device = await seedHomeAssistantObservation(store, {
     id: homeGraphNodeId(spaceId, 'ha_device', deviceId), kind: 'ha_device', slug: deviceId,
     title: 'Reference device', status: 'active',
     metadata: metadata({ homeAssistant: { objectId: deviceId, objectKind: 'device' } }),
@@ -135,6 +138,12 @@ function generate(context: Fixture, kind: PageKind, signal?: AbortSignal) {
 }
 
 async function addAskFact(context: Fixture, source: KnowledgeSourceRecord) {
+  const extraction = context.store.getExtractionBySourceId(source.id);
+  await context.store.upsertExtraction({ ...extraction, sourceId: source.id, extractorId: 'synthetic-reference', format: 'text',
+    excerpt: [extraction?.excerpt, 'The reference device supports 4K UHD resolution.'].filter(Boolean).join(' '),
+    metadata: metadata(),
+  });
+  readings();
   return context.store.upsertNode({
     id: `${source.id}-fact`, kind: 'fact', slug: `${source.id}-fact`, status: 'active',
     title: 'Display resolution', summary: 'The device supports 4K UHD resolution.', sourceId: source.id,
@@ -327,7 +336,7 @@ describe('Home Graph page quality persistence boundaries', () => {
       title: 'FOREIGN_PROTECTED_REFERENCE', summary: 'Authorization: Bearer synthetic-foreign-value',
       metadata: buildHomeGraphMetadata(foreignSpaceId, 'other-house'),
     });
-    const foreignDevice = await context.store.upsertNode({
+    const foreignDevice = await seedHomeAssistantObservation(context.store, {
       id: 'foreign-device', kind: 'ha_device', slug: 'foreign-device', title: 'Foreign device', status: 'active',
       metadata: buildHomeGraphMetadata(foreignSpaceId, 'other-house'),
     });
@@ -364,7 +373,11 @@ describe('Home Graph page quality persistence boundaries', () => {
         if (changedRecord === 'source') await context.store.replaceSourceRecord({ ...source, summary: 'Concurrent source correction.' });
         else {
           const node = changedRecord === 'fact' ? fact : context.device;
-          await context.store.replaceNodeRecord({ ...node, summary: `Concurrent ${changedRecord} correction.` });
+          const summary = `Concurrent ${changedRecord} correction.`;
+          if (changedRecord === 'device') await seedHomeAssistantObservation(context.store, { ...node, summary });
+          else await context.store.replaceNodeRecord({ ...node, summary }, createKnowledgeNodeOperatorMutation(node, {
+            action: 'revise', reviewer: 'fixture-operator', fieldCorrections: [{ path: ['summary'], value: summary }],
+          }));
         }
         const afterConcurrentEdit = persisted(context);
         pause.release();
@@ -416,8 +429,8 @@ describe('Home Graph page quality persistence boundaries', () => {
     racingStore.upsertNode = async (input) => {
       const node = await context.store.upsertNode(input);
       if (input.kind === 'ha_device_passport') concurrent = await context.store.upsertNode({
-        ...fact, summary: 'Concurrent operator correction.', metadata: { ...fact.metadata, operatorReview: 'rejected' },
-      });
+        ...fact, summary: 'Concurrent operator correction.',
+      }, createKnowledgeNodeOperatorMutation(fact, { action: 'reject', reviewer: 'fixture-operator' }));
       return node;
     };
     await expect(generate({ ...context, store: racingStore }, 'passport')).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
@@ -439,12 +452,16 @@ describe('Home Graph page quality persistence boundaries', () => {
     const racingStore = Object.create(context.store) as KnowledgeStore;
     let touched: string | undefined;
     let concurrent: KnowledgeNodeRecord | undefined;
-    racingStore.upsertNode = async (input) => {
-      const node = await context.store.upsertNode(input);
-      if (input.kind === 'fact' && touched === undefined) {
+    const commitPrepared = racingStore.upsertPreparedNode.bind(racingStore);
+    racingStore.upsertPreparedNode = async (prepared, index) => {
+      const node = await commitPrepared(prepared, index);
+      if (node.kind === 'fact' && touched === undefined) {
         touched = node.id;
         const untouched = facts.find((fact) => fact.id !== node.id)!;
-        concurrent = await context.store.upsertNode({ ...untouched, summary: 'Concurrent correction outside this write pass.' });
+        const summary = 'Concurrent correction outside this write pass.';
+        concurrent = await context.store.upsertNode({ ...untouched, summary }, createKnowledgeNodeOperatorMutation(untouched, {
+          action: 'revise', reviewer: 'fixture-operator', fieldCorrections: [{ path: ['summary'], value: summary }],
+        }));
         controller.abort();
       }
       return node;

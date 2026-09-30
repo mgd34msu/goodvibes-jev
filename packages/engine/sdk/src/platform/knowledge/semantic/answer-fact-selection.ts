@@ -12,7 +12,7 @@ export class KnowledgeFactSelectionHeldError extends Error {
 
 export async function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal): Promise<KnowledgeNodeRecord[]> {
   assertAnswerVerificationActive(signal);
-  const byId = new Map(facts.filter((fact) => fact.status !== 'stale').map((fact) => [fact.id, fact]));
+  const byId = new Map(facts.filter((fact) => fact.status === 'active').map((fact) => [fact.id, fact]));
   const shortlist = [...byId.values()].slice(0, 50);
   if (shortlist.length === 0) return [];
   const candidates = shortlist.map((fact) => ({ id: fact.id, content: {

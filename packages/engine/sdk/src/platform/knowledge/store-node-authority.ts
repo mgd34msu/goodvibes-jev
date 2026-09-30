@@ -19,7 +19,7 @@ export interface KnowledgeNodeFieldCorrection {
 }
 
 const operatorMutations = new WeakSet<KnowledgeNodeMutationContext>();
-const reviewFields = new Set(['review', 'reviewProvenance', 'reviewedFacts', 'operatorReview']);
+const reviewFields = new Set(['review', 'reviewProvenance', 'reviewedFacts', 'operatorReview', 'nodeActivation', 'nodeObservation']);
 
 export class KnowledgeNodeMutationHeldError extends Error {
   override readonly name = 'KnowledgeNodeMutationHeldError';
@@ -120,6 +120,7 @@ export function resolveKnowledgeNodeOperatorMutation(
     // Revision is an explicit review of the NEW content. Never carry old facts or
     // an old acceptance stamp onto the replacement, even from the trusted input.
     const metadata = withoutReviewFields(candidate.metadata);
+    if (existing.metadata.nodeObservation !== undefined) metadata.nodeObservation = existing.metadata.nodeObservation;
     const unreviewed = fields?.length === 0;
     return {
       status,
@@ -171,9 +172,14 @@ export function prepareKnowledgeNodeReplacement(
   existing: KnowledgeNodeRecord | undefined,
   mutation: KnowledgeNodeMutationContext | undefined,
   now: number,
+  trustedRestoration = false,
 ): KnowledgeNodeRecord {
   const metadata = withoutReviewFields(record.metadata);
+  if (trustedRestoration) {
+    for (const key of ['nodeActivation', 'nodeObservation']) if (record.metadata[key] !== undefined) metadata[key] = record.metadata[key];
+  }
   for (const key of reviewFields) {
+    if (trustedRestoration && ['nodeActivation', 'nodeObservation'].includes(key)) continue;
     if (existing?.metadata[key] !== undefined) metadata[key] = existing.metadata[key];
   }
   // Preserve a genuine old automatic stamp during compensation. It conveys no
@@ -181,6 +187,10 @@ export function prepareKnowledgeNodeReplacement(
   const provenance = readRecord(record.metadata.reviewProvenance);
   if (!hasKnowledgeNodeOperatorReview(record) && typeof provenance.state === 'string') {
     metadata.reviewProvenance = record.metadata.reviewProvenance;
+    if (record.status !== 'active') {
+      delete metadata.nodeActivation;
+      if (record.metadata.nodeActivation !== undefined) metadata.nodeActivation = record.metadata.nodeActivation;
+    }
   }
   const candidate = { ...record, metadata,
     ...(mutation && existing ? { createdAt: existing.createdAt, updatedAt: now } : {}),

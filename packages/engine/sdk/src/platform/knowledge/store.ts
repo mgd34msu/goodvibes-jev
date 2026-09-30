@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { snapshotNodeInput } from './activation/projection.js';
+import { KnowledgeNodeActivationHeldError, type KnowledgeNodeActivationOptions } from './activation/types.js';
+import { resolveKnowledgeNodeObservation, retainKnowledgeNodeObservation } from './store-node-observation.js';
+import { knowledgeNodeRestorationGuard, prepareNodeActivationPass, assertPreparedNodeWrites, preparedNodeWrite, markPreparedNodeWritten, type NodeMutationDraft, type KnowledgePreparedNodeWrites } from './store-node-activation.js';
+export type { KnowledgePreparedNodeWrites } from './store-node-activation.js';
 import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 import { SQLiteStore } from '../state/sqlite-store.js';
@@ -40,7 +45,6 @@ import {
   uniq,
 } from './store-schema.js';
 import {
-  DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE,
   resolveKnowledgeDbPath,
   type KnowledgeStoreConfig,
 } from './store-config.js';
@@ -131,6 +135,8 @@ const MAX_RETAINED_JOB_RUNS = 500;
 export class KnowledgeStore {
   private readonly sqlite: SQLiteStore;
   private readonly dbPath: string;
+  private readonly nodeActivationScope = Object.freeze({});
+  private readonly nodeActivationConfidenceFloor: number | undefined;
   private ready = false;
   private initPromise: Promise<void> | null = null;
   private readonly sources = new Map<string, KnowledgeSourceRecord>();
@@ -146,11 +152,13 @@ export class KnowledgeStore {
   private readonly schedules = new Map<string, KnowledgeScheduleRecord>();
   private readonly nodeRevisions = new Map<string, KnowledgeNodeRevisionRecord[]>();
   private readonly semanticEnrichmentStates = new Map<string, KnowledgeSemanticEnrichmentStateRecord>();
-  private readonly nodeAutoAcceptConfidence: number;
 
   constructor(config: KnowledgeStoreConfig) {
     this.dbPath = resolveKnowledgeDbPath(config);
-    this.nodeAutoAcceptConfidence = clampConfidence(config.nodeAutoAcceptConfidence ?? DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE);
+    if (config.nodeAutoAcceptConfidence !== undefined && (!Number.isFinite(config.nodeAutoAcceptConfidence) || config.nodeAutoAcceptConfidence < 0 || config.nodeAutoAcceptConfidence > 100)) {
+      throw new RangeError('nodeAutoAcceptConfidence must be a finite 0-100 owner restriction.');
+    }
+    this.nodeActivationConfidenceFloor = config.nodeAutoAcceptConfidence;
     this.sqlite = new SQLiteStore(this.dbPath);
     void this.init().catch((error: unknown) => {
       logger.error('[knowledge-store] initialization failed', {
@@ -494,14 +502,12 @@ export class KnowledgeStore {
     this.prepareNodeMutation(input);
   }
 
-  private prepareNodeMutation(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext): {
-    readonly existing: KnowledgeNodeRecord | undefined;
-    readonly record: KnowledgeNodeRecord;
-    readonly now: number;
-  } {
+  private prepareNodeMutation(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext, observationInput = input): NodeMutationDraft {
     const existing = (input.id
       ? this.nodes.get(input.id)
       : this.getNodeByKindAndSlug(input.kind, input.slug)) ?? undefined;
+    const sameSlug = this.getNodeByKindAndSlug(input.kind, input.slug);
+    if (input.id && sameSlug && sameSlug.id !== input.id) throw new KnowledgeNodeActivationHeldError('stale');
     const now = nowMs();
     const _summary = stableText(input.summary);
     const _sourceId = stableText(input.sourceId);
@@ -518,7 +524,7 @@ export class KnowledgeStore {
       ? ensureKnowledgeSpaceMetadata(mergedNodeMetadata, nodeSpaceId)
       : mergedNodeMetadata;
     // Existing confidence normalization is independent of operator authority.
-    const confidence = clampConfidence(input.confidence ?? existing?.confidence ?? 70);
+    const confidence = clampConfidence(input.confidence ?? existing?.confidence ?? 0);
     const candidate: KnowledgeNodeRecord = {
       id: existing?.id ?? input.id ?? `node-${randomUUID().slice(0, 8)}`,
       kind: input.kind,
@@ -534,19 +540,40 @@ export class KnowledgeStore {
       updatedAt: now,
     };
     // Authority is resolved before automatic activation or any persistence.
-    const gated = resolveNodeActivation({ input, candidate, existing, mutation, now, autoAcceptConfidence: this.nodeAutoAcceptConfidence });
+    const gated = resolveNodeActivation({ input, candidate, existing, mutation, now });
     const record = retainKnowledgeNodeRecord({ ...candidate, ...gated });
-    return { existing, record, now };
+    return { input, existing, record, now, authority: gated !== undefined, observation: resolveKnowledgeNodeObservation(observationInput, existing) };
+  }
+
+  /** Prepare a complete semantic write pass before any affected persistence. */
+  async prepareNodeWrites(inputs: readonly KnowledgeNodeUpsertInput[], options: KnowledgeNodeActivationOptions = {}): Promise<KnowledgePreparedNodeWrites> {
+    const snapshots = inputs.map((input) => snapshotNodeInput(input));
+    await this.init();
+    const drafts = snapshots.map((input, index) => this.prepareNodeMutation(input, undefined, inputs[index]));
+    return prepareNodeActivationPass(this, drafts, options, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+  }
+
+  assertPreparedNodeWrites(prepared: KnowledgePreparedNodeWrites): void { assertPreparedNodeWrites(this, prepared, this.nodeActivationScope); }
+
+  async upsertPreparedNode(prepared: KnowledgePreparedNodeWrites, index: number): Promise<KnowledgeNodeRecord> {
+    await this.init();
+    const { existing, record, now, observationEvidence } = preparedNodeWrite(this, prepared, index, this.nodeActivationScope);
+    if (record === existing) { retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index); return record; }
+    // Everything after the final guard and before save is synchronous.
+    writeKnowledgeNodeRow(this.sqlite, record);
+    recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now);
+    retainKnowledgeNodeObservation(existing, record, observationEvidence);
+    this.nodes.set(record.id, record);
+    markPreparedNodeWritten(prepared, index);
+    await this.sqlite.save();
+    return record;
   }
 
   async upsertNode(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext): Promise<KnowledgeNodeRecord> {
+    const snapshot = snapshotNodeInput(input);
     await this.init();
-    const { existing, record, now } = this.prepareNodeMutation(input, mutation);
-    writeKnowledgeNodeRow(this.sqlite, record);
-    recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now); // preserve prior content (Invariant 8)
-    this.nodes.set(record.id, record);
-    await this.sqlite.save();
-    return record;
+    const prepared = await prepareNodeActivationPass(this, [this.prepareNodeMutation(snapshot, mutation, input)], {}, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+    return this.upsertPreparedNode(prepared, 0);
   }
 
   /** Read append-only node revisions, oldest first. */
@@ -562,13 +589,22 @@ export class KnowledgeStore {
   }
 
   async replaceNodeRecord(record: KnowledgeNodeRecord, mutation?: KnowledgeNodeMutationContext): Promise<void> {
+    const restoration = mutation === undefined ? knowledgeNodeRestorationGuard(this, record, this.nodeActivationScope) : undefined;
+    record = snapshotNodeInput(record);
     await this.init();
     const existing = this.nodes.get(record.id);
+    const sameSlug = this.getNodeByKindAndSlug(record.kind, record.slug);
+    if (sameSlug && sameSlug.id !== record.id) throw new KnowledgeNodeActivationHeldError('stale');
     const now = nowMs();
-    const replacement = prepareKnowledgeNodeReplacement(record, existing, mutation, now);
-    writeKnowledgeNodeRow(this.sqlite, replacement);
-    if (mutation) recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, replacement, existing, now);
-    this.nodes.set(replacement.id, replacement);
+    const replacement = prepareKnowledgeNodeReplacement(record, existing, mutation, now, restoration !== undefined);
+    const authority = mutation !== undefined || replacement === existing;
+    const prepared = await prepareNodeActivationPass(this, [{ input: record, existing, record: replacement, now, authority, restoration }], {}, this.nodeActivationConfidenceFloor, this.nodeActivationScope);
+    const guarded = preparedNodeWrite(this, prepared, 0, this.nodeActivationScope).record;
+    writeKnowledgeNodeRow(this.sqlite, guarded);
+    if (mutation) recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, guarded, existing, now);
+    retainKnowledgeNodeObservation(existing, guarded);
+    this.nodes.set(guarded.id, guarded);
+    markPreparedNodeWritten(prepared, 0);
     await this.sqlite.save();
   }
 
@@ -712,6 +748,7 @@ export class KnowledgeStore {
 
   /** Bounded ordinary writes with a synchronous guard at the all-or-none commit point. */
   async applyGuardedNodeIssueWrites(input: KnowledgeGuardedNodeIssueWrites, beforeWrite: () => void): Promise<void> {
+    input = snapshotNodeInput(input);
     await this.init();
     if (input.nodes.length > 100 || input.issues.length > 100
       || new Set(input.nodes.map((node) => node.id)).size !== input.nodes.length
@@ -720,13 +757,16 @@ export class KnowledgeStore {
       || input.issues.some((issue) => !issue.id || !this.issues.has(issue.id))) {
       throw new Error('Guarded knowledge writes require at most 100 distinct existing nodes and issues.');
     }
-    const nodes = input.nodes.map((node) => this.prepareNodeMutation(node));
+    const prepared = await this.prepareNodeWrites(input.nodes);
+    const nodes = input.nodes.map((_, index) => preparedNodeWrite(this, prepared, index, this.nodeActivationScope));
     const nodeView = new Map(this.nodes);
     for (const { record } of nodes) nodeView.set(record.id, record);
     const issues = input.issues.map((issue) => prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: nodeView }, issue));
     beforeWrite();
+    assertPreparedNodeWrites(this, prepared, this.nodeActivationScope);
     commitKnowledgeNodeIssueWrites({ sqlite: this.sqlite, nodes: this.nodes, issues: this.issues, nodeRevisions: this.nodeRevisions },
       nodes, issues.filter((issue) => !issue.preserve).map((issue) => issue.record));
+    nodes.forEach(({ existing, record, observationEvidence }, index) => { retainKnowledgeNodeObservation(existing, record, observationEvidence); markPreparedNodeWritten(prepared, index); });
     await this.sqlite.save();
   }
 

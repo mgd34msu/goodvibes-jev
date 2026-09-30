@@ -293,7 +293,7 @@ function withAnswerFactContract(
     ]);
     const subjects = subjectIds
       .map((id) => linkedObjects.find((node) => node.id === id) ?? store.getNode(id))
-      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status !== 'stale'));
+      .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active'));
     if (subjects.length === 0) {
       result.push(fact as AnswerFactRecord);
       continue;
@@ -340,7 +340,7 @@ function linkedObjectsFromFacts(
   }
   return [...objectIds]
     .map((id) => store.getNode(id))
-    .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status !== 'stale'));
+    .filter((node): node is KnowledgeNodeRecord => Boolean(node && node.status === 'active'));
 }
 
 function factSubjectIdsFromGraph(

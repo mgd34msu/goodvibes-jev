@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import type { KnowledgeStore } from '../store.js';
 import type {
   KnowledgeIssueRecord,
@@ -15,7 +16,7 @@ export async function suppressGap(
   reason: string | undefined,
   spaceId: string,
 ): Promise<void> {
-  await store.upsertNode({
+  await upsertObservedKnowledgeNode(store, {
     id: gap.id,
     kind: gap.kind,
     slug: gap.slug,
@@ -31,7 +32,7 @@ export async function suppressGap(
       repairReason: reason,
       repairedAt: Date.now(),
     },
-  });
+  }, 'research-task', gap, () => store.getNode(gap.id));
   for (const issue of store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open')) {
     await resolveIssue(store, issue, spaceId, reason ?? 'Gap was classified as not applicable.');
   }
@@ -55,7 +56,7 @@ export async function markGapRepairAttempt(
       ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS
       : undefined
   );
-  await store.upsertNode({
+  await upsertObservedKnowledgeNode(store, {
     id: gap.id,
     kind: gap.kind,
     slug: gap.slug,
@@ -76,7 +77,7 @@ export async function markGapRepairAttempt(
       nextRepairAttemptAt,
       knowledgeSpaceId: spaceId,
     },
-  });
+  }, 'research-task', gap, () => store.getNode(gap.id));
   if (details.status === 'repaired') {
     for (const issue of store.listIssues(Number.MAX_SAFE_INTEGER).filter((entry) => entry.nodeId === gap.id && entry.status === 'open')) {
       await resolveIssue(store, issue, spaceId, details.reason ?? 'Gap was repaired with accepted source-backed evidence.');

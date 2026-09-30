@@ -156,7 +156,7 @@ export interface HomeGraphSearchState {
 export function readHomeGraphSearchState(store: KnowledgeStore, spaceId: string): HomeGraphSearchState {
   const sources = store.listSourcesInSpace(spaceId)
     .filter((source) => source.status !== 'stale' && !isGeneratedPageSource(source));
-  const nodes = store.listNodesInSpace(spaceId).filter((node) => node.status !== 'stale');
+  const nodes = store.listNodesInSpace(spaceId).filter((node) => node.status === 'active');
   const sourceIds = new Set(sources.map((source) => source.id));
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edges = store.listEdges().filter((edge) => (

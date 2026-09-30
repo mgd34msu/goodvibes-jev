@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from './store-node-observation.js';
 import {
   emitKnowledgeCompileCompleted,
   emitKnowledgeExtractionCompleted,
@@ -182,14 +183,14 @@ async function compileKnowledgeSourceRecords(
   if (domain) {
     try {
       const hostname = new URL(domain).hostname.toLowerCase();
-      const domainNode = await context.store.upsertNode({
+      const domainNode = await upsertObservedKnowledgeNode(context.store, {
         kind: 'domain',
         slug: slugify(`${spaceId}-${hostname}`),
         title: hostname,
         summary: `Knowledge sources cataloged under ${hostname}.`,
         aliases: [hostname],
         metadata: knowledgeSpaceMetadata(spaceId, { hostname }),
-      });
+      }, 'catalog-structure', source, () => context.store.getSource(source.id));
       await context.store.upsertEdge({
         fromKind: 'source',
         fromId: source.id,
@@ -214,14 +215,14 @@ async function compileKnowledgeSourceRecords(
     let accumulated = '';
     for (const segment of segments) {
       accumulated = accumulated ? `${accumulated}/${segment}` : segment;
-      const folderNode = await context.store.upsertNode({
+      const folderNode = await upsertObservedKnowledgeNode(context.store, {
         kind: 'bookmark_folder',
         slug: slugify(`${spaceId}-${accumulated}`),
         title: segment,
         summary: `Bookmark folder ${accumulated}.`,
         aliases: [accumulated],
         metadata: knowledgeSpaceMetadata(spaceId, { folderPath: accumulated }),
-      });
+      }, 'catalog-structure', source, () => context.store.getSource(source.id));
       if (previousNode) {
         await context.store.upsertEdge({
           fromKind: 'node',
@@ -247,14 +248,14 @@ async function compileKnowledgeSourceRecords(
   }
 
   for (const tag of source.tags) {
-    const topicNode = await context.store.upsertNode({
+    const topicNode = await upsertObservedKnowledgeNode(context.store, {
       kind: 'topic',
       slug: slugify(`${spaceId}-${tag}`),
       title: tag,
       summary: `Topic tag ${tag}.`,
       aliases: [tag],
       metadata: knowledgeSpaceMetadata(spaceId, { tag }),
-    });
+    }, 'catalog-structure', source, () => context.store.getSource(source.id));
     await context.store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -280,7 +281,7 @@ async function compileKnowledgeSourceRecords(
     }
     for (const section of sectionTitles) {
       if (tagSlugs.has(slugify(section))) continue;
-      const topicNode = await context.store.upsertNode({
+      const topicNode = await upsertObservedKnowledgeNode(context.store, {
         kind: 'topic',
         slug: slugify(`${spaceId}-${section}`),
         title: section,
@@ -290,7 +291,7 @@ async function compileKnowledgeSourceRecords(
           sourceId: source.id,
           extractionId: extraction.id,
         }),
-      });
+      }, 'catalog-structure', { source, extraction }, () => ({ source: context.store.getSource(source.id), extraction: context.store.getExtractionBySourceId(source.id) }));
       await context.store.upsertEdge({
         fromKind: 'source',
         fromId: source.id,

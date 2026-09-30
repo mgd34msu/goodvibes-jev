@@ -1,3 +1,4 @@
+import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { createHash } from 'node:crypto';
 import {
   emitKnowledgeIngestCompleted,
@@ -227,7 +228,7 @@ async function upsertAggregate(
   });
 
   for (const entry of aggregate.entries) {
-    const browserNode = await context.store.upsertNode({
+    const browserNode = await upsertObservedKnowledgeNode(context.store, {
       kind: 'source_group',
       slug: slugify(`browser-${entry.browser}-${entry.profileName}`),
       title: `${entry.browser} ${entry.profileName}`,
@@ -240,7 +241,7 @@ async function upsertAggregate(
         browserFamily: entry.family,
         browserProfilePath: entry.profilePath,
       },
-    });
+    }, 'browser-profile', source, () => context.store.getSource(source.id));
     await context.store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
