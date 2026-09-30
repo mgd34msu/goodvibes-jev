@@ -1,6 +1,6 @@
 import type { KnowledgeSemanticLlm } from './types.js';
 import type { AnswerEvidenceProjection } from './answer-verification/types.js';
-import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { snapshotJudgmentInput } from '../../gate/judgment-input.js';
 export { answerConfidence } from './answer-quality.js';
 
 /** Provider-backed generation supplies content only; it cannot declare its own quality or gaps. */
@@ -10,8 +10,7 @@ export async function synthesizeAnswer(
   options: { readonly signal: AbortSignal; readonly timeoutMs: number },
 ): Promise<string | null> {
   if (!llm) return null;
-  const input = { query, mode, evidence };
-  assertJudgmentInput(input);
+  const input = snapshotJudgmentInput({ query, mode, evidence });
   const text = await llm.completeText({
     purpose: 'knowledge-answer-synthesis', signal: options.signal, timeoutMs: options.timeoutMs,
     maxTokens: mode === 'detailed' ? 2200 : mode === 'concise' ? 700 : 1400,

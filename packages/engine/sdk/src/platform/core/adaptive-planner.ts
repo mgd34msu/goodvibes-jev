@@ -209,8 +209,9 @@ export class AdaptivePlanner {
    */
   async select(inputs: PlannerInputs, options: CallOptions = {}): Promise<PlannerDecision> {
     options.signal?.throwIfAborted();
-    assertJudgmentInput({ task: inputs.taskDescription ?? '' });
     const validated = this._validateInputs(inputs);
+    // Materialize once before preflight; later reads must not revisit caller getters.
+    assertJudgmentInput({ task: validated.taskDescription ?? '' });
     const ts = Date.now();
     // Use validated inputs from here on
     // eslint-disable-next-line no-param-reassign
