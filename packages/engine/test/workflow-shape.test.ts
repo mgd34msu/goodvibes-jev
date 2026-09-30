@@ -195,6 +195,15 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(bun?.['test-cmd']).toBe('bun packages/engine/scripts/test.ts');
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
   });
+
+  test('the required bun matrix leg also runs the judgment foundation suite', () => {
+    const matrix = ci.jobs!['platform-matrix']!;
+    const judgment = steps(matrix).find((step) => step.run === 'bun run --cwd packages/judgment test');
+    expect(judgment).toBeDefined();
+    expect(judgment?.if).toBe("matrix.platform == 'bun'");
+    expect(judgment?.['continue-on-error']).not.toBe(true);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');
+  });
 });
 
 describe('ci.yml: zero-touch auto-release', () => {
