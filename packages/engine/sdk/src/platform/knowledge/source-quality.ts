@@ -1,6 +1,7 @@
 import { KnowledgeRepairFactUsefulnessHeldError } from './semantic/repair-usefulness/types.js';
 import { KnowledgeRepairProfileHeldError } from './semantic/repair-profile/types.js';
 import { KnowledgeNodeMutationHeldError } from './store-node-authority.js';
+import { KnowledgeNodeActivationHeldError } from './activation/types.js';
 import { KnowledgeGeneratedFactSupportHeldError } from './semantic/verification/types.js';
 import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { mapLimit, JudgmentError } from '@goodvibes-jev/judgment';
@@ -33,7 +34,7 @@ export class KnowledgeSourceQualityHeldError extends Error {
 
 /** These failures must not be swallowed before downstream knowledge writes. */
 export function isKnowledgeSourceQualityFailure(error: unknown): error is Error {
-  return error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
+  return error instanceof KnowledgeRepairFactUsefulnessHeldError || error instanceof KnowledgeRepairProfileHeldError || error instanceof KnowledgeNodeMutationHeldError || error instanceof KnowledgeNodeActivationHeldError || error instanceof KnowledgeGeneratedFactSupportHeldError || error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
 }
 export interface KnowledgePageSourceCandidate {
   readonly source: KnowledgeSourceRecord;
