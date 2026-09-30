@@ -30,3 +30,8 @@ export type {
   InboxListInput, ChannelInboxItem, ChannelInboxProviderStatus,
   InboxListOutput, InboxListQuery, InboxAggregatorSources,
 } from './aggregator.js';
+
+export { INBOX_LIST_METHOD_ID, registerInboxSurface } from './registration.js';
+export type {
+  InboxPollingControl, InboxSurfaceContext, RegisterInboxSurfaceOptions, InboxSurfaceRegistration,
+} from './registration.js';

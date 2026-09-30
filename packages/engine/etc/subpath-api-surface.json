@@ -30191,6 +30191,11 @@
       "text": "INBOX_ITEM_TTL_MS: number"
     },
     {
+      "name": "INBOX_LIST_METHOD_ID",
+      "kind": "const",
+      "text": "INBOX_LIST_METHOD_ID = \"channels.inbox.list\""
+    },
+    {
       "name": "INBOX_SWEEP_INTERVAL_MS",
       "kind": "const",
       "text": "INBOX_SWEEP_INTERVAL_MS: number"
@@ -30300,6 +30305,15 @@
       "text": "export interface InboxListQuery { providers?: string[]; limit: number; since?: number; after?: InboxPosition; }"
     },
     {
+      "name": "InboxPollingControl",
+      "kind": "interface",
+      "required": [
+        "start",
+        "stop"
+      ],
+      "text": "export interface InboxPollingControl { start(): Promise<void>; stop(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "InboxPosition",
       "kind": "interface",
       "required": [
@@ -30315,6 +30329,26 @@
         "limit"
       ],
       "text": "export interface InboxQuery { providers?: readonly string[]; since?: number; after?: InboxPosition; limit: number; }"
+    },
+    {
+      "name": "InboxSurfaceContext",
+      "kind": "interface",
+      "required": [
+        "catalog",
+        "logger",
+        "workingDirectory"
+      ],
+      "text": "export interface InboxSurfaceContext { readonly catalog: GatewayMethodCatalog; readonly workingDirectory: string; readonly logger: IntakeLogger; }"
+    },
+    {
+      "name": "InboxSurfaceRegistration",
+      "kind": "interface",
+      "required": [
+        "close",
+        "ready",
+        "unregister"
+      ],
+      "text": "export interface InboxSurfaceRegistration { readonly ready: Promise<void>; close(): Promise<void>; unregister(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "InboxSweepSummary",
@@ -30400,6 +30434,14 @@
       "text": "export interface ProviderStatus { id: string; state: ProviderState; itemCount: number; error?: string; lastPolledAt?: number; configured?: boolean; polled: boolean; }"
     },
     {
+      "name": "RegisterInboxSurfaceOptions",
+      "kind": "interface",
+      "required": [
+        "adapters"
+      ],
+      "text": "export interface RegisterInboxSurfaceOptions { readonly adapters: ReadonlyMap<string, InboundProviderAdapter>; readonly storeFileName?: string; readonly skipInitialPoll?: boolean; readonly gatePolling?: (providerId: string, control: InboxPollingControl) => void | (() => void | Promise<void>); } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ReadonlyMap = interface ReadonlyMap<K, V> { forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; readonly size: number; }"
+    },
+    {
       "name": "RouteResolver",
       "kind": "type",
       "text": "export type RouteResolver = (input: { provider: string; fromDigest: string; kind: InboundChannelItem['kind']; }) => Promise<string | undefined> | string | undefined; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
@@ -30438,6 +30480,11 @@
       "name": "registerAdapterFactory",
       "kind": "function",
       "text": "export declare function registerAdapterFactory(id: string, factory: AdapterFactory): void;"
+    },
+    {
+      "name": "registerInboxSurface",
+      "kind": "function",
+      "text": "export declare function registerInboxSurface(ctx: InboxSurfaceContext, options: RegisterInboxSurfaceOptions): InboxSurfaceRegistration;"
     },
     {
       "name": "registeredProviderIds",
