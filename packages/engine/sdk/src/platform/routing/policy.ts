@@ -53,6 +53,9 @@ export const FALLBACK_ROUTES = 3;
 /** Tier readings in flight at once while the planner fills its shortlist. */
 export const TIER_READ_CONCURRENCY = 8;
 
+/** Benchmark identity readings in flight while preparing eligible route candidates. */
+export const BENCHMARK_READ_CONCURRENCY = 8;
+
 /**
  * The guidance a model gets in its system prompt when its tier reading does
  * not settle: the fullest guidance, which costs a few hundred tokens and

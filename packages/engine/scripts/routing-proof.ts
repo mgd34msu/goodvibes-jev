@@ -24,7 +24,8 @@ import { ProviderRegistry } from '../sdk/src/platform/providers/registry.ts';
 import { ProviderCapabilityRegistry } from '../sdk/src/platform/providers/capabilities.ts';
 import { CacheHitTracker } from '../sdk/src/platform/providers/cache-strategy.ts';
 import { FavoritesStore } from '../sdk/src/platform/providers/favorites.ts';
-import { BenchmarkStore, compositeScore } from '../sdk/src/platform/providers/model-benchmarks.ts';
+import { BenchmarkStore } from '../sdk/src/platform/providers/model-benchmarks.ts';
+import { prepareRouteBenchmarks, routeBenchmarkFor } from '../sdk/src/platform/runtime/contract-composition.ts';
 import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.ts';
 import { createRoutePlanner, type RoutePlanRequest } from '../sdk/src/platform/routing/route-planner.ts';
 import { planTaskRoute } from '../sdk/src/platform/routing/task-routes/planner.ts';
@@ -74,10 +75,8 @@ console.log(`  ${registry.listModels().length} catalog models; configured provid
 const planner = createRoutePlanner({
   catalog: registry,
   tiers: registry.modelTiers,
-  benchmarkFor: (model) => {
-    const entry = benchmarkStore.getKnownBenchmarks(model.displayName) ?? benchmarkStore.getKnownBenchmarks(model.id);
-    return entry ? compositeScore(entry.benchmarks) : null;
-  },
+  benchmarkFor: routeBenchmarkFor(benchmarkStore),
+  prepareBenchmarks: (models, signal) => prepareRouteBenchmarks(benchmarkStore, models, signal),
 });
 
 const REQUESTS: readonly RoutePlanRequest[] = [

@@ -22,6 +22,7 @@
  * caller for the root the same promise of the report.
  */
 import { resolve } from 'node:path';
+import { mapLimit } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../config/manager.js';
 import { ContractStore } from '../contract/store.js';
 import { createContractRunner, type ContractRunner } from '../contract/runner.js';
@@ -36,6 +37,7 @@ import { compositeScore, type BenchmarkStore } from '../providers/model-benchmar
 import type { ModelDefinition } from '../providers/registry.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { createRoutePlanner } from '../routing/route-planner.js';
+import { BENCHMARK_READ_CONCURRENCY } from '../routing/policy.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -83,6 +85,37 @@ export function routeBenchmarkFor(benchmarks: Pick<BenchmarkStore, 'getKnownBenc
 }
 
 /**
+ * Resolve each eligible model's leaderboard identity before the first tier
+ * shortlist is sorted. Exact names and remembered readings need no Jev call;
+ * new aliases are read with bounded concurrency. A failed reading rejects
+ * the route instead of silently sorting by price with unknown identities.
+ */
+export async function prepareRouteBenchmarks(
+  benchmarks: Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks'>,
+  models: readonly ModelDefinition[],
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const stop = new AbortController();
+  const readingSignal = signal === undefined ? stop.signal : AbortSignal.any([signal, stop.signal]);
+  try {
+    await mapLimit(models, BENCHMARK_READ_CONCURRENCY, async (model) => {
+      readingSignal.throwIfAborted();
+      if (benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id)) return;
+      const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
+      readingSignal.throwIfAborted();
+      if (entry === undefined && model.id !== model.displayName) {
+        await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
+      }
+    });
+    readingSignal.throwIfAborted();
+  } catch (error) {
+    stop.abort(error);
+    throw error;
+  }
+}
+
+/**
  * The provider health the route planner filters on: the runtime store's
  * provider health, and every provider whose endpoint did not return its model
  * list in the registry's startup sweep marked unavailable, so no route names
@@ -114,6 +147,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     catalog: options.providerRegistry,
     tiers: options.providerRegistry.modelTiers,
     benchmarkFor: routeBenchmarkFor(options.providerRegistry.benchmarks),
+    prepareBenchmarks: (models, signal) => prepareRouteBenchmarks(options.providerRegistry.benchmarks, models, signal),
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   });
   const runner = createContractRunner({
