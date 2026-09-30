@@ -31,6 +31,7 @@ describe('answer judgment holds before generation or repair writes', () => {
         const fake = fakePort((name) => {
           if (name === 'useful') return noulAnswer(0.99); // Initial relevance settles before the tested fact-reading hold.
           if (mode === 'failed') throw new Error('Synthetic unavailable reader');
+          if (name === 'excerptUseful') return noulAnswer(0.01); // Unselected spans cannot bypass the barrier under test.
           if (name === 'features') return noulAnswer(0.97);
           return noulAnswer(0.5);
         }); installJudgmentPort(fake.port);
@@ -57,7 +58,8 @@ describe('answer judgment holds before generation or repair writes', () => {
     installJudgmentPort(fakePort((name, question, state) => {
       if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.97);
       if (name === 'enough' || name === 'complete') return noulAnswer(0.97);
-      if (name === 'features') return noulAnswer(0.97);
+      if (name === 'excerptUseful') return noulAnswer(0.01); // Unselected spans cannot bypass the barrier under test.
+    if (name === 'features') return noulAnswer(0.97);
       if (name === 'useful') return noulAnswer((state as { candidate: { title: string } }).candidate.title === 'Rejected official manual' ? 0.03 : 0.97);
       if (name !== 'match') throw new Error(`Unexpected fixture question: ${name}`);
       const candidate = (state as { candidate: { sourceType?: string; title: string } }).candidate;

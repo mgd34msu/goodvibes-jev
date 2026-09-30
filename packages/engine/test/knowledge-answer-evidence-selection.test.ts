@@ -22,6 +22,7 @@ function readings(values: Readonly<Record<string, number>>) {
   const fake = fakePort((name, question, state) => {
     if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.99);
     if (name === 'enough' || name === 'complete') return noulAnswer(0.99);
+    if (name === 'excerptUseful') return noulAnswer(0.01); // Unselected spans cannot bypass the barrier under test.
     if (name === 'features') return noulAnswer(0.01);
     if (name === 'match') return noulAnswer(0.99);
     const candidate = (state as { candidate?: { title?: string; reference?: string } }).candidate;

@@ -1,3 +1,4 @@
+import { KnowledgeAnswerExcerptHeldError } from './answer-excerpts/reader.js';
 import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import type {
   KnowledgeNodeRecord,
@@ -37,6 +38,8 @@ import {
   filterFactsForQuery, KnowledgeFactSelectionHeldError,
 } from './answer-fact-selection.js';
 import {
+  assertAnswerEvidenceCurrent,
+  settledAnswerFacts,
   collectAnswerEvidence,
   includeOfficialLinkedEvidence,
   toSearchResult,
@@ -65,7 +68,7 @@ export async function answerKnowledgeQuery(
     if (error instanceof KnowledgeSourceQualityHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason === 'aborted' ? 'aborted' : 'stale');
     if (error instanceof KnowledgeAnswerObjectAlignmentHeldError) throw new KnowledgeAnswerQualityHeldError(
       error.reason === 'unconfigured' ? 'unavailable' : error.reason);
-    if (error instanceof KnowledgeEvidenceRelevanceHeldError) throw new KnowledgeAnswerQualityHeldError(
+    if (error instanceof KnowledgeEvidenceRelevanceHeldError || error instanceof KnowledgeAnswerExcerptHeldError) throw new KnowledgeAnswerQualityHeldError(
       error.reason === 'unsettled' ? 'uncertain' : error.reason === 'unconfigured' ? 'unavailable' : error.reason);
     throw new KnowledgeAnswerQualityHeldError('unavailable');
   }
@@ -85,17 +88,21 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   // Protect the full structural candidate universe before the first evidence reading.
   const objects = input.includeLinkedObjects === false ? undefined
     : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
-  const checkReadSet = () => { check(); objects?.assertCurrent(); };
+  let evidenceReadSet: readonly EvidenceItem[] = [];
+  const checkReadSet = () => { check(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet); };
   const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, objects);
   check();
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
 
   let evidence = evidenceResolution.evidence;
+  evidenceReadSet = evidence;
+  checkReadSet();
   let rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
   checkReadSet();
   const linkedObjects = (await objects?.read(evidence, rawFacts))?.linkedObjects ?? [];
   checkReadSet();
   evidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
+  evidenceReadSet = evidence;
   checkReadSet();
   rawFacts = await collectRawAnswerFacts(input.query, evidence, signal);
   checkReadSet();
@@ -201,20 +208,21 @@ async function resolveAnswerEvidence(
   guard.watch('retrieval-nodes', () => context.store.listNodes(Number.MAX_SAFE_INTEGER).filter(matches));
   guard.watch('retrieval-extractions', () => context.store.listExtractions(Number.MAX_SAFE_INTEGER).filter(matches));
   const evidence = await collectAnswerEvidence(context.store, input, spaceId, limit, objectProfiles, signal);
-  check(); guard.assertCurrent();
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
   if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
   if (evidence.length > 0) return { kind: 'matched', evidence };
 
   const linkedObjects = (await objects?.read([], []))?.linkedObjects ?? [];
-  check(); guard.assertCurrent();
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
   const linkedEvidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit, signal);
-  check(); guard.assertCurrent();
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(evidence);
+  assertAnswerEvidenceCurrent(linkedEvidence);
   if (linkedEvidence.length > 0) return { kind: 'matched', evidence: linkedEvidence };
 
   if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
   const gap = shouldPersistNoMatchGap(spaceId, input.query, linkedObjects)
     ? await persistAnswerGap(context.store, concreteAnswerGapSpaceId(spaceId, [], [], linkedObjects), input.query, 'No indexed evidence matched the question.', {
-      linkedObjects, signal, assertCurrent: () => { check(); guard.assertCurrent(); },
+      linkedObjects, signal, assertCurrent: () => { check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(linkedEvidence); },
     })
     : null;
   return {
@@ -240,7 +248,7 @@ async function resolveAnswerEvidence(
 }
 
 async function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[], signal?: AbortSignal): Promise<readonly KnowledgeNodeRecord[]> {
-  return (await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal)).slice(0, 24);
+  return (settledAnswerFacts(query, evidence) ?? await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)), signal)).slice(0, 24);
 }
 
 function withAnswerFactContract(

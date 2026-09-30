@@ -6,6 +6,8 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairProfileFixtureValues, type RepairUsefulFixtureValues } from './repair-profile-fixture-readings.js';
 export interface AnswerFixtureReadings {
+  /** Exact authored original span outcomes; absent spans receive a settled no. */
+  excerpts?: ReadonlyArray<readonly [string, number]>;
   /** Authored exact category/value pairs; unlisted source spans are never selected. */
   repairProfile?: RepairProfileFixtureValues;
   /** Exact authored claim title, summary and source evidence for repair usefulness. */
@@ -37,6 +39,10 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (name === 'excerptUseful') {
+        const text = (state as { candidate?: { text?: string } }).candidate?.text;
+        return noulAnswer(table.excerpts?.find(([original]) => original === text)?.[1] ?? 0.01);
+      }
       if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state,
         table.repairProfile ?? defaults.repairProfile, table.repairUseful ?? defaults.repairUseful));
       const profile = repairProfileFixtureReading(name, state, table.repairProfile ?? defaults.repairProfile);
