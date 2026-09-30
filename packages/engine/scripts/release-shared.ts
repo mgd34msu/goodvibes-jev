@@ -48,6 +48,7 @@ export interface RunOptions {
   readonly packageName?: string;
   readonly stdio?: 'inherit' | 'pipe' | 'ignore';
   readonly encoding?: BufferEncoding;
+  readonly maxBuffer?: number;
   /**
    * When provided along with `auth: true`, the caller-supplied AuthEnv is used
    * instead of creating a new one. Allows the caller to track and clean up
@@ -329,6 +330,7 @@ export function run(command: string, args: readonly string[], cwd: string, optio
       env: childEnv,
       stdio: options.stdio ?? 'inherit',
       encoding: options.encoding ?? 'utf8',
+      ...(options.maxBuffer !== undefined ? { maxBuffer: options.maxBuffer } : {}),
     });
   } finally {
     if (ownedAuthEnv) cleanupAuthEnv(ownedAuthEnv);
@@ -416,7 +418,10 @@ export function packStage(stageDir: string, packDestination: string): { readonly
     'npm',
     ['pack', '--json', '--pack-destination', packDestination],
     stageDir,
-    { stdio: 'pipe' },
+    // npm includes every packed file in its JSON; the engine's listing exceeds
+    // execFileSync's default 1 MiB. Keep the complete document within the same
+    // finite budget as the tarball inspection helpers below.
+    { stdio: 'pipe', maxBuffer: 32 * 1024 * 1024 },
   );
   return parseNpmPackJson(output);
 }
