@@ -12954,6 +12954,19 @@
       "text": "DEFAULT_INGRESS_ALARM_WINDOW_MS: number"
     },
     {
+      "name": "InboxProfileRouteResolver",
+      "kind": "type",
+      "text": "export type RouteResolver = (input: RouteResolverInput) => string | undefined;"
+    },
+    {
+      "name": "ParsedChannelId",
+      "kind": "interface",
+      "required": [
+        "surfaceKind"
+      ],
+      "text": "export interface ParsedChannelId { surfaceKind: string; routeId?: string; }"
+    },
+    {
       "name": "ProviderRuntimeActionResult",
       "kind": "interface",
       "required": [
@@ -13001,6 +13014,85 @@
       "text": "export declare class RouteBindingManager { private readonly store; private readonly bindings; private runtimeDispatch; private runtimeBus; private readonly featureFlags; private loaded; constructor(config?: { readonly store?: AutomationRouteStore | undefined; readonly runtimeStore?: RuntimeStore | undefined; readonly runtimeBus?: RuntimeEventBus | undefined; readonly featureFlags?: RouteBindingFeatureFlags | null | undefined; }); private isEnabled; isRouteBindingEnabled(): boolean; private requireEnabled; attachRuntime(config: { readonly runtimeStore?: RuntimeStore | null | undefined; readonly runtimeBus?: RuntimeEventBus | null | undefined; }): void; start(): Promise<void>; listBindings(): AutomationRouteBinding[]; getBinding(bindingId: string): AutomationRouteBinding | undefined; resolve(surfaceKind: AutomationSurfaceKind, externalId: string, threadId?: string): AutomationRouteBinding | undefined; upsertBinding(input: UpsertRouteBindingInput): Promise<AutomationRouteBinding>; captureReplyTarget(bindingId: string, replyTargetId: string, threadId?: string): Promise<AutomationRouteBinding | null>; patchBinding(bindingId: string, patch: PatchRouteBindingInput): Promise<AutomationRouteBinding | null>; removeBinding(bindingId: string): Promise<boolean>; recordFailure(surfaceKind: AutomationSurfaceKind, externalId: string, error: string): void; } ;; via AutomationRouteBinding = export interface AutomationRouteBinding { readonly id: string; readonly kind: AutomationRouteKind; readonly surfaceKind: AutomationSurfaceKind; readonly surfaceId: string; readonly externalId: string; readonly sessionPolicy?: AutomationSessionPolicy | undefined; readonly threadPolicy?: AutomationThreadPolicy | undefined; readonly deliveryGuarantee?: AutomationDeliveryGuarantee | undefined; readonly threadId?: string | undefined; readonly channelId?: string | undefined; readonly sessionId?: string | undefined; readonly jobId?: string | undefined; readonly runId?: string | undefined; readonly title?: string | undefined; readonly lastSeenAt: number; readonly createdAt: number; readonly updatedAt: number; readonly metadata: Record<string, unknown>; } ;; AutomationSurfaceKind = export type AutomationSurfaceKind = TransportSurfaceKind; ;; PatchRouteBindingInput = export interface PatchRouteBindingInput { readonly sessionPolicy?: AutomationRouteBinding['sessionPolicy'] | undefined; readonly threadPolicy?: AutomationRouteBinding['threadPolicy'] | undefined; readonly deliveryGuarantee?: AutomationRouteBinding['deliveryGuarantee'] | undefined; readonly threadId?: string | undefined; readonly channelId?: string | undefined; readonly sessionId?: string | null | undefined; readonly jobId?: string | null | undefined; readonly runId?: string | null | undefined; readonly title?: string | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RouteBindingFeatureFlags = type RouteBindingFeatureFlags = Pick<FeatureFlagManager, 'isEnabled'>; ;; RuntimeStore = export type RuntimeStore = StoreApi<RuntimeState>;"
     },
     {
+      "name": "RouteListFilter",
+      "kind": "interface",
+      "text": "export interface RouteListFilter { profileId?: string; surfaceKind?: string; }"
+    },
+    {
+      "name": "RouteResolverInput",
+      "kind": "interface",
+      "text": "export interface RouteResolverInput { readonly provider?: unknown; readonly routeId?: unknown; readonly [key: string]: unknown; }"
+    },
+    {
+      "name": "RouteStore",
+      "kind": "class",
+      "publicMembers": [
+        "close",
+        "constructor",
+        "dbPath",
+        "delete",
+        "findByChannelId",
+        "findById",
+        "init",
+        "list",
+        "listAll",
+        "upsert"
+      ],
+      "text": "export declare class RouteStore { private readonly store; private initialized; private closed; private initializing; private closing; private readonly active; constructor(options: { workingDirectory: string; }); get dbPath(): string; init(): Promise<void>; close(): Promise<void>; private own; private requireInit; listAll(): RoutingChannelRoute[]; list(filter?: RouteListFilter): RoutingChannelRoute[]; findByChannelId(channelId: string): RoutingChannelRoute | null; findById(assignmentId: string): RoutingChannelRoute | null; upsert(input: RouteUpsertInput): Promise<RouteUpsertResult>; private writeRoute; delete(assignmentId: string): Promise<boolean>; private deleteRoute; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "RouteUpsertInput",
+      "kind": "interface",
+      "required": [
+        "channelId",
+        "profileId"
+      ],
+      "text": "export interface RouteUpsertInput { channelId: string; profileId: string; label?: string; }"
+    },
+    {
+      "name": "RouteUpsertResult",
+      "kind": "interface",
+      "required": [
+        "created",
+        "route"
+      ],
+      "text": "export interface RouteUpsertResult { route: RoutingChannelRoute; created: boolean; }"
+    },
+    {
+      "name": "RoutingChannelRoute",
+      "kind": "interface",
+      "required": [
+        "assignmentId",
+        "channelId",
+        "createdAt",
+        "profileId",
+        "surfaceKind",
+        "updatedAt"
+      ],
+      "text": "export interface RoutingChannelRoute { assignmentId: string; channelId: string; surfaceKind: string; routeId?: string; profileId: string; label?: string; createdAt: string; updatedAt: string; }"
+    },
+    {
+      "name": "RoutingResolver",
+      "kind": "interface",
+      "required": [
+        "getProfileForChannel",
+        "resolveProfile"
+      ],
+      "text": "export interface RoutingResolver { getProfileForChannel(surfaceKind: string, routeId?: string): string | null; resolveProfile(surfaceKind: string, routeId?: string): string | null; }"
+    },
+    {
+      "name": "RoutingRouteListItem",
+      "kind": "interface",
+      "required": [
+        "createdAt",
+        "id",
+        "profileId",
+        "surfaceKind",
+        "updatedAt"
+      ],
+      "text": "export interface RoutingRouteListItem { id: string; createdAt: string; updatedAt: string; surfaceKind: string; routeId?: string; profileId: string; label?: string; }"
+    },
+    {
       "name": "SurfaceRegistry",
       "kind": "class",
       "publicMembers": [
@@ -13024,6 +13116,16 @@
       "text": "export interface UpsertRouteBindingInput { readonly id?: string | undefined; readonly kind: AutomationRouteBinding['kind']; readonly surfaceKind: AutomationRouteBinding['surfaceKind']; readonly surfaceId: string; readonly externalId: string; readonly sessionPolicy?: AutomationRouteBinding['sessionPolicy'] | undefined; readonly threadPolicy?: AutomationRouteBinding['threadPolicy'] | undefined; readonly deliveryGuarantee?: AutomationRouteBinding['deliveryGuarantee'] | undefined; readonly threadId?: string | undefined; readonly channelId?: string | undefined; readonly sessionId?: string | undefined; readonly jobId?: string | undefined; readonly runId?: string | undefined; readonly title?: string | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; via AutomationRouteBinding = export interface AutomationRouteBinding { readonly id: string; readonly kind: AutomationRouteKind; readonly surfaceKind: AutomationSurfaceKind; readonly surfaceId: string; readonly externalId: string; readonly sessionPolicy?: AutomationSessionPolicy | undefined; readonly threadPolicy?: AutomationThreadPolicy | undefined; readonly deliveryGuarantee?: AutomationDeliveryGuarantee | undefined; readonly threadId?: string | undefined; readonly channelId?: string | undefined; readonly sessionId?: string | undefined; readonly jobId?: string | undefined; readonly runId?: string | undefined; readonly title?: string | undefined; readonly lastSeenAt: number; readonly createdAt: number; readonly updatedAt: number; readonly metadata: Record<string, unknown>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
+      "name": "WILDCARD_SURFACE",
+      "kind": "const",
+      "text": "WILDCARD_SURFACE = \"any\""
+    },
+    {
+      "name": "buildChannelId",
+      "kind": "function",
+      "text": "export declare function buildChannelId(surfaceKind: string, routeId?: string): string;"
+    },
+    {
       "name": "createAgentDeliveryStrategy",
       "kind": "function",
       "text": "export declare function createAgentDeliveryStrategy(registry: Pick<AgentDeliveryRegistry, 'current'>): ChannelDeliveryStrategy; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
@@ -13032,6 +13134,16 @@
       "name": "createDefaultChannelDeliveryStrategies",
       "kind": "function",
       "text": "export declare function createDefaultChannelDeliveryStrategies(configManager: ConfigManager, serviceRegistry: ServiceRegistry, artifactStore: ArtifactStore, getControlPlaneGateway: () => ControlPlaneGateway | null, secretsManager: Pick<SecretsManager, 'get' | 'getGlobalHome'>): ChannelDeliveryStrategy[]; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+    },
+    {
+      "name": "createInboxRouteResolver",
+      "kind": "function",
+      "text": "export declare function createInboxRouteResolver(resolver: RoutingResolver): RouteResolver; ;; via RouteResolver = export type RouteResolver = (input: RouteResolverInput) => string | undefined;"
+    },
+    {
+      "name": "createRoutingResolver",
+      "kind": "function",
+      "text": "export declare function createRoutingResolver(store: RouteStore): RoutingResolver;"
     },
     {
       "name": "getBuiltinSetupSchema",
@@ -13059,6 +13171,11 @@
       "text": "export declare function observedRuntime(running: boolean, reason: string, lastError?: string | undefined): ChannelRuntimeObservation;"
     },
     {
+      "name": "parseChannelId",
+      "kind": "function",
+      "text": "export declare function parseChannelId(channelId: string): ParsedChannelId;"
+    },
+    {
       "name": "resolveChannelDeliverySurfaceKind",
       "kind": "function",
       "text": "export declare function resolveChannelDeliverySurfaceKind(target: ChannelDeliveryTarget): ChannelDeliverySurfaceKind | undefined;"
@@ -13067,6 +13184,16 @@
       "name": "resolveChannelHealthState",
       "kind": "function",
       "text": "export declare function resolveChannelHealthState(input: ChannelHealthInput): ChannelHealthState;"
+    },
+    {
+      "name": "resolveProfile",
+      "kind": "function",
+      "text": "export declare function resolveProfile(routes: readonly RoutingChannelRoute[], surfaceKind: string, routeId?: string): string | null;"
+    },
+    {
+      "name": "toRouteListItem",
+      "kind": "function",
+      "text": "export declare function toRouteListItem(route: RoutingChannelRoute): RoutingRouteListItem;"
     },
     {
       "name": "unobservableRuntime",

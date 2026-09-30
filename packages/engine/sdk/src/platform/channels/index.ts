@@ -108,3 +108,14 @@ export type {
   AgentConversationSender,
 } from './delivery-router.js';
 export type { ChannelDeliveryRequest } from './delivery/types.js';
+
+// Host-owned channel/profile assignments; resolution follows explicit owner bindings.
+export { RouteStore, parseChannelId, buildChannelId, toRouteListItem } from './host-routing/route-store.js';
+export type {
+  RoutingChannelRoute, RoutingRouteListItem, ParsedChannelId,
+  RouteUpsertInput, RouteUpsertResult, RouteListFilter,
+} from './host-routing/route-store.js';
+export { WILDCARD_SURFACE, resolveProfile, createRoutingResolver } from './host-routing/routing-resolver.js';
+export type { RoutingResolver } from './host-routing/routing-resolver.js';
+export { createInboxRouteResolver } from './host-routing/inbox-bridge.js';
+export type { RouteResolverInput, RouteResolver as InboxProfileRouteResolver } from './host-routing/inbox-bridge.js';
