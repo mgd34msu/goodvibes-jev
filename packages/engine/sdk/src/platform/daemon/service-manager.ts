@@ -599,9 +599,8 @@ export class PlatformServiceManager {
     const pidPath = pidFilePath(platform, this.workingDirectory, this.surfaceRoot);
     const pid = existsSync(pidPath) ? this.readPid(pidPath) : undefined;
     const running = pid !== undefined ? this.isPidRunning(pid) : false;
-    if (!running && existsSync(pidPath)) {
-      rmSync(pidPath, { force: true });
-    }
+    // Status is observational; explicit stop/uninstall own stale PID cleanup.
+
     return running ? { running, pid } : { running };
   }
 

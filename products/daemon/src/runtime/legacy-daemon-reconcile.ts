@@ -125,14 +125,16 @@ export type ReconcileRedundantLegacyUnitReason =
   | 'marker-unreadable'
   | 'disable-failed'
   | 'disable-timeout'
+  | 'remove-failed'
+  | 'reload-failed'
   | 'retired';
 
 export interface ReconcileRedundantLegacyUnitResult {
   /**
    * 'removed' = legacy unit auto-retired; 'notice' = left alone with a printed
    * hint (hand-written, or unreadable); 'failed' = retirement was attempted but
-   * a destructive step failed or its outcome could not be confirmed (this tool
-   * removed nothing); 'noop' = guard refused or nothing to do.
+   * a step failed or its outcome could not be confirmed (the receipt states
+   * which earlier steps completed); 'noop' = guard refused or nothing to do.
    */
   readonly action: 'removed' | 'notice' | 'noop' | 'failed';
   /** Machine-readable why, so callers can leave a breadcrumb for every refusal. */
@@ -368,6 +370,22 @@ export async function reconcileRedundantLegacyUnit(
   // unit file if the disable actually succeeded, otherwise the enablement
   // symlink dangles at a deleted file and this tool can never repair it (the
   // next pass no-ops at the file-exists check).
+  const finishDisabledRetirement = (disableTimedOut: boolean): ReconcileRedundantLegacyUnitResult => {
+    const removeFile = input.legacyUnitFileRemove ?? ((p: string) => rmSync(p, { force: true }));
+    let removed = false;
+    try { removeFile(path); removed = true; }
+    catch { /* The operation did not confirm removal, regardless of its error text. */ }
+    let reloaded = false;
+    try { reloaded = run(systemctl, ['--user', 'daemon-reload']).status === 0; }
+    catch { /* Preserve the completed disable/removal receipt when the runner throws. */ }
+    const lines = [disableTimedOut
+      ? `reconciled: the disable command timed out waiting on the stop job, but re-inspection confirms the installer-managed ${legacyUnit} is no longer enabled${removed ? `, its unit file was removed (${path})` : ''}. Its stop may still be completing.`
+      : `reconciled: ${canonicalUnit} is active and serving, so the redundant installer-managed ${legacyUnit} was disabled${removed ? ` and removed (${path})` : ''}.`];
+    if (!removed) lines.push(`Removal of ${path} could not be confirmed; inspect the unit definition before retrying.`);
+    if (!reloaded) lines.push('daemon-reload did not report success; verify with `systemctl --user daemon-reload` before treating reconciliation as complete.');
+    lines.push(...deadlineNote());
+    return { action: removed && reloaded ? 'removed' : 'failed', reason: !removed ? 'remove-failed' : !reloaded ? 'reload-failed' : 'retired', lines };
+  };
   const disableResult = run(systemctl, ['--user', 'disable', '--now', legacyUnit]);
   const disableStatus = disableResult.status ?? 1;
   if (disableStatus !== 0) {
@@ -383,24 +401,7 @@ export async function reconcileRedundantLegacyUnit(
       if (confirmedDisabled) {
         // The disable took effect; only the client timed out waiting on the
         // stop job. Proceed as success, saying exactly that.
-        const removeFileAfterTimeout = input.legacyUnitFileRemove ?? ((p: string) => rmSync(p, { force: true }));
-        let removeErrorAfterTimeout: string | undefined;
-        try {
-          removeFileAfterTimeout(path);
-        } catch (error) {
-          removeErrorAfterTimeout = summarizeError(error);
-        }
-        run(systemctl, ['--user', 'daemon-reload']);
-        const lines = [
-          `reconciled: the disable command timed out waiting on the stop job, but re-inspection confirms the ` +
-            `installer-managed ${legacyUnit} is no longer enabled${removeErrorAfterTimeout ? '' : `, its unit file was removed (${path})`}. ` +
-            'Its stop may still be completing.',
-        ];
-        if (removeErrorAfterTimeout) {
-          lines.push(`note: could not remove ${path}: ${removeErrorAfterTimeout}; remove it by hand.`);
-        }
-        lines.push(...deadlineNote());
-        return { action: 'removed', reason: 'retired', lines };
+        return finishDisabledRetirement(true);
       }
       return {
         action: 'failed',
@@ -427,22 +428,5 @@ export async function reconcileRedundantLegacyUnit(
     };
   }
 
-  const removeFile = input.legacyUnitFileRemove ?? ((p: string) => rmSync(p, { force: true }));
-  let removeError: string | undefined;
-  try {
-    removeFile(path);
-  } catch (error) {
-    removeError = summarizeError(error);
-  }
-  run(systemctl, ['--user', 'daemon-reload']);
-
-  const lines = [
-    `reconciled: ${canonicalUnit} is active and serving, so the redundant installer-managed ${legacyUnit} ` +
-      `was disabled${removeError ? '' : ` and removed (${path})`}.`,
-  ];
-  if (removeError) {
-    lines.push(`note: could not remove ${path}: ${removeError}; remove it by hand.`);
-  }
-  lines.push(...deadlineNote());
-  return { action: 'removed', reason: 'retired', lines };
+  return finishDisabledRetirement(false);
 }

@@ -52,8 +52,6 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { PlatformServiceManager, type ManagedServiceStatus } from '@goodvibes-jev/engine/sdk/platform/daemon';
-import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { runDaemonConfigMigration } from '../config/run-daemon-config-migration.js';
 import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../config/surface.js';
 
 /** Structurally derived from `PlatformServiceManager`'s own constructor, the
@@ -140,11 +138,11 @@ export interface BuildManagedDaemonServiceManagerParams {
  */
 export function buildManagedDaemonServiceManager(params: BuildManagedDaemonServiceManagerParams): PlatformServiceManager {
   const workingDirectory = params.workingDirectory ?? params.homeDir;
-  if (!params.configManager) runDaemonConfigMigration(params.homeDir);
   const configManager = params.configManager ?? new ConfigManager({
     workingDir: workingDirectory,
     homeDir: params.homeDir,
     surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT,
+    readOnly: true,
   });
   // The unit's ExecStart deliberately carries NO endpoint flags
   // (--hostname/--port): the daemon resolves controlPlane.hostMode/host/port
@@ -510,6 +508,22 @@ export async function runLegacyDaemonMigration(
     };
   }
 
+  // A running target or existing definition belongs to the user. Never
+  // replace it or mistake it for a resource this migration may remove.
+  if (currentStatus.installed || currentStatus.running) {
+    return {
+      ok: false,
+      exitCode: 1,
+      lines: [
+        currentStatus.running
+          ? `migrate-service refused: the managed unit is already running (${currentStatus.path}).`
+          : `migrate-service refused: the managed unit already exists at ${currentStatus.path}.`,
+        'Keep or reconcile that unit explicitly before migrating; neither unit was changed.',
+      ],
+      status: currentStatus,
+    };
+  }
+
   if (!params.confirmMigration) {
     return {
       ok: true,
@@ -528,40 +542,50 @@ export async function runLegacyDaemonMigration(
     };
   }
 
-  // Consented: new-up-then-old-down. The legacy unit is not touched until the
-  // new unit is verified healthy.
-  // Belt-and-braces: the collision check above already returns before
-  // reaching here whenever the resolved unit is the legacy one, this
-  // re-asserts the same invariant right at the mutation site so a future
-  // change to the check above can never silently reopen the hole.
+  // Only a newly created target can be rolled back. Keep its recovery file
+  // until stop/disable has a confirmed outcome, and report cleanup exceptions.
+  let healthCheck = currentStatus;
+  const rollbackNewUnit = (): string => {
+    try {
+      const now = manager.status();
+      healthCheck = now;
+      assertUnitIsNotLegacy(now, legacy, 'roll back the new unit');
+      if (now.path !== currentStatus.path) return 'rollback refused: the managed unit path changed; inspect both units manually.';
+      const rollbackRunner = params.actionRunner ?? defaultActionRunner(SYSTEMCTL_TIMEOUT_MS);
+      const disabled = rollbackRunner('systemctl', ['--user', 'disable', '--now', `${resolvedUnitName}.service`]);
+      if (disabled.status !== 0) return `rollback incomplete: could not confirm the new unit was stopped and disabled; ${now.path} was retained for recovery.`;
+      const rollback = manager.uninstall();
+      healthCheck = rollback;
+      if (rollback.actionError || rollback.installed) return `rollback incomplete: could not confirm removal of ${now.path}; inspect it manually.`;
+      const reload = rollbackRunner('systemctl', ['--user', 'daemon-reload']);
+      if (reload.status !== 0) return 'rollback incomplete: the new unit file was removed, but daemon-reload was not confirmed.';
+      return 'the newly-written unit has been rolled back (removed).';
+    } catch {
+      return 'rollback incomplete: cleanup threw; inspect the managed unit and its service state manually.';
+    }
+  };
+
   assertUnitIsNotLegacy(currentStatus, legacy, 'install the new unit');
-  const installed = manager.install();
-  if (installed.actionError) {
-    return {
-      ok: false,
-      exitCode: 1,
-      lines: [
-        `migrate-service aborted: could not write the new ${resolvedUnitName}.service unit (${installed.actionError}).`,
-        `The install-script ${LEGACY_SERVICE_UNIT_NAME}.service unit was never touched.`,
-      ],
-      status: installed,
-    };
+  let setupError: string | undefined;
+  try {
+    const installed = manager.install();
+    healthCheck = installed;
+    if (installed.actionError) setupError = 'the new unit could not be installed';
+    else {
+      const started = manager.start();
+      healthCheck = manager.status();
+      if (started.actionError || !healthCheck.running) setupError = 'the new unit did not come up healthy';
+    }
+  } catch {
+    setupError = 'the new unit setup or health check threw';
   }
-  const started = manager.start();
-  const healthCheck = manager.status();
-  const healthy = !started.actionError && healthCheck.running;
-  if (!healthy) {
-    assertUnitIsNotLegacy(installed, legacy, 'roll back (uninstall) the new unit');
-    const rollback = manager.uninstall();
-    const rollbackNote = rollback.actionError
-      ? `rolling back the new unit ALSO hit an error (${rollback.actionError}); remove ${installed.path} by hand.`
-      : 'the newly-written unit has been rolled back (removed).';
+  if (setupError) {
+    const rollbackNote = rollbackNewUnit();
     return {
       ok: false,
       exitCode: 1,
       lines: [
-        `migrate-service aborted: the new ${resolvedUnitName}.service unit did not come up healthy` +
-          (started.actionError ? ` (${started.actionError}).` : '.'),
+        `migrate-service aborted: ${setupError}.`,
         rollbackNote,
         `The install-script ${LEGACY_SERVICE_UNIT_NAME}.service unit was never touched and should still be running as before.`,
       ],
@@ -571,35 +595,40 @@ export async function runLegacyDaemonMigration(
 
   // New unit verified healthy, now, and only now, retire the legacy unit.
   const run: ManagedServiceActionRunner = params.actionRunner ?? defaultActionRunner(SYSTEMCTL_TIMEOUT_MS);
-  const stopResult = run('systemctl', ['--user', 'stop', `${LEGACY_SERVICE_UNIT_NAME}.service`]);
-  const disableResult = run('systemctl', ['--user', 'disable', `${LEGACY_SERVICE_UNIT_NAME}.service`]);
+  const legacyName = `${LEGACY_SERVICE_UNIT_NAME}.service`;
+  const retirementStatus = (action: 'stop' | 'disable' | 'daemon-reload'): number | null | undefined => {
+    const args = action === 'daemon-reload' ? ['--user', action] : ['--user', action, legacyName];
+    try { return run('systemctl', args)?.status; }
+    catch { return undefined; }
+  };
+  const retirementRefused = (action: 'stop' | 'disable'): LegacyDaemonMigrationResult => ({
+    ok: false, exitCode: 1, status: healthCheck,
+    lines: [
+      `migration incomplete: the new ${resolvedUnitName}.service unit is healthy, but ${action} of ${legacyName} did not report success.`,
+      `The legacy unit definition at ${legacy.path} was not removed. Its running or enabled state is unconfirmed.`,
+      `Verify the legacy unit before retrying: systemctl --user status ${legacyName}`,
+    ],
+  });
+  if (retirementStatus('stop') !== 0) return retirementRefused('stop');
+  if (retirementStatus('disable') !== 0) return retirementRefused('disable');
   const removeFile = params.legacyUnitFileRemove ?? ((path: string) => rmSync(path, { force: true }));
-  let removeError: string | undefined;
+  let removed = false;
   try {
     removeFile(legacy.path);
-  } catch (error) {
-    removeError = summarizeError(error);
+    removed = true;
+  } catch { /* Keep the uncertain removal outcome explicit below. */ }
+  if (!removed) {
+    return { ok: false, exitCode: 1, status: healthCheck, lines: [
+      `migration incomplete: the new ${resolvedUnitName}.service unit is healthy and ${legacyName} was stopped and disabled.`,
+      `Removal of the legacy unit definition at ${legacy.path} could not be confirmed; inspect it before retrying.`,
+    ] };
   }
-  run('systemctl', ['--user', 'daemon-reload']);
-
-  const lines = [`migrated: the new ${resolvedUnitName}.service unit is installed, enabled, and running.`];
-  if ((stopResult.status ?? 1) !== 0) {
-    lines.push(
-      `note: stopping the install-script unit reported a non-zero exit (${stopResult.stderr ?? stopResult.stdout ?? 'no output'}); ` +
-        'it may already have been stopped.',
-    );
-  }
-  if ((disableResult.status ?? 1) !== 0) {
-    lines.push(
-      `note: disabling the install-script unit reported a non-zero exit (${disableResult.stderr ?? disableResult.stdout ?? 'no output'}); ` +
-        'it may already have been disabled.',
-    );
-  }
-  if (removeError) {
-    lines.push(`note: could not remove the install-script unit file at ${legacy.path}: ${removeError}; remove it by hand.`);
-  } else {
-    lines.push(`the install-script ${LEGACY_SERVICE_UNIT_NAME}.service unit has been stopped, disabled, and removed.`);
-  }
-  lines.push('ran `systemctl --user daemon-reload`.');
-  return { ok: true, exitCode: 0, lines, status: healthCheck };
+  const reloaded = retirementStatus('daemon-reload') === 0;
+  const lines = [
+    `${reloaded ? 'migrated' : 'migration incomplete'}: the new ${resolvedUnitName}.service unit is installed, enabled, and running.`,
+    `the install-script ${legacyName} unit has been stopped, disabled, and removed.`,
+    reloaded ? 'ran `systemctl --user daemon-reload`.'
+      : 'daemon-reload did not report success; verify with `systemctl --user daemon-reload` before treating the migration as complete.',
+  ];
+  return { ok: reloaded, exitCode: reloaded ? 0 : 1, lines, status: healthCheck };
 }

@@ -683,6 +683,7 @@ describe('runDaemonServiceCli: migrate-service', () => {
   } = {}): { runner: ManagedServiceActionRunner; calls: string[][] } {
     const { isActiveState = 'active', enableFails = false } = options;
     const calls: string[][] = [];
+    let newUnitStarted = false;
     const runner: ManagedServiceActionRunner = (command, args) => {
       calls.push([command, ...args]);
       if (args[1] === 'is-active') {
@@ -693,11 +694,13 @@ describe('runDaemonServiceCli: migrate-service', () => {
         // queried the LEGACY name instead of the tracked one, this would
         // wrongly report it healthy, so keep the two names' liveness distinct.
         if (unit === 'goodvibes-daemon.service') return { status: 0, stdout: 'active' };
-        return isActiveState === 'active' ? { status: 0, stdout: 'active' } : { status: 3, stdout: 'inactive' };
+        return newUnitStarted && isActiveState === 'active' ? { status: 0, stdout: 'active' } : { status: 3, stdout: 'inactive' };
       }
       if (args[1] === 'enable' && enableFails) {
         return { status: 1, stderr: 'Failed to enable unit: access denied' };
       }
+      if (args[1] === 'enable') newUnitStarted = true;
+      if (args[1] === 'disable' && args.at(-1) !== 'goodvibes-daemon.service') newUnitStarted = false;
       return { status: 0 };
     };
     return { runner, calls };
@@ -908,25 +911,32 @@ describe('runDaemonServiceCli: migrate-service', () => {
       expect(calls.some((c) => c.includes('goodvibes-daemon.service') && (c.includes('stop') || c.includes('disable')))).toBe(false);
     });
 
-    test('legacy stop/disable report non-zero exit: still removes the unit file and reports an honest note, not a false clean success', async () => {
+    test('a failed legacy stop preserves its unit file and reports an incomplete migration', async () => {
       const calls: string[][] = [];
+      const removed: string[] = [];
+      let newUnitStarted = false;
       const runner: ManagedServiceActionRunner = (command, args) => {
         calls.push([command, ...args]);
-        if (args[1] === 'is-active') return { status: 0, stdout: 'active' };
+        if (args[1] === 'is-active') return args[2] === 'goodvibes-daemon.service' || newUnitStarted
+          ? { status: 0, stdout: 'active' } : { status: 3, stdout: 'inactive' };
+        if (args[1] === 'enable') newUnitStarted = true;
         if (args[2] === 'goodvibes-daemon.service' && (args[1] === 'stop' || args[1] === 'disable')) {
           return { status: 1, stderr: 'Unit not loaded.' };
         }
         return { status: 0 };
       };
       const result = await runDaemonServiceCli(
-        baseInput({ legacyUnitFileExists: () => true, actionRunner: runner, confirmMigration: true }),
+        baseInput({ legacyUnitFileExists: () => true, actionRunner: runner, confirmMigration: true, legacyUnitFileRemove: (path) => removed.push(path) }),
       );
 
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe(false);
+      expect(result.exitCode).toBe(1);
+      expect(removed).toEqual([]);
+      expect(calls.some((call) => call.includes('disable') || call.includes('daemon-reload'))).toBe(false);
       const text = result.lines.join('\n');
-      expect(text).toContain('non-zero exit');
-      expect(text).toContain('it may already have been stopped');
-      expect(text).toContain('it may already have been disabled');
+      expect(text).toContain('migration incomplete');
+      expect(text).toContain('state is unconfirmed');
+      expect(text).toContain('was not removed');
     });
 
     test('on a non-systemd platform, refuses the migrate and touches nothing', async () => {
