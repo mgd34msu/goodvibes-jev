@@ -35,3 +35,13 @@ export { INBOX_LIST_METHOD_ID, registerInboxSurface } from './registration.js';
 export type {
   InboxPollingControl, InboxSurfaceContext, RegisterInboxSurfaceOptions, InboxSurfaceRegistration,
 } from './registration.js';
+
+export {
+  ImapClient as IntakeImapClient, imapDate as intakeImapDate,
+  parseFetchResponse as parseIntakeFetchResponse, decodeHeader as decodeIntakeImapHeader,
+} from './providers/imap-client.js';
+export type {
+  ImapConfig as IntakeImapConfig, ImapEnvelope as IntakeImapEnvelope,
+  ImapSocket as IntakeImapSocket, ImapConnector as IntakeImapConnector,
+} from './providers/imap-client.js';
+export { resolveRouteId as resolveIntakeRouteId } from './providers/route-util.js';

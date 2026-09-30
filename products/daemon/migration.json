@@ -456,6 +456,21 @@
       "targets": [
         "packages/engine/sdk/src/platform/payments/host/register.ts"
       ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/providers/imap-client.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/providers/imap-client.ts",
+        "packages/engine/sdk/src/platform/intake/providers/imap-response.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/inbox/providers/route-util.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/intake/providers/route-util.ts"
+      ]
     }
   ],
   "remaining": "The async runtime graph boots only with an explicit inbox factory. Built-in intake providers and triage, daemon executable/entrypoint and command parity, scripts, original contract-test scaffolding, packaging and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This partial workspace does not satisfy migration:complete."

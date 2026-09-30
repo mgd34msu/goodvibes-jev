@@ -30371,6 +30371,63 @@
       "text": "export interface IntakeCredentialStore { resolveRef(ref: string): Promise<string | null>; resolveConfigSecret(configKey: string): Promise<string | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "IntakeImapClient",
+      "kind": "class",
+      "publicMembers": [
+        "close",
+        "connect",
+        "constructor",
+        "fetchEnvelopes",
+        "login",
+        "logout",
+        "searchUids",
+        "select"
+      ],
+      "text": "export declare class ImapClient { private readonly connector; private socket; private tagCounter; private buffer; private busy; private closed; private ready; private readonly idleError; private readonly cfg; constructor(cfg: ImapConfig, connector?: ImapConnector); connect(): Promise<void>; login(): Promise<void>; select(mailbox?: string): Promise<void>; searchUids(since?: number): Promise<number[]>; fetchEnvelopes(uids: readonly number[]): Promise<ImapEnvelope[]>; logout(): Promise<void>; close(): void; private nextTag; private requireSocket; private command; private readUntil; } ;; via ImapConfig = export interface ImapConfig { host: string; port: number; user: string; password: string; timeoutMs?: number; maxResponseBytes?: number; } ;; ImapConnector = export type ImapConnector = (options: { host: string; port: number; servername: string; }, onSecure: () => void) => ImapSocket; ;; ImapEnvelope = export interface ImapEnvelope { uid: number; from: string; subject: string; date: number; seen: boolean; bodyPreview: string; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "IntakeImapConfig",
+      "kind": "interface",
+      "required": [
+        "host",
+        "password",
+        "port",
+        "user"
+      ],
+      "text": "export interface ImapConfig { host: string; port: number; user: string; password: string; timeoutMs?: number; maxResponseBytes?: number; }"
+    },
+    {
+      "name": "IntakeImapConnector",
+      "kind": "type",
+      "text": "export type ImapConnector = (options: { host: string; port: number; servername: string; }, onSecure: () => void) => ImapSocket; ;; via ImapSocket = export interface ImapSocket { setEncoding(encoding: string): unknown; write(data: string): unknown; once(event: 'error', listener: (error: Error) => void): unknown; on(event: 'data', listener: (chunk: string) => void): unknown; on(event: 'error', listener: (error: Error) => void): unknown; on(event: 'close', listener: () => void): unknown; off(event: 'data', listener: (chunk: string) => void): unknown; off(event: 'error', listener: (error: Error) => void): unknown; off(event: 'close', listener: () => void): unknown; destroy(): unknown; }"
+    },
+    {
+      "name": "IntakeImapEnvelope",
+      "kind": "interface",
+      "required": [
+        "bodyPreview",
+        "date",
+        "from",
+        "seen",
+        "subject",
+        "uid"
+      ],
+      "text": "export interface ImapEnvelope { uid: number; from: string; subject: string; date: number; seen: boolean; bodyPreview: string; }"
+    },
+    {
+      "name": "IntakeImapSocket",
+      "kind": "interface",
+      "required": [
+        "destroy",
+        "off",
+        "on",
+        "once",
+        "setEncoding",
+        "write"
+      ],
+      "text": "export interface ImapSocket { setEncoding(encoding: string): unknown; write(data: string): unknown; once(event: 'error', listener: (error: Error) => void): unknown; on(event: 'data', listener: (chunk: string) => void): unknown; on(event: 'error', listener: (error: Error) => void): unknown; on(event: 'close', listener: () => void): unknown; off(event: 'data', listener: (chunk: string) => void): unknown; off(event: 'error', listener: (error: Error) => void): unknown; off(event: 'close', listener: () => void): unknown; destroy(): unknown; } ;; via Error = interface Error { name: string; message: string; stack?: string; }"
+    },
+    {
       "name": "IntakeLogger",
       "kind": "interface",
       "required": [
@@ -30462,6 +30519,11 @@
       "text": "export declare function clearAdapterRegistry(): void;"
     },
     {
+      "name": "decodeIntakeImapHeader",
+      "kind": "function",
+      "text": "export declare function decodeHeader(value: string): string;"
+    },
+    {
       "name": "decodePageCursor",
       "kind": "function",
       "text": "export declare function decodePageCursor(raw: string): InboxPosition;"
@@ -30472,9 +30534,19 @@
       "text": "export declare function encodePageCursor(position: InboxPosition): string;"
     },
     {
+      "name": "intakeImapDate",
+      "kind": "function",
+      "text": "export declare function imapDate(ms: number): string;"
+    },
+    {
       "name": "normalizeInboxQuery",
       "kind": "function",
       "text": "export declare function normalizeInboxQuery(body: unknown, query?: Readonly<Record<string, string>>): InboxListQuery; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "parseIntakeFetchResponse",
+      "kind": "function",
+      "text": "export declare function parseIntakeFetchResponse(raw: string): ImapEnvelope[]; ;; via ImapEnvelope = export interface ImapEnvelope { uid: number; from: string; subject: string; date: number; seen: boolean; bodyPreview: string; }"
     },
     {
       "name": "registerAdapterFactory",
@@ -30490,6 +30562,11 @@
       "name": "registeredProviderIds",
       "kind": "function",
       "text": "export declare function registeredProviderIds(): string[];"
+    },
+    {
+      "name": "resolveIntakeRouteId",
+      "kind": "function",
+      "text": "export declare function resolveRouteId(ctx: AdapterContext, provider: string, fromDigest: string, kind: InboundChannelItem['kind']): Promise<string | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "toWireItem",
