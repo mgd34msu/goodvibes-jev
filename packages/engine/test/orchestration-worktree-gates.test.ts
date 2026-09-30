@@ -37,6 +37,10 @@ function runGit(cwd: string, args: string[]): void {
 function freshRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'wt-gates-'));
   runGit(dir, ['init']);
+  // Merge commits need a fixture-owned identity; the guarded runner deliberately
+  // isolates HOME and must not depend on the developer's global Git config.
+  runGit(dir, ['config', 'user.name', 'test']);
+  runGit(dir, ['config', 'user.email', 'a@b.c']);
   runGit(dir, ['-c', 'user.email=a@b.c', '-c', 'user.name=test', 'commit', '--allow-empty', '-m', 'seed']);
   return dir;
 }
