@@ -138,7 +138,7 @@ describe('config set', () => {
     expect(writes[0]?.value).toBe(true);
   });
 
-  test('a value the schema refuses comes back as the schema\'s own message', async () => {
+  test('a value the schema refuses comes back with a value-free schema hint', async () => {
     const { manager, writes } = fakeManager();
     const result = (await runConfigCommand(['set', 'controlPlane.port', 'not-a-port'], deps(manager)));
     expect(result.exitCode).toBe(1);
@@ -166,7 +166,7 @@ describe('config set', () => {
     const result = (await runConfigCommand(['set', 'not.a.key', 'value'], deps(manager)));
     expect(result.exitCode).toBe(1);
     expect(result.lines.join('\n')).toContain(
-      "'not.a.key' is not a settings key. Run `goodvibes-daemon config list` to see them.",
+      "not a settings key. Run `goodvibes-daemon config list` to see them.",
     );
     expect(writes).toEqual([]);
   });

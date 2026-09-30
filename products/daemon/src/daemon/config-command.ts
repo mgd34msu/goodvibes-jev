@@ -107,8 +107,39 @@ function schemaFor(deps: ConfigCommandDeps, key: string): ConfigSetting | undefi
   return deps.configManager.getSchema().find((setting) => setting.key === key);
 }
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** Diagnostics come from the schema, never an exception containing user values. */
+function writeFailure(key: string, error: unknown, deps: ConfigCommandDeps): ConfigCommandResult {
+  const setting = schemaFor(deps, key);
+  if (error instanceof ConfigError && setting) {
+    const hint = setting.validationHint ? ` (${setting.validationHint})` : '';
+    const allowed = setting.enumValues ? ` Allowed: ${setting.enumValues.join(', ')}.` : '';
+    return failure(`could not write ${key}: expected ${setting.type}${hint}.${allowed}`, deps);
+  }
+  return failure(`could not write ${key}.`, deps);
+}
+
+/** Finish classification before mutation; a refused reader must leave settings alone. */
+async function prepareWrite(deps: ConfigCommandDeps, key: string, value: unknown): Promise<ConfigCommandResult | undefined> {
+  try {
+    if (deps.json) await redactConfig({ [key]: value });
+    else await renderConfigValue(key, value);
+    return undefined;
+  } catch {
+    return failure(`could not prepare safe output for ${key}; settings were not changed.`, deps);
+  }
+}
+
+/** A transformed stored value must never turn a completed write into a rejection. */
+async function writtenValue(deps: ConfigCommandDeps, key: string): Promise<unknown> {
+  try {
+    if (!isKnownConfigKey(key, deps.configManager.getSchema())) return REDACTED_VALUE;
+    const stored = deps.configManager.get(key);
+    if (!deps.json) return await renderConfigValue(key, stored);
+    const redacted = await redactConfig({ [key]: stored });
+    return redacted.value[key];
+  } catch {
+    return REDACTED_VALUE;
+  }
 }
 
 function readValue(deps: ConfigCommandDeps, key: string): unknown {
@@ -165,7 +196,7 @@ async function listResult(deps: ConfigCommandDeps): Promise<ConfigCommandResult>
 async function getResult(deps: ConfigCommandDeps, key: string): Promise<ConfigCommandResult> {
   const setting = schemaFor(deps, key);
   if (!setting) {
-    return failure(`'${key}' is not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
+    return failure(`not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
   }
   const value = readValue(deps, key);
   if (deps.json) {
@@ -188,35 +219,30 @@ async function getResult(deps: ConfigCommandDeps, key: string): Promise<ConfigCo
 
 async function setResult(deps: ConfigCommandDeps, key: string, rawValue: string): Promise<ConfigCommandResult> {
   if (!isKnownConfigKey(key, deps.configManager.getSchema())) {
-    return failure(`'${key}' is not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
+    return failure(`not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
   }
   const value = parseConfigValueText(rawValue);
+  const preparationFailure = await prepareWrite(deps, key, value);
+  if (preparationFailure) return preparationFailure;
   try {
     deps.configManager.set(key, value as never);
   } catch (error) {
-    // A schema refusal is the common case (wrong type, value outside an enum),
-    // and its message already names what was wrong. Passing it through beats
-    // rewording it into something vaguer.
-    return failure(
-      error instanceof ConfigError ? error.message : `could not write ${key}: ${message(error)}`,
-      deps,
-    );
+    return writeFailure(key, error, deps);
   }
-  const stored = readValue(deps, key);
+  const printable = await writtenValue(deps, key);
   if (deps.json) {
-    const redacted = await redactConfig({ [key]: stored } as Record<string, unknown>);
     return {
       exitCode: 0,
       lines: [JSON.stringify({
         ok: true,
-        data: { key, value: (redacted.value as Record<string, unknown>)[key], written: true },
+        data: { key, value: printable, written: true },
       }, null, 2)],
     };
   }
   return {
     exitCode: 0,
     lines: [
-      `${key} = ${await renderConfigValue(key, stored)}`,
+      `${key} = ${printable}`,
       '  written to disk. A running daemon picks most keys up live; the ones that only apply',
       '  when it binds a port need a restart:  goodvibes-daemon restart-service',
     ],
@@ -225,27 +251,28 @@ async function setResult(deps: ConfigCommandDeps, key: string, rawValue: string)
 
 async function unsetResult(deps: ConfigCommandDeps, key: string): Promise<ConfigCommandResult> {
   if (!isKnownConfigKey(key, deps.configManager.getSchema())) {
-    return failure(`'${key}' is not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
+    return failure(`not a settings key. Run \`${deps.binary ?? 'goodvibes-daemon'} config list\` to see them.`, deps);
   }
+  const preparationFailure = await prepareWrite(deps, key, schemaFor(deps, key)?.default);
+  if (preparationFailure) return preparationFailure;
   try {
     deps.configManager.reset(key);
-  } catch (error) {
-    return failure(`could not reset ${key}: ${message(error)}`, deps);
+  } catch {
+    return failure(`could not reset ${key}.`, deps);
   }
-  const stored = readValue(deps, key);
+  const printable = await writtenValue(deps, key);
   if (deps.json) {
-    const redacted = await redactConfig({ [key]: stored } as Record<string, unknown>);
     return {
       exitCode: 0,
       lines: [JSON.stringify({
         ok: true,
-        data: { key, value: (redacted.value as Record<string, unknown>)[key], reset: true },
+        data: { key, value: printable, reset: true },
       }, null, 2)],
     };
   }
   return {
     exitCode: 0,
-    lines: [`${key} = ${await renderConfigValue(key, stored)}  (back to its shipped default)`],
+    lines: [`${key} = ${printable}  (back to its shipped default)`],
   };
 }
 
@@ -258,11 +285,11 @@ export async function runConfigCommand(args: readonly string[], deps: ConfigComm
   const subcommand = args[0];
   if (subcommand === undefined) return refusal('name what to do with the settings.', deps);
   if (!isConfigSubcommand(subcommand)) {
-    return refusal(`'${subcommand}' is not a config command; try ${CONFIG_SUBCOMMANDS.join(', ')}.`, deps);
+    return refusal(`unknown config command; try ${CONFIG_SUBCOMMANDS.join(', ')}.`, deps);
   }
 
   if (subcommand === 'list') {
-    if (args.length > 1) return refusal(`'${args[1]}' is one argument too many.`, deps);
+    if (args.length > 1) return refusal('one argument too many.', deps);
     return listResult(deps);
   }
 
@@ -270,16 +297,16 @@ export async function runConfigCommand(args: readonly string[], deps: ConfigComm
   if (key === undefined) return refusal(`${subcommand} needs a settings key.`, deps);
 
   if (subcommand === 'get') {
-    if (args.length > 2) return refusal(`'${args[2]}' is one argument too many.`, deps);
+    if (args.length > 2) return refusal('one argument too many.', deps);
     return getResult(deps, key);
   }
   if (subcommand === 'unset') {
-    if (args.length > 2) return refusal(`'${args[2]}' is one argument too many.`, deps);
+    if (args.length > 2) return refusal('one argument too many.', deps);
     return unsetResult(deps, key);
   }
 
   const rawValue = args[2];
-  if (rawValue === undefined) return refusal(`set needs a value: \`config set ${key} <value>\`.`, deps);
-  if (args.length > 3) return refusal(`'${args[3]}' is one argument too many.`, deps);
+  if (rawValue === undefined) return refusal('set needs a value: `config set <key> <value>`.', deps);
+  if (args.length > 3) return refusal('one argument too many.', deps);
   return setResult(deps, key, rawValue);
 }
