@@ -96,8 +96,8 @@ describe('remote process deadline and failure ownership', () => {
       const directory = makeProjectTempDir('remote-process-group');
       const marker = join(directory, 'grandchild-ran');
       const pidFile = join(directory, 'grandchild.pid');
-      const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected'); }, 2000)`;
-      const parent = `Bun.spawn([process.execPath, '--no-env-file', '-e', ${JSON.stringify(descendant)}], {stdout: 'inherit', stderr: 'inherit'}); ${exitEarly ? 'process.exit(0)' : 'setTimeout(() => {}, 10000)'}`;
+      const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected'); }, 2000)`;
+      const parent = `process.on('SIGTERM', () => {}); Bun.spawn([process.execPath, '--no-env-file', '-e', ${JSON.stringify(descendant)}], {stdout: 'inherit', stderr: 'inherit'}); ${exitEarly ? 'process.exit(0)' : 'setTimeout(() => {}, 10000)'}`;
       const started = Date.now();
       let descendantPid: number | undefined;
       try {

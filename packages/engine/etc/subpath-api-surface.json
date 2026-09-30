@@ -50465,9 +50465,46 @@
       "text": "BINARY_INSTALL_COMMAND = \"curl -fsSL https://goodvibes.sh/install.sh | sh\""
     },
     {
+      "name": "Backend",
+      "kind": "interface",
+      "required": [
+        "dispatch",
+        "kind"
+      ],
+      "text": "export interface Backend { readonly kind: PeerRecord['backendKind']; dispatch(peer: PeerRecord, command: string, payload?: DispatchPayload): Promise<BackendDispatchResult>; teardown?(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "BackendConfig",
       "kind": "type",
       "text": "export type BackendConfig = ({ kind: 'docker'; } & DockerBackendConfig) | ({ kind: 'ssh'; } & SshBackendConfig) | ({ kind: 'cloud-terminal'; } & CloudTerminalBackendConfig) | ({ kind: 'local-process'; } & LocalProcessBackendConfig);"
+    },
+    {
+      "name": "BackendContext",
+      "kind": "interface",
+      "required": [
+        "credentials",
+        "homeDirectory",
+        "logger"
+      ],
+      "text": "export interface BackendContext { credentials: RemoteHostCredentialStore; logger: RemoteHostLogger; homeDirectory: string; }"
+    },
+    {
+      "name": "BackendDispatchError",
+      "kind": "class",
+      "publicMembers": [
+        "code",
+        "constructor"
+      ],
+      "text": "export declare class BackendDispatchError extends Error { readonly code: string; constructor(message: string, code?: string); }"
+    },
+    {
+      "name": "BackendDispatchResult",
+      "kind": "interface",
+      "required": [
+        "stderr",
+        "stdout"
+      ],
+      "text": "export interface BackendDispatchResult { exitCode?: number; workId?: string; stdout: string; stderr: string; }"
     },
     {
       "name": "BackendKind",
@@ -50699,6 +50736,11 @@
       "text": "DEFAULT_RETENTION_CONFIG: RetentionConfig"
     },
     {
+      "name": "DEFAULT_SYNC_TIMEOUT_MS",
+      "kind": "const",
+      "text": "DEFAULT_SYNC_TIMEOUT_MS = 120000"
+    },
+    {
       "name": "DELIVERY_ENGINE_FEATURE_FLAG",
       "kind": "const",
       "text": "DELIVERY_ENGINE_FEATURE_FLAG = \"delivery-engine\""
@@ -50737,6 +50779,11 @@
         "TASK_UPDATE"
       ],
       "text": "export interface DataPayloads { TASK_SUBMIT: { readonly taskId: string; readonly agentId: string; readonly title: string; readonly description?: string | undefined; readonly payload: Record<string, unknown>; }; TASK_CANCEL: { readonly taskId: string; readonly reason?: string | undefined; }; TASK_UPDATE: { readonly taskId: string; readonly status: string; readonly progress?: number | undefined; readonly message?: string | undefined; readonly error?: string | undefined; }; AGENT_SPAWN: { readonly agentId: string; readonly taskId: string; readonly role: string; }; AGENT_UPDATE: { readonly agentId: string; readonly state: string; readonly message?: string | undefined; }; AGENT_TERMINATE: { readonly agentId: string; readonly reason?: string | undefined; }; HEALTH_REPORT: { readonly status: string; readonly latencyMs?: number | undefined; readonly serverVersion?: string | undefined; readonly degradedReason?: string | undefined; }; STATE_SNAPSHOT: { readonly tasks: Array<Record<string, unknown>>; readonly health: Record<string, unknown>; readonly epoch: number; }; } ;; via Array = interface Array<T> { length: number; toString(): string; toLocaleString(): string; pop(): T | undefined; push(...items: T[]): number; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; reverse(): T[]; shift(): T | undefined; slice(start?: number, end?: number): T[]; sort(compareFn?: (a: T, b: T) => number): this; splice(start: number, deleteCount?: number): T[]; splice(start: number, deleteCount: number, ...items: T[]): T[]; unshift(...items: T[]): number; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): this is S[]; every(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U; [n: number]: T; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "DispatchPayload",
+      "kind": "interface",
+      "text": "export interface DispatchPayload { args?: string[]; stdin?: string; env?: Record<string, string>; timeoutMs?: number; cwd?: string; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "DistributedApprovalBridge",
@@ -51253,6 +51300,11 @@
       "name": "LocalProcessBackendConfig",
       "kind": "interface",
       "text": "export interface LocalProcessBackendConfig { cwd?: string; allowedCommands?: string[]; }"
+    },
+    {
+      "name": "MAX_SYNC_TIMEOUT_MS",
+      "kind": "const",
+      "text": "MAX_SYNC_TIMEOUT_MS = 600000"
     },
     {
       "name": "McpAttackPathFinding",
@@ -52036,6 +52088,24 @@
         "status"
       ],
       "text": "export interface RemoteHeartbeatSnapshot { readonly status: 'fresh' | 'stale' | 'offline'; readonly lastSeenAt?: number | undefined; readonly ageMs?: number | undefined; readonly detail: string; }"
+    },
+    {
+      "name": "RemoteHostCredentialStore",
+      "kind": "interface",
+      "required": [
+        "resolveRef"
+      ],
+      "text": "export interface RemoteHostCredentialStore { resolveRef(ref: string): Promise<string | null>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "RemoteHostLogger",
+      "kind": "interface",
+      "required": [
+        "error",
+        "info",
+        "warn"
+      ],
+      "text": "export interface RemoteHostLogger { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }"
     },
     {
       "name": "RemoteNegotiationSnapshot",
@@ -53112,6 +53182,11 @@
       "text": "export declare function buildRemoteSessionStateSnapshot(input: { runnerId: string; label: string; connection?: AcpConnection | null | undefined; contract?: RemoteRunnerContract | null | undefined; heartbeat: RemoteHeartbeatSnapshot; negotiation: RemoteNegotiationSnapshot; capabilities: readonly RemoteCapabilitySnapshot[]; recovery: readonly RemoteRecoveryAction[]; }): RemoteSessionStateSnapshot; ;; via AcpConnection = export interface AcpConnection { agentId: string; label: string; transportState: AcpTransportState; connectedAt?: number | undefined; completing: boolean; messageCount: number; errorCount: number; lastError?: string | undefined; taskId?: string | undefined; }"
     },
     {
+      "name": "buildRemoteShellCommand",
+      "kind": "function",
+      "text": "export declare function buildRemoteShellCommand(command: string, args?: string[]): string;"
+    },
+    {
       "name": "canTransition",
       "kind": "function",
       "text": "export declare function canTransition(from: McpServerState, to: McpServerState): boolean; ;; export declare function canTransition(from: PluginLifecycleState, to: PluginLifecycleState): boolean; ;; export declare function canTransition(from: TaskLifecycleState, to: TaskLifecycleState): boolean; ;; export declare function canTransition(from: CompactionLifecycleState, to: CompactionLifecycleState): boolean; ;; via CompactionLifecycleState = export type CompactionLifecycleState = 'idle' | 'checking_threshold' | 'microcompact' | 'collapse' | 'autocompact' | 'reactive_compact' | 'boundary_commit' | 'done' | 'failed'; ;; PluginLifecycleState = export type PluginLifecycleState = 'discovered' | 'loading' | 'loaded' | 'active' | 'degraded' | 'error' | 'unloading' | 'disabled'; ;; TaskLifecycleState = export type TaskLifecycleState = 'queued' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled';"
@@ -53202,6 +53277,11 @@
       "text": "export declare function createDataMessage<T extends DataMessageType>(dataType: T, payload: DataPayloads[T], sessionId: string, epoch: number, offset: number): Readonly<DataMessage>; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
+      "name": "createDockerBackend",
+      "kind": "function",
+      "text": "export declare function createDockerBackend(ctx: BackendContext): Backend;"
+    },
+    {
       "name": "createDurabilityServices",
       "kind": "function",
       "text": "export declare function createDurabilityServices(input: DurabilityServicesInput): DurabilityServices;"
@@ -53210,6 +53290,11 @@
       "name": "createFailureMessage",
       "kind": "function",
       "text": "export declare function createFailureMessage(error: string, errorCategory: TransportErrorCategory, recoverable: boolean, sessionId: string, epoch: number, offset: number, context?: Record<string, unknown>): Readonly<FailureMessage>; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "createLocalProcessBackend",
+      "kind": "function",
+      "text": "export declare function createLocalProcessBackend(ctx: BackendContext): Backend;"
     },
     {
       "name": "createMcpLifecycleManager",
@@ -53707,6 +53792,11 @@
       "text": "export declare function resolveSelfDirectory(input: { readonly execPath: string; readonly command: string; readonly pathEntries: readonly string[]; readonly realPath: (path: string) => string; readonly isExecutableFile: (path: string) => boolean; }): string | undefined;"
     },
     {
+      "name": "resolveTimeout",
+      "kind": "function",
+      "text": "export declare function resolveTimeout(payload?: DispatchPayload): number;"
+    },
+    {
       "name": "runAppendOnlyRetentionSweep",
       "kind": "function",
       "text": "export declare function runAppendOnlyRetentionSweep(roots: AppendOnlyRetentionRoots, options?: { readonly policyOverride?: AtRestPolicy | undefined; readonly maxFilesOverride?: number | undefined; }): AppendOnlySweepOutcome; ;; via AtRestPolicy = export interface AtRestPolicy { readonly redact: boolean; readonly retention: { readonly maxAgeMs: number; readonly maxTotalBytes: number; }; }"
@@ -53775,6 +53865,11 @@
       "name": "surfaceFeatureGateSettingsKeys",
       "kind": "function",
       "text": "export declare function surfaceFeatureGateSettingsKeys(flagIds: readonly string[]): string[];"
+    },
+    {
+      "name": "tokenizeCommand",
+      "kind": "function",
+      "text": "export declare function tokenizeCommand(command: string): string[];"
     },
     {
       "name": "trustGatedAsk",

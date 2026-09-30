@@ -43,6 +43,17 @@ export type {
   PeerRecord,
   PeerRegistrationInput,
 } from './host/peer-registry.js';
+export type { RemoteHostCredentialStore, RemoteHostLogger } from './host/context.js';
+export type { Backend, BackendContext, BackendDispatchResult, DispatchPayload } from './host/backends/types.js';
+export {
+  BackendDispatchError,
+  DEFAULT_SYNC_TIMEOUT_MS,
+  MAX_SYNC_TIMEOUT_MS,
+  resolveTimeout,
+  buildRemoteShellCommand,
+} from './host/backends/types.js';
+export { createLocalProcessBackend, tokenizeCommand } from './host/backends/local-process.js';
+export { createDockerBackend } from './host/backends/docker.js';
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
