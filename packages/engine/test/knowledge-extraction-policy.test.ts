@@ -38,7 +38,8 @@ function extraction(overrides: Partial<KnowledgeExtractionRecord>): KnowledgeExt
 
 describe('knowledge extraction refresh policy', () => {
   test('registers both decisions and runs the synthetic labelled readability fixtures', async () => {
-    expect(registry.list()).toEqual([extractionReadability, pdfTextDecoding]);
+    expect(registry.list()).toContain(extractionReadability);
+    expect(registry.list()).toContain(pdfTextDecoding);
     for (const fixture of extractionReadability.fixtures) {
       const sample = (fixture.state as { sample: string }).sample;
       const fake = answer(fixture.expect.readable === 'yes' ? 0.99 : 0.01);

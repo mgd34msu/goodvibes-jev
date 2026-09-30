@@ -1,3 +1,4 @@
+import { withHtmlExtractionReadings } from './_helpers/html-extraction-readings.js';
 /**
  * optional-dependency-boot.test.ts, an optional package that is not there
  * must not take the process with it.
@@ -265,7 +266,7 @@ describe('an absent optional client package does not take the process down', () 
 });
 
 describe('the same code path with the packages installed', () => {
-  test('extracts by readability and reports itself available', async () => {
+  test('extracts by readability and reports itself available', async () => withHtmlExtractionReadings({}, async () => {
     const { describeHtmlReadabilityAvailability, extractReadableHtml } =
       await import('../sdk/src/platform/knowledge/html-readability.ts');
     const availability = await describeHtmlReadabilityAvailability();
@@ -279,7 +280,7 @@ describe('the same code path with the packages installed', () => {
     expect(extracted).not.toBeNull();
     expect(extracted?.textContent).toContain('Readable body text');
     expect(extracted?.headings[0]).toBe('Heading');
-  });
+  }));
 
   test('graphql: the lazily-built schema is the same schema, printed once', async () => {
     const { KnowledgeGraphqlService, inspectKnowledgeGraphqlAccess } =
@@ -314,7 +315,7 @@ describe('the same code path with the packages installed', () => {
     expect(provider.models.length).toBeGreaterThan(0);
   });
 
-  test('the knowledge extractor picks the readability path and adds no warning', async () => {
+  test('the knowledge extractor picks the readability path and adds no warning', async () => withHtmlExtractionReadings({}, async () => {
     const { extractKnowledgeArtifact } =
       await import('../sdk/src/platform/knowledge/extractors.ts');
     const result = await extractKnowledgeArtifact(
@@ -324,5 +325,5 @@ describe('the same code path with the packages installed', () => {
     );
     expect(result.extractorId).toBe('html-readability');
     expect(result.metadata['warnings']).toBeUndefined();
-  });
+  }));
 });

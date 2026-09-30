@@ -2,13 +2,17 @@
 
 ## Landed slice
 
-The extraction-policy and PDF-extractor inventory decisions now use two named,
+The extraction-policy, PDF-extractor and HTML inventory decisions now use four named,
 registered batteries:
 
 - `engine.knowledge.extraction-readability`: readable document text, including
   non-ASCII text, short labels, tables, URLs, and prose about PDF syntax
 - `engine.knowledge.pdf-text-decoding`: unmarked single-byte versus UTF-16BE
   decoding, neither readable, or unknown
+- `engine.knowledge.html-main-content`: select main document blocks, including
+  tables, with one recorded reading per structurally parsed block
+- `engine.knowledge.html-document-title`: select among title metadata and headings,
+  including none, with an independent fitness check
 
 The registry is `knowledge/extraction/judgment-registry.ts`; existing registry
 auto-discovery includes it. Fixtures are synthetic. These fixtures and fake-port
@@ -24,7 +28,7 @@ old heuristics. The old threshold constants are no longer public exports.
 
 Version, blank-field, owned-placeholder, PDF grammar, BOM, odd-hex-length,
 resource cleanup, deduplication, and output-size checks remain code. Extractor
-generation is now 2, so older retained captures can be re-extracted. The 4096
+generation is now 3, so older retained captures can be re-extracted. The 4096
 character judgment sample is a transport budget, not a readability threshold.
 Full candidate content is preflighted with `assertJudgmentInput` before sampling
 or port access. Database ids/timestamps are not part of the readability request.
@@ -67,13 +71,36 @@ artifact mismatches, a changed fingerprint, one-shot consumption and corrupted
 retained bytes. URL tests stub only artifact acquisition; store and extraction
 execution are real and all judgment responses are deterministic fake-port data.
 
+## HTML main-content and title selection
+
+Both the optional DOM parser and the lightweight parser now feed the same named
+block-selection and title-selection decisions. Mozilla density/keyword article
+selection and first-heading title preference are removed. HTML grammar still
+supplies blocks, headings, links and explicit author/site metadata. The existing
+page-content pattern packs bounded requests; every block must have an actionable
+reading before any content is accepted. Title choices use bounded selection
+rounds plus the foundation's separate fitness check.
+
+A definite no-content result produces an owned empty-extraction marker. A
+confident no-title result leaves the title absent. Neither result falls back to
+page boilerplate or the first heading. Unknown, missing and failed readings
+propagate through artifact dispatch and both regular and Home Graph ingestion.
+The full raw input and decoded block/title candidates are preflighted before
+request clipping. The optional DOM parser can still be absent: the compiled
+optional-dependency fixture exercises the lightweight parser with the same
+strict judgments, without copying or removing installed dependencies.
+
+Offline tests cover non-ASCII tables, later headings, metadata titles, empty
+pages, boilerplate-only pages, title lists larger than one request, raw and
+entity-encoded protected text, and new/re-ingested SQLite records under all
+three hold modes. These are pipeline tests, not live semantic calibration.
+
 ## K2 inventory remainder
 
 This slice is not a claim that the entire extraction family is complete:
 
-- `html-readability.ts`: main-content block selection still uses the Mozilla
-  library's heuristics and title selection still prefers the first heading.
-  These require separate candidate-selection judgments.
+- `html-readability.ts`: its main-content/title decisions are now migrated;
+  structural DOM loading, grammar, deduplication, resource cleanup and caps stay code.
 - `ingest-compile.ts`: entity aliases still come from `topKeywords`; this is
   pending the entity-aliasing migration, not a readability decision.
 - `extractors.ts`: parser dispatch, format grammar, deterministic display
@@ -87,4 +114,4 @@ This slice is not a claim that the entire extraction family is complete:
   decision; `home-graph/extraction.ts` preserves the structural extraction flow
   with an explicit no-write hold boundary.
 
-Live calibration and broader K2 main-content/title work remain separately tracked.
+Live calibration and entity-aliasing work remain separately tracked.

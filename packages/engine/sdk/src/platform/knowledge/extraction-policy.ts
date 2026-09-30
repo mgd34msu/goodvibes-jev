@@ -12,7 +12,7 @@ import type { KnowledgeExtractionRecord } from './types.js';
  * retained lake into a compounding asset. Extractions written before versioning
  * carry no stamp and resolve to version 0, so they re-extract once.
  */
-export const KNOWLEDGE_EXTRACTOR_VERSION = 2;
+export const KNOWLEDGE_EXTRACTOR_VERSION = 3;
 
 export function readKnowledgeExtractorVersion(metadata: Record<string, unknown>): number {
   const value = metadata.extractorVersion;
@@ -27,12 +27,13 @@ export const KNOWLEDGE_EXTRACTION_SAMPLE_CHARS = 4_096;
 /** No classification or mutation may proceed on an unresolved reading. */
 export class KnowledgeExtractionJudgmentHoldError extends Error {
   constructor() {
-    super('Knowledge extraction is on hold: the readability or decoding judgment did not reach an actionable conclusion.');
+    super('Knowledge extraction is on hold: a required extraction judgment did not reach an actionable conclusion.');
     this.name = 'KnowledgeExtractionJudgmentHoldError';
   }
 }
 
 const LIMITED_EXTRACTION_MARKERS = [
+  'html extraction found no main content',
   'pdf extraction produced limited text',
   'no readable text streams',
   'no specialized extractor matched',

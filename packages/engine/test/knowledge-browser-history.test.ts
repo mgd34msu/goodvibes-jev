@@ -1,3 +1,4 @@
+import { withHtmlExtractionReadings } from './_helpers/html-extraction-readings.js';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -128,7 +129,7 @@ describe('browser history knowledge ingest', () => {
 });
 
 describe('readability HTML extraction', () => {
-  test('prefers article text over navigation chrome', async () => {
+  test('prefers article text over navigation chrome', async () => withHtmlExtractionReadings({ rejectedBlocks: ['main_1'], title: 'title-2' }, async () => {
     const result = await extractKnowledgeArtifact({
       id: 'artifact-html',
       mimeType: 'text/html',
@@ -151,5 +152,5 @@ describe('readability HTML extraction', () => {
     expect(result.title).toContain('Useful Browser Knowledge');
     expect(result.summary).toContain('local browser history');
     expect(result.excerpt).not.toContain('Pricing Login');
-  });
+  }));
 });
