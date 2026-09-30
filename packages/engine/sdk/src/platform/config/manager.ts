@@ -7,6 +7,7 @@ import { ConfigError } from '../types/errors.js';
 import { logger } from '../utils/logger.js';
 import type { HookDispatcher } from '../hooks/index.js';
 import type { HookEvent } from '../hooks/types.js';
+import { attachOwnedConfigHook } from './hook-attachment.js';
 import { getManagedSettingLock } from '../runtime/settings/control-plane.js';
 import { requireSurfaceRoot, resolveSharedDirectory, resolveSurfaceDirectory, resolveSurfaceSharedFile } from '../runtime/surface-root.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -224,8 +225,8 @@ export class ConfigManager {
     return this.projectConfigPath ?? undefined;
   }
 
-  attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): void {
-    this.hookDispatcher = hookDispatcher;
+  attachHookDispatcher(hookDispatcher: Pick<HookDispatcher, 'fire'> | null): () => void {
+    return attachOwnedConfigHook(this, dispatcher => { this.hookDispatcher = dispatcher; }, hookDispatcher);
   }
 
   /** Install (or clear) the owner-profile read fallback. See ./profile-fallback.ts. */

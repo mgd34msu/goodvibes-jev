@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { createDisposalScope, registerDaemonRuntimePollers, type DaemonRuntimePollerOwners } from '../../runtime/disposal-wiring.ts';
+import { createDisposalScope, registerDaemonRuntimeBasePollers, registerDaemonRuntimePollers, type DaemonRuntimePollerOwners } from '../../runtime/disposal-wiring.ts';
 
 function owners(calls: string[], close: () => Promise<void>): DaemonRuntimePollerOwners {
   const stop = (name: string) => () => { calls.push(name); };
@@ -37,4 +37,12 @@ test('a handler failure is visible after the remaining owners have still been st
   const calls: string[] = []; const scope = createDisposalScope('fixture');
   registerDaemonRuntimePollers(scope.registry, owners(calls, async () => { calls.push('handlers'); throw new Error('fixture cleanup'); }), { stopConfigWatch: () => { calls.push('config'); } });
   await expect(scope.close()).rejects.toMatchObject({ code: 'DISPOSAL_FAILED' }); expect(calls).toEqual(expected);
+});
+
+test('the constructed base graph can be released when no handler surface was acquired', async () => {
+  const calls: string[] = []; const scope = createDisposalScope('fixture');
+  const { daemonHandlers: _unacquired, ...base } = owners(calls, async () => { throw new Error('Unacquired handler must not be closed'); });
+  registerDaemonRuntimeBasePollers(scope.registry, base, { stopConfigWatch: () => { calls.push('config'); } });
+  await scope.close();
+  expect(calls).toEqual(expected.slice(1));
 });

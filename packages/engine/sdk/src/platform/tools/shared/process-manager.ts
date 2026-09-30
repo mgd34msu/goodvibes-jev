@@ -2,7 +2,6 @@
 
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
-import { sleep } from '../../utils/concurrency.js';
 import { resolveCredentialEnvScrub, scrubCredentialEnv, type ResolvedCredentialEnvScrub } from '../exec/credential-env.js';
 
 /**
@@ -30,7 +29,7 @@ export interface BackgroundProcess {
   exitCode: number | null;
   done: boolean;
   /**
-   * Timestamp (ms since epoch) when SIGKILL was scheduled after a timeout.
+   * Timestamp (ms since epoch) when SIGKILL was scheduled for termination.
    * Null if the process completed normally or SIGKILL was never scheduled.
    */
   killDeadline: number | null;
@@ -68,7 +67,7 @@ const COMPLETED_PROCESS_TTL_MS = 30 * 60 * 1000;
 export interface SpawnOptions {
   /** Abort the process if it hasn't completed within this many ms. Default: 60000. */
   timeout_ms?: number | undefined;
-  /** Grace period (ms) between SIGTERM and SIGKILL after timeout. Default: 5000. */
+  /** Grace period (ms) between SIGTERM and SIGKILL during termination. Default: 5000. */
   sigterm_grace_ms?: number | undefined;
   /**
    * Whether the timeout watchdog may terminate the process. Default: true.
@@ -80,6 +79,16 @@ export interface SpawnOptions {
    * user-facing application as the default outcome of a normal parameter.
    */
   kill_on_timeout?: boolean | undefined;
+  /**
+   * End this child when its runtime closes. Defaults to kill_on_timeout (true
+   * when omitted), preserving separately owned browser/editor/server lifetimes.
+   * Owned POSIX jobs also terminate residual same-group descendants when their
+   * leader exits, before reporting done. Opt out for independently owned jobs.
+   * Explicit stop still terminates and reaps a child regardless of this setting.
+   * Windows owns only direct handles; descendants escaping the group are outside
+   * this boundary on every platform.
+   */
+  kill_on_close?: boolean | undefined;
   /**
    * Credential-bearing env-var scrub applied to the inherited base environment
    * before spawning. Defaults to enabled with an empty allowlist, so a
@@ -105,12 +114,22 @@ export interface BgCommandResult {
   pid?: number | undefined;
 }
 
+interface ManagedProcessShutdown {
+  readonly killOnClose: boolean;
+  stopRequested: boolean;
+  stop(): Promise<void>;
+  detach(): void;
+}
+
 // ─── ProcessManager ───────────────────────────────────────────────────────────
 
 export class ProcessManager {
   private _counter = 0;
   private _processes = new Map<string, BackgroundProcess>();
-  private _procs = new Map<string, ReturnType<typeof Bun.spawn>>();
+  private readonly _shutdowns = new Map<string, ManagedProcessShutdown>();
+  private readonly _launches = new Set<Promise<BgCommandResult>>();
+  private _closed = false;
+  private _closing: Promise<void> | undefined;
 
   // ─── Private helpers ────────────────────────────────────────────────────────
 
@@ -160,7 +179,43 @@ export class ProcessManager {
     return this.launch([command, ...args], [command, ...args].join(' '), cwd, env, opts);
   }
 
-  private async launch(
+  private launch(
+    argv: readonly string[], cmd: string, cwd: string | undefined,
+    env: Record<string, string> | undefined, opts?: SpawnOptions,
+  ): Promise<BgCommandResult> {
+    if (this._closed) return Promise.reject(new Error('ProcessManager is closed'));
+    const launch = this.launchProcess(argv, cmd, cwd, env, opts);
+    this._launches.add(launch);
+    return launch.finally(() => { this._launches.delete(launch); });
+  }
+
+  /**
+   * Stop admission, terminate/reap owned children and drain output. Previously
+   * admitted credential resolutions drain concurrently; shared reads are not
+   * cancelled, and close does not resolve before they settle.
+   */
+  close(): Promise<void> {
+    if (this._closing) return this._closing;
+    this._closed = true;
+    this._closing = Promise.resolve().then(async () => {
+      // No launch may spawn after the closed check, so drain its credential
+      // resolution concurrently instead of delaying existing-child termination.
+      const launches = Promise.allSettled(this._launches);
+      const results = await Promise.allSettled([...this._shutdowns.values()].map((owner) => {
+        if (owner.killOnClose || owner.stopRequested) return owner.stop();
+        // Keep reading output and observing exit for the external owner:
+        // closing its pipes could SIGPIPE a child whose lifetime we do not own.
+        owner.detach();
+        return Promise.resolve();
+      }));
+      await launches;
+      const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (errors.length) throw new AggregateError(errors.map((result) => result.reason), 'Background process shutdown failed');
+    });
+    return this._closing;
+  }
+
+  private async launchProcess(
     argv: readonly string[],
     cmd: string,
     cwd: string | undefined,
@@ -169,7 +224,13 @@ export class ProcessManager {
   ): Promise<BgCommandResult> {
     const timeoutMs = opts?.timeout_ms ?? 60_000;
     const sigtermGraceMs = opts?.sigterm_grace_ms ?? 5_000;
+    assertTimerRange('timeout_ms', timeoutMs);
+    assertTimerRange('sigterm_grace_ms', sigtermGraceMs);
     const killOnTimeout = opts?.kill_on_timeout ?? true;
+    const killOnClose = opts?.kill_on_close ?? killOnTimeout;
+    // Only runtime-owned commands receive an isolated POSIX session/group.
+    // Never send a group signal for a borrowed lifetime or the caller's group.
+    const ownsGroup = killOnClose && process.platform !== 'win32';
 
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([, v]) => v !== undefined),
@@ -179,6 +240,7 @@ export class ProcessManager {
     // background spawn would re-introduce every secret from process.env that the
     // foreground scrub already removed.
     const scrubbedBase = (await scrubCredentialEnv(cleanEnv, opts?.credentialEnvScrub ?? resolveCredentialEnvScrub())).env;
+    if (this._closed) throw new Error('ProcessManager is closed');
     const mergedEnv = { ...scrubbedBase, ...env };
 
     const id = this.newId();
@@ -201,6 +263,7 @@ export class ProcessManager {
       proc = Bun.spawn([...argv], {
         ...(cwd !== undefined ? { cwd } : {}),
         env: mergedEnv,
+        detached: ownsGroup,
         // Closed by default. An unattended command that stops to ask for a
         // password gets EOF and fails instead of blocking forever.
         stdin: opts?.stdin ?? 'ignore',
@@ -214,7 +277,6 @@ export class ProcessManager {
     }
 
     entry.pid = proc.pid;
-    this._procs.set(id, proc);
 
     // Async collection with timeout escalation, SIGTERM then SIGKILL
     // Cast stdout/stderr to ReadableStream, Bun guarantees these are ReadableStream
@@ -231,14 +293,27 @@ export class ProcessManager {
         error: summarizeError(error),
       });
     });
+    let groupStopping: Promise<void> | undefined;
+    const stopOwnedGroup = (): Promise<void> => {
+      if (!groupStopping) {
+        if (ownedGroupExists(proc.pid)) entry.killDeadline = Date.now() + sigtermGraceMs;
+        groupStopping = terminateOwnedGroup(proc.pid, sigtermGraceMs);
+      }
+      return groupStopping;
+    };
     const collectionPromise = (async () => {
       const exitCode = await proc.exited;
+      // A runtime-owned job does not transfer its descendants when its shell
+      // exits. Clean its fresh group now rather than caching a reusable PGID
+      // until an arbitrarily later runtime close.
+      if (ownsGroup) await stopOwnedGroup();
       // The process we spawned is gone. Collect whatever its pipes still hold,
       // but never block completion on them: a surviving descendant holds the
       // same write end, so EOF may never come. Cancelling the readers releases
       // them instead of leaving a task pending on a pipe nobody will close.
-      await Promise.race([streams, sleep(OUTPUT_DRAIN_GRACE_MS)]);
+      await settleWithin(streams, OUTPUT_DRAIN_GRACE_MS);
       drain.abort();
+      await streams;
       entry.exitCode = exitCode;
       // Bun reports the terminating signal on the handle; capture it so a
       // caller can tell "exited 1" from "killed by SIGKILL", which an on-exit
@@ -246,50 +321,51 @@ export class ProcessManager {
       entry.signal = readSignalCode(proc);
       entry.done = true;
       entry.completedAt = Date.now();
-      this._procs.delete(id);
       this.pruneCompletedProcesses();
     })();
 
-    // Timeout watchdog: SIGTERM → wait grace → SIGKILL.
-    //
-    // A termination here is always announced. It used to be silent: a routine
-    // timeout would kill a tracked process and log nothing, so the only trace
-    // was an exitCode of null that read as an ordinary cancellation. When
-    // kill_on_timeout is false the deadline is still recorded and reported, but
-    // the process is left running.
-    const timeoutHandle = setTimeout(async () => {
+    let stopping: Promise<void> | undefined;
+    const owner: ManagedProcessShutdown = {
+      killOnClose,
+      stopRequested: false,
+      stop: () => {
+        if (stopping) return stopping;
+        owner.stopRequested = true;
+        clearTimeout(timeoutHandle);
+        stopping = (async () => {
+          if (ownsGroup) {
+            await stopOwnedGroup();
+          } else if (proc.exitCode === null) {
+            killTrackedProcess(proc, 'SIGTERM', id);
+            entry.killDeadline = Date.now() + sigtermGraceMs;
+            await settleWithin(proc.exited, sigtermGraceMs);
+            if (proc.exitCode === null) {
+              logger.warn('Background process did not exit after SIGTERM, killing', { processId: id, pid: entry.pid, cmd, timeoutMs, signal: 'SIGKILL' });
+              killTrackedProcess(proc, 'SIGKILL', id);
+            }
+          }
+          await collectionPromise;
+          this._shutdowns.delete(id);
+        })();
+        return stopping;
+      },
+      detach: () => { clearTimeout(timeoutHandle); },
+    };
+    this._shutdowns.set(id, owner);
+
+    // Timeout opt-outs preserve externally owned lifetimes. Explicit stop and
+    // runtime close share one termination sequence, including escalation/reap.
+    const timeoutHandle = setTimeout(() => {
       if (entry.done) return;
       entry.timedOut = true;
       if (!killOnTimeout) {
-        logger.info('Background process passed its timeout and was left running', {
-          processId: id,
-          pid: entry.pid,
-          cmd,
-          timeoutMs,
-        });
+        logger.info('Background process passed its timeout and was left running', { processId: id, pid: entry.pid, cmd, timeoutMs });
         return;
       }
-      logger.warn('Background process timed out, terminating', {
-        processId: id,
-        pid: entry.pid,
-        cmd,
-        timeoutMs,
-        signal: 'SIGTERM',
-        sigtermGraceMs,
+      logger.warn('Background process timed out, terminating', { processId: id, pid: entry.pid, cmd, timeoutMs, signal: 'SIGTERM', sigtermGraceMs });
+      void owner.stop().catch((error: unknown) => {
+        logger.warn('Background process termination failed', { processId: id, error: summarizeError(error) });
       });
-      killTrackedProcess(proc, 'SIGTERM', id);
-      entry.killDeadline = Date.now() + sigtermGraceMs;
-      await sleep(sigtermGraceMs);
-      if (!entry.done) {
-        logger.warn('Background process did not exit after SIGTERM, killing', {
-          processId: id,
-          pid: entry.pid,
-          cmd,
-          timeoutMs,
-          signal: 'SIGKILL',
-        });
-        killTrackedProcess(proc, 'SIGKILL', id);
-      }
     }, timeoutMs);
     timeoutHandle.unref?.();
 
@@ -299,9 +375,9 @@ export class ProcessManager {
     void collectionPromise.catch((error) => {
       logger.warn('Background process output collection failed', { processId: id, error: summarizeError(error) });
       clearTimeout(timeoutHandle);
-      entry.done = true;
-      entry.completedAt = Date.now();
-      this._procs.delete(id);
+      drain.abort();
+      entry.done = !ownsGroup;
+      if (entry.done) entry.completedAt = Date.now();
       this.pruneCompletedProcesses();
     });
 
@@ -309,6 +385,8 @@ export class ProcessManager {
     void collectionPromise
       .then(() => {
         clearTimeout(timeoutHandle);
+        // Explicit termination may still be returning from its shared drain.
+        if (!stopping) this._shutdowns.delete(id);
       })
       .catch((error) => {
         logger.debug('Background process timeout cleanup after failed collection', {
@@ -316,6 +394,7 @@ export class ProcessManager {
           error: summarizeError(error),
         });
         clearTimeout(timeoutHandle);
+        if (!ownsGroup) this._shutdowns.delete(id);
       });
 
     return {
@@ -348,18 +427,19 @@ export class ProcessManager {
 
   /**
    * Stop a background process by ID.
-   * Returns true if the process was found and stopped, false if unknown.
+   * Returns true if termination was requested, false if unknown. The visible
+   * record is removed immediately; close() still drains its owned termination.
    */
   stop(id: string): boolean {
     const entry = this._processes.get(id);
     if (!entry) return false;
 
-    const liveProc = this._procs.get(id);
-    if (liveProc && !entry.done) {
-      killTrackedProcess(liveProc, 'SIGTERM', id);
-    }
-    entry.done = true;
-    this._procs.delete(id);
+    const owner = this._shutdowns.get(id);
+    if (owner) void owner.stop().catch((error: unknown) => {
+      logger.warn('Background process stop failed', { processId: id, error: summarizeError(error) });
+    });
+    // Preserve bg_stop's immediate record removal, but retain the owned handle
+    // until exit/output collection completes so close() can still drain it.
     this._processes.delete(id);
     return true;
   }
@@ -546,3 +626,60 @@ async function readProcessStream(
 }
 
 
+
+/** A bounded observation window whose timer never outlives the observed work. */
+async function settleWithin(work: Promise<unknown>, graceMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([work, new Promise<void>((resolve) => { timer = setTimeout(resolve, graceMs); })]);
+  } finally { clearTimeout(timer); }
+}
+
+/** Groups are reachable only for children this manager spawned with detached:true. */
+function ownedGroupExists(pid: number): boolean {
+  assertOwnedGroupId(pid);
+  try { process.kill(-pid, 0); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+function signalOwnedGroup(pid: number, signal: NodeJS.Signals): void {
+  assertOwnedGroupId(pid);
+  try { process.kill(-pid, signal); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+}
+
+async function waitForOwnedGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = performance.now() + timeoutMs;
+  while (ownedGroupExists(pid)) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return false;
+    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10, remaining)));
+  }
+  return true;
+}
+
+async function terminateOwnedGroup(pid: number, graceMs: number): Promise<void> {
+  if (!ownedGroupExists(pid)) return;
+  signalOwnedGroup(pid, 'SIGTERM');
+  if (await waitForOwnedGroupExit(pid, graceMs)) return;
+  logger.warn('Background process group did not exit after SIGTERM, killing', { groupId: pid, signal: 'SIGKILL' });
+  signalOwnedGroup(pid, 'SIGKILL');
+  // Reap the direct child through its collection promise; orphan descendants
+  // are reaped by the OS. Do not claim shutdown if the owned group stays live.
+  if (!await waitForOwnedGroupExit(pid, 5_000)) throw new Error(`Owned process group ${pid} remains observable after SIGKILL; cannot verify release`);
+}
+
+function assertOwnedGroupId(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid owned process group');
+}
+
+function assertTimerRange(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0 || value > 2_147_483_647) {
+    throw new RangeError(`${name} must be a finite number from 0 to 2147483647 milliseconds`);
+  }
+}
