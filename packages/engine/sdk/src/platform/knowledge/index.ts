@@ -239,6 +239,8 @@ export type {
 } from './knowledge-api.js';
 export { KnowledgeProjectionService } from './projections.js';
 export { KnowledgeStore } from './store.js';
+export { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from './store-node-authority.js';
+export type { KnowledgeNodeMutationContext, KnowledgeNodeFieldCorrection } from './store-node-authority.js';
 export { KnowledgeService, buildCuratedKnowledgePromptSync } from './service.js';
 export type {
   KnowledgeBatchIngestResult,

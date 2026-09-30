@@ -53,10 +53,15 @@ import {
   writeKnowledgeNodeRow,
 } from './store-node-history.js';
 import {
+  mergeKnowledgeNodeMetadata, prepareKnowledgeNodeReplacement,
+  retainKnowledgeNodeRecord, type KnowledgeNodeMutationContext,
+} from './store-node-authority.js';
+import {
   deleteKnowledgeNodeRecord,
   deleteKnowledgeSourceRecord,
   type KnowledgeRecordDeleteView,
 } from './store-record-delete.js';
+import { inferRecordReferenceSpaceId, preferRelatedNonDefaultSpace } from './store-record-space.js';
 import { upsertKnowledgeRefinementTask } from './store-refinement.js';
 import {
   deleteKnowledgeSpaceRows,
@@ -107,7 +112,6 @@ import {
 } from './store-read.js';
 import { loadKnowledgeStoreSnapshot } from './store-load.js';
 import {
-  DEFAULT_KNOWLEDGE_SPACE_ID,
   ensureKnowledgeSpaceMetadata,
   getExplicitKnowledgeSpaceId,
   getKnowledgeSpaceId,
@@ -481,18 +485,24 @@ export class KnowledgeStore {
     await this.sqlite.save();
   }
 
-  async upsertNode(input: KnowledgeNodeUpsertInput): Promise<KnowledgeNodeRecord> {
+  /** Read-only preflight; upsertNode independently rechecks at the final write. */
+  async assertNodeMutation(input: KnowledgeNodeUpsertInput): Promise<void> {
     await this.init();
+    this.prepareNodeMutation(input);
+  }
+
+  private prepareNodeMutation(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext): {
+    readonly existing: KnowledgeNodeRecord | undefined;
+    readonly record: KnowledgeNodeRecord;
+    readonly now: number;
+  } {
     const existing = (input.id
       ? this.nodes.get(input.id)
       : this.getNodeByKindAndSlug(input.kind, input.slug)) ?? undefined;
     const now = nowMs();
     const _summary = stableText(input.summary);
     const _sourceId = stableText(input.sourceId);
-    const mergedNodeMetadata = {
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-    };
+    const mergedNodeMetadata = mergeKnowledgeNodeMetadata(existing?.metadata, input.metadata);
     const explicitNodeSpaceId = getExplicitKnowledgeSpaceId({ metadata: mergedNodeMetadata });
     const relatedNodeSpaceId = inferRecordReferenceSpaceId({
       sourceId: _sourceId ?? existing?.sourceId,
@@ -504,27 +514,31 @@ export class KnowledgeStore {
     const nodeMetadata = nodeSpaceId
       ? ensureKnowledgeSpaceMetadata(mergedNodeMetadata, nodeSpaceId)
       : mergedNodeMetadata;
-    // clampConfidence (not an inline min/max) so a non-finite confidence, NaN or
-    // Infinity slips past `??`, which only catches null/undefined, resolves to the
-    // auto-accept default instead of `NaN >= autoAcceptConfidence === false`
-    // silently holding a node as a draft forever.
+    // Existing confidence normalization is independent of operator authority.
     const confidence = clampConfidence(input.confidence ?? existing?.confidence ?? 70);
-    // Review gate: never silently active, stamp honest activation provenance. (Invariants 2 & 4.)
-    const gated = resolveNodeActivation({ input, existing, confidence, metadata: nodeMetadata, now, autoAcceptConfidence: this.nodeAutoAcceptConfidence });
-    const record: KnowledgeNodeRecord = {
+    const candidate: KnowledgeNodeRecord = {
       id: existing?.id ?? input.id ?? `node-${randomUUID().slice(0, 8)}`,
       kind: input.kind,
       slug: input.slug,
       title: input.title.trim(),
       ...(_summary !== null ? { summary: _summary } : existing?.summary ? { summary: existing.summary } : {}),
       aliases: uniq(input.aliases ?? existing?.aliases),
-      status: gated.status,
+      status: input.status ?? existing?.status ?? 'draft',
       confidence,
       ...(_sourceId !== null ? { sourceId: _sourceId } : existing?.sourceId ? { sourceId: existing.sourceId } : {}),
-      metadata: gated.metadata,
+      metadata: nodeMetadata,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
+    // Authority is resolved before automatic activation or any persistence.
+    const gated = resolveNodeActivation({ input, candidate, existing, mutation, now, autoAcceptConfidence: this.nodeAutoAcceptConfidence });
+    const record = retainKnowledgeNodeRecord({ ...candidate, ...gated });
+    return { existing, record, now };
+  }
+
+  async upsertNode(input: KnowledgeNodeUpsertInput, mutation?: KnowledgeNodeMutationContext): Promise<KnowledgeNodeRecord> {
+    await this.init();
+    const { existing, record, now } = this.prepareNodeMutation(input, mutation);
     writeKnowledgeNodeRow(this.sqlite, record);
     recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, record, existing, now); // preserve prior content (Invariant 8)
     this.nodes.set(record.id, record);
@@ -532,7 +546,7 @@ export class KnowledgeStore {
     return record;
   }
 
-  /** Read a node's append-only revision history, oldest first. (Invariant 8.) */
+  /** Read append-only node revisions, oldest first. */
   listNodeRevisions(nodeId: string): KnowledgeNodeRevisionRecord[] {
     return listKnowledgeNodeRevisions(this.nodeRevisions, nodeId);
   }
@@ -544,10 +558,14 @@ export class KnowledgeStore {
     return deleted;
   }
 
-  async replaceNodeRecord(record: KnowledgeNodeRecord): Promise<void> {
+  async replaceNodeRecord(record: KnowledgeNodeRecord, mutation?: KnowledgeNodeMutationContext): Promise<void> {
     await this.init();
-    writeKnowledgeNodeRow(this.sqlite, record);
-    this.nodes.set(record.id, record);
+    const existing = this.nodes.get(record.id);
+    const now = nowMs();
+    const replacement = prepareKnowledgeNodeReplacement(record, existing, mutation, now);
+    writeKnowledgeNodeRow(this.sqlite, replacement);
+    if (mutation) recordKnowledgeNodeRevisions(this.sqlite, this.nodeRevisions, replacement, existing, now);
+    this.nodes.set(replacement.id, replacement);
     await this.sqlite.save();
   }
 
@@ -1093,7 +1111,7 @@ export class KnowledgeStore {
     this.sources.clear();
     for (const record of snapshot.sources) this.sources.set(record.id, record);
     this.nodes.clear();
-    for (const record of snapshot.nodes) this.nodes.set(record.id, record);
+    for (const record of snapshot.nodes) this.nodes.set(record.id, retainKnowledgeNodeRecord(record));
     this.edges.clear();
     for (const record of snapshot.edges) this.edges.set(record.id, record);
     this.issues.clear();
@@ -1126,53 +1144,4 @@ export class KnowledgeStore {
     for (const record of snapshot.semanticEnrichmentStates) this.semanticEnrichmentStates.set(record.sourceId, record);
     this.ready = true;
   }
-}
-
-function inferRecordReferenceSpaceId(input: {
-  readonly sourceId?: string | null | undefined;
-  readonly nodeId?: string | null | undefined;
-  readonly metadata: Record<string, unknown>;
-  readonly sources: ReadonlyMap<string, KnowledgeSourceRecord>;
-  readonly nodes: ReadonlyMap<string, KnowledgeNodeRecord>;
-}): string | null {
-  const spaceIds = new Set<string>();
-  for (const sourceId of uniqueReferenceIds([
-    input.sourceId ?? undefined,
-    readMetadataString(input.metadata.sourceId),
-    ...readMetadataStringArray(input.metadata.sourceIds),
-  ])) {
-    const spaceId = getExplicitKnowledgeSpaceId(input.sources.get(sourceId));
-    if (spaceId) spaceIds.add(spaceId);
-  }
-  for (const nodeId of uniqueReferenceIds([
-    input.nodeId ?? undefined,
-    readMetadataString(input.metadata.nodeId),
-    ...readMetadataStringArray(input.metadata.linkedObjectIds),
-    ...readMetadataStringArray(input.metadata.subjectIds),
-  ])) {
-    const spaceId = getExplicitKnowledgeSpaceId(input.nodes.get(nodeId));
-    if (spaceId) spaceIds.add(spaceId);
-  }
-  return [...spaceIds].find((spaceId) => spaceId !== DEFAULT_KNOWLEDGE_SPACE_ID) ?? [...spaceIds][0] ?? null;
-}
-
-function preferRelatedNonDefaultSpace(explicitSpaceId: string | null, relatedSpaceId: string | null): string | null {
-  if (relatedSpaceId && relatedSpaceId !== DEFAULT_KNOWLEDGE_SPACE_ID && explicitSpaceId === DEFAULT_KNOWLEDGE_SPACE_ID) {
-    return relatedSpaceId;
-  }
-  return explicitSpaceId ?? relatedSpaceId;
-}
-
-function readMetadataString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function readMetadataStringArray(value: unknown): readonly string[] {
-  if (typeof value === 'string' && value.trim().length > 0) return [value.trim()];
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => readMetadataStringArray(entry));
-}
-
-function uniqueReferenceIds(values: readonly (string | undefined)[]): readonly string[] {
-  return [...new Set(values.filter((entry): entry is string => Boolean(entry && entry.trim().length > 0)))];
 }

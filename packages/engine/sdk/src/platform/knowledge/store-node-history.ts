@@ -2,10 +2,10 @@ import type { SQLiteStore } from '../state/sqlite-store.js';
 import { nowMs } from './store-schema.js';
 import { DEFAULT_NODE_AUTO_ACCEPT_CONFIDENCE } from './store-config.js';
 import type { KnowledgeStore } from './store.js';
+import { resolveKnowledgeNodeOperatorMutation, type KnowledgeNodeMutationContext } from './store-node-authority.js';
 import type {
   KnowledgeNodeRecord,
   KnowledgeNodeReviewProvenance,
-  KnowledgeNodeReviewState,
   KnowledgeNodeRevisionChangeKind,
   KnowledgeNodeRevisionRecord,
   KnowledgeNodeUpsertInput,
@@ -49,13 +49,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readNodeReviewer(metadata: Record<string, unknown>): string | undefined {
-  const review = metadata.review;
-  if (!isPlainRecord(review)) return undefined;
-  const reviewer = review.reviewer;
-  return typeof reviewer === 'string' && reviewer.trim().length > 0 ? reviewer.trim() : 'knowledge-review';
-}
-
 function readNodeProvenanceState(metadata: Record<string, unknown>): string | undefined {
   const provenance = metadata.reviewProvenance;
   if (!isPlainRecord(provenance)) return undefined;
@@ -69,49 +62,26 @@ function stampNodeProvenance(
   return { ...metadata, reviewProvenance: provenance };
 }
 
-/**
- * Decide a node's effective status and stamp honest review provenance so a node is
- * never silently active. (Invariants 2 & 4.)
- * - An explicit producer status (or a review that applied facts) is honored and
- *   labelled 'explicit'/'reviewed'.
- * - An already-active node stays active; if it predates the gate it is labelled
- *   'pre-gate' (folds/migrations never get downgraded).
- * - A new/draft node auto-accepts at/above the configured confidence threshold
- *   (labelled 'auto-accepted') or is held as 'draft' pending review otherwise.
- */
+/** Explicit operator authority precedes ordinary producer activation policy. */
 export function resolveNodeActivation(args: {
   readonly input: KnowledgeNodeUpsertInput;
+  readonly candidate: KnowledgeNodeRecord;
   readonly existing: KnowledgeNodeRecord | undefined;
-  readonly confidence: number;
-  readonly metadata: Record<string, unknown>;
+  readonly mutation?: KnowledgeNodeMutationContext | undefined;
   readonly now: number;
   readonly autoAcceptConfidence: number;
 }): { status: KnowledgeNodeRecord['status']; metadata: Record<string, unknown> } {
-  const { input, existing, confidence, metadata, now, autoAcceptConfidence } = args;
-  const reviewer = readNodeReviewer(metadata);
-  const reviewedByFacts = reviewer !== undefined;
+  const { input, candidate, existing, mutation, now, autoAcceptConfidence } = args;
+  const { confidence, metadata } = candidate;
+  const reviewed = resolveKnowledgeNodeOperatorMutation(candidate, existing, mutation, now);
+  if (reviewed) return reviewed;
   if (input.status) {
-    const state: KnowledgeNodeReviewState = reviewedByFacts ? 'reviewed' : 'explicit';
     return {
       status: input.status,
       metadata: stampNodeProvenance(metadata, {
-        state,
-        reason: reviewedByFacts
-          ? `reviewed: status set to '${input.status}' by ${reviewer}`
-          : `explicit: producer set status '${input.status}'`,
+        state: 'explicit',
+        reason: `explicit: producer set status '${input.status}'`,
         decidedAt: now,
-        ...(reviewer !== undefined ? { reviewer } : {}),
-      }),
-    };
-  }
-  if (reviewedByFacts && existing) {
-    return {
-      status: existing.status,
-      metadata: stampNodeProvenance(metadata, {
-        state: 'reviewed',
-        reason: `reviewed by ${reviewer}`,
-        decidedAt: now,
-        reviewer,
       }),
     };
   }

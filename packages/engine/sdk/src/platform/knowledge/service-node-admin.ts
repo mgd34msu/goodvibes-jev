@@ -1,3 +1,4 @@
+import { createKnowledgeNodeOperatorMutation } from './store-node-authority.js';
 import type { KnowledgeStore } from './store.js';
 import type { KnowledgeIssueRecord, KnowledgeNodeRecord } from './types.js';
 import { tokenize } from './shared.js';
@@ -93,6 +94,7 @@ export async function reviewKnowledgeNodeRecord(
   const node = store.getNode(input.id);
   if (!node) return { ok: false };
   const reviewer = input.reviewer ?? 'knowledge-review';
+  const mutation = createKnowledgeNodeOperatorMutation(node, { action: input.decision, reviewer });
   const updated = await store.upsertNode({
     id: node.id,
     kind: node.kind,
@@ -103,7 +105,7 @@ export async function reviewKnowledgeNodeRecord(
     status: input.decision === 'accept' ? 'active' : 'stale',
     confidence: node.confidence,
     ...(node.sourceId ? { sourceId: node.sourceId } : {}),
-    metadata: { ...node.metadata, review: { action: input.decision, reviewer, reviewedAt: Date.now() } },
-  });
+    metadata: node.metadata,
+  }, mutation);
   return { ok: true, node: updated };
 }
