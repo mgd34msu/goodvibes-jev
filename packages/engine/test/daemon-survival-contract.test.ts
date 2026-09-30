@@ -5,7 +5,7 @@
  * clean-shutdown marker yields exactly one crash receipt after an unclean
  * exit.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -82,6 +82,23 @@ describe('renderSystemdUnit survival contract', () => {
 });
 
 describe('systemd install path: detected version gates the unit; lingering is verified honestly', () => {
+  let previousUser: string | undefined;
+  let previousLogname: string | undefined;
+  beforeEach(() => {
+    previousUser = process.env.USER;
+    previousLogname = process.env.LOGNAME;
+    // The runner is a stub. Its fixture identity must not depend on whether
+    // the test host has a login session (headless containers often do not).
+    process.env.USER = 'survival-fixture';
+    delete process.env.LOGNAME;
+  });
+  afterEach(() => {
+    if (previousUser === undefined) delete process.env.USER;
+    else process.env.USER = previousUser;
+    if (previousLogname === undefined) delete process.env.LOGNAME;
+    else process.env.LOGNAME = previousLogname;
+  });
+
   function systemdManager(dir: string, options: {
     systemdVersion: string;
     lingerAnswers: readonly string[];
@@ -129,6 +146,22 @@ describe('systemd install path: detected version gates the unit; lingering is ve
       expect(commands).toContain('systemctl --version');
       expect(commands.some((c) => c.startsWith('loginctl enable-linger '))).toBe(true);
       expect(status.lingerNote).toMatch(/lingering: enabled for .+, the daemon starts at boot\./);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('without a known user, lingering is reported unavailable and no user action is attempted', () => {
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    const dir = mkdtempSync(join(tmpdir(), 'survival-install-no-user-'));
+    try {
+      const { manager, commands } = systemdManager(dir, {
+        systemdVersion: 'systemd 254',
+        lingerAnswers: ['Linger=no'],
+      });
+      expect(manager.install().lingerNote).toContain('could not determine the current user');
+      expect(commands.some((command) => command.startsWith('loginctl '))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

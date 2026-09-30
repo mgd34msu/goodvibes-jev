@@ -21,6 +21,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
+import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
+
+// beforeEach runs after bootDaemon's beforeAll composition installed its live
+// port, and afterEach restores that port before the daemon is stopped.
+const readings = useArtifactKindReadings();
 
 const TOKEN = 'artifact-wire-token';
 
@@ -74,6 +79,9 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
     expect(created.artifact.sizeBytes).toBe(bytes.byteLength);
     expect(created.artifact.mimeType).toBe('application/octet-stream');
     expect(created.artifact.filename).toBe('fixture.bin');
+    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests[0]?.context?.battery).toBe('engine.artifacts.kind');
+    expect(readings.requests[0]?.state).toEqual({ mimeType: 'application/octet-stream', filename: 'fixture.bin' });
 
     const contentRes = await fetch(`${daemon.url}/api/artifacts/${created.artifact.id}/content`, {
       headers: authHeaders(),

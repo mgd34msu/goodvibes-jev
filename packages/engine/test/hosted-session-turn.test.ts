@@ -31,6 +31,7 @@ import { createHostedSessionRuntime } from '../sdk/src/platform/hosted-sessions/
 import type { ChatRequest, ChatResponse, LLMProvider } from '../sdk/src/platform/providers/interface.ts';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry.ts';
 import type { PermissionPromptDecision } from '../sdk/src/platform/permissions/prompt.ts';
+import { installHostedSessionReadings } from './_helpers/hosted-session-readings.ts';
 
 const PROVIDER = 'stub';
 const MODEL = 'stub-1';
@@ -43,6 +44,7 @@ let runtimeBus: RuntimeEventBus;
 let requests: ChatRequest[];
 /** The answers the stub gives, in order. */
 let answers: ChatResponse[];
+let readings: ReturnType<typeof installHostedSessionReadings>;
 
 function textAnswer(content: string): ChatResponse {
   return {
@@ -117,9 +119,11 @@ beforeEach(() => {
     replace: true,
   });
   services.providerRegistry.setCurrentModel(`${PROVIDER}:${MODEL}`);
+  readings = installHostedSessionReadings();
 });
 
 afterEach(() => {
+  readings.restore();
   services.dispose();
   rmSync(root, { recursive: true, force: true });
 });
@@ -135,6 +139,8 @@ test('a hosted session runs a real turn and the transcript is its own', async ()
 
   await session.submit('say something');
 
+  expect(readings.requests.filter((request) => request.context?.battery === 'contract.request-route')
+    .map((request) => request.state)).toEqual([{ request: 'say something' }]);
   expect(requests).toHaveLength(1);
   // The system prompt this session was composed with reached the model.
   expect(requests[0]!.systemPrompt).toContain('you are hosted by the daemon');

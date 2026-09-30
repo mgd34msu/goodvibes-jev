@@ -13,7 +13,6 @@
 //      port's `ask`, or an `askAs` outside a decision definer, bypasses
 //      batteries altogether.
 
-import ts from 'typescript';
 import type { FixtureCheck, JudgmentPort, NamedDecision, Question } from '@goodvibes-jev/judgment';
 
 export interface LintFinding {
@@ -112,67 +111,5 @@ export async function coverageFindings(decisions: readonly NamedDecision[]): Pro
   return { findings, open };
 }
 
-// ── 2. Registered use ────────────────────────────────────────────────────────
-
-const DEFINER = /^define[A-Z]\w*$/;
-
-const propertyNamed = (object: ts.ObjectLiteralExpression, name: string): ts.ObjectLiteralElementLike | undefined =>
-  object.properties.find((property) => property.name !== undefined && ts.isIdentifier(property.name) && property.name.text === name);
-
-/** A string a name property holds: a literal, or a const in the same file initialised to one. */
-function resolveName(property: ts.ObjectLiteralElementLike, file: ts.SourceFile): string | undefined {
-  const value = ts.isPropertyAssignment(property) ? property.initializer : ts.isShorthandPropertyAssignment(property) ? property.name : undefined;
-  if (value === undefined) return undefined;
-  if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
-  if (!ts.isIdentifier(value)) return undefined;
-  let found: string | undefined;
-  const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === value.text && node.initializer !== undefined) {
-      if (ts.isStringLiteral(node.initializer) || ts.isNoSubstitutionTemplateLiteral(node.initializer)) found = node.initializer.text;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return found;
-}
-
-/** Whether a node sits inside a function declared as a decision definer (`function defineX(spec)`). */
-function insideDefiner(node: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node.parent; current !== undefined; current = current.parent) {
-    if (ts.isFunctionDeclaration(current) && current.name !== undefined && DEFINER.test(current.name.text)) return true;
-  }
-  return false;
-}
-
-/** Registered-use findings for one source file. */
-export function sourceFindings(path: string, text: string, registered: ReadonlySet<string>): LintFinding[] {
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const findings: LintFinding[] = [];
-  const at = (node: ts.Node): string => `${path}:${file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1}`;
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const [first] = node.arguments;
-      const callee = node.expression;
-      if (ts.isIdentifier(callee) && DEFINER.test(callee.text) && first !== undefined && ts.isObjectLiteralExpression(first)) {
-        const name = propertyNamed(first, 'name');
-        if (name !== undefined && propertyNamed(first, 'fixtures') !== undefined) {
-          const resolved = resolveName(name, file);
-          if (resolved === undefined) {
-            findings.push({ rule: 'registered-use', where: at(node), message: `${callee.text} defines a decision whose name is not a string this lint can read, so its registration cannot be checked` });
-          } else if (!registered.has(resolved)) {
-            findings.push({ rule: 'registered-use', where: at(node), message: `${callee.text} defines "${resolved}", which no judgment registry registers` });
-          }
-        }
-      }
-      if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'ask' && first !== undefined && ts.isObjectLiteralExpression(first) && propertyNamed(first, 'questions') !== undefined) {
-        findings.push({ rule: 'registered-use', where: at(node), message: 'asks Jev with a request built inline, outside a registered decision' });
-      }
-      if (ts.isIdentifier(callee) && callee.text === 'askAs' && !insideDefiner(node)) {
-        findings.push({ rule: 'registered-use', where: at(node), message: 'calls askAs outside a decision definer (a `function define*`), so the call is attributed to no registered decision' });
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return findings;
-}
+// Source registration checks share the same finding type.
+export { sourceFindings } from './judgment-lint-source.ts';

@@ -63,6 +63,8 @@ import { openEscalation } from '../sdk/src/platform/contract/intake-route.ts';
 import { runContractCli, type ContractCliIo } from '../sdk/src/platform/contract/cli.ts';
 import type { ContractUnitView, ContractView, CriterionView, UnitCheck } from '../sdk/src/platform/contract/types.ts';
 import { decisionLogPath } from '../sdk/src/platform/state/decision-log.ts';
+import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
+import { PROOF_RETAINED_MARKER, STALE_PROOF_TMP_MS, retainProofOutput } from './proof-temp.ts';
 
 const BIN = resolve(dirname(new URL(import.meta.url).pathname), '..', 'sdk', 'src', 'bin', 'goodvibes-contract.ts');
 /** The longest either contract may run before the proof gives up on it. */
@@ -126,6 +128,10 @@ if (presentKeys.length === 0) {
  * only the named provider keys and whose home is a new empty directory.
  */
 const CHILD_MARK = 'CONTRACT_PROOF_CLEAN_ENVIRONMENT';
+// Includes abandoned clean-home directories. Explicitly kept failed projects
+// carry a marker and are never reclaimed by this scratch-directory sweep.
+sweepStaleTmpDirs(tmpdir(), 'contract-proof-scratch-', STALE_PROOF_TMP_MS, { preserveMarker: PROOF_RETAINED_MARKER });
+sweepStaleTmpDirs(tmpdir(), 'contract-proof-home-', STALE_PROOF_TMP_MS, { preserveMarker: PROOF_RETAINED_MARKER });
 if (process.env[CHILD_MARK] !== '1') {
   const home = mkdtempSync(join(tmpdir(), 'contract-proof-home-'));
   const env: Record<string, string> = {};
@@ -158,7 +164,7 @@ function write(root: string, path: string, text: string): void {
 }
 
 function makeProject(): string {
-  const root = mkdtempSync(join(tmpdir(), 'contract-proof-'));
+  const root = mkdtempSync(join(tmpdir(), 'contract-proof-scratch-'));
   write(root, 'package.json', `${JSON.stringify({ name: 'durations', private: true, type: 'module', scripts: { test: 'bun test' } }, null, 2)}\n`);
   write(root, 'src/index.ts', "export const VERSION = '0.1.0';\n");
   write(root, 'test/index.test.ts', "import { expect, test } from 'bun:test';\nimport { VERSION } from '../src/index.ts';\n\ntest('version', () => {\n  expect(VERSION).toBe('0.1.0');\n});\n");
@@ -583,6 +589,7 @@ if (failures.length === 0) {
   say('Every assertion held.');
   rmSync(root, { recursive: true, force: true });
 } else {
+  retainProofOutput(root);
   say(`${failures.length} assertion(s) failed; the project is kept at ${root}:`);
   for (const failure of failures) say(`  - ${failure}`);
 }

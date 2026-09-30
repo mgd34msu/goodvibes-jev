@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { JudgmentError } from '@goodvibes-jev/judgment';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/store.ts';
 import type { ArtifactCreateInput, ArtifactStreamCreateInput } from '../sdk/src/platform/artifacts/types.ts';
 import { createDaemonMediaRouteHandlers } from '../daemon-sdk/src/media-routes.ts';
@@ -10,7 +12,7 @@ import type { DaemonKnowledgeRouteContext } from '../daemon-sdk/src/knowledge-ro
 import type { ArtifactStoreLike } from '../daemon-sdk/src/media-route-types.ts';
 import type { ArtifactStoreUploadLike } from '../daemon-sdk/src/artifact-upload.ts';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.ts';
-import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
+import { artifactKindPort, useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
 
 useArtifactKindReadings();
 
@@ -147,6 +149,31 @@ describe('artifact uploads and ingest', () => {
     expect(store.list()).toHaveLength(0);
     expect(readdirSync(root).filter((entry) => entry.endsWith('.data'))).toHaveLength(0);
     expect(readdirSync(root).filter((entry) => entry.endsWith('.json'))).toHaveLength(0);
+  });
+
+  test.each(['invalid-request', 'unavailable'] as const)('ArtifactStore removes spooled content when kind judgment fails (%s)', async (kind) => {
+    const root = tempDir(`judgment-${kind}`);
+    const store = new ArtifactStore({ rootDir: root });
+    const existing = await store.create({ kind: 'document', text: 'keep this artifact', filename: 'existing.txt' });
+    const before = readdirSync(root).sort();
+    const failure = new JudgmentError(kind, 'artifact kind reading failed');
+    const fake = artifactKindPort(() => { throw failure; });
+    const previous = installJudgmentPort(fake.port);
+    try {
+      await expect(store.createFromStream({
+        stream: ['unclassified uploaded bytes'],
+        filename: 'failed.bin',
+        mimeType: 'application/octet-stream',
+      })).rejects.toBe(failure);
+      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests[0]?.context?.battery).toBe('engine.artifacts.kind');
+      expect(store.list().map((artifact) => artifact.id)).toEqual([existing.id]);
+      // No orphan data or partial metadata, and an unrelated artifact survives.
+      expect(readdirSync(root).sort()).toEqual(before);
+      expect((await store.readContent(existing.id)).buffer.toString()).toBe('keep this artifact');
+    } finally {
+      installJudgmentPort(previous);
+    }
   });
 
   test('POST /api/artifacts accepts multipart file uploads without JSON parsing', async () => {
