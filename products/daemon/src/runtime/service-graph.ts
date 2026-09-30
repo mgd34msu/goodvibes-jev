@@ -93,7 +93,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       // Owned manager: gate states derive from domain settings keys + live bridge
       // (mirrors the SDK composition root; a passed manager is the caller's to wire).
       featureFlags.loadFromConfig({ flags: deriveFeatureStates(configManager) });
-      bindFeatureSettingsBridge(configManager, featureFlags);
+      disposalScope.registry.add('feature settings bridge', bindFeatureSettingsBridge(configManager, featureFlags));
     }
     const runtimeDispatch = createDomainDispatch(options.runtimeStore);
     // Late-bound governor admission keeps construction and background work on
@@ -207,7 +207,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // the port is already in place.
     const personalCapture = new PersonalCaptureHolder();
     const hookDispatcher = new HookDispatcher({ agentManager, toolLLM, projectRoot: workingDirectory }, hookActivityTracker);
-    configManager.attachHookDispatcher(hookDispatcher);
+    disposalScope.registry.add('config hook attachment', configManager.attachHookDispatcher(hookDispatcher));
     const hookWorkbench = createHookWorkbench({
       hookDispatcher,
       configManager,
@@ -404,7 +404,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const webhookNotifier = new WebhookNotifier();
     const replayEngine = new DeterministicReplayEngine(workingDirectory);
     const providerOptimizer = new ProviderOptimizer(providerRegistry, providerCapabilityRegistry, false); // dark until its gate flips it
-    bindProviderOptimizerFeatureFlag(featureFlags, providerOptimizer);
+    disposalScope.registry.add('provider optimizer bridge', bindProviderOptimizerFeatureFlag(featureFlags, providerOptimizer));
     applyProviderOptimizerConfigMode(configManager, providerOptimizer);
     const sessionMemoryStore = new SessionMemoryStore();
     const sessionLineageTracker = new SessionLineageTracker(); const sessionChangeTracker = new SessionChangeTracker();
@@ -415,10 +415,10 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const policyRuntimeState = new PolicyRuntimeState();
     const fileCache = new FileStateCache();
     const projectIndex = new ProjectIndex(workingDirectory);
+    disposalScope.ownUntilRegistered('default workspace project index', () => projectIndex.dispose());
     const processManager = new ProcessManager();
     disposalScope.registry.add('background processes', () => processManager.close());
-    // Repo source-tree code index, sharing memoryEmbeddingRegistry with MemoryStore
-    // above. Auto-build is config-gated (default off).
+    // The source-tree index shares memory embeddings; auto-build is config-gated and off by default.
     const { codeIndexStore, codeIndexReindexScheduler } = createCodeIndexServices({ workingDirectory, surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT, configManager, memoryEmbeddingRegistry, isReindexPaused: () => pauseController.isPaused('code-index-reindex'), admitExpensiveWork });
     disposalScope.ownUntilRegistered('code-index reindex scheduler', () => codeIndexReindexScheduler.dispose());
     // Store snapshots, the periodic append-only sweep, durable remembered-approval rules + the live credential chain.

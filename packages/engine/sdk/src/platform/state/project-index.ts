@@ -52,6 +52,8 @@ export class ProjectIndex {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private createdAt: string = new Date().toISOString();
   private loaded = false;
+  private disposed = false;
+  private closing: Promise<void> | undefined;
 
   constructor(baseDir: string) {
     this.projectRoot = baseDir;
@@ -68,6 +70,7 @@ export class ProjectIndex {
    * Called at startup, safe to call multiple times.
    */
   async load(): Promise<void> {
+    this.assertOpen();
     if (!existsSync(this.indexPath)) {
       this.loaded = true;
       return;
@@ -90,6 +93,7 @@ export class ProjectIndex {
    * Flush to disk immediately, bypassing debounce.
    */
   async forceFlush(): Promise<void> {
+    this.assertOpen();
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -149,6 +153,7 @@ export class ProjectIndex {
    * If tokens is not provided, attempts to estimate from disk.
    */
   upsertFile(path: string, tokens?: number): void {
+    this.assertOpen();
     const normalPath = this.normalizePath(path);
     const t = tokens ?? this.files.get(normalPath) ?? 0;
     this.files.set(normalPath, t);
@@ -160,6 +165,7 @@ export class ProjectIndex {
    * No-op if file not in index.
    */
   touchFile(path: string): void {
+    this.assertOpen();
     const normalPath = this.normalizePath(path);
     if (!this.files.has(normalPath)) return;
     // Update token estimate from file size if readable
@@ -175,6 +181,7 @@ export class ProjectIndex {
   }
 
   removeFile(path: string): void {
+    this.assertOpen();
     const normalPath = this.normalizePath(path);
     if (this.files.delete(normalPath)) {
       this.scheduleFlush();
@@ -196,12 +203,15 @@ export class ProjectIndex {
     return p;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.disposed = true;
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    await this.forceFlush();
+    this.closing = this.flush();
+    return this.closing;
   }
 
   /**
@@ -214,11 +224,13 @@ export class ProjectIndex {
    * @param newBaseDir - Absolute path to the new project root.
    */
   async reroot(newBaseDir: string): Promise<void> {
+    this.assertOpen();
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
     await this.forceFlush();
+    this.assertOpen();
     this.projectRoot = newBaseDir;
     this.baseDir = newBaseDir;
     this.indexPath = join(newBaseDir, '.goodvibes', 'project-index.json');
@@ -233,11 +245,16 @@ export class ProjectIndex {
     if (this.flushTimer !== null) clearTimeout(this.flushTimer);
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
+      if (this.disposed) return;
       this.flush().catch(err => {
         logger.error('ProjectIndex: scheduled flush failed', { error: summarizeError(err) });
       });
     }, 5000);
     this.flushTimer.unref?.();
+  }
+
+  private assertOpen(): void {
+    if (this.disposed) throw new Error('ProjectIndex is disposed');
   }
 
   private async flush(): Promise<void> {
