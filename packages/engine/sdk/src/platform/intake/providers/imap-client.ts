@@ -11,18 +11,17 @@
 // ---------------------------------------------------------------------------
 
 import { connect as tlsConnect } from 'node:tls';
-import { hasTaggedCompletion, parseIntakeFetchResponse, taggedStatus } from './imap-response.js';
+import { parseIntakeFetchResponse, taggedCompletion } from './imap-response.js';
 export { decodeHeader } from './imap-response.js';
 export { parseIntakeFetchResponse as parseFetchResponse } from './imap-response.js';
 /** Narrow transport seam; production uses TLS, tests use an in-memory socket. */
 export interface ImapSocket {
-  setEncoding(encoding: string): unknown;
   write(data: string): unknown;
   once(event: 'error', listener: (error: Error) => void): unknown;
-  on(event: 'data', listener: (chunk: string) => void): unknown;
+  on(event: 'data', listener: (chunk: Uint8Array) => void): unknown;
   on(event: 'error', listener: (error: Error) => void): unknown;
   on(event: 'close', listener: () => void): unknown;
-  off(event: 'data', listener: (chunk: string) => void): unknown;
+  off(event: 'data', listener: (chunk: Uint8Array) => void): unknown;
   off(event: 'error', listener: (error: Error) => void): unknown;
   off(event: 'close', listener: () => void): unknown;
   destroy(): unknown;
@@ -58,7 +57,7 @@ const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export class ImapClient {
   private socket: ImapSocket | null = null;
   private tagCounter = 0;
-  private buffer = '';
+  private buffer: Buffer = Buffer.alloc(0);
   private busy = false;
   private closed = false;
   private ready = false;
@@ -92,7 +91,6 @@ export class ImapClient {
       { host: this.cfg.host, port: this.cfg.port, servername: this.cfg.host }, ready,
     );
     this.socket = socket;
-    socket.setEncoding('utf-8');
     socket.on('error', this.idleError);
     const onError = (): void => refuse(new Error('IMAP TLS connection failed'));
     const onClose = (): void => refuse(new Error('IMAP connection closed during connect'));
@@ -106,9 +104,9 @@ export class ImapClient {
       // Arm the greeting reader before the TLS callback: an eager server may
       // deliver its greeting in the same turn as the successful connection.
       const [, greeting] = await Promise.all([
-        connected, this.readUntil(chunk => /\r?\n/.test(chunk), 'greeting'),
+        connected, this.readUntil(chunk => { const newline = chunk.indexOf(10); return newline < 0 ? undefined : newline + 1; }, 'greeting'),
       ]);
-      if (!/^\* OK\b/i.test(greeting)) throw new Error('IMAP server refused the connection');
+      if (!/^\* OK\b/i.test(greeting.toString('utf8'))) throw new Error('IMAP server refused the connection');
       this.ready = true;
     } catch (error) {
       this.close();
@@ -135,7 +133,7 @@ export class ImapClient {
   async searchUids(since?: number): Promise<number[]> {
     if (since !== undefined && !Number.isFinite(since)) throw new Error('Invalid IMAP search date');
     const criteria = since ? `SINCE ${imapDate(since)}` : 'ALL';
-    const lines = (await this.command(`UID SEARCH ${criteria}`)).split(/\r?\n/);
+    const lines = (await this.command(`UID SEARCH ${criteria}`)).toString('utf8').split(/\r?\n/);
     const uids: number[] = [];
     for (const line of lines) {
       const match = /^\* SEARCH(.*)$/i.exec(line.trim());
@@ -178,7 +176,7 @@ export class ImapClient {
   close(): void {
     this.closed = true;
     this.ready = false;
-    this.buffer = '';
+    this.buffer = Buffer.alloc(0);
     if (this.socket) {
       this.socket.off('error', this.idleError);
       this.socket.destroy();
@@ -201,17 +199,17 @@ export class ImapClient {
   }
 
   /** Send a tagged command and collect all response lines up to the tagged OK. */
-  private async command(text: string): Promise<string> {
+  private async command(text: string): Promise<Buffer> {
     if (!this.ready) throw new Error('IMAP connection is not ready');
     if (this.busy) throw new Error('IMAP command already in progress');
     this.busy = true;
     try {
       const tag = this.nextTag();
       const socket = this.requireSocket();
-      const response = this.readUntil((buf) => hasTaggedCompletion(buf, tag), redactCommand(text));
+      const response = this.readUntil((buf) => taggedCompletion(buf, tag)?.end, redactCommand(text));
       try { socket.write(`${tag} ${text}\r\n`); } catch { this.close(); }
       const raw = await response;
-      const status = taggedStatus(raw, tag);
+      const status = taggedCompletion(raw, tag)?.status;
       if (status !== 'OK') {
         // A server may echo submitted credentials in its free-text rejection.
         // Status is sufficient here; never include that untrusted diagnostic.
@@ -223,23 +221,30 @@ export class ImapClient {
     } finally { this.busy = false; }
   }
 
-  /** Read from the socket until `predicate(buffer)` is true or timeout. */
-  private readUntil(predicate: (buf: string) => boolean, label: string): Promise<string> {
+  /** Read raw bytes through one response boundary, retaining later bytes separately. */
+  private readUntil(completedEnd: (buf: Buffer) => number | undefined, label: string): Promise<Buffer> {
     const socket = this.requireSocket();
-    return new Promise<string>((resolve, reject) => {
-      const onData = (chunk: string): void => {
-        this.buffer += chunk;
-        if (Buffer.byteLength(this.buffer, 'utf8') > this.cfg.maxResponseBytes) {
+    return new Promise<Buffer>((resolve, reject) => {
+      const onData = (chunk: Uint8Array): void => {
+        this.buffer = Buffer.concat([this.buffer, chunk]);
+        if (this.buffer.length > this.cfg.maxResponseBytes) {
           cleanup();
           reject(new Error(`IMAP response exceeded ${this.cfg.maxResponseBytes} bytes (${label})`));
           this.close();
           return;
         }
-        if (predicate(this.buffer)) {
-          const out = this.buffer;
-          this.buffer = '';
+        try {
+          const end = completedEnd(this.buffer);
+          if (end !== undefined) {
+            const out = this.buffer.subarray(0, end);
+            this.buffer = this.buffer.subarray(end);
+            cleanup();
+            resolve(out);
+          }
+        } catch {
           cleanup();
-          resolve(out);
+          reject(new Error(`Invalid IMAP response framing (${label})`));
+          this.close();
         }
       };
       const onError = (): void => {

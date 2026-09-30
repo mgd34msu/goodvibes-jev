@@ -7,7 +7,10 @@ class MemorySocket extends EventEmitter implements ImapSocket {
   readonly writes: string[] = [];
   destroyed = false;
   reply?: (command: string) => void;
-  setEncoding(): this { return this; }
+  override emit(event: string | symbol, ...args: unknown[]): boolean {
+    if (event === 'data' && typeof args[0] === 'string') args[0] = Buffer.from(args[0]);
+    return super.emit(event, ...args);
+  }
   write(command: string): boolean {
     this.writes.push(command);
     queueMicrotask(() => this.reply?.(command));
