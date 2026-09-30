@@ -30,6 +30,20 @@ import type { SyncStoreCallbacks } from './sync.js';
 import type { TransportAdapter, ReconnectEngineCallbacks } from './reconnect.js';
 import { logger } from '../../utils/logger.js';
 
+// Host-side backend registration, distinct from paired distributed peers.
+export { PeerRegistry, PeerRegistryValidationError, normalizeBackendConfig } from './host/peer-registry.js';
+export type {
+  BackendKind,
+  CloudProvider,
+  DockerBackendConfig,
+  SshBackendConfig,
+  CloudTerminalBackendConfig,
+  LocalProcessBackendConfig,
+  BackendConfig,
+  PeerRecord,
+  PeerRegistrationInput,
+} from './host/peer-registry.js';
+
 // ── Re-exports ────────────────────────────────────────────────────────────────
 
 export type {

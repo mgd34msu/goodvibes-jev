@@ -50465,6 +50465,16 @@
       "text": "BINARY_INSTALL_COMMAND = \"curl -fsSL https://goodvibes.sh/install.sh | sh\""
     },
     {
+      "name": "BackendConfig",
+      "kind": "type",
+      "text": "export type BackendConfig = ({ kind: 'docker'; } & DockerBackendConfig) | ({ kind: 'ssh'; } & SshBackendConfig) | ({ kind: 'cloud-terminal'; } & CloudTerminalBackendConfig) | ({ kind: 'local-process'; } & LocalProcessBackendConfig);"
+    },
+    {
+      "name": "BackendKind",
+      "kind": "type",
+      "text": "export type BackendKind = 'docker' | 'ssh' | 'cloud-terminal' | 'local-process';"
+    },
+    {
       "name": "BootFoldLogger",
       "kind": "interface",
       "required": [
@@ -50544,6 +50554,20 @@
         "sizeBytes"
       ],
       "text": "export interface CheckpointRecord { id: string; createdAt: number; sizeBytes: number; retentionClass: RetentionClass; path: string; }"
+    },
+    {
+      "name": "CloudProvider",
+      "kind": "type",
+      "text": "export type CloudProvider = 'gcp' | 'aws' | 'azure';"
+    },
+    {
+      "name": "CloudTerminalBackendConfig",
+      "kind": "interface",
+      "required": [
+        "credentialRef",
+        "provider"
+      ],
+      "text": "export interface CloudTerminalBackendConfig { provider: CloudProvider; projectId?: string; credentialRef: string; location?: string; instance?: string; }"
     },
     {
       "name": "CodeIndexServices",
@@ -50928,6 +50952,14 @@
       "text": "export type DistributedWorkType = 'invoke' | 'status.request' | 'location.request' | 'session.message' | 'automation.run' | 'device.capability';"
     },
     {
+      "name": "DockerBackendConfig",
+      "kind": "interface",
+      "required": [
+        "containerName"
+      ],
+      "text": "export interface DockerBackendConfig { containerName: string; dockerHost?: string; }"
+    },
+    {
       "name": "DowngradeReason",
       "kind": "type",
       "text": "export type DowngradeReason = 'peer_minor_older' | 'policy_forced' | 'peer_requested';"
@@ -51216,6 +51248,11 @@
         "scanned"
       ],
       "text": "export interface LivenessReapResult { readonly scanned: number; readonly reaped: number; }"
+    },
+    {
+      "name": "LocalProcessBackendConfig",
+      "kind": "interface",
+      "text": "export interface LocalProcessBackendConfig { cwd?: string; allowedCommands?: string[]; }"
     },
     {
       "name": "McpAttackPathFinding",
@@ -51550,6 +51587,51 @@
       "name": "PLUGIN_CAPABILITIES",
       "kind": "const",
       "text": "ALL_CAPABILITIES: ReadonlyArray<PluginCapability> ;; via ReadonlyArray = interface ReadonlyArray<T> { readonly length: number; toString(): string; toLocaleString(): string; concat(...items: ConcatArray<T>[]): T[]; concat(...items: (T | ConcatArray<T>)[]): T[]; join(separator?: string): string; slice(start?: number, end?: number): T[]; indexOf(searchElement: T, fromIndex?: number): number; lastIndexOf(searchElement: T, fromIndex?: number): number; every<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S, thisArg?: any): this is readonly S[]; every(predicate: (value: T, index: number, array: readonly T[]) => unknown, thisArg?: any): boolean; some(predicate: (value: T, index: number, array: readonly T[]) => unknown, thisArg?: any): boolean; forEach(callbackfn: (value: T, index: number, array: readonly T[]) => void, thisArg?: any): void; map<U>(callbackfn: (value: T, index: number, array: readonly T[]) => U, thisArg?: any): U[]; filter<S extends T>(predicate: (value: T, index: number, array: readonly T[]) => value is S, thisArg?: any): S[]; filter(predicate: (value: T, index: number, array: readonly T[]) => unknown, thisArg?: any): T[]; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: readonly T[]) => T): T; reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: readonly T[]) => T, initialValue: T): T; reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: readonly T[]) => U, initialValue: U): U; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: readonly T[]) => T): T; reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: readonly T[]) => T, initialValue: T): T; reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: readonly T[]) => U, initialValue: U): U; readonly [n: number]: T; }"
+    },
+    {
+      "name": "PeerRecord",
+      "kind": "interface",
+      "required": [
+        "backendConfig",
+        "backendKind",
+        "displayName",
+        "peerId"
+      ],
+      "text": "export interface PeerRecord { peerId: string; displayName: string; backendKind: BackendKind; backendConfig: BackendConfig; }"
+    },
+    {
+      "name": "PeerRegistrationInput",
+      "kind": "interface",
+      "required": [
+        "backendConfig",
+        "backendKind",
+        "displayName",
+        "peerId"
+      ],
+      "text": "export interface PeerRegistrationInput { peerId: string; displayName: string; backendKind: BackendKind; backendConfig: Record<string, unknown>; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "PeerRegistry",
+      "kind": "class",
+      "publicMembers": [
+        "close",
+        "constructor",
+        "dbPath",
+        "get",
+        "init",
+        "list",
+        "register",
+        "remove"
+      ],
+      "text": "export declare class PeerRegistry { private readonly store; private initialized; private initPromise; private generation; constructor(workingDirectory: string); get dbPath(): string; init(): Promise<void>; private requireInit; register(input: PeerRegistrationInput): Promise<PeerRecord>; get(peerId: string): PeerRecord | null; list(): PeerRecord[]; remove(peerId: string): Promise<boolean>; close(): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "PeerRegistryValidationError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor"
+      ],
+      "text": "declare class PeerRegistryValidationError extends Error { constructor(message: string); }"
     },
     {
       "name": "PerClassPruneResult",
@@ -52529,6 +52611,16 @@
       "text": "export declare class SnapshotPruner { delete(candidates: readonly CheckpointRecord[], options?: PruneOptions): Promise<PruneResult>; private _validatePath; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "SshBackendConfig",
+      "kind": "interface",
+      "required": [
+        "identityRef",
+        "sshHost",
+        "sshUser"
+      ],
+      "text": "export interface SshBackendConfig { sshHost: string; sshPort?: number; sshUser: string; identityRef: string; }"
+    },
+    {
       "name": "StrategyInput",
       "kind": "interface",
       "required": [
@@ -53468,6 +53560,11 @@
       "name": "negotiateProtocolVersion",
       "kind": "function",
       "text": "export declare function negotiateProtocolVersion(localVersion: Readonly<ProtocolVersion>, peerVersion: Readonly<ProtocolVersion>, matrix?: ProtocolSupportMatrix): VersionNegotiationResult; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+    },
+    {
+      "name": "normalizeBackendConfig",
+      "kind": "function",
+      "text": "export declare function normalizeBackendConfig(backendKind: BackendKind, raw: Record<string, unknown>): BackendConfig; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "openTranscriptJournal",
