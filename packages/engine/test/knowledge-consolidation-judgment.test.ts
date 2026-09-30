@@ -199,6 +199,16 @@ describe('knowledge consolidation reading', () => {
     expect(fake.requests).toHaveLength(1);
   });
 
+  test('terminal history cannot fill the result limit and starve a new open candidate', async () => {
+    const h = await harness(); await h.source(); readings();
+    await run(h.context, 'deep-consolidation', { autoPromote: true, limit: 1 });
+    const settled = h.store.listConsolidationCandidates()[0]!;
+    await h.source('The billing transaction keeps its own outbox event.'); readings(0.9);
+    await run(h.context, 'deep-consolidation', { autoPromote: true, limit: 1 });
+    expect(h.memory.retrieve()).toHaveLength(2);
+    expect(h.store.getConsolidationCandidate(settled.id)).toEqual(settled);
+  });
+
   test('terminal operator decisions survive refresh without another model call', async () => {
     const h = await harness(); await h.source(); const fake = readings(); const [candidate] = await refresh(h.context);
     const rejected = await decide(h.context, candidate!.id, 'reject', { decidedBy: 'owner', memoryClass: 'fact' });

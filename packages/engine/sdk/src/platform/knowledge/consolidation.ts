@@ -223,7 +223,7 @@ export async function refreshKnowledgeConsolidationCandidates(
   // decision or silently supersede an open review candidate.
 
   return proposals
-    .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
+    .sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open') || b.score - a.score || b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
     .slice(0, readingLimit);
 }
 

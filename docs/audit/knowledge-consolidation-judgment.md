@@ -20,7 +20,7 @@ The two stores are not one transactional database. Provenance-based replay recov
 
 ## Evidence and remaining gates
 
-Synthetic tests use temporary real SQLite knowledge/memory stores, disabled vector indexing and explicit fake judgment readings. They cover contrary-to-old-score decisions, review/act bands, unavailable/failed ports, known protected content before transmission, stale snapshots, an operator decision during reading, idempotency, provenance and partial-persistence recovery. The six focused consolidation/review/refresh/memory/isolation/retention suites pass 29 tests and 104 assertions.
+Synthetic tests use temporary real SQLite knowledge/memory stores, disabled vector indexing and explicit fake judgment readings. They cover contrary-to-old-score decisions, review/act bands, unavailable/failed ports, known protected content before transmission, stale snapshots, an operator decision during reading, idempotency, provenance and partial-persistence recovery. The six focused consolidation/review/refresh/memory/isolation/retention suites pass 30 tests and 106 assertions.
 
 The battery registry provides seven named fixtures covering both worth answers and all four memory classes. Fake-port execution tests are not semantic accuracy evidence. Live calibration is blocked here because no System One endpoint/key is configured. Once securely configured, the registry can be calibrated through the existing judgment package runner:
 
