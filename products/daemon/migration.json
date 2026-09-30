@@ -1,0 +1,109 @@
+{
+  "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
+  "status": "partial",
+  "phase": "cli-contracts",
+  "entrypoints": [
+    "src/cli/index.ts"
+  ],
+  "mappings": [
+    {
+      "source": "src/cli/command-catalog.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/command-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/cli/completion.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/completion.ts"
+      ]
+    },
+    {
+      "source": "src/cli/help.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/help.ts"
+      ]
+    },
+    {
+      "source": "src/cli/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/index.ts"
+      ]
+    },
+    {
+      "source": "src/cli/parser.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/parser.ts"
+      ]
+    },
+    {
+      "source": "src/cli/types.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/types.ts"
+      ]
+    },
+    {
+      "source": "src/version.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/version.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/command-catalog.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/command-catalog.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/completion.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/completion.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/help.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/help.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/parser.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/parser.test.ts"
+      ]
+    },
+    {
+      "source": "package.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/package.json"
+      ]
+    },
+    {
+      "source": "tsconfig.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/tsconfig.json"
+      ]
+    },
+    {
+      "source": "LICENSE",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/LICENSE"
+      ]
+    }
+  ],
+  "remaining": "The daemon entry point, runtime composition, provider/handler wiring, scripts and other source modules remain unported or not yet mapped here. Existing engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
+}
