@@ -415,8 +415,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     const policyRuntimeState = new PolicyRuntimeState();
     const fileCache = new FileStateCache();
     const projectIndex = new ProjectIndex(workingDirectory);
-    // channelDeliveryRouter now built earlier, near clusterCoordinator above.
     const processManager = new ProcessManager();
+    disposalScope.registry.add('background processes', () => processManager.close());
     // Repo source-tree code index, sharing memoryEmbeddingRegistry with MemoryStore
     // above. Auto-build is config-gated (default off).
     const { codeIndexStore, codeIndexReindexScheduler } = createCodeIndexServices({ workingDirectory, surfaceRoot: GOODVIBES_DAEMON_SURFACE_ROOT, configManager, memoryEmbeddingRegistry, isReindexPaused: () => pauseController.isPaused('code-index-reindex'), admitExpensiveWork });
