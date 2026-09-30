@@ -7,8 +7,10 @@ import type {
   KnowledgeSourceRecord,
   KnowledgeSourceType,
 } from '../types.js';
-import { belongsToSpace, edgeIsActive, readRecord, readString, readStringArray } from './helpers.js';
+import { belongsToSpace, edgeIsActive, readRecord, readStringArray } from './helpers.js';
 import type { HomeGraphRenderState } from './rendering.js';
+import { readHomeGraphQuality, HomeGraphQualityHeldError, type HomeGraphQualityQuestion } from './quality/reader.js';
+import { projectHomeGraphQualityInput, readHomeGraphDeclaredBoolean } from './quality/projection.js';
 
 export interface HomeGraphState extends Omit<HomeGraphRenderState, 'title'> {
   readonly extractions: readonly KnowledgeExtractionRecord[];
@@ -122,49 +124,32 @@ function sourceLinkedObjectIds(source: KnowledgeSourceRecord): string[] {
   ];
 }
 
-export function missingDevicePassportFields(
+/** An uncertain completeness reading holds the caller before any generated-page write. */
+export async function missingDevicePassportFields(
   device: KnowledgeNodeRecord,
   sources: readonly KnowledgeSourceRecord[],
   facts: readonly KnowledgeNodeRecord[] = [],
-): string[] {
-  const hasManufacturer = typeof device.metadata.manufacturer === 'string'
-    || factsContainField(facts, /\b(manufacturer|brand|vendor)\b/);
-  const hasModel = typeof device.metadata.model === 'string'
-    || factsContainField(facts, /\b(model|model number|model id)\b/);
-  const hasBatteryType = factsContainField(facts, /\b(battery type|battery|cr2032|cr123|aaa|aa)\b/);
+  options: { readonly entities?: readonly KnowledgeNodeRecord[] | undefined; readonly signal?: AbortSignal | undefined; readonly timeoutMs?: number | undefined } = {},
+): Promise<string[]> {
+  const manufacturer = typeof device.metadata.manufacturer === 'string';
+  const model = typeof device.metadata.model === 'string';
+  const batteryType = typeof device.metadata.batteryType === 'string' && device.metadata.batteryType.trim().length > 0;
+  const battery = batteryType ? false : readHomeGraphDeclaredBoolean(device.metadata.batteryPowered);
+  const questions: HomeGraphQualityQuestion[] = [];
+  if (!manufacturer && facts.length) questions.push('manufacturerPresent');
+  if (!model && facts.length) questions.push('modelPresent');
+  if (battery === undefined) questions.push('batteryApplicable');
+  if (battery !== false && facts.length) questions.push('batteryTypePresent');
+  if (options.signal?.aborted) throw new HomeGraphQualityHeldError('aborted');
+  if (!questions.length) return [manufacturer ? '' : 'manufacturer', model ? '' : 'model', battery ? 'battery type' : '', sources.length ? '' : 'manual/source'].filter(Boolean);
+  const input = projectHomeGraphQualityInput('device-1', device, options.entities ?? [], facts, questions);
+  const [reading] = await readHomeGraphQuality([input], options);
   return [
-    hasManufacturer ? '' : 'manufacturer',
-    hasModel ? '' : 'model',
-    devicePassportNeedsBatteryField(device) && !hasBatteryType ? 'battery type' : '',
+    manufacturer || reading!.answers.manufacturerPresent ? '' : 'manufacturer',
+    model || reading!.answers.modelPresent ? '' : 'model',
+    (battery ?? reading!.answers.batteryApplicable) && !reading!.answers.batteryTypePresent ? 'battery type' : '',
     sources.length > 0 ? '' : 'manual/source',
   ].filter(Boolean);
-}
-
-function factsContainField(facts: readonly KnowledgeNodeRecord[], pattern: RegExp): boolean {
-  return facts.some((fact) => pattern.test([
-    fact.title,
-    fact.summary,
-    readString(fact.metadata.value),
-    readString(fact.metadata.evidence),
-    ...readStringArray(fact.metadata.labels),
-  ].filter(Boolean).join(' ').toLowerCase()));
-}
-
-function devicePassportNeedsBatteryField(device: KnowledgeNodeRecord): boolean {
-  if (typeof device.metadata.batteryType === 'string' && device.metadata.batteryType.trim().length > 0) return false;
-  if (device.metadata.batteryPowered === false) return false;
-  if (device.metadata.batteryPowered === true) return true;
-  const text = [
-    device.title,
-    device.summary,
-    ...device.aliases,
-    typeof device.metadata.manufacturer === 'string' ? device.metadata.manufacturer : '',
-    typeof device.metadata.model === 'string' ? device.metadata.model : '',
-  ].join(' ').toLowerCase();
-  if (/\b(tv|television|webos|display|monitor|receiver|soundbar|speaker|appliance|outlet|plug|switch|router|bridge|hub|coordinator|adapter|home assistant|integration|software|service|core|supervisor)\b/.test(text)) {
-    return false;
-  }
-  return /\b(battery|button|keypad|leak sensor|motion sensor|contact sensor|door sensor|window sensor|remote|lock|thermostat|cr2032|cr123)\b/.test(text);
 }
 
 export function findHomeAssistantNode(

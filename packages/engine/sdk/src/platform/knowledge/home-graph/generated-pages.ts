@@ -283,7 +283,7 @@ export async function refreshHomeGraphDevicePassport(
   ]);
   const scopedNodeIds = new Set([device.id, ...entities.map((node) => node.id)]);
   const issues = filterDevicePassportIssues(issuesForScope(state.issues, state.edges, scopedNodeIds, sources), sources);
-  const missingFields = missingDevicePassportFields(device, sources, semanticFacts);
+  const missingFields = await missingDevicePassportFields(device, sources, semanticFacts, { entities, signal: context.signal });
   const markdown = renderDevicePassportPage({ spaceId, device, entities, sources, issues, missingFields, semanticFacts });
   const pageContentHash = semanticHash(markdown);
   const passportId = homeGraphNodeId(spaceId, 'ha_device_passport', input.deviceId);

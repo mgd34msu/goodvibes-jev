@@ -4,6 +4,8 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 export interface AnswerFixtureReadings {
+  /** Authored fixture expectations keyed by exact device title, never a keyword classifier. */
+  homeGraph?: ReadonlyArray<readonly [string, Readonly<Partial<Record<'batteryApplicable' | 'manualApplicable' | 'manufacturerPresent' | 'modelPresent' | 'batteryTypePresent', number>>>]>;
   fidelity?: 'supported' | 'contradicted' | 'unsupported';
   fidelityByCandidate?: ReadonlyArray<readonly [string, 'supported' | 'contradicted' | 'unsupported']>;
   fidelityProbability?: number;
@@ -23,6 +25,12 @@ export function useKnowledgeAnswerReadings() {
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (['batteryApplicable', 'manualApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) {
+        const subject = (state as { subject?: { title?: string } }).subject;
+        const scripted = table.homeGraph?.find(([title]) => title === subject?.title)?.[1];
+        const defaults: Record<string, number> = { batteryApplicable: 0.01, manualApplicable: 0.99, manufacturerPresent: 0.01, modelPresent: 0.01, batteryTypePresent: 0.01 };
+        return noulAnswer((scripted as Record<string, number> | undefined)?.[name] ?? defaults[name]!);
+      }
       if (name === 'fidelity') {
         const text = JSON.stringify((state as { candidate?: unknown }).candidate);
         return choiceAnswer(question, table.fidelityByCandidate?.find(([snippet]) => text.includes(snippet))?.[1] ?? table.fidelity ?? 'supported', table.fidelityProbability ?? 0.97);

@@ -2,6 +2,7 @@ import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings
 
 const qualityReadings = useKnowledgeAnswerReadings();
 beforeEach(() => { qualityReadings.set({
+  homeGraph: [['Front Door Sensor', { batteryApplicable: 0.99, manualApplicable: 0.99 }]],
   quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
   authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],
 }); });

@@ -242,6 +242,8 @@ export interface HomeGraphSyncResult {
     readonly edges: number;
     readonly issues: number;
   };
+  /** Structural snapshot import succeeded even when derived quality could not settle. */
+  readonly quality?: { readonly status: 'refreshed' | 'held' | 'partial'; readonly reason?: string | undefined; readonly retainedLegacyIssues?: number | undefined } | undefined;
   readonly generated: HomeGraphGeneratedPagesSummary;
   readonly counts: {
     readonly entities: number;

@@ -1,3 +1,5 @@
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+useKnowledgeAnswerReadings();
 import { useExtractionReadings } from './_helpers/extraction-readings.js';
 
 useExtractionReadings();

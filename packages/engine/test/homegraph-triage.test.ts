@@ -41,6 +41,9 @@ function createFakeTriageLlm(
   const calls: unknown[] = [];
   const fake = fakePort((name, question, state) => {
     const input = state as { reference: string; issue: { code: string }; subject?: Record<string, unknown> };
+    if (name === 'batteryApplicable') return noulAnswer(input.subject?.title === 'Living Room TV' ? 0.01 : 0.99);
+    if (name === 'manualApplicable') return noulAnswer(0.99);
+    if (['manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01);
     if (name !== 'action') return noulAnswer(0.99);
     calls.push(input);
     const scripted = decide({ issueId: input.reference, code: input.issue.code, node: input.subject });

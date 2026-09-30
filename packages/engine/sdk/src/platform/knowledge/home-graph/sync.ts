@@ -19,7 +19,9 @@ import {
   resolveHomeGraphSpace,
 } from './helpers.js';
 import { linkHomeGraphSnapshotObjectReferences } from './link-node.js';
-import { refreshHomeGraphQualityIssues } from './quality.js';
+import { refreshHomeGraphQualityReport } from './quality.js';
+import { HomeGraphQualityHeldError } from './quality/reader.js';
+import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { readHomeGraphState } from './state.js';
 import type { HomeGraphObjectInput, HomeGraphSnapshotInput, HomeGraphSyncResult } from './types.js';
 
@@ -68,7 +70,18 @@ export async function runHomeGraphSnapshotSync(input: {
     const groups = await upsertSnapshotObjects(store, spaceId, installationId, snapshot, home.id, source.id, activeSnapshotNodeIds);
     await retireMissingSnapshotRecords(store, spaceId, installationId, source.id, activeSnapshotNodeIds, snapshotRetirementObjectKinds(snapshot));
     await autoLinkExistingSources(store, spaceId, installationId);
-    const issues = await refreshHomeGraphQualityIssues(store, spaceId, installationId);
+    let issueCount = 0;
+    let quality: NonNullable<HomeGraphSyncResult['quality']>;
+    try {
+      const report = await refreshHomeGraphQualityReport(store, spaceId, installationId);
+      issueCount = report.issues.length;
+      quality = report.retainedLegacyIssues
+        ? { status: 'partial', reason: 'legacy-reviewed-state-retained', retainedLegacyIssues: report.retainedLegacyIssues }
+        : { status: 'refreshed' };
+    } catch (error) {
+      if (!(error instanceof HomeGraphQualityHeldError) && !(error instanceof JudgmentInputError)) throw error;
+      quality = { status: 'held', reason: error instanceof HomeGraphQualityHeldError ? error.reason : error.problem === 'unsupported-input' ? 'malformed' : 'protected-input' };
+    }
     const generated = await generateAutomaticHomeGraphPages({
       store,
       artifactStore,
@@ -86,9 +99,10 @@ export async function runHomeGraphSnapshotSync(input: {
       created: {
         nodes: after.nodes.filter((node) => !beforeNodeIds.has(node.id)).length,
         edges: after.edges.filter((edge) => !beforeEdgeIds.has(edge.id)).length,
-        issues: issues.length,
+        issues: issueCount,
       },
       generated,
+      quality,
       counts: groups,
     };
   });

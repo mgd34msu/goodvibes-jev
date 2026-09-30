@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { commitGuardedKnowledgeIssueReplacement } from './store-issue-replacement.js';
 import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 import { SQLiteStore } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -689,6 +690,14 @@ export class KnowledgeStore {
     }
     await this.sqlite.save();
     return created;
+  }
+
+  /** Whole-pass ordinary replacement; preserves terminal and operator-reviewed issues. */
+  async replaceIssuesGuarded(inputs: readonly KnowledgeIssueUpsertInput[], namespace: string, beforeWrite: () => void, legacyHomeGraphIssues: readonly KnowledgeIssueRecord[] = []): Promise<KnowledgeIssueRecord[]> {
+    await this.init();
+    const records = commitGuardedKnowledgeIssueReplacement({ sqlite: this.sqlite, issues: this.issues, sources: this.sources, nodes: this.nodes }, inputs, namespace, beforeWrite, legacyHomeGraphIssues);
+    await this.sqlite.save();
+    return records;
   }
 
   async upsertIssue(input: KnowledgeIssueUpsertInput, mutation?: KnowledgeIssueOperatorMutation): Promise<KnowledgeIssueRecord> {

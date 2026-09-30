@@ -41,6 +41,7 @@ type ReadingState = {
 
 function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    if (['batteryApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01); // Authored reference-device fixture: these fields are absent and battery tracking does not apply.
     if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
     if (name === 'useful') return noulAnswer(probability(state as ReadingState));
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.97);
@@ -181,7 +182,8 @@ describe('Home Graph page quality persistence boundaries', () => {
       const page = await generate(context, kind);
       expect(page.markdown).toContain(relevant.title!);
       expect(page.markdown).not.toContain('unrelated-');
-      expect(fake.requests).toHaveLength(1);
+      expect(fake.requests).toHaveLength(kind === 'passport' ? 2 : 1);
+      expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(1);
       expect((fake.requests[0]!.state as ReadingState).candidate.title).toBe(relevant.title!);
       expect(JSON.stringify(fake.requests)).not.toContain('synthetic-unrelated-value');
       expect(JSON.stringify(fake.requests)).not.toContain('UNRELATED_REFERENCE_MARKER');
@@ -335,7 +337,9 @@ describe('Home Graph page quality persistence boundaries', () => {
     const fake = readings();
     const result = await refreshAsk(context, [responseOnlyForeign, collision], [], [context.device, foreignDevice]);
     expect(result).toEqual({ requested: true, refreshed: 1 });
-    expect(fake.requests).toHaveLength(0);
+    expect(fake.requests).toHaveLength(1);
+    expect(Object.keys(fake.requests[0]!.questions)).toEqual(['batteryApplicable']);
+    expect(JSON.stringify(fake.requests)).not.toContain('FOREIGN');
     expect(context.store.getSource(foreign.id)).toEqual(foreign);
     expect(context.store.getSource(responseOnlyForeign.id)).toBeNull();
     expect(context.store.getNode(foreignDevice.id)).toEqual(foreignDevice);
