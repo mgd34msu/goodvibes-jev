@@ -124,8 +124,8 @@ test('a session bootstrap creates the CompactionManager and a compaction in the 
   await session.submit('one more');
   off();
 
-  // Small-window compaction is deterministic; only the turn's intake is read.
-  expect(readings.requests.map((request) => request.context?.battery)).toEqual(['contract.request-route']);
+  // Small-window compaction is deterministic; turn shape and contract intake are separate readings.
+  expect(readings.requests.map((request) => request.context?.battery)).toEqual(['engine.core.turn-shape', 'contract.request-route']);
   expect(seen.map((e) => e.type)).toEqual([
     'COMPACTION_CHECK',
     'COMPACTION_MICROCOMPACT',

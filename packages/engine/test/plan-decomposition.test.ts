@@ -11,6 +11,8 @@
  * fake provider.
  */
 import { describe, expect, test } from 'bun:test';
+import { useCoreReadings } from './_helpers/core-readings.ts';
+const readings = useCoreReadings({ strategy: 'cohort' });
 import { AdaptivePlanner, type PlannerInputs } from '../sdk/src/platform/core/adaptive-planner.js';
 import {
   decomposeGoal,
@@ -257,6 +259,7 @@ describe('decomposeGoal: configured / gated heuristic (not a fallback)', () => {
   test('gate declines to decompose → single-item heuristic, no agent, no fallbackReason', async () => {
     const { runner, calls } = scriptedRunner([completed(VALID_JSON, USAGE)]);
     const outcomes: DecompositionOutcome[] = [];
+    readings.set({ strategy: 'single' });
     const result = await decomposeGoal(REQUEST, new AdaptivePlanner(), SINGLE_INPUTS, AGENT_CONFIG, runner, {
       onOutcome: (o) => outcomes.push(o),
     });

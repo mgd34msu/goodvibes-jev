@@ -126,10 +126,9 @@ interface PlannerInputSources {
 }
 
 /**
- * The AdaptivePlanner inputs for a workstream task. Only the risk decides the
- * decomposition gate (above 0.7 the planner picks single and the draft stays
- * one item); the others pick which non-single strategy is recorded and show
- * in /plan explain.
+ * The AdaptivePlanner inputs for a workstream task. A registered strategy
+ * reading decides whether and how to decompose, from the task, risk and actual
+ * capabilities. There is no numeric risk cutoff deciding the answer in code.
  *  - riskScore: `routing.request-risk` (routing/batteries/request.ts) read
  *    over the task as a planner brief: how costly a wrong or careless result
  *    would be, on four levels. The planner takes a 0-1 score, so the reading's

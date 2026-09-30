@@ -2,9 +2,9 @@ import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ContentPart, LLMProvider } from '../providers/interface.js';
 import type { ProviderRegistry } from '../providers/registry.js';
-import { classifyIntent } from './intent-classifier.js';
+import { classifyIntent, type ClassificationResult } from './intent-classifier.js';
 import { logger } from '../utils/logger.js';
-import type { AdaptivePlanner } from './adaptive-planner.js';
+import { PlannerJudgmentError, type AdaptivePlanner } from './adaptive-planner.js';
 import type { ExecutionPlan, PlanItem } from './execution-plan.js';
 import type { ExecutionPlanManager } from './execution-plan.js';
 import type { RuntimeEventBus } from '../runtime/events/index.js';
@@ -22,32 +22,34 @@ export type ChatResponseWithReasoning = Awaited<ReturnType<LLMProvider['chat']>>
   reasoningSummary?: string | undefined;
 };
 
-const PROJECT_PRIMING_SIGNALS = new Set([
-  'parallelism_keywords',
-  'multi_sentence_actions',
-  'spec_plan_reference',
-]);
-
-export function maybeEmitAdaptivePlannerDecision(
+export async function maybeEmitAdaptivePlannerDecision(
   text: string,
   flagEnabled: boolean,
   adaptivePlanner: Pick<AdaptivePlanner, 'select'> | null,
   runtimeBus: RuntimeEventBus | null,
   emitterContext: EmitterContextFactory,
   turnId: string,
-): void {
+  classification?: ClassificationResult,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!flagEnabled) return;
   if (!adaptivePlanner) return;
-  const classification = classifyIntent(text);
+  const reading = classification ?? await classifyIntent(text, signal ? { signal } : {});
+  signal?.throwIfAborted();
+  if (reading.risk.outcome !== 'act') {
+    reading.recordAction(`planner held: risk reading ${reading.risk.outcome}`);
+    throw new PlannerJudgmentError('unsettled');
+  }
   const plannerInputs = {
-    riskScore: 0.3,
+    riskScore: reading.risk.normalized,
     latencyBudgetMs: Infinity,
-    isMultiStep: classification.intent === 'project' && classification.confidence > 0.5,
+    isMultiStep: reading.intent === 'project' && reading.outcome === 'act',
     remoteAvailable: false,
     backgroundEligible: false,
-    taskDescription: text.slice(0, 120),
+    taskDescription: text,
   };
-  const decision = adaptivePlanner.select(plannerInputs);
+  const decision = await adaptivePlanner.select(plannerInputs, signal ? { signal } : {});
+  reading.recordAction(`planner selected ${decision.selected}`);
   if (runtimeBus) {
     emitPlanStrategySelected(runtimeBus, emitterContext(turnId), decision);
   }
@@ -57,14 +59,25 @@ export function maybeEmitAdaptivePlannerDecision(
   });
 }
 
-export function prepareConversationForTurn(
+export interface TurnPreparationOptions {
+  readonly signal?: AbortSignal;
+  /** Capture the transcript boundary before awaiting a reading or cancellation. */
+  readonly onMessageAdded?: () => void;
+  /** Contract intake must decide who plans before a conversational plan instruction is injected. */
+  readonly deferPlanPriming?: boolean;
+  /** Reuses the turn's reading for planner telemetry without another request. */
+  readonly onClassification?: (reading: ClassificationResult) => Promise<void>;
+}
+
+export async function prepareConversationForTurn(
   conversation: ConversationManager,
   providerRegistry: Pick<ProviderRegistry, 'getCurrentModel'>,
   text: string,
   content: ContentPart[] | undefined,
   sessionId?: string,
   planManager: Pick<ExecutionPlanManager, 'getActive' | 'toMarkdown'> | null = null,
-): ExecutionPlan | null {
+  options: TurnPreparationOptions = {},
+): Promise<ExecutionPlan | null> {
   const preTurnPlan = planManager?.getActive(sessionId) ?? null;
   if (preTurnPlan && planManager) {
     const planMd = planManager.toMarkdown(preTurnPlan);
@@ -91,24 +104,32 @@ export function prepareConversationForTurn(
     conversation.addUserMessage(content ?? text);
   }
 
-  const activePlan = planManager?.getActive(sessionId) ?? null;
-  if (!activePlan) {
-    const classification = classifyIntent(text);
-    const hasProjectPrimingSignal = classification.signals.some((signal) => PROJECT_PRIMING_SIGNALS.has(signal));
-    const shouldPrimeProjectMode = classification.intent === 'project'
-      && classification.confidence > 0.5
-      && hasProjectPrimingSignal;
-    if (shouldPrimeProjectMode) {
-      conversation.addSystemMessage(
-        '[Project mode] This looks like a multi-step project task. ' +
-        'Before executing, write a brief spec (goals, constraints, non-goals) ' +
-        'and an execution plan (phases and tasks). ' +
-        'Use the execution plan format: ## Phase [STATUS] / - [x] Task - STATUS.'
-      );
-    }
-  }
+  options.onMessageAdded?.();
+  // The submitted message is retained even if judgment fails or is cancelled.
+  const classification = await classifyIntent(text, options.signal ? { signal: options.signal } : {});
+  options.signal?.throwIfAborted();
+  await options.onClassification?.(classification);
+  options.signal?.throwIfAborted();
+  if (options.deferPlanPriming) classification.recordAction('plan priming deferred until contract intake');
+  else primeConversationForTurn(conversation, classification, planManager?.getActive(sessionId) ?? null);
 
   return preTurnPlan;
+}
+
+/** Apply only after contract intake leaves this as an ordinary conversational turn. */
+export function primeConversationForTurn(conversation: ConversationManager, classification: ClassificationResult, activePlan: ExecutionPlan | null): void {
+  if (!activePlan && classification.needsPlan.verdict === 'yes' && classification.needsPlan.outcome === 'act') {
+    classification.recordAction('inject specification and execution-plan instruction');
+    conversation.addSystemMessage(
+      '[Project mode] This request warrants a specification and execution plan. ' +
+      'Before executing, write a brief spec (goals, constraints, non-goals) ' +
+      'and an execution plan (phases and tasks). ' +
+      'Use the execution plan format: ## Phase [STATUS] / - [x] Task - STATUS.'
+    );
+  } else {
+    classification.recordAction(activePlan ? 'use the existing execution plan' : `no automatic plan priming: ${classification.needsPlan.verdict} (${classification.needsPlan.outcome})`);
+  }
+
 }
 
 export type { ContractSessionHooks };

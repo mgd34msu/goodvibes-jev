@@ -10,6 +10,7 @@ import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { forgetCredentialEnvReadings } from '../../sdk/src/platform/tools/exec/credential-env.ts';
 import { forgetGateReadings, type GateReadingTable } from './gate-readings.ts';
+import { coreReadingsPort } from './core-readings.ts';
 import { toolReadingsPort, type ToolReadingTable } from './tool-readings.ts';
 
 export function installHostedSessionReadings(options: {
@@ -20,6 +21,7 @@ export function installHostedSessionReadings(options: {
     if (name === 'route') return choiceAnswer(question, 'converse', 0.97);
     throw new Error(`hosted session intake fixture: unexpected question ${name}`);
   });
+  const core = coreReadingsPort({ intent: 'chat', needsPlan: false, strategy: 'single' });
   const tools = toolReadingsPort(options.tools, options.gate);
   const requests: JudgmentRequest<Questions>[] = [];
   const port: JudgmentPort = {
@@ -27,6 +29,7 @@ export function installHostedSessionReadings(options: {
     async ask(request) {
       requests.push(request as JudgmentRequest<Questions>);
       const battery = request.context?.battery;
+      if (battery === 'engine.core.turn-shape' || battery === 'engine.core.execution-strategy') return core.port.ask(request);
       if (battery === 'contract.request-route') return intake.port.ask(request);
       if (battery?.startsWith('engine.gate.') || battery?.startsWith('engine.tools.')) return tools.port.ask(request);
       throw new Error(`hosted session fixture: unexpected decision ${battery ?? '(unnamed)'}`);

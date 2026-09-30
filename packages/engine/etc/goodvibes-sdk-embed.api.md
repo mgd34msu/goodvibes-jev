@@ -4,6 +4,7 @@
 
 ```ts
 
+import type { CallOptions } from '@goodvibes-jev/judgment';
 import { JudgmentPort } from '@goodvibes-jev/judgment';
 import type { Outcome } from '@goodvibes-jev/judgment';
 import type { ReplyReadingName } from '@goodvibes-jev/judgment';

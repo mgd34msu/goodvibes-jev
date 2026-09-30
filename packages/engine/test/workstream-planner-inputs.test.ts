@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Question } from '@goodvibes-jev/judgment';
-import { fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { AdaptivePlanner } from '../sdk/src/platform/core/index.ts';
 import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestration/index.ts';
@@ -35,8 +35,9 @@ afterEach(() => {
 });
 
 /** A port that reads every task's risk at `level` (0 negligible .. 3 severe) and records the requests. */
-function riskPort(level: number) {
+function riskPort(level: number, strategy = 'cohort') {
   return fakePort((name: string, question: Question) => {
+    if (name === 'strategy') return choiceAnswer(question, strategy, 0.97);
     if (name !== 'risk') throw new Error(`unexpected question ${name}`);
     return scoreAnswer(question, level);
   });
@@ -96,7 +97,7 @@ describe('workstream draft planner inputs', () => {
 
     await workstreamCommands.proposeDraft('Move the billing service to webhooks and migrate existing customers.');
 
-    expect(requests).toHaveLength(1);
+    expect(requests).toHaveLength(2);
     expect(Object.keys(requests[0]!.questions)).toEqual(['risk']);
     expect(requests[0]!.state).toEqual({ purpose: 'planner', work: 'Move the billing service to webhooks and migrate existing customers.' });
     const inputs = planner.getLatest()!.inputs;
@@ -108,13 +109,13 @@ describe('workstream draft planner inputs', () => {
     orchestrationEngine.dispose();
   });
 
-  test('a severe risk reading closes the decomposition gate, so no planning agent runs', async () => {
-    installJudgmentPort(riskPort(3).port);
+  test('a recorded single strategy closes decomposition for a severe task', async () => {
+    installJudgmentPort(riskPort(3, 'single').port);
     const { workstreamCommands, orchestrationEngine, spawned } = makeServices({ decomposition: 'agent' });
 
     const draft = await workstreamCommands.proposeDraft('Delete the duplicate customer records from the production billing database.');
 
-    expect(draft.gate).toMatchObject({ decompose: false, strategy: 'single', reasonCode: 'HIGH_RISK_SINGLE_PREFERRED' });
+    expect(draft.gate).toMatchObject({ decompose: false, strategy: 'single', reasonCode: 'JUDGMENT_SELECTED' });
     expect(draft.provenance.kind).toBe('gate-declined');
     expect(draft.spec.items).toHaveLength(1);
     expect(spawned).toEqual([]);

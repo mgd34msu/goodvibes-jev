@@ -27970,6 +27970,8 @@ export interface PlannerDecision {
     // (undocumented)
     readonly candidates: readonly StrategyCandidate[];
     // (undocumented)
+    readonly decisionId?: string | undefined;
+    // (undocumented)
     readonly inputs: {
         readonly riskScore: number;
         readonly latencyBudgetMs: number;
@@ -27978,6 +27980,7 @@ export interface PlannerDecision {
         readonly backgroundEligible: boolean;
         readonly taskDescription?: string | undefined;
     };
+    readonly outcome?: 'act' | 'confirm' | 'escalate' | undefined;
     // (undocumented)
     readonly overrideActive: boolean;
     // (undocumented)

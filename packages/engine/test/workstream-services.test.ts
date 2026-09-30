@@ -22,7 +22,7 @@ import { createWorkstreamServices, type WorkstreamServicesDeps } from '../sdk/sr
 import type { StartedContract } from '../sdk/src/platform/contract/runner.ts';
 import type { StartContractInput, StartFromPlanInput } from '../sdk/src/platform/contract/types.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
-import { fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, fakePort, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { RemoteRunnerRegistry, RemoteSupervisor } from '../sdk/src/platform/runtime/remote/index.ts';
 import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
@@ -140,7 +140,7 @@ describe('createWorkstreamServices: drafts and contract launch', () => {
   // Every draft reads the task's risk (routing.request-risk) for the planner:
   // these tests read it as minor, which leaves the decomposition gate open.
   beforeEach(() => {
-    previousPort = installJudgmentPort(fakePort((_name, question) => scoreAnswer(question, 1)).port);
+    previousPort = installJudgmentPort(fakePort((name, question) => name === 'strategy' ? choiceAnswer(question, 'cohort', 0.97) : scoreAnswer(question, 1)).port);
   });
 
   afterEach(() => {

@@ -1,3 +1,4 @@
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 /**
  * hosted-session-contracts.test.ts
  *
@@ -16,6 +17,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { coreReadingsPort } from './_helpers/core-readings.ts';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 
@@ -84,7 +86,9 @@ function routeEveryTurnToWork(): void {
     routeReads += 1;
     return choiceAnswer(question, 'contract', 0.97);
   });
-  const previous = installJudgmentPort(fake.port);
+  const core = coreReadingsPort({ intent: 'project', needsPlan: true, risk: 1 });
+  const port: JudgmentPort = { model: fake.port.model, ask: (request) => request.context?.battery === 'engine.core.turn-shape' ? core.port.ask(request) : fake.port.ask(request) };
+  const previous = installJudgmentPort(port);
   restoreReadings = () => { installJudgmentPort(previous); };
 }
 
@@ -117,6 +121,7 @@ test('a turn read as work starts a contract in the session, and the record lists
 
   await manager.deliver(session.id, 'Add a --json flag to the export command.');
 
+  expect(manager.historyOf(session.id).some((message) => message.content.includes('[Project mode]'))).toBe(false);
   expect(runner.started).toEqual([{ ask: 'Add a --json flag to the export command.', sessionId: session.id, origin: 'turn', projectRoot: workspace }]);
   const contractId = [...runner.contracts.keys()][0]!;
   expect(manager.get(session.id)?.contractIds).toEqual([contractId]);

@@ -16,6 +16,9 @@ export interface PlannerDecision {
   readonly candidates: readonly StrategyCandidate[];
   readonly overrideActive: boolean;
   readonly timestamp: number;
+  /** The automatic reading's band outcome and decision-log identity, when present. */
+  readonly outcome?: 'act' | 'confirm' | 'escalate' | undefined;
+  readonly decisionId?: string | undefined;
   readonly inputs: {
     readonly riskScore: number;
     readonly latencyBudgetMs: number;

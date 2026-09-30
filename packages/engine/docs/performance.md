@@ -52,10 +52,11 @@ import { AdaptivePlanner } from '@goodvibes-jev/engine/sdk/platform/core';
 
 const planner = new AdaptivePlanner();
 
-const decision = planner.select({
-  riskScore: 0.3,         // 0 = safe, 1 = highly destructive
+const decision = await planner.select({
+  riskScore: 0.3,         // supply the normalized risk reading, not a hand-selected score
   latencyBudgetMs: Infinity,
   isMultiStep: true,
+  taskDescription: 'Implement and integrate the independent client and server changes.',
   remoteAvailable: false,
   backgroundEligible: false,
   taskDescription: 'Refactor auth module',
@@ -484,13 +485,14 @@ GET /api/control-plane/events?domains=turn,agents,tools
 
 ### Parallel tool execution
 
-Configure `cohort` strategy via the adaptive planner to fan tasks out across agent cohorts. The planner automatically selects `cohort` for multi-step tasks with risk score ≤ 0.7:
+Configure `cohort` strategy via the adaptive planner to fan tasks out across agent cohorts. A registered Jev reading selects the strategy from the actual task, its recorded risk and current capabilities; uncertainty holds the selection rather than guessing:
 
 ```ts
-const decision = planner.select({
+const decision = await planner.select({
   riskScore: 0.2,
   latencyBudgetMs: 30_000,
   isMultiStep: true,
+  taskDescription: 'Implement and integrate the independent client and server changes.',
   remoteAvailable: false,
   backgroundEligible: false,
 });
@@ -502,10 +504,11 @@ const decision = planner.select({
 Defer latency-insensitive work to background execution to avoid blocking the conversation loop:
 
 ```ts
-const decision = planner.select({
+const decision = await planner.select({
   riskScore: 0.1,
   latencyBudgetMs: Infinity,
   isMultiStep: false,
+  taskDescription: 'Reindex the saved library using the background queue.',
   remoteAvailable: false,
   backgroundEligible: true,
 });

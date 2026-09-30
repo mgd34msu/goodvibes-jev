@@ -1,7 +1,7 @@
 /**
  * Adaptive Execution Planner.
  *
- * Scores and selects execution strategies based on risk, latency, and
+ * Reads execution strategy through Jev using risk, latency, and
  * capability inputs. Emits typed reason codes for every decision and
  * maintains an explicit override path that is logged in full.
  *
@@ -10,6 +10,10 @@
  *           /plan override <strategy>
  */
 
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import type { CallOptions, Outcome } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { executionStrategy } from './batteries/planner.js';
 import { logger } from '../utils/logger.js';
 import {
   assemblePlanProposal,
@@ -44,7 +48,10 @@ export const VALID_STRATEGIES: ExecutionStrategy[] = ['auto', 'single', 'cohort'
  * `AdaptivePlanner.explainReasonCode()`.
  */
 export type StrategyReasonCode =
-  // Selection reasons
+  // Selection reasons; legacy codes remain readable for older event/history consumers.
+  | 'JUDGMENT_SELECTED'
+  | 'JUDGMENT_UNSETTLED'
+  | 'PINNED_MODE'
   | 'OVERRIDE_IN_EFFECT'           // user override is active
   | 'HIGH_RISK_SINGLE_PREFERRED'   // risk score too high for parallelism
   | 'LOW_LATENCY_SINGLE'           // latency budget favours minimal hops
@@ -121,6 +128,9 @@ export interface PlannerDecision {
 
   /** Snapshot of inputs used for this decision. */
   inputs: PlannerInputs;
+  /** Present for automatic choices, so history carries the reading and its band. */
+  outcome?: Outcome;
+  decisionId?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +138,9 @@ export interface PlannerDecision {
 // ---------------------------------------------------------------------------
 
 const REASON_EXPLANATIONS: Record<StrategyReasonCode, string> = {
+  JUDGMENT_SELECTED: 'The recorded execution-strategy reading selected this available strategy.',
+  JUDGMENT_UNSETTLED: 'The execution-strategy reading did not settle. No strategy was authorized.',
+  PINNED_MODE: 'The owner explicitly pinned this strategy with /plan mode.',
   OVERRIDE_IN_EFFECT:
     'A user-supplied /plan override is in effect. The planner\'s automatic '
     + 'selection is bypassed until the override is cleared.',
@@ -155,69 +168,13 @@ const REASON_EXPLANATIONS: Record<StrategyReasonCode, string> = {
     'The supplied strategy name is not recognised. No change was made.',
 };
 
-// ---------------------------------------------------------------------------
-// Scorer
-// ---------------------------------------------------------------------------
-
-/**
- * Score a single strategy candidate given the current planner inputs.
- *
- * Returns a numeric score (0-100, higher = preferred) and the primary reason
- * code that drove the score.
- */
-function scoreStrategy(
-  strategy: ExecutionStrategy,
-  inputs: PlannerInputs,
-): { score: number; reasonCode: StrategyReasonCode } {
-  const {
-    riskScore,
-    latencyBudgetMs,
-    isMultiStep,
-    remoteAvailable,
-    backgroundEligible,
-  } = inputs;
-
-  switch (strategy) {
-    case 'single': {
-      // Preferred when risk is high or latency budget is tight
-      let s = 50;
-      if (riskScore > 0.7) s += 30;
-      if (latencyBudgetMs < 5_000) s += 20;
-      if (!isMultiStep) s += 10;
-      const reasonCode: StrategyReasonCode =
-        riskScore > 0.7
-          ? 'HIGH_RISK_SINGLE_PREFERRED'
-          : latencyBudgetMs < 5_000
-          ? 'LOW_LATENCY_SINGLE'
-          : 'AUTO_FALLBACK_SINGLE';
-      return { score: Math.min(s, 100), reasonCode };
-    }
-
-    case 'cohort': {
-      // Good when multi-step and low risk
-      if (!isMultiStep) return { score: 0, reasonCode: 'AUTO_FALLBACK_SINGLE' };
-      if (riskScore > 0.7) return { score: 5, reasonCode: 'HIGH_RISK_SINGLE_PREFERRED' };
-      const s = 70 + (1 - riskScore) * 20;
-      return { score: Math.min(s, 100), reasonCode: 'COHORT_CAPABLE' };
-    }
-
-    case 'background': {
-      if (!backgroundEligible) return { score: 0, reasonCode: 'AUTO_FALLBACK_SINGLE' };
-      if (riskScore > 0.6) return { score: 10, reasonCode: 'HIGH_RISK_SINGLE_PREFERRED' };
-      const s = 60 + (latencyBudgetMs === Infinity ? 20 : 0);
-      return { score: Math.min(s, 100), reasonCode: 'BACKGROUND_DEFERRED' };
-    }
-
-    case 'remote': {
-      if (!remoteAvailable) return { score: 0, reasonCode: 'AUTO_FALLBACK_SINGLE' };
-      if (riskScore > 0.7) return { score: 5, reasonCode: 'HIGH_RISK_SINGLE_PREFERRED' };
-      const s = 65 + (1 - riskScore) * 15;
-      return { score: Math.min(s, 100), reasonCode: 'REMOTE_CAPABLE' };
-    }
-
-    case 'auto':
-      // 'auto' itself is not scored as a candidate, it triggers evaluation of others
-      return { score: -1, reasonCode: 'AUTO_FALLBACK_SINGLE' };
+/** An automatic choice that cannot authorize execution, without a guessed fallback. */
+export class PlannerJudgmentError extends Error {
+  override readonly name = 'PlannerJudgmentError';
+  constructor(readonly reason: 'unsettled' | 'unavailable-strategy') {
+    super(reason === 'unsettled'
+      ? 'The execution strategy reading did not settle; an owner decision is required.'
+      : 'The execution strategy reading selected an unavailable capability; no work was started.');
   }
 }
 
@@ -246,11 +203,13 @@ export class AdaptivePlanner {
    * - If a user override is active, it is returned immediately with reason
    *   `OVERRIDE_IN_EFFECT`.
    * - If mode is not `auto`, the mode itself is returned (as a pinned choice).
-   * - Otherwise all concrete strategies are scored and the highest wins.
+   * - Otherwise a registered reading selects a strategy; uncertainty holds the work.
    *
    * The decision is appended to the history log.
    */
-  select(inputs: PlannerInputs): PlannerDecision {
+  async select(inputs: PlannerInputs, options: CallOptions = {}): Promise<PlannerDecision> {
+    options.signal?.throwIfAborted();
+    assertJudgmentInput({ task: inputs.taskDescription ?? '' });
     const validated = this._validateInputs(inputs);
     const ts = Date.now();
     // Use validated inputs from here on
@@ -274,7 +233,8 @@ export class AdaptivePlanner {
 
     // Pinned mode (not auto)
     if (this.mode !== 'auto') {
-      const { score, reasonCode } = scoreStrategy(this.mode, inputs);
+      const score = 100;
+      const reasonCode: StrategyReasonCode = 'PINNED_MODE';
       const decision: PlannerDecision = {
         selected: this.mode,
         reasonCode,
@@ -287,29 +247,41 @@ export class AdaptivePlanner {
       return decision;
     }
 
-    // Auto: score all concrete strategies
+    const run = await executionStrategy.run(judgmentPort('engine.core.planner'), {
+      task: inputs.taskDescription ?? '',
+      riskScore: inputs.riskScore,
+      latencyBudgetMs: Number.isFinite(inputs.latencyBudgetMs) ? inputs.latencyBudgetMs : 'unbounded',
+      isMultiStep: inputs.isMultiStep,
+      remoteAvailable: inputs.remoteAvailable,
+      backgroundEligible: inputs.backgroundEligible,
+    }, { site: 'engine.core.planner', ...options });
+    options.signal?.throwIfAborted();
+    // An owner override that arrived during a slow reading supersedes it.
+    if (this.overrideStrategy !== null || this.mode !== 'auto') {
+      run.recordAction('superseded by owner strategy change');
+      return this.select(inputs, options);
+    }
+    const reading = run.readings.strategy;
+    const available = reading.choice !== 'remote' || inputs.remoteAvailable;
+    const canRun = available && (reading.choice !== 'background' || inputs.backgroundEligible);
+    const settled = reading.outcome === 'act' && canRun;
     const candidates: StrategyCandidate[] = (['single', 'cohort', 'background', 'remote'] as const)
-      .map((s) => {
-        const { score, reasonCode } = scoreStrategy(s, inputs);
-        return { strategy: s, score, reasonCode } satisfies StrategyCandidate;
-      })
+      .map((strategy) => ({ strategy, score: reading.probabilities[strategy] * 100, reasonCode: 'JUDGMENT_SELECTED' as const }))
       .sort((a, b) => b.score - a.score);
-
-    const best = candidates[0]!;
     const decision: PlannerDecision = {
-      selected: best.strategy,
-      reasonCode: best.reasonCode,
+      selected: settled ? reading.choice : 'auto',
+      reasonCode: settled ? 'JUDGMENT_SELECTED' : 'JUDGMENT_UNSETTLED',
       candidates,
       overrideActive: false,
       timestamp: ts,
       inputs,
+      outcome: reading.outcome,
+      decisionId: run.result.decisionId,
     };
+    run.recordAction(settled ? `selected ${reading.choice}` : `held: ${canRun ? reading.outcome : 'unavailable capability'}`);
     this._appendHistory(decision);
-    logger.debug('[AdaptivePlanner] auto-selected', {
-      strategy: best.strategy,
-      reasonCode: best.reasonCode,
-      score: best.score,
-    });
+    if (!settled) throw new PlannerJudgmentError(canRun ? 'unsettled' : 'unavailable-strategy');
+    logger.debug('[AdaptivePlanner] judgment selected', { strategy: reading.choice, outcome: reading.outcome, decisionId: run.result.decisionId });
     return decision;
   }
 
@@ -324,8 +296,8 @@ export class AdaptivePlanner {
    * history as every other planner call, and `/plan explain` / `/plan
    * status` remain authoritative for it.
    */
-  shouldDecompose(inputs: PlannerInputs): DecompositionGate {
-    const decision = this.select(inputs);
+  async shouldDecompose(inputs: PlannerInputs, options: CallOptions = {}): Promise<DecompositionGate> {
+    const decision = await this.select(inputs, options);
     return {
       decompose: decision.selected !== 'single',
       strategy: decision.selected,
@@ -353,11 +325,12 @@ export class AdaptivePlanner {
    * TUI) can show WHY a proposal was or wasn't decomposed, reusing
    * `AdaptivePlanner.explainReasonCode`.
    */
-  proposeWorkstream(
+  async proposeWorkstream(
     inputs: PlannerInputs,
     raw?: RawDecomposition,
-  ): { proposal: PlanProposal; gate: DecompositionGate; issues: PlanProposalIssue[] } {
-    const gate = this.shouldDecompose(inputs);
+    options: CallOptions = {},
+  ): Promise<{ proposal: PlanProposal; gate: DecompositionGate; issues: PlanProposalIssue[] }> {
+    const gate = await this.shouldDecompose(inputs, options);
     const task = inputs.taskDescription ?? '';
     if (gate.decompose && raw) {
       const { proposal, issues } = assemblePlanProposal(task, gate.strategy, raw);
