@@ -1,12 +1,16 @@
-import { useExtractionReadings } from './_helpers/extraction-readings.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 
-useExtractionReadings();
+const qualityReadings = useKnowledgeAnswerReadings();
+beforeEach(() => { qualityReadings.set({
+  quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
+  authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],
+}); });
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ArtifactStore } from '../sdk/src/platform/artifacts/index.js';
 import {
   HomeGraphService,

@@ -38,7 +38,7 @@ import {
   sourceInAnswerObjectScope,
 } from './object-scope.js';
 import { canonicalRepairSubjectNodes } from './repair-subjects.js';
-import { sourceAuthorityBoostForAnswer } from './answer-source-ranking.js';
+import { readAnswerSourceRanking } from './answer-source-ranking.js';
 import {
   GENERIC_ANSWER_INTENT_TOKENS,
   isBroadKnowledgeSpaceAlias,
@@ -215,48 +215,39 @@ export async function includeOfficialLinkedEvidence(
   if (linkedObjects.length === 0) return [...evidence];
   const linkedIds = new Set(linkedObjects.map((node) => node.id));
   const linkedSourceIds = sourceIdsLinkedToNodes(store, linkedIds, spaceId);
-  const tokens = expandQueryTokens(tokenizeSemanticQuery(query));
   const usableSourceIds = new Set(listAnswerSources(store, spaceId).filter(isUsableAnswerSource).map((source) => source.id));
   const sourceFacts = buildSourceFactIndex(store, spaceId, usableSourceIds);
   const officialSources = listAnswerSources(store, spaceId)
     .filter(isUsableAnswerSource)
     .filter((source) => belongsToAnswerSpace(source, spaceId))
-    .filter((source) => sourceAuthorityBoostForAnswer(source) > 0)
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
     .slice(0, 50);
   if (officialSources.length === 0) return [...evidence];
   const selectedFacts = await filterFactsForQuery(query, uniqueNodes(officialSources.flatMap((source) => sourceFacts.get(source.id) ?? [])));
   const selectedFactIds = new Set(selectedFacts.map((fact) => fact.id));
   const featureIntent = await hasFeatureIntentForQuery(query);
-  const officialItems = officialSources
-    .map((source) => {
-      const extraction = store.getExtractionBySourceId(source.id);
-      const facts = (sourceFacts.get(source.id) ?? []).filter((fact) => selectedFactIds.has(fact.id));
-      const text = sourceSemanticText(source, extraction);
-      const scoringText = [
-        source.title,
-        source.summary,
-        source.description,
-        source.tags.join(' '),
-        text,
-        facts.map(renderFactForScoring).join(' '),
-      ].join('\n');
-      const semanticScore = scoreSemanticText(scoringText, tokens);
-      return {
-        kind: 'source' as const,
-        id: source.id,
-        title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
-        score: semanticScore + sourceAuthorityBoostForAnswer(source) + Math.min(80, facts.length * 10),
-        source,
-        excerpt: selectEvidenceExcerpt(query, text, facts, featureIntent),
-        facts,
-      };
-    })
-    .filter((item) => item.score > 0);
+  const retrievalScores = new Map(evidence.filter((item) => item.source).map((item) => [item.source!.id, item.score]));
+  const candidates = officialSources.map((source) => {
+    const extraction = store.getExtractionBySourceId(source.id);
+    const facts = (sourceFacts.get(source.id) ?? []).filter((fact) => selectedFactIds.has(fact.id));
+    const text = sourceSemanticText(source, extraction);
+    return {
+      kind: 'source' as const, id: source.id,
+      title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
+      score: retrievalScores.get(source.id) ?? 0, source, excerpt: selectEvidenceExcerpt(query, text, facts, featureIntent), facts,
+    };
+  });
+  const ranked = await readAnswerSourceRanking(candidates, selectedFacts, query);
+  const byId = new Map(candidates.map((item) => [item.id, item]));
+  // score remains the existing retrieval scale consumed by legacy answer confidence.
+  // Relevance probability orders this set only; it is not answer confidence.
+  // Newly discovered references have no retrieval score rather than invented points.
+  const officialItems = ranked.map((reading) => byId.get(reading.source.id)!);
   if (officialItems.length === 0) return [...evidence];
-  return uniqueEvidenceItems([...officialItems, ...evidence]
-    .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id)))
-    .slice(0, Math.max(limit, evidence.length, 1));
+  // Do not compare model probabilities with the earlier retrieval point scale.
+  // Preserve the bounded union for the final semantic source ranking; newly
+  // settled matches lead its request window rather than being cut by old points.
+  return uniqueEvidenceItems([...officialItems, ...evidence]);
 }
 
 export function toSearchResult(item: EvidenceItem): KnowledgeSearchResult {

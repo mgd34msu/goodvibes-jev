@@ -20,7 +20,8 @@ import {
   sourceAuthority,
   type RepairFactClassification,
 } from './repair-fact-selection.js';
-import { sourceAuthorityBoostForAnswer } from './answer-source-ranking.js';
+import { isKnowledgeSourceQualityFailure, KnowledgeSourceQualityHeldError } from '../source-quality.js';
+import { createSemanticPrimarySourcePlanner, createSemanticWriteGuard } from './primary-source-plan.js';
 import {
   normalizeWhitespace,
   readRecord,
@@ -81,6 +82,8 @@ export async function promoteRepairSources(
           'Semantic repair source enrichment exceeded its run budget.',
         );
       } catch (error) {
+        // Earlier settled promotion/link passes stand; this hold must not start a fallback pass.
+        if (isKnowledgeSourceQualityFailure(error)) throw error;
         await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
         await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId]);
         await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId]);
@@ -190,12 +193,19 @@ async function promoteRepairEvidenceFacts(
   gap: KnowledgeNodeRecord,
   sourceIds: readonly string[],
 ): Promise<number> {
+  const guard = createSemanticWriteGuard(store);
+  // Repeated foreground reads may upsert the identical gap while search runs.
+  // Rebase only that timestamp; every intent/provenance/status field must match,
+  // and the complete current row is guarded through subsequent judgment awaits.
+  const currentGap = store.getNode(gap.id);
+  guard.watch(`node:${gap.id}`, () => store.getNode(gap.id), { ...gap, updatedAt: currentGap?.updatedAt ?? gap.updatedAt });
+  guard.watch('repair-subjects', () => linkedRepairSubjects(store, spaceId, gap, []));
   const subjects = linkedRepairSubjects(store, spaceId, gap, []);
   if (subjects.length === 0) return 0;
-  let promoted = 0;
+  const inputs: SourceLinkedRepairProfileFactInput[] = [];
   for (const sourceId of sourceIds) {
     const source = store.getSource(sourceId);
-    if (!source) continue;
+    if (!source || getKnowledgeSpaceId(source) !== spaceId) continue;
     const extraction = store.getExtractionBySourceId(source.id);
     const authority = sourceAuthority(source);
     const text = repairSourceEvidenceText(source, extraction);
@@ -206,7 +216,7 @@ async function promoteRepairEvidenceFacts(
       text,
     });
     for (const profileFact of profileFacts) {
-      promoted += await upsertPromotedRepairFact({
+      inputs.push(promotedRepairFactInput({
         store,
         spaceId,
         gap,
@@ -217,7 +227,7 @@ async function promoteRepairEvidenceFacts(
         summary: profileFact.summary,
         classification: profileFact,
         evidence: profileFact.evidence,
-      });
+      }));
     }
     const sentences = selectRepairFactSentences({
       query: gap.title,
@@ -227,7 +237,7 @@ async function promoteRepairEvidenceFacts(
     for (const sentence of sentences) {
       const classification = classifyRepairFact(sentence);
       if (!classification) continue;
-      promoted += await upsertPromotedRepairFact({
+      inputs.push(promotedRepairFactInput({
         store,
         spaceId,
         gap,
@@ -238,13 +248,19 @@ async function promoteRepairEvidenceFacts(
         summary: classification.summary,
         classification,
         evidence: sentence,
-      });
+      }));
     }
   }
-  return promoted;
+  const prepared = await prepareSourceLinkedRepairProfileFacts(inputs);
+  await store.batch(async () => {
+    guard.assertCurrent();
+    prepared.assertCurrent();
+    await prepared.write();
+  });
+  return inputs.length;
 }
 
-async function upsertPromotedRepairFact(input: {
+function promotedRepairFactInput(input: {
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly gap: KnowledgeNodeRecord;
@@ -255,8 +271,8 @@ async function upsertPromotedRepairFact(input: {
   readonly summary: string;
   readonly evidence: string;
   readonly classification: RepairFactClassification | RepairProfileFact;
-}): Promise<number> {
-  await upsertSourceLinkedRepairProfileFact({
+}): SourceLinkedRepairProfileFactInput {
+  return {
     store: input.store,
     spaceId: input.spaceId,
     source: input.source,
@@ -275,11 +291,10 @@ async function upsertPromotedRepairFact(input: {
       linkedBy: 'semantic-gap-repair',
       gapId: input.gap.id,
     },
-  });
-  return 1;
+  };
 }
 
-export async function upsertSourceLinkedRepairProfileFact(input: {
+export interface SourceLinkedRepairProfileFactInput {
   readonly store: KnowledgeStore;
   readonly spaceId: string;
   readonly source: KnowledgeSourceRecord;
@@ -296,25 +311,97 @@ export async function upsertSourceLinkedRepairProfileFact(input: {
   readonly factMetadata?: Record<string, unknown> | undefined;
   readonly edgeMetadata?: Record<string, unknown> | undefined;
   readonly metadataBuilder?: ((metadata: Record<string, unknown>) => Record<string, unknown>) | undefined;
-}): Promise<KnowledgeNodeRecord> {
-  const subjectIds = input.subjects.map((subject) => subject.id);
-  const factId = semanticFactId({
-    spaceId: input.spaceId,
-    kind: input.classification.kind,
-    title: input.title,
-    value: input.classification.value,
-    summary: input.summary,
-    subjectIds,
-    fallbackScope: input.source.id,
+}
+
+export interface PreparedSourceLinkedRepairProfileFact {
+  readonly input: SourceLinkedRepairProfileFactInput;
+  readonly factId: string;
+  readonly sourceIds: readonly string[];
+  readonly primarySourceId: string;
+}
+export interface PreparedSourceLinkedRepairProfileFacts {
+  readonly plans: readonly PreparedSourceLinkedRepairProfileFact[];
+  readonly assertCurrent: () => void;
+  readonly write: () => Promise<KnowledgeNodeRecord[]>;
+}
+
+/** Resolve the entire pass before opening a batch. write() performs no judgments. */
+export async function prepareSourceLinkedRepairProfileFacts(
+  inputs: readonly SourceLinkedRepairProfileFactInput[],
+  options: { readonly signal?: AbortSignal | undefined } = {},
+): Promise<PreparedSourceLinkedRepairProfileFacts> {
+  if (options.signal?.aborted) throw new KnowledgeSourceQualityHeldError('aborted');
+  const store = inputs[0]?.store;
+  if (!store) return { plans: [], assertCurrent() {}, async write(): Promise<KnowledgeNodeRecord[]> { return []; } };
+  const guard = createSemanticWriteGuard(store, options.signal);
+  const planner = createSemanticPrimarySourcePlanner(store, guard, options.signal);
+  const virtualSources = new Map<string, readonly string[]>();
+  const drafts = inputs.map((original) => {
+    const { store: inputStore, metadataBuilder, ...data } = original;
+    const input: SourceLinkedRepairProfileFactInput = Object.freeze({
+      ...freezePlanData(structuredClone(data)), store: inputStore, metadataBuilder,
+    });
+    if (input.store !== store) throw new TypeError('A prepared repair fact pass must use one store.');
+    guard.watch(`source:${input.source.id}`, () => store.getSource(input.source.id), input.source);
+    guard.extraction(input.source.id);
+    for (const subject of input.subjects) guard.watch(`node:${subject.id}`, () => store.getNode(subject.id), subject);
+    const subjectIds = input.subjects.map((subject) => subject.id);
+    const factId = semanticFactId({ spaceId: input.spaceId, kind: input.classification.kind,
+      title: input.title, value: input.classification.value, summary: input.summary, subjectIds, fallbackScope: input.source.id });
+    const existingFact = guard.node(factId);
+    const sourceIds = uniqueStrings([
+      ...(virtualSources.get(factId) ?? readStringArray(existingFact?.metadata.sourceIds)),
+      readString(existingFact?.metadata.sourceId), existingFact?.sourceId, input.source.id,
+    ]);
+    virtualSources.set(factId, sourceIds);
+    const resolve = planner.prepare(input.spaceId, {
+      kind: input.classification.kind, title: input.title, summary: input.summary,
+      value: input.classification.value, evidence: input.evidence,
+      subjects: input.subjects.map(({ id, title, kind }) => ({ id, title, kind })),
+    }, sourceIds);
+    return { input, factId, sourceIds, resolve };
   });
-  const existingFact = input.store.getNode(factId);
-  const sourceIds = uniqueStrings([
-    ...readStringArray(existingFact?.metadata.sourceIds),
-    readString(existingFact?.metadata.sourceId),
-    existingFact?.sourceId,
-    input.source.id,
-  ]);
-  const primarySourceId = preferredRepairFactSourceId(input.store, sourceIds, input.source.id);
+  const factIds = new Set(drafts.map((draft) => draft.factId));
+  guard.watch('support-edges', () => store.listEdges().filter((edge) =>
+    (edge.toKind === 'node' && factIds.has(edge.toId)) || (edge.fromKind === 'node' && factIds.has(edge.fromId))));
+  const plans: PreparedSourceLinkedRepairProfileFact[] = [];
+  for (const { input, factId, sourceIds, resolve } of drafts) plans.push(Object.freeze({
+    input, factId, sourceIds: Object.freeze([...sourceIds]), primarySourceId: await resolve(),
+  }));
+  guard.assertCurrent();
+  return {
+    plans: Object.freeze(plans),
+    assertCurrent: guard.assertCurrent,
+    async write(): Promise<KnowledgeNodeRecord[]> {
+      // Callers may have awaited other prepared work since this plan resolved.
+      // Validate once at entry, before this pass intentionally changes its rows.
+      guard.assertCurrent();
+      const facts: KnowledgeNodeRecord[] = [];
+      for (const plan of plans) facts.push(await writeResolvedSourceLinkedRepairProfileFact(plan));
+      return facts;
+    },
+  };
+}
+
+function freezePlanData<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const nested of Object.values(value)) freezePlanData(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export async function upsertSourceLinkedRepairProfileFact(input: SourceLinkedRepairProfileFactInput): Promise<KnowledgeNodeRecord> {
+  const prepared = await prepareSourceLinkedRepairProfileFacts([input]);
+  return input.store.batch(async () => {
+    prepared.assertCurrent();
+    return (await prepared.write())[0]!;
+  });
+}
+
+async function writeResolvedSourceLinkedRepairProfileFact(plan: PreparedSourceLinkedRepairProfileFact): Promise<KnowledgeNodeRecord> {
+  const { input, factId, sourceIds, primarySourceId } = plan;
+  const subjectIds = input.subjects.map((subject) => subject.id);
   const metadataBuilder = input.metadataBuilder ?? ((metadata: Record<string, unknown>) => semanticMetadata(input.spaceId, metadata));
   const confidence = input.confidence ?? (input.authority === 'official-vendor' ? 90 : input.authority === 'vendor' ? 82 : 76);
   const supportWeight = input.supportWeight ?? (input.authority === 'official-vendor' ? 0.96 : 0.84);
@@ -509,25 +596,6 @@ function factSourceIds(
     fact.sourceId,
     ...(sourceIdsByFactId.get(fact.id) ?? []),
   ]);
-}
-
-function preferredRepairFactSourceId(
-  store: KnowledgeStore,
-  sourceIds: readonly string[],
-  fallbackSourceId: string,
-): string {
-  const candidates = uniqueStrings(sourceIds)
-    .map((sourceId) => store.getSource(sourceId))
-    .filter((source): source is KnowledgeSourceRecord => Boolean(source && source.status !== 'stale'));
-  if (candidates.length === 0) return fallbackSourceId;
-  return candidates
-    .sort((left, right) => repairFactSourceQuality(right) - repairFactSourceQuality(left) || left.id.localeCompare(right.id))[0]!.id;
-}
-
-function repairFactSourceQuality(source: KnowledgeSourceRecord): number {
-  return sourceAuthorityBoostForAnswer(source)
-    + (source.status === 'indexed' ? 40 : source.status === 'pending' ? 5 : 0)
-    + (source.sourceType === 'manual' || source.sourceType === 'document' ? 12 : source.sourceType === 'url' ? 8 : 0);
 }
 
 function isUsableRepairFact(node: KnowledgeNodeRecord): boolean {

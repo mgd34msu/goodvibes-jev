@@ -76,6 +76,11 @@ export { renderKnowledgeMap } from './map.js';
 export type { KnowledgeMapRenderOptions, KnowledgeMapRenderState } from './map.js';
 export {
   compareKnowledgePageSources,
+  createKnowledgePageSourceReader,
+  rankKnowledgePageSources,
+  readKnowledgeSourceAuthority,
+  KnowledgeSourceQualityHeldError,
+  isKnowledgeSourceQualityFailure,
   isUsefulKnowledgePageSource,
   isUsefulKnowledgePageSourceCandidate,
   knowledgePageSourceWeight,

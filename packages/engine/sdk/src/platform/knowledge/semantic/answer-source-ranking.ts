@@ -18,11 +18,11 @@ export class KnowledgeSourceRankingHeldError extends Error {
 }
 
 /** The caller supplies only sources inside its existing access/space filter. */
-export async function rankAnswerSources(
+export async function readAnswerSourceRanking(
   evidence: readonly AnswerSourceRankingEvidence[],
   facts: readonly KnowledgeNodeRecord[],
   query: string,
-): Promise<KnowledgeSourceRecord[]> {
+): Promise<Array<{ source: KnowledgeSourceRecord; probability: number }>> {
   const sources = uniqueSources(evidence.flatMap((item) => item.source ? [item.source] : []))
     .filter((source) => source.status !== 'failed' && source.status !== 'stale');
   const realSources = sources.filter((source) => !isGeneratedKnowledgeSource(source));
@@ -50,7 +50,11 @@ export async function rankAnswerSources(
   const accepted = result.ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
   if (accepted.length === 0 && result.ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeSourceRankingHeldError();
   const byId = new Map(shortlist.map((source) => [source.id, source]));
-  return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => byId.get(item.id)!);
+  return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => ({ source: byId.get(item.id)!, probability: item.probability }));
+}
+
+export async function rankAnswerSources(evidence: readonly AnswerSourceRankingEvidence[], facts: readonly KnowledgeNodeRecord[], query: string): Promise<KnowledgeSourceRecord[]> {
+  return (await readAnswerSourceRanking(evidence, facts, query)).map((item) => item.source);
 }
 
 /** Minimal content/provenance evidence; no arbitrary metadata or numeric database dates. */
@@ -62,29 +66,6 @@ export function sourceRankingContent(source: KnowledgeSourceRecord) {
     sourceType: source.sourceType, status: source.status, trust: 'untrusted reference material',
     claimedProvenance: { reason: readString(discovery.trustReason) ?? '', domain: readString(discovery.sourceDomain) ?? '' },
   };
-}
-
-export function sourceAuthorityBoostForAnswer(source: KnowledgeSourceRecord): number {
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  const text = [
-    readString(discovery.trustReason),
-    readString(discovery.sourceDomain),
-    source.title,
-    source.summary,
-    source.description,
-    source.url,
-    source.sourceUri,
-    source.canonicalUri,
-  ].filter(Boolean).join(' ').toLowerCase();
-  if (/\bofficial-vendor-domain\b/.test(text)) return 140;
-  if (/\bofficial\b/.test(text) && /\b(support|specifications?|manual|product|docs?|datasheet)\b/.test(text) && !isCommercialLowValueSourceText(text)) return 120;
-  if (/\bmanufacturer-domain\b/.test(text)) return 80;
-  return 0;
-}
-
-function isCommercialLowValueSourceText(text: string): boolean {
-  return /\b(shopping|shop now|affiliate|associate program|buy now|add to cart|price comparison|marketplace|retailer|store listing|seller listing|sponsored listing|latest price|compare prices)\b/.test(text)
-    || /(^|\.)amazon\.[a-z.]+\b|(^|\.)ebay\.[a-z.]+\b|(^|\.)walmart\.[a-z.]+\b|(^|\.)bestbuy\.[a-z.]+\b|(^|\.)target\.[a-z.]+\b/.test(text);
 }
 
 function uniqueSources(values: readonly KnowledgeSourceRecord[]): KnowledgeSourceRecord[] {

@@ -13,13 +13,12 @@ import {
 } from './helpers.js';
 import { refreshHomeGraphDevicePassport } from './generated-pages.js';
 import {
-  compareHomeGraphPageSources,
-  homeGraphPageSourceWeight,
+  createHomeGraphPageSourceReader,
   isUsefulHomeGraphPageFact,
-  isUsefulHomeGraphPageSource,
-  isUsefulHomeGraphPageSourceCandidate,
 } from './page-quality.js';
-import { sourceAuthorityBoostForAnswer } from '../semantic/answer-source-ranking.js';
+import { isKnowledgeSourceQualityFailure } from '../source-quality.js';
+import { getKnowledgeSpaceId } from '../spaces.js';
+import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
 import type { HomeGraphAskResult } from './types.js';
 
 const MAX_ASK_REFRESH_DEVICES = 2;
@@ -36,7 +35,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
   readonly answer: HomeGraphAskResult;
 }): Promise<{ readonly requested: boolean; readonly refreshed: number }> {
   if ((input.answer.answer.facts?.length ?? 0) === 0 && input.answer.answer.sources.length === 0) return { requested: false, refreshed: 0 };
-  const devices = input.answer.answer.linkedObjects.filter((node) => node.kind === 'ha_device').slice(0, MAX_ASK_REFRESH_DEVICES);
+  const devices = input.answer.answer.linkedObjects.filter((node) => node.kind === 'ha_device' && getKnowledgeSpaceId(node) === input.spaceId).slice(0, MAX_ASK_REFRESH_DEVICES);
   try {
     await persistAnswerFactSubjectLinks({
       store: input.store,
@@ -47,6 +46,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
       sources: input.answer.answer.sources ?? [],
     });
   } catch (error) {
+    if (isKnowledgeSourceQualityFailure(error)) throw error;
     logger.warn('Home Graph Ask page enrichment bookkeeping failed', {
       spaceId: input.spaceId,
       installationId: input.installationId,
@@ -70,6 +70,7 @@ export async function refreshDevicePagesForHomeGraphAsk(input: {
       });
       refreshed += 1;
     } catch (error) {
+      if (isKnowledgeSourceQualityFailure(error)) throw error;
       logger.warn('Home Graph Ask generated page refresh failed', {
         spaceId: input.spaceId,
         installationId: input.installationId,
@@ -90,16 +91,30 @@ async function persistAnswerFactSubjectLinks(input: {
   readonly sources: readonly KnowledgeSourceRecord[];
 }): Promise<void> {
   if (input.devices.length === 0) return;
+  const reader = createHomeGraphPageSourceReader();
+  const guard = createSemanticWriteGuard(input.store);
+  for (const device of input.devices) guard.node(device.id);
+  const facts = input.facts.filter((fact) => getKnowledgeSpaceId(fact) === input.spaceId);
+  for (const fact of facts) guard.node(fact.id);
+  const candidates = input.sources.filter((source) => getKnowledgeSpaceId(source) === input.spaceId)
+    .filter((source) => {
+      const existing = guard.source(source.id);
+      return !existing || getKnowledgeSpaceId(existing) === input.spaceId;
+    }).slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER).map((source) => {
+    const existing = input.store.getSource(source.id) ?? undefined;
+    return { source, existing, status: mergeSourceStatus(source.status, existing?.status) };
+  });
+  const readings = await reader.readCandidates(candidates);
+  const pageSources = readings.filter((reading) => reading.useful)
+    .sort((a, b) => b.probability! - a.probability! || a.source.id.localeCompare(b.source.id))
+    .slice(0, MAX_ASK_PAGE_SOURCES_TO_LINK);
+  const acceptedSourceIds = new Set(pageSources.map((reading) => reading.source.id));
   await input.store.batch(async () => {
+    // No source/link mutation follows a stale model await.
+    guard.assertCurrent();
     const devicesById = new Map(input.devices.map((device) => [device.id, device]));
-    const pageSources: KnowledgeSourceRecord[] = [];
-    for (const source of input.sources.slice(0, MAX_ASK_PAGE_SOURCES_TO_CONSIDER)) {
-      const existing = input.store.getSource(source.id);
-      if (!isUsefulHomeGraphPageSourceCandidate(source, existing ?? undefined)) continue;
-      const storedSource = await upsertAnswerPageSource(input, source);
-      if (isUsefulHomeGraphPageSource(storedSource)) pageSources.push(storedSource);
-    }
-    for (const storedSource of pageSources.sort(compareHomeGraphPageSources).slice(0, MAX_ASK_PAGE_SOURCES_TO_LINK)) {
+    for (const reading of pageSources) {
+      const storedSource = await upsertAnswerPageSource(input, reading.source);
       for (const device of input.devices) {
         await input.store.upsertEdge({
           fromKind: 'source',
@@ -107,15 +122,15 @@ async function persistAnswerFactSubjectLinks(input: {
           toKind: 'node',
           toId: device.id,
           relation: 'source_for',
-          weight: homeGraphPageSourceWeight(storedSource),
+          weight: reading.probability!,
           metadata: buildHomeGraphMetadata(input.spaceId, input.installationId, {
             linkedBy: 'homegraph-ask-page-refresh',
           }),
         });
       }
     }
-    for (const fact of input.facts) {
-      if (!isUsefulHomeGraphPageFact(fact) || !fact.sourceId) continue;
+    for (const fact of facts) {
+      if (!isUsefulHomeGraphPageFact(fact) || !fact.sourceId || !acceptedSourceIds.has(fact.sourceId)) continue;
       const source = input.store.getSource(fact.sourceId);
       if (!source || source.status === 'stale' || isGeneratedPageSource(source)) continue;
       const targets = answerFactTargetDevices(fact, devicesById);

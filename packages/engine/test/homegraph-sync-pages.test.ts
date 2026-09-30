@@ -1,8 +1,12 @@
-import { useExtractionReadings } from './_helpers/extraction-readings.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 
-useExtractionReadings();
+const qualityReadings = useKnowledgeAnswerReadings();
+beforeEach(() => { qualityReadings.set({
+  quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
+  authorities: [['LG 86NANO90UNA official specifications', 'official-vendor']],
+}); });
 
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { HomeGraphRoutes } from '../sdk/src/platform/daemon/http/home-graph-routes.js';
 import {
   HomeGraphService,

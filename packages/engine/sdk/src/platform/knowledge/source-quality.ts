@@ -1,148 +1,131 @@
+import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
+import { mapLimit, JudgmentError } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
+import { sourceRankingContent } from './semantic/answer-source-ranking.js';
+import { pageSourceQuality } from './semantic/ranking/source-quality.js';
 import type { KnowledgeSourceRecord } from './types.js';
 
 export interface KnowledgePageSourceQualityPolicy {
+  /** Structural provenance flag supplied by the owning projection pipeline. */
   readonly isGeneratedSource?: ((source: KnowledgeSourceRecord) => boolean) | undefined;
-  readonly authorityBoost?: ((source: KnowledgeSourceRecord) => number) | undefined;
-  readonly isLowValueSource?: ((source: KnowledgeSourceRecord, existing?: KnowledgeSourceRecord) => boolean) | undefined;
-  readonly usablePendingPattern?: RegExp | undefined;
-  readonly qualityKeywordPattern?: RegExp | undefined;
+  /** What the reference is for; no regex/point policy substitutes for a reading. */
+  readonly purpose?: string | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+export type KnowledgeSourceAuthority = 'official-vendor' | 'vendor' | 'secondary' | 'unverified';
+export interface KnowledgePageSourceReading {
+  readonly source: KnowledgeSourceRecord;
+  readonly useful: boolean;
+  readonly probability?: number | undefined;
+  readonly authority: KnowledgeSourceAuthority;
+  readonly decisionId?: string | undefined;
+}
+export class KnowledgeSourceQualityHeldError extends Error {
+  override readonly name = 'KnowledgeSourceQualityHeldError';
+  constructor(readonly reason: 'unsettled' | 'unavailable' | 'no-match' | 'stale' | 'aborted' = 'unsettled') {
+    super(reason === 'aborted' ? 'Knowledge source quality reading was cancelled; no source was authorized for use.' : reason === 'stale' ? 'Knowledge source changed during its quality reading; no source was written.' : reason === 'no-match' ? 'No eligible knowledge source supports the requested reference.' : 'Knowledge source quality did not settle; no source was authorized for use.');
+  }
 }
 
-const DEFAULT_USABLE_PENDING_PATTERN = /\b(support|specifications?|manual|product|datasheet|docs?)\b/;
-const DEFAULT_QUALITY_KEYWORD_PATTERN = /\b(?:support|specifications?|manual|product)\b/;
-const MAX_PAGE_SOURCE_WEIGHT = 0.98;
-const MIN_USABLE_PAGE_SOURCE_WEIGHT = 0.05;
-const SOURCE_QUALITY_WEIGHT_DIVISOR = 120;
-
-export function isUsefulKnowledgePageSource(
-  source: KnowledgeSourceRecord,
-  policy: KnowledgePageSourceQualityPolicy = {},
-): boolean {
-  if (!isUsableKnowledgePageSourceStatus(source, source.status, policy)) return false;
-  if (policy.isGeneratedSource?.(source)) return false;
-  return !isLowValueKnowledgePageSource(source, undefined, policy);
+/** These failures must not be swallowed before downstream knowledge writes. */
+export function isKnowledgeSourceQualityFailure(error: unknown): error is Error {
+  return error instanceof KnowledgeSourceQualityHeldError || error instanceof JudgmentError || error instanceof JudgmentPortMissingError || error instanceof JudgmentInputError;
+}
+export interface KnowledgePageSourceCandidate {
+  readonly source: KnowledgeSourceRecord;
+  readonly existing?: KnowledgeSourceRecord | undefined;
+  readonly status?: KnowledgeSourceRecord['status'] | undefined;
 }
 
-export function isUsefulKnowledgePageSourceCandidate(
-  source: KnowledgeSourceRecord,
-  existing: KnowledgeSourceRecord | undefined,
-  status: KnowledgeSourceRecord['status'],
-  policy: KnowledgePageSourceQualityPolicy = {},
-): boolean {
-  if (!isUsableKnowledgePageSourceStatus(source, status, policy)) return false;
-  if (policy.isGeneratedSource?.(source) || (existing && policy.isGeneratedSource?.(existing))) return false;
-  return !isLowValueKnowledgePageSource(source, existing, policy);
+/** A per-operation reader shares exact readings, never a process-wide semantic cache. */
+export function createKnowledgePageSourceReader(policy: KnowledgePageSourceQualityPolicy = {}) {
+  const cache = new Map<string, Promise<KnowledgePageSourceReading>>();
+  const sourceVersions = new Map<string, string>();
+  const throwIfAborted = () => { if (policy.signal?.aborted) throw new KnowledgeSourceQualityHeldError('aborted'); };
+  const purpose = policy.purpose ?? 'A grounded factual reference page about the subject described by the source';
+  function excluded(source: KnowledgeSourceRecord, status: KnowledgeSourceRecord['status'], existing?: KnowledgeSourceRecord) {
+    return (status !== 'indexed' && status !== 'pending') || policy.isGeneratedSource?.(source) || (existing && policy.isGeneratedSource?.(existing));
+  }
+  function stateFor(source: KnowledgeSourceRecord, existing?: KnowledgeSourceRecord, status = source.status) {
+    return { purpose, candidate: sourceRankingContent(source), effectiveStatus: status, ...(existing ? { previous: sourceRankingContent(existing) } : {}) };
+  }
+  async function read(source: KnowledgeSourceRecord, existing?: KnowledgeSourceRecord, status = source.status): Promise<KnowledgePageSourceReading> {
+    throwIfAborted();
+    if (excluded(source, status, existing)) return { source, useful: false, authority: 'unverified' };
+    const version = JSON.stringify(source);
+    const earlier = sourceVersions.get(source.id);
+    if (earlier !== undefined && earlier !== version) throw new KnowledgeSourceQualityHeldError('stale');
+    sourceVersions.set(source.id, version);
+    const state = stateFor(source, existing, status);
+    assertJudgmentInput(state);
+    const key = JSON.stringify(state);
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const run = await pageSourceQuality.run(judgmentPort('engine.knowledge.page-source-quality'), state, { site: 'engine.knowledge.page-source-quality', ...(policy.signal ? { signal: policy.signal } : {}) });
+        throwIfAborted();
+        const { useful, authority } = run.readings;
+        if (useful.outcome !== 'act' || authority.outcome !== 'act') {
+          run.recordAction('held: source usefulness or authority unsettled');
+          throw new KnowledgeSourceQualityHeldError();
+        }
+        run.recordAction(useful.verdict === 'yes' ? `source eligible: ${authority.choice}` : 'source excluded: not useful');
+        return { source, useful: useful.verdict === 'yes', probability: useful.probability, authority: authority.choice, decisionId: run.result.decisionId };
+      })().catch((error: unknown) => {
+        if (isKnowledgeSourceQualityFailure(error)) throw error;
+        throw new KnowledgeSourceQualityHeldError('unavailable');
+      });
+      cache.set(key, pending);
+    }
+    const result = await pending;
+    throwIfAborted();
+    return { ...result, source };
+  }
+  async function readCandidates(candidates: readonly KnowledgePageSourceCandidate[]): Promise<KnowledgePageSourceReading[]> {
+    throwIfAborted();
+    if (candidates.length > 50) throw new JudgmentInputError('unsupported-input');
+    assertJudgmentInput(candidates.filter(({ source, existing, status }) => !excluded(source, status ?? source.status, existing)).map(({ source, existing, status }) => stateFor(source, existing, status ?? source.status)));
+    return mapLimit(candidates, 4, ({ source, existing, status }) => read(source, existing, status ?? source.status));
+  }
+  async function rank(sources: readonly KnowledgeSourceRecord[]): Promise<KnowledgePageSourceReading[]> {
+    const byId = new Map<string, KnowledgeSourceRecord>();
+    for (const source of sources) {
+      const previous = byId.get(source.id);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(source)) throw new KnowledgeSourceQualityHeldError('stale');
+      byId.set(source.id, source);
+    }
+    const unique = [...byId.values()];
+    const shortlist = unique.filter((source) => !excluded(source, source.status)).slice(0, 50);
+    // Refuse the entire selected batch before any concurrent request starts.
+    const readings = await readCandidates(shortlist.map((source) => ({ source })));
+    return readings.filter((item) => item.useful).sort((a, b) => b.probability! - a.probability! || a.source.id.localeCompare(b.source.id));
+  }
+  function assertCurrent(current: (id: string) => KnowledgeSourceRecord | null | undefined): void {
+    throwIfAborted();
+    for (const [id, version] of sourceVersions) if (JSON.stringify(current(id)) !== version) throw new KnowledgeSourceQualityHeldError('stale');
+  }
+  return { read, rank, readCandidates, assertCurrent };
 }
 
-export function compareKnowledgePageSources(
-  left: KnowledgeSourceRecord,
-  right: KnowledgeSourceRecord,
-  policy: KnowledgePageSourceQualityPolicy = {},
-): number {
-  return knowledgePageSourceQuality(right, policy) - knowledgePageSourceQuality(left, policy)
-    || sourceLabel(left).localeCompare(sourceLabel(right))
-    || left.id.localeCompare(right.id);
+export async function isUsefulKnowledgePageSource(source: KnowledgeSourceRecord, policy: KnowledgePageSourceQualityPolicy = {}): Promise<boolean> {
+  return (await createKnowledgePageSourceReader(policy).read(source)).useful;
 }
-
-export function knowledgePageSourceWeight(
-  source: KnowledgeSourceRecord,
-  policy: KnowledgePageSourceQualityPolicy = {},
-): number {
-  const quality = knowledgePageSourceQuality(source, policy);
-  if (quality <= 0) return 0;
-  return Math.min(
-    MAX_PAGE_SOURCE_WEIGHT,
-    Math.max(MIN_USABLE_PAGE_SOURCE_WEIGHT, quality / SOURCE_QUALITY_WEIGHT_DIVISOR),
-  );
+export async function isUsefulKnowledgePageSourceCandidate(source: KnowledgeSourceRecord, existing: KnowledgeSourceRecord | undefined, status: KnowledgeSourceRecord['status'], policy: KnowledgePageSourceQualityPolicy = {}): Promise<boolean> {
+  return (await createKnowledgePageSourceReader(policy).read(source, existing, status)).useful;
 }
-
-function knowledgePageSourceQuality(
-  source: KnowledgeSourceRecord,
-  policy: KnowledgePageSourceQualityPolicy,
-): number {
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  const rank = typeof discovery.sourceRank === 'number' ? Math.max(0, 12 - discovery.sourceRank) : 0;
-  const uri = sourceUriText(source).toLowerCase();
-  const authorityBoost = policy.authorityBoost?.(source) ?? 0;
-  return authorityBoost
-    + rank * 5
-    + 24
-    + (source.sourceType === 'document' ? 10 : source.sourceType === 'url' ? 6 : 0)
-    + ((policy.qualityKeywordPattern ?? DEFAULT_QUALITY_KEYWORD_PATTERN).test(uri) ? 10 : 0)
-    - (isLowValueKnowledgePageSource(source, undefined, policy) ? 120 : 0);
+export async function rankKnowledgePageSources(sources: readonly KnowledgeSourceRecord[], policy: KnowledgePageSourceQualityPolicy = {}): Promise<KnowledgeSourceRecord[]> {
+  return (await createKnowledgePageSourceReader(policy).rank(sources)).map((item) => item.source);
 }
-
-function isUsableKnowledgePageSourceStatus(
-  source: KnowledgeSourceRecord,
-  status: KnowledgeSourceRecord['status'],
-  policy: KnowledgePageSourceQualityPolicy,
-): boolean {
-  if (status === 'indexed') return true;
-  if (status !== 'pending') return false;
-  const authorityBoost = policy.authorityBoost?.(source) ?? 0;
-  return authorityBoost > 0 || looksLikeUsablePendingPageSource(source, policy);
+/** Prefer the batch rank helper when sorting a collection. */
+export async function compareKnowledgePageSources(left: KnowledgeSourceRecord, right: KnowledgeSourceRecord, policy: KnowledgePageSourceQualityPolicy = {}): Promise<number> {
+  const readings = await createKnowledgePageSourceReader(policy).rank([left, right]);
+  const probabilities = new Map(readings.map((item) => [item.source.id, item.probability!]));
+  return (probabilities.get(right.id) ?? 0) - (probabilities.get(left.id) ?? 0) || left.id.localeCompare(right.id);
 }
-
-function isLowValueKnowledgePageSource(
-  source: KnowledgeSourceRecord,
-  existing: KnowledgeSourceRecord | undefined,
-  policy: KnowledgePageSourceQualityPolicy,
-): boolean {
-  if (policy.isLowValueSource?.(source, existing)) return true;
-  const discovery = readRecord(source.metadata.sourceDiscovery);
-  const existingDiscovery = readRecord(existing?.metadata.sourceDiscovery);
-  const text = [
-    source.title,
-    existing?.title,
-    source.summary,
-    existing?.summary,
-    source.description,
-    existing?.description,
-    source.url,
-    existing?.url,
-    source.sourceUri,
-    existing?.sourceUri,
-    source.canonicalUri,
-    existing?.canonicalUri,
-    typeof discovery.trustReason === 'string' ? discovery.trustReason : undefined,
-    typeof existingDiscovery.trustReason === 'string' ? existingDiscovery.trustReason : undefined,
-    typeof discovery.sourceDomain === 'string' ? discovery.sourceDomain : undefined,
-    typeof existingDiscovery.sourceDomain === 'string' ? existingDiscovery.sourceDomain : undefined,
-  ].filter(Boolean).join(' ').toLowerCase();
-  if (/\b(?:shopping|shop now|affiliate|associate program|buy now|add to cart|price comparison|marketplace|retailer|store listing|seller listing|sponsored listing)\b/.test(text)) return true;
-  if (/(^|\.)amazon\.[a-z.]+\b|(^|\.)ebay\.[a-z.]+\b|(^|\.)walmart\.[a-z.]+\b|(^|\.)bestbuy\.[a-z.]+\b|(^|\.)target\.[a-z.]+\b/.test(text)) return true;
-  if (/\b(ranking system|ranked by|latest price|prices? & features?|review score|compare prices)\b/.test(text)) return true;
-  return false;
+export async function knowledgePageSourceWeight(source: KnowledgeSourceRecord, policy: KnowledgePageSourceQualityPolicy = {}): Promise<number> {
+  const reading = await createKnowledgePageSourceReader(policy).read(source);
+  return reading.useful ? reading.probability! : 0;
 }
-
-function looksLikeUsablePendingPageSource(
-  source: KnowledgeSourceRecord,
-  policy: KnowledgePageSourceQualityPolicy,
-): boolean {
-  const text = [
-    source.title,
-    source.summary,
-    source.description,
-    source.url,
-    source.sourceUri,
-    source.canonicalUri,
-  ].filter(Boolean).join(' ').toLowerCase();
-  return (policy.usablePendingPattern ?? DEFAULT_USABLE_PENDING_PATTERN).test(text)
-    && !isLowValueKnowledgePageSource(source, undefined, policy);
-}
-
-function sourceUriText(source: KnowledgeSourceRecord): string {
-  return [
-    source.url,
-    source.sourceUri,
-    source.canonicalUri,
-  ].filter(Boolean).join(' ');
-}
-
-function sourceLabel(source: KnowledgeSourceRecord): string {
-  return source.title ?? source.url ?? source.sourceUri ?? source.canonicalUri ?? source.id;
-}
-
-function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+export async function readKnowledgeSourceAuthority(source: KnowledgeSourceRecord, policy: KnowledgePageSourceQualityPolicy = {}): Promise<KnowledgeSourceAuthority> {
+  return (await createKnowledgePageSourceReader(policy).read(source)).authority;
 }
