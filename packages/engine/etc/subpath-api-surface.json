@@ -53342,6 +53342,11 @@
       "text": "export declare function createSessionUnrecoverablePlaybook(getRuntimeContext?: () => OpsRuntimeContextState | null): Playbook; ;; via OpsRuntimeContextState = export interface OpsRuntimeContextState { runtimeBus: RuntimeEventBus; store: RuntimeStore; recoveryFilePath: string; lastSessionPointerPath: string; now: () => number; lastEventAt: number; sessionRecoveryFailedAt?: number | undefined; sessionRecoveryFailedCount: number; detach: () => void; } ;; Playbook = export interface Playbook { readonly id: string; readonly name: string; readonly description: string; readonly symptoms: string[]; readonly checks: DiagnosticCheck[]; readonly steps: PlaybookStep[]; readonly escalationCriteria: string[]; readonly tags: string[]; }"
     },
     {
+      "name": "createSshBackend",
+      "kind": "function",
+      "text": "export declare function createSshBackend(ctx: BackendContext): Backend;"
+    },
+    {
       "name": "createStoreRerooter",
       "kind": "function",
       "text": "export declare function createStoreRerooter(deps: { readonly codeIndexStore: Pick<CodeIndexStore, 'reroot'>; readonly projectIndex: { reroot(dir: string): Promise<unknown>; }; readonly surfaceRoot: string; }): (newWorkingDir: string) => Promise<void>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"

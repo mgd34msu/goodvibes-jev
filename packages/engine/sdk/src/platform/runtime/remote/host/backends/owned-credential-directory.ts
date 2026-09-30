@@ -101,10 +101,14 @@ export class OwnedCredentialDirectory {
     return this.directoryPromise;
   }
 
-  private async create(): Promise<string> {
+  async prepare(): Promise<void> {
     await this.ready;
     this.assertOpen();
     if (this.preparationFailed) throw new BackendDispatchError('Credential scratch could not be prepared.', 'REMOTE_BACKEND_CREDENTIAL_STORAGE_FAILED');
+  }
+
+  private async create(): Promise<string> {
+    await this.prepare();
     await assertRealPath(this.root);
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     await assertRealPath(this.root);
