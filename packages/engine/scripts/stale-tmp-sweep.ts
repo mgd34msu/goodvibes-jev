@@ -25,8 +25,13 @@ import { join } from 'node:path';
  * whose mtime is older than `maxAgeMs`. Best-effort: a directory that
  * vanishes between listing and stat (another run reclaimed it first) or that
  * fails to remove is silently skipped, never thrown.
+ * An optional preservation predicate can keep evidence the caller recognizes;
+ * an inspection error also preserves that candidate rather than deleting it.
  */
-export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number, options: { readonly preserveMarker?: string } = {}): void {
+export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number, options: {
+  readonly preserveMarker?: string;
+  readonly preserve?: (directory: string) => boolean;
+} = {}): void {
   let entries: string[];
   try {
     entries = readdirSync(root);
@@ -44,6 +49,7 @@ export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number
       continue; // vanished between listing and stat
     }
     try {
+      if (options.preserve?.(path)) continue;
       rmSync(path, { recursive: true, force: true });
     } catch {
       // Best effort, another run may have reclaimed it first.
