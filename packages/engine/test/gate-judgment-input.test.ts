@@ -22,6 +22,12 @@ const SECRET = 'SYNTHETIC_PROTECTED_VALUE_DO_NOT_TRANSMIT';
 const PAN = '4111111111111111';
 const REF = 'goodvibes://secrets/goodvibes/OPENAI_API_KEY';
 
+function hiddenArrayValue(value: unknown, index = 0): unknown[] {
+  const items: unknown[] = [];
+  Object.defineProperty(items, String(index), { value, enumerable: false });
+  return items;
+}
+
 function gate(options: { auto?: boolean; approve?: boolean; surface?: string; ledger?: UntrustedContentLedger } = {}) {
   const events: unknown[] = [];
   const asks: PermissionPromptRequest[] = [];
@@ -127,6 +133,59 @@ describe('pre-judgment protected input refusal', () => {
     expect(log.requests).toEqual([]);
   });
 
+  for (const [name, value] of [
+    ['inline credential', `password=${SECRET}`],
+    ['PAN in text', `Card ${PAN}`],
+    ['numeric PAN', Number(PAN)],
+    ['nested declared credential', { password: SECRET }],
+    ['nested declared card field', { cvv: SECRET }],
+    ['nested hidden array', hiddenArrayValue({ apiKey: SECRET })],
+    ['credential after clipping', `${'x'.repeat(4500)} password=${SECRET}`],
+    ['PAN after clipping', `${'x'.repeat(4500)} ${PAN}`],
+  ] as const) {
+    test(`non-enumerable array ${name} is refused before any battery request`, async () => {
+      const items = hiddenArrayValue(value, 3);
+      const args = { content: 'safe text'.repeat(600), nested: { items } };
+      await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(() => readingArguments(args)).toThrow(JudgmentInputError);
+      const { manager, events, asks } = gate({ auto: true, approve: true });
+      const result = await manager.checkDetailed('test', args);
+      expect(result.reasonCode).toBe('boundary_judgment_input');
+      expect(log.requests).toEqual([]);
+      expect(events).toEqual([]);
+      expect(asks).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expect(JSON.stringify(result)).not.toContain(PAN);
+      expect(Object.getOwnPropertyDescriptor(items, '3')).toMatchObject({ value, enumerable: false });
+    });
+  }
+
+  test('enumerable object length fields are scanned before any battery request', async () => {
+    for (const args of [{ length: `password=${SECRET}` }, { nested: { length: Number(PAN) } }]) {
+      await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(() => readingArguments(args)).toThrow(JudgmentInputError);
+    }
+    expect(log.requests).toEqual([]);
+  });
+
+  test('hidden array accessors and serialization overrides are refused without execution', async () => {
+    let invoked = 0;
+    const getter: unknown[] = ['safe'];
+    Object.defineProperty(getter, '3', { get: () => { invoked++; return SECRET; }, enumerable: false });
+    const mapper: unknown[] = ['safe'];
+    Object.defineProperty(mapper, 'map', { value: () => { invoked++; return [SECRET]; }, enumerable: false });
+    const serializer: unknown[] = ['safe'];
+    Object.defineProperty(serializer, 'toJSON', { value: () => { invoked++; return SECRET; }, enumerable: false });
+    for (const items of [getter, mapper, serializer]) {
+      const args = { items };
+      expect(judgmentInputProblem(args)).toBe('unsupported-input');
+      await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(() => readingArguments(args)).toThrow(JudgmentInputError);
+    }
+    expect(invoked).toBe(0);
+    expect(log.requests).toEqual([]);
+  });
+
   test('complete local PAN scans are bounded on many digit groups', () => {
     expect(judgmentInputProblem({ content: '1234 '.repeat(10_000) })).toBeUndefined();
     expect(judgmentInputProblem({ content: `${PAN} `.repeat(10_000) })).toBe('card-material');
@@ -167,6 +226,22 @@ describe('safe calls keep semantic judgment and original execution arguments', (
     ['https://example.test/send', { outward: true, derives: true }],
     ['rm -rf /', { catastrophic: true }],
   ]);
+
+  test('harmless hidden array slots and holes reach all three batteries unchanged', async () => {
+    const items = hiddenArrayValue('ordinary hidden value', 3);
+    const args = { nested: { items }, length: 'ordinary object field' };
+    expect(judgmentInputProblem(args)).toBeUndefined();
+    const before = JSON.stringify(args);
+    await readToolCall({ toolName: 'test', args });
+    expect(log.requests).toHaveLength(3);
+    for (const request of log.requests) {
+      const state = request.state as { arguments: unknown };
+      expect(JSON.stringify(state.arguments)).toBe(before);
+    }
+    expect(JSON.stringify(args)).toBe(before);
+    expect(Object.hasOwn(items, '0')).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(items, '3')).toMatchObject({ value: 'ordinary hidden value', enumerable: false });
+  });
 
   test('references, ordinary text, shell programs, metadata and read paths remain readable', async () => {
     for (const args of [

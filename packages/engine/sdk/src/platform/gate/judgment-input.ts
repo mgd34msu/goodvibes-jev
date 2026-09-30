@@ -161,14 +161,17 @@ export function judgmentInputProblem(value: unknown, toolName = ''): JudgmentInp
       return inlineProblem(String(entry));
     }
     if (typeof entry !== 'object' || ancestors.has(entry)) return 'unsupported-input';
+    const array = Array.isArray(entry);
     const prototype: unknown = Object.getPrototypeOf(entry);
-    if (Array.isArray(entry) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return 'unsupported-input';
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return 'unsupported-input';
     ancestors.add(entry);
     try {
       const descriptors = Object.getOwnPropertyDescriptors(entry);
       if (Object.values(descriptors).some((descriptor) => descriptor.get !== undefined || descriptor.set !== undefined)) return 'unsupported-input';
+      // Array.map and JSON read array slots regardless of enumerability. Inspect
+      // every own array value; only an array's structural length is omitted.
       const fields: Record<string, unknown> = Object.fromEntries(Object.entries(descriptors)
-        .filter(([key, descriptor]) => key !== 'length' && descriptor.enumerable)
+        .filter(([key, descriptor]) => array ? key !== 'length' : descriptor.enumerable)
         .map(([key, descriptor]) => [key, descriptor.value as unknown]));
       const selected = OPERATION_FIELDS.map((field) => fields[field]).find((field) => field === CARD_CREATE || field === CREDENTIAL_SET);
       const op = typeof selected === 'string' ? selected : operation;
