@@ -8,6 +8,7 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { inferKnowledgeInjectionTrustTier } from '../sdk/src/platform/knowledge/shared.js';
 import {
   decideKnowledgeConsolidationCandidate as decide,
   refreshKnowledgeConsolidationCandidates as refresh,
@@ -123,7 +124,12 @@ describe('knowledge consolidation reading', () => {
     expect(h.memory.isReady).toBe(false);
     await decide(h.context, candidate!.id, 'accept', { decidedBy: 'owner', memoryClass: 'decision' });
     expect(h.memory.retrieve()[0]?.cls).toBe('decision');
-    expect(h.memory.retrieve()[0]?.reviewedBy).toBe('owner');
+    const memory = h.memory.retrieve()[0]!;
+    expect(memory.reviewState).toBe('reviewed');
+    expect(memory.reviewedBy).toBe('owner');
+    expect(memory.reviewedAt).toBeNumber();
+    expect(inferKnowledgeInjectionTrustTier(memory.reviewState)).toBe('reviewed');
+    expect(h.store.getConsolidationCandidate(candidate!.id)?.metadata.decisionAuthority).toBe('operator');
   });
 
   test('uncertain class blocks automatic promotion even when worth acts', async () => {
@@ -192,6 +198,11 @@ describe('knowledge consolidation reading', () => {
       { kind: 'event', ref: candidate.id, label: 'knowledge consolidation candidate' },
     ]));
     expect(memory.confidence).toBe(97);
+    expect(memory.reviewState).toBe('fresh');
+    expect(memory.reviewedBy).toBeUndefined();
+    expect(memory.reviewedAt).toBeUndefined();
+    expect(inferKnowledgeInjectionTrustTier(memory.reviewState)).toBe('fresh');
+    expect(candidate.metadata.decisionAuthority).toBe('automatic');
     await run(h.context, 'deep-consolidation', { autoPromote: true });
     await decide(h.context, candidate.id, 'accept', { decidedBy: 'later retry' });
     expect(h.memory.retrieve()).toHaveLength(1);

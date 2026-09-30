@@ -1,5 +1,6 @@
 import type { SQLiteStore } from '../state/sqlite-store.js';
 import { nowMs, stableText } from './store-schema.js';
+import { isTerminalRefinementState } from './store-lifecycle-authority.js';
 import type {
   KnowledgeRefinementTaskRecord,
   KnowledgeRefinementTaskUpsertInput,
@@ -12,6 +13,9 @@ export async function upsertKnowledgeRefinementTask(
   createId: () => string,
 ): Promise<KnowledgeRefinementTaskRecord> {
   const existing = input.id ? refinementTasks.get(input.id) : null;
+  // Terminal decisions belong to this task identity. A new gap/task is a new
+  // lifecycle; retryable blocked/failed tasks intentionally remain writable.
+  if (existing && isTerminalRefinementState(existing.state)) return existing;
   const now = nowMs();
   const _subjectKind = stableText(input.subjectKind);
   const _subjectId = stableText(input.subjectId);

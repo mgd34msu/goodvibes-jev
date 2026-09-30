@@ -32,6 +32,7 @@ import {
   suppressGap,
 } from './self-improvement-gap-state.js';
 import { BASE_OBJECT_PROFILES } from './self-improvement-graph.js';
+import { captureGapRepairLifecycle } from './self-improvement-lifecycle.js';
 
 const DEFAULT_REFINEMENT_LIMIT = 12;
 const MAX_REFINEMENT_LIMIT = 24;
@@ -139,8 +140,11 @@ export async function runKnowledgeSemanticSelfImprovement(
     }
     state.processedGaps += 1;
     const gapContext = buildGapContext(context.store, spaceId, gap, objectProfiles);
+    const lifecycleStopped = captureGapRepairLifecycle(context.store, gap);
     const task = await upsertRefinementTaskForGap(context.store, spaceId, gapContext, plan.trigger, 'detected', 'Gap was detected for semantic refinement.');
     state.taskIds.push(task.id);
+    const shouldStop = () => input.signal?.aborted === true || context.shouldStop?.() === true || lifecycleStopped(task.id);
+    if (shouldStop()) { state.skippedGaps += 1; continue; }
     const classification = classifyGap(gapContext, input.force === true, objectProfiles);
     if (classification.action === 'suppress') {
       await suppressGap(context.store, gap, classification.reason, spaceId);
@@ -191,6 +195,7 @@ export async function runKnowledgeSemanticSelfImprovement(
       task,
       startedAt: plan.startedAt,
       maxRunMs: plan.maxRunMs,
+      shouldStop,
     });
     applyRepairOutcome(state, repair);
     await yieldToEventLoop();
@@ -349,6 +354,7 @@ async function repairCandidateGap(options: {
   readonly task: KnowledgeRefinementTaskRecord;
   readonly startedAt: number;
   readonly maxRunMs: number;
+  readonly shouldStop: () => boolean;
 }): Promise<GapRepairOutcome> {
   const { context, spaceId, gap } = options;
   const repairKey = `${spaceId}:${gap.id}`;
@@ -363,6 +369,7 @@ async function repairCandidateGap(options: {
       gapRepairer: context.gapRepairer!,
     });
   } catch (error) {
+    if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
     const reason = error instanceof Error ? error.message : String(error);
     const nextRepairAttemptAt = isBudgetError(reason)
       ? Date.now() + SELF_IMPROVEMENT_RETRY_DELAY_MS
@@ -412,9 +419,12 @@ async function executeGapRepair(options: {
   readonly startedAt: number;
   readonly maxRunMs: number;
   readonly gapRepairer: KnowledgeSemanticGapRepairer;
+  readonly shouldStop: () => boolean;
 }): Promise<GapRepairOutcome> {
   const { context, input, spaceId, objectProfiles, gap, gapContext, startedAt, maxRunMs, gapRepairer } = options;
+  if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   let task = await updateRefinementTask(context.store, options.task, 'searching', 'Searching for source-backed repair evidence.', { query: gap.title });
+  if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   const remainingMs = Math.max(1_000, startedAt + maxRunMs - Date.now());
   const result = await runGapRepairerWithBudget({
     input,
@@ -424,8 +434,10 @@ async function executeGapRepair(options: {
     gapRepairer,
     remainingMs,
   });
+  if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   const assessment = await recordGapRepairAssessment(context.store, task, gap, result);
   task = assessment.task;
+  if (options.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   if (assessment.acceptedSourceIds.length) {
     task = await updateRefinementTask(context.store, task, 'applying', 'Linking accepted repair sources into the graph.');
   }
@@ -439,6 +451,7 @@ async function executeGapRepair(options: {
     acceptedSourceIds: assessment.acceptedSourceIds,
     ingestedSourceIds: assessment.ingestedSourceIds,
     deadlineAt: startedAt + maxRunMs,
+    shouldStop: options.shouldStop,
   });
 }
 
@@ -501,17 +514,21 @@ async function applyGapRepairEvidence(input: {
   readonly acceptedSourceIds: readonly string[];
   readonly ingestedSourceIds: readonly string[];
   readonly deadlineAt: number;
+  readonly shouldStop: () => boolean;
 }): Promise<GapRepairOutcome> {
   const { context, objectProfiles, spaceId, gap, task, result, acceptedSourceIds, ingestedSourceIds, deadlineAt } = input;
-  const linkedRepairs = await linkRepairSources(context.store, spaceId, gap, acceptedSourceIds, result?.query ?? gap.title, objectProfiles);
+  if (input.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
+  const linkedRepairs = await linkRepairSources(context.store, spaceId, gap, acceptedSourceIds, result?.query ?? gap.title, objectProfiles, input.shouldStop);
+  if (input.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   let promotedFactCount = 0;
   let repairComplete = false;
   if (acceptedSourceIds.length > 0) {
-    const promotion = await promoteRepairSources({ ...context, objectProfiles }, spaceId, gap, acceptedSourceIds, task, deadlineAt);
+    const promotion = await promoteRepairSources({ ...context, objectProfiles, shouldStop: input.shouldStop }, spaceId, gap, acceptedSourceIds, task, deadlineAt);
     promotedFactCount = promotion.promotedFactCount;
     repairComplete = promotion.repairComplete;
   }
 
+  if (input.shouldStop()) return emptyRepairOutcome({ skippedGaps: 1 });
   const evidenceSufficient = result?.evidenceSufficient !== false && acceptedSourceIds.length > 0 && repairComplete;
   await markGapRepairAttempt(context.store, gap, spaceId, {
     status: evidenceSufficient ? 'repaired' : acceptedSourceIds.length ? 'deferred' : 'searched_no_sources',

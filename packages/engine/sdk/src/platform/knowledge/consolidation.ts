@@ -97,10 +97,9 @@ async function applyDecision(context: KnowledgeConsolidationContext, id: string,
         { kind: 'event', ref: candidate.subjectId, label: `knowledge ${candidate.subjectKind}` },
       ],
       review: {
-        state: 'reviewed',
+        state: automatic ? 'fresh' : 'reviewed',
         confidence: Math.max(0, Math.min(100, Math.round(candidate.score))),
-        reviewedAt: decidedAt,
-        reviewedBy: input.decidedBy,
+        ...(!automatic ? { reviewedAt: decidedAt, reviewedBy: input.decidedBy } : {}),
       },
     });
     acceptedMemoryId = memory.id;
@@ -121,6 +120,7 @@ async function applyDecision(context: KnowledgeConsolidationContext, id: string,
     decidedBy: input.decidedBy,
     metadata: {
       ...candidate.metadata,
+      decisionAuthority: automatic ? 'automatic' : 'operator',
       ...(acceptedMemoryId ? { acceptedMemoryId } : {}),
     },
   });

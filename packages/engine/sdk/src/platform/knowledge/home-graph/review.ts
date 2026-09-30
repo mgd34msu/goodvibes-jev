@@ -1,3 +1,4 @@
+import { createKnowledgeIssueOperatorMutation } from '../store-lifecycle-authority.js';
 import { createKnowledgeNodeOperatorMutation } from '../store-node-authority.js';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type {
@@ -40,6 +41,7 @@ export async function reviewHomeGraphFact(
         operation: 'homegraph.review',
       });
     }
+    const issueMutation = createKnowledgeIssueOperatorMutation(issue);
     const subjectNode = issue.nodeId ? store.getNode(issue.nodeId) : null;
     const appliedFacts = await applyHomeGraphReviewFacts(store, spaceId, issue, subjectNode, input);
     const suppression = buildSuppression(input, issue, reviewedAt);
@@ -55,7 +57,7 @@ export async function reviewHomeGraphFact(
         review: reviewMetadata(input, reviewedAt),
         ...(suppression ? { suppression } : {}),
       }),
-    });
+    }, issueMutation);
     const node = appliedFacts?.node ?? subjectNode ?? undefined;
     return {
       ok: true,
@@ -245,6 +247,7 @@ function buildSuppression(
 }
 
 function issueStatusForAction(action: HomeGraphReviewInput['action'], current: KnowledgeIssueRecord['status']): KnowledgeIssueRecord['status'] {
+  if (action === 'edit') return 'open';
   return action === 'reject' || action === 'resolve' || action === 'accept' ? 'resolved' : current;
 }
 

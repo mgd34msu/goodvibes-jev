@@ -1,3 +1,4 @@
+import { assertKnowledgeIssueOperatorMutation, createKnowledgeIssueOperatorMutation } from './store-lifecycle-authority.js';
 import { createKnowledgeNodeOperatorMutation } from './store-node-authority.js';
 import type { KnowledgeIssueRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from './types.js';
 import type { KnowledgeStore } from './store.js';
@@ -30,6 +31,7 @@ export async function reviewKnowledgeIssue(
   await store.init();
   const issue = store.getIssue(input.issueId);
   if (!issue) throw new Error(`Unknown knowledge issue: ${input.issueId}`);
+  const issueMutation = createKnowledgeIssueOperatorMutation(issue);
   const reviewedAt = Date.now();
   const facts = readReviewFacts(input.value);
   const source = issue.sourceId ? store.getSource(issue.sourceId) : null;
@@ -48,6 +50,7 @@ export async function reviewKnowledgeIssue(
   const updatedSource = source && Object.keys(facts).length > 0
     ? await applySourceFacts(store, source, facts, input, reviewedAt)
     : source ?? undefined;
+  assertKnowledgeIssueOperatorMutation(store.getIssue(issue.id), issueMutation);
   const updatedNode = node && Object.keys(facts).length > 0
     ? await applyNodeFacts(store, node, facts, input, nodeMutation!)
     : node ?? undefined;
@@ -69,7 +72,7 @@ export async function reviewKnowledgeIssue(
       },
       ...(suppression ? { suppression } : {}),
     },
-  });
+  }, issueMutation);
   return {
     ok: true,
     issue: updatedIssue,

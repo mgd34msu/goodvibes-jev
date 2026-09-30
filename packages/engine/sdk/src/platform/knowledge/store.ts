@@ -32,7 +32,7 @@ import type {
   KnowledgeUsageUpsertInput,
 } from './types.js';
 import {
-  createSchema, issueStatusForUpsert,
+  createSchema,
   nowMs,
   stableText,
   uniq,
@@ -42,6 +42,7 @@ import {
   resolveKnowledgeDbPath,
   type KnowledgeStoreConfig,
 } from './store-config.js';
+import { prepareKnowledgeIssueUpsert, type KnowledgeIssueOperatorMutation } from './store-lifecycle-authority.js';
 import { KNOWLEDGE_EXTRACTOR_VERSION } from './extraction-policy.js';
 import {
   clampConfidence,
@@ -689,16 +690,15 @@ export class KnowledgeStore {
     return created;
   }
 
-  async upsertIssue(input: KnowledgeIssueUpsertInput): Promise<KnowledgeIssueRecord> {
+  async upsertIssue(input: KnowledgeIssueUpsertInput, mutation?: KnowledgeIssueOperatorMutation): Promise<KnowledgeIssueRecord> {
     await this.init();
-    const existing = input.id ? this.issues.get(input.id) : null;
+    const existing = input.id ? this.issues.get(input.id) : undefined;
+    const lifecycle = prepareKnowledgeIssueUpsert(existing, input, mutation);
+    if (existing && lifecycle.preserve) return existing;
     const now = nowMs();
     const _sourceId = stableText(input.sourceId);
     const _nodeId = stableText(input.nodeId);
-    const mergedIssueMetadata = {
-      ...(existing?.metadata ?? {}),
-      ...(input.metadata ?? {}),
-    };
+    const mergedIssueMetadata = lifecycle.metadata;
     const issueSource = _sourceId !== null
       ? this.sources.get(_sourceId)
       : existing?.sourceId
@@ -727,7 +727,7 @@ export class KnowledgeStore {
       severity: input.severity,
       code: input.code,
       message: input.message.trim(),
-      status: input.status ?? issueStatusForUpsert(existing, input),
+      status: lifecycle.status,
       ...(_sourceId !== null ? { sourceId: _sourceId } : {}),
       ...(_nodeId !== null ? { nodeId: _nodeId } : {}),
       metadata: issueMetadata,
@@ -757,6 +757,9 @@ export class KnowledgeStore {
 
   async replaceIssueRecord(record: KnowledgeIssueRecord): Promise<void> {
     await this.init();
+    const lifecycle = prepareKnowledgeIssueUpsert(this.issues.get(record.id), record, undefined, true);
+    if (lifecycle.preserve) return;
+    record = { ...record, status: lifecycle.status, metadata: lifecycle.metadata };
     this.sqlite.run(`
       INSERT OR REPLACE INTO knowledge_issues (
         id, severity, code, message, status, source_id, node_id, metadata, created_at, updated_at
