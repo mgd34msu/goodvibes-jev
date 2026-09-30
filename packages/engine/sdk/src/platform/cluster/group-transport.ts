@@ -21,6 +21,7 @@
  */
 import { digestSurfaceId } from './group-crypto.js';
 import { isOutOfBandMessageType } from './group-membership.js';
+import { ClusterOwnedLifecycle } from './owned-lifecycle.js';
 import {
   decodeEnvelope,
   encodeEnvelope,
@@ -93,7 +94,10 @@ export class GroupWireRouter {
     droppedNoGroup: 0,
   };
 
-  private started = false;
+  private readonly lifecycle = new ClusterOwnedLifecycle(
+    async () => { await this.options.inner.start((raw) => this.receive(raw)); },
+    async () => { this.electionListener = null; await this.options.inner.stop(); },
+  );
   private announcedNoGroup = false;
   private electionListener: ((raw: string) => void) | null = null;
   private seq = 0;
@@ -101,17 +105,12 @@ export class GroupWireRouter {
   constructor(private readonly options: GroupWireRouterOptions) {}
 
   /** Start the underlying socket. Idempotent, both tenants may call it. */
-  async ensureStarted(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
-    await this.options.inner.start((raw) => this.receive(raw));
+  ensureStarted(): Promise<void> {
+    return this.lifecycle.start();
   }
 
-  async stop(): Promise<void> {
-    if (!this.started) return;
-    this.started = false;
-    this.electionListener = null;
-    await this.options.inner.stop();
+  stop(): Promise<void> {
+    return this.lifecycle.stop();
   }
 
   describe(): ClusterTransportDescription {
