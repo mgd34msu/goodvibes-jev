@@ -5,6 +5,9 @@
 import { describe, expect, test } from 'bun:test';
 import { defineBattery, defineDispatch, defineJudge, oneOf, rated, STAKES_BANDS, yesNo, type FixtureCheck } from '@goodvibes-jev/judgment';
 import { coverageFindings, questionCoverage, sourceFindings } from '../scripts/judgment-lint-rules.ts';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { registry as contractRegistry } from '../sdk/src/platform/contract/judgment-registry.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 
@@ -102,5 +105,99 @@ describe('registered use', () => {
       ['y.ts:2', 'asks Jev with a request built inline, outside a registered decision'],
       ['y.ts:4', 'calls askAs outside a decision definer (a `function define*`), so the call is attributed to no registered decision'],
     ]);
+  });
+
+  test('every fixed-name instance of a private factory is checked, including critical variants', () => {
+    const source = `
+      function judge(name, band) { return defineJudge({ name, band, fixtures: [] }); }
+      const NAME = 'engine.known';
+      export const judges = { high: judge(NAME, high), critical: judge('engine.critical', critical) };
+    `;
+    expect(sourceFindings('factory.ts', source, new Set(['engine.known', 'engine.critical']))).toEqual([]);
+    expect(sourceFindings('factory.ts', source, registered).map((finding) => finding.message)).toEqual([
+      'defineJudge defines "engine.critical", which no judgment registry registers',
+    ]);
+  });
+
+  test.each([
+    "const decision = judge(runtimeName);",
+    "const decision = judge(...runtimeNames);",
+    "const alias = judge; const decision = alias('engine.known');",
+    "use(judge); const decision = judge('engine.known');",
+    "export { judge }; const decision = judge('engine.known');",
+    "const api = { judge }; const decision = judge('engine.known');",
+    '',
+  ])('a private factory is not trusted with unknown or escaping invocations: %s', (use) => {
+    const source = `function judge(name) { return defineJudge({ name, fixtures: [] }); } ${use}`;
+    expect(sourceFindings('factory.ts', source, registered)).toHaveLength(1);
+  });
+
+  test('an exported factory and a reassigned parameter cannot be proved from local calls', () => {
+    for (const source of [
+      "export function judge(name) { return defineJudge({ name, fixtures: [] }); } judge('engine.known');",
+      "function judge(name) { name = runtimeName; return defineJudge({ name, fixtures: [] }); } judge('engine.known');",
+      "function judge(name) { [name] = runtimeNames; return defineJudge({ name, fixtures: [] }); } judge('engine.known');",
+    ]) expect(sourceFindings('factory.ts', source, registered)).toHaveLength(1);
+  });
+
+  test('name resolution respects lexical scope instead of finding an unrelated same-named constant', () => {
+    const source = `
+      const NAME = 'engine.known';
+      function other() { const NAME = 'engine.unlisted'; return defineJudge({ name: NAME, fixtures: [] }); }
+      function judge(NAME) { return defineJudge({ name: NAME, fixtures: [] }); }
+      judge(dynamicName);
+    `;
+    const messages = sourceFindings('scope.ts', source, registered).map((finding) => finding.message);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toContain('"engine.unlisted"');
+    expect(messages[1]).toContain('registration cannot be checked');
+  });
+
+  const custom = (header = 'HEADER', tail = '') => `
+    const HEADER = { name: 'engine.known', version: 1 } as const;
+    const OTHER = { name: 'engine.known', version: 1 } as const;
+    const FIXTURES = [];
+    export const decision = {
+      ...decisionHeader({ ...HEADER, fixtures: FIXTURES }),
+      async read(port, input) { return askAs(port, ${header}, 'battery', input, {}); },
+      checkFixtures: (port) => checkEachFixture(FIXTURES, {}, (fixture) => decision.read(port, fixture)),
+    };
+    ${tail}
+  `;
+
+  test('a composed custom decision carries its registered header and fixture checks', () => {
+    expect(sourceFindings('custom.ts', custom(), registered)).toEqual([]);
+    expect(sourceFindings('custom.ts', custom(), new Set()).map((finding) => finding.message)).toEqual([
+      'decisionHeader defines "engine.known", which no judgment registry registers',
+      'calls askAs outside a decision definer (a `function define*`), so the call is attributed to no registered decision',
+    ]);
+  });
+
+  test('custom decision attribution requires the matching header, fixtures and fixture checker', () => {
+    for (const source of [
+      custom('OTHER'),
+      custom().replace('fixtures: FIXTURES', 'description: "no fixtures"'),
+      custom().replace('checkFixtures:', 'unrelated:'),
+      custom('HEADER', "askAs(port, HEADER, 'battery', input, {});"),
+    ]) expect(sourceFindings('custom.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('spreads cannot hide an unregistered name or make an unknown override silently pass', () => {
+    const source = `
+      const HEADER = { name: 'engine.unlisted' };
+      const a = defineJudge({ ...HEADER, fixtures: [] });
+      const b = defineJudge({ name: 'engine.known', fixtures: [], ...unknown });
+    `;
+    expect(sourceFindings('spread.ts', source, registered)).toHaveLength(2);
+  });
+
+  test('the actual composed contract decisions are clean only with every real registration', () => {
+    const names = new Set(contractRegistry.list().map((decision) => decision.name));
+    for (const filename of ['unit-judge', 'group-judge', 'deliverable-judge', 'plan-coverage', 'unit-shape']) {
+      const path = resolve(import.meta.dir, `../sdk/src/platform/contract/batteries/${filename}.ts`);
+      const source = readFileSync(path, 'utf8');
+      expect(sourceFindings(path, source, names)).toEqual([]);
+      expect(sourceFindings(path, source, new Set())).not.toEqual([]);
+    }
   });
 });

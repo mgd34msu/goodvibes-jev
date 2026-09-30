@@ -8,7 +8,9 @@
 // registries register different decisions under one name, or when engine
 // source asks Jev outside a registered decision: a `define*` decision no
 // registry registers, a request built inline and sent to a port's `ask`, or
-// an `askAs` outside a decision definer. See judgment-lint-rules.ts.
+// an `askAs` outside a decision definer or a registered custom decision with
+// the same header and fixtures. Private factories must have known names at
+// every call site. See judgment-lint-source.ts.
 
 import { relative, resolve } from 'node:path';
 import { coverageFindings, sourceFindings, type LintFinding } from './judgment-lint-rules.ts';
@@ -27,7 +29,7 @@ findings.push(...coverage.findings);
 const sources = [...new Bun.Glob(SOURCE).scanSync({ cwd: ENGINE_ROOT })].filter((file) => !SKIPPED.test(file)).sort();
 for (const file of sources) {
   const text = await Bun.file(resolve(ENGINE_ROOT, file)).text();
-  if (!/\bdefine[A-Z]|\.ask\(|\baskAs\(/.test(text)) continue;
+  if (!/\bdefine[A-Z]|\bdecisionHeader\(|\.ask\(|\baskAs\(/.test(text)) continue;
   findings.push(...sourceFindings(relative(resolve(ENGINE_ROOT, '../..'), resolve(ENGINE_ROOT, file)), text, registered));
 }
 
