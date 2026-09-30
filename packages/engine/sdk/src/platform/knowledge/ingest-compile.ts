@@ -6,6 +6,7 @@ import {
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import { extractKnowledgeArtifact } from './extractors.js';
+import { prepareKnowledgeExtraction, consumeKnowledgeExtraction, type PreparedKnowledgeExtraction } from './prepared-extraction.js';
 import { knowledgeExtractionNeedsRefresh } from './extraction-policy.js';
 import {
   canonicalizeUri,
@@ -34,6 +35,7 @@ export async function finalizeKnowledgeIngestedSource(
     readonly sourceId: string;
     readonly artifactId: string;
     readonly inputTitle?: string | undefined;
+    readonly preparedExtraction?: PreparedKnowledgeExtraction | undefined;
     readonly sourceType: KnowledgeSourceType;
     readonly connectorId: string;
     readonly tags: readonly string[];
@@ -42,11 +44,10 @@ export async function finalizeKnowledgeIngestedSource(
     readonly metadata: Record<string, unknown>;
   },
 ): Promise<{ source: KnowledgeSourceRecord; artifactId: string; extraction: KnowledgeExtractionRecord }> {
-  const content = await context.artifactStore.readContent(input.artifactId);
-  const record = content.record;
-  const canonicalUri = canonicalizeUri(record.sourceUri ?? '');
   try {
-    const extracted = await extractKnowledgeArtifact(record, content.buffer);
+    const token = input.preparedExtraction ?? await prepareKnowledgeExtraction(context, input.sourceId, input.artifactId);
+    const { record, extracted } = consumeKnowledgeExtraction(context, token, input.sourceId, input.artifactId);
+    const canonicalUri = canonicalizeUri(record.sourceUri ?? '');
     const extraction = await context.store.upsertExtraction({
       sourceId: input.sourceId,
       artifactId: input.artifactId,

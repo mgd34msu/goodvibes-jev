@@ -51,6 +51,22 @@ Existing Home Graph regression suites use an explicit offline plumbing fixture:
 the documents supplied by those tests are labelled readable, with exact rejected
 samples listed for their garbled-document test. This fixture is not a classifier.
 
+## Regular-ingest hold boundary
+
+Regular URL and artifact ingestion reserve a source identity without writing it,
+then extract and judge before creating or replacing a pending source. Finalize
+accepts a one-shot prepared token tied to that exact source id, artifact id and
+content hash. Preparation verifies the retained bytes against their SHA-256;
+consumption checks the current artifact fingerprint, rejects unrecognized,
+mismatched or already-consumed tokens, and keeps the actual result private to
+the preparation module. No result from another source/artifact can be reused.
+
+Temporary SQLite regressions cover new-source and existing-source holds for both
+routes, protected input before port access, preserved retained files, source and
+artifact mismatches, a changed fingerprint, one-shot consumption and corrupted
+retained bytes. URL tests stub only artifact acquisition; store and extraction
+execution are real and all judgment responses are deterministic fake-port data.
+
 ## K2 inventory remainder
 
 This slice is not a claim that the entire extraction family is complete:
@@ -64,8 +80,9 @@ This slice is not a claim that the entire extraction family is complete:
   prefixes, caps, and parser-failure warnings are PORT in the inventory.
 - `ingest-inputs.ts`: input/record presence, connector identifiers, refresh
   limits/status, and HTTP scheme checks are PORT or delegated in the inventory.
-  Its regular ingest entry points still write pending/failed source rows around
-  extraction; prepare-before-pending hold preservation is the immediate follow-on.
+  Regular artifact and URL ingest now prepare extraction before publishing a
+  pending source. Ordinary parser/fetch failures keep their failed-record path;
+  judgment holds preserve both new-source absence and prior indexed records.
 - `home-graph/extraction-quality.ts` is the awaited inverse of the readability
   decision; `home-graph/extraction.ts` preserves the structural extraction flow
   with an explicit no-write hold boundary.
