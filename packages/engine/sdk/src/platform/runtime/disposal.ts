@@ -165,3 +165,7 @@ export function registerRuntimePollers(registry: DisposalRegistry, owners: Runti
     if (cancelled > 0) logger.info('Runtime disposal cancelled in-flight agent runs', { cancelled });
   });
 }
+
+// Additive awaited ownership seam; legacy synchronous scopes retain their contract.
+export { AsyncDisposalError, createAsyncDisposalScope } from './async-disposal.js';
+export type { AsyncDisposalRegistry, AsyncDisposalScope } from './async-disposal.js';

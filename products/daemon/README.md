@@ -25,3 +25,8 @@ pinned daemon package version, not a newly published release.
 Source: `mgd34msu/goodvibes-daemon` at
 `443e5ee4d6cda0d36d57e2886398d0836074a4a9`. Exact migrated paths are recorded in
 `migration.json`; the full source inventory remains authoritative.
+
+The initial runtime adapters now compose credential/identity services and mail
+dependencies and register every declared disposal owner. They do not start the
+full runtime. Hosts must await the disposal scope's `close()` before transferring
+ownership; `dispose()` only starts that cleanup for legacy callers.

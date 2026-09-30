@@ -46210,6 +46210,34 @@
   ],
   "./platform/runtime/disposal": [
     {
+      "name": "AsyncDisposalError",
+      "kind": "class",
+      "publicMembers": [
+        "code",
+        "constructor",
+        "failures"
+      ],
+      "text": "export declare class AsyncDisposalError extends Error { readonly code = \"DISPOSAL_FAILED\"; readonly failures: readonly Failure[]; constructor(scopeName: string, failures: readonly Failure[]); } ;; via Failure = interface Failure { readonly label: string; readonly error: unknown; }"
+    },
+    {
+      "name": "AsyncDisposalRegistry",
+      "kind": "interface",
+      "required": [
+        "add"
+      ],
+      "text": "export interface AsyncDisposalRegistry { add(label: string, dispose: () => void | Promise<void>): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "AsyncDisposalScope",
+      "kind": "interface",
+      "required": [
+        "close",
+        "dispose",
+        "registry"
+      ],
+      "text": "export interface AsyncDisposalScope { readonly registry: AsyncDisposalRegistry; dispose(): void; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "DisposalRegistry",
       "kind": "interface",
       "required": [
@@ -46247,6 +46275,11 @@
         "watcherRegistry"
       ],
       "text": "export interface RuntimePollerOwners { readonly stopConfigWatch: () => void; readonly watcherRegistry: { dispose(): void; }; readonly storeSnapshotScheduler: { stop(): void; }; readonly appendOnlyRetentionScheduler: { stop(): void; }; readonly memoryConsolidationScheduler: { stop(): void; }; readonly codeIndexReindexScheduler: { dispose(): void; }; readonly sessionOrchestration: { dispose(): void; }; readonly knowledgeService: { dispose(): void; }; readonly agentKnowledgeService: { dispose(): void; }; readonly homeGraphService: { dispose(): void; }; readonly contractRunner: { dispose(): void; }; readonly processRegistry: { dispose(): void; }; readonly memoryGovernor: { stop(): void; }; readonly agentOrchestrator: { dispose(): void; }; readonly cancelHostedAgentRuns: () => number; readonly triggerManager?: { shutdown(): void; } | undefined; }"
+    },
+    {
+      "name": "createAsyncDisposalScope",
+      "kind": "function",
+      "text": "export declare function createAsyncDisposalScope(scopeName: string): AsyncDisposalScope;"
     },
     {
       "name": "createDisposalScope",

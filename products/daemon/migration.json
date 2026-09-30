@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "cli-config-contracts",
+  "phase": "cli-config-runtime-adapters",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -172,6 +172,27 @@
       "disposition": "HOIST",
       "targets": [
         "packages/engine/sdk/src/platform/config/daemon-credential-store.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/credential-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/credential-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/mail-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/mail-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/disposal-wiring.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/disposal-wiring.ts"
       ]
     }
   ],
