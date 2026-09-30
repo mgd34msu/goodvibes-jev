@@ -16,6 +16,9 @@ import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { semanticFactId } from '../sdk/src/platform/knowledge/semantic/utils.js';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore } from '../sdk/src/platform/state/index.js';
 import { trackDisposables } from './_helpers/disposables.ts';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+useKnowledgeAnswerReadings();
 
 const tmpRoots: string[] = [];
 

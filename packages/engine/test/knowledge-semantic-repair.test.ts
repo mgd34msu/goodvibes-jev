@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -17,6 +18,8 @@ import {
   createStores,
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
+
+useKnowledgeAnswerReadings();
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {
   test('web gap repair ingests at least two distinct sources for answer gaps', async () => {

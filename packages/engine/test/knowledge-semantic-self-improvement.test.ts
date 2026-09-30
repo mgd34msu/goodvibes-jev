@@ -19,9 +19,17 @@ import {
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
 import { settleEvents } from './_helpers/test-timeout.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+
+const answerReadings = useKnowledgeAnswerReadings();
 
 describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   test('strict answers keep official sources linked by graph edges even without source discovery metadata', async () => {
+    // Fix this fixture's relevance order explicitly; claimed authority is not a ranking rule.
+    answerReadings.set({ sources: [
+      ['LG 86NANO90UNA official specifications', 0.99],
+      ['LG 86NANO90UNA secondary specifications', 0.95],
+    ] });
     const { store } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
