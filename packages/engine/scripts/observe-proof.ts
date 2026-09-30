@@ -37,6 +37,8 @@ import { analyzeDecisionLog, JUDGMENT_EVAL_SUITE, judgmentEvalScenarios } from '
 import { EvalRunner } from '../sdk/src/platform/runtime/eval/index.ts';
 import { decisionLogPath, openStateDecisionLog } from '../sdk/src/platform/state/decision-log.ts';
 import { ENGINE_ROOT, loadEngineRegistries } from './judgment-registries.ts';
+import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
+import { PROOF_RETAINED_MARKER, STALE_PROOF_TMP_MS, retainProofOutput } from './proof-temp.ts';
 
 const { values } = parseArgs({
   args: process.argv.slice(2),
@@ -59,7 +61,9 @@ function selected(): NamedDecision[] {
   return [...new Map(smallest.map((decision) => [decision.name, decision])).values()];
 }
 
-const workspace = resolve(values.workspace ?? mkdtempSync(join(tmpdir(), 'observe-proof-')));
+// A new scratch prefix leaves older intentionally kept proof logs untouched.
+sweepStaleTmpDirs(tmpdir(), 'observe-proof-scratch-', STALE_PROOF_TMP_MS, { preserveMarker: PROOF_RETAINED_MARKER });
+const workspace = resolve(values.workspace ?? mkdtempSync(join(tmpdir(), 'observe-proof-scratch-')));
 const stateRoot = join(workspace, '.goodvibes', 'proof');
 mkdirSync(stateRoot, { recursive: true });
 const logPath = decisionLogPath(stateRoot);
@@ -104,6 +108,7 @@ const cli = Bun.spawnSync(['bun', 'scripts/observe-report.ts', '--log', logPath,
 process.stdout.write(cli.stdout);
 process.stderr.write(cli.stderr);
 if (cli.exitCode !== 0) {
+  if (values.workspace === undefined) retainProofOutput(workspace);
   console.error(`[observe-proof] FAIL: the observe report exited ${cli.exitCode}`);
   process.exit(1);
 }
@@ -125,7 +130,9 @@ console.log('\n[observe-proof] analyses with output:');
 for (const [analysis, ok] of Object.entries(outputs)) console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${analysis}`);
 const empty = Object.entries(outputs).filter(([, ok]) => !ok).map(([analysis]) => analysis);
 if (empty.length > 0) {
+  if (values.workspace === undefined) retainProofOutput(workspace);
   console.error(`[observe-proof] FAIL: no output from ${empty.join(', ')}${values.all === true ? '' : '; try --all for more readings'}`);
   process.exit(1);
 }
+if (values.workspace === undefined) retainProofOutput(workspace);
 console.log(`[observe-proof] PASS: every analysis produced output from ${report.entries} logged calls. Log kept at ${logPath}`);

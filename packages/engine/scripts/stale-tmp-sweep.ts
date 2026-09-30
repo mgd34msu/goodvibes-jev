@@ -17,7 +17,7 @@
  * system temp dir, must never be touched. This is not a blanket `/tmp`
  * sweep, it only ever looks at entries starting with the caller's prefix.
  */
-import { readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -26,7 +26,7 @@ import { join } from 'node:path';
  * vanishes between listing and stat (another run reclaimed it first) or that
  * fails to remove is silently skipped, never thrown.
  */
-export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number): void {
+export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number, options: { readonly preserveMarker?: string } = {}): void {
   let entries: string[];
   try {
     entries = readdirSync(root);
@@ -37,6 +37,7 @@ export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number
   for (const name of entries) {
     if (!name.startsWith(prefix)) continue;
     const path = join(root, name);
+    if (options.preserveMarker !== undefined && existsSync(join(path, options.preserveMarker))) continue;
     try {
       if (now - statSync(path).mtimeMs <= maxAgeMs) continue;
     } catch {
