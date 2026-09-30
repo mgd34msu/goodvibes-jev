@@ -119,3 +119,6 @@ export { WILDCARD_SURFACE, resolveProfile, createRoutingResolver } from './host-
 export type { RoutingResolver } from './host-routing/routing-resolver.js';
 export { createInboxRouteResolver } from './host-routing/inbox-bridge.js';
 export type { RouteResolverInput, RouteResolver as InboxProfileRouteResolver } from './host-routing/inbox-bridge.js';
+
+// Encrypted host draft mirror, bound to the canonical channels.drafts contracts.
+export * from './host-drafts/index.js';

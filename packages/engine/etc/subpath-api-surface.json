@@ -12954,6 +12954,82 @@
       "text": "DEFAULT_INGRESS_ALARM_WINDOW_MS: number"
     },
     {
+      "name": "DraftHostContext",
+      "kind": "interface",
+      "required": [
+        "catalog",
+        "credentials",
+        "logger",
+        "workingDirectory"
+      ],
+      "text": "export interface DraftHostContext { readonly catalog: GatewayMethodCatalog; readonly credentials: DaemonCredentialStore; readonly workingDirectory: string; readonly logger: { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }; } ;; via DaemonCredentialStore = export interface DaemonCredentialStore { resolveRef(ref: string): Promise<string | null>; resolveConfigSecret(configKey: string): Promise<string | null>; put(secretKey: string, value: string, opts?: { scope?: SecretScope; medium?: 'plaintext' | 'secure'; }): Promise<void>; has(secretKey: string): Promise<boolean>; }"
+    },
+    {
+      "name": "DraftListQuery",
+      "kind": "interface",
+      "text": "export interface DraftListQuery { status?: DraftStatus; limit?: number; }"
+    },
+    {
+      "name": "DraftRecord",
+      "kind": "interface",
+      "required": [
+        "createdAt",
+        "id",
+        "message",
+        "status",
+        "updatedAt",
+        "version"
+      ],
+      "text": "export interface DraftRecord { version: number; id: string; createdAt: string; updatedAt: string; status: DraftStatus; message: string; title?: string; channel?: string; route?: string; webhook?: string; link?: string; tags?: string[]; sentResponseId?: string; sendError?: string; }"
+    },
+    {
+      "name": "DraftRegistration",
+      "kind": "interface",
+      "required": [
+        "close"
+      ],
+      "text": "export interface DraftRegistration { (): void; close(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "DraftSaveInput",
+      "kind": "interface",
+      "required": [
+        "message"
+      ],
+      "text": "export interface DraftSaveInput { id?: string; version?: number; title?: string; message: string; channel?: string; route?: string; webhook?: string; link?: string; tags?: string[]; status?: DraftStatus; createdAt?: string; updatedAt?: string; }"
+    },
+    {
+      "name": "DraftSaveResult",
+      "kind": "interface",
+      "required": [
+        "created",
+        "draft"
+      ],
+      "text": "export interface DraftSaveResult { draft: DraftRecord; created: boolean; }"
+    },
+    {
+      "name": "DraftStatus",
+      "kind": "type",
+      "text": "export type DraftStatus = 'draft' | 'queued' | 'sent' | 'failed';"
+    },
+    {
+      "name": "DraftSyncStore",
+      "kind": "class",
+      "publicMembers": [
+        "close",
+        "constructor",
+        "count",
+        "dbPath",
+        "delete",
+        "get",
+        "init",
+        "list",
+        "save",
+        "upsert"
+      ],
+      "text": "export declare class DraftSyncStore { private readonly store; private readonly cipher; private readonly generateId; private readonly now; private initialized; private closed; private initializing; private closing; private readonly active; private upsertTail; constructor(options: DraftSyncStoreOptions); get dbPath(): string; init(): Promise<void>; save(): Promise<void>; close(): Promise<void>; private track; private requireInit; upsert(input: DraftSaveInput): Promise<DraftSaveResult>; private performUpsert; list(query?: DraftListQuery): DraftRecord[]; count(status?: DraftStatus): number; get(id: string): DraftRecord | null; delete(id: string): boolean; private getRow; private fallbackRow; } ;; via DraftSyncStoreOptions = export interface DraftSyncStoreOptions { workingDirectory: string; cipher: AtRestCipher; fileName?: string; generateId?: () => string; now?: () => string; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "InboxProfileRouteResolver",
       "kind": "type",
       "text": "export type RouteResolver = (input: RouteResolverInput) => string | undefined;"
@@ -12993,6 +13069,11 @@
       "name": "ProviderRuntimeSurface",
       "kind": "type",
       "text": "export type ProviderRuntimeSurface = 'slack' | 'discord' | 'ntfy';"
+    },
+    {
+      "name": "RegisterDraftsOptions",
+      "kind": "interface",
+      "text": "export interface RegisterDraftsOptions { fileName?: string; store?: DraftSyncStore; }"
     },
     {
       "name": "RouteBindingManager",
@@ -13176,6 +13257,16 @@
       "text": "export declare function parseChannelId(channelId: string): ParsedChannelId;"
     },
     {
+      "name": "redactWebhook",
+      "kind": "function",
+      "text": "export declare function redactWebhook(value?: string | null): string | undefined;"
+    },
+    {
+      "name": "registerDraftMethods",
+      "kind": "function",
+      "text": "export declare function registerDraftMethods(ctx: HandlerContext, options?: RegisterDraftsOptions): DraftRegistration;"
+    },
+    {
       "name": "resolveChannelDeliverySurfaceKind",
       "kind": "function",
       "text": "export declare function resolveChannelDeliverySurfaceKind(target: ChannelDeliveryTarget): ChannelDeliverySurfaceKind | undefined;"
@@ -13189,6 +13280,11 @@
       "name": "resolveProfile",
       "kind": "function",
       "text": "export declare function resolveProfile(routes: readonly RoutingChannelRoute[], surfaceKind: string, routeId?: string): string | null;"
+    },
+    {
+      "name": "sha256First",
+      "kind": "function",
+      "text": "export declare function sha256First(input: string, hexChars: number): string;"
     },
     {
       "name": "toRouteListItem",
@@ -20959,6 +21055,15 @@
       "text": "CLIENT_COMPATIBILITY_FLOOR_HEADER = \"X-Goodvibes-Client-Floor\""
     },
     {
+      "name": "CatalogHandlerEntry",
+      "kind": "interface",
+      "required": [
+        "handler",
+        "id"
+      ],
+      "text": "export interface CatalogHandlerEntry { readonly id: string; readonly handler: TypedHandler<unknown, unknown>; readonly options?: RegisterHandlerOptions; }"
+    },
+    {
       "name": "ClientCompatibilityStatus",
       "kind": "type",
       "text": "export type ClientCompatibilityStatus = 'ok' | 'restart-required' | 'unknown';"
@@ -21300,6 +21405,33 @@
       "text": "export interface GatewayVerbGroupDeps extends FleetCheckpointsSearchGatewayDeps, BrowserCompositionDeps { readonly secretsManager: VapidSecretStore; readonly personalCapture?: Pick<import('../../personal-capture/index.js').PersonalCaptureHolder, 'setPort'> | undefined; readonly disposal?: DisposalRegistry | undefined; readonly approvalBroker: ApprovalSource; readonly stampFixSessionOnApproval?: ((offerCallId: string, outcome: FixSessionStartOutcome) => Promise<unknown>) | undefined; readonly requestApproval?: ((input: { readonly request: PermissionPromptRequest; readonly metadata?: Record<string, unknown> | undefined; }) => Promise<PermissionPromptDecision>) | undefined; readonly watcherRegistry?: CiPollingHost | undefined; readonly userPermissionRuleStore?: Pick<UserPermissionRuleStore, 'list' | 'delete'> | undefined; readonly shellPaths: { resolveUserPath(...segments: string[]): string; }; readonly surfaceRoot: string; readonly vapidSubject?: string | undefined; readonly runtimeBus?: Pick<RuntimeEventBus, 'onDomain' | 'emit'> | undefined; readonly sessionPresence?: NeedsInputPresence | undefined; readonly pairingTokens?: PairingGatewayService | undefined; readonly relayAvailable?: (() => boolean) | undefined; readonly pairingWebOrigin?: (() => string | undefined) | undefined; readonly tailscaleRunner?: TailscaleCommandRunner | undefined; readonly acpHost?: Pick<AcpHostService, 'spawnAgent' | 'list'> | undefined; readonly acpDiscover?: (() => ReturnType<typeof discoverAcpAgents>) | undefined; readonly configManager: Pick<ConfigManager, 'get' | 'set' | 'attachProfileFallback'>; readonly runtimeStore: Pick<RuntimeStore, 'getState'>; readonly sessionLiveTurnControls?: SessionLiveTurnControlsHolder | undefined; readonly powerManager?: PowerGatewayService | undefined; readonly deviceCapabilities?: DevicesGatewayService | undefined; readonly memoryGovernor?: MemoryGatewayService | undefined; readonly voiceSetup?: VoiceSetupGatewayService | undefined; readonly calendarGateway?: CalendarGatewayService | undefined; readonly emailGateway?: EmailGatewayService | undefined; readonly emailServiceDeps?: EmailCompositionDeps['emailServiceDeps']; readonly describeEmailConfigProblem?: EmailCompositionDeps['describeEmailConfigProblem']; readonly emailLog?: EmailCompositionDeps['emailLog']; readonly channelDeliveryRouter?: Pick<ChannelDeliveryRouter, 'deliver'> | undefined; readonly providerRegistry?: ProviderRegistry | undefined; readonly automationManager?: Pick<AutomationManager, 'listJobs' | 'createJob' | 'updateJob' | 'setEnabled' | 'attachCheckinEvaluator' | 'listRuns' | 'runNow'> | undefined; readonly sessionLister?: { listSessions(limit?: number): readonly CheckinSessionView[]; } | undefined; readonly sessionIntake?: InboundIntakeBroker | undefined; readonly channelPolicy?: Pick<ChannelPolicyManager, 'getPolicy'> | undefined; readonly workingDirectory?: string | undefined; readonly onCiAutoWatch?: ((observer: (toolName: string, args: Record<string, unknown>, success: boolean) => void) => void) | undefined; readonly conversationRewindPort?: RewindConversationPort | null | undefined; readonly stepUpService?: StepUpGatewayService | undefined; readonly memoryRegistry?: MemoryProjectionSource | undefined; readonly credentialWrites?: { readonly config: CredentialWriteConfig; readonly secrets: CredentialWriteSecrets; readonly additionalSecretKeys?: readonly string[] | undefined; } | undefined; readonly approvalRaise?: ApprovalRaiseService | undefined; } ;; via ApprovalRaiseService = export interface ApprovalRaiseService { raiseApproval(input: RequestSharedApprovalInput): Promise<RaisedApproval>; getApproval(approvalId: string): SharedApprovalRecord | null; } ;; ApprovalSource = export interface ApprovalSource { subscribe(listener: (approval: ApprovalNotice) => void): () => void; } ;; CalendarGatewayService = export interface CalendarGatewayService { listEvents(input: CalendarGatewayListInput): Promise<readonly CalendarGatewayEventSummary[]>; getEvent(eventId: string, calendarId?: string | undefined): Promise<CalendarGatewayEventDetail>; createEvent(input: CalendarGatewayCreateInput): Promise<CalendarGatewayCreated>; exportIcs(input: CalendarGatewayListInput): Promise<CalendarGatewayIcsExport>; importIcs(icsContent: string, calendarId?: string | undefined): Promise<CalendarGatewayIcsImport>; } ;; CheckinSessionView = export interface CheckinSessionView { readonly status: string; readonly activeAgentId?: string | undefined; readonly pendingInputCount: number; readonly title: string; readonly surfaceKinds: readonly string[]; } ;; CiPollingHost = export interface CiPollingHost { registerPollingWatcher(input: { id: string; label: string; source: { id: string; kind: 'watcher'; label: string; enabled: boolean; createdAt: number; updatedAt: number; metadata: Record<string, never>; }; intervalMs: number; run: () => Promise<string | void> | string | void; }): unknown; startWatcher(id: string): unknown; } ;; CredentialWriteConfig = export interface CredentialWriteConfig { get(key: string): unknown; setDynamic(key: string, value: unknown): void; } ;; CredentialWriteSecrets = export interface CredentialWriteSecrets { set(key: string, value: string, options?: { scope?: SecretScope | undefined; }): Promise<void>; get(key: string): Promise<string | null>; delete(key: string, options?: { scope?: SecretScope | undefined; }): Promise<void>; } ;; DisposalRegistry = export interface DisposalRegistry { add(label: string, dispose: () => void): void; } ;; EmailCompositionDeps = export interface EmailCompositionDeps { readonly emailGateway?: EmailGatewayService | undefined; readonly emailServiceDeps?: EmailServiceDeps | undefined; readonly untrustedContentLedger?: UntrustedContentLedger | undefined; readonly describeEmailConfigProblem?: (() => Promise<SurfaceEmailConfigProblem | null>) | undefined; readonly emailLog?: EmailGatewayLog | undefined; } ;; EmailGatewayService = export interface EmailGatewayService { listInbox(input: EmailGatewayListInput): Promise<EmailGatewayListResult>; readMessage(uid: number): Promise<EmailGatewayMessageDetail | null>; createDraft(input: EmailGatewayDraftInput): Promise<EmailGatewayDraftResult>; send(input: EmailGatewaySendInput): Promise<EmailGatewaySendResult>; } ;; FixSessionStartOutcome = export type FixSessionStartOutcome = { readonly sessionId: string; } | { readonly error: string; }; ;; InboundIntakeBroker = export interface InboundIntakeBroker { submitMessage(input: SubmitSharedSessionMessageInput): Promise<SharedSessionSubmission>; } ;; MemoryGatewayService = export type MemoryGatewayService = Pick<MemoryGovernor, 'snapshot'>; ;; MemoryProjectionSource = export interface MemoryProjectionSource { getAll(): readonly MemoryRecord[]; } ;; NeedsInputPresence = export interface NeedsInputPresence { isAttached(sessionId: string): boolean; } ;; PairingGatewayService = export type PairingGatewayService = Pick<PairingTokenManager, 'list' | 'mint' | 'mintForMigration' | 'rename' | 'revoke' | 'isLegacyRevoked' | 'revokeLegacyShared'>; ;; PermissionPromptDecision = export interface PermissionPromptDecision { approved: boolean; remember?: boolean | undefined; rememberTier?: RememberTier | undefined; reason?: string | undefined; modifiedArgs?: Record<string, unknown> | undefined; } ;; PermissionPromptRequest = export interface PermissionPromptRequest { callId: string; tool: string; args: Record<string, unknown>; category: PermissionCategory; analysis: PermissionRequestAnalysis; workingDirectory?: string | undefined; attribution?: PermissionAttribution | undefined; rememberOptions?: readonly RememberTierOption[] | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; PowerGatewayService = export type PowerGatewayService = Pick<PowerManager, 'getState' | 'setKeepAwake'>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ReturnType = type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any; ;; RewindConversationPort = export interface RewindConversationPort { preview(anchor: RewindAnchor): Promise<RewindConversationPreview>; rewind(anchor: RewindAnchor): Promise<RewindConversationOutcome>; } ;; RuntimeStore = export type RuntimeStore = StoreApi<RuntimeState>; ;; StepUpGatewayService = export type StepUpGatewayService = Pick<StepUpService, 'registerCredential' | 'mintChallenge'>; ;; TailscaleCommandRunner = export interface TailscaleCommandRunner { run(command: string, args: readonly string[]): TailscaleCommandResult; } ;; VapidSecretStore = export interface VapidSecretStore { get(key: string): Promise<string | null>; set(key: string, value: string): Promise<void>; } ;; VoiceSetupGatewayService = export interface VoiceSetupGatewayService { status(): unknown; install(): Promise<VoiceLocalInstallResult>; wakeStatus(): unknown; wakeProvision(): Promise<unknown>; wakeModelChunk(request: { component: string; offset?: number | undefined; maxBytes?: number | undefined; }): WakeModelChunkPayload; }"
     },
     {
+      "name": "HandlerContextEnvelope",
+      "kind": "interface",
+      "required": [
+        "admin",
+        "authToken",
+        "explicitUserRequest",
+        "principalId",
+        "scopes"
+      ],
+      "text": "export interface HandlerContextEnvelope { readonly principalId: string; readonly admin: boolean; readonly scopes: string[]; readonly explicitUserRequest: boolean; readonly authToken: string; }"
+    },
+    {
+      "name": "HandlerError",
+      "kind": "type",
+      "text": "HandlerError: typeof GatewayVerbError ;; export type HandlerError = GatewayVerbError;"
+    },
+    {
+      "name": "HandlerInvocation",
+      "kind": "interface",
+      "required": [
+        "body",
+        "context",
+        "query"
+      ],
+      "text": "export interface HandlerInvocation<TBody> { readonly body: TBody; readonly query: Record<string, string>; readonly context: HandlerContextEnvelope; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
       "name": "HostedSessionVerbService",
       "kind": "interface",
       "required": [
@@ -21492,9 +21624,19 @@
       "text": "RENDER_GRADE_SESSION_DOMAINS: readonly RuntimeEventDomain[] ;; via RuntimeEventDomain = export type RuntimeEventDomain = typeof RUNTIME_EVENT_DOMAINS[number];"
     },
     {
+      "name": "REQUIRE_CONFIRM",
+      "kind": "const",
+      "text": "REQUIRE_CONFIRM = \"REQUIRE_CONFIRM\""
+    },
+    {
       "name": "ROUTE_BINDING_SCHEMA",
       "kind": "const",
       "text": "ROUTE_BINDING_SCHEMA: Record<string, unknown> ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "RegisterHandlerOptions",
+      "kind": "interface",
+      "text": "export interface RegisterHandlerOptions { readonly confirm?: boolean; }"
     },
     {
       "name": "RegisterSharedSessionInput",
@@ -21845,6 +21987,21 @@
       "text": "export interface SubmitSharedSessionMessageInput { readonly sessionId?: string | undefined; readonly routeId?: string | undefined; readonly surfaceKind: AutomationSurfaceKind; readonly surfaceId: string; readonly externalId?: string | undefined; readonly threadId?: string | undefined; readonly userId?: string | undefined; readonly displayName?: string | undefined; readonly title?: string | undefined; readonly body: string; readonly metadata?: Record<string, unknown> | undefined; readonly routing?: SharedSessionRoutingIntent | undefined; } ;; via AutomationSurfaceKind = export type AutomationSurfaceKind = TransportSurfaceKind; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
+      "name": "TypedHandler",
+      "kind": "type",
+      "text": "export type TypedHandler<TBody, TResult> = (input: HandlerInvocation<TBody>) => Promise<TResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "Unregister",
+      "kind": "type",
+      "text": "export type Unregister = () => void;"
+    },
+    {
+      "name": "assertConfirmed",
+      "kind": "function",
+      "text": "export declare function assertConfirmed(body: unknown, ctx: { readonly explicitUserRequest: boolean; }): void;"
+    },
+    {
       "name": "buildModifiedEditArgs",
       "kind": "function",
       "text": "export declare function buildModifiedEditArgs(request: Pick<PermissionPromptRequest, 'args'>, selectedHunks: ReadonlySet<number> | readonly number[]): Record<string, unknown>; ;; via PermissionPromptRequest = export interface PermissionPromptRequest { callId: string; tool: string; args: Record<string, unknown>; category: PermissionCategory; analysis: PermissionRequestAnalysis; workingDirectory?: string | undefined; attribution?: PermissionAttribution | undefined; rememberOptions?: readonly RememberTierOption[] | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; ReadonlySet = interface ReadonlySet<T> { forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void; has(value: T): boolean; readonly size: number; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
@@ -21925,6 +22082,11 @@
       "text": "export declare function importLegacySessionStores(input: { readonly homeStorePath: string; readonly sources: readonly LegacySessionSource[]; }): Promise<ImportLegacySessionsResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "normalizeContext",
+      "kind": "function",
+      "text": "export declare function normalizeContext(c: GatewayMethodInvocationContext | undefined): HandlerContextEnvelope;"
+    },
+    {
       "name": "preSplitSweepReceipt",
       "kind": "function",
       "text": "export declare function preSplitSweepReceipt(report: PreSplitControlPlaneSweepReport): string | null;"
@@ -21948,6 +22110,16 @@
       "name": "reapQuarantineDirectories",
       "kind": "function",
       "text": "export declare function reapQuarantineDirectories(parentDirectory: string, now?: number): { readonly expired: number; readonly overCap: number; };"
+    },
+    {
+      "name": "registerCatalogHandler",
+      "kind": "function",
+      "text": "export declare function registerCatalogHandler<TBody, TResult>(catalog: GatewayMethodCatalog, methodId: string, handler: TypedHandler<TBody, TResult>, options?: RegisterHandlerOptions): Unregister;"
+    },
+    {
+      "name": "registerCatalogHandlers",
+      "kind": "function",
+      "text": "export declare function registerCatalogHandlers(catalog: GatewayMethodCatalog, entries: readonly CatalogHandlerEntry[]): Unregister;"
     },
     {
       "name": "registerDevicesGatewayMethods",

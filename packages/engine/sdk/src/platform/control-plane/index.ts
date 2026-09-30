@@ -190,3 +190,6 @@ export type {
   PaymentBeginCheckoutInput,
   PaymentBeginResultView,
 } from './routes/payments.js';
+
+// Shared host handler binding, including explicit-user confirmation semantics.
+export * from './host-handlers.js';

@@ -299,6 +299,62 @@
       "targets": [
         "products/daemon/src/runtime/payments-composition.ts"
       ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/draft-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/draft-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/register.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/register.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/index.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/register.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/control-plane/host-handlers.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/errors.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/control-plane/host-handlers.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/drafts/draft-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-draft-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/drafts/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-draft-register.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/handlers/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-host-handler-contract.test.ts"
+      ]
     }
   ],
   "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
