@@ -1,6 +1,7 @@
+import { exactKnowledgeIds, generatedFactSupportMetadata, type GeneratedFactWritePlanner } from './fact-support-write-plan.js';
 import type { KnowledgeStore } from '../store.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
-import type { KnowledgeEdgeRecord, KnowledgeNodeRecord } from '../types.js';
+import type { KnowledgeEdgeRecord, KnowledgeNodeRecord, KnowledgeNodeUpsertInput } from '../types.js';
 import { isActiveKnowledgeEdge } from '../projection-utils.js';
 import { readString, readStringArray, semanticMetadata, uniqueStrings } from './utils.js';
 import type { SemanticPrimarySourcePlanner, SemanticWriteGuard } from './primary-source-plan.js';
@@ -8,7 +9,7 @@ import type { SemanticPrimarySourcePlanner, SemanticWriteGuard } from './primary
 /** Capture supersession from the original graph, before any entity/fact writes. */
 export function prepareSemanticSupersession(
   store: KnowledgeStore, sourceId: string, spaceId: string, activeIds: ReadonlySet<string>,
-  guard: SemanticWriteGuard, planner: SemanticPrimarySourcePlanner,
+  guard: SemanticWriteGuard, planner: SemanticPrimarySourcePlanner, support: GeneratedFactWritePlanner,
 ) {
   const readSuperseded = () => store.listNodesInSpace(spaceId).filter((node) => (
     semanticNodeReferencesSource(node, sourceId) && typeof node.metadata.semanticKind === 'string'
@@ -21,7 +22,13 @@ export function prepareSemanticSupersession(
       ? activeSemanticFactSupportSourceIds(store, node, sourceId, spaceId, guard) : [];
     const subjectIds = uniqueStrings([...readStringArray(node.metadata.subjectIds), ...readStringArray(node.metadata.linkedObjectIds)]);
     const subjects = subjectIds.map((id) => guard.node(id)).filter((subject): subject is KnowledgeNodeRecord => Boolean(subject));
-    return { node, supportingSourceIds, resolve: supportingSourceIds.length === 0 ? undefined : planner.prepare(spaceId, {
+    const supportKey = supportingSourceIds.length === 0 ? undefined : support.add(spaceId, {
+      id: node.id, kind: readString(node.metadata.factKind) ?? node.kind, title: node.title, summary: node.summary,
+      value: node.metadata.value, evidence: node.metadata.evidence, aliases: node.aliases,
+      labels: readStringArray(node.metadata.labels), subject: readString(node.metadata.subject),
+      targetHints: subjects.map(({ id, title, kind }) => ({ id, title, kind })),
+    }, supportingSourceIds, subjects);
+    return { node, supportingSourceIds, supportKey, resolve: supportingSourceIds.length === 0 ? undefined : planner.prepare(spaceId, {
       kind: readString(node.metadata.factKind) ?? node.kind, title: node.title, summary: node.summary,
       value: node.metadata.value, evidence: node.metadata.evidence, subject: node.metadata.subject, targetHints: node.metadata.targetHints,
       subjects: subjects.map(({ id, title, kind }) => ({ id, title, kind })),
@@ -30,22 +37,26 @@ export function prepareSemanticSupersession(
   const factIds = new Set(nodes.map((node) => node.id));
   guard.watch('supersession-supports', () => store.listEdges().filter((edge) => edge.toKind === 'node' && factIds.has(edge.toId)));
   return async () => {
-    const plans: Array<{ node: KnowledgeNodeRecord; supportingSourceIds: string[]; primarySourceId: string | undefined }> = [];
+    const plans: Array<{ node: KnowledgeNodeRecord; supportingSourceIds: string[]; primarySourceId: string | undefined; supportKey: string | undefined }> = [];
     for (const draft of drafts) plans.push({ ...draft, primarySourceId: await draft.resolve?.() });
+    const supersededAt = Date.now();
+    const writes = plans.map(({ node, supportingSourceIds, primarySourceId, supportKey }) => {
+      const input: KnowledgeNodeUpsertInput = primarySourceId
+        ? { ...node, sourceId: primarySourceId, metadata: semanticMetadata(spaceId, {
+          ...node.metadata, sourceId: primarySourceId, sourceIds: supportingSourceIds,
+          generatedFactSupport: generatedFactSupportMetadata(support.plans(supportKey!), node.metadata.generatedFactSupport),
+          detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: supersededAt,
+        }) }
+        : { ...node, status: 'stale', metadata: { ...node.metadata, supersededAt, supersededInSpaceId: spaceId } };
+      return { node, primarySourceId, input };
+    });
+    for (const write of writes) await store.assertNodeMutation(write.input);
     return async () => {
-      const supersededAt = Date.now();
-      for (const { node, supportingSourceIds, primarySourceId } of plans) {
-        if (primarySourceId) {
-          await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt);
-          await store.upsertNode({ ...node, sourceId: primarySourceId, metadata: semanticMetadata(spaceId, {
-            ...node.metadata, sourceId: primarySourceId, sourceIds: supportingSourceIds,
-            detachedSourceIds: uniqueStrings([...readStringArray(node.metadata.detachedSourceIds), sourceId]), sourceDetachedAt: supersededAt,
-          }) });
-        } else {
-          await store.upsertNode({ ...node, status: 'stale', metadata: {
-            ...node.metadata, supersededAt, supersededInSpaceId: spaceId,
-          } });
-        }
+      for (const write of writes) await store.assertNodeMutation(write.input);
+      for (const { node, primarySourceId, input } of writes) {
+        // Recheck authority before removing a retained fact's previous support.
+        await store.upsertNode(input);
+        if (primarySourceId) await deactivateSemanticFactSupport(store, sourceId, node.id, spaceId, supersededAt);
       }
     };
   };
@@ -64,7 +75,7 @@ function activeSemanticFactSupportSourceIds(
   spaceId: string,
   guard: SemanticWriteGuard,
 ): string[] {
-  return uniqueStrings([
+  return exactKnowledgeIds([
     ...readStringArray(fact.metadata.sourceIds),
     readString(fact.metadata.sourceId),
     fact.sourceId,

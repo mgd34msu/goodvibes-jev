@@ -247,9 +247,12 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
 
   test('semantic enrichment inherits source subject links from graph edges', async () => {
     const { store } = createStores();
+    // Stable synthetic IDs keep derived hash strings deterministic under the
+    // conservative PAN boundary; no production scanner exemption is added.
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     const semantic = new KnowledgeSemanticService(store);
     const device = await store.upsertNode({
+      id: 'synthetic-edge-enrichment-device',
       kind: 'ha_device',
       slug: 'lg-edge-enrichment-tv',
       title: 'LG webOS Smart TV',
@@ -258,6 +261,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: { knowledgeSpaceId: spaceId, manufacturer: 'LG', model: '86NANO90UNA' },
     });
     const official = await store.upsertSource({
+      id: 'synthetic-edge-enrichment-source',
       connectorId: 'semantic-gap-repair',
       sourceType: 'url',
       title: 'LG 86NANO90UNA official specifications',
@@ -273,6 +277,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
     });
     await store.upsertExtraction({
+      id: 'synthetic-edge-enrichment-extraction',
       sourceId: official.id,
       extractorId: 'web',
       format: 'html',
@@ -876,6 +881,10 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       ['Input and output ports', 'Input and output ports: HDMI inputs, HDMI eARC, USB ports, Ethernet, optical audio output, RF antenna input, and RS-232C/external control.'],
       ['Audio capabilities', 'Audio capabilities: 2 x 10W speakers.'],
     ];
+    await store.upsertExtraction({ sourceId: repairSource.id, extractorId: 'synthetic', format: 'text',
+      excerpt: `LG 86NANO90UNA specifications: ${goodFactPairs.map(([, summary]) => summary).join(' ')}`,
+      metadata: knowledgeSpaceMetadata('homeassistant:test'),
+    });
     const goodFacts = await Promise.all(goodFactPairs.map(([title, summary], index) => store.upsertNode({
       kind: 'fact',
       slug: `existing-official-lg-fact-${index}`,

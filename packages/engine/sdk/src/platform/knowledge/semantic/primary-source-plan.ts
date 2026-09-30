@@ -4,10 +4,14 @@ import { getKnowledgeSpaceId } from '../spaces.js';
 import { createKnowledgePageSourceReader, KnowledgeSourceQualityHeldError } from '../source-quality.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
-import { uniqueStrings } from './utils.js';
+
+/** A cooperative lifecycle stop never authorizes a fallback or late write. */
+export function assertSemanticWriteAllowed(signal?: AbortSignal, shouldStop?: () => boolean): void {
+  if (signal?.aborted || shouldStop?.()) throw new KnowledgeSourceQualityHeldError('aborted');
+}
 
 /** Optimistic read-set for one persistence pass, including absent/excluded records. */
-export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSignal) {
+export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSignal, shouldStop?: () => boolean) {
   const checks = new Map<string, () => void>();
   function watch<T>(key: string, read: () => T, expected: T = read()): T {
     const version = JSON.stringify(expected);
@@ -26,7 +30,7 @@ export function createSemanticWriteGuard(store: KnowledgeStore, signal?: AbortSi
     node(id: string) { return watch(`node:${id}`, () => store.getNode(id)); },
     extraction(id: string) { return watch(`extraction:${id}`, () => store.getExtractionBySourceId(id)); },
     assertCurrent() {
-      if (signal?.aborted) throw new KnowledgeSourceQualityHeldError('aborted');
+      assertSemanticWriteAllowed(signal, shouldStop);
       for (const check of checks.values()) check();
     },
   };
@@ -48,7 +52,7 @@ export function createSemanticPrimarySourcePlanner(store: KnowledgeStore, guard:
   const decisions = new Map<string, Promise<string>>();
   let requests = 0;
   function prepare(spaceId: string, claim: SemanticPrimaryClaim, sourceIds: readonly string[]): () => Promise<string> {
-    const candidates = uniqueStrings(sourceIds).map((id) => guard.source(id))
+    const candidates = [...new Set(sourceIds)].map((id) => guard.source(id))
       .filter((source): source is KnowledgeSourceRecord => Boolean(source
         && getKnowledgeSpaceId(source) === spaceId
         && (source.status === 'indexed' || source.status === 'pending')))

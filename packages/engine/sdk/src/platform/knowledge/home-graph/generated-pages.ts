@@ -336,14 +336,10 @@ export async function refreshHomeGraphDevicePassport(
       writtenEdgeKeys.push({ fromKind: 'node', fromId: passport.id, toKind: 'node', toId: device.id, relation: 'source_for' });
       throwIfAborted(context.signal);
       preparedProfileFacts.assertCurrent();
-      for (const factPlan of pageProfileFacts) {
-        writtenNodeIds.add(factPlan.node.id);
-        writtenEdgeKeys.push(
-          { fromKind: 'source', fromId: factPlan.source.id, toKind: 'node', toId: factPlan.node.id, relation: 'supports_fact' },
-          { fromKind: 'node', fromId: factPlan.node.id, toKind: 'node', toId: device.id, relation: 'describes' },
-        );
-      }
-      await preparedProfileFacts.write();
+      await preparedProfileFacts.write({
+        nodeWritten: (node) => { writtenNodeIds.add(node.id); },
+        edgeWritten: (edge) => { writtenEdgeKeys.push(edgeKey(edge)); },
+      });
       throwIfAborted(context.signal);
       const generated = await materializeGeneratedMarkdown({
         store,
@@ -367,6 +363,7 @@ export async function refreshHomeGraphDevicePassport(
       return { passport, generated };
     } catch (error) {
       await rollbackWrittenRecords();
+      throwIfAborted(context.signal);
       throw error;
     }
   });

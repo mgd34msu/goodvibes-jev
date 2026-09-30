@@ -43,7 +43,7 @@ interface SelfImproveContext {
   readonly gapRepairer?: KnowledgeSemanticGapRepairer | null | undefined;
   readonly activeGapRepairs: Set<string>;
   readonly objectProfiles?: readonly KnowledgeObjectProfilePolicy[] | undefined;
-  readonly enrichSource?: (sourceId: string, options: { readonly force?: boolean; readonly knowledgeSpaceId?: string }) => Promise<unknown>;
+  readonly enrichSource?: (sourceId: string, options: { readonly force?: boolean; readonly knowledgeSpaceId?: string; readonly signal?: AbortSignal; readonly shouldStop?: (() => boolean) | undefined }) => Promise<unknown>;
   /**
    * Cooperative stop probe (memory-governor pause), consulted at the SAME
    * yield points as `input.signal`, before/after gap discovery and at the top

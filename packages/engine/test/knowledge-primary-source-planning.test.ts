@@ -5,6 +5,8 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { prepareSourceLinkedRepairProfileFacts, promoteRepairSources, type SourceLinkedRepairProfileFactInput } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
 import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
+import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
+import { createSemanticPrimarySourcePlanner, createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
 import type { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
@@ -19,6 +21,7 @@ afterEach(() => { installJudgmentPort(previous); });
 function readings(value: (purpose: string, title: string) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
     const input = state as { purpose: string; candidate: { title: string } };
+    if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
     if (name === 'useful') return noulAnswer(value(input.purpose, input.candidate.title));
     if (name === 'authority') return choiceAnswer(question, 'secondary', 0.97);
     throw new Error(`Unexpected question ${name}`);
@@ -35,7 +38,16 @@ async function fixture() {
   return { store, subject, source, a, b };
 }
 async function addSource(store: KnowledgeStore, id: string, subjectId: string, scope = spaceId) {
-  return store.upsertSource({ id, connectorId: 'synthetic', sourceType: 'manual', title: id, status: 'indexed', summary: 'Synthetic reference describing concrete supported device claims in detail.', metadata: { knowledgeSpaceId: scope, sourceDiscovery: { linkedObjectIds: [subjectId] } } });
+  const source = await store.upsertSource({ id, connectorId: 'synthetic', sourceType: 'manual', title: id, status: 'indexed', summary: 'Synthetic reference describing concrete supported device claims in detail.', metadata: { knowledgeSpaceId: scope, sourceDiscovery: { linkedObjectIds: [subjectId] } } });
+  const names = ['First claim', 'Second claim', 'Later claim', 'Old shared claim', 'New unique claim', 'Exact display claim', 'Versioned claim', 'Collision claim'];
+  const text = [
+    'Synthetic TV-123 is also called Fresh entity and Collision in this synthetic fixture. It has four HDMI ports. Four HDMI ports. HDMI ports are 4.',
+    'First HDMI claim and Later HDMI claim are section labels for the four HDMI ports. Evidence 0, Evidence 1 and Evidence 2 each report four HDMI ports.',
+    ...names.map((name) => `${name} claim supported by the synthetic reference. ${name} evidence.`),
+    'Capped claim 0 through Capped claim 160 are synthetic note labels; each claim is supported by the synthetic reference, and each corresponding Capped claim evidence refers to that same statement.',
+  ].join(' ');
+  await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', excerpt: text, metadata: { knowledgeSpaceId: scope } });
+  return source;
 }
 function claim(title: string): KnowledgeSemanticFactInput { return { kind: 'note', title, summary: `${title} claim supported by the synthetic reference.`, evidence: `${title} evidence`, confidence: 90 }; }
 async function seedFact(store: KnowledgeStore, subject: KnowledgeNodeRecord, fact: KnowledgeSemanticFactInput, sources: readonly KnowledgeSourceRecord[]) {
@@ -50,7 +62,7 @@ function enrich(store: KnowledgeStore, source: KnowledgeSourceRecord, facts: rea
 }
 function graph(store: KnowledgeStore) { return JSON.stringify({ nodes: store.listNodes(), edges: store.listEdges(), issues: store.listIssues() }); }
 function profileInput(store: KnowledgeStore, source: KnowledgeSourceRecord, subject: KnowledgeNodeRecord, title = 'HDMI ports'): SourceLinkedRepairProfileFactInput {
-  return { store, source, spaceId, subjects: [subject], authority: 'secondary', title, summary: 'The device has four HDMI ports.', evidence: 'Four HDMI ports', classification: { kind: 'specification', title, summary: 'The device has four HDMI ports.', value: '4', labels: ['hdmi'], aliases: [] }, extractor: 'synthetic-profile' };
+  return { store, source, extraction: store.getExtractionBySourceId(source.id), spaceId, subjects: [subject], authority: 'secondary', title, summary: 'The device has four HDMI ports.', evidence: 'Four HDMI ports', classification: { kind: 'specification', title, summary: 'The device has four HDMI ports.', value: '4', labels: ['hdmi'], aliases: [] }, extractor: 'synthetic-profile' };
 }
 
 describe('primary source persistence preplanning', () => {
@@ -102,11 +114,17 @@ describe('primary source persistence preplanning', () => {
     const { store, subject, source, a } = await fixture();
     const foreign = await addSource(store, 'FOREIGN_PRIVATE_SOURCE_MARKER', subject.id, 'other-space');
     const fact = claim('Exact display claim'); await seedFact(store, subject, fact, [a, foreign]);
-    const fake = readings(); await enrich(store, source, [fact]);
+    const fake = readings();
+    const planner = createSemanticPrimarySourcePlanner(store, createSemanticWriteGuard(store));
+    await planner.prepare(spaceId, { kind: fact.kind, title: fact.title, summary: fact.summary,
+      subjects: [subject] }, [source.id, a.id, foreign.id])();
     const requests = JSON.stringify(fake.requests);
     expect(fake.requests).toHaveLength(2);
     expect(requests).not.toContain('FOREIGN_PRIVATE_SOURCE_MARKER');
     expect(requests).toContain('Exact display claim'); expect(requests).toContain(subject.title);
+    const before = graph(store); const writes = readings();
+    await expect(enrich(store, source, [fact])).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+    expect(writes.requests).toHaveLength(0); expect(graph(store)).toBe(before);
   });
 
   test('identical claim/support sets reuse readings while distinct claims select independent winners', async () => {
@@ -115,7 +133,7 @@ describe('primary source persistence preplanning', () => {
     const firstNode = await seedFact(store, subject, first, [a]); const secondNode = await seedFact(store, subject, second, [a]);
     const fake = readings((purpose, title) => (purpose.includes('First claim') ? title === 'a' : title === 'current') ? 0.99 : 0.9);
     await enrich(store, source, [first, first, second]);
-    expect(fake.requests).toHaveLength(4);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(4);
     expect(store.getNode(firstNode.id)?.sourceId).toBe(a.id); expect(store.getNode(secondNode.id)?.sourceId).toBe(source.id);
   });
 
@@ -150,6 +168,7 @@ describe('primary source persistence preplanning', () => {
   });
 
   test('entity-ID collision uses the post-entity subject overlay before fact ID planning', async () => {
+    readings();
     const { store, source } = await fixture();
     const entityId = `sem-entity-${semanticHash(spaceId, source.id, 'Collision')}`;
     await store.upsertNode({ id: entityId, kind: 'knowledge_entity', slug: 'collision', title: 'Old TV-987', status: 'active', metadata: { knowledgeSpaceId: spaceId, entityKind: 'device' } });
@@ -180,11 +199,12 @@ describe('primary source persistence preplanning', () => {
     const { store, subject, source, a } = await fixture();
     const first = profileInput(store, source, subject, 'First HDMI claim'), second = profileInput(store, source, subject, 'Later HDMI claim');
     const before = graph(store); readings((purpose) => purpose.includes('Later HDMI claim') ? 0.65 : 0.97);
-    await expect(prepareSourceLinkedRepairProfileFacts([first, { ...first, source: a }, second, { ...second, source: a }])).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
+    await expect(prepareSourceLinkedRepairProfileFacts([first, { ...first, source: a, extraction: store.getExtractionBySourceId(a.id) }, second, { ...second, source: a, extraction: store.getExtractionBySourceId(a.id) }])).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
     expect(graph(store)).toBe(before);
   });
 
   test('absent, excluded, single-source, extraction and subject snapshots cannot be silently replaced', async () => {
+    readings();
     for (const change of ['missing', 'excluded', 'single', 'extraction', 'subject'] as const) {
       const { store, subject, source, a } = await fixture();
       const input = profileInput(store, source, subject); let missingId = '';
@@ -195,9 +215,13 @@ describe('primary source persistence preplanning', () => {
         if (change === 'excluded') await store.replaceSourceRecord({ ...a, status: 'failed' });
         await store.upsertNode({ ...node, metadata: { ...node.metadata, sourceIds: [source.id, missingId] } });
       }
+      if (change === 'missing' || change === 'excluded') {
+        const before = graph(store);
+        await expect(prepareSourceLinkedRepairProfileFacts([input])).rejects.toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+        expect(graph(store)).toBe(before);
+        continue;
+      }
       const prepared = await prepareSourceLinkedRepairProfileFacts([input]);
-      if (change === 'missing') await addSource(store, missingId, subject.id);
-      if (change === 'excluded') await store.replaceSourceRecord(a);
       if (change === 'single') await store.replaceSourceRecord({ ...source, summary: 'Changed single source' });
       if (change === 'extraction') await store.upsertExtraction({ sourceId: source.id, extractorId: 'test', format: 'text', excerpt: 'Changed extracted evidence' });
       if (change === 'subject') await store.upsertNode({ ...subject, title: 'Changed subject' });
@@ -206,6 +230,7 @@ describe('primary source persistence preplanning', () => {
   });
 
   test('oversized support sets and aborted preparations are typed holds before writes or requests', async () => {
+    readings();
     const { store, subject, source } = await fixture();
     const input = profileInput(store, source, subject);
     const prepared = await prepareSourceLinkedRepairProfileFacts([input]);
@@ -228,10 +253,11 @@ describe('primary source persistence preplanning', () => {
     await seedFact(store, subject, facts[160]!, [source, a, b]);
     const before = graph(store); const fake = readings(() => 0.65);
     await expect(enrich(store, source, facts)).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(2); expect(graph(store)).toBe(before);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(2); expect(graph(store)).toBe(before);
   });
 
   test('promotion propagates a quality hold without its enrichment fallback writes', async () => {
+    readings();
     const { store, subject, source } = await fixture();
     const gap = await store.upsertNode({ id: 'gap', kind: 'knowledge_gap', slug: 'gap', title: 'Full device specifications', metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } });
     const task = await store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
@@ -268,6 +294,7 @@ describe('primary source persistence preplanning', () => {
   });
 
   test('prepared write rechecks source and operator state without relying on its caller', async () => {
+    readings();
     for (const change of ['source', 'subject'] as const) {
       const { store, subject, source } = await fixture();
       const prepared = await prepareSourceLinkedRepairProfileFacts([profileInput(store, source, subject)]);

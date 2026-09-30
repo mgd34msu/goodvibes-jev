@@ -70,11 +70,6 @@ export const LINE_CAP_GRANDFATHER: Readonly<Record<string, GrandfatherEntry>> = 
     ceiling: 1100,
     justification: 'core orchestrator monolith, pre-split, shrink-only; +5 for the compaction-strategy resolver wiring into checkContextWindowPreflight (import + getCompactionStrategy dep resolving behavior.compactionStrategy against the compaction-distiller-strategy flag; the resolver lives in conversation-compaction.ts); +15 for model-context-warning plumbing (pending-warning field, turn-loop note callback, preflight/post-turn dep wiring); +6 for replay deliver-once acknowledgment after injection; +11 for per-model tool-format telemetry (import + defensive active-model resolution + observeToolResults after the main-session tool loop)',
   },
-  // enrichment.ts ~1.00k, semantic enrichment pipeline, pre-split, shrink-only
-  'sdk/src/platform/knowledge/semantic/enrichment.ts': {
-    ceiling: 1005,
-    justification: 'semantic enrichment pipeline, pre-split, shrink-only',
-  },
   // knowledge-routes.ts ~1.00k, daemon knowledge route surface, pre-split, shrink-only
   'daemon-sdk/src/knowledge-routes.ts': {
     ceiling: 1007,

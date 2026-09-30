@@ -1,6 +1,6 @@
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { KnowledgeStore } from '../store.js';
-import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
+import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
 import { deriveRepairProfileFacts } from '../semantic/repair-profile.js';
 import { semanticFactId, semanticSlug } from '../semantic/utils.js';
 import type { SourceLinkedRepairProfileFactInput } from '../semantic/self-improvement-promotion.js';
@@ -20,6 +20,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 export interface DevicePageProfileFactPlan {
   readonly node: KnowledgeNodeRecord;
   readonly source: KnowledgeSourceRecord;
+  readonly extraction: KnowledgeExtractionRecord;
   readonly title: string;
   readonly summary: string;
   readonly evidence: string;
@@ -44,7 +45,7 @@ export async function buildDevicePageProfileFacts(input: {
     throwIfAborted(input.signal);
     const extraction = input.extractionsBySourceId?.get(source.id) ?? input.store.getExtractionBySourceId(source.id);
     const sourceText = extractedPageSourceText(extraction);
-    if (!sourceText.trim()) continue;
+    if (!extraction || !sourceText.trim()) continue;
     const { authority } = await input.sourceReader.read(source);
     if (authority === 'unverified') continue;
     const profileFacts = deriveRepairProfileFacts({
@@ -96,6 +97,7 @@ export async function buildDevicePageProfileFacts(input: {
           updatedAt: now,
         },
         source,
+        extraction,
         title: profileFact.title,
         summary: profileFact.summary,
         evidence: profileFact.evidence,
@@ -118,6 +120,7 @@ export function devicePageProfileFactInput(
     store,
     spaceId,
     source: fact.source,
+    extraction: fact.extraction,
     subjects: [device],
     authority: fact.authority,
     title: fact.title,

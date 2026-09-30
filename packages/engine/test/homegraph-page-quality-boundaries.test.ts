@@ -41,6 +41,7 @@ type ReadingState = {
 
 function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'supported' || name === 'attached') return noulAnswer(0.99);
     if (name === 'useful') return noulAnswer(probability(state as ReadingState));
     if (name === 'authority') return choiceAnswer(question, 'official-vendor', 0.97);
     throw new Error(`Unexpected page-quality fixture question: ${name}`);
@@ -59,7 +60,7 @@ function pauseReading(predicate: (state: ReadingState) => boolean = () => true) 
     ...fake.port,
     async ask(request) {
       const answer = await fake.port.ask(request);
-      if (!paused && predicate(request.state as ReadingState)) {
+      if (!paused && 'useful' in request.questions && predicate(request.state as ReadingState)) {
         paused = true;
         entered.resolve();
         await released.promise;
@@ -253,11 +254,13 @@ describe('Home Graph page quality persistence boundaries', () => {
       (purpose.startsWith(primaryPurpose) ? candidate.title === b.title : candidate.title === a.title) ? 0.99 : 0.91
     ));
     const page = await generate(context, 'passport');
-    const pageRequests = fake.requests.filter(({ state }) => !(state as ReadingState).purpose.startsWith(primaryPurpose));
-    const primaryRequests = fake.requests.filter(({ state }) => (state as ReadingState).purpose.startsWith(primaryPurpose));
+    const qualityRequests = fake.requests.filter((request) => 'useful' in request.questions);
+    const pageRequests = qualityRequests.filter(({ state }) => !((state as ReadingState).purpose ?? '').startsWith(primaryPurpose));
+    const primaryRequests = qualityRequests.filter(({ state }) => ((state as ReadingState).purpose ?? '').startsWith(primaryPurpose));
     expect(pageRequests.map(({ state }) => (state as ReadingState).candidate.title).sort()).toEqual([a.title!, b.title!]);
     expect(primaryRequests.map(({ state }) => (state as ReadingState).candidate.title).sort()).toEqual([a.title!, b.title!]);
-    for (const request of fake.requests) expect(Object.keys(request.questions).sort()).toEqual(['authority', 'useful']);
+    for (const request of qualityRequests) expect(Object.keys(request.questions).sort()).toEqual(['authority', 'useful']);
+    expect(fake.requests.some((request) => 'supported' in request.questions)).toBe(true);
     expect(fake.requests.slice(0, 2)).toEqual(pageRequests);
     const facts = context.store.listNodesInSpace(spaceId).filter((node) => node.kind === 'fact');
     expect(facts).toHaveLength(1);
@@ -274,7 +277,7 @@ describe('Home Graph page quality persistence boundaries', () => {
     const fake = readings(({ purpose }) => purpose.startsWith(primaryPurpose) ? 0.65 : 0.97);
     const before = persisted(context);
     await expect(generate(context, 'passport')).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
-    expect(fake.requests).toHaveLength(4);
+    expect(fake.requests.filter((request) => 'useful' in request.questions)).toHaveLength(4);
     expect(persisted(context)).toBe(before);
   });
 
@@ -394,7 +397,7 @@ describe('Home Graph page quality persistence boundaries', () => {
       && edge.relation === 'supports_fact')).toBe(true);
     expect(context.store.listEdges().some((edge) => edge.fromId === acceptedFact.id && edge.toId === context.device.id
       && edge.relation === 'describes')).toBe(true);
-    expect(fake.requests.filter(({ state }) => (state as ReadingState).candidate.title === rejected.title)).toHaveLength(1);
+    expect(fake.requests.filter(({ state }) => (state as ReadingState).candidate?.title === rejected.title)).toHaveLength(1);
   });
   test('a write-entry hold restores its passport but preserves an untouched concurrent fact edit', async () => {
     const context = await fixture();
@@ -416,6 +419,36 @@ describe('Home Graph page quality persistence boundaries', () => {
     await expect(generate({ ...context, store: racingStore }, 'passport')).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
     expect(context.store.getNode(fact.id)).toEqual(concurrent!);
     expect(context.store.getNode(priorPassport!.id)).toEqual(priorPassport);
+  });
+
+  test('mid-profile cancellation restores only written facts and preserves an untouched concurrent edit', async () => {
+    const context = await fixture();
+    const source = await addSource(context, 'multi-profile-reference', { profile: true });
+    const extraction = context.store.getExtractionBySourceId(source.id)!;
+    const text = 'The reference device has 4K UHD 3840 x 2160 resolution, 120 Hz, HDMI 2.1, USB, Ethernet, Bluetooth, Wi-Fi, and 2 x 10W speakers.';
+    await context.store.upsertExtraction({ ...extraction, excerpt: text, structure: { searchText: text } });
+    readings(); await generate(context, 'passport');
+    const facts = context.store.listNodes().filter((node) => node.kind === 'fact');
+    expect(facts.length).toBeGreaterThan(1);
+    const before = new Map(facts.map((fact) => [fact.id, fact]));
+    const controller = new AbortController();
+    const racingStore = Object.create(context.store) as KnowledgeStore;
+    let touched: string | undefined;
+    let concurrent: KnowledgeNodeRecord | undefined;
+    racingStore.upsertNode = async (input) => {
+      const node = await context.store.upsertNode(input);
+      if (input.kind === 'fact' && touched === undefined) {
+        touched = node.id;
+        const untouched = facts.find((fact) => fact.id !== node.id)!;
+        concurrent = await context.store.upsertNode({ ...untouched, summary: 'Concurrent correction outside this write pass.' });
+        controller.abort();
+      }
+      return node;
+    };
+    await expect(generate({ ...context, store: racingStore }, 'passport', controller.signal)).rejects.toThrow('Home Graph device passport refresh was cancelled');
+    expect(touched).toBeDefined(); expect(concurrent).toBeDefined();
+    expect(context.store.getNode(touched!)).toEqual(before.get(touched!)!);
+    expect(context.store.getNode(concurrent!.id)).toEqual(concurrent!);
   });
 
 });

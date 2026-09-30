@@ -1,3 +1,6 @@
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+useKnowledgeAnswerReadings();
+
 import { describe, expect, test } from 'bun:test';
 import {
   createProviderBackedKnowledgeSemanticLlm,

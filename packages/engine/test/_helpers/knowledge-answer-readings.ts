@@ -25,6 +25,7 @@ export function useKnowledgeAnswerReadings() {
         const text = JSON.stringify(state);
         return noulAnswer(table.quality?.find(([snippet]) => text.includes(snippet))?.[1] ?? 0.97);
       }
+      if (name === 'supported' || name === 'attached') return noulAnswer(0.99); // Explicit synthetic support fixtures; not a semantic evaluator.
       if (name === 'readable') return noulAnswer(0.99); // The suite supplies readable synthetic documents.
       if (name === 'features') return noulAnswer(table.features ?? 0.97);
       if (name !== 'match') throw new Error(`Unexpected answer fixture question: ${name}`);

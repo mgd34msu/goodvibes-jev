@@ -320,6 +320,9 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
     });
+    await store.upsertExtraction({ sourceId: official.id, extractorId: 'test', format: 'text',
+      excerpt: 'The display provides 4K UHD resolution and Dolby Vision.', metadata: { knowledgeSpaceId: spaceId },
+    });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'shared-display-fact',
