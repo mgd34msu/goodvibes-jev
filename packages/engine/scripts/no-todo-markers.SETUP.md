@@ -32,3 +32,13 @@ Uses the same SHA-pinned action versions as the existing CI jobs.
 - Scans: `packages/` (excludes `vendor/`, `generated/`, `*.test.ts`/`*.spec.ts`, `node_modules/`, `dist/`)
 - No build step required, the script reads source files directly (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.mjs`/`.cjs`)
 - Exits non-zero and prints `file:line:col [MARKER]` for every violation found, followed by an indented line showing the offending source text
+
+Literal strings inside an inline `fixtures` array passed to an imported judgment
+definition may intentionally contain unfinished code for calibration. The scanner
+identifies the lexical import binding from `@goodvibes-jev/judgment`, including
+named aliases and namespace calls. It exempts those recorded string literals,
+including literal string arrays joined with a literal separator;
+it does not exempt battery files, comments, callback bodies, runtime expressions,
+unrelated or shadowed factories, or indirect fixture arrays. A real marker after
+a fixture literal on the same line is still reported. The original unit-quality
+example retains its literal unfinished-code marker and expected adverse reading.
