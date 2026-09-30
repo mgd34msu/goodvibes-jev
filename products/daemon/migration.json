@@ -222,6 +222,27 @@
       "targets": [
         "products/daemon/src/runtime/conversation-rewind-port.ts"
       ]
+    },
+    {
+      "source": "src/runtime/cluster-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/cluster-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/cluster-group-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/cluster-group-composition.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/cluster-holdings-wiring.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/cluster-holdings-wiring.test.ts"
+      ]
     }
   ],
   "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."

@@ -30,3 +30,8 @@ The initial runtime adapters now compose credential/identity services and mail
 dependencies and register every declared disposal owner. They do not start the
 full runtime. Hosts must await the disposal scope's `close()` before transferring
 ownership; `dispose()` only starts that cleanup for legacy callers.
+
+Cluster adapters now wire the real group and coordinator with one signed
+transport. Callers must await startup and shutdown, including return admission;
+optional clock/transport seams permit deterministic tests without joining a LAN.
+The actual inbox registration and complete server composition are still pending.
