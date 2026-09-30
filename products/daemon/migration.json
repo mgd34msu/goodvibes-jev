@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "configured-runtime-graph",
+  "phase": "configured-runtime-service-commands",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -455,6 +455,41 @@
       "disposition": "HOIST",
       "targets": [
         "packages/engine/sdk/src/platform/payments/host/register.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/service-commands.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/service-commands.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/legacy-daemon-migration.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/legacy-daemon-migration.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/legacy-daemon-reconcile.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/legacy-daemon-reconcile.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/service-commands.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/service-commands.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/service-lifecycle-commands.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/service-lifecycle-commands.test.ts"
       ]
     }
   ],
