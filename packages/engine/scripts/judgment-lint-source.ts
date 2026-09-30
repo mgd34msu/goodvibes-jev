@@ -196,8 +196,12 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
         if (spread === undefined) return undefined;
         for (const [key, value] of spread) properties.set(key, value);
       } else {
+        // Spreading an accessor executes code with the source as `this`.
+        // Methods and custom prototypes can expose the same mutable identity
+        // without any identifier reference for the escape check to see.
+        if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) return undefined;
         const name = named(property);
-        if (name === undefined) return undefined;
+        if (name === undefined || name === '__proto__') return undefined;
         properties.set(name, property);
       }
     }

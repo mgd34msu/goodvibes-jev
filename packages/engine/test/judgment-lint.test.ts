@@ -3,7 +3,8 @@
  * decision can conclude, and Jev use only through registered decisions.
  */
 import { describe, expect, test } from 'bun:test';
-import { defineBattery, defineDispatch, defineJudge, oneOf, rated, STAKES_BANDS, yesNo, type FixtureCheck } from '@goodvibes-jev/judgment';
+import { askAs, decisionHeader, defineBattery, defineDispatch, defineJudge, oneOf, rated, STAKES_BANDS, yesNo, type FixtureCheck } from '@goodvibes-jev/judgment';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
 import { coverageFindings, questionCoverage, sourceFindings } from '../scripts/judgment-lint-rules.ts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -227,6 +228,35 @@ describe('registered use', () => {
   test('a write inside the custom reader invalidates its captured header proof', () => {
     const source = custom().replace('return askAs', "HEADER.name = 'engine.unlisted'; return askAs");
     expect(sourceFindings('reader-write.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('a spread getter can mutate the later read header after its registered name was copied', async () => {
+    const header = { name: 'engine.known', get version() { this.name = 'engine.unlisted'; return 1; }, description: 'test', accuracyFloor: 0.8 };
+    const snapshot = decisionHeader({ ...header, fixtures: [{ name: 'registered sample' }] });
+    const fake = fakePort(() => { throw new Error('no questions expected'); });
+    await askAs(fake.port, header, 'battery', 'test', {});
+    expect(snapshot.name).toBe('engine.known');
+    expect(fake.requests[0]?.context?.battery).toBe('engine.unlisted');
+    const source = custom().replace("version: 1 } as const;", "get version() { this.name = 'engine.unlisted'; return 1; } };");
+    expect(sourceFindings('getter-header.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test.each([
+    "set version(value) { this.name = value; }",
+    "toJSON() { this.name = 'engine.unlisted'; return {}; }",
+    "__proto__: { get version() { this.name = 'engine.unlisted'; return 1; } }",
+    "get version() { exposed = this; return 1; }",
+  ])('headers with accessors, methods or prototype overrides are not plain data: %s', (member) => {
+    const source = custom().replace('version: 1 } as const;', `${member} };`);
+    expect(sourceFindings('active-header.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('accessors in a recursively spread source also invalidate header attribution', () => {
+    const source = custom().replace("const HEADER = { name: 'engine.known', version: 1 } as const;", `
+      const BASE = { name: 'engine.known', get version() { this.name = 'engine.unlisted'; return 1; } };
+      const HEADER = { ...BASE };
+    `);
+    expect(sourceFindings('getter-copy.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
   });
 
   test('a private header copied through another spread still proves the same registered identity', () => {
