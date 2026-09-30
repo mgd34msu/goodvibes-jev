@@ -21,6 +21,7 @@
  *      invokeGatewayMethod), what webui/TUI actually see on the wire.
  *  (d) regression: NOT_INVOKABLE is unchanged and the two codes never collide.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -83,6 +84,7 @@ describe('(c) real bootDaemon HTTP proof: the wire shape webui/TUI actually cons
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'w6-c4-home-'));
+    seedBenchmarkCache(home, 'goodvibes');
     work = mkdtempSync(join(tmpdir(), 'w6-c4-work-'));
     daemon = await bootDaemon({
       homeDirectory: home,

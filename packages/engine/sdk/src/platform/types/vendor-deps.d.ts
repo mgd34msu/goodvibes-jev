@@ -118,6 +118,7 @@ declare module 'node-edge-tts/dist/drm.js' {
 declare module 'simple-git' {
   export interface SimpleGitOptions {
     baseDir?: string;
+    config?: string[];
     binary?: string;
     maxConcurrentProcesses?: number;
     trimmed?: boolean;

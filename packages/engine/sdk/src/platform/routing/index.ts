@@ -4,7 +4,19 @@
  * is a Jev reading over the whole catalog. No rule names a vendor or a model.
  */
 export { ROUTE_TIERS, MODEL_TIER_OPTIONS, WORK_TIER_OPTIONS, higherTier, tierRank, tierSearchOrder, type RouteTier } from './tiers.js';
-export * from './policy.js';
+export {
+  TIER_FOR_DIFFICULTY,
+  TIER_FLOOR_FOR_RISK,
+  TIER_FLOOR_FOR_PURPOSE,
+  TIER_FLOOR_FOR_UNSURE_NON_ENGLISH,
+  TIER_READ_SHORTLIST,
+  TIER_READ_ROUNDS,
+  CHOICE_SHORTLIST,
+  FALLBACK_ROUTES,
+  TIER_READ_CONCURRENCY,
+  BENCHMARK_READ_CONCURRENCY,
+  GUIDANCE_TIER_WHEN_UNSETTLED,
+} from './policy.js';
 export {
   DOMAINS,
   INTENTS,

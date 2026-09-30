@@ -43,6 +43,18 @@ function localUrl(value: string | URL, reporter: NetworkViolationReporter, kind:
   return url;
 }
 
+function localProxy(value: unknown, reporter: NetworkViolationReporter, kind: string): string | { url: string; headers?: unknown } | undefined {
+  if (value === undefined) return undefined;
+  const address = typeof value === 'string' ? value
+    : value !== null && (typeof value === 'object' || typeof value === 'function') && 'url' in value ? value.url : undefined;
+  if (typeof address !== 'string') reject(reporter, kind, '[invalid proxy]');
+  const url = localUrl(address, reporter, kind);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') reject(reporter, kind, '[invalid proxy protocol]');
+  // Native transports must receive the value we checked, even when an option
+  // uses an accessor or reading its headers mutates the original proxy object.
+  return typeof value === 'string' ? address : { ...value as object, url: address };
+}
+
 function localSocket(args: readonly unknown[], reporter: NetworkViolationReporter, kind: string): void {
   const first = args[0];
   if (Array.isArray(first)) return localSocket(first, reporter, kind);
@@ -80,9 +92,8 @@ export function installTestNetworkGuard(reporter: NetworkViolationReporter): () 
     // Follow each hop here instead, checking it before the next connection.
     for (let hop = 0; ; hop++) {
       localUrl(request.url, reporter, `fetch ${request.method}`);
-      const proxy = init !== undefined && 'proxy' in init ? init.proxy : undefined;
-      if (typeof proxy === 'string') localUrl(proxy, reporter, 'fetch proxy');
-      const response = await originalFetch(request.clone(), { ...transport, redirect: 'manual' });
+      const proxy = localProxy('proxy' in transport ? transport.proxy : undefined, reporter, 'fetch proxy');
+      const response = await originalFetch(request.clone(), { ...transport, ...(proxy === undefined ? {} : { proxy }), redirect: 'manual' } as Parameters<typeof fetch>[1]);
       const location = response.headers.get('location');
       if (![301, 302, 303, 307, 308].includes(response.status) || location === null || redirect === 'manual') return response;
       if (redirect === 'error') throw new TypeError('Fetch redirect refused by request policy');
@@ -127,6 +138,11 @@ export function installTestNetworkGuard(reporter: NetworkViolationReporter): () 
   globalThis.WebSocket = new Proxy(originalWebSocket, {
     construct(target, args, newTarget) {
       localUrl(String(args[0]), reporter, 'WebSocket');
+      const options = args[1];
+      if (options !== null && (typeof options === 'object' || typeof options === 'function') && 'proxy' in options) {
+        const snapshot = { ...options };
+        args[1] = { ...snapshot, proxy: localProxy(snapshot.proxy, reporter, 'WebSocket proxy') };
+      }
       return Reflect.construct(target, args, newTarget);
     },
   });

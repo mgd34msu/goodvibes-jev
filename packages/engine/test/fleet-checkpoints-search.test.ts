@@ -26,6 +26,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 
 const TOKEN = 'fleet-search-test-token';
 let home: string;
@@ -177,6 +178,7 @@ async function invokeVerb<T extends WireError = WireError>(
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'fleet-search-home-'));
   work = mkdtempSync(join(tmpdir(), 'fleet-search-work-'));
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

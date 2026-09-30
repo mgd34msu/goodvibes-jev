@@ -56,6 +56,9 @@ export const TIER_READ_CONCURRENCY = 8;
 /** Benchmark identity readings in flight while preparing eligible route candidates. */
 export const BENCHMARK_READ_CONCURRENCY = 8;
 
+/** Maximum attempts to obtain benchmark identities from one stable leaderboard generation. */
+export const BENCHMARK_PREPARATION_ATTEMPTS = 3;
+
 /**
  * The guidance a model gets in its system prompt when its tier reading does
  * not settle: the fullest guidance, which costs a few hundred tokens and

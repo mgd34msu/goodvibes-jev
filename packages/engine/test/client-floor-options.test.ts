@@ -43,6 +43,7 @@ import { resolveRuntimeFeatureFlags } from '../sdk/src/platform/runtime/feature-
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { createClientRuntimeServices } from '../sdk/src/platform/runtime/client-services.ts';
 import { createRuntimeStore } from '../sdk/src/platform/runtime/store/index.ts';
+import { fixtureBenchmark, seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 
 const roots: string[] = [];
 afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -52,6 +53,7 @@ function stackOptions() {
   roots.push(root);
   const workingDirectory = join(root, 'work');
   const surfaceRoot = 'tui';
+  seedBenchmarkCache(root, surfaceRoot);
   const configManager = new ConfigManager({ workingDir: workingDirectory, homeDir: root, surfaceRoot });
   const shellPaths = createShellPathService({ workingDirectory, homeDirectory: root });
   const secretsManager = createRuntimeSecretsManager({
@@ -114,22 +116,25 @@ describe('whether model discovery runs at construction', () => {
 
   test('the default runs it: an omitted option is the pre-option behaviour', () => {
     const probe = discoveryProbe();
-    createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory });
+    const stack = createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory });
     expect(probe.calls).toEqual(['discovery']);
+    expect(stack.benchmarkStore.getKnownBenchmarks(fixtureBenchmark.modelId)).toEqual(fixtureBenchmark);
   });
 
   test("'run' is the default spelled out", () => {
     const probe = discoveryProbe();
-    createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory, modelDiscovery: 'run' });
+    const stack = createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory, modelDiscovery: 'run' });
     expect(probe.calls).toEqual(['discovery']);
+    expect(stack.benchmarkStore.getKnownBenchmarks(fixtureBenchmark.modelId)).toEqual(fixtureBenchmark);
   });
 
   test("'skip' does not start the write a short-lived composition would outlive", () => {
     const probe = discoveryProbe();
-    createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory, modelDiscovery: 'skip' });
+    const stack = createProviderStack({ ...stackOptions(), providerRegistryFactory: probe.factory, modelDiscovery: 'skip' });
     // Skipping is a statement about this composition's lifetime, never a claim
     // that discovery is unwanted, so custom providers are still initialised.
     expect(probe.calls).toEqual([]);
+    expect(stack.benchmarkStore.getKnownBenchmarks(fixtureBenchmark.modelId)).toBeUndefined();
   });
 });
 
