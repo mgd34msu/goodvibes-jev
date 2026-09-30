@@ -1,6 +1,6 @@
-import { useExtractionReadings } from './_helpers/extraction-readings.js';
+import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 
-useExtractionReadings();
+const answerReadings = useKnowledgeAnswerReadings();
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -98,6 +98,16 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('strict candidate answers exclude unrelated sources and off-intent facts', async () => {
+    // Explicit readings for the off-intent maintenance/setup facts in this fixture.
+    answerReadings.set({ facts: [
+      ['Fasten the stand screws to prevent the TV from overturning during setup', 0.03],
+      ['Refer all servicing to qualified personnel and contact customer service for repair', 0.03],
+      ['Clean the TV with a dry cloth', 0.03],
+      ['Warning: do not use uncertified HDMI cables', 0.03],
+      ['External Devices Supported USB to Serial SERVICE ONLY', 0.03],
+      ['REFER TO QUALIFIED SERVICE PERSONNEL', 0.03],
+    ] });
+
     const { store } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const tv = await store.upsertSource({
@@ -784,6 +794,16 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('Home Graph semantic ask does not let unrelated semantic pages become object anchors', async () => {
+    // Explicit readings for the off-intent maintenance/setup facts in this fixture.
+    answerReadings.set({ facts: [
+      ['Fasten the stand screws to prevent the TV from overturning during setup', 0.03],
+      ['Refer all servicing to qualified personnel and contact customer service for repair', 0.03],
+      ['Clean the TV with a dry cloth', 0.03],
+      ['Warning: do not use uncertified HDMI cables', 0.03],
+      ['External Devices Supported USB to Serial SERVICE ONLY', 0.03],
+      ['REFER TO QUALIFIED SERVICE PERSONNEL', 0.03],
+    ] });
+
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));

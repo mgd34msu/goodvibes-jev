@@ -36,7 +36,6 @@ import {
   collectAnswerEvidence,
   filterAnswerLinkedObjects,
   includeOfficialLinkedEvidence,
-  includeOfficialLinkedSources,
   inferObjectLinkedObjects,
   shouldUseEvidenceLinkedObjects,
   toSearchResult,
@@ -63,18 +62,31 @@ export async function answerKnowledgeQuery(
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
 
   let evidence = evidenceResolution.evidence;
-  let rawFacts = collectRawAnswerFacts(input.query, evidence);
+  let rawFacts = await collectRawAnswerFacts(input.query, evidence);
   const linkedObjects = resolveAnswerLinkedObjects(context, input, spaceId, evidence, rawFacts, objectProfiles);
-  evidence = includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
-  rawFacts = collectRawAnswerFacts(input.query, evidence);
+  evidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
+  rawFacts = await collectRawAnswerFacts(input.query, evidence);
+  const rankedSources = await rankAnswerSources(evidence, rawFacts, input.query);
+  const acceptedSourceIds = new Set(rankedSources.map((source) => source.id));
+  evidence = evidence.filter((item) => !item.source || acceptedSourceIds.has(item.source.id));
+  rawFacts = rawFacts.filter((fact) => {
+    const sources = uniqueStrings([...readStringArray(fact.metadata.sourceIds), readString(fact.metadata.sourceId), fact.sourceId]);
+    return sources.length === 0 || sources.some((id) => acceptedSourceIds.has(id));
+  });
+  const acceptedFactIds = new Set(rawFacts.map((fact) => fact.id));
+  evidence = evidence.filter((item) => item.node?.metadata.semanticKind !== 'fact' || acceptedFactIds.has(item.node.id));
+  if (evidence.length === 0) return {
+    ok: true, spaceId, query: input.query,
+    answer: { text: input.noMatchMessage ?? `No source-backed knowledge matched "${input.query}".`, mode, confidence: 0, sources: [], linkedObjects: [], facts: [], gaps: [], synthesized: false },
+    results: [],
+  };
   const llmAnswer = await synthesizeAnswer(context.llm ?? null, input.query, mode, evidence, input.timeoutMs);
-  const rankedSources = rankAnswerSources(evidence, rawFacts);
   const facts = withAnswerFactContract(context.store, rawFacts, linkedObjects);
-  const sources = includeOfficialLinkedSources(context.store, spaceId, rankedSources, linkedObjects)
+  const sources = rankedSources
     .slice(0, limit)
     .map(withAnswerSourceAliases);
   const gapSpaceId = concreteAnswerGapSpaceId(spaceId, evidence, sources, linkedObjects);
-  const featureIntent = hasFeatureIntentForQuery(input.query);
+  const featureIntent = await hasFeatureIntentForQuery(input.query);
   const llmGapCount = llmAnswer?.gaps?.length ?? 0;
   const hasConcreteAnswerFacts = facts.length > 0 && sources.length > 0;
   const needsFeatureEvidenceGap = featureIntent && answerNeedsFeatureGap({
@@ -146,13 +158,13 @@ async function resolveAnswerEvidence(
   limit: number,
   objectProfiles: ObjectProfiles,
 ): Promise<AnswerEvidenceResolution> {
-  const evidence = collectAnswerEvidence(context.store, input, spaceId, limit, objectProfiles);
+  const evidence = await collectAnswerEvidence(context.store, input, spaceId, limit, objectProfiles);
   if (evidence.length > 0) return { kind: 'matched', evidence };
 
   const linkedObjects = input.includeLinkedObjects === false
     ? []
     : filterAnswerLinkedObjects(spaceId, input.query, [...(input.linkedObjects ?? [])], objectProfiles);
-  const linkedEvidence = includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
+  const linkedEvidence = await includeOfficialLinkedEvidence(context.store, spaceId, input.query, evidence, linkedObjects, limit);
   if (linkedEvidence.length > 0) return { kind: 'matched', evidence: linkedEvidence };
 
   const gap = shouldPersistNoMatchGap(spaceId, input.query, linkedObjects)
@@ -181,8 +193,8 @@ async function resolveAnswerEvidence(
   };
 }
 
-function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[]): readonly KnowledgeNodeRecord[] {
-  return filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts))).slice(0, 24);
+async function collectRawAnswerFacts(query: string, evidence: readonly EvidenceItem[]): Promise<readonly KnowledgeNodeRecord[]> {
+  return (await filterFactsForQuery(query, uniqueNodes(evidence.flatMap((item) => item.facts)))).slice(0, 24);
 }
 
 function resolveAnswerLinkedObjects(

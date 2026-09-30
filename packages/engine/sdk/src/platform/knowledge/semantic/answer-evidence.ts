@@ -45,22 +45,21 @@ import {
   type EvidenceItem,
 } from './answer-common.js';
 import {
-  factIntent,
   filterFactsForQuery,
-  hasFeatureIntent,
+  hasFeatureIntentForQuery,
   renderFactForPrompt,
   renderFactForScoring,
   renderNodeEvidence,
   semanticKindBoost,
 } from './answer-fact-selection.js';
 
-export function collectAnswerEvidence(
+export async function collectAnswerEvidence(
   store: KnowledgeStore,
   input: KnowledgeSemanticAnswerInput,
   spaceId: string,
   limit: number,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
-): EvidenceItem[] {
+): Promise<EvidenceItem[]> {
   const tokens = expandQueryTokens(tokenizeSemanticQuery(input.query));
   if (tokens.length === 0) return [];
   const subjectTokens = tokens.filter((token) => !GENERIC_ANSWER_INTENT_TOKENS.has(token));
@@ -78,13 +77,18 @@ export function collectAnswerEvidence(
     ? inferAnswerObjectScope(store, spaceId, input.query, subjectTokens, objectProfiles)
     : null;
 
-  const sourceItems = answerSources
+  const scopedSources = answerSources
     .filter((source) => belongsToAnswerSpace(source, spaceId))
     .filter((source) => sourceInAnswerObjectScope(store, source, objectScope))
     .filter((source) => !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id))
+    .slice(0, 50);
+  const scopedFacts = await filterFactsForQuery(input.query, uniqueNodes(scopedSources.flatMap((source) => sourceFacts.get(source.id) ?? [])));
+  const selectedFactIds = new Set(scopedFacts.map((fact) => fact.id));
+  const featureIntent = scopedSources.length > 0 ? await hasFeatureIntentForQuery(input.query) : false;
+  const sourceItems = scopedSources
     .map((source) => {
       const extraction = store.getExtractionBySourceId(source.id);
-      const facts = filterFactsForQuery(input.query, sourceFacts.get(source.id) ?? []);
+      const facts = (sourceFacts.get(source.id) ?? []).filter((fact) => selectedFactIds.has(fact.id));
       const text = sourceSemanticText(source, extraction);
       const scoringText = [
         source.title,
@@ -115,7 +119,7 @@ export function collectAnswerEvidence(
         title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
         score,
         source,
-        excerpt: selectEvidenceExcerpt(input.query, text, facts),
+        excerpt: selectEvidenceExcerpt(input.query, text, facts, featureIntent),
         facts,
       };
     });
@@ -200,50 +204,34 @@ export function shouldUseEvidenceLinkedObjects(
   return true;
 }
 
-export function includeOfficialLinkedSources(
-  store: KnowledgeStore,
-  spaceId: string,
-  rankedSources: readonly KnowledgeSourceRecord[],
-  linkedObjects: readonly KnowledgeNodeRecord[],
-): readonly KnowledgeSourceRecord[] {
-  if (linkedObjects.length === 0) return rankedSources;
-  const linkedIds = new Set(linkedObjects.map((node) => node.id));
-  const linkedSourceIds = sourceIdsLinkedToNodes(store, linkedIds, spaceId);
-  const official = listAnswerSources(store, spaceId)
-    .filter(isUsableAnswerSource)
-    .filter((source) => belongsToAnswerSpace(source, spaceId))
-    .filter((source) => sourceAuthorityBoostForAnswer(source) > 0)
-    .filter((source) => {
-      const discovery = readRecord(source.metadata.sourceDiscovery);
-      return linkedSourceIds.has(source.id)
-        || readStringArray(discovery.linkedObjectIds).some((id) => linkedIds.has(id));
-    })
-    .sort((left, right) => sourceAuthorityBoostForAnswer(right) - sourceAuthorityBoostForAnswer(left));
-  return uniqueSources([...official, ...rankedSources]);
-}
-
-export function includeOfficialLinkedEvidence(
+export async function includeOfficialLinkedEvidence(
   store: KnowledgeStore,
   spaceId: string,
   query: string,
   evidence: readonly EvidenceItem[],
   linkedObjects: readonly KnowledgeNodeRecord[],
   limit: number,
-): EvidenceItem[] {
+): Promise<EvidenceItem[]> {
   if (linkedObjects.length === 0) return [...evidence];
   const linkedIds = new Set(linkedObjects.map((node) => node.id));
   const linkedSourceIds = sourceIdsLinkedToNodes(store, linkedIds, spaceId);
   const tokens = expandQueryTokens(tokenizeSemanticQuery(query));
   const usableSourceIds = new Set(listAnswerSources(store, spaceId).filter(isUsableAnswerSource).map((source) => source.id));
   const sourceFacts = buildSourceFactIndex(store, spaceId, usableSourceIds);
-  const officialItems = listAnswerSources(store, spaceId)
+  const officialSources = listAnswerSources(store, spaceId)
     .filter(isUsableAnswerSource)
     .filter((source) => belongsToAnswerSpace(source, spaceId))
     .filter((source) => sourceAuthorityBoostForAnswer(source) > 0)
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
+    .slice(0, 50);
+  if (officialSources.length === 0) return [...evidence];
+  const selectedFacts = await filterFactsForQuery(query, uniqueNodes(officialSources.flatMap((source) => sourceFacts.get(source.id) ?? [])));
+  const selectedFactIds = new Set(selectedFacts.map((fact) => fact.id));
+  const featureIntent = await hasFeatureIntentForQuery(query);
+  const officialItems = officialSources
     .map((source) => {
       const extraction = store.getExtractionBySourceId(source.id);
-      const facts = filterFactsForQuery(query, sourceFacts.get(source.id) ?? []);
+      const facts = (sourceFacts.get(source.id) ?? []).filter((fact) => selectedFactIds.has(fact.id));
       const text = sourceSemanticText(source, extraction);
       const scoringText = [
         source.title,
@@ -260,7 +248,7 @@ export function includeOfficialLinkedEvidence(
         title: source.title ?? source.canonicalUri ?? source.sourceUri ?? source.id,
         score: semanticScore + sourceAuthorityBoostForAnswer(source) + Math.min(80, facts.length * 10),
         source,
-        excerpt: selectEvidenceExcerpt(query, text, facts),
+        excerpt: selectEvidenceExcerpt(query, text, facts, featureIntent),
         facts,
       };
     })
@@ -420,10 +408,9 @@ function selectEvidenceExcerpt(
   query: string,
   text: string,
   facts: readonly KnowledgeNodeRecord[],
+  featureIntent: boolean,
 ): string {
   const tokens = expandQueryTokens(tokenizeSemanticQuery(query));
-  const intent = factIntent(tokenizeSemanticQuery(query));
-  const featureIntent = Boolean(intent && hasFeatureIntent(intent));
   const evidenceText = stripEvidenceRoutingFragments(text);
   const factLines = facts
     .map(renderFactForPrompt)

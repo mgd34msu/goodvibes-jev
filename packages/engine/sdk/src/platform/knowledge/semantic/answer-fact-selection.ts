@@ -1,87 +1,38 @@
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../../gate/judgment-input.js';
+import { answerFactRerank, answerQueryIntent } from './ranking/fact-rerank.js';
 import type { KnowledgeNodeRecord } from '../types.js';
-import {
-  readString,
-  tokenizeSemanticQuery,
-} from './utils.js';
-import {
-  hasConcreteFeatureSignal,
-  isLowValueFeatureOrSpecText,
-  semanticFactText,
-} from './fact-quality.js';
-import { GENERIC_ANSWER_INTENT_TOKENS } from './answer-common.js';
+import { readString } from './utils.js';
 
-export function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[]): KnowledgeNodeRecord[] {
-  const tokens = tokenizeSemanticQuery(query);
-  const intent = factIntent(tokens);
-  const matching = intent
-    ? facts.filter((fact) => intent.has(readString(fact.metadata.factKind) ?? 'note'))
-    : [...facts];
-  return matching
-    .filter((fact) => fact.status !== 'stale' && !isLowValueFactForQuery(tokens, intent, fact))
-    .sort(compareFactQuality);
+export class KnowledgeFactSelectionHeldError extends Error {
+  override readonly name = 'KnowledgeFactSelectionHeldError';
+  constructor() { super('Knowledge fact relevance did not settle; no fact was selected.'); }
 }
 
-export function factIntent(tokens: readonly string[]): ReadonlySet<string> | null {
-  const tokenSet = new Set(tokens);
-  if (hasAny(tokenSet, ['feature', 'features', 'capability', 'capabilities', 'function', 'functions', 'support', 'supports', 'spec', 'specs', 'specification', 'specifications'])) {
-    return new Set(['feature', 'capability', 'specification', 'compatibility', 'configuration', 'identity']);
-  }
-  if (hasAny(tokenSet, ['reset', 'setup', 'install', 'configure', 'pair'])) {
-    return new Set(['procedure', 'configuration', 'troubleshooting']);
-  }
-  if (hasAny(tokenSet, ['battery', 'filter', 'maintenance', 'warranty', 'replace', 'clean'])) {
-    return new Set(['maintenance', 'specification', 'warning']);
-  }
-  if (hasAny(tokenSet, ['warning', 'caution', 'risk', 'hazard'])) return new Set(['warning']);
-  return null;
+export async function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeNodeRecord[]> {
+  const byId = new Map(facts.filter((fact) => fact.status !== 'stale').map((fact) => [fact.id, fact]));
+  const shortlist = [...byId.values()].slice(0, 50);
+  if (shortlist.length === 0) return [];
+  const candidates = shortlist.map((fact) => ({ id: fact.id, content: {
+    title: fact.title, summary: fact.summary ?? '', value: readString(fact.metadata.value) ?? '',
+    evidence: readString(fact.metadata.evidence) ?? '', kind: readString(fact.metadata.factKind) ?? 'note',
+    trust: 'untrusted reference material',
+  } }));
+  assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
+  const port = judgmentPort('engine.knowledge.answer-fact-rank');
+  const { ranked } = await answerFactRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-fact-rank' });
+  for (const item of ranked) if (item.decisionId !== undefined) port.recorder?.recordAction(item.decisionId, item.reading.verdict === 'yes' && item.reading.outcome === 'act' ? 'selected: query-supporting fact' : `not selected: ${item.reading.verdict} (${item.reading.outcome})`);
+  const accepted = ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
+  if (accepted.length === 0 && ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeFactSelectionHeldError();
+  return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => byId.get(item.id)!);
 }
 
-export function hasAny(values: ReadonlySet<string>, candidates: readonly string[]): boolean {
-  return candidates.some((candidate) => values.has(candidate));
-}
-
-function isLowValueFactForQuery(
-  tokens: readonly string[],
-  intent: ReadonlySet<string> | null,
-  fact: KnowledgeNodeRecord,
-): boolean {
-  if (!intent || !hasFeatureIntent(intent)) return false;
-  const kind = readString(fact.metadata.factKind) ?? 'note';
-  if (!['feature', 'capability', 'specification', 'compatibility', 'configuration', 'identity'].includes(kind)) return false;
-  const text = semanticFactText(fact);
-  if (isLowValueFeatureOrSpecText(text)) return true;
-  if (!hasConcreteFeatureSignal(text)) return true;
-  const extractor = readString(fact.metadata.extractor);
-  const confidence = typeof fact.confidence === 'number' ? fact.confidence : 0;
-  if (extractor !== 'deterministic' || confidence > 60) return false;
-  const subjectTokens = tokens.filter((token) => !GENERIC_ANSWER_INTENT_TOKENS.has(token));
-  return subjectTokens.length > 0 && !hasConcreteFeatureSignal(text);
-}
-
-export function hasFeatureIntent(intent: ReadonlySet<string>): boolean {
-  return intent.has('feature') || intent.has('capability') || intent.has('specification') || intent.has('compatibility');
-}
-
-export function hasFeatureIntentForQuery(query: string): boolean {
-  const intent = factIntent(tokenizeSemanticQuery(query));
-  return Boolean(intent && hasFeatureIntent(intent));
-}
-
-function compareFactQuality(left: KnowledgeNodeRecord, right: KnowledgeNodeRecord): number {
-  return factQuality(right) - factQuality(left) || left.title.localeCompare(right.title);
-}
-
-function factQuality(fact: KnowledgeNodeRecord): number {
-  const extractor = readString(fact.metadata.extractor);
-  const kind = readString(fact.metadata.factKind);
-  const value = readString(fact.metadata.value);
-  const authority = readString(fact.metadata.sourceAuthority);
-  return (extractor === 'llm' ? 40 : 0)
-    + (extractor === 'repair-promotion' ? 34 : 0)
-    + (authority === 'official-vendor' ? 24 : authority === 'vendor' ? 14 : 0)
-    + (value ? 12 : 0)
-    + (kind === 'capability' || kind === 'feature' ? 8 : kind === 'specification' ? 6 : 0)
-    + Math.round(fact.confidence / 10);
+export async function hasFeatureIntentForQuery(query: string): Promise<boolean> {
+  assertJudgmentInput({ query });
+  const run = await answerQueryIntent.run(judgmentPort('engine.knowledge.answer-query-intent'), { query }, { site: 'engine.knowledge.answer-query-intent' });
+  if (run.readings.features.outcome !== 'act') { run.recordAction('held: unsettled query intent'); throw new KnowledgeFactSelectionHeldError(); }
+  run.recordAction(`query feature intent: ${run.readings.features.verdict}`);
+  return run.readings.features.verdict === 'yes';
 }
 
 export function renderFactForScoring(fact: KnowledgeNodeRecord): string {
@@ -102,22 +53,9 @@ export function renderFactForPrompt(fact: KnowledgeNodeRecord): string {
   return `${kind}: ${fact.title}${value ? ` = ${value}` : ''}${fact.summary ? ` - ${fact.summary}` : ''}${evidence ? ` Evidence: ${evidence}` : ''}`;
 }
 
+/** Formatting retains the actual evidence; no keyword heuristic discards it. */
 function cleanFactEvidenceForAnswer(fact: KnowledgeNodeRecord): string | undefined {
-  const evidence = readString(fact.metadata.evidence)?.replace(/\s+/g, ' ').trim() ?? '';
-  if (!evidence) return undefined;
-  if (isLowValueFeatureOrSpecText(evidence)) return undefined;
-  const normalizedEvidence = normalizeFactText(evidence);
-  if (!normalizedEvidence) return undefined;
-  const title = normalizeFactText(fact.title);
-  const summary = normalizeFactText(fact.summary ?? '');
-  const value = normalizeFactText(readString(fact.metadata.value) ?? '');
-  if (normalizedEvidence === title || normalizedEvidence === summary || normalizedEvidence === value) return undefined;
-  if (title && value && normalizedEvidence.includes(title) && normalizedEvidence.includes(value)) return undefined;
-  return evidence;
-}
-
-function normalizeFactText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return readString(fact.metadata.evidence)?.replace(/\s+/g, ' ').trim() || undefined;
 }
 
 export function renderNodeEvidence(node: KnowledgeNodeRecord): string {
@@ -131,4 +69,9 @@ export function semanticKindBoost(node: KnowledgeNodeRecord): number {
   if (node.metadata.semanticKind === 'wiki_page') return 24;
   if (node.metadata.semanticKind === 'entity') return 18;
   return 0;
+}
+
+/** Structural set intersection, retained for callers with an explicit token set. */
+export function hasAny(values: ReadonlySet<string>, candidates: readonly string[]): boolean {
+  return candidates.some((candidate) => values.has(candidate));
 }
