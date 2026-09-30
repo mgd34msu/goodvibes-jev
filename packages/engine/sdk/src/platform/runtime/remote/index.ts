@@ -60,6 +60,8 @@ export { createBackends } from './host/backends/index.js';
 export { RemoteDispatcher, STDOUT_PREVIEW_LIMIT } from './host/dispatcher.js';
 export type { RemoteWorkItemInput, RemoteWorkEnqueuer, RemoteInvokeResult, RemoteDispatcherOptions, DispatchRequest } from './host/dispatcher.js';
 export { HostDistributedRuntime } from './host/service.js';
+export { registerRemoteSurface } from './host/surface.js';
+export type { RemoteSurfaceContext, RemoteInvokeAdapter, RemoteSurfaceRegistration, RegisterRemoteSurfaceOptions } from './host/surface.js';
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 

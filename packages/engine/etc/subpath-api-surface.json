@@ -52041,6 +52041,11 @@
       "text": "export interface RecoveryRestoreResult { readonly snapshot: SessionSnapshot; readonly info: RecoveryFileInfo; readonly receipt: string; }"
     },
     {
+      "name": "RegisterRemoteSurfaceOptions",
+      "kind": "interface",
+      "text": "export interface RegisterRemoteSurfaceOptions { readonly manager?: DistributedRuntimeManager; readonly managerReady?: Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "RemoteCapabilityId",
       "kind": "type",
       "text": "export type RemoteCapabilityId = 'files' | 'commands' | 'approvals' | 'artifacts' | 'resume' | 'shared-sandbox' | 'dedicated-sandbox';"
@@ -52161,6 +52166,14 @@
         "warn"
       ],
       "text": "export interface RemoteHostLogger { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }"
+    },
+    {
+      "name": "RemoteInvokeAdapter",
+      "kind": "interface",
+      "required": [
+        "invoke"
+      ],
+      "text": "export interface RemoteInvokeAdapter { invoke(input: Record<string, unknown>): Promise<unknown>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "RemoteInvokeResult",
@@ -52407,6 +52420,26 @@
         "totalConnections"
       ],
       "text": "export interface RemoteSupervisorSnapshot { readonly capturedAt: number; readonly totalConnections: number; readonly activeConnections: number; readonly degradedConnections: number; readonly pools: readonly RemoteRunnerPool[]; readonly sessions: readonly RemoteSessionStateSnapshot[]; } ;; via RemoteRunnerPool = export interface RemoteRunnerPool { readonly id: string; readonly label: string; readonly description?: string | undefined; readonly trustClass: RemoteRunnerContract['trustClass'] | 'mixed'; readonly preferredTemplate?: string | undefined; readonly maxRunners?: number | undefined; readonly runnerIds: readonly string[]; readonly createdAt: number; readonly lastUpdatedAt: number; }"
+    },
+    {
+      "name": "RemoteSurfaceContext",
+      "kind": "interface",
+      "required": [
+        "workingDirectory"
+      ],
+      "text": "export interface RemoteSurfaceContext extends BackendContext { readonly workingDirectory: string; }"
+    },
+    {
+      "name": "RemoteSurfaceRegistration",
+      "kind": "interface",
+      "required": [
+        "close",
+        "dispatch",
+        "ready",
+        "service",
+        "unregister"
+      ],
+      "text": "export interface RemoteSurfaceRegistration { readonly ready: Promise<void>; readonly service: DistributedRuntimeRouteService; readonly dispatch: RemoteInvokeAdapter; close(): Promise<void>; unregister(): void; } ;; via DistributedRuntimeRouteService = export interface DistributedRuntimeRouteService { listPairRequests(): unknown; approvePairRequest(requestId: string, input: Record<string, unknown>): Promise<unknown | null>; rejectPairRequest(requestId: string, input: Record<string, unknown>): Promise<unknown | null>; listPeers(): unknown; rotatePeerToken(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; revokePeerToken(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; disconnectPeer(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; listWork(): unknown; invokePeer(input: Record<string, unknown>): Promise<unknown>; cancelWork(workId: string, input: Record<string, unknown>): Promise<unknown | null>; getNodeHostContract(): unknown; requestPairing(input: Record<string, unknown>): Promise<unknown>; verifyPairRequest(requestId: string, challenge: string, input: Record<string, unknown>): Promise<unknown | null>; heartbeatPeer(auth: RemotePeerAuth, input: Record<string, unknown>): Promise<unknown>; claimWork(auth: RemotePeerAuth, input: Record<string, unknown>): Promise<unknown>; completeWork(auth: RemotePeerAuth, workId: string, input: Record<string, unknown>): Promise<unknown | null>; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "RemoteTask",
@@ -53852,6 +53885,11 @@
       "name": "reconnectFailurePlaybook",
       "kind": "const",
       "text": "reconnectFailurePlaybook: Playbook ;; via Playbook = export interface Playbook { readonly id: string; readonly name: string; readonly description: string; readonly symptoms: string[]; readonly checks: DiagnosticCheck[]; readonly steps: PlaybookStep[]; readonly escalationCriteria: string[]; readonly tags: string[]; }"
+    },
+    {
+      "name": "registerRemoteSurface",
+      "kind": "function",
+      "text": "export declare function registerRemoteSurface(ctx: RemoteSurfaceContext, options?: RegisterRemoteSurfaceOptions): RemoteSurfaceRegistration;"
     },
     {
       "name": "removeLivenessMarker",
