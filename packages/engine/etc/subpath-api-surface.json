@@ -29799,6 +29799,24 @@
       "text": "export interface InboundChannelItem { id: string; provider: string; kind: 'dm' | 'thread' | 'mention' | 'reaction'; fromDigest: string; subjectPreview: string; bodyPreview: string; routeId?: string; receivedAt: number; unread: boolean; triageScore?: number; triageTags?: string[]; }"
     },
     {
+      "name": "InboundPoller",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "isProviderRunning",
+        "pollOnce",
+        "pollProvider",
+        "pollProviderOnce",
+        "providerIds",
+        "snapshotStatuses",
+        "start",
+        "startProvider",
+        "stop",
+        "stopProvider"
+      ],
+      "text": "export declare class InboundPoller { private readonly adapters; private readonly store; private readonly logger; private readonly perProviderLimit; private readonly setIntervalImpl; private readonly clearIntervalImpl; private readonly timers; private readonly statuses; private readonly pending; private readonly controllers; private readonly generations; private readonly paused; private stopping; private started; private released; constructor(options: PollerOptions); start(): void; startProvider(id: string): void; stopProvider(id: string): Promise<void>; isProviderRunning(id: string): boolean; providerIds(): string[]; pollOnce(): Promise<void>; pollProviderOnce(id: string): Promise<void>; pollProvider(id: string, adapter: InboundProviderAdapter): Promise<void>; private performPoll; snapshotStatuses(providerIds?: readonly string[]): ProviderStatus[]; stop(): Promise<void>; private warn; private setStatus; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "InboundProviderAdapter",
       "kind": "interface",
       "required": [
@@ -29887,12 +29905,22 @@
       "text": "POLL_CADENCE_MS: { readonly realtime: 30000; readonly email: 60000; readonly default: 120000; }"
     },
     {
+      "name": "PollerOptions",
+      "kind": "interface",
+      "required": [
+        "adapters",
+        "logger",
+        "store"
+      ],
+      "text": "export interface PollerOptions { adapters: Map<string, InboundProviderAdapter>; store: InboxCursorStore; logger: HandlerLogger; perProviderLimit?: number; setIntervalImpl?: typeof setInterval; clearIntervalImpl?: typeof clearInterval; } ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; }"
+    },
+    {
       "name": "ProviderPollOptions",
       "kind": "interface",
       "required": [
         "limit"
       ],
-      "text": "export interface ProviderPollOptions { since?: number; limit: number; }"
+      "text": "export interface ProviderPollOptions { signal?: AbortSignal; since?: number; limit: number; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
     },
     {
       "name": "ProviderPollResult",
@@ -29907,6 +29935,17 @@
       "name": "ProviderState",
       "kind": "type",
       "text": "export type ProviderState = 'ready' | 'unavailable' | 'empty';"
+    },
+    {
+      "name": "ProviderStatus",
+      "kind": "interface",
+      "required": [
+        "id",
+        "itemCount",
+        "polled",
+        "state"
+      ],
+      "text": "export interface ProviderStatus { id: string; state: ProviderState; itemCount: number; error?: string; lastPolledAt?: number; configured?: boolean; polled: boolean; }"
     },
     {
       "name": "RouteResolver",

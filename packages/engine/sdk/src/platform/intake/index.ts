@@ -18,3 +18,6 @@ export {
 export type {
   InboxSweepSummary, InboxCursorStoreOptions, InboxPosition, InboxQuery,
 } from './cursor-store.js';
+
+export { InboundPoller } from './poller.js';
+export type { ProviderStatus, PollerOptions } from './poller.js';

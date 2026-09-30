@@ -69,6 +69,8 @@ export interface ProviderPollResult {
 }
 
 export interface ProviderPollOptions {
+  /** Cooperative cancellation for leadership loss or surface shutdown. */
+  signal?: AbortSignal;
   /** Only return items newer than this Unix-ms timestamp, when supported. */
   since?: number;
   /** Max items to return this poll. */
