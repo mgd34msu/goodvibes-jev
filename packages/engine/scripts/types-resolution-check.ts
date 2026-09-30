@@ -1,35 +1,26 @@
-/**
- * types-resolution-check.ts, arethetypeswrong over every released package.
- *
- * attw resolves each export of a packed tarball the way Node and the
- * bundler-style resolvers do. The tarballs are packed from the release stage,
- * as publish packs them, not from the workspace, because the workspace
- * manifests carry the `bun` source condition that the published manifests
- * drop. The release tooling packs them (packStage reads every shape npm's
- * pack output takes); attw's own --pack step reads only one.
- *
- * The ignored rules are the old package set's: every package is ESM only, so
- * there is no CommonJS resolution to check.
+/** Check every published export with all four attw resolvers and unchanged rules.
+ * Small direct-Node subprocesses bound memory and provide progress/deadlines;
+ * CI distributes the same exhaustive plan over independent runners.
  */
-import {
-  cleanupStage,
-  collectTarballs,
-  createSdkTempDir,
-  packStage,
-  run,
-  stagePackages,
-} from './release-shared.ts';
+import { execFileSync } from 'node:child_process';
+import { cleanupStage, collectTarballs, createSdkTempDir, packStage, stagePackages } from './release-shared.ts';
+import { packedExports, parseShard, planChecks } from './types-resolution-plan.ts';
+import { checkChunk } from './types-resolution-runner.ts';
 
+const shard = parseShard(process.argv.slice(2));
 const { tempRoot, publicStages } = await stagePackages();
 const packDestination = createSdkTempDir('goodvibes-sdk-attw-');
 try {
   const tarballs = collectTarballs(publicStages.map((stage) => packStage(stage.stageDir, packDestination)), packDestination);
-  for (const tarball of tarballs) {
-    run('bunx', ['attw', tarball, '--ignore-rules', 'no-resolution', 'cjs-resolves-to-esm'], process.cwd());
-  }
+  // Inspect the actual shipped manifest, not the source-condition workspace one.
+  const packages = tarballs.map((tarball) => packedExports(JSON.parse(execFileSync('tar',
+    ['-xOf', tarball, 'package/package.json'], { encoding: 'utf8' })), tarball));
+  const lanes = planChecks(packages, shard.count);
+  const chunks = lanes[shard.index]!;
+  console.log(`attw shard ${shard.index}/${shard.count}: ${chunks.reduce((n, chunk) => n + chunk.entrypoints.length, 0)} of ${packages.reduce((n, pkg) => n + pkg.entrypoints.length, 0)} exports`);
+  for (const chunk of chunks) await checkChunk(chunk);
 } finally {
   cleanupStage(packDestination);
   cleanupStage(tempRoot);
 }
-
-console.log('types resolution check passed for all public packages');
+console.log(`types resolution check passed for shard ${shard.index}/${shard.count}`);
