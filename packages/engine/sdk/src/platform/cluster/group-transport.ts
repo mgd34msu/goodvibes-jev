@@ -96,10 +96,15 @@ export class GroupWireRouter {
 
   private readonly lifecycle = new ClusterOwnedLifecycle(
     async () => { await this.options.inner.start((raw) => this.receive(raw)); },
-    async () => { this.electionListener = null; await this.options.inner.stop(); },
+    async () => {
+      this.clearElectionListener();
+      try { await this.options.inner.stop(); }
+      finally { this.clearElectionListener(); }
+    },
   );
   private announcedNoGroup = false;
   private electionListener: ((raw: string) => void) | null = null;
+  private electionListenerGeneration = 0;
   private seq = 0;
 
   constructor(private readonly options: GroupWireRouterOptions) {}
@@ -139,8 +144,11 @@ export class GroupWireRouter {
   electionTransport(nodeVersion: string): ClusterTransport {
     return {
       start: async (onMessage) => {
-        this.electionListener = onMessage;
+        const generation = ++this.electionListenerGeneration;
         await this.ensureStarted();
+        // Publish only after acquisition succeeds. A stop or newer start can
+        // invalidate this registration while the shared socket is opening.
+        if (generation === this.electionListenerGeneration) this.electionListener = onMessage;
       },
       send: async (raw) => {
         const wrapped = this.wrapElectionMessage(raw, nodeVersion);
@@ -150,10 +158,15 @@ export class GroupWireRouter {
       // The socket belongs to the group runtime, whose own lifecycle closes it.
       // A coordinator shutting down must not take the beacon down with it.
       stop: async () => {
-        this.electionListener = null;
+        this.clearElectionListener();
       },
       describe: () => this.describe(),
     };
+  }
+
+  private clearElectionListener(): void {
+    this.electionListenerGeneration += 1;
+    this.electionListener = null;
   }
 
   // ── outbound ──────────────────────────────────────────────────────────────
