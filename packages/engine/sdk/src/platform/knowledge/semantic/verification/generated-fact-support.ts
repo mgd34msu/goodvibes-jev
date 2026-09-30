@@ -1,3 +1,4 @@
+import { createSupportReferenceLabels } from './structural-references.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, JudgmentPort } from '@goodvibes-jev/judgment';
 import { generatedFactFieldSupport, generatedFactSubjectAttachment } from './batteries.js';
@@ -31,15 +32,15 @@ function versionsAgree(inputs: readonly ProjectedSupportInput[]): void {
     compare(`source:${input.sourceId}`, input.sourceHash);
     compare(`extraction:${input.extractionId}`, input.extractionHash);
     compare(`source-extraction:${input.sourceId}`, input.extractionHash);
-    for (const subject of input.subjects) compare(`subject:${subject.state.id}`, subject.hash);
+    for (const subject of input.subjects) compare(`subject:${subject.originalId}`, subject.hash);
   }
 }
 function requestPlans(input: ProjectedSupportInput): RequestPlan[] {
   const state = input.state as { readonly [key: string]: JsonValue };
   return [
-    ...input.fields.map((field) => ({ projection: input, field: field.name, fieldHash: supportHash(field.value), state: { ...state, field }, attachment: false })),
-    ...input.subjects.map((subject) => ({ projection: input, field: 'subjectAttachment', fieldHash: supportHash(subject.state),
-      subjectId: subject.state.id, subjectHash: subject.hash, state: { ...state, subject: subject.state }, attachment: true })),
+    ...input.fields.map((field) => ({ projection: input, field: field.name, fieldHash: field.originalHash, state: { ...state, field: { name: field.name, value: field.value } }, attachment: false })),
+    ...input.subjects.map((subject) => ({ projection: input, field: 'subjectAttachment', fieldHash: subject.originalFieldHash,
+      subjectId: subject.originalId, subjectHash: subject.hash, state: { ...state, subject: subject.state }, attachment: true })),
   ];
 }
 /** Validate custom ports too: a malformed noul may otherwise accidentally reach an act band. */
@@ -86,8 +87,9 @@ export async function prepareGeneratedFactSupport(inputs: readonly GeneratedFact
   // No port is even acquired until every selected input has passed privacy and
   // identity checks. In particular, a protected late field cannot leak early ones.
   let projectionBytes = 0;
+  const referenceLabels = createSupportReferenceLabels();
   const projections = inputs.map((input) => {
-    const projection = projectSupportInput(input);
+    const projection = projectSupportInput(input, referenceLabels);
     projectionBytes += new TextEncoder().encode(JSON.stringify(projection)).byteLength;
     if (projectionBytes > maxBytes) throw new Held('budget');
     return projection;
@@ -96,7 +98,7 @@ export async function prepareGeneratedFactSupport(inputs: readonly GeneratedFact
   const jobs: RequestPlan[] = [], requestsByKey = new Map<string, number>();
   let bytes = 0;
   const planRequests = projections.map((input) => freezeSupport(requestPlans(input)).map((request) => {
-    const key = JSON.stringify({ state: request.state, sourceHash: input.sourceHash, extractionHash: input.extractionHash, subjectHash: request.subjectHash });
+    const key = JSON.stringify({ state: request.state, claimHash: input.claimHash, sourceHash: input.sourceHash, extractionHash: input.extractionHash, subjectHash: request.subjectHash });
     const previous = requestsByKey.get(key);
     if (previous !== undefined) return previous;
     if (jobs.length >= maxRequests) throw new Held('budget');

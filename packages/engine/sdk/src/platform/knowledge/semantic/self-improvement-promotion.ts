@@ -387,7 +387,7 @@ export async function prepareSourceLinkedRepairProfileFacts(
       id: factId, kind: input.classification.kind, title: input.title, summary: input.summary,
       value: input.classification.value, evidence: input.evidence, labels: input.classification.labels,
       aliases: input.classification.aliases, subject: input.subjects[0]?.title, targetHints: repairSubjectHints(input.subjects),
-    }, sourceIds, input.subjects, new Map([[input.source.id, input.extraction]]));
+    }, sourceIds, input.subjects, new Map([[input.source.id, input.extraction]]), new Set(), { claimId: factId });
     const resolve = planner.prepare(input.spaceId, {
       kind: input.classification.kind, title: input.title, summary: input.summary,
       value: input.classification.value, evidence: input.evidence,

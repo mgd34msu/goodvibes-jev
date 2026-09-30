@@ -1,3 +1,4 @@
+import type { SupportReferenceLabels } from './structural-references.js';
 import { createHash } from 'node:crypto';
 import type { JsonValue } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../../gate/judgment-input.js';
@@ -68,7 +69,7 @@ const CLAIM_KEYS = new Set(['id', 'kind', 'title', 'summary', 'value', 'evidence
 const HINT_KEYS = new Set(['id', 'kind', 'title']);
 
 /** Produces only explicit evidence and identity fields; arbitrary metadata never leaves this boundary. */
-export function projectSupportInput(input: GeneratedFactSupportInput) {
+export function projectSupportInput(input: GeneratedFactSupportInput, labels?: SupportReferenceLabels) {
   assertPlainSnapshot(input);
   if (!record(input) || !text(input.spaceId) || input.spaceId !== input.spaceId.trim()
     || !record(input.source) || !record(input.claim) || !Array.isArray(input.subjects)) throw new Held('malformed');
@@ -125,21 +126,29 @@ export function projectSupportInput(input: GeneratedFactSupportInput) {
     ...(extraction.excerpt === undefined ? {} : { excerpt: extraction.excerpt }),
     sections: extraction.sections, texts,
   };
-  const subjects = input.subjects.map((subject) => ({ state: subjectProjection(subject), hash: supportHash(subject) }));
-  const state = { spaceId, claim, source: sourceState, extraction: extractionState, subjects: subjects.map((subject) => subject.state) };
+  const references = labels?.forInput(input);
+  const projectedClaim = references ? { ...claim, id: references.claimId,
+    ...(claim.targetHints === undefined ? {} : { targetHints: claim.targetHints.map((hint) =>
+      typeof hint === 'string' ? hint : { ...hint, id: references.subjects.get(String(hint.id)) ?? hint.id }) }),
+  } : claim;
+  const subjects = input.subjects.map((subject) => {
+    const state = subjectProjection(subject);
+    return { originalId: subject.id, originalFieldHash: supportHash(state), state: { ...state, id: references?.subjects.get(subject.id) ?? state.id }, hash: supportHash(subject) };
+  });
+  const state = { spaceId, claim: projectedClaim, source: sourceState, extraction: extractionState, subjects: subjects.map((subject) => subject.state) };
   // Called for EVERY selected input before the reader sends ANY request, without clipping.
   assertJudgmentInput(state);
-  const fields: { name: string; value: JsonValue }[] = [];
+  const fields: { name: string; value: JsonValue; originalHash: string }[] = [];
   for (const name of ['kind', 'title', 'summary', 'value', 'evidence', 'subject'] as const) {
-    const value = claim[name];
-    if (value !== undefined) fields.push({ name, value: JSON.parse(JSON.stringify(value)) as JsonValue });
+    const value = projectedClaim[name];
+    if (value !== undefined) fields.push({ name, value: JSON.parse(JSON.stringify(value)) as JsonValue, originalHash: supportHash(claim[name]) });
   }
   for (const name of ['labels', 'aliases', 'targetHints'] as const) {
-    claim[name]?.forEach((value, index) => fields.push({ name: `${name}[${index}]`, value: JSON.parse(JSON.stringify(value)) as JsonValue }));
+    projectedClaim[name]?.forEach((value, index) => fields.push({ name: `${name}[${index}]`, value: JSON.parse(JSON.stringify(value)) as JsonValue, originalHash: supportHash(claim[name]![index]) }));
   }
   // Detach the request/plan from caller-owned objects before the first await.
   const snapshot = JSON.parse(JSON.stringify({ state, fields, subjects, claim })) as {
-    state: JsonValue; fields: typeof fields; subjects: { state: ReturnType<typeof subjectProjection>; hash: string }[]; claim: typeof claim;
+    state: JsonValue; fields: typeof fields; subjects: { originalId: string; originalFieldHash: string; state: ReturnType<typeof subjectProjection>; hash: string }[]; claim: typeof claim;
   };
   return freezeSupport({ ...snapshot, spaceId, claimId: claim.id, claimHash: supportHash(claim), sourceId: source.id,
     sourceHash: supportHash(source), extractionId: extraction.id, extractionHash: supportHash(extraction),

@@ -48,7 +48,7 @@ export function prepareEnrichmentFactDrafts(input: {
     const subjects = [...new Map([...factLinkedObjects.slice(0, 8), ...entitySubjects].map((subject) => [subject.id, subject])).values()];
     const supportKey = support.add(spaceId, { ...factClaim(factId, fact),
       subject: factLinkedObjects[0]?.title, targetHints,
-    }, sourceIds, subjects, originalExtractions, proposedIds);
+    }, sourceIds, subjects, originalExtractions, proposedIds, { claimId: factId, subjectIds: new Set(entitySubjects.map((subject) => subject.id)) });
     const resolve = primary.prepare(spaceId, { kind: fact.kind, title: fact.title, summary: fact.summary,
       value: fact.value, evidence: fact.evidence, subjects: factLinkedObjects.map(({ id, title, kind }) => ({ id, title, kind })),
       targetHints: fact.targetHints,
