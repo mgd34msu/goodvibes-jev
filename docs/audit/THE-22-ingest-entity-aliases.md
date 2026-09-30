@@ -45,9 +45,10 @@ confirmation-band result throws a value-free `KnowledgeEntityAliasHoldError`.
 There is no partial alias result or old-keyword fallback, and existing graph
 records are untouched by a held compile. An empty candidate set needs no reading.
 
-This is a graph compilation boundary. It does not change the upstream ingestion
-source/extraction persistence lifecycle or classify all source-ingestion failures
-as extraction holds. It also does not migrate other `topKeywords` consumers.
+The ordinary artifact and URL ingestion lifecycle now stages the source and
+extraction before this boundary as well; see `THE-42-staged-ingest-aliases.md`.
+Operational fetch and parser failures still produce failed source records. Other
+`topKeywords` consumers are outside this change.
 
 ## Verification
 

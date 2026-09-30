@@ -37,7 +37,10 @@ export class KnowledgeEntityAliasHoldError extends Error {
 export async function readKnowledgeEntityAliases(
   entities: readonly EntityIdentity[],
   input: AliasEvidence,
+  signal?: AbortSignal,
+  retainGuard?: (assertCurrent: () => void) => void,
 ): Promise<readonly (readonly string[])[]> {
+  if (signal?.aborted) throw new KnowledgeEntityAliasHoldError();
   if (entities.length === 0) return [];
   assertJudgmentInput({ entities, evidence: input });
   const identities = entities.map(({ kind, title }) => ({ kind, title }));
@@ -67,9 +70,18 @@ export async function readKnowledgeEntityAliases(
   const actions: Array<{ readonly record: (action: string) => void; readonly action: string }> = [];
   try {
     const port = judgmentPort('knowledge.ingest.entity-alias');
+    const model = port.model;
+    const assertCurrent = () => {
+      try {
+        if (signal?.aborted || judgmentPort('knowledge.ingest.entity-alias') !== port || port.model !== model) throw new KnowledgeEntityAliasHoldError();
+      } catch { throw new KnowledgeEntityAliasHoldError(); }
+    };
+    retainGuard?.(assertCurrent);
     // Sequential, at most 128 calls total, and every retained alias has its own reading.
     for (const { index, state } of requests) {
-      const run = await entityAlias.run(port, state, { site: 'knowledge.ingest.entity-alias' });
+      assertCurrent();
+      const run = await abortableAliasRead(entityAlias.run(port, state, { site: 'knowledge.ingest.entity-alias', ...(signal ? { signal } : {}) }), signal);
+      assertCurrent();
       const reading = run.readings.alias;
       if (reading.outcome !== 'act' || reading.verdict === 'uncertain') {
         run.recordAction('held: unresolved alias identity');
@@ -88,4 +100,17 @@ export async function readKnowledgeEntityAliases(
     // No heuristic retry, logging of input/error text, or partial alias set on outages.
     throw new KnowledgeEntityAliasHoldError();
   }
+}
+
+/** Cancellation holds even when a provider does not honor its AbortSignal. */
+async function abortableAliasRead<T>(read: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return read;
+  let abort = () => {};
+  const stopped = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(new KnowledgeEntityAliasHoldError());
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([read, stopped]); }
+  finally { signal.removeEventListener('abort', abort); }
 }

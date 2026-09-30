@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { snapshotNodeInput } from './activation/projection.js';
+import { supportHash } from './semantic/verification/projection.js';
+import { canonicalizeUri } from './shared.js';
 import type { ArtifactRecord } from '../artifacts/types.js';
 import { extractKnowledgeArtifact, type KnowledgeExtractionResult } from './extractors.js';
 import { KnowledgeExtractionJudgmentHoldError } from './extraction-policy.js';
@@ -14,6 +17,7 @@ export interface PreparedKnowledgeExtraction {
 interface PreparedContent {
   readonly record: ArtifactRecord;
   readonly extracted: KnowledgeExtractionResult;
+  readonly assertCurrent: () => void;
 }
 
 // Callers cannot supply fabricated results or mutate the prepared extraction.
@@ -24,13 +28,28 @@ export async function prepareKnowledgeExtraction(
   sourceId: string,
   artifactId: string,
 ): Promise<PreparedKnowledgeExtraction> {
-  const { record, buffer } = await context.artifactStore.readContent(artifactId);
+  await context.store.init();
+  const readRetained = () => ({ source: context.store.getSource(sourceId), extraction: context.store.getExtractionBySourceId(sourceId) });
+  const retainedHash = supportHash(readRetained());
+  const content = await context.artifactStore.readContent(artifactId);
+  const record = snapshotNodeInput(content.record);
+  const { buffer } = content;
   if (record.id !== artifactId || createHash('sha256').update(buffer).digest('hex') !== record.sha256) {
     throw new KnowledgeExtractionJudgmentHoldError();
   }
-  const extracted = await extractKnowledgeArtifact(record, buffer);
+  const canonicalUri = canonicalizeUri(record.sourceUri ?? '');
+  const canonicalSource = canonicalUri ? context.store.getSourceByCanonicalUri(canonicalUri)?.id : undefined;
+  const recordHash = supportHash(record);
+  const assertCurrent = () => {
+    if (supportHash(readRetained()) !== retainedHash || supportHash(context.artifactStore.getRecord(artifactId)) !== recordHash
+      || (canonicalUri ? context.store.getSourceByCanonicalUri(canonicalUri)?.id : undefined) !== canonicalSource) {
+      throw new KnowledgeExtractionJudgmentHoldError();
+    }
+  };
+  const extracted = snapshotNodeInput(await extractKnowledgeArtifact(record, buffer));
+  assertCurrent();
   const token = Object.freeze({ sourceId, artifactId, contentHash: record.sha256 });
-  prepared.set(token, { record, extracted });
+  prepared.set(token, { record, extracted, assertCurrent });
   return token;
 }
 
@@ -47,6 +66,7 @@ export function consumeKnowledgeExtraction(
     || !record || record.sha256 !== token.contentHash) {
     throw new KnowledgeExtractionJudgmentHoldError();
   }
+  value.assertCurrent();
   prepared.delete(token);
   return value;
 }

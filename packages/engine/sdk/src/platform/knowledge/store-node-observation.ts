@@ -6,7 +6,7 @@ import { supportHash } from './semantic/verification/projection.js';
 import { KnowledgeNodeActivationHeldError } from './activation/types.js';
 
 export type KnowledgeObservationOrigin = 'catalog-structure' | 'memory-mirror' | 'home-assistant-snapshot' | 'browser-profile' | 'generated-page-index' | 'research-task';
-interface Observation { readonly inputHash: string; readonly existingHash: string; readonly origin: KnowledgeObservationOrigin; readonly check: () => void; }
+interface Observation { readonly inputHash: string; readonly existingHash: string; readonly origin: KnowledgeObservationOrigin; readonly check: () => void; readonly checkEvidence: () => void; }
 export interface ObservedEvidence { readonly record: KnowledgeNodeRecord; readonly origin: KnowledgeObservationOrigin; readonly assertCurrent: () => void; }
 const observedRecords = new WeakMap<KnowledgeNodeRecord, ObservedEvidence>();
 export function getKnowledgeNodeObservation(existing: KnowledgeNodeRecord | undefined, candidate: KnowledgeNodeRecord): ObservedEvidence | undefined {
@@ -40,8 +40,9 @@ export function prepareObservedKnowledgeNodeInput(store: KnowledgeStore, input: 
   const frozen = snapshotNodeInput(input);
   const expected = supportHash(evidence ?? null);
   const existing = input.id ? store.getNode(input.id) : store.getNodeByKindAndSlug(input.kind, input.slug);
+  const checkEvidence = () => { if (supportHash(readEvidence() ?? null) !== expected) throw new KnowledgeNodeActivationHeldError('stale'); };
   const observation = Object.freeze({ inputHash: supportHash(frozen), existingHash: supportHash(existing), origin,
-    check: () => { if (supportHash(readEvidence() ?? null) !== expected) throw new KnowledgeNodeActivationHeldError('stale'); } });
+    check: checkEvidence, checkEvidence });
   observations.set(frozen, observation);
   return frozen;
 }
@@ -56,5 +57,14 @@ export function resolveKnowledgeNodeObservation(input: KnowledgeNodeUpsertInput,
     if (supportHash(input) !== observation.inputHash || supportHash(existing ?? null) !== observation.existingHash) throw new KnowledgeNodeActivationHeldError('stale');
     observation.check();
   };
-  assertCurrent(); return { origin: observation.origin, input, assertCurrent, checkEvidence: observation.check };
+  assertCurrent(); return { origin: observation.origin, input, assertCurrent, checkEvidence: observation.checkEvidence };
+}
+
+/** Staged catalog evidence is guarded before commit and read from the live store thereafter. */
+export function prepareStagedObservedKnowledgeNodeInput(store: KnowledgeStore, input: KnowledgeNodeUpsertInput,
+  evidence: unknown, readEvidence: () => unknown, assertCurrent: () => void): KnowledgeNodeUpsertInput {
+  const frozen = prepareObservedKnowledgeNodeInput(store, input, 'catalog-structure', evidence, readEvidence);
+  const observation = observations.get(frozen)!;
+  observations.set(frozen, Object.freeze({ ...observation, check: assertCurrent }));
+  return frozen;
 }
