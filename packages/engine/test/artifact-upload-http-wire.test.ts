@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { useArtifactKindReadings } from './helpers/artifact-kind-readings.ts';
 
@@ -48,6 +49,7 @@ describe('raw and multipart artifact uploads round-trip over a real daemon', () 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'artifact-wire-home-'));
     work = mkdtempSync(join(tmpdir(), 'artifact-wire-work-'));
+    seedBenchmarkCache(home, 'goodvibes');
     daemon = await bootDaemon({
       homeDirectory: home,
       workingDir: work,
@@ -144,6 +146,7 @@ describe('over-cap uploads get an honest 413 that states the limit, never a sile
     work = mkdtempSync(join(tmpdir(), 'artifact-wire-cap-work-'));
     const configManager = new ConfigManager({ workingDir: work, homeDir: home, surfaceRoot: 'goodvibes' });
     configManager.set('storage.artifacts.maxBytes', ARTIFACT_MAX_BYTES);
+    seedBenchmarkCache(home, 'goodvibes');
     daemon = await bootDaemon({
       homeDirectory: home,
       workingDir: work,

@@ -20,11 +20,11 @@
  * real system temp dir when run through this entry point instead of
  * `scripts/test.ts`, leaking the same way a signal-killed run does.
  */
-import { readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runOwnedTestChild } from './owned-test-child.ts';
+import { defaultTestArgs } from './test-discovery.ts';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
 import {
   makeRunTmpDirName,
@@ -42,27 +42,7 @@ const SDK_ROOT = resolve(__dirname, '..');
 const args = process.argv.slice(2);
 const RUN_TMP_DIR_NAME = makeRunTmpDirName();
 
-function defaultTestArgs(): readonly string[] {
-  const testRoot = resolve(SDK_ROOT, 'test');
-  const rootTestFiles = readdirSync(testRoot)
-    .filter((entry) => entry.endsWith('.test.ts'))
-    .sort()
-    .map((entry) => `test/${entry}`);
-  const extra: string[] = [];
-  for (const sub of ['integration', 'toolchain']) {
-    try {
-      const entries = readdirSync(resolve(testRoot, sub), { withFileTypes: true });
-      if (entries.some((e) => e.isFile() && /\.test\.(ts|tsx|mjs)$/.test(e.name))) {
-        extra.push(`test/${sub}`);
-      }
-    } catch {
-      // Optional in package-only checkouts.
-    }
-  }
-  return [...rootTestFiles, ...extra];
-}
-
-const testArgs = args.length > 0 ? args : defaultTestArgs();
+const testArgs = args.length > 0 ? args : defaultTestArgs(SDK_ROOT);
 const reportPath = process.env.GOODVIBES_LEAK_REPORT ?? resolve(SDK_ROOT, '.tmp/leak-report.json');
 
 await withWorkspaceLock('leak-scan', async () => {

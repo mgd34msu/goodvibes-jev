@@ -15,7 +15,7 @@
  *   - the sandbox boundary asserted intact under the PTY (live, bwrap-gated)
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, realpathSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,6 +42,7 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import { useToolReadings } from './_helpers/tool-readings.ts';
+import { createExecContainmentProof, execContainmentRequired, EXEC_CONTAINMENT_REQUIRED_ENV } from './_helpers/exec-containment-proof.ts';
 
 // Jev reads whether a command will prompt and whether a quiet last line is a
 // question; these fakes stand in for it. Anything unlisted reads as no.
@@ -56,6 +57,8 @@ const readings = useToolReadings([
 
 const LIVE_PTY = detectPtyAvailability(probePtyHost());
 const LIVE_SANDBOX = detectSandboxAvailability(probeSandboxHost());
+const REQUIRE_CONTAINMENT = execContainmentRequired(process.env[EXEC_CONTAINMENT_REQUIRED_ENV]);
+const containmentProof = createExecContainmentProof(REQUIRE_CONTAINMENT, { pty: LIVE_PTY, sandbox: LIVE_SANDBOX });
 
 function tempRoot(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -254,10 +257,9 @@ describe('buildExecPromptAnswerHandler', () => {
 
 // ── Live PTY tests (probed; skipped honestly when script(1) is absent) ───────
 
-// Live-availability guard, repo-convention style (the no-skipped-tests gate
-// bans .skipIf): each live test probes and returns early with an honest log
-// when the host lacks the backend. On the Linux dev/CI hosts script(1) is
-// present, so these run for real.
+// Optional local hosts report missing support. The dedicated containment CI
+// lane requires support and completion of both real fixtures below, so an
+// early return can never satisfy that gate.
 function ptyUnavailable(): boolean {
   if (LIVE_PTY.available) return false;
   console.log(`[exec-interactive.test] live PTY tests not run: ${LIVE_PTY.reason}`);
@@ -433,6 +435,12 @@ describe('runInteractiveCommand (live PTY)', () => {
 // ── Sandbox boundary intact under the PTY (live, bwrap-gated) ────────────────
 
 describe('sandbox boundary under the PTY (live bwrap)', () => {
+    beforeAll(() => containmentProof.assertHost());
+    afterAll(() => {
+      containmentProof.assertComplete();
+      if (REQUIRE_CONTAINMENT) console.log('exec-containment-proof: PASS (2/2 real fixtures completed)');
+    });
+
     test('the bwrap boundary holds under the PTY: workspace writable, outside read-only', async () => {
       if (ptyUnavailable() || sandboxUnavailable()) return;
       const workspace = tempRoot('gv-pty-sandbox-ws-');
@@ -461,11 +469,13 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
       });
 
       expect(result.pty).toBe(true);
+      expect(result.success).toBe(true);
       expect(result.stdout).toContain('inside-ok');
       expect(result.stdout).toContain('outside-blocked');
       expect(result.stdout).not.toContain('outside-ok');
       expect(existsSync(join(workspace, 'inside.txt'))).toBe(true);
       expect(existsSync(join(outside, 'outside.txt'))).toBe(false);
+      containmentProof.completed('filesystem-boundary');
     }, 30_000);
 
     test('the answer path works INSIDE the boundary too', async () => {
@@ -494,5 +504,6 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
       expect(result.success).toBe(true);
       expect(result.prompts_answered).toBe(1);
       expect(result.stdout).toContain('accepted');
+      containmentProof.completed('sandboxed-answer');
     }, 30_000);
 });

@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDecipheriv, createECDH, createHmac, randomBytes } from 'node:crypto';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.ts';
 import { SecretsManager } from '../sdk/src/platform/config/secrets.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
@@ -136,6 +137,7 @@ beforeAll(async () => {
     },
   });
   sinkOrigin = `http://127.0.0.1:${sink.port}`;
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

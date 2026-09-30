@@ -22,6 +22,7 @@
  *     store path.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -74,6 +75,8 @@ async function declineEverything(input: {
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'client-runtime-'));
   daemonRoot = mkdtempSync(join(tmpdir(), 'client-runtime-daemon-'));
+  seedBenchmarkCache(root, 'tui');
+  seedBenchmarkCache(daemonRoot, 'goodvibes');
   configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: join(root, 'cfg'), workingDir: root, homeDir: root });
 
   client = createClientRuntimeServices({

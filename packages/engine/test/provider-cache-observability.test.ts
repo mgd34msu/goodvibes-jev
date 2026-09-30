@@ -80,6 +80,7 @@ function makeRegistry(root: string): ProviderRegistry {
     benchmarkStore: {
       getBenchmarks: () => undefined,
       getKnownBenchmarks: () => undefined,
+      readBenchmarks: async () => undefined,
       getTopBenchmarkModelIds: () => [],
       benchmarksSettled: async () => {},
     },

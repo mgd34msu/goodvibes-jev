@@ -5,6 +5,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { TTL_24H_MS, isTtlCacheStale, validateTtlCacheEnvelope } from './json-ttl-cache.js';
 import { instrumentedFetch, fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import { ModelIdentityResolver } from '../routing/model-identity.js';
+import { BENCHMARK_PREPARATION_ATTEMPTS } from '../routing/policy.js';
 
 export interface ModelBenchmarks {
   gpqa?: number | undefined;
@@ -164,6 +165,20 @@ export interface BenchmarkStoreOptions {
   readonly dir: string;
 }
 
+/** Cancel one wait without aborting the memoized identity other routes share. */
+function waitForIdentity(reading: Promise<string | null>, signal?: AbortSignal): Promise<string | null> {
+  if (signal === undefined) return reading;
+  return new Promise((resolve, reject) => {
+    const aborted = (): void => { reject(signal.reason); };
+    if (signal.aborted) aborted();
+    else signal.addEventListener('abort', aborted, { once: true });
+    void reading.then(
+      (value) => { signal.removeEventListener('abort', aborted); resolve(value); },
+      (error: unknown) => { signal.removeEventListener('abort', aborted); reject(error); },
+    );
+  });
+}
+
 export class BenchmarkStore {
   private readonly dir: string;
   private cache: BenchmarksCache | null = null;
@@ -247,13 +262,21 @@ export class BenchmarkStore {
   }
 
   /** {@link getBenchmarks}, waiting for the identity reading instead of answering without it. */
-  async readBenchmarks(modelName: string, site = 'providers.model-benchmarks.identity'): Promise<BenchmarkEntry | undefined> {
-    const known = this.findBenchmarks(modelName, false);
-    if (known) return known;
-    const entries = this.cache?.entries ?? [];
-    if (entries.length === 0) return undefined;
-    const same = await this.identity().resolve({ id: modelName }, site);
-    return same === null ? undefined : entries.find((entry) => entry.modelId === same);
+  async readBenchmarks(modelName: string, site = 'providers.model-benchmarks.identity', signal?: AbortSignal): Promise<BenchmarkEntry | undefined> {
+    for (let attempt = 0; attempt < BENCHMARK_PREPARATION_ATTEMPTS; attempt++) {
+      signal?.throwIfAborted();
+      const known = this.findBenchmarks(modelName, false);
+      if (known) return known;
+      const entries = this.cache?.entries ?? [];
+      if (entries.length === 0) return undefined;
+      const same = await waitForIdentity(this.identity().resolve({ id: modelName }, site), signal);
+      signal?.throwIfAborted();
+      // Refresh replaces both the entries and their identity resolver. Never
+      // return a reading from the retired generation, even a remembered miss.
+      if (entries !== this.cache?.entries) continue;
+      return same === null ? undefined : entries.find((entry) => entry.modelId === same);
+    }
+    throw new Error('Benchmark leaderboard kept changing during identity preparation');
   }
 
   private findBenchmarks(modelName: string, request: boolean): BenchmarkEntry | undefined {

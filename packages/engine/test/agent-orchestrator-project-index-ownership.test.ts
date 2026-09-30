@@ -16,6 +16,7 @@
  * was in who holds the object, and a stand-in is exactly where that gets lost.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +56,7 @@ let sharedIndexRef: ProjectIndex | undefined;
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'orchestrator-index-'));
+  seedBenchmarkCache(root, 'goodvibes');
   agentCwd = mkdtempSync(join(tmpdir(), 'orchestrator-agent-cwd-'));
 
   services = createRuntimeServices({

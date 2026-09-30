@@ -61,9 +61,11 @@ import { fileURLToPath } from 'node:url';
 // `bun:test` and registers a global `beforeEach`, and this runs in the PARENT.
 import { HEARTBEAT_PATH_ENV, PARENT_PID_ENV } from './test-child-watchdog-env.ts';
 import { sweepStaleTmpDirs } from './stale-tmp-sweep.ts';
+import { isolatedTestEnvironment, NETWORK_VIOLATIONS_ENV } from './test-isolation.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHILD_WATCHDOG = resolve(__dirname, 'test-child-watchdog.ts');
+const NETWORK_PRELOAD = resolve(__dirname, 'test-network-preload.ts');
 
 /**
  * How long a run may go without a single test STARTING before this module ends
@@ -197,16 +199,20 @@ export async function runOwnedTestChild(options: {
   readonly argv: readonly string[];
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
+  /** Deliberately supplied fixture values, after inherited credentials have been removed. */
+  readonly fixtureEnv?: Readonly<Record<string, string | undefined>>;
 }): Promise<OwnedTestChildResult> {
   const stallMs = positiveEnvMs('GOODVIBES_TEST_STALL_MS', DEFAULT_STALL_MS);
   const ceilingMs = positiveEnvMs('GOODVIBES_TEST_CEILING_MS', DEFAULT_CEILING_MS);
   sweepStaleTmpDirs(tmpdir(), HEARTBEAT_PREFIX, STALE_HEARTBEAT_MS);
   const heartbeatDir = mkdtempSync(join(tmpdir(), HEARTBEAT_PREFIX));
   const heartbeatPath = join(heartbeatDir, 'progress');
+  const violationsPath = join(heartbeatDir, 'network-violations');
+  const childEnv = isolatedTestEnvironment(options.env, join(heartbeatDir, 'isolated'), options.fixtureEnv);
   const startedAt = Date.now();
   const initialPpid = process.ppid;
 
-  const child = Bun.spawn(['bun', 'test', '--preload', CHILD_WATCHDOG, ...options.argv], {
+  const child = Bun.spawn(['bun', '--no-env-file', 'test', '--preload', NETWORK_PRELOAD, '--preload', CHILD_WATCHDOG, ...options.argv], {
     cwd: options.cwd,
     stdin: 'inherit',
     // Piped rather than inherited, so this process can see what the suite last
@@ -222,7 +228,8 @@ export async function runOwnedTestChild(options: {
       ...(process.stdout.isTTY && options.env.FORCE_COLOR === undefined
         ? { FORCE_COLOR: '1' }
         : {}),
-      ...options.env,
+      ...childEnv,
+      [NETWORK_VIOLATIONS_ENV]: violationsPath,
       [PARENT_PID_ENV]: String(process.pid),
       [HEARTBEAT_PATH_ENV]: heartbeatPath,
     },
@@ -303,8 +310,14 @@ export async function runOwnedTestChild(options: {
   }, POLL_MS);
 
   try {
-    const exitCode = await child.exited;
+    let exitCode = await child.exited;
     await pumps;
+    let violations = '';
+    try { violations = readFileSync(violationsPath, 'utf8'); } catch { /* no blocked requests */ }
+    if (violations.length > 0) {
+      process.stderr.write(`\ngoodvibes: unexpected external test I/O was blocked:\n${violations}`);
+      if (exitCode === 0) exitCode = 1;
+    }
     return { exitCode, signalCode: child.signalCode, stopped, stopReason };
   } finally {
     clearInterval(watchdog);

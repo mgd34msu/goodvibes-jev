@@ -24,6 +24,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 
 const TOKEN = 'chat-verbs-token';
 let home: string;
@@ -111,6 +112,7 @@ beforeAll(async () => {
     { id: 'u1', role: 'user', content: 'hi' },
     { id: 'a1', role: 'assistant', content: 'hello' },
   ]);
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

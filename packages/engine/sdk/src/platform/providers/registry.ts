@@ -80,7 +80,7 @@ export class ProviderRegistry {
   private readonly cacheHitTracker: CacheHitTracker;
   private readonly featureFlags: Pick<FeatureFlagManager, 'isEnabled'> | null;
   private readonly favoritesStore: Pick<FavoritesStore, 'load'>;
-  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'getTopBenchmarkModelIds' | 'benchmarksSettled'>;
+  private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'readBenchmarks' | 'getTopBenchmarkModelIds' | 'benchmarksSettled'>;
   private readonly modelLimitsService: ModelLimitsService;
   private readonly gatewayPricing: GatewayPricingService;
   private readonly runtimeMetadataDeps: ProviderRuntimeMetadataDeps;
@@ -751,7 +751,7 @@ export class ProviderRegistry {
   get modelTiers(): ModelTierStore { return this.routingReadings.tiers; }
 
   /** The benchmark leaderboard, for the route planner's ordering of each tier's candidates. */
-  get benchmarks(): Pick<BenchmarkStore, 'getKnownBenchmarks' | 'benchmarksSettled'> { return this.benchmarkStore; }
+  get benchmarks(): Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks' | 'benchmarksSettled'> { return this.benchmarkStore; }
 
   /**
    * Resolve the full capability record for a model.
