@@ -141,7 +141,9 @@ export async function refreshKnowledgeConsolidationCandidates(
   let readings = 0;
 
   for (const [key, stats] of usageStats.entries()) {
-    const [subjectKind, subjectId] = key.split(':', 2) as [KnowledgeConsolidationCandidateRecord['subjectKind'], string];
+    const separator = key.indexOf(':');
+    const subjectKind = key.slice(0, separator) as KnowledgeConsolidationCandidateRecord['subjectKind'];
+    const subjectId = key.slice(separator + 1);
     if (subjectKind === 'issue') continue;
     const item = context.store.getItem(subjectId);
     if (!item?.source && !item?.node) continue;

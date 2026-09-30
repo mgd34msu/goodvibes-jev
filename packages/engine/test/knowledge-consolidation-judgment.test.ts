@@ -97,6 +97,15 @@ describe('knowledge consolidation reading', () => {
     expect(fake.requests).toHaveLength(1);
   });
 
+  test('structured source identifiers retain every colon and their exact provenance', async () => {
+    const h = await harness();
+    const source = await h.store.upsertSource({ id: 'source:fixture:outbox', connectorId: 'url', sourceType: 'url', title: 'Outbox invariant', summary: 'Persist order and outbox event in one transaction.', status: 'indexed' });
+    await h.store.upsertUsageRecord({ targetKind: 'source', targetId: source.id, usageKind: 'search-hit' });
+    readings(); await run(h.context, 'deep-consolidation', { autoPromote: true });
+    expect(h.store.listConsolidationCandidates()[0]?.subjectId).toBe(source.id);
+    expect(h.memory.retrieve()[0]?.provenance).toContainEqual({ kind: 'event', ref: source.id, label: 'knowledge source' });
+  });
+
   test('high usage and relations do not override a no reading', async () => {
     const h = await harness(); await h.source('Lunch arrives in five minutes.', 30); readings(0.03, 'fact');
     const report = await run(h.context, 'deep-consolidation', { autoPromote: true });
