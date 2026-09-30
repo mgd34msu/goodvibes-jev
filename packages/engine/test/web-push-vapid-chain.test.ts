@@ -25,6 +25,7 @@
  *    remove it).
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -266,6 +267,7 @@ function attention(reason: ProcessAttentionReason): Pick<ProcessNode, 'needsAtte
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'vapidchain-home-'));
+  seedBenchmarkCache(home, 'goodvibes');
   work = mkdtempSync(join(tmpdir(), 'vapidchain-work-'));
   sink = Bun.serve({
     port: 0,

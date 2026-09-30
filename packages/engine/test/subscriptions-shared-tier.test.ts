@@ -16,6 +16,7 @@
  * already use), with a one-time, non-destructive fold of whatever a legacy
  * per-surface store still holds.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,6 +38,8 @@ const roots: string[] = [];
 function makeHome(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), `${prefix}-`));
   roots.push(root);
+  seedBenchmarkCache(root, 'tui');
+  seedBenchmarkCache(root, 'daemon');
   return root;
 }
 afterAll(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });

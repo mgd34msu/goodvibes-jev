@@ -1,3 +1,4 @@
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,6 +51,7 @@ describe('daemon Agent knowledge route wiring', () => {
     const homeDirectory = join(root, 'home');
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(homeDirectory, { recursive: true });
+    seedBenchmarkCache(homeDirectory, 'goodvibes');
     const runtimeBus = new RuntimeEventBus();
     const configManager = new ConfigManager({
       homeDir: homeDirectory,

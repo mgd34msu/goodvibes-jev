@@ -5,6 +5,7 @@
  * fake System One endpoint on loopback (the transport is real HTTP; only the
  * answers are canned) and reads a failure through the installed port.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -73,6 +74,7 @@ describe('the daemon composition installs the judgment port', () => {
 
   beforeAll(() => {
     home = mkdtempSync(join(tmpdir(), 'judgment-home-'));
+    seedBenchmarkCache(home, 'goodvibes');
     work = mkdtempSync(join(tmpdir(), 'judgment-work-'));
     fake = startFakeSystemOne();
   });

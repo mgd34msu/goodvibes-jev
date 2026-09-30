@@ -21,6 +21,7 @@
  *      '*', and Allow-Credentials rides only with a specific origin.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -64,6 +65,7 @@ beforeAll(async () => {
 
   // Daemon with BOTH capabilities enabled.
   onHome = mkdtempSync(join(tmpdir(), 'webui-on-home-'));
+  seedBenchmarkCache(onHome, 'goodvibes');
   onWork = mkdtempSync(join(tmpdir(), 'webui-on-work-'));
   const onConfig = new ConfigManager({ workingDir: onWork, homeDir: onHome, surfaceRoot: 'goodvibes' });
   onConfig.set('controlPlane.webui.serve', true);
@@ -86,6 +88,7 @@ beforeAll(async () => {
   staticAssetsDir = mkdtempSync(join(tmpdir(), 'webui-static-assets-'));
   writeFileSync(join(staticAssetsDir, 'index.html'), STATIC_INDEX_HTML);
   staticHome = mkdtempSync(join(tmpdir(), 'webui-static-home-'));
+  seedBenchmarkCache(staticHome, 'goodvibes');
   staticWork = mkdtempSync(join(tmpdir(), 'webui-static-work-'));
   const staticConfig = new ConfigManager({ workingDir: staticWork, homeDir: staticHome, surfaceRoot: 'goodvibes' });
   staticConfig.set('controlPlane.webui.serve', true);
@@ -102,6 +105,7 @@ beforeAll(async () => {
 
   // Daemon with defaults (both capabilities OFF) for byte-parity checks.
   offHome = mkdtempSync(join(tmpdir(), 'webui-off-home-'));
+  seedBenchmarkCache(offHome, 'goodvibes');
   offWork = mkdtempSync(join(tmpdir(), 'webui-off-work-'));
   servingOff = await bootDaemon({
     homeDirectory: offHome,
