@@ -16,9 +16,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import type { JudgmentPort } from '@goodvibes-jev/judgment';
 
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
@@ -30,6 +29,7 @@ import { HostedSessionStore } from '../sdk/src/platform/hosted-sessions/store.ts
 import type { HostedWorkspaceFloor } from '../sdk/src/platform/hosted-sessions/workspace-floor.ts';
 import type { HostedSessionUpdatePayload } from '../sdk/src/platform/hosted-sessions/types.ts';
 import { escalate, fakeRunner, pass, type FakeRunner } from './contract/operator-support.ts';
+import { decisionPort } from './helpers/decision-port.ts';
 
 let root: string;
 let workspace: string;
@@ -37,8 +37,9 @@ let stateDir: string;
 let published: HostedSessionUpdatePayload[];
 let disposals: (() => void)[];
 let runner: FakeRunner;
-let restorePort: JudgmentPort | undefined;
+let restoreReadings: (() => void) | undefined;
 let routeReads: number;
+let escalationStates: unknown[];
 
 const storeLimits = { maxSessions: 20, maxMessagesPerSession: 100, terminatedRetentionMs: 60_000 };
 
@@ -74,13 +75,17 @@ function buildManager(): HostedSessionManager {
 
 /** Every turn's request route reads `contract` at act. Installed after the floor exists, since a floor installs its own port. */
 function routeEveryTurnToWork(): void {
-  const fake = fakePort((name, question) => {
-    if (name !== 'route') return undefined;
+  const fake = decisionPort(['contract.request-route', 'contract.escalation-turn'], (name, question, state) => {
+    if (name === 'responds') {
+      escalationStates.push(state);
+      return noulAnswer(0.97);
+    }
+    if (name !== 'route') throw new Error(`hosted contracts fixture: unexpected question ${name}`);
     routeReads += 1;
     return choiceAnswer(question, 'contract', 0.97);
   });
   const previous = installJudgmentPort(fake.port);
-  restorePort ??= previous;
+  restoreReadings = () => { installJudgmentPort(previous); };
 }
 
 beforeEach(() => {
@@ -91,12 +96,13 @@ beforeEach(() => {
   published = [];
   disposals = [];
   runner = fakeRunner();
-  restorePort = undefined;
+  restoreReadings = undefined;
   routeReads = 0;
+  escalationStates = [];
 });
 
 afterEach(() => {
-  if (restorePort !== undefined) installJudgmentPort(restorePort);
+  restoreReadings?.();
   for (const dispose of disposals.splice(0)) {
     try { dispose(); } catch { /* a floor the manager already disposed */ }
   }
@@ -138,6 +144,7 @@ test('a contract\'s question is the session\'s reply, and the next turn answers 
 
   const readsBefore = routeReads;
   await manager.deliver(session.id, 'Leave the docs out of it; ship the rename.');
+  expect(escalationStates).toEqual([{ question, turn: 'Leave the docs out of it; ship the rename.' }]);
   expect(runner.replies).toEqual([{ contractId, escalationId, text: 'Leave the docs out of it; ship the rename.' }]);
   // The reply went to the contract before any route was read, and started nothing new.
   expect(routeReads).toBe(readsBefore);
