@@ -7,6 +7,7 @@ export interface RunOptions {
   env?: Record<string, string>;
   stdin?: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 export interface RunResult {
@@ -108,6 +109,7 @@ export async function runProcess(options: RunOptions): Promise<RunResult> {
   if (options.args.length === 0) {
     throw new Error('runProcess requires at least one argument (the executable).');
   }
+  if (options.signal?.aborted) throw new DOMException('Process execution aborted.', 'AbortError');
   const spawn = getBunSpawn();
   const child = spawn(options.args, {
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
@@ -119,12 +121,17 @@ export async function runProcess(options: RunOptions): Promise<RunResult> {
   });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<null>((resolve) => {
-    timer = setTimeout(() => { resolve(null); }, options.timeoutMs);
+  let onAbort: (() => void) | undefined;
+  const interrupted = new Promise<{ kind: 'timeout' | 'abort' }>((resolve) => {
+    timer = setTimeout(() => { resolve({ kind: 'timeout' }); }, options.timeoutMs);
+    onAbort = () => { resolve({ kind: 'abort' }); };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
   });
   let stdout: CapturedStream | undefined;
   let stderr: CapturedStream | undefined;
   try {
+    if (options.signal?.aborted) throw new DOMException('Process execution aborted.', 'AbortError');
     stdout = captureStream(child.stdout);
     stderr = captureStream(child.stderr);
     const input = (async () => {
@@ -136,12 +143,13 @@ export async function runProcess(options: RunOptions): Promise<RunResult> {
     // Attach handlers to every operation before racing the deadline. A late
     // stdin rejection after timeout must not become an unhandled rejection.
     const complete = Promise.all([stdout.result, stderr.result, child.exited, input]);
-    const outcome = await Promise.race([complete, deadline]);
-    if (outcome !== null) {
-      const [out, err, exitCode] = outcome;
+    const outcome = await Promise.race([complete.then((value) => ({ kind: 'complete' as const, value })), interrupted]);
+    if (outcome.kind === 'complete') {
+      const [out, err, exitCode] = outcome.value;
       return { stdout: out, stderr: err, exitCode: typeof exitCode === 'number' ? exitCode : -1, timedOut: false };
     }
 
+    if (outcome.kind === 'abort') throw new DOMException('Process execution aborted.', 'AbortError');
     stopOwnedProcess(child);
     stdout.cancel();
     stderr.cancel();
@@ -161,5 +169,6 @@ export async function runProcess(options: RunOptions): Promise<RunResult> {
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) options.signal?.removeEventListener('abort', onAbort);
   }
 }

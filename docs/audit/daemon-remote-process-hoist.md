@@ -35,6 +35,10 @@ claim to process-tree containment. Normal completion leaves intentional
 background work unchanged. Credential-bearing external CLIs and production
 hosts are not exercised by these tests.
 
+The later credential-lifecycle prerequisite adds an optional AbortSignal to
+the internal runner: pre-aborted work never spawns, and active cancellation
+uses the same owned-child cleanup before rejecting with AbortError.
+
 The final process and registry run passes 40 guarded tests across three files,
 including nine process-runner tests.
 
