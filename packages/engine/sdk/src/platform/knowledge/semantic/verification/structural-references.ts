@@ -1,3 +1,7 @@
+import type { KnowledgeStore } from '../../store.js';
+import { captureKnowledgeSourceReferences } from '../../source-structural-references.js';
+import type { KnowledgeSourceRecord, KnowledgeExtractionRecord } from '../../types.js';
+import { supportHash } from './projection.js';
 import { KnowledgeGeneratedFactSupportHeldError, type GeneratedFactSupportInput } from './types.js';
 
 /** Internal producer capability. Never populated from JSON or a stored ID prefix. */
@@ -9,6 +13,7 @@ interface RegisteredReferences {
   readonly claimId: string;
   readonly subjectIds: ReadonlySet<string>;
 }
+const sourceReferences = new WeakMap<GeneratedFactSupportInput, object>();
 const references = new WeakMap<GeneratedFactSupportInput, RegisteredReferences>();
 
 /**
@@ -27,6 +32,15 @@ export function withEngineGeneratedSupportReferences(
   references.set(input, { claimId: generated.claimId, subjectIds });
   return input;
 }
+
+/** The planner supplies actual store records after its complete snapshot equality checks. */
+export function withStoredKnowledgeSourceReferences(input: GeneratedFactSupportInput, store: KnowledgeStore, source: KnowledgeSourceRecord, extraction: KnowledgeExtractionRecord | null): GeneratedFactSupportInput {
+  const proof = captureKnowledgeSourceReferences(store, source, extraction);
+  if (!proof) return input;
+  if (supportHash(input.source) !== supportHash(source) || supportHash(input.extraction ?? null) !== supportHash(extraction)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  sourceReferences.set(input, proof); return input;
+}
+export function storedKnowledgeSourceReferences(input: GeneratedFactSupportInput): object | undefined { return sourceReferences.get(input); }
 
 /** Local per-pass mapping; raw IDs never enter the projected request or log. */
 export function createSupportReferenceLabels() {

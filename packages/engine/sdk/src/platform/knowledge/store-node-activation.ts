@@ -1,3 +1,4 @@
+import { captureKnowledgeSourceReferences } from './source-structural-references.js';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { nodeServingWithoutReview } from './activation/battery.js';
@@ -50,13 +51,15 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
   const proposed = new Map(drafts.map((draft) => [draft.record.id, draft.record]));
   let localBytes = 0;
   const nodes = drafts.map((draft) => {
-    const evidence = draft.authority || draft.observation || draft.restoration ? [] : snapshotNodeInput(evidenceFor(store, draft.record));
+    const actualEvidence = draft.authority || draft.observation || draft.restoration ? [] : evidenceFor(store, draft.record);
+    const references = actualEvidence.map(({ source, extraction }) => captureKnowledgeSourceReferences(store, source, extraction));
+    const evidence = snapshotNodeInput(actualEvidence);
     const observed = draft.authority || draft.observation || draft.restoration ? undefined : getKnowledgeNodeObservation(draft.existing, draft.record);
     observed?.assertCurrent();
     const subjects = draft.authority || draft.observation || draft.restoration ? [] : snapshotNodeInput(activationSubjectIds(draft.record).map((id) => ({ id, node: store.getNode(id) })));
     localBytes += new TextEncoder().encode(JSON.stringify({ input: draft.input, evidence, subjects })).byteLength;
     if (localBytes > LIMITS.bytes * 4) throw new Held('budget');
-    return { ...draft, evidence, evidenceHash: supportHash({ evidence, subjects: subjects.map(({ id, node }) => ({ id,
+    return { ...draft, references, evidence, evidenceHash: supportHash({ evidence, subjects: subjects.map(({ id, node }) => ({ id,
       content: proposed.has(id) ? activationContent(proposed.get(id)!) : node ? activationContent(node) : null })), observed: observed?.record }), subjects, observed };
   });
   const requests: ReturnType<typeof projectNodeActivation>[] = [];
@@ -83,7 +86,7 @@ export async function prepareNodeActivationPass(store: KnowledgeStore, drafts: r
     // Both projection and complete protected-input preflight run for every selected
     // synthesized candidate before the reader can send the first request.
     const projection = projectNodeActivation(record, draft.evidence, draft.subjects.map((subject) => ({ ...subject,
-      node: proposed.get(subject.id) ?? subject.node })), draft.observed);
+      node: proposed.get(subject.id) ?? subject.node })), draft.observed, draft.references);
     requestIndices.set(index, requests.length); requests.push(projection);
     return undefined;
   });

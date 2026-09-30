@@ -1,3 +1,5 @@
+import { projectKnowledgeSourceReferences } from '../../source-structural-references.js';
+import { storedKnowledgeSourceReferences } from './structural-references.js';
 import type { SupportReferenceLabels } from './structural-references.js';
 import { createHash } from 'node:crypto';
 import type { JsonValue } from '@goodvibes-jev/judgment';
@@ -112,15 +114,16 @@ export function projectSupportInput(input: GeneratedFactSupportInput, labels?: S
     }
   }
   if (![extraction.excerpt, ...extraction.sections, ...Object.values(texts)].some(text)) throw new Held('missing-evidence');
+  const structural = projectKnowledgeSourceReferences(source, extraction, storedKnowledgeSourceReferences(input));
   const sourceState = {
-    id: source.id, sourceType: source.sourceType,
+    id: structural?.sourceId ?? source.id, sourceType: source.sourceType,
     ...(source.title === undefined ? {} : { title: source.title }),
     ...(source.url === undefined ? {} : { url: source.url }),
-    ...(source.sourceUri === undefined ? {} : { sourceUri: source.sourceUri }),
-    ...(source.canonicalUri === undefined ? {} : { canonicalUri: source.canonicalUri }),
+    ...(source.sourceUri === undefined || structural?.omitSourceUri ? {} : { sourceUri: source.sourceUri }),
+    ...(source.canonicalUri === undefined || structural?.omitCanonicalUri ? {} : { canonicalUri: source.canonicalUri }),
   };
   const extractionState = {
-    id: extraction.id, sourceId: extraction.sourceId,
+    id: structural?.extractionId ?? extraction.id, sourceId: structural?.sourceId ?? extraction.sourceId,
     ...(extraction.title === undefined ? {} : { title: extraction.title }),
     ...(extraction.summary === undefined ? {} : { summary: extraction.summary }),
     ...(extraction.excerpt === undefined ? {} : { excerpt: extraction.excerpt }),

@@ -1,3 +1,4 @@
+import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
@@ -64,9 +65,10 @@ export async function rankAnswerSources(evidence: readonly AnswerSourceRankingEv
 /** Minimal content/provenance evidence; no arbitrary metadata or numeric database dates. */
 export function sourceRankingContent(source: KnowledgeSourceRecord) {
   const discovery = readRecord(source.metadata.sourceDiscovery);
+  const uris = knowledgeSourceJudgmentUris(source);
   return {
     title: source.title ?? '', summary: source.summary ?? '', description: source.description ?? '',
-    uri: source.url ?? source.sourceUri ?? source.canonicalUri ?? '',
+    uri: uris.url ?? uris.sourceUri ?? uris.canonicalUri ?? '',
     sourceType: source.sourceType, status: source.status, trust: 'untrusted reference material',
     claimedProvenance: { reason: readString(discovery.trustReason) ?? '', domain: readString(discovery.sourceDomain) ?? '' },
   };

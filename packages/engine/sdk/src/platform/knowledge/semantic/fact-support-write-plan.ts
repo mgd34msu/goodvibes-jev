@@ -1,4 +1,4 @@
-import { withEngineGeneratedSupportReferences, type EngineGeneratedSupportReferences } from './verification/structural-references.js';
+import { withStoredKnowledgeSourceReferences, withEngineGeneratedSupportReferences, type EngineGeneratedSupportReferences } from './verification/structural-references.js';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeExtractionRecord, KnowledgeNodeRecord } from '../types.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -55,7 +55,7 @@ export function createGeneratedFactWritePlanner(
     const key = semanticHash(JSON.stringify({ spaceId, claim, sources, subjects }));
     if (!slots.has(key)) slots.set(key, sources.map(({ source, extraction }) => {
       const index = requests.length;
-      const input = { spaceId, claim, source, extraction, subjects };
+      const input = withStoredKnowledgeSourceReferences({ spaceId, claim, source, extraction, subjects }, store, source, store.getExtractionBySourceId(source.id));
       requests.push(generatedReferences ? withEngineGeneratedSupportReferences(input, generatedReferences) : input);
       return index;
     }));

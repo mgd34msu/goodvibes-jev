@@ -1,3 +1,4 @@
+import { registerGeneratedKnowledgeExtractionReferences } from '../source-structural-references.js';
 import { JudgmentInputError } from '../../gate/judgment-input.js';
 import { KnowledgeExtractionJudgmentHoldError } from '../extraction-policy.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -45,8 +46,9 @@ export async function storeHomeGraphArtifactExtraction(
 ): Promise<KnowledgeExtractionRecord | undefined> {
   if (!extracted) return undefined;
   const existing = store.getExtractionBySourceId(source.id);
-  return store.upsertExtraction({
-    id: existing?.id ?? `hg-extract-${source.id.replace(/^hg-src-/, '')}`,
+  const generatedId = `hg-extract-${source.id.replace(/^hg-src-/, '')}`;
+  const record = await store.upsertExtraction({
+    id: existing?.id ?? generatedId,
     sourceId: source.id,
     artifactId: artifact.id,
     extractorId: extracted.extractorId,
@@ -60,6 +62,8 @@ export async function storeHomeGraphArtifactExtraction(
     structure: extracted.structure,
     metadata: buildHomeGraphMetadata(spaceId, installationId, extracted.metadata),
   });
+  if (record.id === generatedId) registerGeneratedKnowledgeExtractionReferences(store, source, record, generatedId);
+  return record;
 }
 
 export async function extractHomeGraphArtifact(

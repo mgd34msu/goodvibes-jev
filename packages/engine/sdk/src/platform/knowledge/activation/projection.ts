@@ -1,3 +1,4 @@
+import { projectKnowledgeSourceReferences } from '../source-structural-references.js';
 import type { JsonValue } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -46,7 +47,7 @@ export interface ActivationEvidence {
 }
 export function activationEvidenceHash(evidence: readonly ActivationEvidence[]): string { return supportHash(evidence); }
 /** Database IDs, timestamps and unrelated metadata are never transmitted or generically exempted from privacy checks. */
-export function projectNodeActivation(node: KnowledgeNodeRecord, evidence: readonly ActivationEvidence[], subjects: readonly ActivationSubject[] = [], observed?: { readonly record: KnowledgeNodeRecord; readonly origin: string }): { readonly state: Record<string, JsonValue>; readonly reason?: 'missing-evidence' | 'foreign-space' } {
+export function projectNodeActivation(node: KnowledgeNodeRecord, evidence: readonly ActivationEvidence[], subjects: readonly ActivationSubject[] = [], observed?: { readonly record: KnowledgeNodeRecord; readonly origin: string }, references: readonly (object | undefined)[] = []): { readonly state: Record<string, JsonValue>; readonly reason?: 'missing-evidence' | 'foreign-space' } {
   const content: Record<string, unknown> = {};
   for (const key of CONTENT_KEYS) if (node.metadata[key] !== undefined) content[key] = node.metadata[key];
   // Structural node references get request-local labels, but semantic identity text remains complete.
@@ -71,8 +72,9 @@ export function projectNodeActivation(node: KnowledgeNodeRecord, evidence: reado
     if (getKnowledgeSpaceId(source) !== getKnowledgeSpaceId(node)) reason = 'foreign-space';
     const trust: Record<string, unknown> = {};
     for (const key of TRUST_KEYS) if (source.metadata[key] !== undefined) trust[key] = source.metadata[key];
+    const structural = projectKnowledgeSourceReferences(source, extraction, references[index]);
     const context = { reference: `source-${index + 1}`, primaryReference: id === node.sourceId, sourceType: source.sourceType, title: source.title,
-      sourceUri: source.sourceUri, canonicalUri: source.canonicalUri, claimedTrust: trust, trust: 'untrusted source reference; only actual extraction supplies evidence' };
+      sourceUri: structural?.omitSourceUri ? undefined : source.sourceUri, canonicalUri: structural?.omitCanonicalUri ? undefined : source.canonicalUri, claimedTrust: trust, trust: 'untrusted source reference; only actual extraction supplies evidence' };
     if (!extraction) return { ...context, unverified: 'missing-extraction' };
     if (getKnowledgeSpaceId(extraction) !== getKnowledgeSpaceId(node)) reason = 'foreign-space';
     const texts: Record<string, unknown> = {};

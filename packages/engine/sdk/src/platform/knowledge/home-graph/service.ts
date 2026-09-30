@@ -1,3 +1,4 @@
+import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { ConfigurationError, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { ArtifactStore } from '../../artifacts/index.js';
 import type { ArtifactDescriptor } from '../../artifacts/types.js';
@@ -486,6 +487,7 @@ export class HomeGraphService {
     readonly metadata: Record<string, unknown>;
   }): Promise<HomeGraphIngestResult> {
     const sourceId = homeGraphSourceId(input.spaceId, input.metadata.homeGraphSourceKind as string, input.sourceUri ?? input.artifact.id);
+    const canonicalUri = namespacedCanonicalUri(input.spaceId, 'source', input.sourceUri ?? input.artifact.id);
     const prepared = await prepareHomeGraphArtifactExtraction({
       store: this.store,
       artifactStore: this.artifactStore,
@@ -497,7 +499,7 @@ export class HomeGraphService {
       sourceType: input.sourceType,
       title: input.title ?? input.artifact.filename,
       sourceUri: input.sourceUri ?? input.artifact.sourceUri,
-      canonicalUri: namespacedCanonicalUri(input.spaceId, 'source', input.sourceUri ?? input.artifact.id),
+      canonicalUri,
       tags: uniqueStrings(input.tags),
       status: 'indexed',
       artifactId: input.artifact.id,
@@ -507,6 +509,8 @@ export class HomeGraphService {
         artifactMimeType: input.artifact.mimeType,
       }),
     });
+    registerGeneratedKnowledgeSourceReferences(this.store, source, { id: sourceId, canonicalUri,
+      ...(!input.sourceUri && !input.artifact.sourceUri && source.sourceUri === canonicalUri ? { sourceUri: canonicalUri } : {}) });
     const extraction = await storeHomeGraphArtifactExtraction(this.store, source, input.artifact, input.spaceId, input.installationId, prepared);
     const linked = input.target
       ? (await this.linkKnowledge({ knowledgeSpaceId: input.spaceId, sourceId: source.id, target: input.target })).edge

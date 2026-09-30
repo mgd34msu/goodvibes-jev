@@ -1,3 +1,4 @@
+import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { enrichmentFactNodeInput, enrichmentGapNodeInput } from './enrichment-node-plans.js';
@@ -82,7 +83,11 @@ export async function enrichKnowledgeSource(
   linkedObjectsForSource(context.store, source, new Set(), (id) => generationGuard.node(id));
   generationGuard.assertCurrent();
   if (!extraction) return emptyResult(source, true, 'semantic enrichment requires extracted source evidence');
-  const text = sourceSemanticText(source, extraction);
+  const uris = knowledgeSourceJudgmentUris(source);
+  const text = sourceSemanticText({ ...source, ...uris }, extraction);
+  const structural = projectKnowledgeSourceReferences(source, extraction, captureKnowledgeSourceReferences(context.store, source, extraction));
+  const generationSource = { id: structural?.sourceId ?? source.id, title: source.title, sourceType: source.sourceType, tags: source.tags,
+    uri: uris.canonicalUri ?? uris.sourceUri ?? uris.url, provenance: sourceRankingContent(source).claimedProvenance };
   const textHash = sourceSemanticHash(source, extraction);
   const existingSemantic = readRecord(context.store.getSemanticEnrichmentState(source.id)?.metadata);
   const currentExtractor = readString(existingSemantic.extractor);
@@ -104,8 +109,8 @@ export async function enrichKnowledgeSource(
   }
 
   // Minimize and protect the complete generation input before any display cap.
-  assertJudgmentInput({ source: sourceRankingContent(source), text, sections: extraction?.sections ?? [] });
-  const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, source, extraction, text, options.signal);
+  assertJudgmentInput({ source: generationSource, text, extraction: { format: extraction.format, title: extraction.title, summary: extraction.summary, sections: extraction.sections } });
+  const llmExtraction = await extractSemanticsWithLlm(context.llm ?? null, generationSource, extraction, text, options.signal);
   generationGuard.assertCurrent();
   const semantic = freezeSupport(structuredClone(normalizeSemanticExtraction(llmExtraction)
     ?? deterministicSemanticExtraction(source, extraction, text)));
@@ -127,7 +132,7 @@ export async function enrichKnowledgeSource(
 
 async function extractSemanticsWithLlm(
   llm: KnowledgeSemanticLlm | null,
-  source: KnowledgeSourceRecord,
+  generationSource: Record<string, unknown>,
   extraction: KnowledgeExtractionRecord | null,
   text: string,
   signal?: AbortSignal,
@@ -145,14 +150,7 @@ async function extractSemanticsWithLlm(
       'Prefer precise facts over broad summaries. Preserve numbers, model names, ports, version names, constraints, and useful procedures. Every `confidence` field is an INTEGER on a 0-100 scale (0 = none, 100 = certain), never a 0-1 probability.',
     ].join(' '),
     prompt: JSON.stringify({
-      source: {
-        id: source.id,
-        title: source.title,
-        sourceType: source.sourceType,
-        tags: source.tags,
-        uri: source.canonicalUri ?? source.sourceUri,
-        provenance: sourceRankingContent(source).claimedProvenance,
-      },
+      source: generationSource,
       extraction: {
         format: extraction?.format,
         title: extraction?.title,
