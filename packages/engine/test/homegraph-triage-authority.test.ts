@@ -116,14 +116,18 @@ describe('automatic triage respects operator authority and frozen state', () => 
   test('SQL failure rolls back all facts, resolutions and revision rows before caches change', async () => {
     const { store, node, run, snapshot, reload } = await fixture(['homegraph.device.unknown_battery', 'homegraph.device.missing_manual']); readings();
     const before = snapshot(); const revisions = JSON.stringify(store.listNodeRevisions(node.id));
-    const original = SQLiteStore.prototype.run; let issueWrites = 0;
+    const original = SQLiteStore.prototype.run; let issueWrites = 0; let database: SQLiteStore | undefined;
     const spy = spyOn(SQLiteStore.prototype, 'run').mockImplementation(function(this: SQLiteStore, sql, params) {
+      database = this;
       if (sql.includes('INSERT OR REPLACE INTO knowledge_issues') && ++issueWrites === 2) throw new Error('synthetic issue write failure');
       return original.call(this, sql, params);
     });
     try { await expect(run()).rejects.toThrow('synthetic issue write failure'); }
     finally { spy.mockRestore(); }
     expect(snapshot()).toBe(before); expect(JSON.stringify(store.listNodeRevisions(node.id))).toBe(revisions);
+    expect(JSON.parse(String(database!.exec('SELECT metadata FROM knowledge_nodes WHERE id = ?', [node.id])[0]!.values[0]![0]))).toEqual(node.metadata);
+    expect(database!.exec('SELECT COUNT(*) FROM knowledge_node_revisions WHERE node_id = ?', [node.id])[0]!.values[0]![0]).toBe(JSON.parse(revisions).length);
+    expect(database!.exec("SELECT COUNT(*) FROM knowledge_issues WHERE status = 'resolved'")[0]!.values[0]![0]).toBe(0);
     const reloaded = await reload();
     expect(JSON.stringify({ nodes: reloaded.listNodesInSpace(spaceId), issues: reloaded.listIssuesInSpace(spaceId) })).toBe(before);
     expect(JSON.stringify(reloaded.listNodeRevisions(node.id))).toBe(revisions);
