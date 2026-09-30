@@ -35,6 +35,7 @@ function port(options: { aligned?: number; integrationIntent?: number; initial?:
     if (name === 'concreteObject') return noulAnswer(0.99);
     if (name === 'aligned') return noulAnswer(options.aligned ?? 0.99);
     if (name === 'useful') return noulAnswer(options.initial ?? 0.99);
+    if (name === 'excerptUseful') return noulAnswer(0.01); // Unselected spans cannot bypass the barrier under test.
     if (name === 'features') return noulAnswer(0.01);
     if (name === 'preferred') return choiceAnswer(question, 'generated', 0.99);
     if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.99);

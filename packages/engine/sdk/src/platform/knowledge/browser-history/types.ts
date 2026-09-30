@@ -1,3 +1,5 @@
+import type { KnowledgeBatchIngestResult, KnowledgeSourceRecord } from '../types.js';
+
 export type BrowserKnowledgeFamily = 'chromium' | 'gecko' | 'webkit';
 
 export type BrowserKnowledgeKind =
@@ -71,3 +73,23 @@ export interface BrowserKnowledgeCollectResult {
   readonly errors: readonly string[];
 }
 
+/** Raw browser provenance capture and guarded graph compilation are separate phases. */
+export interface BrowserKnowledgeIngestOutcome {
+  readonly canonicalUri: string;
+  /** Retained source identity, including when capture stopped after storing the source. */
+  readonly sourceId?: string | undefined;
+  readonly capture: 'completed' | 'partial' | 'failed';
+  readonly compilation: 'completed' | 'held' | 'failed' | 'not-attempted';
+  readonly error?: string | undefined;
+}
+
+/** Inherited imported/sources count only completed compilation; failed includes holds. */
+export interface BrowserKnowledgeIngestResult extends KnowledgeBatchIngestResult {
+  /** Aggregates with complete raw source, extraction and browser-profile provenance capture. */
+  readonly captured: number;
+  /** Complete captures, including those whose subsequent compilation was held or failed. */
+  readonly capturedSources: readonly KnowledgeSourceRecord[];
+  /** One outcome per canonical URL. Compilation completion does not assert fact acceptance. */
+  readonly outcomes: readonly BrowserKnowledgeIngestOutcome[];
+  readonly profiles: readonly BrowserKnowledgeProfile[];
+}

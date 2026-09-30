@@ -1,3 +1,4 @@
+import { hasAnswerExcerptSelection } from './answer-excerpts/provenance.js';
 import { knowledgeSourceJudgmentUris } from '../source-structural-references.js';
 import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -36,7 +37,7 @@ export async function readAnswerSourceRanking(
   const candidates = shortlist.map((source) => ({
     id: source.id,
     content: {
-      ...sourceRankingContent(source),
+      ...sourceRankingProjection(source, evidence.some((item) => item.source?.id === source.id && hasAnswerExcerptSelection(item))),
       excerpts: evidence.filter((item) => item.source?.id === source.id && item.excerpt).map((item) => item.excerpt!),
       facts: facts.filter((fact) => fact.status === 'active' && uniqueStrings([
         ...readStringArray(fact.metadata.sourceIds), readString(fact.metadata.sourceId), fact.sourceId,
@@ -60,6 +61,17 @@ export async function readAnswerSourceRanking(
 
 export async function rankAnswerSources(evidence: readonly AnswerSourceRankingEvidence[], facts: readonly KnowledgeNodeRecord[], query: string, signal?: AbortSignal): Promise<KnowledgeSourceRecord[]> {
   return (await readAnswerSourceRanking(evidence, facts, query, signal)).map((item) => item.source);
+}
+
+/** Prepared answer excerpts have already selected their body evidence. Keep
+ * identity/provenance context, but never revive an unselected body field through
+ * a second projection. Legacy callers retain their existing complete content.
+ */
+function sourceRankingProjection(source: KnowledgeSourceRecord, selectedExcerpts: boolean) {
+  const content = sourceRankingContent(source);
+  if (!selectedExcerpts) return content;
+  const { summary: _summary, description: _description, ...context } = content;
+  return { ...context, evidenceScope: 'selected-excerpts' };
 }
 
 /** Minimal content/provenance evidence; no arbitrary metadata or numeric database dates. */

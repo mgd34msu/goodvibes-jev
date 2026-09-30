@@ -63,6 +63,16 @@
  * looking like the first.
  */
 
+/** A transport-framed syntax segment followed by an optional opaque literal.
+ * The syntax excludes the {N} marker; literal text must never be rescanned as
+ * quoted strings, NIL, UIDs, parentheses or tagged command completions.
+ * Legacy string inputs remain supported for existing email-session callers.
+ */
+export interface ImapFetchFrame {
+  readonly syntax: string;
+  readonly literal?: string;
+}
+
 /** One `* n FETCH (...)` response, read whole. */
 export interface ImapFetchResponse {
   /**
@@ -196,7 +206,7 @@ function readQuotedString(text: string, from: number): { value: string; next: nu
  * the session folds literals, but it is what a scripted response looks like,
  * and reading it costs nothing.
  */
-function readSectionValue(open: OpenResponse, chunk: string, from: number): number {
+function readSectionValue(open: OpenResponse, chunk: string, from: number, literal?: string): number {
   const spec = normalizeSpec(open.bracketAccum);
   open.bracketAccum = '';
   let index = from;
@@ -206,6 +216,10 @@ function readSectionValue(open: OpenResponse, chunk: string, from: number): numb
   if (partial !== null) index += partial[0].length;
   while (chunk.charAt(index) === ' ' || chunk.charAt(index) === '\t') index += 1;
 
+  if (index >= chunk.length && literal !== undefined) {
+    open.sections.set(spec, literal);
+    return chunk.length;
+  }
   if (index >= chunk.length) {
     open.pending = { spec, collected: [] };
     return chunk.length;
@@ -226,7 +240,7 @@ function readSectionValue(open: OpenResponse, chunk: string, from: number): numb
 }
 
 /** Scan one line of structural (non-payload) response text. */
-function consume(open: OpenResponse, chunk: string): void {
+function consume(open: OpenResponse, chunk: string, literal?: string): void {
   let index = 0;
   while (index < chunk.length) {
     const char = chunk.charAt(index);
@@ -243,7 +257,7 @@ function consume(open: OpenResponse, chunk: string): void {
     if (open.inBracket) {
       if (char === ']') {
         open.inBracket = false;
-        index = readSectionValue(open, chunk, index + 1);
+        index = readSectionValue(open, chunk, index + 1, literal);
         continue;
       }
       open.bracketAccum += char;
@@ -336,7 +350,7 @@ function seal(open: OpenResponse): ImapFetchResponse {
  * part of a FETCH response, the tagged completion, other untagged data, is
  * ignored rather than guessed at.
  */
-export function parseFetchResponses(lines: readonly string[]): ImapFetchResponse[] {
+export function parseFetchResponses(lines: readonly (string | ImapFetchFrame)[]): ImapFetchResponse[] {
   const responses: ImapFetchResponse[] = [];
   let open: OpenResponse | null = null;
 
@@ -347,7 +361,9 @@ export function parseFetchResponses(lines: readonly string[]): ImapFetchResponse
     open = null;
   };
 
-  for (const line of lines) {
+  for (const frame of lines) {
+    const line = typeof frame === 'string' ? frame : frame.syntax;
+    const literal = typeof frame === 'string' ? undefined : frame.literal;
     const start = FETCH_START.exec(line);
 
     if (open !== null) {
@@ -362,7 +378,7 @@ export function parseFetchResponses(lines: readonly string[]): ImapFetchResponse
       } else {
         open.lines += 1;
         if (open.pending !== null) consumePending(open, line);
-        else consume(open, line);
+        else consume(open, line, literal);
         if (open.closed) close(null);
         else if (open.lines > MAX_RESPONSE_LINES) {
           open.error = `the FETCH response for sequence number ${open.seq} ran past `
@@ -377,7 +393,7 @@ export function parseFetchResponses(lines: readonly string[]): ImapFetchResponse
     const seq = parseInt(start[1] ?? '0', 10);
     open = newOpenResponse(seq);
     open.lines = 1;
-    consume(open, line.slice(start[0].length));
+    consume(open, line.slice(start[0].length), literal);
     if (open.closed) close(null);
   }
 

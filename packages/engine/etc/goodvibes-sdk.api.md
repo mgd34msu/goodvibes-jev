@@ -17362,6 +17362,41 @@ export interface OperatorMethodOutputMap {
     "knowledge.ingest.browserHistory": {
         imported: number;
         failed: number;
+        captured: number;
+        capturedSources: readonly (({
+            id: string;
+            connectorId: string;
+            sourceType: "bookmark" | "bookmark-list" | "dataset" | "document" | "history" | "image" | "manual" | "other" | "repo" | "url";
+            title?: string;
+            sourceUri?: string;
+            canonicalUri?: string;
+            summary?: string;
+            description?: string;
+            tags: readonly string[];
+            folderPath?: string;
+            status: string;
+            artifactId?: string;
+            contentHash?: string;
+            lastCrawledAt?: number;
+            crawlError?: string;
+            sessionId?: string;
+            metadata: ({} & {
+                readonly [key: string]: ({} & {
+                    readonly [key: string]: JsonValue;
+                }) | boolean | null | number | readonly JsonValue[] | string;
+            });
+            createdAt: number;
+            updatedAt: number;
+        } & {
+            readonly [key: string]: unknown;
+        }))[];
+        outcomes: readonly ({
+            canonicalUri: string;
+            sourceId?: string;
+            capture: "completed" | "failed" | "partial";
+            compilation: "completed" | "failed" | "held" | "not-attempted";
+            error?: string;
+        })[];
         sources: readonly (({
             id: string;
             connectorId: string;

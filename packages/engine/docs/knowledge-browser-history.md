@@ -45,6 +45,38 @@ The compiler links browser sources to domain nodes, profile `source_group`
 nodes, bookmark folder nodes when available, and topic tags such as
 `browser-history` and `browser-bookmark`.
 
+Capture and compilation are separate phases. Raw browser observations remain
+available when a later alias, activation, or authority reading holds graph
+compilation. `BrowserKnowledgeIngestResult` reports both phases:
+
+- `captured` and `capturedSources` contain complete raw captures: source,
+  extraction, and browser-profile links, including captures whose compilation
+  was held or failed
+- `imported` and `sources` retain their existing meaning: aggregates whose
+  compilation completed. `failed` includes every incomplete aggregate,
+  including held compilation
+- `outcomes` has one entry per canonical URL, with its stable `sourceId` when
+  stored, `capture` (`completed`, `partial`, or `failed`), and `compilation`
+  (`completed`, `held`, `failed`, or `not-attempted`)
+- A `partial` capture stored the source before a later capture step failed. It
+  is excluded from `capturedSources`; its outcome identifies the retained source
+- Outcome `error` and the existing `errors` list explain which phase stopped
+  and whether capture was retained. Profile read errors remain in `errors`
+
+For example, an alias hold after one complete capture returns `captured: 1`,
+`imported: 0`, `failed: 1`, a captured source, and an outcome with
+`capture: 'completed'` and `compilation: 'held'`. The source's `indexed` status
+describes available raw evidence; it does not assert successful compilation or
+factual acceptance. Completed compilation may also retain pending-review draft
+nodes under the normal activation policy.
+
+After resolving a held reading or operational failure, repeat the browser sync
+with the same filters. Canonical URL matching reuses the source identity and
+provenance links and preserves a richer existing extraction. Capture is not
+rolled back or duplicated just because compilation needs another attempt.
+The background job carries these outcomes and separate captured, partial/failed
+capture, held-compilation, and failed-compilation counts in its result.
+
 ## SDK usage
 
 ```ts

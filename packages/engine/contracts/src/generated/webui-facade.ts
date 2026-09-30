@@ -13668,6 +13668,41 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
     "output": {
       "imported": 0,
       "failed": 0,
+      "captured": 0,
+      "capturedSources": [
+        {
+          "id": "sample",
+          "connectorId": "sample",
+          "sourceType": "url",
+          "title": "sample",
+          "sourceUri": "sample",
+          "canonicalUri": "sample",
+          "summary": "sample",
+          "description": "sample",
+          "tags": [
+            "sample"
+          ],
+          "folderPath": "sample",
+          "status": "sample",
+          "artifactId": "sample",
+          "contentHash": "sample",
+          "lastCrawledAt": 0,
+          "crawlError": "sample",
+          "sessionId": "sample",
+          "metadata": {},
+          "createdAt": 0,
+          "updatedAt": 0
+        }
+      ],
+      "outcomes": [
+        {
+          "canonicalUri": "sample",
+          "sourceId": "sample",
+          "capture": "completed",
+          "compilation": "completed",
+          "error": "sample"
+        }
+      ],
       "sources": [
         {
           "id": "sample",

@@ -298,6 +298,8 @@ export type {
   BrowserKnowledgeFamily,
   BrowserKnowledgeFilter,
   BrowserKnowledgeIngestOptions,
+  BrowserKnowledgeIngestOutcome,
+  BrowserKnowledgeIngestResult,
   BrowserKnowledgeKind,
   BrowserKnowledgeProfile,
   BrowserKnowledgeSourceKind,
