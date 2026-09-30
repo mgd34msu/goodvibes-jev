@@ -159,6 +159,8 @@ export interface ApprovalBrokerLike {
     approvalId: string,
     input: {
       readonly approved: boolean;
+      /** Explicit producer evidence; absent on legacy callback reports. */
+      readonly disposition?: 'approved' | 'denied' | 'amended' | undefined;
       readonly remember: boolean;
       readonly actor: string;
       readonly actorSurface: string;

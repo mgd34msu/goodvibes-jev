@@ -1,0 +1,403 @@
+{
+  "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
+  "status": "partial",
+  "phase": "cli-config-runtime-adapters",
+  "entrypoints": [
+    "src/cli/index.ts"
+  ],
+  "mappings": [
+    {
+      "source": "src/cli/command-catalog.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/command-catalog.ts"
+      ]
+    },
+    {
+      "source": "src/cli/completion.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/completion.ts"
+      ]
+    },
+    {
+      "source": "src/cli/help.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/help.ts"
+      ]
+    },
+    {
+      "source": "src/cli/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/index.ts"
+      ]
+    },
+    {
+      "source": "src/cli/parser.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/parser.ts"
+      ]
+    },
+    {
+      "source": "src/cli/types.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/cli/types.ts"
+      ]
+    },
+    {
+      "source": "src/version.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/version.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/command-catalog.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/command-catalog.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/completion.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/completion.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/help.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/help.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cli/parser.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cli/parser.test.ts"
+      ]
+    },
+    {
+      "source": "package.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/package.json"
+      ]
+    },
+    {
+      "source": "tsconfig.json",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/tsconfig.json"
+      ]
+    },
+    {
+      "source": "LICENSE",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/LICENSE"
+      ]
+    },
+    {
+      "source": "src/config/checkpoint-settings.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/checkpoint-settings.ts"
+      ]
+    },
+    {
+      "source": "src/config/config-key-guard.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/config-key-guard.ts"
+      ]
+    },
+    {
+      "source": "src/config/run-daemon-config-migration.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/run-daemon-config-migration.ts"
+      ]
+    },
+    {
+      "source": "src/config/secret-config.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/secret-config.ts"
+      ]
+    },
+    {
+      "source": "src/config/secrets.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/secrets.ts"
+      ]
+    },
+    {
+      "source": "src/config/surface.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/surface.ts"
+      ]
+    },
+    {
+      "source": "src/test/config/config-key-guard.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/config/config-key-guard.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/config/daemon-credential-scope.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/config/daemon-credential-scope.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cluster/replication-policy-drift.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cluster/replication-policy-drift.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/credentials.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/config/daemon-credential-store.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/credential-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/credential-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/mail-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/mail-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/disposal-wiring.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/disposal-wiring.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/index.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/fleet-services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/fleet-services.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/browser-checkout-seam-holder.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/browser-checkout-seam-holder.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/conversation-rewind-port.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/conversation-rewind-port.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/cluster-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/cluster-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/cluster-group-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/cluster-group-composition.ts"
+      ]
+    },
+    {
+      "source": "src/test/runtime/cluster-holdings-wiring.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/runtime/cluster-holdings-wiring.test.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/device-posture-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/device-posture-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/trigger-services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/trigger-services.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/fleet-needs-input-push.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/fleet-needs-input-push.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/notification-dispatch.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/notification-dispatch.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/trust/checkpoint-eligibility.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/trust/checkpoint-eligibility.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/workspace-checkpointing.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/workspace-checkpointing.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/trust/trust-gated-approvals.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/runtime/workspace-trust-approval.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/payments-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/payments-composition.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/draft-store.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/draft-store.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/register.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/register.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/drafts/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-drafts/index.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/register.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/control-plane/host-handlers.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/errors.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/control-plane/host-handlers.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/drafts/draft-store.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-draft-store.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/drafts/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-draft-register.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/handlers/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-host-handler-contract.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/routing/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-routing/registration.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-routing-register.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/helpers.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/_helpers/routing-registration.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/context.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/handlers/context.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/contracts.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/handlers/contracts.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/index.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/handlers/index.ts"
+      ]
+    }
+  ],
+  "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
+}

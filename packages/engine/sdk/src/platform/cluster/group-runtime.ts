@@ -20,6 +20,7 @@
  * broadcasting unsigned, is the outcome this explicitly avoids.
  */
 import { GroupAdmissionService, type AdmissionOutcome } from './group-admissions.js';
+import { ClusterOwnedLifecycle, ClusterPeriodicTasks } from './owned-lifecycle.js';
 import { digestSurfaceId, sealForMember, openSealedEnvelope } from './group-crypto.js';
 import { GROUP_MESSAGE_TYPES } from './group-membership.js';
 import {
@@ -135,15 +136,15 @@ export class ClusterGroupRuntime {
   private keyringInstance: GroupKeyring | null = null;
   private readonly admissions: GroupAdmissionService;
   private readonly discovered = new Map<string, DiscoveredGroup>();
-  private cancelHousekeeping: (() => void) | null = null;
-  private cancelBeacon: (() => void) | null = null;
-  private started = false;
+  private readonly lifecycle = new ClusterOwnedLifecycle((signal) => this.startOwned(signal), () => this.stopOwned());
+  private readonly periodic: ClusterPeriodicTasks;
   private lastRotationCheckAt = 0;
   private unreadableMaterial = false;
   private housekeeping = false;
   private replication: ConfigReplicationService | null = null;
 
   constructor(private readonly options: ClusterGroupRuntimeOptions) {
+    this.periodic = new ClusterPeriodicTasks(options.clock, options.logger);
     // Built here, not in start(), because the composition root needs
     // `electionTransport()` while it is still WIRING, the coordinator is
     // constructed with it before anything is started. Constructing the router
@@ -195,10 +196,13 @@ export class ClusterGroupRuntime {
 
   // ── lifecycle ─────────────────────────────────────────────────────────────
 
-  async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
+  start(): Promise<void> { return this.lifecycle.start(); }
+
+  stop(): Promise<void> { return this.lifecycle.stop(); }
+
+  private async startOwned(signal: AbortSignal): Promise<void> {
     await this.reloadMaterial();
+    signal.throwIfAborted();
     if (!this.options.settings.enabled) {
       // Switched off. Read the stored membership so `cluster status`, `key` and
       // `nodes` can still answer honestly about a group this machine belongs to
@@ -209,8 +213,9 @@ export class ClusterGroupRuntime {
       return;
     }
     await this.router.ensureStarted();
-    this.scheduleBeacon();
-    this.scheduleHousekeeping();
+    signal.throwIfAborted();
+    this.periodic.schedule(this.options.settings.beaconSeconds * 1_000, () => this.sendBeacon());
+    this.periodic.schedule(HOUSEKEEPING_INTERVAL_MS, () => this.runHousekeeping());
     if (!this.material) {
       this.options.logger.info(
         'cluster: sharing is switched on but this machine is not in a group; it is listening only',
@@ -219,14 +224,9 @@ export class ClusterGroupRuntime {
     }
   }
 
-  async stop(): Promise<void> {
-    if (!this.started) return;
-    this.started = false;
-    this.cancelBeacon?.();
-    this.cancelHousekeeping?.();
-    this.cancelBeacon = null;
-    this.cancelHousekeeping = null;
+  private async stopOwned(): Promise<void> {
     this.admissions.abandon('the daemon shut down before the group answered');
+    await this.periodic.stop();
     await this.router.stop();
   }
 
@@ -492,24 +492,6 @@ export class ClusterGroupRuntime {
       state: this.state,
       configRevision: this.replication?.replica.revision ?? 0,
     });
-  }
-
-  // ── timers ────────────────────────────────────────────────────────────────
-
-  private scheduleBeacon(): void {
-    const tick = (): void => {
-      void this.sendBeacon();
-      this.cancelBeacon = this.options.clock.setTimer(tick, this.options.settings.beaconSeconds * 1_000);
-    };
-    this.cancelBeacon = this.options.clock.setTimer(tick, this.options.settings.beaconSeconds * 1_000);
-  }
-
-  private scheduleHousekeeping(): void {
-    const tick = (): void => {
-      void this.runHousekeeping();
-      this.cancelHousekeeping = this.options.clock.setTimer(tick, HOUSEKEEPING_INTERVAL_MS);
-    };
-    this.cancelHousekeeping = this.options.clock.setTimer(tick, HOUSEKEEPING_INTERVAL_MS);
   }
 
   /**

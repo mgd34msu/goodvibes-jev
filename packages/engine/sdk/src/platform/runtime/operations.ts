@@ -329,3 +329,17 @@ export type {
   WorkspaceTrustManagerOptions,
   WorkspaceTrustPaths,
 } from './workspace-trust.js';
+
+// Headless hosts ask through the shared broker and read explicit record provenance.
+export {
+  createWorkspaceTrustDecisionAsk,
+  trustGatedApprovalRaiser,
+  WorkspaceTrustDecisionUnsettledError,
+  WORKSPACE_TRUST_ASK_TIMEOUT_MS,
+} from './workspace-trust-approval.js';
+export type {
+  ApprovalRaise,
+  ApprovalRaiseExtras,
+  TrustGateManager,
+  WorkspaceTrustDecisionAskDeps,
+} from './workspace-trust-approval.js';

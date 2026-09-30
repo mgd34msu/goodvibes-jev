@@ -260,14 +260,14 @@ function createOperatorClient(
       approve: async (approvalId, actor, actorSurface = 'transport', note): Promise<SharedApprovalRecord | null> => {
         const response = await withNullOnNotFound(() => operatorApi.invoke<{ approval?: SharedApprovalRecord | null }>(
           'approvals.approve',
-          { approvalId, actor, actorSurface, ...(note ? { note } : {}) },
+          { approvalId, disposition: 'approved', actor, actorSurface, ...(note ? { note } : {}) },
         ));
         return response?.approval ?? null;
       },
       deny: async (approvalId, actor, actorSurface = 'transport', note): Promise<SharedApprovalRecord | null> => {
         const response = await withNullOnNotFound(() => operatorApi.invoke<{ approval?: SharedApprovalRecord | null }>(
           'approvals.deny',
-          { approvalId, actor, actorSurface, ...(note ? { note } : {}) },
+          { approvalId, disposition: 'denied', actor, actorSurface, ...(note ? { note } : {}) },
         ));
         return response?.approval ?? null;
       },

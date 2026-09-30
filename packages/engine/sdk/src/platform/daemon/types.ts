@@ -51,6 +51,12 @@ export interface DaemonConfig {
   runtimeBus?: RuntimeEventBus | null | undefined;
   runtimeServices?: RuntimeServices | undefined;
   /**
+   * The host's payment-window inbox, shared with its notifier. Borrowed only:
+   * the host owns and awaits close() on full graph teardown, never a listener
+   * restart. Omitted preserves the facade's existing private inbox behavior.
+   */
+  paymentReplies?: import('../payments/reply-inbox.js').PaymentReplyInbox | undefined;
+  /**
    * Override companion-chat rate-limiter thresholds from daemon config.
    * Takes precedence over GOODVIBES_CHAT_LIMITER_THRESHOLD env var.
    */

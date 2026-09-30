@@ -158,7 +158,7 @@ jobs:
           # `pretest` tsc build does not re-emit over the restored artifact.
           - platform: bun
             node-version: "22"
-            test-cmd: bun packages/engine/scripts/test.ts
+            test-cmd: bun packages/engine/scripts/test.ts && bun run products:test
           - platform: rn-bundle
             node-version: "22"
             test-cmd: bun run test:rn

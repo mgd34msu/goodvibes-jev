@@ -181,7 +181,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -266,7 +267,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -351,7 +353,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -436,7 +439,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -542,7 +546,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "remember": false,
             "rememberTier": "session",
             "reason": "sample",
-            "modifiedArgs": {}
+            "modifiedArgs": {},
+            "disposition": "approved"
           },
           "fixSessionId": "sample",
           "fixSessionError": "sample",
@@ -619,7 +624,8 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",

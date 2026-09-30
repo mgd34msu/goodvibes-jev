@@ -11,7 +11,9 @@ import { restoreStoreSnapshot, snapshotStoreFile } from './store-snapshots.js';
 // function". A failed load clears the memo so the next open can retry.
 let sqlJsEnginePromise: Promise<SqlJsStatic> | null = null;
 
-function loadSqlJsEngine(): Promise<SqlJsStatic> {
+// Internal shared loader for the distinct daemon handler store; deliberately
+// omitted from the public state barrel.
+export function loadSqlJsEngine(): Promise<SqlJsStatic> {
   if (!sqlJsEnginePromise) {
     sqlJsEnginePromise = import('sql.js')
       .then((mod) => mod.default() as Promise<SqlJsStatic>)

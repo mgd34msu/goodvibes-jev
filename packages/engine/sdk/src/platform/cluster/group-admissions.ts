@@ -88,6 +88,7 @@ interface PendingAdmission {
   readonly node: NodeKeyMaterial;
   readonly deadline: number;
   readonly settle: (result: AdmissionOutcome) => void;
+  cancelDeadline?: () => void;
   /**
    * Replies addressed to this machine that arrived and could not be
    * authenticated. Counted so the timeout can tell "the group is not there"
@@ -560,7 +561,7 @@ export class GroupAdmissionService {
       });
       // Identity-scoped so a timer left over from an earlier attempt cannot
       // settle a later one with a deadline that never applied to it.
-      this.host.clock.setTimer(() => {
+      pending.cancelDeadline = this.host.clock.setTimer(() => {
         this.settle(
           pending.unauthenticatedReplies > 0
             ? {
@@ -574,6 +575,8 @@ export class GroupAdmissionService {
           pending,
         );
       }, timeoutMs);
+      // A synchronous in-memory response or shutdown can settle during send().
+      if (this.pending !== pending) pending.cancelDeadline();
     });
   }
 
@@ -581,6 +584,7 @@ export class GroupAdmissionService {
     const pending = this.pending;
     if (!pending || (only && pending !== only)) return;
     this.pending = null;
+    pending.cancelDeadline?.();
     pending.settle(result);
   }
 }

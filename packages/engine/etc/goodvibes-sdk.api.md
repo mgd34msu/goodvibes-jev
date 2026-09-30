@@ -3291,6 +3291,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "approvals.approve": {
         approvalId: string;
+        disposition?: "approved";
         note?: string;
         remember?: boolean;
         selectedHunks?: readonly number[];
@@ -3315,6 +3316,7 @@ export interface OperatorMethodInputMap {
     // (undocumented)
     "approvals.deny": {
         approvalId: string;
+        disposition?: "amended" | "denied";
         note?: string;
         remember?: boolean;
         rememberTier?: "command-class" | "exact" | "path" | "session" | "tool";
@@ -7756,6 +7758,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -7845,6 +7848,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -7934,6 +7938,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8023,6 +8028,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8132,6 +8138,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;
@@ -8217,6 +8224,7 @@ export interface OperatorMethodOutputMap {
                         readonly [key: string]: JsonValue;
                     }) | boolean | null | number | readonly JsonValue[] | string;
                 });
+                disposition?: "amended" | "approved" | "cancelled" | "denied" | "expired" | "remembered";
             };
             fixSessionId?: string;
             fixSessionError?: string;

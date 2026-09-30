@@ -54,8 +54,14 @@ const PROJECTS: readonly Project[] = [
   },
 ];
 
+// Products join the gate as soon as their real workspace appears. Their own
+// source, test, tooling and coverage typecheck scripts all remain mandatory.
+const ALL_PROJECTS: readonly Project[] = [...PROJECTS, {
+  label: 'product workspace typechecks', command: 'bun', args: ['run', 'products:typecheck'],
+}];
+
 const results: CommandResult[] = [];
-for (const project of PROJECTS) {
+for (const project of ALL_PROJECTS) {
   console.log(`[typecheck] ${project.label} ...`);
   const run = spawnSync(project.command, [...project.args], {
     cwd: REPO_ROOT,

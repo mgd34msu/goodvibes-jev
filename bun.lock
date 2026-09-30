@@ -46,6 +46,7 @@
         "goodvibes-changelog-gate": "./toolchain/dist/bin/changelog-gate.js",
         "goodvibes-sha256sums": "./toolchain/dist/bin/sha256sums.js",
         "goodvibes-train-status": "./toolchain/dist/bin/train-status.js",
+        "goodvibes-contract": "./sdk/dist/bin/goodvibes-contract.js",
       },
       "dependencies": {
         "@goodvibes-jev/judgment": "workspace:*",
@@ -96,6 +97,13 @@
       "version": "2.0.23",
       "dependencies": {
         "@typesafe-ai/sdk": "0.6.0",
+      },
+    },
+    "products/daemon": {
+      "name": "@goodvibes-jev/daemon",
+      "version": "1.28.25",
+      "dependencies": {
+        "@goodvibes-jev/engine": "workspace:*",
       },
     },
   },
@@ -308,6 +316,8 @@
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.28.1", "", { "os": "win32", "cpu": "x64" }, "sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A=="],
 
     "@exodus/bytes": ["@exodus/bytes@1.16.0", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-IcpW84uEn3N7ETtNZMlxKhfl6Pec8rUNGOTBtWbK1FKhJxIFAptZyVrvVRVBimAJxJCgc3PxepxkdWWG4DVzfA=="],
+
+    "@goodvibes-jev/daemon": ["@goodvibes-jev/daemon@workspace:products/daemon"],
 
     "@goodvibes-jev/engine": ["@goodvibes-jev/engine@workspace:packages/engine"],
 
@@ -942,7 +952,6 @@
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
-
 
     "fuzzy-search": ["fuzzy-search@3.2.1", "", {}, "sha512-vAcPiyomt1ioKAsAL2uxSABHJ4Ju/e4UeDM+g1OlR0vV4YhLGMNsdLNvZTpEDY4JCSt0E4hASCNM5t2ETtsbyg=="],
 

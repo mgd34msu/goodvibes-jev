@@ -42,6 +42,7 @@ import type { CompanionChatManager } from '../companion/companion-chat-manager.j
 import type { HostedSessionManager } from '../hosted-sessions/index.js';
 import { reportHostedSessionRestore } from './hosted-sessions-composition.js';
 import { isSurfaceDeliveryEnabled } from './surface-policy.js';
+import { handleInteractiveApprovalAction } from './facade-approval-action.js';
 import { AgentTaskAdapter } from '../runtime/tasks/adapters/agent-adapter.js';
 import {
   configureDaemonSessionContinuation,
@@ -201,6 +202,7 @@ export class DaemonServer {
     this.hostedSessions = resolved.hostedSessions;
 
     const collaborators = createDaemonFacadeCollaborators({
+      paymentReplies: config.paymentReplies,
       runtime: resolved,
       pendingSurfaceReplies: this.pendingSurfaceReplies,
       authToken: () => this.authToken,
@@ -849,32 +851,12 @@ export class DaemonServer {
     action: 'claim' | 'approve' | 'deny' | 'cancel',
     req: Request,
   ): Promise<Response> {
-    const body = await this.parseOptionalJsonBody(req);
-    const payload = body instanceof Response || body === null ? {} as JsonBody : body;
-    const actor = this.requireAuthenticatedSession(req)?.username ?? (this.authToken ? 'shared-token' : 'operator');
-    const note = typeof payload.note === 'string' ? payload.note : undefined;
-    if (action === 'claim') {
-      const approval = await this.approvalBroker.claimApproval(approvalId, actor, 'web', note);
-      return approval
-        ? this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ approval }))
-        : this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ error: 'Unknown approval' }, { status: 404 }));
-    }
-    if (action === 'cancel') {
-      const approval = await this.approvalBroker.cancelApproval(approvalId, actor, 'web', note);
-      return approval
-        ? this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ approval }))
-        : this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ error: 'Unknown approval' }, { status: 404 }));
-    }
-    const approval = await this.approvalBroker.resolveApproval(approvalId, {
-      approved: action === 'approve',
-      remember: typeof payload.remember === 'boolean' ? payload.remember : false,
-      actor,
-      actorSurface: 'web',
-      note,
-    });
-    return approval
-      ? this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ approval }))
-      : this.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ error: 'Unknown approval' }, { status: 404 }));
+    return handleInteractiveApprovalAction({
+      broker: this.approvalBroker,
+      parseBody: (request) => this.parseOptionalJsonBody(request),
+      actor: (request) => this.requireAuthenticatedSession(request)?.username ?? (this.authToken ? 'shared-token' : 'operator'),
+      record: (request, path, response) => this.recordApiResponse(request, path, response),
+    }, approvalId, action, req);
   }
   private trySpawnAgent(input: Parameters<AgentManager['spawn']>[0], logLabel = 'DaemonServer', sessionId?: string): AgentRecord | Response {
     try {

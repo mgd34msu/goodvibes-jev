@@ -11,6 +11,8 @@ export type { HITLMode, HITLModeDefinition } from './mode-manager.js';
 export { HITL_QUIET, HITL_BALANCED, HITL_OPERATOR } from './mode-manager.js';
 export { FileWatcher } from './file-watcher.js';
 export { SQLiteStore } from './sqlite-store.js';
+export { HandlerSqliteStore } from './daemon-handler-sqlite-store.js';
+export type { HandlerSqliteStoreOptions } from './daemon-handler-sqlite-store.js';
 export { TelemetryDB } from './telemetry.js';
 export type { ToolCallRecord, TelemetryFilter, TelemetrySummary } from './telemetry.js';
 export { FileUndoManager } from './file-undo.js';
