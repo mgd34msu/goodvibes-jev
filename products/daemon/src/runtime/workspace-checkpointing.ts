@@ -23,6 +23,8 @@ import { createWorkspaceRegistrationLiveChecker, type StoreShellPaths } from './
  */
 
 export interface WorkspaceCheckpointing {
+  /** Stop host admission first; wait for eager init and already accepted git work. */
+  readonly close: () => Promise<void>;
   /** The manager itself, automatic snapshots gated, explicit creates unrestricted. */
   readonly manager: WorkspaceCheckpointManager;
   /**
@@ -80,11 +82,8 @@ export function createWorkspaceCheckpointing(opts: {
     return originalCreate(createOpts);
   }) as typeof manager.create;
 
-  // Eagerly initialize so the automatic-snapshot subscription is live before the
-  // first turn completes. If init() rejects, the manager caches that rejection
-  // forever and every later call re-throws it, the catch here only prevents an
-  // unhandled rejection at startup; the checkpoint verbs report the failure to
-  // whoever calls them.
+  // Eager initialization remains observable through checkpoint calls, which can
+  // retry a failed init. close drains it before owned directories are released.
   void manager.init().catch((error: unknown) => {
     logger.warn('WorkspaceCheckpointManager.init failed', { error: error instanceof Error ? error.message : String(error) });
   });
@@ -112,5 +111,5 @@ export function createWorkspaceCheckpointing(opts: {
     },
   };
 
-  return { manager, gatewayManager, currentlyAllowed };
+  return { manager, gatewayManager, currentlyAllowed, close: () => manager.drain() };
 }

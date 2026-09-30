@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "cli-config-runtime-adapters",
+  "phase": "configured-runtime-graph",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -397,7 +397,66 @@
       "targets": [
         "products/daemon/src/daemon/handlers/index.ts"
       ]
+    },
+    {
+      "source": "src/runtime/services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/services.ts",
+        "products/daemon/src/runtime/service-graph.ts",
+        "products/daemon/src/runtime/acquisition.ts",
+        "products/daemon/src/runtime/contract-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/runtime-services-types.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/runtime-services-types.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/daemon-handler-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/daemon-handler-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/knowledge-services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/knowledge-services.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/hosted-session-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/hosted-session-composition.ts"
+      ]
+    },
+    {
+      "source": "src/testing/daemon-fixture.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/testing/daemon-fixture.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/merchant-judge.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/merchant-judge-model.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/payments/register.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/payments/host/register.ts"
+      ]
     }
   ],
-  "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
+  "remaining": "The async runtime graph boots only with an explicit inbox factory. Built-in intake providers and triage, daemon executable/entrypoint and command parity, scripts, original contract-test scaffolding, packaging and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This partial workspace does not satisfy migration:complete."
 }

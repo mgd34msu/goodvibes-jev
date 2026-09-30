@@ -87,15 +87,23 @@ export function registerDaemonRuntimePollers(
   services: DaemonRuntimePollerOwners,
   extras: RuntimeDisposalExtras,
 ): void {
+  registerDaemonRuntimeBasePollers(registry, services, extras);
+  // Added last so complete handler drain precedes their dependencies.
+  registry.add('daemon handler surfaces', () => services.daemonHandlers.close());
+}
+
+/**
+ * Own the constructed graph before async product-handler acquisition begins.
+ * The completed composition registers its actual handlers in the outer scope.
+ * Every other owner remains required, including the composed runner's store.
+ */
+export function registerDaemonRuntimeBasePollers(
+  registry: AsyncDisposalRegistry,
+  services: Omit<DaemonRuntimePollerOwners, 'daemonHandlers'>,
+  extras: RuntimeDisposalExtras,
+): void {
   registerRuntimePollers(registry, { ...services, stopConfigWatch: extras.stopConfigWatch });
   registry.add('durability housekeeping', services.stopDurabilityHousekeeping);
   registry.add('device housekeeping', () => services.devicePosture.stopHousekeeping());
   registry.add('wake-word housekeeping', services.stopWakeHousekeeping);
-  // Registered LAST so it tears down FIRST (the scope unwinds in reverse), which
-  // is the order daemon/cli.ts already used by hand: release the handler surfaces
-  //, closing the inbox store and stopping its poll timers, before the pollers
-  // the rest of the graph owns. Being on this list is what makes a plain
-  // `await close()` total: every shutdown path stops these, not just the one that
-  // remembered to call `unregister()` itself.
-  registry.add('daemon handler surfaces', () => services.daemonHandlers.close());
 }

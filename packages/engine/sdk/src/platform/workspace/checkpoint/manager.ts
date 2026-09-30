@@ -687,6 +687,15 @@ export class WorkspaceCheckpointManager {
     this.unsubscribers.length = 0;
   }
 
+  /** After the owner stops new calls, unsubscribe and drain accepted init/git work. */
+  async drain(): Promise<void> {
+    this.dispose();
+    if (this.initPromise) await this.init().catch(() => {});
+    this.dispose(); // Initialization may have subscribed after the first dispose.
+    let pending: Promise<void>;
+    do { pending = this.lockChain; await pending; } while (pending !== this.lockChain);
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
