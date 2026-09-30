@@ -73,7 +73,7 @@ describe('platform/discovery: behavior smoke', () => {
   });
 
   test('scanLocalhost() resolves with ScanResult shape', async () => {
-    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async () => new Response('', { status: 404 }), { preconnect() {} }));
     try {
       const result = await scanLocalhost();
       expect(result.servers).toBeInstanceOf(Array);

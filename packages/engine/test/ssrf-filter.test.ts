@@ -24,10 +24,10 @@ let transportCalls = 0;
 let restoreFetch: (() => void) | undefined;
 beforeEach(() => {
   transportCalls = 0;
-  const mock = spyOn(globalThis, 'fetch').mockImplementation(async () => {
+  const mock = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async () => {
     transportCalls++;
     throw new Error('fixture transport unavailable');
-  });
+  }, { preconnect() {} }));
   restoreFetch = () => mock.mockRestore();
 });
 afterEach(() => { restoreFetch?.(); restoreFetch = undefined; });

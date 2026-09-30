@@ -21,21 +21,27 @@ function stubTransports() {
   return { fetchCalls, socketCalls, violations };
 }
 
+// DOM's global constructor hides Bun's additional options overload; keep the
+// supplied options checked against Bun's declaration and exercise the same global.
+function openSocket(options: Bun.WebSocketOptions): WebSocket {
+  return Reflect.construct(WebSocket, ['ws://127.0.0.1:8000', options]);
+}
+
 const externalProxies = [
   'http://outside.invalid:9000',
   { url: 'http://outside.invalid:9000/private?token=synthetic', headers: { 'Proxy-Authorization': 'synthetic-test-only' } },
 ] as const;
 
-test.each(externalProxies)('fetch proxy is checked before delegating a loopback target: %j', async (proxy) => {
+test.each(externalProxies.map((proxy) => [proxy] as const))('fetch proxy is checked before delegating a loopback target: %j', async (proxy) => {
   const { fetchCalls, violations } = stubTransports();
   await expect(fetch('http://127.0.0.1:8000', { proxy })).rejects.toBeInstanceOf(TestExternalNetworkError);
   expect(fetchCalls).toHaveLength(0);
   expect(violations).toEqual(['Unexpected external fetch proxy in ordinary tests: http://outside.invalid:9000']);
 });
 
-test.each(externalProxies)('WebSocket proxy is checked before delegating a loopback target: %j', (proxy) => {
+test.each(externalProxies.map((proxy) => [proxy] as const))('WebSocket proxy is checked before delegating a loopback target: %j', (proxy) => {
   const { socketCalls, violations } = stubTransports();
-  expect(() => new WebSocket('ws://127.0.0.1:8000', { proxy })).toThrow(TestExternalNetworkError);
+  expect(() => openSocket({ proxy })).toThrow(TestExternalNetworkError);
   expect(socketCalls).toHaveLength(0);
   expect(violations).toEqual(['Unexpected external WebSocket proxy in ordinary tests: http://outside.invalid:9000']);
 });
@@ -45,7 +51,7 @@ test('both supported loopback proxy forms retain transport options', async () =>
   const proxies = ['http://127.0.0.1:9000', { url: 'http://[::1]:9000', headers: { 'Proxy-Authorization': 'synthetic-test-only' } }];
   for (const proxy of proxies) {
     await fetch('http://localhost:8000', { proxy });
-    new WebSocket('ws://localhost:8000', { proxy, protocols: ['fixture'] });
+    openSocket({ proxy, protocols: ['fixture'] });
   }
   expect(fetchCalls.map((args) => (args[1] as RequestInit & { proxy: unknown }).proxy)).toEqual(proxies);
   expect(socketCalls.map((args) => (args[1] as Bun.WebSocketOptions).proxy)).toEqual(proxies);
@@ -72,7 +78,7 @@ test('native transports receive the checked proxy snapshot when accessors change
   };
   await fetch('http://localhost:8000', { proxy: changingProxy() });
   let optionReads = 0;
-  new WebSocket('ws://localhost:8000', {
+  openSocket({
     get proxy() { return optionReads++ === 0 ? changingProxy() : 'http://outside.invalid:9000'; },
   });
   expect((fetchCalls[0]?.[1] as { proxy: { url: string } }).proxy.url).toBe('http://127.0.0.1:9000');
