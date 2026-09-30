@@ -32,6 +32,10 @@ function runGit(cwd: string, args: string[]): string {
 
 function initRepo(root: string): void {
   runGit(root, ['init']);
+  // Merge commits need a fixture-owned identity; the guarded runner deliberately
+  // isolates HOME and must not depend on the developer's global Git config.
+  runGit(root, ['config', 'user.name', 'test']);
+  runGit(root, ['config', 'user.email', 'a@b.c']);
   runGit(root, ['-c', 'user.email=a@b.c', '-c', 'user.name=test', 'commit', '--allow-empty', '-m', 'seed']);
 }
 

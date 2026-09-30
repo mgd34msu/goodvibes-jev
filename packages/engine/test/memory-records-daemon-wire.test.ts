@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { classifyMemoryWireError } from '../sdk/src/platform/runtime/memory-spine/index.ts';
 import { useMemoryReadings } from './_helpers/memory-readings.ts';
 
@@ -60,6 +61,7 @@ async function search(body: Record<string, unknown>): Promise<WireSearchResult> 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'mem-wire-home-'));
   work = mkdtempSync(join(tmpdir(), 'mem-wire-work-'));
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

@@ -12,6 +12,7 @@
  * (bypassing boot.ts's catch) and asserting a clean shutdown.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,6 +26,7 @@ let daemon: BootedDaemon;
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'stop-home-'));
+  seedBenchmarkCache(home, 'goodvibes');
   work = mkdtempSync(join(tmpdir(), 'stop-work-'));
   // Watchers default ON now, recreate the disabled case this regression guards.
   // bootDaemon's ConfigManager resolves <home>/.goodvibes/goodvibes/settings.json.

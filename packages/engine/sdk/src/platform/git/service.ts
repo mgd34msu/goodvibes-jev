@@ -304,18 +304,18 @@ export class GitService {
           const flags: string[] = [];
           if (options.amend) flags.push('--amend');
           if (options.noVerify) flags.push('--no-verify');
-          const raw = await (await this.git()).raw([
-            '-c',
-            `user.name=${options.fallbackIdentity.name}`,
-            '-c',
-            `user.email=${options.fallbackIdentity.email}`,
-            'commit',
-            '-m',
-            message,
-            ...flags,
-          ]);
-          const hash = (await (await this.git()).raw(['rev-parse', 'HEAD'])).trim();
-          const output = { hash, summary: raw.trim() };
+          // Keep the normal commit parser on the fallback path too. A silent
+          // rejecting hook can resolve with no commit; reading HEAD afterwards
+          // would mistake the previous commit for a successful new one.
+          const fallbackGit = await createSimpleGit({
+            baseDir: this.getCwd(),
+            config: [
+              `user.name=${options.fallbackIdentity.name}`,
+              `user.email=${options.fallbackIdentity.email}`,
+            ],
+          });
+          const result = await fallbackGit.commit(message, undefined, flags);
+          const output = { hash: result.commit, summary: JSON.stringify(result.summary) };
           await this.firePost('commit', { message, ...output });
           return output;
         } catch (fallbackErr) {

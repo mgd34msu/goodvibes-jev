@@ -135,7 +135,7 @@ describe('AgentWorktree', () => {
     expect(runGit(root, ['diff', '--cached', '--name-only']).trim()).toBe('');
   });
 
-  test('commitWorkingTree restores the index when the commit step fails after staging', async () => {
+  test.each(['configured', 'fallback'] as const)('commitWorkingTree restores the index when the commit step fails after staging (%s identity)', async (identity) => {
     // A genuinely-failing commit (here: a pre-commit hook that rejects) must not leave the
     // deliverable staged in the user's index. The staged path is reset before the error propagates.
     const root = mkdtempSync(join(tmpdir(), 'agent-worktree-restore-'));
@@ -143,6 +143,12 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, 'seed.ts'), 'export const seed = 1;\n');
     runGit(root, ['add', 'seed.ts']);
     runGit(root, ['-c', 'user.email=a@b.c', '-c', 'user.name=test', 'commit', '-m', 'seed']);
+
+    // Exercise both paths regardless of the host's identity. Empty local values
+    // force the fallback path even outside the guarded runner's isolated HOME.
+    runGit(root, ['config', 'user.name', identity === 'configured' ? 'test' : '']);
+    runGit(root, ['config', 'user.email', identity === 'configured' ? 'a@b.c' : '']);
+    const originalHead = runGit(root, ['rev-parse', 'HEAD']).trim();
 
     // Install a pre-commit hook that always rejects. The executable bit must be set explicitly,
     // git ignores a non-executable hook (and writeFileSync's mode is not honored reliably here).
@@ -155,6 +161,8 @@ describe('AgentWorktree', () => {
     writeFileSync(join(root, 'deliverable.ts'), 'export const d = true;\n');
     const worktree = new AgentWorktree(root);
     await expect(worktree.commitWorkingTree('Contract: rejected', ['deliverable.ts'])).rejects.toThrow();
+
+    expect(runGit(root, ['rev-parse', 'HEAD']).trim()).toBe(originalHead);
 
     // Index must be clean despite the failed commit, the staged path was reset.
     expect(runGit(root, ['diff', '--cached', '--name-only']).trim()).toBe('');

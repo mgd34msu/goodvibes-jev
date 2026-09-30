@@ -10,11 +10,14 @@
  * SSE 401 without auth).
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { gatewayPricingCachePath } from '../sdk/src/platform/providers/gateway-pricing.ts';
+import { createShellPathService } from '../sdk/src/platform/runtime/shell-paths.ts';
 
 const TOKEN = 'test-boot-token';
 let home: string;
@@ -27,7 +30,16 @@ function auth(extra: Record<string, string> = {}): Record<string, string> {
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'boot-home-'));
+  seedBenchmarkCache(home, 'goodvibes');
   work = mkdtempSync(join(tmpdir(), 'boot-work-'));
+  // Account/provider reads exercise the real lazy pricing cache. These fresh
+  // fixtures have no rates, preserving honest unknown prices without live GETs.
+  const cacheDir = createShellPathService({ workingDirectory: work, homeDirectory: home }).resolveUserPath('goodvibes');
+  for (const provider of ['aihubmix', 'vercel-ai-gateway']) {
+    writeFileSync(gatewayPricingCachePath(cacheDir, provider), JSON.stringify({
+      version: 1, fetchedAt: Date.now(), ttlMs: 86_400_000, models: {},
+    }));
+  }
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

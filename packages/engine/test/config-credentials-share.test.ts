@@ -18,6 +18,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { SecretsManager } from '../sdk/src/platform/config/secrets.ts';
 import { CONFIG_SNAPSHOT_SCHEMA } from '../sdk/src/platform/control-plane/operator-contract-schemas-admin.ts';
 
@@ -50,6 +51,7 @@ beforeAll(async () => {
   await seed.set('REF_BACKED_TOKEN', `goodvibes://secrets/env/${ENV_REF_VAR}`, { scope: 'user', medium: 'secure' });
   process.env[ENV_REF_VAR] = ENV_REF_PLAINTEXT;
 
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,

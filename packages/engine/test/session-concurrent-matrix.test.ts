@@ -8,6 +8,7 @@
  * Matrix: two TUI-class sessions (different projects) + one agent-class + one
  * webui-class, all live against one real bootDaemon over the HTTP wire.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,6 +73,7 @@ describe('D7c: N concurrent sessions across surfaces on one daemon', () => {
 
   test('all four register, list live together, heartbeat independently, close in isolation, and survive restart', async () => {
     home = mkdtempSync(join(tmpdir(), 'matrix-home-'));
+    seedBenchmarkCache(home, 'goodvibes');
     work = mkdtempSync(join(tmpdir(), 'matrix-work-'));
     const daemonHomeDir = join(home, 'daemon');
     daemon = await bootDaemon({ homeDirectory: home, workingDir: work, daemonHomeDir, port: 0, host: '127.0.0.1', token: TOKEN });

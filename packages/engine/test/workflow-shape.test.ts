@@ -195,6 +195,43 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(bun?.['test-cmd']).toBe('bun packages/engine/scripts/test.ts');
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
   });
+
+  test('the required bun matrix leg also runs the judgment foundation suite', () => {
+    const matrix = ci.jobs!['platform-matrix']!;
+    const judgment = steps(matrix).find((step) => step.run === 'bun run test:judgment');
+    expect(judgment).toBeDefined();
+    const rootScripts = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
+    expect(rootScripts['test:judgment']).toBe('bun packages/engine/scripts/test.ts --cwd ../judgment test');
+    expect(judgment?.if).toBe("matrix.platform == 'bun'");
+    expect(judgment?.['continue-on-error']).not.toBe(true);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');
+  });
+
+  test('live containment is an unconditional required lane on a supported VM runner', () => {
+    const proof = ci.jobs!['exec-containment-proof']!;
+    expect(proof).toBeDefined();
+    expect(proof['runs-on']).toBe('ubuntu-22.04');
+    expect(proof.if).toBeUndefined();
+    expect(proof['continue-on-error']).toBeUndefined();
+    expect(proof['timeout-minutes']).toBe(10);
+    expect(needsOf(proof)).toEqual(['build']);
+    expect(stepText(proof)).toContain('workspace-build-output');
+    expect(stepText(proof)).not.toContain('bun run build');
+    const install = steps(proof).find((step) => step.name === 'Install official sandbox and PTY packages');
+    expect(install?.run).toBe('sudo apt-get update\nsudo apt-get install --yes --no-install-recommends bubblewrap util-linux\nbwrap --version\nscript --version\n');
+    const live = steps(proof).find((step) => step.name === 'Require actual sandbox fixture execution');
+    expect(live?.env).toEqual({ GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT: '1' });
+    expect(live?.run).toBe('bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts');
+    for (const step of steps(proof)) {
+      expect(step.if).toBeUndefined();
+      expect(step['continue-on-error']).toBeUndefined();
+    }
+    // Package installation is the only privileged step; tests stay unprivileged.
+    const otherRuns = steps(proof).filter((step) => step !== install).map((step) => step.run ?? '').join('\n');
+    expect(otherRuns).not.toMatch(/sudo|sysctl|apparmor|--privileged|chmod/);
+    expect(needsOf(ci.jobs!['auto-release']!)).toContain('exec-containment-proof');
+    expect(ci.jobs!['auto-release']!.if).toBe("github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'");
+  });
 });
 
 describe('ci.yml: zero-touch auto-release', () => {

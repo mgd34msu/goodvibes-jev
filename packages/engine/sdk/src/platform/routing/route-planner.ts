@@ -41,6 +41,8 @@ export interface RoutePlannerDeps {
   readonly providerHealth?: (() => ReadonlyMap<string, { readonly status: ProviderStatus }>) | undefined;
   /** Published benchmark composite (0 to 1) for a model, when one is known. */
   readonly benchmarkFor?: ((model: ModelDefinition) => number | null | undefined) | undefined;
+  /** Resolve benchmark identities for eligible models before their facts are ordered. Rejections stop routing. */
+  readonly prepareBenchmarks?: ((models: readonly ModelDefinition[], signal?: AbortSignal) => Promise<void>) | undefined;
 }
 
 /** Hard requirements the work puts on a model: facts, checked in code. */
@@ -198,12 +200,15 @@ function describe(reading: RequestReading, pool: TierPool, pick: Selection, chos
 export function createRoutePlanner(deps: RoutePlannerDeps): RoutePlanner {
   return {
     async planRoute(request) {
+      request.signal?.throwIfAborted();
       const signalOption = request.signal ? { signal: request.signal } : {};
       const reading = await readRequest(request, { site: 'routing.route-planner.request', ...signalOption });
       const eligible = eligibleModels(deps, request.requires);
       if (eligible.length === 0) {
         throw new NoRouteError('No configured, healthy provider serves a model that meets this work\'s requirements (tool calling, context window, image input).');
       }
+      await deps.prepareBenchmarks?.(eligible, request.signal);
+      request.signal?.throwIfAborted();
       const facts = eligible.map((model) => factsFor(deps, model));
       const byKey = new Map(eligible.map((model) => [model.registryKey, model]));
       for (const tier of tierSearchOrder(reading.tier)) {

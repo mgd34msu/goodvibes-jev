@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEmbeddedSession, type EmbeddedSession } from '../sdk/src/embed.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.ts';
 
 function makeRequest(callId: string): PermissionPromptRequest {
@@ -34,6 +35,7 @@ describe('createEmbeddedSession', () => {
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'embed-home-'));
     work = mkdtempSync(join(tmpdir(), 'embed-work-'));
+    seedBenchmarkCache(home, 'goodvibes');
     session = await createEmbeddedSession({
       workspace: work,
       homeDirectory: home,

@@ -22,6 +22,7 @@
  * caller for the root the same promise of the report.
  */
 import { resolve } from 'node:path';
+import { mapLimit } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../config/manager.js';
 import { ContractStore } from '../contract/store.js';
 import { createContractRunner, type ContractRunner } from '../contract/runner.js';
@@ -35,7 +36,8 @@ import { createOrchestrationEngine } from '../orchestration/engine.js';
 import { compositeScore, type BenchmarkStore } from '../providers/model-benchmarks.js';
 import type { ModelDefinition } from '../providers/registry.js';
 import type { ProviderRegistry } from '../providers/registry.js';
-import { createRoutePlanner } from '../routing/route-planner.js';
+import { createRoutePlanner, type RoutePlanner, type RoutePlannerDeps } from '../routing/route-planner.js';
+import { BENCHMARK_PREPARATION_ATTEMPTS, BENCHMARK_READ_CONCURRENCY } from '../routing/policy.js';
 import type { AgentManager } from '../tools/agent/index.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -82,6 +84,89 @@ export function routeBenchmarkFor(benchmarks: Pick<BenchmarkStore, 'getKnownBenc
   };
 }
 
+type RouteBenchmarks = Pick<BenchmarkStore, 'getKnownBenchmarks' | 'readBenchmarks'> & Partial<Pick<BenchmarkStore, 'onRefreshed'>>;
+
+/**
+ * Resolve each eligible model's leaderboard identity before the first tier
+ * shortlist is sorted. Exact names and remembered readings need no Jev call;
+ * new aliases are read with bounded concurrency. A refresh retries the whole
+ * batch, including aliases already read. Failed readings or repeated refreshes
+ * reject the route instead of silently sorting by price with unknown identities.
+ */
+async function readRouteBenchmarkSnapshot(
+  benchmarks: RouteBenchmarks,
+  models: readonly ModelDefinition[],
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<ModelDefinition, number | null>> {
+  signal?.throwIfAborted();
+  const stop = new AbortController();
+  const readingSignal = signal === undefined ? stop.signal : AbortSignal.any([signal, stop.signal]);
+  let refreshed = false;
+  const unsubscribe = benchmarks.onRefreshed?.(() => { refreshed = true; });
+  try {
+    for (let attempt = 0; attempt < BENCHMARK_PREPARATION_ATTEMPTS; attempt++) {
+      refreshed = false;
+      await mapLimit(models, BENCHMARK_READ_CONCURRENCY, async (model) => {
+        readingSignal.throwIfAborted();
+        if (benchmarks.getKnownBenchmarks(model.displayName) ?? benchmarks.getKnownBenchmarks(model.id)) return;
+        const entry = await benchmarks.readBenchmarks(model.displayName, 'routing.route-planner.benchmark-identity', readingSignal);
+        readingSignal.throwIfAborted();
+        if (entry === undefined && model.id !== model.displayName) {
+          await benchmarks.readBenchmarks(model.id, 'routing.route-planner.benchmark-identity', readingSignal);
+        }
+      });
+      readingSignal.throwIfAborted();
+      // A refresh can invalidate aliases that finished before a sibling's
+      // awaited reading. Prepare the whole batch again, not just that sibling.
+      if (!refreshed) {
+        // Capture scores in this same synchronous turn. A refresh may run
+        // after this promise resolves, before the planner resumes to read facts.
+        const benchmarkFor = routeBenchmarkFor(benchmarks);
+        return new Map(models.map((model) => [model, benchmarkFor(model)]));
+      }
+    }
+    throw new Error('Benchmark leaderboard kept changing during route preparation');
+  } catch (error) {
+    stop.abort(error);
+    throw error;
+  } finally {
+    unsubscribe?.();
+  }
+}
+
+/**
+ * Warm current benchmark identities. This does not retain a snapshot across
+ * the caller's await; routing must use createBenchmarkRoutePlanner instead.
+ */
+export async function prepareRouteBenchmarks(
+  benchmarks: RouteBenchmarks,
+  models: readonly ModelDefinition[],
+  signal?: AbortSignal,
+): Promise<void> {
+  await readRouteBenchmarkSnapshot(benchmarks, models, signal);
+}
+
+/** The contract runner's planner, with a separate stable benchmark snapshot per plan. */
+export function createBenchmarkRoutePlanner(
+  deps: Omit<RoutePlannerDeps, 'benchmarkFor' | 'prepareBenchmarks'>,
+  benchmarks: RouteBenchmarks,
+): RoutePlanner {
+  return {
+    planRoute(request) {
+      // Routes share tier readings but never the score map: another concurrent
+      // plan can prepare a newer generation while this plan is still awaiting.
+      let scores: ReadonlyMap<ModelDefinition, number | null> = new Map();
+      return createRoutePlanner({
+        ...deps,
+        prepareBenchmarks: async (models, signal) => {
+          scores = await readRouteBenchmarkSnapshot(benchmarks, models, signal);
+        },
+        benchmarkFor: (model) => scores.get(model) ?? null,
+      }).planRoute(request);
+    },
+  };
+}
+
 /**
  * The provider health the route planner filters on: the runtime store's
  * provider health, and every provider whose endpoint did not return its model
@@ -110,12 +195,11 @@ export interface ComposedContractRunner {
 export function composeContractRunner(options: ContractRunnerCompositionOptions): ComposedContractRunner {
   const store = new ContractStore({ projectRoot: options.projectRoot });
   const { priceUsage, priceProvenance } = buildPricingSeams(options.providerRegistry);
-  const planner = createRoutePlanner({
+  const planner = createBenchmarkRoutePlanner({
     catalog: options.providerRegistry,
     tiers: options.providerRegistry.modelTiers,
-    benchmarkFor: routeBenchmarkFor(options.providerRegistry.benchmarks),
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
-  });
+  }, options.providerRegistry.benchmarks);
   const runner = createContractRunner({
     agentManager: options.agentManager,
     messageBus: options.agentMessageBus,
