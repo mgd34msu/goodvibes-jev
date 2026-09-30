@@ -243,6 +243,48 @@
       "targets": [
         "products/daemon/src/test/runtime/cluster-holdings-wiring.test.ts"
       ]
+    },
+    {
+      "source": "src/runtime/device-posture-composition.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/device-posture-composition.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/trigger-services.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/trigger-services.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/fleet-needs-input-push.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/fleet-needs-input-push.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/notification-dispatch.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/notification-dispatch.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/trust/checkpoint-eligibility.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/trust/checkpoint-eligibility.ts"
+      ]
+    },
+    {
+      "source": "src/runtime/workspace-checkpointing.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/runtime/workspace-checkpointing.ts"
+      ]
     }
   ],
   "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
