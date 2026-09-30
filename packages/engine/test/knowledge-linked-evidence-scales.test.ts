@@ -30,7 +30,7 @@ describe('linked evidence probability and retrieval compatibility', () => {
     expect(result.map((item) => item.id)).toEqual([source.id, device.id]);
     expect(result[0]?.score).toBe(160);
     expect(result[1]?.score).toBe(900);
-    expect(answerConfidence(null, result)).toBe(answerConfidence(null, [original]));
+    expect(answerConfidence(null)).toBe(0);
   });
   test('a newly found source has no invented retrieval score or synthesized confidence', async () => {
     const { store, device, source } = await fixture();
@@ -38,8 +38,8 @@ describe('linked evidence probability and retrieval compatibility', () => {
     const result = await includeOfficialLinkedEvidence(store, 'default', 'Reset the router', [], [device], 1);
     expect(result.map((item) => item.id)).toEqual([source.id]);
     expect(result[0]?.score).toBe(0);
-    // Legacy answer confidence remains a separate pending K4 conversion.
-    expect(answerConfidence(null, result)).toBe(10);
+    // Retrieval probabilities/points cannot invent measured answer fidelity.
+    expect(answerConfidence(null)).toBe(0);
   });
   test('an uncertain relevance reading cannot recover an original high retrieval score', async () => {
     const { store, device, source } = await fixture();

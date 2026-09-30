@@ -429,6 +429,10 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
         },
       },
     });
+    // Actual synthetic source text, independent of the stored fact claim.
+    await store.upsertExtraction({ sourceId: official.id, extractorId: 'synthetic', format: 'text',
+      excerpt: 'LG 86NANO90UNA official specifications list 4K UHD resolution, 100/120 Hz refresh rate, HDR10, and Dolby Vision.', metadata: { knowledgeSpaceId: spaceId },
+    });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'lg-display-fact',
@@ -516,6 +520,10 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
       tags: ['semantic-gap-repair'],
       status: 'indexed',
       metadata: { knowledgeSpaceId: spaceId },
+    });
+    // Actual synthetic source text, independent of the stored fact claim.
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text',
+      excerpt: 'TV comparison notes list 4K UHD resolution, HDR10, Dolby Vision, and 120 Hz refresh rate; these notes do not identify the particular Home Graph device.', metadata: { knowledgeSpaceId: spaceId },
     });
     const fact = await store.upsertNode({
       kind: 'fact',

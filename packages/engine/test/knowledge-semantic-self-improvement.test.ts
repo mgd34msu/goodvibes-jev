@@ -602,6 +602,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('semantic gap repair is idempotent once a repair source is linked', async () => {
+    // Initial manual evidence is genuinely partial, regardless of the generator's own gap list.
+    answerReadings.set({ enough: 0.01, complete: 0.01 });
     const { store } = createStores();
     const calls: unknown[] = [];
     const semantic = new KnowledgeSemanticService(store, {
@@ -627,6 +629,12 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
             searchText: 'LG 86NANO90UNA specifications include a NanoCell 4K display, Dolby Vision, HDR10, HDMI eARC, webOS smart TV features, Wi-Fi, Bluetooth, and Game Optimizer.',
           },
           metadata: { knowledgeSpaceId: 'homeassistant:test' },
+        });
+        // Once the fixture repair text exists, measured evidence is sufficient.
+        // The old generator still gives its partial manual answer; the literal
+        // candidate is independently complete and must be preferred.
+        answerReadings.set({ enough: 0.99, complete: 0.97,
+          completeByCandidate: [['manual only confirms Magic Remote', 0.01]], preferred: 'rendered',
         });
         return {
           searched: true,
@@ -940,6 +948,8 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('answer-triggered refinement is queued without blocking the answer', async () => {
+    // Explicit insufficiency reading replaces a generator-authored gap as the trigger.
+    answerReadings.set({ enough: 0.01, complete: 0.01 });
     const { store } = createStores();
     const calls: unknown[] = [];
     const semantic = new KnowledgeSemanticService(store, {

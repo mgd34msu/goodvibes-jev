@@ -98,12 +98,16 @@ export type {
 } from './extensions.js';
 export {
   KnowledgeSemanticService,
+  KnowledgeAnswerQualityHeldError,
   createWebKnowledgeGapRepairer,
   createProviderBackedKnowledgeSemanticLlm,
   runKnowledgeSemanticSelfImprovement,
 } from './semantic/index.js';
 export type {
   KnowledgeSemanticAnswer,
+  KnowledgeAnswerQuality,
+  AnswerQualityBoolean,
+  AnswerQualityHoldReason,
   KnowledgeSemanticAnswerInput,
   KnowledgeSemanticAnswerResult,
   KnowledgeSemanticEnrichmentResult,

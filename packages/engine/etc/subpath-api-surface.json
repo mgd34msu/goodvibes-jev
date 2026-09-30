@@ -30718,6 +30718,21 @@
   ],
   "./platform/knowledge": [
     {
+      "name": "AnswerQualityBoolean",
+      "kind": "interface",
+      "required": [
+        "outcome",
+        "probability",
+        "verdict"
+      ],
+      "text": "export interface AnswerQualityBoolean { readonly verdict: 'yes' | 'no'; readonly probability: number; readonly outcome: 'act'; }"
+    },
+    {
+      "name": "AnswerQualityHoldReason",
+      "kind": "type",
+      "text": "export type AnswerQualityHoldReason = 'uncertain' | 'unavailable' | 'malformed' | 'aborted' | 'budget' | 'stale';"
+    },
+    {
       "name": "AnyHomeGraphRelation",
       "kind": "type",
       "text": "export type AnyHomeGraphRelation = HomeGraphRelation | HomeGraphMachineWrittenRelation;"
@@ -31255,6 +31270,25 @@
       "name": "KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS",
       "kind": "const",
       "text": "KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS: number"
+    },
+    {
+      "name": "KnowledgeAnswerQuality",
+      "kind": "interface",
+      "required": [
+        "decisionIds",
+        "status"
+      ],
+      "text": "export interface KnowledgeAnswerQuality { readonly status: 'verified' | 'partial' | 'unsupported' | 'no-evidence'; readonly fidelity?: { readonly verdict: 'supported' | 'contradicted' | 'unsupported'; readonly probability: number; readonly outcome: Outcome; } | undefined; readonly evidenceSufficient?: AnswerQualityBoolean | undefined; readonly answerComplete?: AnswerQualityBoolean | undefined; readonly decisionIds: readonly string[]; readonly evidenceReferences?: readonly { readonly reference: string; readonly sourceId: string; readonly extractionId: string; }[] | undefined; } ;; via Outcome = export type Outcome = 'act' | 'confirm' | 'escalate';"
+    },
+    {
+      "name": "KnowledgeAnswerQualityHeldError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "name",
+        "reason"
+      ],
+      "text": "export declare class KnowledgeAnswerQualityHeldError extends Error { readonly reason: AnswerQualityHoldReason; readonly name = \"KnowledgeAnswerQualityHeldError\"; constructor(reason: AnswerQualityHoldReason); }"
     },
     {
       "name": "KnowledgeApi",
@@ -31984,7 +32018,7 @@
         "synthesized",
         "text"
       ],
-      "text": "export interface KnowledgeSemanticAnswer { readonly text: string; readonly mode: string; readonly confidence: number; readonly sources: readonly KnowledgeSourceRecord[]; readonly linkedObjects: readonly KnowledgeNodeRecord[]; readonly facts: readonly KnowledgeNodeRecord[]; readonly gaps: readonly KnowledgeNodeRecord[]; readonly refinementTaskIds?: readonly string[] | undefined; readonly refinement?: KnowledgeSemanticAnswerRefinement | undefined; readonly synthesized: boolean; } ;; via KnowledgeSemanticAnswerRefinement = export interface KnowledgeSemanticAnswerRefinement { readonly status: 'not_needed' | 'repaired' | 'deferred' | 'active' | 'incomplete'; readonly reason?: string | undefined; readonly repairStatus?: string | undefined; readonly refinementTaskIds: readonly string[]; readonly acceptedSourceIds: readonly string[]; readonly promotedFactCount: number; readonly nextRepairAttemptAt?: number | undefined; readonly waitedMs?: number | undefined; readonly answerCacheInvalidated?: boolean | undefined; readonly pageRefreshRequested?: boolean | undefined; readonly pageRefreshed?: boolean | undefined; }"
+      "text": "export interface KnowledgeSemanticAnswer { readonly quality?: KnowledgeAnswerQuality | undefined; readonly text: string; readonly mode: string; readonly confidence: number; readonly sources: readonly KnowledgeSourceRecord[]; readonly linkedObjects: readonly KnowledgeNodeRecord[]; readonly facts: readonly KnowledgeNodeRecord[]; readonly gaps: readonly KnowledgeNodeRecord[]; readonly refinementTaskIds?: readonly string[] | undefined; readonly refinement?: KnowledgeSemanticAnswerRefinement | undefined; readonly synthesized: boolean; } ;; via KnowledgeSemanticAnswerRefinement = export interface KnowledgeSemanticAnswerRefinement { readonly status: 'not_needed' | 'repaired' | 'deferred' | 'active' | 'incomplete'; readonly reason?: string | undefined; readonly repairStatus?: string | undefined; readonly refinementTaskIds: readonly string[]; readonly acceptedSourceIds: readonly string[]; readonly promotedFactCount: number; readonly nextRepairAttemptAt?: number | undefined; readonly waitedMs?: number | undefined; readonly answerCacheInvalidated?: boolean | undefined; readonly pageRefreshRequested?: boolean | undefined; readonly pageRefreshed?: boolean | undefined; }"
     },
     {
       "name": "KnowledgeSemanticAnswerInput",
@@ -31992,7 +32026,7 @@
       "required": [
         "query"
       ],
-      "text": "export interface KnowledgeSemanticAnswerInput { readonly query: string; readonly knowledgeSpaceId?: string | undefined; readonly mode?: 'concise' | 'standard' | 'detailed' | undefined; readonly limit?: number | undefined; readonly includeSources?: boolean | undefined; readonly includeConfidence?: boolean | undefined; readonly includeLinkedObjects?: boolean | undefined; readonly candidateSourceIds?: readonly string[] | undefined; readonly candidateNodeIds?: readonly string[] | undefined; readonly strictCandidates?: boolean | undefined; readonly linkedObjects?: readonly KnowledgeNodeRecord[] | undefined; readonly noMatchMessage?: string | undefined; readonly autoRepairGaps?: boolean | undefined; readonly timeoutMs?: number | undefined; }"
+      "text": "export interface KnowledgeSemanticAnswerInput { readonly signal?: AbortSignal | undefined; readonly query: string; readonly knowledgeSpaceId?: string | undefined; readonly mode?: 'concise' | 'standard' | 'detailed' | undefined; readonly limit?: number | undefined; readonly includeSources?: boolean | undefined; readonly includeConfidence?: boolean | undefined; readonly includeLinkedObjects?: boolean | undefined; readonly candidateSourceIds?: readonly string[] | undefined; readonly candidateNodeIds?: readonly string[] | undefined; readonly strictCandidates?: boolean | undefined; readonly linkedObjects?: readonly KnowledgeNodeRecord[] | undefined; readonly noMatchMessage?: string | undefined; readonly autoRepairGaps?: boolean | undefined; readonly timeoutMs?: number | undefined; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
     },
     {
       "name": "KnowledgeSemanticAnswerResult",
@@ -32141,7 +32175,7 @@
         "selfImprove",
         "setGapRepairer"
       ],
-      "text": "export declare class KnowledgeSemanticService { private readonly store; private options; private readonly activeGapRepairs; private readonly activeSelfImprovementRuns; constructor(store: KnowledgeStore, options?: KnowledgeSemanticServiceOptions); get llm(): KnowledgeSemanticLlm | null; setGapRepairer(gapRepairer: KnowledgeSemanticGapRepairer | null | undefined): void; addObjectProfiles(profiles: readonly KnowledgeObjectProfilePolicy[] | null | undefined): void; enrichSource(sourceId: string, input?: { readonly force?: boolean | undefined; readonly knowledgeSpaceId?: string | undefined; }): Promise<KnowledgeSemanticEnrichmentResult | null>; enrichSources(sources: readonly KnowledgeSourceRecord[], input?: { readonly force?: boolean; readonly knowledgeSpaceId?: string; readonly limit?: number; }): Promise<readonly KnowledgeSemanticEnrichmentResult[]>; reindex(input?: { readonly sourceIds?: readonly string[] | undefined; readonly limit?: number | undefined; readonly maxRunMs?: number | undefined; readonly force?: boolean | undefined; readonly knowledgeSpaceId?: string | undefined; }): Promise<{ readonly scanned: number; readonly enriched: number; readonly skipped: number; readonly failed: number; readonly errors: readonly { readonly sourceId: string; readonly error: string; }[]; readonly selfImprovement: KnowledgeSemanticSelfImproveResult; }>; answer(input: KnowledgeSemanticAnswerInput): Promise<KnowledgeSemanticAnswerResult>; repairAnswerGaps(input: { readonly answer: KnowledgeSemanticAnswerResult; readonly maxRunMs?: number | undefined; readonly limit?: number | undefined; }): Promise<KnowledgeSemanticSelfImproveResult>; private runAnswerRefinementInBackground; private readonly backgroundScheduler; queueBackgroundSelfImprove(input: KnowledgeSemanticSelfImproveInput, delayMs?: number): void; selfImprove(input?: KnowledgeSemanticSelfImproveInput, runOptions?: { readonly stopWhenPaused?: boolean; }): Promise<KnowledgeSemanticSelfImproveResult>; private backgroundStopRequested; isBackgroundWorkPaused(): boolean; admitBackgroundWork(label: string): { allowed: boolean; reason?: string | undefined; }; private runSelfImproveUnlocked; private collectSemanticSpaceIds; private taskIdsForGaps; private waitForActiveAnswerGapRepairs; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare class KnowledgeSemanticService { private readonly store; private options; private readonly activeGapRepairs; private readonly activeSelfImprovementRuns; constructor(store: KnowledgeStore, options?: KnowledgeSemanticServiceOptions); get llm(): KnowledgeSemanticLlm | null; setGapRepairer(gapRepairer: KnowledgeSemanticGapRepairer | null | undefined): void; addObjectProfiles(profiles: readonly KnowledgeObjectProfilePolicy[] | null | undefined): void; enrichSource(sourceId: string, input?: { readonly force?: boolean | undefined; readonly knowledgeSpaceId?: string | undefined; }): Promise<KnowledgeSemanticEnrichmentResult | null>; enrichSources(sources: readonly KnowledgeSourceRecord[], input?: { readonly force?: boolean; readonly knowledgeSpaceId?: string; readonly limit?: number; }): Promise<readonly KnowledgeSemanticEnrichmentResult[]>; reindex(input?: { readonly sourceIds?: readonly string[] | undefined; readonly limit?: number | undefined; readonly maxRunMs?: number | undefined; readonly force?: boolean | undefined; readonly knowledgeSpaceId?: string | undefined; }): Promise<{ readonly scanned: number; readonly enriched: number; readonly skipped: number; readonly failed: number; readonly errors: readonly { readonly sourceId: string; readonly error: string; }[]; readonly selfImprovement: KnowledgeSemanticSelfImproveResult; }>; answer(input: KnowledgeSemanticAnswerInput): Promise<KnowledgeSemanticAnswerResult>; repairAnswerGaps(input: { readonly answer: KnowledgeSemanticAnswerResult; readonly signal?: AbortSignal | undefined; readonly maxRunMs?: number | undefined; readonly limit?: number | undefined; }): Promise<KnowledgeSemanticSelfImproveResult>; private runAnswerRefinementInBackground; private readonly backgroundScheduler; queueBackgroundSelfImprove(input: KnowledgeSemanticSelfImproveInput, delayMs?: number): void; selfImprove(input?: KnowledgeSemanticSelfImproveInput, runOptions?: { readonly stopWhenPaused?: boolean; }): Promise<KnowledgeSemanticSelfImproveResult>; private backgroundStopRequested; isBackgroundWorkPaused(): boolean; admitBackgroundWork(label: string): { allowed: boolean; reason?: string | undefined; }; private runSelfImproveUnlocked; private collectSemanticSpaceIds; private taskIdsForGaps; private waitForActiveAnswerGapRepairs; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "KnowledgeSemanticServiceOptions",

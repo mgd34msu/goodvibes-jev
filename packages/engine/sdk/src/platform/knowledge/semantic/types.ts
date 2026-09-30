@@ -1,3 +1,4 @@
+import type { KnowledgeAnswerQuality } from './answer-verification/types.js';
 import type {
   KnowledgeObjectProfilePolicy,
 } from '../extensions.js';
@@ -101,6 +102,8 @@ export interface KnowledgeSemanticEnrichmentResult {
 }
 
 export interface KnowledgeSemanticAnswerInput {
+  /** Programmatic cancellation; never part of the serialized judgment state. */
+  readonly signal?: AbortSignal | undefined;
   readonly query: string;
   readonly knowledgeSpaceId?: string | undefined;
   readonly mode?: 'concise' | 'standard' | 'detailed' | undefined;
@@ -118,6 +121,7 @@ export interface KnowledgeSemanticAnswerInput {
 }
 
 export interface KnowledgeSemanticAnswer {
+  readonly quality?: KnowledgeAnswerQuality | undefined;
   readonly text: string;
   readonly mode: string;
   readonly confidence: number;

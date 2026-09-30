@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 const roots: string[] = [];
@@ -47,9 +47,11 @@ describe('answer judgment holds before generation or repair writes', () => {
     }
     const prompts: string[] = [];
     const service = new KnowledgeSemanticService(store, { llm: {
-      async completeJson(input) { prompts.push(input.prompt); return null; }, async completeText() { return null; },
+      async completeJson() { throw new Error("No answer JSON generation"); }, async completeText(input) { prompts.push(input.prompt); return null; },
     } });
-    installJudgmentPort(fakePort((name, _question, state) => {
+    installJudgmentPort(fakePort((name, question, state) => {
+      if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.97);
+      if (name === 'enough' || name === 'complete') return noulAnswer(0.97);
       if (name === 'features') return noulAnswer(0.97);
       if (name !== 'match') throw new Error(`Unexpected fixture question: ${name}`);
       const candidate = (state as { candidate: { sourceType?: string; title: string } }).candidate;

@@ -11,7 +11,6 @@ import {
   homeAssistantKnowledgeSpaceId,
 } from '../sdk/src/platform/knowledge/index.js';
 import {
-  BoilerplateAnswerLlm,
   FakeKnowledgeLlm,
   ForegroundRepairLlm,
   GapRepairAnswerLlm,
@@ -109,7 +108,11 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     ] });
 
     const { store } = createStores();
-    const semantic = new KnowledgeSemanticService(store);
+    // Concise candidate is authored by the synthetic generator; production never regex-cleans an answer.
+    const semantic = new KnowledgeSemanticService(store, { llm: {
+      async completeJson() { return null; },
+      async completeText() { return 'The TV supports Dolby Vision.'; },
+    } });
     const tv = await store.upsertSource({
       connectorId: 'manual',
       sourceType: 'manual',
@@ -232,6 +235,8 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
         sourceDiscovery: { trustReason: 'official-vendor-domain, model:86NANO90UNA', sourceRank: 1 },
       },
     });
+    await store.upsertExtraction({ sourceId: official.id, extractorId: 'synthetic', format: 'text',
+      excerpt: 'The LG 86NANO90UNA living room TV supports 4K UHD resolution, HDR10, and Dolby Vision.', metadata: { knowledgeSpaceId: spaceId } });
     const secondary = await store.upsertSource({
       connectorId: 'web',
       sourceType: 'url',
@@ -528,6 +533,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('base Home Assistant alias stores answer-gap refinement in the concrete installation space', async () => {
+    answerReadings.set({ enough: 0.03, complete: 0.03, fidelityByCandidate: [['generated', 'unsupported']] });
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, {
       llm: new GapRepairAnswerLlm(),
@@ -584,11 +590,12 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     });
 
     expect(answer.answer.gaps?.some((gap) => (
-      gap.summary?.includes('source-backed feature or specification facts')
+      gap.summary?.includes('no extracted evidence available')
     ))).toBe(true);
   });
 
   test('Home Graph ask prioritizes answer synthesis before background semantic enrichment', async () => {
+    answerReadings.set({ enough: 0.03, complete: 0.03 });
     const { store, artifactStore } = createStores();
     const llm = new OrderedHomeGraphAskLlm();
     const semantic = new KnowledgeSemanticService(store, { llm });
@@ -618,7 +625,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(llm.calls[0]).toBe('knowledge-answer-synthesis');
     expect(answer.answer.synthesized).toBe(true);
     expect(answer.answer.text).toContain('Dolby Vision');
-    expect(answer.answer.gaps?.map((gap) => gap.title)).toContain('What are the complete TV feature specifications?');
+    expect(answer.answer.gaps?.map((gap) => gap.title)).toContain('what features does the living room tv have?');
   });
 
   test('Home Graph ask repairs concrete feature gaps from repaired sources', async () => {
@@ -808,7 +815,11 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     ] });
 
     const { store, artifactStore } = createStores();
-    const semantic = new KnowledgeSemanticService(store);
+    // Concise candidate is authored by the synthetic generator; production never regex-cleans an answer.
+    const semantic = new KnowledgeSemanticService(store, { llm: {
+      async completeJson() { return null; },
+      async completeText() { return 'The TV supports HDR10, HDMI ARC/eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.'; },
+    } });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
     await service.syncSnapshot({
       installationId: 'house',
@@ -895,9 +906,13 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(answerText).not.toContain('▲');
   });
 
-  test('feature answer synthesis strips provider-returned setup boilerplate', async () => {
+  test('measured candidate preference selects concise generated content over literal setup boilerplate', async () => {
+    answerReadings.set({ preferred: 'generated' });
     const { store } = createStores();
-    const semantic = new KnowledgeSemanticService(store, { llm: new BoilerplateAnswerLlm() });
+    const semantic = new KnowledgeSemanticService(store, { llm: {
+      async completeJson() { throw new Error('Answer generation is plain text'); },
+      async completeText() { return 'The TV supports HDMI Ultra HD Deep Color, 4K at 100/120 Hz on ports 3 and 4, and IEEE 802.11a/b/g/n/ac wireless LAN and Bluetooth.'; },
+    } });
     const source = await store.upsertSource({
       connectorId: 'manual',
       sourceType: 'manual',
@@ -921,6 +936,12 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
         ].join(' '),
       },
     });
+
+    for (const [index, summary] of [
+      'HDMI Ultra HD Deep Color with 4K at 100/120 Hz on ports 3 and 4.',
+      'IEEE 802.11a/b/g/n/ac wireless LAN and Bluetooth.',
+    ].entries()) await store.upsertNode({ kind: 'fact', slug: `concise-feature-${index}`, title: 'TV feature',
+      summary, sourceId: source.id, metadata: { semanticKind: 'fact', factKind: 'feature' } });
 
     const answer = await semantic.answer({
       query: 'what features does the LG TV have?',
@@ -949,6 +970,8 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       tags: ['semantic-gap-repair'],
       status: 'indexed',
     });
+    await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text',
+      excerpt: 'The LG 86NANO90UNA TV supports a native 120 Hz refresh rate.' });
     const fact = await store.upsertNode({
       kind: 'fact',
       slug: 'lg-tv-refresh-rate',
@@ -1060,58 +1083,24 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(isLowValueFeatureOrSpecText('RS-232C external control setup command table for SERVICE ONLY')).toBe(true);
   });
 
-  test('feature answers still report a gap when prose is not backed by persisted concrete facts', async () => {
-    const { answerNeedsFeatureGap } = await import('../sdk/src/platform/knowledge/semantic/answer-quality.js');
-    const { store } = createStores();
-    const source = await store.upsertSource({
-      connectorId: 'semantic-gap-repair',
-      sourceType: 'url',
-      title: 'LG 86NANO90UNA official specifications',
-      canonicalUri: 'https://www.lg.com/us/tvs/lg-86nano90una-4k-uhd-tv',
-      tags: ['semantic-gap-repair'],
-      status: 'indexed',
+  test('measured sufficiency accepts sparse evidence and rejects many facts missing the requested detail', async () => {
+    const { verifyKnowledgeAnswer } = await import('../sdk/src/platform/knowledge/semantic/answer-verification/reader.js');
+    const { answerNeedsEvidenceGap } = await import('../sdk/src/platform/knowledge/semantic/answer-quality.js');
+    const query = 'How many HDMI ports does the TV have?';
+    const sparse = await verifyKnowledgeAnswer({ query,
+      evidence: [{ reference: 'evidence-1', text: 'The TV has four HDMI ports.' }],
+      candidates: [{ id: 'rendered', text: 'Four HDMI ports.' }],
     });
-    const device = await store.upsertNode({
-      kind: 'ha_device',
-      slug: 'lg-tv-gap-backed-by-facts',
-      title: 'LG webOS Smart TV',
-      aliases: ['LG 86NANO90UNA'],
-      confidence: 90,
-      metadata: { manufacturer: 'LG', model: '86NANO90UNA' },
+    expect(answerNeedsEvidenceGap(sparse.quality)).toBe(false);
+    expect(sparse.quality.status).toBe('verified');
+    answerReadings.set({ enough: 0.03, complete: 0.03 });
+    const many = await verifyKnowledgeAnswer({ query,
+      evidence: [{ reference: 'evidence-1', text: '4K display, HDR10, Dolby Vision, webOS, USB, Wi-Fi, Bluetooth, stereo speakers.',
+        facts: ['4K display', 'HDR10', 'Dolby Vision', 'webOS', 'USB', 'Wi-Fi', 'Bluetooth', 'stereo speakers'] }],
+      candidates: [{ id: 'rendered', text: 'The source lists many features but gives no HDMI port count.' }],
     });
-
-    expect(answerNeedsFeatureGap({
-      query: 'What features does the LG 86NANO90UNA have?',
-      text: 'It has a 4K NanoCell display, HDR10, Dolby Vision, webOS, HDMI, USB, Wi-Fi, Bluetooth, and 2 x 10W speakers.',
-      facts: [],
-      sources: [source],
-      linkedObjects: [device],
-    })).toBe(true);
-
-    const facts = await Promise.all(['Display and picture specifications', 'Input and output ports', 'Audio capabilities'].map((title, index) => store.upsertNode({
-      kind: 'fact',
-      slug: `lg-tv-backed-fact-${index}`,
-      title,
-      summary: `${title}: 4K UHD resolution, HDMI inputs, USB ports, Wi-Fi, Bluetooth, and 2 x 10W speakers.`,
-      aliases: [],
-      confidence: 90,
-      sourceId: source.id,
-      metadata: {
-        semanticKind: 'fact',
-        factKind: index === 1 ? 'specification' : 'feature',
-        sourceId: source.id,
-        subjectIds: [device.id],
-        linkedObjectIds: [device.id],
-      },
-    })));
-
-    expect(answerNeedsFeatureGap({
-      query: 'What features does the LG 86NANO90UNA have?',
-      text: 'It has a 4K NanoCell display, HDR10, Dolby Vision, webOS, HDMI, USB, Wi-Fi, Bluetooth, and 2 x 10W speakers.',
-      facts,
-      sources: [source],
-      linkedObjects: [device],
-    })).toBe(false);
+    expect(answerNeedsEvidenceGap(many.quality)).toBe(true);
+    expect(many.quality.status).toBe('partial');
   });
 
   test('base Home Assistant alias does not return generic device facts without a subject', async () => {

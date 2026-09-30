@@ -1,3 +1,4 @@
+import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { answerFactRerank, answerQueryIntent } from './ranking/fact-rerank.js';
@@ -9,7 +10,8 @@ export class KnowledgeFactSelectionHeldError extends Error {
   constructor() { super('Knowledge fact relevance did not settle; no fact was selected.'); }
 }
 
-export async function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[]): Promise<KnowledgeNodeRecord[]> {
+export async function filterFactsForQuery(query: string, facts: readonly KnowledgeNodeRecord[], signal?: AbortSignal): Promise<KnowledgeNodeRecord[]> {
+  assertAnswerVerificationActive(signal);
   const byId = new Map(facts.filter((fact) => fact.status !== 'stale').map((fact) => [fact.id, fact]));
   const shortlist = [...byId.values()].slice(0, 50);
   if (shortlist.length === 0) return [];
@@ -20,16 +22,19 @@ export async function filterFactsForQuery(query: string, facts: readonly Knowled
   } }));
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
   const port = judgmentPort('engine.knowledge.answer-fact-rank');
-  const { ranked } = await answerFactRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-fact-rank' });
+  const { ranked } = await answerFactRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-fact-rank', ...(signal ? { signal } : {}) });
+  assertAnswerVerificationActive(signal);
   for (const item of ranked) if (item.decisionId !== undefined) port.recorder?.recordAction(item.decisionId, item.reading.verdict === 'yes' && item.reading.outcome === 'act' ? 'selected: query-supporting fact' : `not selected: ${item.reading.verdict} (${item.reading.outcome})`);
   const accepted = ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
   if (accepted.length === 0 && ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeFactSelectionHeldError();
   return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => byId.get(item.id)!);
 }
 
-export async function hasFeatureIntentForQuery(query: string): Promise<boolean> {
+export async function hasFeatureIntentForQuery(query: string, signal?: AbortSignal): Promise<boolean> {
+  assertAnswerVerificationActive(signal);
   assertJudgmentInput({ query });
-  const run = await answerQueryIntent.run(judgmentPort('engine.knowledge.answer-query-intent'), { query }, { site: 'engine.knowledge.answer-query-intent' });
+  const run = await answerQueryIntent.run(judgmentPort('engine.knowledge.answer-query-intent'), { query }, { site: 'engine.knowledge.answer-query-intent', ...(signal ? { signal } : {}) });
+  assertAnswerVerificationActive(signal);
   if (run.readings.features.outcome !== 'act') { run.recordAction('held: unsettled query intent'); throw new KnowledgeFactSelectionHeldError(); }
   run.recordAction(`query feature intent: ${run.readings.features.verdict}`);
   return run.readings.features.verdict === 'yes';

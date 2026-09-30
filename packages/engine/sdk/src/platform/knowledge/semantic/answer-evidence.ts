@@ -59,6 +59,7 @@ export async function collectAnswerEvidence(
   spaceId: string,
   limit: number,
   objectProfiles: readonly KnowledgeObjectProfilePolicy[],
+  signal?: AbortSignal,
 ): Promise<EvidenceItem[]> {
   const tokens = expandQueryTokens(tokenizeSemanticQuery(input.query));
   if (tokens.length === 0) return [];
@@ -82,9 +83,9 @@ export async function collectAnswerEvidence(
     .filter((source) => sourceInAnswerObjectScope(store, source, objectScope))
     .filter((source) => !strictCandidates || candidateSourceIds.has(source.id) || linkedSourceIds.has(source.id))
     .slice(0, 50);
-  const scopedFacts = await filterFactsForQuery(input.query, uniqueNodes(scopedSources.flatMap((source) => sourceFacts.get(source.id) ?? [])));
+  const scopedFacts = await filterFactsForQuery(input.query, uniqueNodes(scopedSources.flatMap((source) => sourceFacts.get(source.id) ?? [])), signal);
   const selectedFactIds = new Set(scopedFacts.map((fact) => fact.id));
-  const featureIntent = scopedSources.length > 0 ? await hasFeatureIntentForQuery(input.query) : false;
+  const featureIntent = scopedSources.length > 0 ? await hasFeatureIntentForQuery(input.query, signal) : false;
   const sourceItems = scopedSources
     .map((source) => {
       const extraction = store.getExtractionBySourceId(source.id);
@@ -211,6 +212,7 @@ export async function includeOfficialLinkedEvidence(
   evidence: readonly EvidenceItem[],
   linkedObjects: readonly KnowledgeNodeRecord[],
   limit: number,
+  signal?: AbortSignal,
 ): Promise<EvidenceItem[]> {
   if (linkedObjects.length === 0) return [...evidence];
   const linkedIds = new Set(linkedObjects.map((node) => node.id));
@@ -223,9 +225,9 @@ export async function includeOfficialLinkedEvidence(
     .filter((source) => linkedSourceIds.has(source.id) || readStringArray(readRecord(source.metadata.sourceDiscovery).linkedObjectIds).some((id) => linkedIds.has(id)))
     .slice(0, 50);
   if (officialSources.length === 0) return [...evidence];
-  const selectedFacts = await filterFactsForQuery(query, uniqueNodes(officialSources.flatMap((source) => sourceFacts.get(source.id) ?? [])));
+  const selectedFacts = await filterFactsForQuery(query, uniqueNodes(officialSources.flatMap((source) => sourceFacts.get(source.id) ?? [])), signal);
   const selectedFactIds = new Set(selectedFacts.map((fact) => fact.id));
-  const featureIntent = await hasFeatureIntentForQuery(query);
+  const featureIntent = await hasFeatureIntentForQuery(query, signal);
   const retrievalScores = new Map(evidence.filter((item) => item.source).map((item) => [item.source!.id, item.score]));
   const candidates = officialSources.map((source) => {
     const extraction = store.getExtractionBySourceId(source.id);
@@ -237,9 +239,9 @@ export async function includeOfficialLinkedEvidence(
       score: retrievalScores.get(source.id) ?? 0, source, excerpt: selectEvidenceExcerpt(query, text, facts, featureIntent), facts,
     };
   });
-  const ranked = await readAnswerSourceRanking(candidates, selectedFacts, query);
+  const ranked = await readAnswerSourceRanking(candidates, selectedFacts, query, signal);
   const byId = new Map(candidates.map((item) => [item.id, item]));
-  // score remains the existing retrieval scale consumed by legacy answer confidence.
+  // score remains the existing retrieval scale for search result consumers.
   // Relevance probability orders this set only; it is not answer confidence.
   // Newly discovered references have no retrieval score rather than invented points.
   const officialItems = ranked.map((reading) => byId.get(reading.source.id)!);

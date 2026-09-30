@@ -1,3 +1,4 @@
+import { assertAnswerVerificationActive } from './answer-verification/budget.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
 import { answerSourceRerank } from './ranking/source-rerank.js';
@@ -22,7 +23,9 @@ export async function readAnswerSourceRanking(
   evidence: readonly AnswerSourceRankingEvidence[],
   facts: readonly KnowledgeNodeRecord[],
   query: string,
+  signal?: AbortSignal,
 ): Promise<Array<{ source: KnowledgeSourceRecord; probability: number }>> {
+  assertAnswerVerificationActive(signal);
   const sources = uniqueSources(evidence.flatMap((item) => item.source ? [item.source] : []))
     .filter((source) => source.status !== 'failed' && source.status !== 'stale');
   const realSources = sources.filter((source) => !isGeneratedKnowledgeSource(source));
@@ -45,7 +48,8 @@ export async function readAnswerSourceRanking(
   // Preflight the complete selected batch before any concurrent request starts.
   assertJudgmentInput({ query, candidates: candidates.map((candidate) => candidate.content) });
   const port = judgmentPort('engine.knowledge.answer-source-rank');
-  const result = await answerSourceRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-source-rank' });
+  const result = await answerSourceRerank.rerank(port, query, candidates, { site: 'engine.knowledge.answer-source-rank', ...(signal ? { signal } : {}) });
+  assertAnswerVerificationActive(signal);
   for (const item of result.ranked) if (item.decisionId !== undefined) port.recorder?.recordAction(item.decisionId, item.reading.verdict === 'yes' && item.reading.outcome === 'act' ? 'selected: query-supporting source' : `not selected: ${item.reading.verdict} (${item.reading.outcome})`);
   const accepted = result.ranked.filter((item) => item.reading.verdict === 'yes' && item.reading.outcome === 'act');
   if (accepted.length === 0 && result.ranked.some((item) => item.reading.outcome !== 'act')) throw new KnowledgeSourceRankingHeldError();
@@ -53,8 +57,8 @@ export async function readAnswerSourceRanking(
   return accepted.sort((a, b) => b.probability - a.probability || a.id.localeCompare(b.id)).map((item) => ({ source: byId.get(item.id)!, probability: item.probability }));
 }
 
-export async function rankAnswerSources(evidence: readonly AnswerSourceRankingEvidence[], facts: readonly KnowledgeNodeRecord[], query: string): Promise<KnowledgeSourceRecord[]> {
-  return (await readAnswerSourceRanking(evidence, facts, query)).map((item) => item.source);
+export async function rankAnswerSources(evidence: readonly AnswerSourceRankingEvidence[], facts: readonly KnowledgeNodeRecord[], query: string, signal?: AbortSignal): Promise<KnowledgeSourceRecord[]> {
+  return (await readAnswerSourceRanking(evidence, facts, query, signal)).map((item) => item.source);
 }
 
 /** Minimal content/provenance evidence; no arbitrary metadata or numeric database dates. */
