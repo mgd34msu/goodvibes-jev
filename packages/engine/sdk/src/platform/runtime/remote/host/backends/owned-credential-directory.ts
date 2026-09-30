@@ -46,6 +46,7 @@ export class OwnedCredentialDirectory {
   private directoryPromise: Promise<string> | null = null;
   private owned: { path: string; stat: Stats; rootStat: Stats } | null = null;
   private readonly writes = new Set<Promise<string>>();
+  private readonly files = new Set<string>();
   private closed = false;
   private closing: Promise<void> | null = null;
 
@@ -131,11 +132,13 @@ export class OwnedCredentialDirectory {
       await assertRealPath(directory);
       const path = join(directory, `${randomUUID()}.${extension}`);
       const handle = await open(path, 'wx', 0o600);
+      this.files.add(path);
       try {
         await handle.writeFile(contents);
       } catch (error) {
         await handle.close();
         await rm(path, { force: true });
+        this.files.delete(path);
         throw error;
       }
       await handle.close();
@@ -144,6 +147,24 @@ export class OwnedCredentialDirectory {
     this.writes.add(pending);
     void pending.then(() => { this.writes.delete(pending); }, () => { this.writes.delete(pending); });
     return pending;
+  }
+
+  /** Remove only a file this instance created, never an arbitrary caller path. */
+  async remove(path: string): Promise<void> {
+    if (!this.files.has(path)) throw new Error('Credential scratch file is not owned by this instance.');
+    if (this.owned) {
+      await assertRealPath(this.owned.path);
+      try {
+        if (!sameDirectory(await lstat(this.root), this.owned.rootStat)
+          || !sameDirectory(await lstat(this.owned.path), this.owned.stat)) {
+          throw new Error('Credential scratch directory identity changed.');
+        }
+        await rm(path, { force: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+    }
+    this.files.delete(path);
   }
 
   close(): Promise<void> {

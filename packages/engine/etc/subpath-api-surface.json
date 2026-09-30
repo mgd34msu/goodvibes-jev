@@ -53257,6 +53257,11 @@
       "text": "export declare function createChannelComposition(options: { readonly configManager: ConfigManager; readonly runtimeStore: RuntimeStore; readonly runtimeBus: RuntimeEventBus; readonly featureFlags: FeatureFlagManager; }): ChannelComposition; ;; via RuntimeStore = export type RuntimeStore = StoreApi<RuntimeState>;"
     },
     {
+      "name": "createCloudTerminalBackend",
+      "kind": "function",
+      "text": "export declare function createCloudTerminalBackend(ctx: BackendContext): Backend;"
+    },
+    {
       "name": "createCodeIndexServices",
       "kind": "function",
       "text": "export declare function createCodeIndexServices(deps: CodeIndexServicesDeps): CodeIndexServices;"

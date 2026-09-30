@@ -54,6 +54,7 @@ export {
 } from './host/backends/types.js';
 export { createLocalProcessBackend, tokenizeCommand } from './host/backends/local-process.js';
 export { createDockerBackend } from './host/backends/docker.js';
+export { createCloudTerminalBackend } from './host/backends/cloud-terminal.js';
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 

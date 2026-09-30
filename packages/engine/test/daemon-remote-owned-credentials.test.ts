@@ -17,6 +17,19 @@ function seedOwner(root: string, pid: number, nonce = 'abcdefghijklmnop') {
 }
 
 describe('owned credential scratch', () => {
+  test('single-file cleanup can remove only this instance created files', async () => {
+    const root = fixtureRoot();
+    const owned = new OwnedCredentialDirectory({ rootDirectory: root, logger });
+    const file = await owned.write('dummy', 'cred');
+    const legacy = join(root, 'legacy.key');
+    writeFileSync(legacy, 'dummy legacy');
+    await expect(owned.remove(legacy)).rejects.toThrow('not owned');
+    await owned.remove(file);
+    expect(existsSync(file)).toBe(false);
+    await owned.close();
+    expect(readFileSync(legacy, 'utf8')).toBe('dummy legacy');
+  });
+
   test('concurrent instances retain separate private files through individual teardown', async () => {
     const root = fixtureRoot();
     const a = new OwnedCredentialDirectory({ rootDirectory: root, logger });
