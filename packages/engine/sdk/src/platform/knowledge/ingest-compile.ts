@@ -14,9 +14,9 @@ import {
   mergeTags,
   readMetadataStrings,
   slugify,
-  topKeywords,
 } from './shared.js';
 import type { KnowledgeIngestContext } from './ingest-context.js';
+import { readKnowledgeEntityAliases } from './entity-aliases.js';
 import type {
   KnowledgeExtractionRecord,
   KnowledgeNodeRecord,
@@ -145,10 +145,11 @@ export async function compileKnowledgeSource(
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
 ): Promise<void> {
+  const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction);
   const initialNodeCount = context.store.status().nodeCount;
   const initialEdgeCount = context.store.status().edgeCount;
   await context.store.batch(async () => {
-    await compileKnowledgeSourceRecords(context, source, extraction);
+    await compileKnowledgeSourceRecords(context, source, extraction, entityHints);
   });
 
   const finalStatus = context.store.status();
@@ -162,7 +163,8 @@ export async function compileKnowledgeSource(
 async function compileKnowledgeSourceRecords(
   context: KnowledgeIngestContext,
   source: KnowledgeSourceRecord,
-  extraction?: KnowledgeExtractionRecord | null,
+  extraction: KnowledgeExtractionRecord | null | undefined,
+  entityHints: readonly CompiledEntityHint[],
 ): Promise<void> {
   const spaceId = getKnowledgeSpaceId(source);
   if (source.artifactId) {
@@ -263,7 +265,7 @@ async function compileKnowledgeSourceRecords(
     });
   }
 
-  await compileKnowledgeStructuredEntityHints(context, source, extraction);
+  await writeKnowledgeStructuredEntityHints(context, source, entityHints);
 
   if (extraction) {
     const tagSlugs = new Set(source.tags.map((tag) => slugify(tag)));
@@ -333,14 +335,23 @@ export async function compileKnowledgeStructuredEntityHints(
   source: KnowledgeSourceRecord,
   extraction?: KnowledgeExtractionRecord | null,
 ): Promise<void> {
-  const spaceId = getKnowledgeSpaceId(source);
+  const entityHints = await prepareKnowledgeStructuredEntityHints(source, extraction);
+  await writeKnowledgeStructuredEntityHints(context, source, entityHints);
+}
+
+interface CompiledEntityHint {
+  readonly kind: KnowledgeNodeRecord['kind'];
+  readonly title: string;
+  readonly relation: string;
+  readonly summaryPrefix: string;
+  readonly aliases: readonly string[];
+}
+
+async function prepareKnowledgeStructuredEntityHints(
+  source: KnowledgeSourceRecord,
+  extraction: KnowledgeExtractionRecord | null | undefined,
+): Promise<readonly CompiledEntityHint[]> {
   const metadata = source.metadata ?? {};
-  const topicKeywords = topKeywords([
-    source.title ?? '',
-    source.summary ?? '',
-    extraction?.summary ?? '',
-    extraction?.sections.join(' ') ?? '',
-  ].join(' '), 4);
   const entitySpecs: Array<{
     kind: KnowledgeNodeRecord['kind'];
     values: readonly string[];
@@ -413,29 +424,42 @@ export async function compileKnowledgeStructuredEntityHints(
     },
   ];
 
-  for (const spec of entitySpecs) {
-    for (const value of spec.values.slice(0, MAX_ENTITY_HINT_VALUES_PER_KIND)) {
-      const title = value.trim();
-      if (!title) continue;
-      const node = await context.store.upsertNode({
-        kind: spec.kind,
-        slug: slugify(`${spaceId}-${title}`),
-        title,
-        summary: `${spec.summaryPrefix} entity compiled from structured knowledge sources.`,
-        aliases: topicKeywords,
-        metadata: knowledgeSpaceMetadata(spaceId, {
-          compiledFrom: source.id,
-          tags: [...source.tags],
-        }),
-      });
-      await context.store.upsertEdge({
-        fromKind: 'source',
-        fromId: source.id,
-        toKind: 'node',
-        toId: node.id,
-        relation: spec.relation,
-        metadata: knowledgeSpaceMetadata(spaceId),
-      });
-    }
+  const entities = entitySpecs.flatMap((spec) => spec.values.slice(0, MAX_ENTITY_HINT_VALUES_PER_KIND)
+    .map((value) => ({ kind: spec.kind, title: value.trim(), relation: spec.relation, summaryPrefix: spec.summaryPrefix }))
+    .filter((entity) => entity.title.length > 0));
+  const aliases = await readKnowledgeEntityAliases(entities, {
+    title: source.title ?? '', summary: source.summary ?? '',
+    extractionSummary: extraction?.summary ?? '', sections: extraction?.sections ?? [],
+  });
+  return entities.map((entity, index) => ({ ...entity, aliases: aliases[index]! }));
+}
+
+async function writeKnowledgeStructuredEntityHints(
+  context: KnowledgeIngestContext,
+  source: KnowledgeSourceRecord,
+  entities: readonly CompiledEntityHint[],
+): Promise<void> {
+  const spaceId = getKnowledgeSpaceId(source);
+  for (const entity of entities) {
+    const { kind, title, summaryPrefix, aliases, relation } = entity;
+    const node = await context.store.upsertNode({
+      kind,
+      slug: slugify(`${spaceId}-${title}`),
+      title,
+      summary: `${summaryPrefix} entity compiled from structured knowledge sources.`,
+      aliases,
+      metadata: knowledgeSpaceMetadata(spaceId, {
+        compiledFrom: source.id,
+        tags: [...source.tags],
+      }),
+    });
+    await context.store.upsertEdge({
+      fromKind: 'source',
+      fromId: source.id,
+      toKind: 'node',
+      toId: node.id,
+      relation,
+      metadata: knowledgeSpaceMetadata(spaceId),
+    });
   }
 }
