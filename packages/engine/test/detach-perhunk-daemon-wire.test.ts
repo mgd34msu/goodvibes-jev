@@ -13,6 +13,7 @@
  *    computed server-side, including the out-of-range 400.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,7 @@ function auth(extra: Record<string, string> = {}): Record<string, string> {
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'w3s3-home-'));
+  seedBenchmarkCache(home, 'goodvibes');
   work = mkdtempSync(join(tmpdir(), 'w3s3-work-'));
   daemon = await bootDaemon({
     homeDirectory: home,

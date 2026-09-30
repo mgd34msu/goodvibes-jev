@@ -8,6 +8,7 @@
  * offline). Exercises the full TUI journey: adopt (activate), register, keepalive,
  * offline queue, reconnect flush, and close.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,6 +79,7 @@ interface Harness {
 
 async function startHarness(): Promise<Harness> {
   const homeDirectory = mkdtempSync(join(tmpdir(), 'goodvibes-sdk-spine-home-'));
+  seedBenchmarkCache(homeDirectory, 'goodvibes');
   const workingDir = mkdtempSync(join(tmpdir(), 'goodvibes-sdk-spine-project-'));
   const daemon = await bootDaemon({ homeDirectory, workingDir, port: 0, token: TOKEN });
   const transport = createHttpTransport({ baseUrl: daemon.url, authToken: TOKEN });

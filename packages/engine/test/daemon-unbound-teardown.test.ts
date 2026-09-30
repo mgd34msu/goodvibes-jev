@@ -18,6 +18,7 @@
  * ordinary suite, no preload required.
  */
 
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,6 +100,7 @@ let createdDuringRun = 0;
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'unbound-home-'));
+  seedBenchmarkCache(home, 'goodvibes');
   work = mkdtempSync(join(tmpdir(), 'unbound-work-'));
 
   install();
