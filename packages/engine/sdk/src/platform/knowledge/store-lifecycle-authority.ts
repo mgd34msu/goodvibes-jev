@@ -43,7 +43,14 @@ export function prepareKnowledgeIssueUpsert(
   const retired = readStrings(lifecycle.retiredFingerprints);
   // A captured old record cannot undo a later review/reopen, even when both
   // lifecycles happen to have status open. Sparse producer inputs have no token.
-  const stale = !mutation && ((typeof incomingLifecycle.id === 'string' && incomingLifecycle.id !== lifecycle.id)
+  // Pre-token persisted snapshots cannot prove they observed an operator reopen.
+  // Current repair callers carry the token read with the issue; a genuinely new
+  // content fingerprint is still a separate lifecycle rather than a freeze.
+  const unversionedResolution = !changed && input.status === 'resolved' && existing?.status === 'open'
+    && typeof readRecord(existing.metadata.review).action === 'string'
+    && typeof lifecycle.id === 'string' && incomingLifecycle.id !== lifecycle.id;
+  const stale = !mutation && (unversionedResolution
+    || (typeof incomingLifecycle.id === 'string' && incomingLifecycle.id !== lifecycle.id)
     || (changed && next !== undefined && retired.includes(next)));
   if (existing && (stale || (!mutation && existing.status === 'resolved' && !changed))) {
     return { preserve: true, status: existing.status, metadata: existing.metadata };

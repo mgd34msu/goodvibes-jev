@@ -4,6 +4,8 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.js';
+import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
 import { createKnowledgeIssueOperatorMutation } from '../sdk/src/platform/knowledge/store-lifecycle-authority.js';
 import { reviewKnowledgeIssue } from '../sdk/src/platform/knowledge/review.js';
 import { reviewHomeGraphFact } from '../sdk/src/platform/knowledge/home-graph/review.js';
@@ -177,6 +179,27 @@ describe('knowledge issue lifecycle authority', () => {
     await expect(old).rejects.toThrow('changed before its explicit review');
     expect(h.store.getIssue(issue.id)).toEqual(resolved);
     expect(h.store.getNode(h.gap.id)).toEqual(h.gap);
+  });
+
+  test('an unversioned legacy payload cannot resolve a reopened issue, but a fresh pass still can', async () => {
+    const { store: initial } = createStores(); await initial.init();
+    const sqlite = new SQLiteStore(initial.storagePath); await sqlite.init(createSchema);
+    sqlite.run(`INSERT INTO knowledge_issues (id, severity, code, message, status, metadata, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, ['legacy-issue', 'info', 'gap', 'Missing property', 'open', JSON.stringify({ subjectFingerprint: 'v1' }), 1, 1]);
+    await sqlite.save();
+    const store = new KnowledgeStore({ dbPath: initial.storagePath }); await store.init();
+    const captured = store.getIssue('legacy-issue')!;
+    expect(captured.metadata.issueLifecycle).toBeUndefined();
+    await reviewKnowledgeIssue(store, { issueId: captured.id, action: 'resolve', reviewer: 'owner' });
+    const reopened = (await reviewKnowledgeIssue(store, { issueId: captured.id, action: 'reopen', reviewer: 'owner' })).issue;
+    expect(await store.upsertIssue({ ...captured, status: 'resolved' })).toEqual(reopened);
+    await store.replaceIssueRecord({ ...captured, status: 'resolved' });
+    expect(store.getIssue(captured.id)).toEqual(reopened);
+    // A pass that observes the new operator decision carries its current token.
+    expect((await store.upsertIssue({ ...reopened, status: 'resolved' })).status).toBe('resolved');
+    const fresh = await store.upsertIssue({ ...captured, metadata: { subjectFingerprint: 'v2' } });
+    expect(fresh.status).toBe('open');
+    expect(fresh.metadata.review).toBeUndefined();
   });
 
   test('a serialized review capability cannot forge operator authority', async () => {
