@@ -140,6 +140,26 @@ describe('registered use', () => {
     ]) expect(sourceFindings('factory.ts', source, registered)).toHaveLength(1);
   });
 
+  test.each([
+    "for (name of ['engine.unlisted']) {}",
+    "for (name in { 'engine.unlisted': null }) {}",
+    "for ([name] of [['engine.unlisted']]) {}",
+    "for ({ value: name } of [{ value: 'engine.unlisted' }]) {}",
+    "var name = 'engine.unlisted';",
+    "var [name] = ['engine.unlisted'];",
+    "for (var name = 'engine.unlisted'; false;) {}",
+    "function name() {}",
+    "eval(\"name = 'engine.unlisted'\");",
+  ])('rebinding cannot preserve a factory parameter proof: %s', (write) => {
+    const source = `function judge(name) { ${write} return defineJudge({ name, fixtures: [] }); } judge('engine.known');`;
+    expect(sourceFindings('factory-write.ts', source, registered).length).toBeGreaterThan(0);
+  });
+
+  test('a separately bound loop variable does not mutate the factory parameter', () => {
+    const source = `function judge(name) { for (const name of ['engine.unlisted']) {} return defineJudge({ name, fixtures: [] }); } judge('engine.known');`;
+    expect(sourceFindings('loop-scope.ts', source, registered)).toEqual([]);
+  });
+
   test('name resolution respects lexical scope instead of finding an unrelated same-named constant', () => {
     const source = `
       const NAME = 'engine.known';
@@ -180,6 +200,47 @@ describe('registered use', () => {
       custom().replace('checkFixtures:', 'unrelated:'),
       custom('HEADER', "askAs(port, HEADER, 'battery', input, {});"),
     ]) expect(sourceFindings('custom.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test.each([
+    "HEADER.name = 'engine.unlisted';",
+    "HEADER['name'] = 'engine.unlisted';",
+    "const alias = HEADER; alias.name = 'engine.unlisted';",
+    "const wrapper = { header: HEADER }; wrapper.header.name = 'engine.unlisted';",
+    "mutate(HEADER);",
+    "Object.assign(HEADER, { name: 'engine.unlisted' });",
+    "Object.defineProperty(HEADER, 'name', { value: 'engine.unlisted' });",
+    "delete HEADER.name;",
+    "for (HEADER.name of ['engine.unlisted']) {}",
+    "export { HEADER };",
+    "function getHeader() { return HEADER; }",
+    "eval(\"HEADER.name = 'engine.unlisted'\");",
+  ])('mutable or escaping const headers cannot authorize custom reads: %s', (write) => {
+    const source = custom('HEADER', write);
+    expect(sourceFindings('header-write.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('an exported header binding is not a private immutable runtime identity', () => {
+    expect(sourceFindings('header-export.ts', custom().replace('const HEADER', 'export const HEADER'), registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('a write inside the custom reader invalidates its captured header proof', () => {
+    const source = custom().replace('return askAs', "HEADER.name = 'engine.unlisted'; return askAs");
+    expect(sourceFindings('reader-write.ts', source, registered).some((finding) => finding.message.includes('calls askAs outside'))).toBe(true);
+  });
+
+  test('a private header copied through another spread still proves the same registered identity', () => {
+    const source = custom().replace("const HEADER = { name: 'engine.known', version: 1 } as const;", "const BASE = { name: 'engine.known', version: 1 } as const; const HEADER = { ...BASE };");
+    expect(sourceFindings('header-copy.ts', source, registered)).toEqual([]);
+  });
+
+  test.each([
+    "const SPEC = { ...HEADER, fixtures: [], ...unknown }; defineJudge(SPEC);",
+    "defineJudge({ ...HEADER, fixtures: [], ...unknown });",
+    "const SPEC = { name: 'engine.known', fixtures: [] }; mutate(SPEC); defineJudge(SPEC);",
+  ])('unresolved composed decision specs do not silently disappear: %s', (use) => {
+    const source = `const HEADER = { name: 'engine.known' }; ${use}`;
+    expect(sourceFindings('unresolved.ts', source, registered).length).toBeGreaterThan(0);
   });
 
   test('spreads cannot hide an unregistered name or make an unknown override silently pass', () => {

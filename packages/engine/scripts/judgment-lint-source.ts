@@ -63,7 +63,12 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
         ? checker.getExportSpecifierLocalTargetSymbol(identifier.parent)
       : checker.getSymbolAtLocation(identifier);
   const references = new Map<ts.Symbol, ts.Identifier[]>();
+  let dynamicBindings = false;
   const collect = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (ts.isIdentifier(callee) && callee.text === 'eval') dynamicBindings = true;
+    }
     if (ts.isIdentifier(node)) {
       const symbol = symbolOf(node);
       if (symbol !== undefined) {
@@ -84,21 +89,28 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
   // Only private, directly called functions have a closed set of invocations.
   // Exporting, aliasing, passing or returning one makes its parameter unknown.
   function parameterValues(parameter: ts.ParameterDeclaration): ts.Expression[] | undefined {
+    if (dynamicBindings) return undefined; // Direct eval can write bindings absent from the AST.
     const fn = parameter.parent;
     if (!ts.isFunctionDeclaration(fn) || fn.name === undefined || parameter.dotDotDotToken !== undefined
       || fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword || modifier.kind === ts.SyntaxKind.DefaultKeyword)) return undefined;
     const symbol = checker.getSymbolAtLocation(fn.name);
     if (symbol === undefined) return undefined;
     if (!ts.isIdentifier(parameter.name)) return undefined;
+    const parameterName = parameter.name.text;
+    if (fn.body?.statements.some((statement) => ts.isFunctionDeclaration(statement)
+      && statement.name?.text === parameterName)) return undefined;
     const parameterSymbol = symbolOf(parameter.name);
     for (const reference of parameterSymbol === undefined ? [] : references.get(parameterSymbol) ?? []) {
       for (let current: ts.Node = reference; current.parent !== undefined && current !== fn; current = current.parent) {
-        const parent = current.parent;
+        const parent: ts.Node = current.parent;
+        if (ts.isVariableDeclaration(parent) && parent.name === current && parent.initializer !== undefined) return undefined;
+        if (ts.isFunctionDeclaration(parent) && parent !== fn && parent.name === current) return undefined;
         if (ts.isBinaryExpression(parent) && parent.left === current
           && parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
           && parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) return undefined;
         if ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent))
           && (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)) return undefined;
+        if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === current) return undefined;
       }
     }
     const values: ts.Expression[] = [];
@@ -112,6 +124,35 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
       values.push(argument);
     }
     return values.length === 0 ? undefined : values;
+  }
+
+  // const only fixes the binding, not the object. Resolve an object identity
+  // only while it is private and every reference is a copy-by-spread or the
+  // known read protocol's header argument. Aliases, property access, exports
+  // and arbitrary calls can mutate or expose it, so none prove a stable name.
+  function privateHeaderInitializer(identifier: ts.Identifier): ts.Expression | undefined {
+    if (dynamicBindings) return undefined; // A private object can be exposed or changed through eval.
+    const declaration = declarationOf(identifier);
+    if (declaration === undefined || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return undefined;
+    const initializer = constInitializer(declaration);
+    if (initializer === undefined) return undefined;
+    const statement = declaration.parent.parent;
+    if (ts.isVariableStatement(statement) && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return undefined;
+    const symbol = symbolOf(declaration.name);
+    if (symbol === undefined) return undefined;
+    for (const reference of references.get(symbol) ?? []) {
+      if (reference === declaration.name) continue;
+      let use: ts.Expression = reference;
+      while (ts.isAsExpression(use.parent) || ts.isTypeAssertionExpression(use.parent)
+        || ts.isParenthesizedExpression(use.parent) || ts.isSatisfiesExpression(use.parent)
+        || ts.isNonNullExpression(use.parent)) use = use.parent;
+      const parent = use.parent;
+      if (ts.isSpreadAssignment(parent) && parent.expression === use) continue;
+      if (ts.isCallExpression(parent) && ts.isIdentifier(parent.expression)
+        && parent.expression.text === 'askAs' && parent.arguments[1] === use) continue;
+      return undefined;
+    }
+    return initializer;
   }
 
   function namesOf(expression: ts.Expression, seen: ReadonlySet<ts.Node> = new Set()): string[] | undefined {
@@ -144,8 +185,7 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
     if (seen.has(expression)) return undefined;
     const next = new Set(seen).add(expression);
     if (ts.isIdentifier(expression)) {
-      const declaration = declarationOf(expression);
-      const initializer = declaration === undefined ? undefined : constInitializer(declaration);
+      const initializer = privateHeaderInitializer(expression);
       return initializer === undefined ? undefined : propertiesOf(initializer, next);
     }
     if (!ts.isObjectLiteralExpression(expression)) return undefined;
@@ -162,6 +202,26 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
       }
     }
     return properties;
+  }
+
+  // This only identifies a decision-shaped specification for a refusal. It
+  // never proves its values: unknown spreads and unsafe aliases must not make
+  // an otherwise visible name/fixtures pair disappear from the lint entirely.
+  function declaredKeys(expression: ts.Expression, seen: ReadonlySet<ts.Node> = new Set()): Set<string> {
+    expression = unwrap(expression);
+    if (seen.has(expression)) return new Set();
+    const next = new Set(seen).add(expression);
+    if (ts.isIdentifier(expression)) {
+      const declaration = declarationOf(expression);
+      const initializer = declaration === undefined ? undefined : constInitializer(declaration);
+      return initializer === undefined ? new Set() : declaredKeys(initializer, next);
+    }
+    const keys = new Set<string>();
+    if (ts.isObjectLiteralExpression(expression)) for (const property of expression.properties) {
+      if (ts.isSpreadAssignment(property)) for (const key of declaredKeys(property.expression, next)) keys.add(key);
+      else { const key = named(property); if (key !== undefined) keys.add(key); }
+    }
+    return keys;
   }
 
   function decisionNames(expression: ts.Expression): string[] | undefined {
@@ -199,10 +259,7 @@ export function sourceFindings(path: string, text: string, registered: ReadonlyS
 
   function checkDecision(call: ts.CallExpression, expression: ts.Expression, callee: string): void {
     const properties = propertiesOf(expression);
-    const direct = unwrap(expression);
-    if (properties === undefined && ts.isObjectLiteralExpression(direct)
-      && direct.properties.some((property) => named(property) === 'name')
-      && direct.properties.some((property) => named(property) === 'fixtures')) {
+    if (properties === undefined && declaredKeys(expression).has('fixtures')) {
       report(call, `${callee} defines a decision whose name is not a string this lint can read, so its registration cannot be checked`);
       return;
     }
