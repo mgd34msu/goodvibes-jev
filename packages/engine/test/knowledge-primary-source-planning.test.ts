@@ -4,7 +4,7 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { prepareSourceLinkedRepairProfileFacts, promoteRepairSources, type SourceLinkedRepairProfileFactInput } from '../sdk/src/platform/knowledge/semantic/self-improvement-promotion.js';
-import { JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
+import { judgmentInputProblem, JudgmentInputError } from '../sdk/src/platform/gate/judgment-input.js';
 import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
 import { createSemanticPrimarySourcePlanner, createSemanticWriteGuard } from '../sdk/src/platform/knowledge/semantic/primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/source-quality.js';
@@ -304,6 +304,38 @@ describe('primary source persistence preplanning', () => {
       await expect(prepared.write()).rejects.toBeInstanceOf(KnowledgeSourceQualityHeldError);
       expect(graph(store)).toBe(before);
     }
+  });
+
+  test('whole subject records project only declared identity fields, never timestamps or unrelated metadata', async () => {
+    const { store, subject, source, a } = await fixture(); const fake = readings();
+    let timestamp = 1790763900000;
+    while (judgmentInputProblem(timestamp) !== 'card-material') timestamp++;
+    const fullSubject = { ...subject, createdAt: timestamp, updatedAt: timestamp,
+      metadata: { privateMarker: 'UNRELATED_PRIVATE_SUBJECT_METADATA', authorization: 'Bearer synthetic-private-metadata' },
+    };
+    const planner = createSemanticPrimarySourcePlanner(store, createSemanticWriteGuard(store));
+    await planner.prepare(spaceId, { kind: 'note', title: 'Exact claim', subjects: [fullSubject] }, [source.id, a.id])();
+    const requests = JSON.stringify(fake.requests);
+    expect(fake.requests).toHaveLength(2); expect(requests).toContain(subject.title); expect(requests).toContain(subject.id);
+    expect(requests).not.toContain(String(timestamp)); expect(requests).not.toContain('UNRELATED_PRIVATE_SUBJECT_METADATA');
+    expect(requests).not.toContain('synthetic-private-metadata');
+  });
+  test('consumed identity accessors are refused without invocation; omitted accessors never run', async () => {
+    const { store, subject, source, a } = await fixture(); const fake = readings(); let calls = 0;
+    const omitted = { ...subject }; Object.defineProperty(omitted, 'metadata', { enumerable: true, get() { calls++; return {}; } });
+    const planner = createSemanticPrimarySourcePlanner(store, createSemanticWriteGuard(store));
+    await planner.prepare(spaceId, { kind: 'note', title: 'Exact claim', subjects: [omitted] }, [source.id, a.id])();
+    expect(calls).toBe(0);
+    const consumed = { ...subject }; Object.defineProperty(consumed, 'title', { enumerable: true, get() { calls++; return 'unsafe'; } });
+    const before = fake.requests.length;
+    expect(() => planner.prepare(spaceId, { kind: 'note', title: 'Exact claim', subjects: [consumed] }, [source.id, a.id])).toThrow(JudgmentInputError);
+    expect(calls).toBe(0); expect(fake.requests).toHaveLength(before);
+  });
+  test('protected semantic claim fields still hold before any primary-source request', async () => {
+    const { store, subject, source, a } = await fixture(); const fake = readings();
+    const planner = createSemanticPrimarySourcePlanner(store, createSemanticWriteGuard(store));
+    expect(() => planner.prepare(spaceId, { kind: 'note', title: 'Authorization: Bearer synthetic-secret', subjects: [subject] }, [source.id, a.id])).toThrow(JudgmentInputError);
+    expect(fake.requests).toHaveLength(0);
   });
 
 });

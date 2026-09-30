@@ -1,3 +1,4 @@
+import { projectSemanticPrimaryClaim } from './primary-claim-projection.js';
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { sourceRankingContent } from './answer-source-ranking.js';
 import { getKnowledgeSpaceId } from '../spaces.js';
@@ -52,6 +53,7 @@ export function createSemanticPrimarySourcePlanner(store: KnowledgeStore, guard:
   const decisions = new Map<string, Promise<string>>();
   let requests = 0;
   function prepare(spaceId: string, claim: SemanticPrimaryClaim, sourceIds: readonly string[]): () => Promise<string> {
+    const projectedClaim = projectSemanticPrimaryClaim(claim);
     const candidates = [...new Set(sourceIds)].map((id) => guard.source(id))
       .filter((source): source is KnowledgeSourceRecord => Boolean(source
         && getKnowledgeSpaceId(source) === spaceId
@@ -60,13 +62,13 @@ export function createSemanticPrimarySourcePlanner(store: KnowledgeStore, guard:
     // All supplied IDs were snapshotted before filtering, including missing records.
     // Refuse oversized sets rather than choosing a winner from a hidden truncation.
     if (candidates.length > 50) throw new JudgmentInputError('unsupported-input');
-    const purpose = `Choose a useful, credible primary reference supporting this exact claim and subject: ${JSON.stringify(claim)}`;
+    const purpose = `Choose a useful, credible primary reference supporting this exact claim and subject: ${JSON.stringify(projectedClaim)}`;
     // All prepares run before any resolver. Refuse a protected later claim or
     // support set before an earlier request can leave this persistence pass.
     if (candidates.length > 1) assertJudgmentInput(candidates.map((source) => ({
       purpose, candidate: sourceRankingContent(source), effectiveStatus: source.status,
     })));
-    const key = JSON.stringify({ spaceId, claim, sources: candidates });
+    const key = JSON.stringify({ spaceId, claim: projectedClaim, sources: candidates });
     return async () => {
       guard.assertCurrent();
       if (candidates.length === 0) throw new KnowledgeSourceQualityHeldError('no-match');

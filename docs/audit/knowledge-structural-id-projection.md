@@ -47,3 +47,17 @@ consistent cross-references, duplicate/distinct receipts, JSON/prefix forgery,
 protected late content, unsupported ID paths, and identity changes. Together with
 the generated support and write boundaries: 50 tests, 436 assertions pass. These
 are offline fake-port and temporary-state checks, not live calibration evidence.
+
+## Primary-source claim DTO follow-on
+
+The first accumulated proof found a different conservative false hold: a caller
+passed a full KnowledgeNodeRecord where SemanticPrimaryClaim declared only
+id/kind/title. JSON.stringify formerly serialized the extra metadata and numeric
+database timestamps into the judgment purpose; a Luhn-valid timestamp caused a
+card-material refusal. Primary-source planning now constructs its declared claim
+and subject/hint DTO explicitly, reading property descriptors without invoking
+accessors. Unrelated metadata/timestamps are omitted, meaningful fields remain,
+and complete selected content is still preflighted before serialization/requests.
+Unknown hint shapes and consumed accessors hold. This does not exempt protected
+semantic values or IDs. Three regressions plus the related profile/page suite pass
+62 tests/269 assertions. No model calibration is implied.
