@@ -449,6 +449,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('base Home Assistant alias ask suppresses unrelated broad facts', async () => {
+    answerReadings.set({ initialEvidence: [['Sony', 0.01], ['BRAVIA', 0.01], ['Router', 0.01], ['MT6000', 0.01], ['WireGuard', 0.01]] });
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store, { llm: new FakeKnowledgeLlm() });
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));
@@ -711,6 +712,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('cold Home Graph ask waits for accepted repair source promotion before returning', async () => {
+    answerReadings.set({ initialEvidence: [['LG 86NANO90UNA official specifications', 0.99]], sources: [['LG 86NANO90UNA official specifications', 0.99]] });
     const { store, artifactStore } = createStores();
     const spaceId = homeAssistantKnowledgeSpaceId('house');
     let officialSourceId = '';
@@ -1107,6 +1109,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
   });
 
   test('base Home Assistant alias does not return generic device facts without a subject', async () => {
+    answerReadings.set({ initialEvidenceDefault: 0.01 }); // Authored ambiguous query: no particular device is identified.
     const { store, artifactStore } = createStores();
     const semantic = new KnowledgeSemanticService(store);
     const service = disposables.add(new HomeGraphService(store, artifactStore, { semanticService: semantic }));

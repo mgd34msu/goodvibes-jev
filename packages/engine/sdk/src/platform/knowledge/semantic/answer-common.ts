@@ -15,6 +15,8 @@ export interface EvidenceItem {
   readonly id: string;
   readonly title: string;
   readonly score: number;
+  /** Explicit units for initial relevance readings; never an answer-confidence score. */
+  readonly scoreScale?: 'relevance-probability' | undefined;
   readonly source?: KnowledgeSourceRecord | undefined;
   readonly node?: KnowledgeNodeRecord | undefined;
   readonly excerpt?: string | undefined;

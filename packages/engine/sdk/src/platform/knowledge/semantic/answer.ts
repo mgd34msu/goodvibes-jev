@@ -1,3 +1,4 @@
+import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import type {
   KnowledgeNodeRecord,
 } from '../types.js';
@@ -24,6 +25,7 @@ import { withAnswerVerificationBudget } from './answer-verification/budget.js';
 import { assertJudgmentInput, JudgmentInputError } from '../../gate/judgment-input.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import { KnowledgeSourceQualityHeldError } from '../source-quality.js';
+import { KnowledgeEvidenceRelevanceHeldError } from './evidence-ranking/reader.js';
 import { renderFallbackAnswer } from './answer-fallback.js';
 import { rankAnswerSources, KnowledgeSourceRankingHeldError } from './answer-source-ranking.js';
 import {
@@ -64,6 +66,8 @@ export async function answerKnowledgeQuery(
     if (error instanceof KnowledgeAnswerQualityHeldError || error instanceof JudgmentInputError) throw error;
     if (error instanceof KnowledgeSourceRankingHeldError || error instanceof KnowledgeFactSelectionHeldError) throw new KnowledgeAnswerQualityHeldError('uncertain');
     if (error instanceof KnowledgeSourceQualityHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason === 'aborted' ? 'aborted' : 'stale');
+    if (error instanceof KnowledgeEvidenceRelevanceHeldError) throw new KnowledgeAnswerQualityHeldError(
+      error.reason === 'unsettled' ? 'uncertain' : error.reason === 'unconfigured' ? 'unavailable' : error.reason);
     throw new KnowledgeAnswerQualityHeldError('unavailable');
   }
 }
@@ -121,21 +125,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
     const subjectIds = uniqueStrings([...(fact.subjectIds ?? []), ...readStringArray(fact.metadata.subjectIds), ...readStringArray(fact.metadata.linkedObjectIds)]);
     if (subjectIds.some((id) => !claimSubjects.some((subject) => subject.id === id))) throw new KnowledgeAnswerQualityHeldError('malformed');
   }
-  const candidateClaims = facts.map((fact) => ({ title: fact.title, summary: fact.summary,
-    value: fact.metadata.value, evidence: fact.metadata.evidence, subject: fact.metadata.subject,
-    aliases: fact.aliases, labels: readStringArray(fact.metadata.labels), factKind: readString(fact.metadata.factKind),
-    targetHints: (Array.isArray(fact.metadata.targetHints) ? fact.metadata.targetHints : []).map((hint) => typeof hint === 'string' ? hint : {
-      title: readString(readRecord(hint).title), summary: readString(readRecord(hint).summary), kind: readString(readRecord(hint).kind),
-      name: readString(readRecord(hint).name), description: readString(readRecord(hint).description),
-      // Only resolved local node references can omit their store key. External
-      // identifiers retain their meaning and the ordinary protected-input gate.
-      externalReference: claimSubjects.some((subject) => subject.id === readString(readRecord(hint).id)) ? undefined : readString(readRecord(hint).id),
-      model: readString(readRecord(hint).model), manufacturer: readString(readRecord(hint).manufacturer),
-    }),
-    subjects: uniqueStrings([...(fact.subjectIds ?? []), ...readStringArray(fact.metadata.subjectIds), ...readStringArray(fact.metadata.linkedObjectIds)])
-      .map((id) => claimSubjects.find((node) => node.id === id))
-      .filter((node): node is KnowledgeNodeRecord => Boolean(node)).map((node) => ({ title: node.title, summary: node.summary, kind: node.kind })),
-  }));
+  const candidateClaims = facts.map((fact) => projectAnswerFactClaim(fact, claimSubjects));
   assertJudgmentInput({ query: input.query, facts: candidateClaims });
   const candidateFacts = candidateClaims.map((claim) => JSON.stringify(claim));
   const generated = prepared.evidence.length ? await synthesizeAnswer(context.llm ?? null, input.query, mode, prepared.evidence,
@@ -175,7 +165,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
       gaps: evidenceGap && !isRepairedAnswerGap(evidenceGap) ? [evidenceGap] : [],
       synthesized: Boolean(selection.candidate),
     },
-    results: evidence.map(toSearchResult),
+    results: evidence.slice(0, limit).map(toSearchResult),
   };
 }
 

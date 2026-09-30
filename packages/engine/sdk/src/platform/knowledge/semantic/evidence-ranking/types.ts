@@ -7,8 +7,10 @@ export interface AnswerEvidenceCandidate {
   readonly sourceType?: string | undefined;
   readonly nodeKind?: string | undefined;
   readonly claimedProvenance?: string | undefined;
-  readonly facts?: readonly { readonly title: string; readonly summary?: string | undefined;
-    readonly value?: string | number | boolean | null | undefined; readonly evidence?: string | undefined }[] | undefined;
+  readonly facts?: readonly { readonly title: string; readonly kind?: string | undefined; readonly summary?: string | undefined;
+    readonly value?: string | number | boolean | null | undefined; readonly evidence?: string | undefined;
+    /** The exact structured claim fields used by final fidelity, serialized without database-only metadata. */
+    readonly details?: string | undefined }[] | undefined;
 }
 export interface AnswerEvidenceRelevanceInput { readonly query: string; readonly candidates: readonly AnswerEvidenceCandidate[]; }
 export interface AnswerEvidenceRelevanceReading {

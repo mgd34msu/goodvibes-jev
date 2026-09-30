@@ -69,13 +69,6 @@ export function renderNodeEvidence(node: KnowledgeNodeRecord): string {
   return [node.summary, node.aliases.join(', ')].filter(Boolean).join('\n');
 }
 
-export function semanticKindBoost(node: KnowledgeNodeRecord): number {
-  if (node.metadata.semanticKind === 'fact') return 45;
-  if (node.metadata.semanticKind === 'wiki_page') return 24;
-  if (node.metadata.semanticKind === 'entity') return 18;
-  return 0;
-}
-
 /** Structural set intersection, retained for callers with an explicit token set. */
 export function hasAny(values: ReadonlySet<string>, candidates: readonly string[]): boolean {
   return candidates.some((candidate) => values.has(candidate));

@@ -19,7 +19,9 @@ describe('answer judgment holds before generation or repair writes', () => {
       const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
       const source = await store.upsertSource({ id: 'manual-fixture', connectorId: 'manual', sourceType: 'manual', title: 'Router HDMI inputs', summary: 'The router has four HDMI inputs.', status: 'indexed' });
       await store.upsertExtraction({ sourceId: source.id, extractorId: 'synthetic', format: 'text', summary: 'The router has four HDMI inputs.', sections: ['Inputs'], structure: { searchText: 'The router has four HDMI inputs.' } });
+      const seedPort = installJudgmentPort(fakePort((name) => { if (name !== 'serve') throw new Error('Unexpected seed reading'); return noulAnswer(0.99); }).port);
       await store.upsertNode({ kind: 'fact', slug: 'hdmi-inputs', title: 'HDMI inputs', summary: 'The router has four HDMI inputs.', status: 'active', sourceId: source.id, metadata: { semanticKind: 'fact', factKind: 'specification', sourceIds: [source.id], value: 'four HDMI inputs', evidence: 'The router has four HDMI inputs.' } });
+      installJudgmentPort(seedPort);
       const before = { sources: store.listSources(), nodes: store.listNodes(), edges: store.listEdges(), issues: store.listIssues() };
       let synthesisCalls = 0;
       const service = new KnowledgeSemanticService(store, { llm: {
@@ -27,6 +29,7 @@ describe('answer judgment holds before generation or repair writes', () => {
       } });
       if (mode !== 'missing') {
         const fake = fakePort((name) => {
+          if (name === 'useful') return noulAnswer(0.99); // Initial relevance settles before the tested fact-reading hold.
           if (mode === 'failed') throw new Error('Synthetic unavailable reader');
           if (name === 'features') return noulAnswer(0.97);
           return noulAnswer(0.5);
@@ -40,11 +43,13 @@ describe('answer judgment holds before generation or repair writes', () => {
   test('a rejected source is not re-added by claimed authority or shown to the generation model', async () => {
     const root = mkdtempSync(join(tmpdir(), 'goodvibes-answer-source-')); roots.push(root);
     const store = new KnowledgeStore({ dbPath: join(root, 'knowledge.sqlite') });
+    const seedPort = installJudgmentPort(fakePort((name) => { if (name !== 'serve') throw new Error('Unexpected seed reading'); return noulAnswer(0.99); }).port);
     for (const [id, title, detail] of [['rejected', 'Rejected official manual', 'HDMI inputs include the unsupported purple marker.'], ['accepted', 'Accepted manual', 'HDMI inputs include four supported connectors.']] as const) {
       await store.upsertSource({ id, connectorId: 'manual', sourceType: 'manual', title, summary: detail, status: 'indexed', metadata: { sourceDiscovery: { trustReason: 'official-vendor-domain' } } });
       await store.upsertExtraction({ sourceId: id, extractorId: 'synthetic', format: 'text', summary: detail, structure: { searchText: detail } });
       await store.upsertNode({ kind: 'fact', slug: id, title, summary: detail, status: 'active', sourceId: id, metadata: { semanticKind: 'fact', factKind: 'specification', sourceIds: [id], evidence: detail } });
     }
+    installJudgmentPort(seedPort);
     const prompts: string[] = [];
     const service = new KnowledgeSemanticService(store, { llm: {
       async completeJson() { throw new Error("No answer JSON generation"); }, async completeText(input) { prompts.push(input.prompt); return null; },
@@ -53,6 +58,7 @@ describe('answer judgment holds before generation or repair writes', () => {
       if (name === 'fidelity') return choiceAnswer(question, 'supported', 0.97);
       if (name === 'enough' || name === 'complete') return noulAnswer(0.97);
       if (name === 'features') return noulAnswer(0.97);
+      if (name === 'useful') return noulAnswer((state as { candidate: { title: string } }).candidate.title === 'Rejected official manual' ? 0.03 : 0.97);
       if (name !== 'match') throw new Error(`Unexpected fixture question: ${name}`);
       const candidate = (state as { candidate: { sourceType?: string; title: string } }).candidate;
       return noulAnswer(candidate.sourceType && candidate.title === 'Rejected official manual' ? 0.03 : 0.97);

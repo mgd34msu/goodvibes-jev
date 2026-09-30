@@ -25,8 +25,8 @@ function snapshotInput(input: AnswerEvidenceRelevanceInput): AnswerEvidenceRelev
       if (!Array.isArray(candidate.facts)) throw new Held('malformed');
       if (candidate.facts.length > LIMITS.facts) throw new Held('budget');
       for (const fact of candidate.facts) {
-        if (!record(fact) || Object.keys(fact).some((key) => !['title', 'summary', 'value', 'evidence'].includes(key))
-          || typeof fact.title !== 'string' || !optionalText(fact.summary) || !optionalText(fact.evidence)
+        if (!record(fact) || Object.keys(fact).some((key) => !['title', 'kind', 'summary', 'value', 'evidence', 'details'].includes(key))
+          || typeof fact.title !== 'string' || !optionalText(fact.kind) || !optionalText(fact.summary) || !optionalText(fact.evidence) || !optionalText(fact.details)
           || (fact.value !== undefined && fact.value !== null && typeof fact.value !== 'string' && typeof fact.value !== 'boolean'
             && !(typeof fact.value === 'number' && Number.isFinite(fact.value)))) throw new Held('malformed');
       }

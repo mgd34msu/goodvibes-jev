@@ -6,6 +6,8 @@ import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/test
 export interface AnswerFixtureReadings {
   /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
   activation?: ReadonlyArray<readonly [string, number]>;
+  initialEvidence?: ReadonlyArray<readonly [string, number]>;
+  initialEvidenceDefault?: number;
   /** Authored fixture expectations keyed by exact device title, never a keyword classifier. */
   homeGraph?: ReadonlyArray<readonly [string, Readonly<Partial<Record<'batteryApplicable' | 'manualApplicable' | 'manufacturerPresent' | 'modelPresent' | 'batteryTypePresent', number>>>]>;
   fidelity?: 'supported' | 'contradicted' | 'unsupported';
@@ -57,6 +59,9 @@ export function useKnowledgeAnswerReadings() {
       if (question.type !== 'noul') throw new Error(`Unexpected answer fixture question: ${name}`);
       if (name === 'useful') {
         const text = JSON.stringify(state);
+        if (typeof (state as { candidate?: { reference?: unknown } }).candidate?.reference === 'string') {
+          return noulAnswer(table.initialEvidence?.find(([snippet]) => text.includes(snippet))?.[1] ?? table.initialEvidenceDefault ?? 0.97);
+        }
         return noulAnswer(table.quality?.find(([snippet]) => text.includes(snippet))?.[1] ?? 0.97);
       }
       if (name === 'supported' || name === 'attached') return noulAnswer(0.99); // Explicit synthetic support fixtures; not a semantic evaluator.

@@ -37,3 +37,71 @@ Relevance probabilities are not answer-confidence scores. Linked-evidence union 
 Deterministic coverage includes protected whole-batch preflight, opposite-to-keyword source selection, stale and unavailable readers, distinct-claim primary decisions, duplicate fact provenance, supersession, cancellation, actual SQLite/artifact no-write boundaries and source/fact/device scope isolation. Existing Home Graph source-quality/repair assertions are preserved with explicitly labelled fake readings. A timestamp-only repeat of the identical repair-gap record can join an in-progress repair; changed intent, provenance or operator status still holds. The full current source row is guarded through later awaits.
 
 Live calibration remains unconfigured. These offline fixtures test plumbing and safety, not achieved semantic accuracy.
+
+## THE-21 phase C: initial evidence selection
+
+The initial `collectAnswerEvidence` pass now asks
+`engine.knowledge.answer-evidence-relevance` about the question as written and
+complete selected source/extraction or node/fact meaning. This covers inventory
+entries `docs/inventory/engine.md` lines 1827–1831 and 1840 in the pinned inventory:
+synonym expansion, source/node token points, subject/alias penalties,
+candidate/link/fact-count bonuses, positive-score filtering, top-minus-90 pruning,
+and fixed record-kind boosts. Exact access/space membership, indexed source and
+active node status, explicit candidate/graph membership, duplicate removal and
+bounded source/node windows remain structural constraints.
+
+The read-only foundation uses request-local candidate labels; database keys stay
+in a guarded local map. Its actual 0–1 relevance probabilities are labelled as
+such in results and are never rescaled to legacy retrieval points or answer
+confidence. Candidates settle before a synchronous stable ordering. Any
+unsettled, unavailable, stale, malformed, cancelled or over-budget pass holds the
+whole selection. Settled rejection is distinct from a failed reading.
+
+Full source/extraction meaning includes the established metadata content fields.
+Concrete source/extraction space and identity must agree even when the request
+uses a broad space alias. All candidate text and the exact structured claim
+fields used by final fidelity are preflighted before the first semantic request.
+That includes labels, aliases, fact kinds, target hints and graph-only subject
+meaning. The structured guard runs before serializing claim details. Proven
+fresh local source URIs use THE-36's record-bound projection; unknown/copied IDs
+and external URLs keep ordinary protected-data handling. This is bounded
+structural minimization, not universal personal-data detection.
+
+Source, extraction, node, operator state and pertinent graph snapshots are
+checked after awaits. Explicit candidate IDs cannot make draft claims serve.
+An accepted fact may retain its accepted backing source internally even when the
+public result limit is one. A request-local lineage guard prevents subsequent
+official-linked-source enrichment from resurrecting an initial rejected source.
+No source is added merely because it was labelled official. Whole-pass holds
+reach the existing answer hold boundary before generation or repair writes.
+
+Deterministic coverage includes a paraphrase outranking keyword stuffing,
+record-kind and explicit-membership rejection, exact probability units,
+no/uncertain/unavailable distinctions, protected late input with zero requests,
+foreign source/extraction and draft isolation, graph-only protected subjects,
+stale records, limit-one backing provenance and repeated linked-source vetoes.
+Provider fixtures explicitly supply the new relevance decision; prior answer and
+repair assertions remain in place. These fixtures establish plumbing and safety,
+not live accuracy. THE-35 retains calibration and latency proof; THE-34 retains
+cross-dot integration and full CI.
+
+### Remaining K3 and adjacent inventory
+
+This phase is not all of THE-21 or K3. Query subject extraction
+(`GENERIC_ANSWER_INTENT_TOKENS`), integration intent, excerpt fact-line and
+sentence selection, inferred object/query scope and any remaining shared search
+scoring are still inventoried for subsequent bounded conversions. Repair-profile
+category/value/wattage/count/query filters (inventory lines 1947–1954), generated
+wiki/entity fidelity and related content generation remain explicit subsequent
+work. Content generation still uses the real provider-backed generator; judgment
+reads concrete candidates and does not invent a replacement generator API.
+Existing phases A/B, THE-23 support, THE-27 answer fidelity, THE-31 page quality and
+THE-32 activation remain separate decisions with distinct probability meanings.
+
+The phase C caller tree passed 636 tests / 3,880 assertions across 63 explicit
+knowledge/Home Graph suites through the repository's owned test runner, plus
+build, forced solution and standalone type tests, API/subpath, line-cap,
+credential-scope, no-any and error-contract checks. The initial relevance
+foundation additionally has its isolated 16-test / 76-assertion proof. These are
+local deterministic checks; publication, cross-dot CI and live proofs remain the
+gates named above.
