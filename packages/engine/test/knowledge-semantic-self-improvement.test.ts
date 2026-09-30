@@ -22,8 +22,9 @@ import {
 } from './_helpers/knowledge-semantic-fixtures.js';
 import { settleEvents } from './_helpers/test-timeout.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
 
-const answerReadings = useKnowledgeAnswerReadings();
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
 useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: self-improvement', () => {

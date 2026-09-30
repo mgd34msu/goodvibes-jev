@@ -21,6 +21,7 @@ import { KnowledgeSourceQualityHeldError } from '../sdk/src/platform/knowledge/s
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/platform/knowledge/types.js';
 import { withTestTimeout } from './_helpers/test-timeout.js';
+import { homeGraphRepairProfileValues, repairProfileFixtureReading } from './_helpers/repair-profile-fixture-readings.js';
 
 const spaceId = 'homeassistant:page-quality-house';
 const installationId = 'page-quality-house';
@@ -43,6 +44,8 @@ type ReadingState = {
 
 function readings(probability: (state: ReadingState) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    const profile = repairProfileFixtureReading(name, state, homeGraphRepairProfileValues);
+    if (profile !== undefined) return noulAnswer(profile);
     if (['batteryApplicable', 'manufacturerPresent', 'modelPresent', 'batteryTypePresent'].includes(name)) return noulAnswer(0.01); // Authored reference-device fixture: these fields are absent and battery tracking does not apply.
     if (name === 'serve' && ['Network and wireless capabilities', 'Display and picture specifications', 'Input and output ports', 'Gaming and HDMI features', 'Audio capabilities', 'Display resolution'].includes((state as ReadingState).candidate.title)) return noulAnswer(0.99); // Authored synthetic reference-document claims.
     if (name === 'supported' || name === 'attached') return noulAnswer(0.99);

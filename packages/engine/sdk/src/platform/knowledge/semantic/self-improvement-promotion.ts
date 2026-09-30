@@ -12,8 +12,11 @@ import type {
   KnowledgeRefinementTaskRecord,
   KnowledgeSourceRecord,
 } from '../types.js';
-import { hasConcreteFeatureSignal, isLowValueFeatureOrSpecText, semanticFactText } from './fact-quality.js';
-import { deriveRepairProfileFacts, type RepairProfileFact } from './repair-profile.js';
+import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
+import { createRepairFactUsefulnessReader } from './repair-usefulness/reader.js';
+import { createRepairUsefulnessGuard, prepareRepairUsefulness, prepareProposedRepairUsefulness } from './repair-usefulness-plan.js';
+import { deriveRepairProfileFactPass, repairProfileSourceText, repairProfileSubject, type RepairProfileFact } from './repair-profile.js';
+import { captureKnowledgeSourceReferences } from '../source-structural-references.js';
 import { buildKnowledgeSemanticGraphIndex } from './graph-index.js';
 import { factsForSource, linkedObjectsForSource } from './self-improvement-graph.js';
 import { updateRefinementTask } from './self-improvement-tasks.js';
@@ -74,21 +77,26 @@ async function promoteRepairSourcesWithinBudget(
   const targetUsableFactCount = repairTargetUsableFactCount(gap);
   const subjects = linkedRepairSubjects(context.store, spaceId, gap, context.objectProfiles ?? []);
   const subjectIds = new Set(subjects.map((subject) => subject.id));
+  const usefulness = createRepairFactUsefulnessReader({ signal });
+  const countUsable = (ids: readonly string[]) => countUsableRepairFacts(context.store, spaceId, ids, subjectIds,
+    gap, subjects, usefulness, signal, context.shouldStop);
+  const linkSubjects = (ids: readonly string[]) => linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, ids,
+    usefulness, signal, context.shouldStop);
   const processedSourceIds: string[] = [];
   if (context.enrichSource) {
     for (const [index, sourceId] of sourceIds.entries()) {
       await yieldEvery(index, 2);
       assertSemanticWriteAllowed(signal, context.shouldStop);
       processedSourceIds.push(sourceId);
-      await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      if (countUsableRepairFacts(context.store, spaceId, processedSourceIds, subjectIds) >= targetUsableFactCount) break;
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      if (countUsableRepairFacts(context.store, spaceId, processedSourceIds, subjectIds) >= targetUsableFactCount) break;
+      await linkSubjects([sourceId]);
+      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
+      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await linkSubjects([sourceId]);
+      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      if (countUsableRepairFacts(context.store, spaceId, processedSourceIds, subjectIds) >= targetUsableFactCount) break;
+      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await linkSubjects([sourceId]);
+      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       const remainingMs = Math.max(0, deadlineAt - Date.now());
       if (remainingMs < 1_000) break;
       try {
@@ -99,21 +107,23 @@ async function promoteRepairSourcesWithinBudget(
         // Earlier settled promotion/link passes stand; this hold must not start a fallback pass.
         if (isKnowledgeSourceQualityFailure(error) || error instanceof KnowledgeGeneratedFactSupportHeldError) throw error;
         await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-        await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-        await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-        await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Repair source enrichment did not finish for one accepted source.', {
-          sourceId,
-          enrichmentError: error instanceof Error ? error.message : String(error),
-          promotedSourceIds: processedSourceIds,
-          promotedFactCount: countUsableRepairFacts(context.store, spaceId, processedSourceIds, subjectIds),
+        await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+        await linkSubjects([sourceId]);
+        const recoveryUsefulness = await countUsable(processedSourceIds);
+        await context.store.batch(async () => {
+          recoveryUsefulness.assertCurrent();
+          await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Repair source enrichment did not finish for one accepted source.', {
+            sourceId, enrichmentError: error instanceof Error ? error.message : String(error),
+            promotedSourceIds: processedSourceIds, promotedFactCount: recoveryUsefulness.count,
+          });
         });
         if (deadlineAt - Date.now() < 1_000) break;
         continue;
       }
       await waitForRepairSourceText(context.store, sourceId, Math.min(deadlineAt, Date.now() + REPAIR_SOURCE_TEXT_WAIT_MS));
-      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, [sourceId], signal, context.shouldStop);
-      if (countUsableRepairFacts(context.store, spaceId, processedSourceIds, subjectIds) >= targetUsableFactCount) break;
+      await promoteRepairEvidenceFacts(context.store, spaceId, gap, [sourceId], usefulness, signal, context.shouldStop);
+      await linkSubjects([sourceId]);
+      if ((await countUsable(processedSourceIds)).count >= targetUsableFactCount) break;
       await yieldToEventLoop();
     }
   }
@@ -121,30 +131,32 @@ async function promoteRepairSourcesWithinBudget(
   const promotionSourceIds = processedSourceIds.length > 0 ? uniqueStrings(processedSourceIds) : sourceIds;
   const promotedFactCount = processedSourceIds.length > 0
     ? 0
-    : await promoteRepairEvidenceFacts(context.store, spaceId, gap, sourceIds, signal, context.shouldStop);
-  await linkPromotedFactsToRepairSubjects(context.store, spaceId, gap, promotionSourceIds, signal, context.shouldStop);
-  const usableFactCount = promotedFactCount > 0
-    ? promotedFactCount
-    : countUsableRepairFacts(context.store, spaceId, promotionSourceIds, subjectIds);
+    : await promoteRepairEvidenceFacts(context.store, spaceId, gap, sourceIds, usefulness, signal, context.shouldStop);
+  await linkSubjects(promotionSourceIds);
+  const finalUsefulness = await countUsable(promotionSourceIds);
+  const usableFactCount = promotedFactCount > 0 ? promotedFactCount : finalUsefulness.count;
   assertSemanticWriteAllowed(signal, context.shouldStop);
   const repairComplete = usableFactCount >= targetUsableFactCount;
-  if (repairComplete) {
-    await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'verified', 'Accepted repair sources were semantically enriched.', {
-      promotedSourceIds: promotionSourceIds,
-      promotedFactCount: usableFactCount,
-    });
-  } else if (usableFactCount > 0) {
-    await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources yielded partial subject-linked facts.', {
-      promotedSourceIds: promotionSourceIds,
-      promotedFactCount: usableFactCount,
-      targetPromotedFactCount: targetUsableFactCount,
-    });
-  } else {
-    await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources did not yield usable subject-linked facts.', {
-      promotedSourceIds: promotionSourceIds,
-      promotedFactCount: usableFactCount,
-    });
-  }
+  await context.store.batch(async () => {
+    finalUsefulness.assertCurrent();
+    if (repairComplete) {
+      await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'verified', 'Accepted repair sources were semantically enriched.', {
+        promotedSourceIds: promotionSourceIds,
+        promotedFactCount: usableFactCount,
+      });
+    } else if (usableFactCount > 0) {
+      await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources yielded partial subject-linked facts.', {
+        promotedSourceIds: promotionSourceIds,
+        promotedFactCount: usableFactCount,
+        targetPromotedFactCount: targetUsableFactCount,
+      });
+    } else {
+      await updateRefinementTask(context.store, context.store.getRefinementTask(task.id) ?? task, 'applying', 'Accepted repair sources did not yield usable subject-linked facts.', {
+        promotedSourceIds: promotionSourceIds,
+        promotedFactCount: usableFactCount,
+      });
+    }
+  });
   return { promotedFactCount: usableFactCount, repairComplete, promotedSourceIds: promotionSourceIds };
 }
 
@@ -195,19 +207,12 @@ function sourceRequiresExtractedEvidence(source: KnowledgeSourceRecord): boolean
   return Boolean(source.url || source.sourceUri || source.canonicalUri);
 }
 
-function repairSourceEvidenceText(
-  source: KnowledgeSourceRecord,
-  extraction: ReturnType<KnowledgeStore['getExtractionBySourceId']>,
-): string {
-  const extracted = extractedSemanticText(extraction);
-  return extracted.length >= 40 ? extracted : sourceSemanticText(source, extraction);
-}
-
 async function promoteRepairEvidenceFacts(
   store: KnowledgeStore,
   spaceId: string,
   gap: KnowledgeNodeRecord,
   sourceIds: readonly string[],
+  reader: ReturnType<typeof createRepairFactUsefulnessReader>,
   signal?: AbortSignal, shouldStop?: () => boolean,
 ): Promise<number> {
   assertSemanticWriteAllowed(signal, shouldStop);
@@ -221,19 +226,22 @@ async function promoteRepairEvidenceFacts(
   const subjects = linkedRepairSubjects(store, spaceId, gap, []);
   if (subjects.length === 0) return 0;
   const inputs: SourceLinkedRepairProfileFactInput[] = [];
-  for (const sourceId of sourceIds) {
-    const source = store.getSource(sourceId);
-    if (!source || getKnowledgeSpaceId(source) !== spaceId) continue;
-    const extraction = store.getExtractionBySourceId(source.id);
-    if (!extraction) continue; // Wait/stage the source; its summary is not extracted evidence.
-    const authority = sourceAuthority(source);
-    const text = repairSourceEvidenceText(source, extraction);
-    if (text.length < 40) continue;
-    const profileFacts = deriveRepairProfileFacts({
-      query: gap.title,
-      source,
-      text,
-    });
+  const entries = sourceIds.flatMap((sourceId) => {
+    const source = guard.source(sourceId);
+    if (!source || getKnowledgeSpaceId(source) !== spaceId) return [];
+    const extraction = guard.extraction(source.id);
+    if (!extraction) return [];
+    const text = repairProfileSourceText(extraction);
+    if (!text.trim()) return [];
+    return [{ source, extraction, text, authority: sourceAuthority(source) }];
+  });
+  const profiles = await deriveRepairProfileFactPass(entries.map(({ source, extraction, text }) => ({
+    query: gap.title, source, extraction, text, subjects: subjects.map(repairProfileSubject),
+    structuralReferences: captureKnowledgeSourceReferences(store, source, extraction),
+  })), { signal });
+  guard.assertCurrent();
+  for (const [index, { source, extraction, text, authority }] of entries.entries()) {
+    const profileFacts = profiles[index]!;
     for (const profileFact of profileFacts) {
       inputs.push(promotedRepairFactInput({
         store,
@@ -255,6 +263,9 @@ async function promoteRepairEvidenceFacts(
       text,
     });
     for (const sentence of sentences) {
+      // A selected exact span already represents this evidence. Do not run it
+      // through the separate legacy canonical-value classifier a second time.
+      if (profileFacts.some((fact) => fact.evidence.split('\n\n').includes(sentence))) continue;
       const classification = classifyRepairFact(sentence);
       if (!classification) continue;
       inputs.push(promotedRepairFactInput({
@@ -272,10 +283,21 @@ async function promoteRepairEvidenceFacts(
       }));
     }
   }
+  const usefulnessGuard = createRepairUsefulnessGuard(store, spaceId, gap, subjects, signal, shouldStop);
   const prepared = await prepareSourceLinkedRepairProfileFacts(inputs, { signal, shouldStop });
+  guard.assertCurrent(); prepared.assertCurrent(); usefulnessGuard.assertCurrent();
+  const useful = await prepareProposedRepairUsefulness({ store, spaceId, gap, subjects, guard: usefulnessGuard, reader,
+    proposals: prepared.plans.map((plan) => ({ factId: plan.factId, sourceIds: plan.sourceIds, claim: {
+      title: plan.input.title, kind: plan.input.classification.kind, summary: plan.input.summary,
+      value: plan.writeData.factMetadata.value, evidence: plan.writeData.factMetadata.evidence,
+      subject: plan.writeData.factMetadata.subject, labels: plan.input.classification.labels, aliases: plan.input.classification.aliases,
+    } })),
+  });
+  // A stored fact may be excluded from a later count. These are newly selected
+  // claims: disagreement holds this complete proposed pass before any writes.
+  if (useful.count !== prepared.plans.length) throw new KnowledgeRepairFactUsefulnessHeldError('not-useful');
   await store.batch(async () => {
-    guard.assertCurrent();
-    prepared.assertCurrent();
+    guard.assertCurrent(); prepared.assertCurrent(); useful.assertCurrent();
     await prepared.write();
   });
   return inputs.length;
@@ -486,11 +508,21 @@ async function writeResolvedSourceLinkedRepairProfileFact(
 }
 
 async function linkPromotedFactsToRepairSubjects(
-  store: KnowledgeStore, spaceId: string, gap: KnowledgeNodeRecord, sourceIds: readonly string[], signal?: AbortSignal, shouldStop?: () => boolean,
+  store: KnowledgeStore, spaceId: string, gap: KnowledgeNodeRecord, sourceIds: readonly string[],
+  reader: ReturnType<typeof createRepairFactUsefulnessReader>, signal?: AbortSignal, shouldStop?: () => boolean,
 ): Promise<void> {
   const subjects = linkedRepairSubjects(store, spaceId, gap, []);
+  if (!subjects.length) return;
+  const guard = createRepairUsefulnessGuard(store, spaceId, gap, subjects, signal, shouldStop);
+  const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
+  const candidates = [...new Map(sourceIds.flatMap((sourceId) => [
+    ...factsForSource(sourceId, graph.edges, graph.nodesById),
+    ...[...graph.nodesById.values()].filter((node) => node.kind === 'fact' && node.status === 'active'
+      && exactKnowledgeIds([node.sourceId, readString(node.metadata.sourceId), ...readStringArray(node.metadata.sourceIds)]).includes(sourceId)),
+  ]).map((fact) => [fact.id, fact])).values()].filter((fact) => isRepairFactKind(fact) && isRepairFactCompatibleWithSubjects(fact, subjects));
+  const prepared = await prepareRepairUsefulness({ store, spaceId, gap, subjects, candidates, guard, reader });
   await writeSupportedRepairSubjectLinks({ store, spaceId, gap, sourceIds, subjects, signal, shouldStop,
-    candidate: (fact) => isUsableRepairFact(fact) && isRepairFactCompatibleWithSubjects(fact, subjects),
+    candidate: prepared.accepts, assertCurrent: prepared.assertCurrent,
   });
 }
 
@@ -523,12 +555,15 @@ function linkedRepairSubjects(
   });
 }
 
-function countUsableRepairFacts(
+async function countUsableRepairFacts(
   store: KnowledgeStore,
   spaceId: string,
   sourceIds: readonly string[],
   subjectIds: ReadonlySet<string>,
-): number {
+  gap: KnowledgeNodeRecord, subjects: readonly KnowledgeNodeRecord[],
+  reader: ReturnType<typeof createRepairFactUsefulnessReader>, signal?: AbortSignal, shouldStop?: () => boolean,
+) {
+  const guard = createRepairUsefulnessGuard(store, spaceId, gap, subjects, signal, shouldStop);
   const sources = new Set(sourceIds);
   const graph = buildKnowledgeSemanticGraphIndex(store, spaceId);
   const sourceIdsByFactId = new Map<string, Set<string>>();
@@ -538,11 +573,11 @@ function countUsableRepairFacts(
     current.add(edge.fromId);
     sourceIdsByFactId.set(edge.toId, current);
   }
-  return [...graph.nodesById.values()]
+  const candidates = [...graph.nodesById.values()]
     .filter((node) => node.kind === 'fact' && node.status === 'active')
     .filter((node) => getKnowledgeSpaceId(node) === spaceId)
     .filter((node) => factSourceIds(node, sourceIdsByFactId).some((sourceId) => sources.has(sourceId)))
-    .filter(isUsableRepairFact)
+    .filter(isRepairFactKind)
     .filter((node) => {
       if (subjectIds.size === 0) return true;
       const linkedIds = uniqueStrings([
@@ -550,8 +585,8 @@ function countUsableRepairFacts(
         ...readStringArray(node.metadata.subjectIds),
       ]);
       return linkedIds.some((id) => subjectIds.has(id));
-    })
-    .length;
+    });
+  return prepareRepairUsefulness({ store, spaceId, gap, subjects, candidates, guard, reader });
 }
 
 function factSourceIds(
@@ -566,12 +601,8 @@ function factSourceIds(
   ]);
 }
 
-function isUsableRepairFact(node: KnowledgeNodeRecord): boolean {
-  if (!['feature', 'capability', 'specification', 'compatibility', 'configuration'].includes(readString(node.metadata.factKind) ?? '')) {
-    return false;
-  }
-  const text = semanticFactText(node);
-  return hasConcreteFeatureSignal(text) && !isLowValueFeatureOrSpecText(text);
+function isRepairFactKind(node: KnowledgeNodeRecord): boolean {
+  return ['feature', 'capability', 'specification', 'compatibility', 'configuration'].includes(readString(node.metadata.factKind) ?? '');
 }
 
 function isRepairFactCompatibleWithSubjects(fact: KnowledgeNodeRecord, subjects: readonly KnowledgeNodeRecord[]): boolean {

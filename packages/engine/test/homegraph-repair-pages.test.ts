@@ -1,7 +1,8 @@
 import { createCompressedPdfBuffer } from './_helpers/homegraph-service-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-readings.js';
 
-const qualityReadings = useKnowledgeAnswerReadings();
+const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
 beforeEach(() => { qualityReadings.set({
   activation: [['Display and picture specifications', 0.99],['Input and output ports', 0.99],['Smart TV platform and integrations', 0.99],['Network and wireless capabilities', 0.99],['Gaming and HDMI features', 0.99],['Audio capabilities', 0.99],['Tuner and broadcast support', 0.99],['LG webOS Smart TV', 0.99],['LG TV', 0.99],['Display and audio specifications', 0.99]],
   quality: [['Amazon affiliate LG listing', 0.03], ['Pending LG candidate source', 0.03], ['LG 86NANO90UNA official specifications', 0.99]],
@@ -91,7 +92,12 @@ describe('Home Graph repair and generated pages', () => {
       kind: 'document',
       mimeType: 'application/pdf',
       filename: 'LG-86NANO90UNA-manual.pdf',
-      stream: [createCompressedPdfBuffer('LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10, HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.')],
+      // A single 12pt line ran beyond the page edge and physically clipped at "Gam".
+      // Wrap the same complete sentence so extraction can retain every claim.
+      stream: [createCompressedPdfBuffer([
+        'LG 86NANO90UNA TV features include Dolby Vision IQ, HDR10,',
+        'HDMI eARC, Filmmaker Mode, Game Optimizer, and Magic Remote voice control.',
+      ])],
       metadata,
     });
     const manual = await store.upsertSource({
@@ -252,7 +258,7 @@ describe('Home Graph repair and generated pages', () => {
     expect(passport.markdown).toContain('Display and picture specifications');
     expect(passport.markdown).toContain('Dolby Vision');
     expect(passport.markdown).toContain('Audio capabilities');
-    expect(passport.markdown).toContain('Dolby audio formats');
+    expect(passport.markdown).toContain('DTV Audio Supported Codec: MPEG and Dolby Digital.');
     expect(passport.markdown).not.toContain('SpeakerCompare');
     expect(passport.markdown).not.toContain('equal power mode');
     expect(passport.markdown).not.toContain('Do not place the TV');

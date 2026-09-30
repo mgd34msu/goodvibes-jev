@@ -1,8 +1,9 @@
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
 
-const answerReadings = useKnowledgeAnswerReadings();
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
 useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
@@ -417,7 +418,7 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     expect(answer.answer.linkedObjects.map((node) => node.title)).toEqual(['Living Room TV']);
     expect(answer.answer.linkedObjects.every((node) => typeof node.metadata.semanticKind !== 'string')).toBe(true);
     expect(page.markdown).toContain('Verified Device Facts');
-    expect(page.markdown).toContain('HDMI inputs');
+    expect(page.markdown).toContain('Input and output ports: The Living Room TV supports Dolby Vision and includes four HDMI ports.');
   });
 
   test('base knowledge ask treats homeassistant as a namespace alias', async () => {

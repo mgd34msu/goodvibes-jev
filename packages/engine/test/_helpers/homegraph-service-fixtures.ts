@@ -62,8 +62,9 @@ export async function waitFor(predicate: () => boolean, timeoutMs: number): Prom
   return _canonicalWaitFor(predicate, { timeoutMs, intervalMs: 10 });
 }
 
-export function createCompressedPdfBuffer(text: string): Buffer {
-  const content = `BT /F1 12 Tf 72 720 Td (${escapePdfText(text)}) Tj ET`;
+export function createCompressedPdfBuffer(text: string | readonly string[]): Buffer {
+  const lines = typeof text === 'string' ? [text] : text;
+  const content = `BT /F1 12 Tf 72 720 Td ${lines.map((line) => `(${escapePdfText(line)}) Tj`).join(' 0 -16 Td ')} ET`;
   const compressed = deflateSync(Buffer.from(content, 'utf-8'));
   const chunks: Buffer[] = [];
   const offsets: number[] = [];
@@ -102,4 +103,3 @@ export function createCompressedPdfBuffer(text: string): Buffer {
 function escapePdfText(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
-

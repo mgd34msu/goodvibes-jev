@@ -16,6 +16,7 @@ import type { KnowledgeNodeRecord, KnowledgeSourceRecord } from '../sdk/src/plat
 import { semanticFactId, semanticHash } from '../sdk/src/platform/knowledge/semantic/utils.js';
 import type { KnowledgeSemanticFactInput, KnowledgeSemanticLlm } from '../sdk/src/platform/knowledge/semantic/types.js';
 import { createStores } from './_helpers/knowledge-semantic-fixtures.js';
+import { repairUsefulFixtureReading } from './_helpers/repair-profile-fixture-readings.js';
 
 const spaceId = 'primary-plan-space';
 let previous: JudgmentPort | undefined;
@@ -23,6 +24,11 @@ beforeEach(() => { previous = installJudgmentPort(undefined); });
 afterEach(() => { installJudgmentPort(previous); });
 function readings(value: (purpose: string, title: string) => number = () => 0.97) {
   const fake = fakePort((name, question, state) => {
+    if (name === 'wanted' || name === 'selected' || name === 'profileSupported') return noulAnswer(0.01); // Profile selection is unrelated to these authored primary-source claims.
+    if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state, [], [
+      ['Input and output ports', 'Input and output ports: HDMI inputs.',
+        'Synthetic TV-123 is also called Fresh entity and Collision in this synthetic fixture. It has four HDMI ports.'],
+    ]));
     const input = state as { purpose: string; candidate: { title: string } };
     if (name === 'supported' || name === 'attached' || name === 'serve') return noulAnswer(0.99); // Authored faithful synthetic claims in addSource below.
     if (name === 'useful') return noulAnswer(value(input.purpose, input.candidate.title));

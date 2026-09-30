@@ -1,6 +1,7 @@
 import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-fixtures.js';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
-const qualityReadings = useKnowledgeAnswerReadings();
+import { homeGraphRepairProfileValues } from './_helpers/repair-profile-fixture-readings.js';
+const qualityReadings = useKnowledgeAnswerReadings({ repairProfile: homeGraphRepairProfileValues });
 beforeEach(() => qualityReadings.set({ activation: [
   ['Display and picture specifications', 0.99], ['Input and output ports', 0.99],
   ['Network and wireless capabilities', 0.99], ['Gaming and HDMI features', 0.99], ['Audio capabilities', 0.99],

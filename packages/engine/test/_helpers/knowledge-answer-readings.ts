@@ -3,7 +3,12 @@ import { afterEach, beforeEach } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairProfileFixtureValues, type RepairUsefulFixtureValues } from './repair-profile-fixture-readings.js';
 export interface AnswerFixtureReadings {
+  /** Authored exact category/value pairs; unlisted source spans are never selected. */
+  repairProfile?: RepairProfileFixtureValues;
+  /** Exact authored claim title, summary and source evidence for repair usefulness. */
+  repairUseful?: RepairUsefulFixtureValues;
   /** Exact candidate titles with authored activation readings. Unlisted candidates never receive an implicit yes. */
   activation?: ReadonlyArray<readonly [string, number]>;
   initialEvidence?: ReadonlyArray<readonly [string, number]>;
@@ -23,13 +28,17 @@ export interface AnswerFixtureReadings {
   quality?: ReadonlyArray<readonly [string, number]>;
   authorities?: ReadonlyArray<readonly [string, 'official-vendor' | 'vendor' | 'secondary' | 'unverified']>;
 }
-export function useKnowledgeAnswerReadings() {
+export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings, 'repairProfile' | 'repairUseful'> = {}) {
   let previous: JudgmentPort | undefined;
   let table: AnswerFixtureReadings = {};
   let activation: AnswerFixtureReadings['activation'] = [];
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (name === 'repairUseful') return noulAnswer(repairUsefulFixtureReading(state,
+        table.repairProfile ?? defaults.repairProfile, table.repairUseful ?? defaults.repairUseful));
+      const profile = repairProfileFixtureReading(name, state, table.repairProfile ?? defaults.repairProfile);
+      if (profile !== undefined) return noulAnswer(profile);
       if (name === 'serve') {
         const title = (state as { candidate?: { title?: string } }).candidate?.title;
         const probability = (table.activation ?? activation)?.find(([candidateTitle]) => candidateTitle === title)?.[1];

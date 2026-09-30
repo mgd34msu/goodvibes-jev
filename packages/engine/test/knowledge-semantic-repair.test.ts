@@ -3,6 +3,7 @@ import { seedHomeAssistantObservation } from './_helpers/homegraph-observation-f
 import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_helpers/knowledge-semantic-activation-fixtures.js';
 import { describe, expect, test } from 'bun:test';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
+import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -22,7 +23,7 @@ import {
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
 
-const answerReadings = useKnowledgeAnswerReadings();
+const answerReadings = useKnowledgeAnswerReadings({ repairProfile: semanticRepairProfileValues, repairUseful: semanticRepairUsefulValues });
 useSemanticActivationFixtures(answerReadings);
 
 describe('semantic knowledge/wiki enrichment: web repair and subject links', () => {

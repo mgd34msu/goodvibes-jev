@@ -1,10 +1,12 @@
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { KnowledgeStore } from '../store.js';
 import type { KnowledgeExtractionRecord, KnowledgeNodeRecord, KnowledgeSourceRecord } from '../types.js';
-import { deriveRepairProfileFacts } from '../semantic/repair-profile.js';
+import { deriveRepairProfileFactPass, repairProfileSourceText, repairProfileSubject, type RepairProfileFact } from '../semantic/repair-profile.js';
+import { captureKnowledgeSourceReferences } from '../source-structural-references.js';
+import { createSemanticWriteGuard } from '../semantic/primary-source-plan.js';
 import { semanticFactId, semanticSlug } from '../semantic/utils.js';
 import type { SourceLinkedRepairProfileFactInput } from '../semantic/self-improvement-promotion.js';
-import { buildHomeGraphMetadata, readRecord } from './helpers.js';
+import { buildHomeGraphMetadata } from './helpers.js';
 import type { HomeGraphPageSourceReader } from './page-quality.js';
 
 type ExtractionBySourceId = ReadonlyMap<string, ReturnType<KnowledgeStore['getExtractionBySourceId']>>;
@@ -24,7 +26,7 @@ export interface DevicePageProfileFactPlan {
   readonly title: string;
   readonly summary: string;
   readonly evidence: string;
-  readonly classification: ReturnType<typeof deriveRepairProfileFacts>[number];
+  readonly classification: RepairProfileFact;
   readonly authority: 'official-vendor' | 'vendor' | 'secondary';
 }
 
@@ -40,19 +42,27 @@ export async function buildDevicePageProfileFacts(input: {
 }): Promise<DevicePageProfileFactPlan[]> {
   throwIfAborted(input.signal);
   const facts: DevicePageProfileFactPlan[] = [];
+  const guard = createSemanticWriteGuard(input.store, input.signal);
+  guard.watch(`node:${input.device.id}`, () => input.store.getNode(input.device.id), input.device);
   const sources = input.sources.slice(0, MAX_PROFILE_SOURCES_PER_DEVICE_PAGE);
-  for (const source of sources) {
-    throwIfAborted(input.signal);
+  const entries = sources.flatMap((source) => {
+    guard.watch(`source:${source.id}`, () => input.store.getSource(source.id), source);
     const extraction = input.extractionsBySourceId?.get(source.id) ?? input.store.getExtractionBySourceId(source.id);
-    const sourceText = extractedPageSourceText(extraction);
-    if (!extraction || !sourceText.trim()) continue;
+    guard.watch(`extraction:${source.id}`, () => input.store.getExtractionBySourceId(source.id), extraction);
+    const text = repairProfileSourceText(extraction);
+    return extraction && text.trim() ? [{ source, extraction, text }] : [];
+  });
+  const profiles = await deriveRepairProfileFactPass(entries.map(({ source, extraction, text }) => ({
+    query: `complete features specifications ${input.device.title}`, source, extraction, text,
+    subjects: [repairProfileSubject(input.device)], structuralReferences: captureKnowledgeSourceReferences(input.store, source, extraction),
+  })), { signal: input.signal });
+  guard.assertCurrent();
+  for (const [index, { source, extraction }] of entries.entries()) {
+    throwIfAborted(input.signal);
     const { authority } = await input.sourceReader.read(source);
+    guard.assertCurrent();
     if (authority === 'unverified') continue;
-    const profileFacts = deriveRepairProfileFacts({
-      query: `complete features specifications ${input.device.title}`,
-      source,
-      text: sourceText,
-    });
+    const profileFacts = profiles[index]!;
     for (const profileFact of profileFacts) {
       throwIfAborted(input.signal);
       const subjectIds = [input.device.id];
@@ -136,26 +146,4 @@ export function devicePageProfileFactInput(
     },
     metadataBuilder: (metadata) => buildHomeGraphMetadata(spaceId, installationId, metadata),
   };
-}
-
-function extractedPageSourceText(extraction: ReturnType<KnowledgeStore['getExtractionBySourceId']>): string {
-  if (!extraction) return '';
-  const structure = readRecord(extraction.structure);
-  const nestedStructure = readRecord(structure.structure);
-  const metadata = readRecord(extraction.metadata);
-  const nestedMetadata = readRecord(structure.metadata);
-  return [
-    extraction.excerpt,
-    ...extraction.sections,
-    typeof structure.searchText === 'string' ? structure.searchText : undefined,
-    typeof structure.text === 'string' ? structure.text : undefined,
-    typeof structure.content === 'string' ? structure.content : undefined,
-    typeof nestedStructure.searchText === 'string' ? nestedStructure.searchText : undefined,
-    typeof nestedStructure.text === 'string' ? nestedStructure.text : undefined,
-    typeof nestedStructure.content === 'string' ? nestedStructure.content : undefined,
-    typeof metadata.searchText === 'string' ? metadata.searchText : undefined,
-    typeof metadata.text === 'string' ? metadata.text : undefined,
-    typeof nestedMetadata.searchText === 'string' ? nestedMetadata.searchText : undefined,
-    typeof nestedMetadata.text === 'string' ? nestedMetadata.text : undefined,
-  ].filter(Boolean).join('\n\n');
 }

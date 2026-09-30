@@ -14,11 +14,13 @@ export async function writeSupportedRepairSubjectLinks(input: {
   readonly store: KnowledgeStore; readonly spaceId: string; readonly gap: KnowledgeNodeRecord;
   readonly subjects: readonly KnowledgeNodeRecord[]; readonly sourceIds: readonly string[];
   readonly candidate: (fact: KnowledgeNodeRecord) => boolean;
+  readonly assertCurrent?: (() => void) | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly shouldStop?: (() => boolean) | undefined;
 }): Promise<void> {
   const { store, spaceId, subjects } = input;
   assertSemanticWriteAllowed(input.signal, input.shouldStop);
+  input.assertCurrent?.();
   if (subjects.length === 0) return;
   const guard = createSemanticWriteGuard(store, input.signal, input.shouldStop);
   const support = createGeneratedFactWritePlanner(store, guard, { signal: input.signal });
@@ -77,6 +79,7 @@ export async function writeSupportedRepairSubjectLinks(input: {
   await store.batch(async () => {
     store.assertPreparedNodeWrites(activation);
     guard.assertCurrent();
+    input.assertCurrent?.();
     for (const [index, { fact, primarySourceId, supportMetadata }] of plans.entries()) {
       assertSemanticWriteAllowed(input.signal, input.shouldStop);
       await store.upsertPreparedNode(activation, index);
