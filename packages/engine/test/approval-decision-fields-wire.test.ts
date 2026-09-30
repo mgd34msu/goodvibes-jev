@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootDaemon, type BootedDaemon } from '../sdk/src/platform/daemon/boot.ts';
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import type { PermissionPromptRequest } from '../sdk/src/platform/permissions/prompt.ts';
 
 const TOKEN = 'approval-fields-token';
@@ -27,6 +28,7 @@ function auth(extra: Record<string, string> = {}): Record<string, string> {
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'approval-fields-home-'));
   work = mkdtempSync(join(tmpdir(), 'approval-fields-work-'));
+  seedBenchmarkCache(home, 'goodvibes');
   daemon = await bootDaemon({
     homeDirectory: home,
     workingDir: work,
