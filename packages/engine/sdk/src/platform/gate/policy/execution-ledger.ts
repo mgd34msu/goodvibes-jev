@@ -27,7 +27,7 @@ import type { RuntimeEventBus } from '../../runtime/events/index.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
 import type { SideEffectKind } from '../batteries/side-effect.js';
-import { judgmentInputProblem, JudgmentInputError } from '../judgment-input.js';
+import { snapshotJudgmentInput, JudgmentInputError } from '../judgment-input.js';
 import { readSideEffectKind, shellCommandsIn } from '../reading.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { mapLimit } from '@goodvibes-jev/judgment';
@@ -326,12 +326,17 @@ export class AgentExecutionLedger {
   private async recordReceived(event: Extract<ToolEvent, { type: 'TOOL_RECEIVED' }>, timestamp: number): Promise<void> {
     // TOOL_RECEIVED precedes the permission result. Refused material must not
     // reach the independent route/argument readers or their persisted previews.
-    const problem = judgmentInputProblem(event.args, event.tool);
-    const refusal = problem ? new JudgmentInputError(problem).message : undefined;
+    let args: Record<string, unknown> = {};
+    let refusal: string | undefined;
+    try { args = snapshotJudgmentInput(event.args, event.tool) as Record<string, unknown>; }
+    catch (error) {
+      if (!(error instanceof JudgmentInputError)) throw error;
+      refusal = error.message;
+    }
+    const problem = refusal !== undefined;
     const [route, roles] = refusal
       ? [{ routeKind: 'other' as const, routeKindError: refusal }, { roles: null, error: refusal }]
-      : await Promise.all([readRouteKind(event.tool, event.args), readArgRolesReported(event.tool, event.args)]);
-    const args = problem ? {} : event.args;
+      : await Promise.all([readRouteKind(event.tool, args), readArgRolesReported(event.tool, args)]);
     const command = shellCommandsIn(args)[0];
     if (this.disposed) return;
     const record: MutableAgentExecutionRecord = {

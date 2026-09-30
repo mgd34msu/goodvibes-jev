@@ -54,6 +54,49 @@ const MAX_DEPTH = 64;
 const MAX_NODES = 20_000;
 const MAX_TEXT_CHARS = 1_000_000;
 
+/** Own the descriptor values once; later scans and projection never read input again. */
+function captureInput(value: unknown): unknown {
+  let nodes = 0;
+  let chars = 0;
+  let slots = 0;
+  const ancestors = new Set<object>();
+  const unsupported = (): never => { throw new JudgmentInputError('unsupported-input'); };
+  function capture(entry: unknown, depth: number): unknown {
+    if (++nodes > MAX_NODES || depth > MAX_DEPTH) return unsupported();
+    if (typeof entry === 'string') {
+      chars += entry.length;
+      if (chars > MAX_TEXT_CHARS) return unsupported();
+      return entry;
+    }
+    if (entry === null || entry === undefined || typeof entry === 'boolean') return entry;
+    if (typeof entry === 'number') return Number.isFinite(entry) ? entry : unsupported();
+    if (typeof entry !== 'object' || ancestors.has(entry)) return unsupported();
+    const array = Array.isArray(entry);
+    const prototype: unknown = Object.getPrototypeOf(entry);
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return unsupported();
+    const descriptors = Object.getOwnPropertyDescriptors(entry);
+    // Neither species construction nor hidden serialization/iterator hooks are JSON data.
+    if (Object.getOwnPropertySymbols(descriptors).length > 0 || (array && Object.hasOwn(descriptors, 'constructor'))) return unsupported();
+    if (Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return unsupported();
+    const length: unknown = array ? descriptors['length']?.value : 0;
+    if (typeof length !== 'number' || !Number.isInteger(length) || length < 0 || (slots += length) > MAX_NODES) return unsupported();
+    const copy: object = array ? new Array(length) : Object.create(null) as object;
+    ancestors.add(entry);
+    try {
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (array ? key === 'length' : !descriptor.enumerable) continue;
+        const index = Number(key);
+        if (array && Number.isInteger(index) && index >= 0 && index < 0xffff_ffff && String(index) === key && index >= length) return unsupported();
+        // DefineProperty preserves __proto__ as data instead of changing the clone's prototype.
+        Object.defineProperty(copy, key, { value: capture(descriptor.value, depth + 1), enumerable: true });
+      }
+      return Object.freeze(copy);
+    } finally { ancestors.delete(entry); }
+  }
+  try { return capture(value, 0); }
+  catch { return unsupported(); }
+}
+
 function present(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
 }
@@ -138,7 +181,7 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
  * are inspected even in nested tool/params wrappers and JSON-encoded bodies.
  * Empty credential fields and goodvibes secret references carry no raw value.
  */
-export function judgmentInputProblem(value: unknown, toolName = ''): JudgmentInputProblem | undefined {
+function snapshotProblem(value: unknown, toolName: string): JudgmentInputProblem | undefined {
   let nodes = 0;
   let chars = 0;
   const ancestors = new Set<object>();
@@ -167,7 +210,10 @@ export function judgmentInputProblem(value: unknown, toolName = ''): JudgmentInp
     ancestors.add(entry);
     try {
       const descriptors = Object.getOwnPropertyDescriptors(entry);
-      if (Object.values(descriptors).some((descriptor) => descriptor.get !== undefined || descriptor.set !== undefined)) return 'unsupported-input';
+      // Array.map consults constructor[Symbol.species], and JSON hooks can run
+      // even when non-enumerable. Plain JSON must not supply executable hooks.
+      if (Object.getOwnPropertySymbols(descriptors).length > 0 || (array && Object.hasOwn(descriptors, 'constructor'))) return 'unsupported-input';
+      if (Object.values(descriptors).some((descriptor) => !('value' in descriptor) || typeof descriptor.value === 'function')) return 'unsupported-input';
       // Array.map and JSON read array slots regardless of enumerability. Inspect
       // every own array value; only an array's structural length is omitted.
       const fields: Record<string, unknown> = Object.fromEntries(Object.entries(descriptors)
@@ -203,8 +249,24 @@ export function judgmentInputProblem(value: unknown, toolName = ''): JudgmentInp
   return inlineProblem(toolName) ?? visit(value, [], toolName, 0);
 }
 
+/** Immutable, fully inspected data for consumers that will project or serialize it. */
+export function snapshotJudgmentInput(value: unknown, toolName = ''): unknown {
+  const snapshot = captureInput(value);
+  const problem = snapshotProblem(snapshot, toolName);
+  if (problem) throw new JudgmentInputError(problem);
+  return snapshot;
+}
+
+/** Return a fixed refusal kind without exposing input or executing its accessors. */
+export function judgmentInputProblem(value: unknown, toolName = ''): JudgmentInputProblem | undefined {
+  try { snapshotJudgmentInput(value, toolName); return undefined; }
+  catch (error) {
+    if (error instanceof JudgmentInputError) return error.problem;
+    throw error;
+  }
+}
+
 /** Must run before accessing the port, not only before awaiting a request. */
 export function assertJudgmentInput(value: unknown, toolName = ''): void {
-  const problem = judgmentInputProblem(value, toolName);
-  if (problem) throw new JudgmentInputError(problem);
+  snapshotJudgmentInput(value, toolName);
 }

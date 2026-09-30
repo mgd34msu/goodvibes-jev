@@ -4,7 +4,7 @@ import { LIMITS, toJson, type Selection } from '@goodvibes-jev/judgment';
 import type { ChannelIngressPolicyInput, ChannelPolicyDecision, RouteBindingManager } from '../channels/index.js';
 import type { ApprovalBroker, SharedApprovalRecord } from '../control-plane/approval-broker.js';
 import { logger } from '../utils/logger.js';
-import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { assertJudgmentInput, snapshotJudgmentInput } from '../gate/judgment-input.js';
 import { channelApprovalReply, channelApprovalTarget } from './batteries/approval-reply.js';
 
 export type ApprovalReplyBroker = Pick<ApprovalBroker, 'listApprovals' | 'resolveApproval'>;
@@ -20,8 +20,7 @@ function proposalFor(record: SharedApprovalRecord) {
   };
   // Direct or restored broker asks can predate the tool gate's input check.
   // Inspect raw data before JSON serialization can invoke accessors/toJSON.
-  assertJudgmentInput(proposal, record.request.tool);
-  return toJson(proposal);
+  return toJson(snapshotJudgmentInput(proposal, record.request.tool) as typeof proposal);
 }
 
 /** Only routing/source identity, not mutable last-seen timestamps or audit metadata. */

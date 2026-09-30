@@ -186,6 +186,83 @@ describe('pre-judgment protected input refusal', () => {
     expect(log.requests).toEqual([]);
   });
 
+  for (const species of ['value', 'getter'] as const) {
+    test(`array ${species} species cannot construct unchecked slots or start any battery`, async () => {
+      let constructors = 0;
+      let getters = 0;
+      class Injected extends Array<unknown> {
+        constructor(size: number) {
+          super(size + 1);
+          constructors++;
+          this[size] = `password=${SECRET}`;
+        }
+      }
+      const constructor = {};
+      Object.defineProperty(constructor, Symbol.species, species === 'value'
+        ? { value: Injected }
+        : { get: () => { getters++; return Injected; } });
+      const items: unknown[] = ['ordinary'];
+      Object.defineProperty(items, 'constructor', { value: constructor, enumerable: false });
+      const args = { nested: { items } };
+      expect(judgmentInputProblem(args)).toBe('unsupported-input');
+      await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(() => readingArguments(args)).toThrow(JudgmentInputError);
+      const { manager, events, asks } = gate({ auto: true, approve: true });
+      expect((await manager.checkDetailed('test', args)).reasonCode).toBe('boundary_judgment_input');
+      expect(constructors).toBe(0);
+      expect(getters).toBe(0);
+      expect(log.requests).toEqual([]);
+      expect(events).toEqual([]);
+      expect(asks).toEqual([]);
+      expect(items).toHaveLength(1);
+    });
+  }
+
+  for (const hook of ['toJSON', Symbol.iterator] as const) {
+    for (const shape of ['array', 'object'] as const) {
+      test(`hidden ${shape} ${String(hook)} callbacks are refused before projection`, async () => {
+        let invoked = 0;
+        const value = shape === 'array' ? ['ordinary'] : { text: 'ordinary' };
+        Object.defineProperty(value, hook, { value: () => { invoked++; return `password=${SECRET}`; }, enumerable: false });
+        const args = { value };
+        expect(judgmentInputProblem(args)).toBe('unsupported-input');
+        await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+        expect(() => readingArguments(args)).toThrow(JudgmentInputError);
+        expect(invoked).toBe(0);
+        expect(log.requests).toEqual([]);
+      });
+    }
+  }
+
+  test('symbol accessors are refused without reading their values', async () => {
+    let invoked = 0;
+    const value = { text: 'ordinary' };
+    Object.defineProperty(value, Symbol.iterator, { get: () => { invoked++; return () => [SECRET]; } });
+    const args = { value };
+    expect(judgmentInputProblem(args)).toBe('unsupported-input');
+    await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(invoked).toBe(0);
+    expect(log.requests).toEqual([]);
+  });
+
+  test('protected proxy descriptor values are refused without invoking get', async () => {
+    let gets = 0;
+    const value = new Proxy({ value: `password=${SECRET}` }, {
+      get: () => { gets++; return 'ordinary'; },
+    });
+    await expect(readToolCall({ toolName: 'test', args: { value } })).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(gets).toBe(0);
+    expect(log.requests).toEqual([]);
+  });
+
+  test('protected __proto__ data and oversized sparse arrays fail closed', async () => {
+    const hidden = Object.fromEntries([['__proto__', { password: SECRET }]]);
+    for (const args of [hidden, { items: new Array(20_001) }]) {
+      await expect(readToolCall({ toolName: 'test', args })).rejects.toBeInstanceOf(JudgmentInputError);
+    }
+    expect(log.requests).toEqual([]);
+  });
+
   test('complete local PAN scans are bounded on many digit groups', () => {
     expect(judgmentInputProblem({ content: '1234 '.repeat(10_000) })).toBeUndefined();
     expect(judgmentInputProblem({ content: `${PAN} `.repeat(10_000) })).toBe('card-material');
@@ -229,7 +306,7 @@ describe('safe calls keep semantic judgment and original execution arguments', (
 
   test('harmless hidden array slots and holes reach all three batteries unchanged', async () => {
     const items = hiddenArrayValue('ordinary hidden value', 3);
-    const args = { nested: { items }, length: 'ordinary object field' };
+    const args = { nested: { items }, length: 'ordinary object field', constructor: { kind: 'metadata' }, toJSON: 'ordinary object data' };
     expect(judgmentInputProblem(args)).toBeUndefined();
     const before = JSON.stringify(args);
     await readToolCall({ toolName: 'test', args });
@@ -241,6 +318,60 @@ describe('safe calls keep semantic judgment and original execution arguments', (
     expect(JSON.stringify(args)).toBe(before);
     expect(Object.hasOwn(items, '0')).toBe(false);
     expect(Object.getOwnPropertyDescriptor(items, '3')).toMatchObject({ value: 'ordinary hidden value', enumerable: false });
+  });
+
+  test('captured plain data is detached from later changes to the original arguments', async () => {
+    const items = hiddenArrayValue({ text: 'ordinary nested value' });
+    const args = { items, metadata: { label: 'ordinary' } };
+    const before = JSON.stringify(args);
+    await readToolCall({ toolName: 'test', args });
+    args.metadata.label = `password=${SECRET}`;
+    (items[0] as { text: string }).text = `password=${SECRET}`;
+    items.push(`password=${SECRET}`);
+    expect(log.requests).toHaveLength(3);
+    for (const request of log.requests) {
+      expect(JSON.stringify((request.state as { arguments: unknown }).arguments)).toBe(before);
+      expect(JSON.stringify(request)).not.toContain(SECRET);
+    }
+  });
+
+  for (const shape of ['array', 'object'] as const) {
+    test(`${shape} projection uses validated descriptors without invoking proxy get`, async () => {
+      let gets = 0;
+      let descriptors = 0;
+      const original = shape === 'array' ? ['ordinary'] : { value: 'ordinary' };
+      const value = new Proxy(original, {
+        get: (target, key, receiver): unknown => {
+          gets++;
+          return key === (shape === 'array' ? '0' : 'value') ? `password=${SECRET}` : Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor: (target, key) => {
+          descriptors++;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      });
+      await readToolCall({ toolName: 'test', args: { value } });
+      expect(gets).toBe(0);
+      expect(descriptors).toBe(shape === 'array' ? 2 : 1);
+      expect(log.requests).toHaveLength(3);
+      for (const request of log.requests) {
+        expect(JSON.stringify((request.state as { arguments: unknown }).arguments)).toBe(JSON.stringify({ value: original }));
+        expect(JSON.stringify(request)).not.toContain(SECRET);
+      }
+    });
+  }
+
+  test('__proto__ stays an ordinary own data key through projection and serialization', async () => {
+    const args = Object.fromEntries([['__proto__', { text: 'ordinary prototype-key data' }]]);
+    const before = JSON.stringify(args);
+    await readToolCall({ toolName: 'test', args });
+    expect(log.requests).toHaveLength(3);
+    for (const request of log.requests) {
+      const projected = (request.state as { arguments: object }).arguments;
+      expect(Object.getPrototypeOf(projected)).toBe(Object.prototype);
+      expect(Object.hasOwn(projected, '__proto__')).toBe(true);
+      expect(JSON.stringify(projected)).toBe(before);
+    }
   });
 
   test('references, ordinary text, shell programs, metadata and read paths remain readable', async () => {
@@ -282,6 +413,49 @@ describe('safe calls keep semantic judgment and original execution arguments', (
 
 describe('secondary reading paths and errors', () => {
   const log = useGateReadings([['https://example.test/send', { outward: true, derives: true }]]);
+
+  test('the execution ledger reads argument names and previews from the inspected snapshot', async () => {
+    let gets = 0;
+    const value = new Proxy({ ordinary: 'ordinary nested value' }, {
+      get: (target, key, receiver): unknown => {
+        gets++;
+        return key === 'ordinary' ? { [`password=${SECRET}`]: 'unchecked name' } : Reflect.get(target, key, receiver);
+      },
+    });
+    const bus = new RuntimeEventBus();
+    const ledger = new AgentExecutionLedger(bus);
+    try {
+      emitToolReceived(bus, { sessionId: 'test', traceId: 'test', source: 'test' }, { callId: 'proxy-call', turnId: 'turn', tool: 'read', args: { value } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await ledger.settled();
+      expect(log.requests.filter((request) => JSON.stringify(request.state).includes(SECRET))).toHaveLength(0);
+      expect(gets).toBe(0);
+      expect(log.requests.some((request) => Object.keys(request.questions ?? {}).includes('holds_credential'))).toBe(true);
+      expect(JSON.stringify(log.requests)).not.toContain(SECRET);
+      expect(JSON.stringify(ledger.getSnapshot())).not.toContain(SECRET);
+    } finally { ledger.dispose(); }
+  });
+
+  test('content derivation reads inspected strings without rereading proxy properties', async () => {
+    let gets = 0;
+    const ordinary = Object.fromEntries([['text', 'ordinary outward text'], ['__proto__', 'ordinary prototype-key text']]);
+    const args = new Proxy(ordinary, {
+      get: (target, key, receiver): unknown => {
+        gets++;
+        return key === 'text' ? `password=${SECRET}` : Reflect.get(target, key, receiver);
+      },
+    });
+    const ledger = new UntrustedContentLedger();
+    ledger.startTurn();
+    ledger.record({ surface: 'web-page', origin: 'https://source.test', at: new Date().toISOString(), content: 'ordinary source text' });
+    const reading = await readToolCall({ toolName: 'fetch', args: { url: 'https://example.test/send' } });
+    await runBoundary({ toolName: 'fetch', args, reading, ledger });
+    expect(log.requests.filter((request) => JSON.stringify(request.state).includes(SECRET))).toHaveLength(0);
+    expect(gets).toBe(0);
+    expect(log.requests.some((request) => Object.keys(request.questions ?? {}).includes('derives'))).toBe(true);
+    expect(JSON.stringify(log.requests)).not.toContain(SECRET);
+    expect(JSON.stringify(log.requests)).toContain('ordinary prototype-key text');
+  });
 
   test('MCP capability reading validates before either parallel request starts', async () => {
     const manager = new McpPermissionManager();

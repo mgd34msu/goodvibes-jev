@@ -43,7 +43,7 @@
  * Which tool calls are outward is Jev's `outward` reading alone. The earlier
  * judgment-input check protects the judgment transmission independently.
  */
-import { judgmentInputProblem, JudgmentInputError } from './judgment-input.js';
+import { judgmentInputProblem, snapshotJudgmentInput, JudgmentInputError } from './judgment-input.js';
 import { checkOwnerApproval, type OwnerApproval } from '../security/owner-approval.js';
 import { getProcessUntrustedContentLedger, type UntrustedContentLedger } from '../security/untrusted-content.js';
 import { findContentTaint } from '../security/content-taint.js';
@@ -74,7 +74,7 @@ export type BoundaryVerdict =
 
 /** Every string value in the arguments, keyed by its path: the content an approval is bound to. */
 export function stringFieldsOf(args: Record<string, unknown>, prefix = ''): Record<string, string> {
-  const fields: Record<string, string> = {};
+  const fields = Object.create(null) as Record<string, string>;
   for (const [key, value] of Object.entries(args)) {
     const path = prefix ? `${prefix}.${key}` : key;
     if (typeof value === 'string') fields[path] = value;
@@ -168,14 +168,26 @@ export function judgmentInputBoundary(toolName: string, args: Record<string, unk
   };
 }
 
+/** Match the public boundary's value-free refusal when preparing owned data. */
+function snapshotRefusal(error: unknown): BoundaryVerdict {
+  if (!(error instanceof JudgmentInputError)) throw error;
+  return {
+    passed: false,
+    checks: [{ check: 'judgment-input', result: 'refuse', detail: error.problem }],
+    refusedBy: 'judgment-input',
+    reason: error.message,
+  };
+}
+
 /**
  * Runs the boundary over one call. The first refusal stops the run; the
  * checks list records every check that ran and those it skipped.
  */
 export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict> {
-  const privacy = judgmentInputBoundary(input.toolName, input.args);
-  if (!privacy.passed) return privacy;
-  const checks: BoundaryCheck[] = [...privacy.checks];
+  let args: Record<string, unknown>;
+  try { args = snapshotJudgmentInput(input.args, input.toolName) as Record<string, unknown>; }
+  catch (error) { return snapshotRefusal(error); }
+  const checks: BoundaryCheck[] = [{ check: 'judgment-input', result: 'pass' }];
   const refuse = (check: BoundaryCheck, reason: string, extra: Partial<Extract<BoundaryVerdict, { passed: false }>> = {}): BoundaryVerdict => {
     checks.push(check);
     return { passed: false, checks, refusedBy: check.check, reason, ...extra };
@@ -207,7 +219,7 @@ export async function runBoundary(input: BoundaryInput): Promise<BoundaryVerdict
     return { passed: true, checks };
   }
 
-  const content = stringFieldsOf(input.args);
+  const content = stringFieldsOf(args);
   const card = reading.boundary.cardDetails;
   if (card === 'yes') {
     return refuse({ check: 'card-details', result: 'refuse', detail: 'carries payment card details' }, 'Refused: this call would send payment card details. Card details are entered at a local terminal or in the web UI, never sent by a tool.');

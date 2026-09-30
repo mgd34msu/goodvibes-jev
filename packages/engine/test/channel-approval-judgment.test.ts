@@ -233,6 +233,31 @@ describe('the reply must identify its target before its meaning is read', () => 
 });
 
 describe('authorization and failures are fail closed', () => {
+  test('proposal serialization uses inspected descriptors instead of proxy property reads', async () => {
+    const h = await harness();
+    const ask = await h.ask();
+    let gets = 0;
+    const marker = 'password=SYNTHETIC_APPROVAL_PROXY_ONLY';
+    const args = new Proxy({ destination: 'ordinary destination' }, {
+      get: (target, key, receiver): unknown => {
+        gets++;
+        return key === 'destination' ? marker : Reflect.get(target, key, receiver);
+      },
+    });
+    const record = { ...ask.approval, request: { ...ask.approval.request, args } };
+    readings.set({ reply: 'unclear' });
+    const decision = { allowed: true, policy: { allowlistUserIds: [OWNER] } } as unknown as ChannelPolicyDecision;
+    expect(await tryResolveApprovalReplyFromChannel({ surface: 'slack', userId: OWNER, text: 'which deployment?' }, decision, {
+      approvalBroker: { listApprovals: () => [record], resolveApproval: h.broker.resolveApproval.bind(h.broker) },
+      routeBindings: { getBinding: () => undefined },
+    })).toBe(false);
+    expect(readings.requests.filter((request) => JSON.stringify(request.state).includes(marker))).toHaveLength(0);
+    expect(gets).toBe(0);
+    expect(readings.requests).toHaveLength(1);
+    expect(JSON.stringify(readings.requests)).not.toContain(marker);
+    expect(JSON.stringify(readings.requests)).toContain('ordinary destination');
+  });
+
   test('an unknown sender cannot answer through the Slack adapter', async () => {
     const h = await harness();
     const ask = await h.ask();

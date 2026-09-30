@@ -7,7 +7,7 @@
  * Code reads an uncertain fact as true: a reading that does not reach a
  * confident no counts as yes. Doubt raises the stakes; it never lowers them.
  */
-import { assertJudgmentInput } from './judgment-input.js';
+import { snapshotJudgmentInput } from './judgment-input.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, Stakes, YesNoReading } from '@goodvibes-jev/judgment';
 import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
@@ -84,7 +84,13 @@ function boundedArguments(value: unknown): JsonValue {
     return value.length <= MAX_STRING_CHARS ? value : `${value.slice(0, MAX_STRING_CHARS)} [${value.length - MAX_STRING_CHARS} more characters]`;
   }
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
-  if (Array.isArray(value)) return value.map(boundedArguments);
+  if (Array.isArray(value)) {
+    const projected: JsonValue[] = new Array(value.length);
+    for (let index = 0; index < value.length; index++) {
+      if (Object.hasOwn(value, index)) projected[index] = boundedArguments(value[index]);
+    }
+    return projected;
+  }
   if (typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined).map(([k, v]) => [k, boundedArguments(v)]));
   }
@@ -93,17 +99,16 @@ function boundedArguments(value: unknown): JsonValue {
 
 /** Privacy-checked arguments; scan the complete input before applying size caps. */
 export function readingArguments(value: unknown): JsonValue {
-  assertJudgmentInput(value);
-  return boundedArguments(value);
+  return boundedArguments(snapshotJudgmentInput(value));
 }
 
 /** The state a gate battery reads: the tool, its arguments and the working directory. */
 export function readingState(toolName: string, args: Record<string, unknown>, workingDirectory?: string): { [key: string]: JsonValue } {
-  assertJudgmentInput({ args, workingDirectory }, toolName);
+  const snapshot = snapshotJudgmentInput({ args, workingDirectory }, toolName) as { args: unknown; workingDirectory?: string };
   return {
     tool: toolName,
-    arguments: boundedArguments(args),
-    ...(workingDirectory ? { workingDirectory } : {}),
+    arguments: boundedArguments(snapshot.args),
+    ...(snapshot.workingDirectory ? { workingDirectory: snapshot.workingDirectory } : {}),
   };
 }
 
