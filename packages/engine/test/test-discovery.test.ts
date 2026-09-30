@@ -63,7 +63,8 @@ test('the actual runner executes nested fixture suites by default and preserves 
   const scripts = join(root, 'scripts');
   mkdirSync(scripts);
   for (const file of ['test.ts', 'test-discovery.ts', 'owned-test-child.ts', 'stale-tmp-sweep.ts',
-    'test-run-tmp.ts', 'workspace-lock.ts', 'test-child-watchdog-env.ts', 'test-child-watchdog.ts']) {
+    'test-run-tmp.ts', 'workspace-lock.ts', 'test-child-watchdog-env.ts', 'test-child-watchdog.ts',
+    'test-isolation.ts', 'test-network-guard.ts', 'test-network-preload.ts']) {
     copyFileSync(resolve(import.meta.dir, '../scripts', file), join(scripts, file));
   }
   for (const path of ['root.test.ts', 'contract/runner.test.ts', 'routing/route.test.ts', 'new/deeper/extra.test.ts']) {

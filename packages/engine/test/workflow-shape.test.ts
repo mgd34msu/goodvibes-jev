@@ -198,8 +198,10 @@ describe('ci.yml: build once, restore everywhere', () => {
 
   test('the required bun matrix leg also runs the judgment foundation suite', () => {
     const matrix = ci.jobs!['platform-matrix']!;
-    const judgment = steps(matrix).find((step) => step.run === 'bun run --cwd packages/judgment test');
+    const judgment = steps(matrix).find((step) => step.run === 'bun run test:judgment');
     expect(judgment).toBeDefined();
+    const rootScripts = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
+    expect(rootScripts['test:judgment']).toBe('bun packages/engine/scripts/test.ts --cwd ../judgment test');
     expect(judgment?.if).toBe("matrix.platform == 'bun'");
     expect(judgment?.['continue-on-error']).not.toBe(true);
     expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');

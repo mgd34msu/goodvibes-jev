@@ -204,7 +204,7 @@ jobs:
         if: matrix.platform == 'bun'
         # Keep the level-0 foundation in the required Bun lane without invoking
         # the root pretest rebuild over the shared, restored build artifact.
-        run: bun run --cwd packages/judgment test
+        run: bun run test:judgment
       - name: Sweep the fake-IMAP suites for the lost-wake race
         # The bun leg only: this re-runs suites the leg has already run, with
         # one wire call delayed so a wake edge that a test pushes at the wrong
