@@ -10,6 +10,7 @@
  * as pending-restart on the manager's snapshot instead of silently doing
  * nothing or faking a live apply.
  */
+import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,6 +54,7 @@ function buildServices() {
   const homeDirectory = join(root, 'home');
   mkdirSync(workingDir, { recursive: true });
   mkdirSync(homeDirectory, { recursive: true });
+  seedBenchmarkCache(homeDirectory, 'goodvibes');
   const configManager = new ConfigManager({
     homeDir: homeDirectory,
     workingDir,
@@ -109,6 +111,7 @@ describe('createRuntimeServices: live feature-settings bridge', () => {
     const homeDirectory = join(root, 'home');
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(homeDirectory, { recursive: true });
+    seedBenchmarkCache(homeDirectory, 'goodvibes');
     const configManager = new ConfigManager({
       homeDir: homeDirectory,
       workingDir,
@@ -141,6 +144,7 @@ describe('createRuntimeServices: live feature-settings bridge', () => {
     const homeDirectory = join(root, 'home');
     mkdirSync(workingDir, { recursive: true });
     mkdirSync(homeDirectory, { recursive: true });
+    seedBenchmarkCache(homeDirectory, 'goodvibes');
     const configManager = new ConfigManager({
       homeDir: homeDirectory,
       workingDir,
@@ -185,6 +189,7 @@ function servicesWithOtelMode(mode: string): { configManager: ConfigManager } {
   const homeDirectory = join(root, 'home');
   mkdirSync(workingDir, { recursive: true });
   mkdirSync(homeDirectory, { recursive: true });
+  seedBenchmarkCache(homeDirectory, 'goodvibes');
   const configManager = new ConfigManager({ homeDir: homeDirectory, workingDir, surfaceRoot: 'goodvibes-test' });
   // otel-foundation is startup-gated, so the value has to be persisted before
   // the runtime is composed, the same ordering the case above documents.

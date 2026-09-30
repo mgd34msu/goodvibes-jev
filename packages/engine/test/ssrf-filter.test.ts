@@ -5,7 +5,7 @@
  * HookDefinition.allowInternal: true bypasses the filter for hooks.
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { run as runHttpHook } from '../sdk/src/platform/hooks/runners/http.ts';
 import type { HookDefinition, HookEvent } from '../sdk/src/platform/hooks/types.ts';
 import { WebhookNotifier } from '../sdk/src/platform/integrations/webhooks.ts';
@@ -20,6 +20,18 @@ const MOCK_EVENT: HookEvent = {
   payload: {},
 };
 
+let transportCalls = 0;
+let restoreFetch: (() => void) | undefined;
+beforeEach(() => {
+  transportCalls = 0;
+  const mock = spyOn(globalThis, 'fetch').mockImplementation(async () => {
+    transportCalls++;
+    throw new Error('fixture transport unavailable');
+  });
+  restoreFetch = () => mock.mockRestore();
+});
+afterEach(() => { restoreFetch?.(); restoreFetch = undefined; });
+
 describe('HTTP hook SSRF filter', () => {
   test('localhost hook URL is blocked', async () => {
     const hook: HookDefinition = {
@@ -30,6 +42,7 @@ describe('HTTP hook SSRF filter', () => {
     const result = await runHttpHook(hook, MOCK_EVENT);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/blocked/);
+    expect(transportCalls).toBe(0);
   });
 
   test('private IPv4 hook URL is blocked', async () => {
@@ -54,7 +67,7 @@ describe('HTTP hook SSRF filter', () => {
     expect(result.error).toMatch(/blocked/);
   });
 
-  test('allowInternal: true bypasses the SSRF filter (attempts actual fetch: expected network fail, not SSRF block)', async () => {
+  test('allowInternal: true reaches the fixture transport instead of an SSRF refusal', async () => {
     const hook: HookDefinition = {
       match: 'Post:tool:*',
       type: 'http',
@@ -65,11 +78,11 @@ describe('HTTP hook SSRF filter', () => {
     const result = await runHttpHook(hook, MOCK_EVENT);
     expect(result.ok).toBe(false);
     expect(result.error ?? '').not.toMatch(/^http hook blocked/);
+    expect(transportCalls).toBe(1);
   });
 
   test('public external URL is not blocked (does not contain SSRF error)', async () => {
-    // We do not make a real network request here, we only verify the filter passes.
-    // The hook runner will try to fetch but will fail with a network error, NOT an SSRF block.
+    // The controlled transport fails after the filter permits the public URL.
     const hook: HookDefinition = {
       match: 'Post:tool:*',
       type: 'http',
@@ -79,6 +92,7 @@ describe('HTTP hook SSRF filter', () => {
     const result = await runHttpHook(hook, MOCK_EVENT);
     expect(result.ok).toBe(false);
     expect(result.error ?? '').not.toMatch(/^http hook blocked/);
+    expect(transportCalls).toBe(1);
   });
 });
 
@@ -118,12 +132,13 @@ describe('WebhookNotifier SSRF filter', () => {
   });
 
   test('public URL is not blocked by SSRF filter', async () => {
-    const notifier = new WebhookNotifier([], { timeoutMs: 1_000 });
+    const notifier = new WebhookNotifier([], { timeoutMs: 1_000, force: true });
     notifier.addUrl('https://example.com/no-such-webhook');
 
     const results = await notifier.test();
     expect(results.length).toBe(1);
     expect(results[0]!.ok).toBe(false);
     expect(results[0]!.error ?? '').not.toMatch(/blocked URL/);
+    expect(transportCalls).toBe(1);
   });
 });

@@ -5,12 +5,12 @@
  * Closes coverage gap: platform/discovery
  */
 
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runOwnedTestChild } from '../scripts/owned-test-child.ts';
 import {
-  scan,
   scanHosts,
   scanLocalhost,
   loadPersistedProviders,
@@ -34,24 +34,36 @@ describe('platform/discovery: behavior smoke', () => {
     }
   });
 
-  test('scan() resolves with ScanResult shape or times out gracefully', async () => {
-    // scan() probes localhost + all /24 subnet IPs; no AbortSignal param.
-    // We race it against a 10s wall-clock limit and assert whichever outcome arrives.
-    const result = await Promise.race([
-      scan().then((r) => r),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 10000)),
-    ]).catch(() => null);
-    // Either the scan resolved with a ScanResult, or we got null from the timeout, both are valid
-    if (result !== null) {
-      expect(result.servers).toBeInstanceOf(Array);
-      expect(typeof result.scannedHosts).toBe('number');
-      expect(typeof result.scannedPorts).toBe('number');
-      expect(typeof result.durationMs).toBe('number');
-    } else {
-      // Timeout branch: scan is still running in the background; that is expected
-      expect(result).toBeNull();
-    }
-  }, { timeout: 12000 });
+  test('scan() completes every probe against fixture transport before returning its result', async () => {
+    // Bun's built-in named imports do not follow spyOn on the default os
+    // object. Keep this module replacement in an owned child so it cannot
+    // leak into other files, and import the actual scanner after installing it.
+    const directory = mkdtempSync(join(tmpdir(), 'scan-fixture-'));
+    const fixture = join(directory, 'scan.test.ts');
+    try {
+      writeFileSync(fixture, `
+        import { expect, mock, test } from 'bun:test';
+        const os = await import('node:os');
+        mock.module('node:os', () => ({ ...os, networkInterfaces: () => ({ fixture: [{
+          address: '192.0.2.10', netmask: '255.255.255.0', family: 'IPv4',
+          mac: '00:00:00:00:00:00', internal: false, cidr: '192.0.2.10/24',
+        }] }) }));
+        const { scan } = await import(${JSON.stringify(new URL('../sdk/src/platform/discovery/scanner.ts', import.meta.url).href)});
+        test('all fixture probes finish', async () => {
+          let requests = 0;
+          globalThis.fetch = Object.assign(async () => { requests++; return new Response('', { status: 404 }); }, { preconnect() {} });
+          const result = await scan();
+          expect(result.servers).toEqual([]);
+          expect(result.scannedHosts).toBe(255);
+          expect(typeof result.scannedPorts).toBe('number');
+          expect(typeof result.durationMs).toBe('number');
+          expect(requests).toBe(result.scannedHosts * result.scannedPorts);
+        });
+      `);
+      const result = await runOwnedTestChild({ argv: [fixture], cwd: directory, env: process.env });
+      expect(result.exitCode).toBe(0);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
 
   test('scanHosts([]) resolves with empty DiscoveredServer array for empty host list', async () => {
     // Empty host list, no probes, immediate resolution
@@ -61,19 +73,17 @@ describe('platform/discovery: behavior smoke', () => {
   });
 
   test('scanLocalhost() resolves with ScanResult shape', async () => {
-    const result = await Promise.race([
-      scanLocalhost(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 3000)
-      ),
-    ]).catch(() => null);
-    if (result !== null) {
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }));
+    try {
+      const result = await scanLocalhost();
       expect(result.servers).toBeInstanceOf(Array);
       expect(typeof result.scannedHosts).toBe('number');
       expect(typeof result.scannedPorts).toBe('number');
       expect(typeof result.durationMs).toBe('number');
-    }
-  }, { timeout: 5000 });
+      expect(result.scannedHosts).toBe(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(result.scannedPorts);
+    } finally { fetchSpy.mockRestore(); }
+  });
 
   test('scanMcpServers() resolves with McpDiscoveryResult shape (suggestions array, locationsScanned)', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'gv-mcp-scan-test-'));
