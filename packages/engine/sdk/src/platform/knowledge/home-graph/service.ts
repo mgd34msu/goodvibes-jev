@@ -69,7 +69,7 @@ import {
 } from './sync-self-improvement.js';
 import { resolveReadableHomeGraphSpace } from './space-selection.js';
 import { runHomeGraphSnapshotSync } from './sync.js';
-import { autoLinkExistingHomeGraphSources, extractHomeGraphArtifact } from './extraction.js';
+import { autoLinkExistingHomeGraphSources, extractHomeGraphArtifact, prepareHomeGraphArtifactExtraction, storeHomeGraphArtifactExtraction } from './extraction.js';
 import type {
   HomeGraphAskInput, HomeGraphAskResult, HomeGraphDevicePassportResult, HomeGraphExport,
   HomeGraphIngestArtifactInput, HomeGraphIngestNoteInput, HomeGraphIngestResult, HomeGraphIngestUrlInput,
@@ -238,7 +238,7 @@ export class HomeGraphService {
     const initialState = readHomeGraphSearchState(this.store, spaceId);
     const repairedExtractions = await this.repairStaleExtractionsForAsk(spaceId, installationId, input.query, initialState);
     const state = repairedExtractions > 0 ? readHomeGraphSearchState(this.store, spaceId) : initialState;
-    const results = scoreHomeGraphResults(
+    const results = await scoreHomeGraphResults(
       input.query,
       state.sources,
       state.nodes,
@@ -282,7 +282,7 @@ export class HomeGraphService {
     query: string,
     state: ReturnType<typeof readHomeGraphSearchState>,
   ): Promise<number> {
-    const candidates = selectHomeGraphExtractionRepairCandidates(
+    const candidates = await selectHomeGraphExtractionRepairCandidates(
       query,
       state.sources,
       state.nodes,
@@ -297,7 +297,13 @@ export class HomeGraphService {
       if (!artifactId) continue;
       const artifact = this.artifactStore.get(artifactId);
       if (!artifact) continue;
-      const extraction = await this.extractArtifact(source, artifact, spaceId, installationId);
+      const prepared = await prepareHomeGraphArtifactExtraction({
+        store: this.store,
+        artifactStore: this.artifactStore,
+        reportBackgroundError: this.reportBackgroundError.bind(this),
+      }, source.id, artifact, spaceId);
+      const searchable = prepared ? await extractionHasSearchableText(prepared) : false;
+      const extraction = await storeHomeGraphArtifactExtraction(this.store, source, artifact, spaceId, installationId, prepared);
       if (extraction) {
         await autoLinkHomeGraphSource({
           store: this.store,
@@ -308,7 +314,7 @@ export class HomeGraphService {
           state: readHomeGraphState(this.store, spaceId),
         });
       }
-      if (extraction && extractionHasSearchableText(extraction)) repaired += 1;
+      if (extraction && searchable) repaired += 1;
       await yieldToEventLoop();
     }
     return repaired;
@@ -480,6 +486,11 @@ export class HomeGraphService {
     readonly metadata: Record<string, unknown>;
   }): Promise<HomeGraphIngestResult> {
     const sourceId = homeGraphSourceId(input.spaceId, input.metadata.homeGraphSourceKind as string, input.sourceUri ?? input.artifact.id);
+    const prepared = await prepareHomeGraphArtifactExtraction({
+      store: this.store,
+      artifactStore: this.artifactStore,
+      reportBackgroundError: this.reportBackgroundError.bind(this),
+    }, sourceId, input.artifact, input.spaceId);
     const source = await this.store.upsertSource({
       id: sourceId,
       connectorId: HOME_GRAPH_CONNECTOR_ID,
@@ -496,7 +507,7 @@ export class HomeGraphService {
         artifactMimeType: input.artifact.mimeType,
       }),
     });
-    const extraction = await this.extractArtifact(source, input.artifact, input.spaceId, input.installationId);
+    const extraction = await storeHomeGraphArtifactExtraction(this.store, source, input.artifact, input.spaceId, input.installationId, prepared);
     const linked = input.target
       ? (await this.linkKnowledge({ knowledgeSpaceId: input.spaceId, sourceId: source.id, target: input.target })).edge
       : (await autoLinkHomeGraphSource({
@@ -658,7 +669,7 @@ function withHomeGraphAskPageRefresh(
   };
 }
 
-function extractionHasSearchableText(extraction: KnowledgeExtractionRecord): boolean {
+async function extractionHasSearchableText(extraction: Pick<KnowledgeExtractionRecord, 'structure'>): Promise<boolean> {
   const structure = readRecord(extraction.structure);
-  return typeof structure.searchText === 'string' && !isUnusableHomeGraphExtractionText(structure.searchText);
+  return typeof structure.searchText === 'string' && !(await isUnusableHomeGraphExtractionText(structure.searchText));
 }

@@ -165,7 +165,7 @@ export async function reindexHomeGraphSources(input: {
     if (!artifactId) continue;
     scanned += 1;
     const current = input.extractionBySourceId.get(source.id);
-    if (!homeGraphExtractionNeedsRepair(current)) {
+    if (!(await homeGraphExtractionNeedsRepair(current))) {
       skipped += 1;
       continue;
     }

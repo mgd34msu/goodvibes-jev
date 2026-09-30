@@ -1,3 +1,10 @@
+import { useExtractionReadings } from './_helpers/extraction-readings.js';
+
+useExtractionReadings([
+  'MANUAL_6420-010-01628_GAG_CLASSIC_PRO_USA_Rev_00.pdf: âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE',
+  '%PDF-1.7 7 0 obj /Filter /FlateDecode stream âÓÒó977 ç^Å‰zÇmÇì É¥NKºÚZjì†ÅjÒ(íÚD_EQ¥>ÅE yEx¥µržSã‹irvus Æw÷ùçùy¼4°',
+]);
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

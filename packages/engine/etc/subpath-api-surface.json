@@ -31247,39 +31247,14 @@
       "text": "export interface HomeGraphSyncResult { readonly ok: true; readonly spaceId: string; readonly installationId: string; readonly source: KnowledgeSourceRecord; readonly home: KnowledgeNodeRecord; readonly created: { readonly nodes: number; readonly edges: number; readonly issues: number; }; readonly generated: HomeGraphGeneratedPagesSummary; readonly counts: { readonly entities: number; readonly devices: number; readonly areas: number; readonly automations: number; readonly scripts: number; readonly scenes: number; readonly labels: number; readonly integrations: number; }; }"
     },
     {
-      "name": "KNOWLEDGE_BINARY_EXTENDED_RATIO_THRESHOLD",
+      "name": "KNOWLEDGE_EXTRACTION_SAMPLE_CHARS",
       "kind": "const",
-      "text": "KNOWLEDGE_BINARY_EXTENDED_RATIO_THRESHOLD = 0.18"
-    },
-    {
-      "name": "KNOWLEDGE_BINARY_PUNCTUATION_RATIO_THRESHOLD",
-      "kind": "const",
-      "text": "KNOWLEDGE_BINARY_PUNCTUATION_RATIO_THRESHOLD = 0.42"
-    },
-    {
-      "name": "KNOWLEDGE_BINARY_SAMPLE_CHARS",
-      "kind": "const",
-      "text": "KNOWLEDGE_BINARY_SAMPLE_CHARS = 4096"
-    },
-    {
-      "name": "KNOWLEDGE_BINARY_USEFUL_RATIO_THRESHOLD",
-      "kind": "const",
-      "text": "KNOWLEDGE_BINARY_USEFUL_RATIO_THRESHOLD = 0.78"
-    },
-    {
-      "name": "KNOWLEDGE_BINARY_WHITESPACE_RATIO_THRESHOLD",
-      "kind": "const",
-      "text": "KNOWLEDGE_BINARY_WHITESPACE_RATIO_THRESHOLD = 0.08"
+      "text": "KNOWLEDGE_EXTRACTION_SAMPLE_CHARS = 4096"
     },
     {
       "name": "KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS",
       "kind": "const",
       "text": "KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS: number"
-    },
-    {
-      "name": "KNOWLEDGE_MIN_BINARY_SAMPLE_CHARS",
-      "kind": "const",
-      "text": "KNOWLEDGE_MIN_BINARY_SAMPLE_CHARS = 120"
     },
     {
       "name": "KnowledgeApi",
@@ -31429,6 +31404,14 @@
         "id"
       ],
       "text": "export interface KnowledgeExtensionDefinition { readonly id: string; readonly objectProfiles?: readonly KnowledgeObjectProfilePolicy[] | undefined; readonly pageTemplates?: readonly KnowledgePageTemplate[] | undefined; readonly relationshipResolvers?: readonly KnowledgeRelationshipResolver[] | undefined; readonly facetProviders?: readonly KnowledgeFacetProvider[] | undefined; }"
+    },
+    {
+      "name": "KnowledgeExtractionJudgmentHoldError",
+      "kind": "class",
+      "publicMembers": [
+        "constructor"
+      ],
+      "text": "export declare class KnowledgeExtractionJudgmentHoldError extends Error { constructor(); }"
     },
     {
       "name": "KnowledgeExtractionRecord",
@@ -32983,7 +32966,7 @@
     {
       "name": "hasUsefulKnowledgeExtractionText",
       "kind": "function",
-      "text": "export declare function hasUsefulKnowledgeExtractionText(value: string | undefined): boolean;"
+      "text": "export declare function hasUsefulKnowledgeExtractionText(value: string | undefined): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "homeAssistantKnowledgeSpaceId",
@@ -33038,7 +33021,7 @@
     {
       "name": "knowledgeExtractionNeedsRefresh",
       "kind": "function",
-      "text": "export declare function knowledgeExtractionNeedsRefresh(extraction: KnowledgeExtractionRecord | null, currentExtractorVersion?: number): boolean;"
+      "text": "export declare function knowledgeExtractionNeedsRefresh(extraction: KnowledgeExtractionRecord | null, currentExtractorVersion?: number): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "knowledgeNowMs",
@@ -33073,12 +33056,12 @@
     {
       "name": "looksBinaryLikeText",
       "kind": "function",
-      "text": "export declare function looksBinaryLikeText(value: string): boolean;"
+      "text": "export declare function looksBinaryLikeText(value: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "looksLikeRawPdfPayload",
       "kind": "function",
-      "text": "export declare function looksLikeRawPdfPayload(value: string): boolean;"
+      "text": "export declare function looksLikeRawPdfPayload(value: string): Promise<boolean>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "materializeGeneratedKnowledgeProjection",
@@ -33138,7 +33121,7 @@
     {
       "name": "readKnowledgeSearchText",
       "kind": "function",
-      "text": "export declare function readKnowledgeSearchText(record: Record<string, unknown>): string | undefined; ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export declare function readKnowledgeSearchText(record: Record<string, unknown>): Promise<string | undefined>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "renderKnowledgeMap",

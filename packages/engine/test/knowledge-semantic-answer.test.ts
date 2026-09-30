@@ -1,3 +1,7 @@
+import { useExtractionReadings } from './_helpers/extraction-readings.js';
+
+useExtractionReadings();
+
 import { describe, expect, test } from 'bun:test';
 import {
   createProviderBackedKnowledgeSemanticLlm,

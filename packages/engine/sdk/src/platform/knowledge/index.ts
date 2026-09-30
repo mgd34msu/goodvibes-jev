@@ -9,13 +9,9 @@ export { createMemoryApi } from './knowledge-api.js';
 export { renderPacket } from './shared.js';
 export { extractKnowledgeArtifact } from './extractors.js';
 export {
-  KNOWLEDGE_BINARY_EXTENDED_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_PUNCTUATION_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_SAMPLE_CHARS,
-  KNOWLEDGE_BINARY_USEFUL_RATIO_THRESHOLD,
-  KNOWLEDGE_BINARY_WHITESPACE_RATIO_THRESHOLD,
   KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS,
-  KNOWLEDGE_MIN_BINARY_SAMPLE_CHARS,
+  KNOWLEDGE_EXTRACTION_SAMPLE_CHARS,
+  KnowledgeExtractionJudgmentHoldError,
   hasUsefulKnowledgeExtractionText,
   knowledgeExtractionNeedsRefresh,
   looksBinaryLikeText,

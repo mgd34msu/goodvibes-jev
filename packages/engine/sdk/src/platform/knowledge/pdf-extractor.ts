@@ -1,9 +1,14 @@
 import { inflateSync } from 'node:zlib';
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { pdfTextDecoding } from './batteries/extraction-readability.js';
 import type { KnowledgeExtractionResult } from './extractors.js';
 import {
   KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS,
-  looksBinaryLikeText,
-  looksLikeRawPdfPayload,
+  KNOWLEDGE_EXTRACTION_SAMPLE_CHARS,
+  KnowledgeExtractionJudgmentHoldError,
+  hasUsefulKnowledgeExtractionText,
+  requireExtractionJudgment,
 } from './extraction-policy.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -19,9 +24,9 @@ function cleanText(value: string): string {
     .trim();
 }
 
-function searchTextPayload(value: string): string | undefined {
+async function searchTextPayload(value: string): Promise<string | undefined> {
   const cleaned = cleanText(value);
-  if (!cleaned || looksBinaryLikeText(cleaned) || looksLikeRawPdfPayload(cleaned)) return undefined;
+  if (!(await hasUsefulKnowledgeExtractionText(value))) return undefined;
   return cleaned.length <= KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS
     ? cleaned
     : cleaned.slice(0, KNOWLEDGE_MAX_STRUCTURE_SEARCH_TEXT_CHARS);
@@ -43,7 +48,7 @@ function firstNonEmptyLine(value: string): string | undefined {
 
 function summarizeText(text: string, maxLength = 320): string | undefined {
   const cleaned = cleanText(text);
-  if (!cleaned || looksBinaryLikeText(cleaned) || looksLikeRawPdfPayload(cleaned)) return undefined;
+  if (!cleaned) return undefined;
   if (cleaned.length <= maxLength) return cleaned;
   const sentence = cleaned.match(/^(.{0,320}?[.!?])(?:\s|$)/)?.[1]?.trim();
   return sentence && sentence.length >= 40 ? sentence : `${cleaned.slice(0, maxLength - 1).trim()}...`;
@@ -51,16 +56,16 @@ function summarizeText(text: string, maxLength = 320): string | undefined {
 
 function excerptText(text: string, maxLength = 480): string | undefined {
   const cleaned = cleanText(text);
-  if (!cleaned || looksBinaryLikeText(cleaned) || looksLikeRawPdfPayload(cleaned)) return undefined;
+  if (!cleaned) return undefined;
   return cleaned.length <= maxLength ? cleaned : `${cleaned.slice(0, maxLength - 1).trim()}...`;
 }
 
-function uniqueStrings(values: Iterable<string>, limit = 24): string[] {
+async function uniqueStrings(values: Iterable<string>, limit = 24): Promise<string[]> {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const value of values) {
     const trimmed = cleanText(value);
-    if (!trimmed || seen.has(trimmed) || !isReadablePdfText(trimmed)) continue;
+    if (!trimmed || seen.has(trimmed) || !(await hasUsefulKnowledgeExtractionText(value))) continue;
     seen.add(trimmed);
     result.push(trimmed);
     if (result.length >= limit) break;
@@ -81,63 +86,56 @@ interface RawPdfExtractionDiagnostics {
 export async function extractPdf(buffer: Buffer): Promise<KnowledgeExtractionResult> {
   const parsed = await extractPdfWithPdfJs(buffer);
   if (parsed.result) return parsed.result;
-  const raw = extractPdfRawStreams(buffer, parsed.warning ? [parsed.warning] : []);
+  const raw = await extractPdfRawStreams(buffer, parsed.warning ? [parsed.warning] : []);
   if (raw) return raw;
   throw new Error('PDF extraction failed: no readable text was extracted. OCR or a dedicated PDF provider may be required.');
 }
 
 async function extractPdfWithPdfJs(buffer: Buffer): Promise<PdfJsExtractionAttempt> {
+  let pageCount: number;
+  const pageTexts: string[] = [];
   try {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const loadingTask = pdfjs.getDocument({
-      data: new Uint8Array(buffer),
-      useSystemFonts: true,
-    });
-    const document = await loadingTask.promise;
-    const pageCount = document.numPages;
-    const pageTexts: string[] = [];
-    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const lines = textContentItemsToLines(content.items);
-      if (lines.length > 0) pageTexts.push(lines.join('\n'));
-      page.cleanup();
+    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true });
+    try {
+      const document = await loadingTask.promise;
+      pageCount = document.numPages;
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        const page = await document.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const lines = textContentItemsToLines(content.items);
+        if (lines.length > 0) pageTexts.push(lines.join('\n'));
+        page.cleanup();
+      }
+    } finally {
+      // The loading task owns teardown in pdfjs 5.x and 6.x.
+      await loadingTask.destroy();
     }
-    // pdfjs-dist 6.x removed destroy() from the document proxy; the loading
-    // task owns teardown in both 5.x and 6.x. Destroying through the document
-    // threw AFTER a successful extraction, and the catch below discarded the
-    // good result into the raw-stream fallback.
-    await loadingTask.destroy();
-    const text = cleanText(pageTexts.join('\n\n'));
-    if (!text) return {};
-    const searchText = searchTextPayload(text);
-    return {
-      result: {
-        extractorId: 'pdfjs',
-        format: 'pdf',
-        title: firstNonEmptyLine(text) ?? 'PDF document',
-        summary: summarizeText(text) ?? 'PDF document.',
-        excerpt: excerptText(text),
-        sections: uniqueStrings(text.split(/\n+/), 24),
-        links: uniqueStrings(Array.from(text.matchAll(/\bhttps?:\/\/[^\s)]+/g), (match) => match[0]), 50),
-        estimatedTokens: estimateTokens(text),
-        structure: {
-          pageCount,
-          extractedTextChars: text.length,
-          ...(searchText ? { searchText } : {}),
-        },
-        metadata: {
-          limitations: ['PDF text extraction does not perform OCR for scanned images.'],
-        },
-      },
-    };
   } catch (error) {
     const warning = `PDF.js extraction failed; used raw stream fallback: ${summarizeError(error)}`;
-    logger.warn('PDF extraction: pdfjs path failed; trying raw stream extraction', {
-      error: summarizeError(error),
-    });
+    logger.warn('PDF extraction: pdfjs path failed; trying raw stream extraction', { error: summarizeError(error) });
     return { warning };
   }
+  // Parsing fallback is allowed; a judgment outage or uncertain reading is not.
+  const uncleaned = pageTexts.join('\n\n');
+  assertJudgmentInput(uncleaned);
+  const searchText = await searchTextPayload(uncleaned);
+  if (!searchText) return {};
+  const text = cleanText(uncleaned);
+  return {
+    result: {
+      extractorId: 'pdfjs',
+      format: 'pdf',
+      title: firstNonEmptyLine(text) ?? 'PDF document',
+      summary: summarizeText(text) ?? 'PDF document.',
+      excerpt: excerptText(text),
+      sections: await uniqueStrings(text.split(/\n+/), 24),
+      links: await uniqueStrings(Array.from(text.matchAll(/\bhttps?:\/\/[^\s)]+/g), (match) => match[0]), 50),
+      estimatedTokens: estimateTokens(text),
+      structure: { pageCount, extractedTextChars: text.length, searchText },
+      metadata: { limitations: ['PDF text extraction does not perform OCR for scanned images.'] },
+    },
+  };
 }
 
 function textContentItemsToLines(items: readonly unknown[]): string[] {
@@ -145,7 +143,7 @@ function textContentItemsToLines(items: readonly unknown[]): string[] {
   let current = '';
   for (const item of items) {
     const record = unknownRecord(item);
-    const text = typeof record.str === 'string' ? cleanText(record.str) : '';
+    const text = typeof record.str === 'string' ? record.str : '';
     if (text) current = current ? `${current} ${text}` : text;
     if (record.hasEOL === true && current) {
       lines.push(current);
@@ -160,7 +158,7 @@ function unknownRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
-function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[] = []): KnowledgeExtractionResult | undefined {
+async function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[] = []): Promise<KnowledgeExtractionResult | undefined> {
   const body = buffer.toString('latin1');
   const texts: string[] = [];
   const diagnostics: RawPdfExtractionDiagnostics = { failedFlateDecodeStreams: 0 };
@@ -170,13 +168,13 @@ function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[]
     const dictionary = match[1]! ?? '';
     const rawChunk = match[2]! ?? '';
     const chunk = decodePdfStreamChunk(dictionary, rawChunk, diagnostics);
-    for (const text of extractPdfTextStrings(chunk)) {
-      if (isReadablePdfText(text)) texts.push(text);
-    }
+    texts.push(...await extractPdfTextStrings(chunk));
   }
-  const combined = uniqueStrings(texts, 64).join('\n');
-  const searchable = uniqueStrings(texts, 512).join('\n');
-  const searchText = searchTextPayload(searchable);
+  assertJudgmentInput(texts);
+  const readable = await uniqueStrings(texts, 512);
+  const combined = readable.slice(0, 64).join('\n');
+  const searchable = readable.join('\n');
+  const searchText = await searchTextPayload(searchable);
   if (!searchText) return undefined;
   const warnings = [...initialWarnings];
   if (diagnostics.failedFlateDecodeStreams > 0) {
@@ -191,8 +189,8 @@ function extractPdfRawStreams(buffer: Buffer, initialWarnings: readonly string[]
     title: firstNonEmptyLine(combined) ?? 'PDF document',
     summary: summarizeText(combined) ?? 'PDF document text extracted from raw streams.',
     excerpt: excerptText(combined),
-    sections: uniqueStrings(combined.split(/\n+/), 8),
-    links: uniqueStrings(Array.from(combined.matchAll(/\bhttps?:\/\/[^\s)]+/g), (linkMatch) => linkMatch[0]), 50),
+    sections: await uniqueStrings(combined.split(/\n+/), 8),
+    links: await uniqueStrings(Array.from(combined.matchAll(/\bhttps?:\/\/[^\s)]+/g), (linkMatch) => linkMatch[0]), 50),
     estimatedTokens: estimateTokens(combined),
     structure: {
       extractedStringCount: texts.length,
@@ -223,10 +221,10 @@ function decodePdfStreamChunk(
   }
 }
 
-function extractPdfTextStrings(chunk: string): string[] {
+async function extractPdfTextStrings(chunk: string): Promise<string[]> {
   return [
     ...extractLiteralStrings(chunk),
-    ...extractHexStrings(chunk),
+    ...await extractHexStrings(chunk),
   ];
 }
 
@@ -240,7 +238,7 @@ function extractLiteralStrings(chunk: string): string[] {
     }
     const parsed = readPdfLiteralString(chunk, index + 1);
     if (parsed) {
-      values.push(cleanText(parsed.value));
+      values.push(parsed.value);
       index = parsed.nextIndex;
     } else {
       index += 1;
@@ -307,27 +305,48 @@ function decodePdfEscape(char: string, following: string): { readonly value: str
   }
 }
 
-function extractHexStrings(chunk: string): string[] {
+async function extractHexStrings(chunk: string): Promise<string[]> {
   const values: string[] = [];
-  const hexRe = /<([0-9A-Fa-f\s]{4,})>/g;
+  const hexRe = /(?<!<)<([0-9A-Fa-f\s]*)>(?!>)/g;
   let match: RegExpExecArray | null;
   while ((match = hexRe.exec(chunk)) !== null) {
-    const text = decodeHexPdfString(match[1] ?? '');
-    if (text) values.push(cleanText(text));
+    const text = await decodeHexPdfString(match[1] ?? '');
+    if (text) values.push(text);
   }
   return values;
 }
 
-function decodeHexPdfString(value: string): string | undefined {
+async function decodeHexPdfString(value: string): Promise<string | undefined> {
   const hex = value.replace(/\s+/g, '');
-  if (hex.length < 4 || hex.length % 2 !== 0) return undefined;
+  // Preserve the parser's complete-byte rule, not the old two-byte text floor.
+  if (hex.length === 0 || hex.length % 2 !== 0) return undefined;
   const bytes = Buffer.from(hex, 'hex');
-  if (bytes.length >= 2 && bytes[0]! === 0xfe && bytes[1]! === 0xff) {
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    if (bytes.length % 2 !== 0) return undefined;
     return decodeUtf16Be(bytes.subarray(2));
   }
-  const mostlyUtf16 = bytes.length >= 4 && bytes.filter((byte, index) => index % 2 === 0 && byte === 0).length >= Math.floor(bytes.length / 4);
-  if (mostlyUtf16) return decodeUtf16Be(bytes);
-  return bytes.toString('latin1');
+  const singleByte = bytes.toString('latin1');
+  const utf16be = bytes.length % 2 === 0 ? decodeUtf16Be(bytes) : null;
+  // Both full interpretations are inspected before either bounded candidate leaves.
+  assertJudgmentInput({ singleByte, utf16be });
+  return requireExtractionJudgment(async () => {
+    const run = await pdfTextDecoding.run(judgmentPort('knowledge.extraction.pdf-decoding'), {
+      singleByte: singleByte.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS),
+      utf16be: utf16be?.slice(0, KNOWLEDGE_EXTRACTION_SAMPLE_CHARS) ?? null,
+    }, { site: 'knowledge.extraction.pdf-decoding' });
+    const reading = run.readings.decoding;
+    if (reading.outcome !== 'act' || reading.choice === 'unknown' || (reading.choice === 'utf16be' && utf16be === null)) {
+      run.recordAction('hold');
+      throw new KnowledgeExtractionJudgmentHoldError();
+    }
+    run.recordAction(reading.choice);
+    switch (reading.choice) {
+      case 'neither': return undefined;
+      case 'utf16be': return utf16be ?? undefined;
+      case 'singleByte': return singleByte;
+      default: throw new KnowledgeExtractionJudgmentHoldError();
+    }
+  });
 }
 
 function decodeUtf16Be(bytes: Buffer): string {
@@ -337,17 +356,4 @@ function decodeUtf16Be(bytes: Buffer): string {
     swapped[index + 1] = bytes[index]!;
   }
   return swapped.toString('utf16le');
-}
-
-function isReadablePdfText(value: string): boolean {
-  const text = cleanText(value);
-  if (text.length < 2 || looksLikeRawPdfPayload(text) || looksBinaryLikeText(text)) return false;
-  const sample = text.slice(0, 512);
-  let lettersOrDigits = 0;
-  let whitespace = 0;
-  for (const char of sample) {
-    if (/[a-z0-9]/i.test(char)) lettersOrDigits += 1;
-    if (/\s/.test(char)) whitespace += 1;
-  }
-  return (lettersOrDigits + whitespace) / sample.length >= 0.55;
 }

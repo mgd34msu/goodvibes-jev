@@ -118,7 +118,7 @@ function readKnowledgeSpaceId(metadata: Record<string, unknown>): string | undef
 
 export async function recompileKnowledgeSource(context: KnowledgeIngestContext, source: KnowledgeSourceRecord): Promise<void> {
   const extraction = source.id ? context.store.getExtractionBySourceId(source.id) : null;
-  if (source.artifactId && knowledgeExtractionNeedsRefresh(extraction)) {
+  if (source.artifactId && await knowledgeExtractionNeedsRefresh(extraction)) {
     const content = await context.artifactStore.readContent(source.artifactId);
     const extracted = await extractKnowledgeArtifact(content.record, content.buffer);
     await context.store.upsertExtraction({
