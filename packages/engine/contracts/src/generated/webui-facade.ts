@@ -2511,6 +2511,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   "approvals.approve": {
     "input": {
       "approvalId": "sample",
+      "disposition": "approved",
       "note": "sample",
       "remember": false,
       "selectedHunks": [
@@ -2573,7 +2574,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -2657,7 +2659,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -2739,7 +2742,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -2767,6 +2771,7 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
   "approvals.deny": {
     "input": {
       "approvalId": "sample",
+      "disposition": "denied",
       "note": "sample",
       "remember": false,
       "rememberTier": "session",
@@ -2825,7 +2830,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",
@@ -2926,7 +2932,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
             "remember": false,
             "rememberTier": "session",
             "reason": "sample",
-            "modifiedArgs": {}
+            "modifiedArgs": {},
+            "disposition": "approved"
           },
           "fixSessionId": "sample",
           "fixSessionError": "sample",
@@ -3042,7 +3049,8 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
           "remember": false,
           "rememberTier": "session",
           "reason": "sample",
-          "modifiedArgs": {}
+          "modifiedArgs": {},
+          "disposition": "approved"
         },
         "fixSessionId": "sample",
         "fixSessionError": "sample",

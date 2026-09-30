@@ -457,6 +457,15 @@ async function handleApprovalAction(
       ? context.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, Response.json({ approval }))
       : context.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, jsonErrorResponse({ error: 'Unknown approval' }, { status: 404 }));
   }
+  // Legacy generic callbacks choose this URL from a boolean. The URL alone
+  // therefore cannot prove that an operator chose permanent workspace trust.
+  const disposition = payload.disposition;
+  if (disposition !== undefined && (action === 'approve'
+    ? disposition !== 'approved'
+    : disposition !== 'denied' && disposition !== 'amended')) {
+    return context.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`,
+      jsonErrorResponse({ error: 'disposition must match the approval action.' }, { status: 400 }));
+  }
   const selectedHunks = action === 'approve' ? readSelectedHunks(payload.selectedHunks) : undefined;
   if (selectedHunks instanceof Response) {
     return context.recordApiResponse(req, `/api/approvals/${approvalId}/${action}`, selectedHunks);
@@ -486,6 +495,7 @@ async function handleApprovalAction(
   try {
     approval = await context.approvalBroker.resolveApproval(approvalId, {
       approved: action === 'approve',
+      ...(disposition !== undefined ? { disposition: disposition as 'approved' | 'denied' | 'amended' } : {}),
       remember: typeof payload.remember === 'boolean' ? payload.remember : false,
       actor,
       actorSurface: 'web',

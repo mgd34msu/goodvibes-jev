@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { isRecord } from '../utils/record-coerce.js';
 import { resolveApprovalHunkSelection } from './approval-hunk-apply.js';
 import { raiseSharedApproval, type RaisedApproval } from './approval-broker-raise.js';
+import { approvalDispositionMatches, assertExplicitApprovalDisposition, ordinaryApprovalDecision, type ExplicitApprovalDisposition, type SharedApprovalDecision } from './approval-disposition.js';
 
 export type SharedApprovalStatus = 'pending' | 'claimed' | 'approved' | 'denied' | 'cancelled' | 'expired';
 
@@ -34,7 +35,7 @@ export interface SharedApprovalRecord {
   readonly claimedAt?: number | undefined;
   readonly resolvedAt?: number | undefined;
   readonly resolvedBy?: string | undefined;
-  readonly decision?: PermissionPromptDecision | undefined;
+  readonly decision?: SharedApprovalDecision | undefined;
   /**
    * When this ask stops waiting, for asks that were given a timeout.
    *
@@ -215,6 +216,12 @@ function validateApprovalRecord(value: unknown): void {
       throwInvalidApprovalSnapshot();
     }
     if (decision['remember'] !== undefined && typeof decision['remember'] !== 'boolean') {
+      throwInvalidApprovalSnapshot();
+    }
+    if (!approvalDispositionMatches(decision['approved'], decision['disposition'], value['status'] as string)) {
+      throwInvalidApprovalSnapshot();
+    }
+    if (decision['disposition'] === 'amended' && (decision['remember'] === true || decision['rememberTier'] !== undefined)) {
       throwInvalidApprovalSnapshot();
     }
   }
@@ -477,6 +484,8 @@ export class ApprovalBroker {
     approvalId: string,
     input: {
       readonly approved: boolean;
+      /** Explicit producer evidence. Legacy or automatic callbacks omit it. */
+      readonly disposition?: ExplicitApprovalDisposition | undefined;
       readonly remember?: boolean | undefined;
       readonly modifiedArgs?: Record<string, unknown> | undefined;
       /**
@@ -503,6 +512,12 @@ export class ApprovalBroker {
       readonly note?: string | undefined;
     },
   ): Promise<SharedApprovalRecord | null> {
+    const approved = input.approved;
+    const disposition = input.disposition;
+    assertExplicitApprovalDisposition(approved, disposition);
+    if (disposition === 'amended' && (input.remember === true || input.rememberTier !== undefined)) {
+      throw Object.assign(new Error('An amendment cannot create a remembered approval rule.'), { code: 'INVALID_ARGUMENT', status: 400 });
+    }
     await this.start();
     const approval = this.approvals.get(approvalId);
     if (!approval) return null;
@@ -513,7 +528,7 @@ export class ApprovalBroker {
     // whole-request rejection. Compute the modified args from the pending
     // request's OWN edits so the result is identical for every calling surface.
     let modifiedArgs = input.modifiedArgs;
-    if (input.selectedHunks !== undefined && input.approved) {
+    if (input.selectedHunks !== undefined && approved) {
       const resolution = resolveApprovalHunkSelection(approval.request, input.selectedHunks);
       if (!resolution.ok) {
         throw Object.assign(new Error(resolution.reason), {
@@ -525,12 +540,13 @@ export class ApprovalBroker {
     }
     const updated: SharedApprovalRecord = {
       ...approval,
-      status: input.approved ? 'approved' : 'denied',
+      status: approved ? 'approved' : 'denied',
       updatedAt: Date.now(),
       resolvedAt: Date.now(),
       resolvedBy: input.actor,
       decision: {
-        approved: input.approved,
+        approved,
+        ...(disposition !== undefined ? { disposition } : {}),
         ...(input.remember !== undefined ? { remember: input.remember } : {}),
         ...(input.rememberTier !== undefined ? { rememberTier: input.rememberTier } : {}),
         ...(input.reason !== undefined ? { reason: input.reason } : {}),
@@ -538,14 +554,14 @@ export class ApprovalBroker {
       },
       audit: [
         ...approval.audit,
-        buildAudit(input.approved ? 'approved' : 'denied', input.actor, input.actorSurface, input.note),
+        buildAudit(approved ? 'approved' : 'denied', input.actor, input.actorSurface, input.note),
       ],
     };
     this.approvals.set(approvalId, updated);
     await this.persist();
     this.publish(updated);
 
-    this.resolvePending(approvalId, updated.decision ?? { approved: input.approved });
+    this.resolvePending(approvalId, updated.decision ?? { approved });
 
     // A generalizing remember tier answers more than this one ask: sweep every
     // queued pending ask the remembered decision covers (same rule match) and
@@ -556,7 +572,7 @@ export class ApprovalBroker {
         toolName: approval.request.tool,
         args: approval.request.args,
         tier: input.rememberTier,
-        effect: input.approved ? 'allow' : 'deny',
+        effect: approved ? 'allow' : 'deny',
       });
       if (rule) {
         for (const candidate of [...this.approvals.values()]) {
@@ -568,23 +584,24 @@ export class ApprovalBroker {
           if (!covered) continue;
           const swept: SharedApprovalRecord = {
             ...candidate,
-            status: input.approved ? 'approved' : 'denied',
+            status: approved ? 'approved' : 'denied',
             updatedAt: Date.now(),
             resolvedAt: Date.now(),
             resolvedBy: input.actor,
             decision: {
-              approved: input.approved,
+              approved,
+              disposition: 'remembered',
               ...(input.reason !== undefined ? { reason: input.reason } : {}),
             },
             audit: [
               ...candidate.audit,
-              buildAudit(input.approved ? 'approved' : 'denied', input.actor, input.actorSurface,
+              buildAudit(approved ? 'approved' : 'denied', input.actor, input.actorSurface,
                 `covered by remembered ${input.rememberTier} decision on ${approvalId}`),
             ],
           };
           this.approvals.set(candidate.id, swept);
           this.publish(swept);
-          this.resolvePending(candidate.id, swept.decision ?? { approved: input.approved });
+          this.resolvePending(candidate.id, swept.decision ?? { approved });
         }
         await this.persist();
       }
@@ -593,9 +610,10 @@ export class ApprovalBroker {
   }
 
   /** Resolve every waiter attached to an approval (coalesced asks share one record). */
-  private resolvePending(approvalId: string, decision: PermissionPromptDecision): void {
+  private resolvePending(approvalId: string, recorded: SharedApprovalDecision): void {
     const pending = this.pendingResolvers.get(approvalId);
     if (!pending) return;
+    const decision = ordinaryApprovalDecision(recorded);
     if (pending.timer) clearTimeout(pending.timer);
     for (const resolve of pending.resolvers) resolve(decision);
     this.pendingResolvers.delete(approvalId);
@@ -641,13 +659,13 @@ export class ApprovalBroker {
       updatedAt: Date.now(),
       resolvedAt: Date.now(),
       resolvedBy: actor,
-      decision: { approved: false, remember: false },
+      decision: { approved: false, remember: false, disposition: 'cancelled' },
       audit: [...approval.audit, buildAudit('cancelled', actor, actorSurface, note)],
     };
     this.approvals.set(approvalId, updated);
     await this.persist();
     this.publish(updated);
-    this.resolvePending(approvalId, { approved: false, remember: false });
+    this.resolvePending(approvalId, updated.decision!);
     return updated;
   }
 
@@ -661,13 +679,13 @@ export class ApprovalBroker {
       updatedAt: Date.now(),
       resolvedAt: Date.now(),
       resolvedBy: 'approval-broker',
-      decision: { approved: false, remember: false },
+      decision: { approved: false, remember: false, disposition: 'expired' },
       audit: [...approval.audit, buildAudit('expired', 'approval-broker', 'service', note)],
     };
     this.approvals.set(approvalId, updated);
     await this.persist();
     this.publish(updated);
-    this.resolvePending(approvalId, { approved: false, remember: false });
+    this.resolvePending(approvalId, updated.decision!);
   }
 
   /**

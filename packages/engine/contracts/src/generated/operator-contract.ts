@@ -726,6 +726,12 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "approvalId": {
               "type": "string"
             },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "approved"
+              ]
+            },
             "note": {
               "type": "string"
             },
@@ -1114,6 +1120,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
@@ -1624,6 +1641,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
@@ -2128,6 +2156,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
@@ -2295,6 +2334,13 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "properties": {
             "approvalId": {
               "type": "string"
+            },
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "denied",
+                "amended"
+              ]
             },
             "note": {
               "type": "string"
@@ -2651,6 +2697,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
@@ -3280,6 +3337,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                             }
                           ]
                         }
+                      },
+                      "disposition": {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "denied",
+                          "amended",
+                          "cancelled",
+                          "expired",
+                          "remembered"
+                        ]
                       }
                     },
                     "required": [
@@ -4019,6 +4087,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
@@ -115854,6 +115933,17 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                           }
                         ]
                       }
+                    },
+                    "disposition": {
+                      "type": "string",
+                      "enum": [
+                        "approved",
+                        "denied",
+                        "amended",
+                        "cancelled",
+                        "expired",
+                        "remembered"
+                      ]
                     }
                   },
                   "required": [
