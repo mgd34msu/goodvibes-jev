@@ -9,6 +9,8 @@ export type {
   BrowserKnowledgeEntry,
   BrowserKnowledgeFamily,
   BrowserKnowledgeFilter,
+  BrowserKnowledgeIngestOutcome,
+  BrowserKnowledgeIngestResult,
   BrowserKnowledgeKind,
   BrowserKnowledgeProfile,
   BrowserKnowledgeSourceKind,

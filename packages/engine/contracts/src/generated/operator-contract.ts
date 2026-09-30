@@ -60209,6 +60209,164 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
             "failed": {
               "type": "number"
             },
+            "captured": {
+              "type": "number"
+            },
+            "capturedSources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "connectorId": {
+                    "type": "string"
+                  },
+                  "sourceType": {
+                    "type": "string",
+                    "enum": [
+                      "url",
+                      "bookmark",
+                      "bookmark-list",
+                      "history",
+                      "document",
+                      "repo",
+                      "dataset",
+                      "image",
+                      "manual",
+                      "other"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "sourceUri": {
+                    "type": "string"
+                  },
+                  "canonicalUri": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "folderPath": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "artifactId": {
+                    "type": "string"
+                  },
+                  "contentHash": {
+                    "type": "string"
+                  },
+                  "lastCrawledAt": {
+                    "type": "number"
+                  },
+                  "crawlError": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "array",
+                          "items": {}
+                        }
+                      ]
+                    }
+                  },
+                  "createdAt": {
+                    "type": "number"
+                  },
+                  "updatedAt": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "connectorId",
+                  "sourceType",
+                  "tags",
+                  "status",
+                  "metadata",
+                  "createdAt",
+                  "updatedAt"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "outcomes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "canonicalUri": {
+                    "type": "string"
+                  },
+                  "sourceId": {
+                    "type": "string"
+                  },
+                  "capture": {
+                    "type": "string",
+                    "enum": [
+                      "completed",
+                      "partial",
+                      "failed"
+                    ]
+                  },
+                  "compilation": {
+                    "type": "string",
+                    "enum": [
+                      "completed",
+                      "held",
+                      "failed",
+                      "not-attempted"
+                    ]
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "canonicalUri",
+                  "capture",
+                  "compilation"
+                ],
+                "additionalProperties": false
+              }
+            },
             "sources": {
               "type": "array",
               "items": {
@@ -60367,6 +60525,9 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
           "required": [
             "imported",
             "failed",
+            "captured",
+            "capturedSources",
+            "outcomes",
             "sources",
             "errors",
             "profiles"

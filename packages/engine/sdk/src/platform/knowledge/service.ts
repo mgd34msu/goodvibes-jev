@@ -21,7 +21,7 @@ import {
   type KnowledgeNodeReviewDecisionInput,
 } from './service-node-admin.js';
 import { ingestBrowserKnowledge } from './browser-history/index.js';
-import type { BrowserKnowledgeIngestOptions, BrowserKnowledgeProfile } from './browser-history/index.js';
+import type { BrowserKnowledgeIngestOptions, BrowserKnowledgeIngestResult } from './browser-history/index.js';
 import type {
   KnowledgeBatchIngestResult,
   KnowledgeBookmarkSeed,
@@ -610,7 +610,7 @@ export class KnowledgeService {
 
   async syncBrowserHistory(
     input: BrowserKnowledgeIngestOptions = {},
-  ): Promise<KnowledgeBatchIngestResult & { readonly profiles: readonly BrowserKnowledgeProfile[] }> {
+  ): Promise<BrowserKnowledgeIngestResult> {
     return ingestBrowserKnowledge(this.getIngestContext(), input);
   }
 

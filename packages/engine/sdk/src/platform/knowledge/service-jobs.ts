@@ -1,12 +1,11 @@
 import type {
-  KnowledgeBatchIngestResult,
   KnowledgeIssueRecord,
   KnowledgeJobMode,
   KnowledgeJobRecord,
   KnowledgeMaterializedProjection,
   KnowledgeStatus,
 } from './types.js';
-import type { BrowserKnowledgeProfile } from './browser-history/index.js';
+import type { BrowserKnowledgeIngestResult } from './browser-history/index.js';
 import type { KnowledgeSemanticService } from './semantic/index.js';
 
 export interface KnowledgeServiceJobRunnerContext {
@@ -17,9 +16,7 @@ export interface KnowledgeServiceJobRunnerContext {
     sourceIds?: readonly string[],
     limit?: number | undefined,
   ) => Promise<number>;
-  readonly syncBrowserHistory: (input: { readonly limit?: number | undefined }) => Promise<
-    KnowledgeBatchIngestResult & { readonly profiles: readonly BrowserKnowledgeProfile[] }
-  >;
+  readonly syncBrowserHistory: (input: { readonly limit?: number | undefined }) => Promise<BrowserKnowledgeIngestResult>;
   readonly materializeProjection: (input: {
     readonly kind: 'overview' | 'bundle';
     readonly limit: number;
@@ -54,6 +51,12 @@ export async function runKnowledgeServiceJobByKind(
       return {
         imported: result.imported,
         failed: result.failed,
+        captured: result.captured,
+        capturePartial: result.outcomes.filter((outcome) => outcome.capture === 'partial').length,
+        captureFailed: result.outcomes.filter((outcome) => outcome.capture === 'failed').length,
+        compilationHeld: result.outcomes.filter((outcome) => outcome.compilation === 'held').length,
+        compilationFailed: result.outcomes.filter((outcome) => outcome.compilation === 'failed').length,
+        outcomes: result.outcomes,
         profileCount: result.profiles.length,
         errorCount: result.errors.length,
       };
