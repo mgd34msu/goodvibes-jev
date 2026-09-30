@@ -214,11 +214,16 @@ jobs:
   # bytes produced by the `build` job, eliminates the 4-parallel-builds
   # non-determinism window from independent package builds.
   # ---------------------------------------------------------------------------
-  types-resolution-check:
-    name: Are the types wrong? (exports map resolution)
+  types-resolution-shards:
+    name: Exports resolution shard (${{ matrix.shard }}/16)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [build]
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -242,7 +247,21 @@ jobs:
           # dist-freshness checks would misread the restore as staleness.
           find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
       - name: Run are-the-types-wrong check
-        run: bun run types:resolution-check
+        run: bun run types:resolution-check --shard ${{ matrix.shard }}/16
+
+  # Preserve the required-check name and fail closed on failure/cancel/skip.
+  types-resolution-check:
+    name: Are the types wrong? (exports map resolution)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    if: always()
+    needs: [build, types-resolution-shards]
+    steps:
+      - name: Require every exports shard
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          SHARDS_RESULT: ${{ needs.types-resolution-shards.result }}
+        run: test "$BUILD_RESULT" = success && test "$SHARDS_RESULT" = success
 
   publint-check:
     name: publint (package.json hygiene)
@@ -377,6 +396,7 @@ jobs:
       - build
       - platform-matrix
       - types-resolution-check
+      - types-resolution-shards
       - publint-check
       - sbom-check
       - artifact-lane

@@ -17,7 +17,7 @@
  * system temp dir, must never be touched. This is not a blanket `/tmp`
  * sweep, it only ever looks at entries starting with the caller's prefix.
  */
-import { readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -25,8 +25,13 @@ import { join } from 'node:path';
  * whose mtime is older than `maxAgeMs`. Best-effort: a directory that
  * vanishes between listing and stat (another run reclaimed it first) or that
  * fails to remove is silently skipped, never thrown.
+ * An optional preservation predicate can keep evidence the caller recognizes;
+ * an inspection error also preserves that candidate rather than deleting it.
  */
-export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number): void {
+export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number, options: {
+  readonly preserveMarker?: string;
+  readonly preserve?: (directory: string) => boolean;
+} = {}): void {
   let entries: string[];
   try {
     entries = readdirSync(root);
@@ -37,12 +42,14 @@ export function sweepStaleTmpDirs(root: string, prefix: string, maxAgeMs: number
   for (const name of entries) {
     if (!name.startsWith(prefix)) continue;
     const path = join(root, name);
+    if (options.preserveMarker !== undefined && existsSync(join(path, options.preserveMarker))) continue;
     try {
       if (now - statSync(path).mtimeMs <= maxAgeMs) continue;
     } catch {
       continue; // vanished between listing and stat
     }
     try {
+      if (options.preserve?.(path)) continue;
       rmSync(path, { recursive: true, force: true });
     } catch {
       // Best effort, another run may have reclaimed it first.
