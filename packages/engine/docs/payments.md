@@ -616,12 +616,16 @@ separate mechanisms, deliberately not unified, and this capability uses both:
    Note that at this layer `'channel-message'` is *untrusted*, exactly like
    `'email'`. That is about whether text just read can direct the runtime, not
    about whether a human on that channel can answer a question we asked.
-2. **Channel identity resolving a pending ask**, `platform/daemon/approval-reply.ts`: `parseApprovalReplyVerb(text)` and
-   `tryResolveApprovalReplyFromChannel(...)`, gated on
+2. **Channel identity resolving a pending ask**, `platform/daemon/approval-reply.ts`: `tryResolveApprovalReplyFromChannel(...)`,
+   using registered Jev reply/target readings after deterministic checks on
    `ChannelPolicyRecord.allowlistUserIds` (`platform/channels/types.ts`). This is
    what lets the owner reply "approve" in Telegram and have it resolve a broker
    record. It only answers an ask we already raised; it can never manufacture a
-   new instruction from channel content.
+   new instruction from channel content. Conditional approval declines the original
+   arguments and carries the full reply as guidance. Unclear or unsettled readings
+   leave asks pending; unavailable judgment fails without resolving anything.
+   Proposal/reply inputs are checked locally before judgment. Channel ingress
+   refuses protected values with a safe notice before model calls or policy audit.
 
 **Email's exclusion is already structural, not a policy check.** `'email'` is not
 a member of `ChannelSurface` (`platform/channels/types.ts`) and not a member of

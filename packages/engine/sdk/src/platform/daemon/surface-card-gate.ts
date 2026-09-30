@@ -1,6 +1,7 @@
 /**
- * surface-card-gate.ts, refuse card-shaped content arriving on any remote
- * messaging channel (docs/inbound-email.md §11.0).
+ * surface-card-gate.ts, refuse card-shaped and protected credential content
+ * arriving on a remote messaging channel before judgment or persistence
+ * (docs/inbound-email.md §11.0).
  *
  * **Provenance, stated plainly: §11.0 is a coordinator ruling, not an owner
  * quote.** Design rule it enforces: card details are entered only at a local
@@ -39,7 +40,8 @@
  */
 import type { ChannelIngressPolicyInput, ChannelPolicyDecision, ChannelPolicyManager } from '../channels/index.js';
 import { logger } from '../utils/logger.js';
-import { cardShapeKinds, detectCardShapes, renderCardShapeRefusal } from '../security/card-shapes.js';
+import { JudgmentInputError, judgmentInputProblem, type JudgmentInputProblem } from '../gate/judgment-input.js';
+import { cardShapeKinds, detectCardShapes, findCardNumberShapes, renderCardShapeRefusal } from '../security/card-shapes.js';
 import {
   deliverProposalNotice,
   resolveOriginBinding,
@@ -54,18 +56,42 @@ export interface SurfaceCardGateDeps
 
 /** Decision reason prefix. The suffix names the matched shape KINDS, never the digits. */
 export const CARD_SHAPES_REFUSED_REASON = 'card-shapes-refused';
+export const JUDGMENT_INPUT_REFUSED_REASON = 'judgment-input-refused';
+
+/** Report a protected-input refusal without an audit write, model call or raw value. */
+async function refuseProtectedInput(
+  deps: SurfaceCardGateDeps,
+  input: ChannelIngressPolicyInput,
+  problem: JudgmentInputProblem,
+): Promise<ChannelPolicyDecision> {
+  const binding = resolveOriginBinding(deps, {
+    surface: input.surface,
+    ...(input.userId !== undefined ? { userId: input.userId } : {}),
+    ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
+    ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+  });
+  const outcome = await deliverProposalNotice(deps, binding,
+    `${new JudgmentInputError(problem).message} Approving or vetoing an action still works here; resend your answer without protected values.`);
+  logger.warn('Refused protected input on a remote channel before judgment', {
+    surface: input.surface, problem, refusalDelivered: outcome.delivered,
+  });
+  return {
+    allowed: false,
+    reason: `${JUDGMENT_INPUT_REFUSED_REASON}:${problem}`,
+    policy: deps.channelPolicy.getPolicy(input.surface),
+  };
+}
 
 /**
- * Inspect one inbound message for card shapes.
+ * Inspect one inbound message for card shapes and protected judgment input.
  *
  * Returns `null` when there is nothing to refuse, which is the overwhelming
  * majority of messages and the only path that continues to policy evaluation.
  * Returns a not-allowed `ChannelPolicyDecision` when card shapes are present,
  * having first put a refusal on the same channel the message arrived on.
  *
- * Nothing derived from `input.text` reaches a log line, a decision reason, a
- * notice body or any store: every outward string here is built from
- * `CardShapeFinding.kind`, which is all a finding carries.
+ * No raw values from `input.text` reach logs, reasons, notices or stores:
+ * outward strings name only fixed card-shape or judgment-input problem kinds.
  */
 export async function refuseCardShapedIngress(
   deps: SurfaceCardGateDeps,
@@ -74,7 +100,13 @@ export async function refuseCardShapedIngress(
   const text = input.text;
   if (typeof text !== 'string' || text.length === 0) return null;
 
-  const findings = await detectCardShapes(text);
+  // A definite PAN already refuses the message. Do not send accompanying
+  // prose (which may contain other credentials) to the optional card-talk
+  // reading just to decide whether more card shapes should be named.
+  const pans = findCardNumberShapes(text);
+  const problem = pans.length === 0 ? judgmentInputProblem(text) : undefined;
+  if (problem !== undefined) return refuseProtectedInput(deps, input, problem);
+  const findings = pans.length > 0 ? pans : await detectCardShapes(text);
   if (findings.length === 0) return null;
 
   const kinds = cardShapeKinds(findings);

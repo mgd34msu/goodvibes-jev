@@ -8,8 +8,8 @@
  * The card number used throughout is `4111111111111111`, the published Visa
  * test value. It passes Luhn and belongs to no cardholder.
  *
- * What these cases are actually defending. `parseApprovalReplyVerb` treats
- * `no, <anything>` as a veto whose trailing text becomes the resolution
+ * What these cases are actually defending. Approval reply judgment can read
+ * `no, <anything>` as a veto whose full text becomes the resolution
  * `note` AND the `reason` handed to the waiting tool call; `evaluateIngress`
  * writes `input.text.slice(0, 200)` into the channel policy audit trail and
  * schedules that trail to disk. So a veto typed with a card number in it had
@@ -25,9 +25,9 @@ import { handleNtfySurfacePayload } from '../sdk/src/platform/adapters/ntfy/inde
 import { WorkProposalStore } from '../sdk/src/platform/agents/work-proposal-store.ts';
 import { logger } from '../sdk/src/platform/utils/logger.ts';
 import { trackDisposables } from './_helpers/disposables.ts';
-import { useSecurityReadings } from './helpers/security-readings.ts';
+import { useApprovalReadings } from './helpers/approval-readings.ts';
 
-useSecurityReadings();
+const readings = useApprovalReadings();
 
 const disposables = trackDisposables();
 
@@ -204,7 +204,7 @@ function buildHarness(options: HarnessOptions = {}) {
       ? {
           listApprovals: () => {
             stages.push('listApprovals');
-            return [{ id: 'approval-1', status: 'pending', routeId: 'route-1' }];
+            return [{ id: 'approval-1', status: 'pending', routeId: 'route-1', request: { tool: 'purchase', args: {}, analysis: { summary: 'Buy a mouse' } } }];
           },
           resolveApproval: async (id: string, resolution: Record<string, unknown>) => {
             stages.push('resolveApproval');
@@ -375,8 +375,8 @@ describe('the gate runs before everything that could store the message', () => {
 
     expect(decision.allowed).toBe(true);
     expect(harness.stages[0]).toBe('evaluateIngress');
-    // Approval-reply resolution is reached by verbs only, so a status question
-    // is the wrong probe for it, the 'no' case below covers that stage.
+    // The reply reading leaves a status question unresolved; the no case below
+    // covers resolution through the same shared ingress hook.
   });
 });
 
@@ -395,8 +395,8 @@ describe('a veto carrying a card is refused, and he is told', () => {
   });
 
   test('the veto text never reaches the approval store as a steering note', async () => {
-    // Without the gate, parseApprovalReplyVerb reads `no, <text>` as a deny
-    // whose trailing text becomes both the audit note and the `reason` handed
+    // Without the gate, reply judgment can read `no, <text>` as a deny
+    // whose full text becomes both the audit note and the `reason` handed
     // to the waiting tool call. That is the path this closes.
     const harness = buildHarness({ pendingApproval: true });
     await harness.ingress(`no, that is not the card, use ${CARD}`);
@@ -405,6 +405,7 @@ describe('a veto carrying a card is refused, and he is told', () => {
   });
 
   test('an approve or veto WITHOUT digits still resolves: the authority is untouched', async () => {
+    readings.set({ reply: 'reject' });
     // §11.0's distinction, asserted rather than trusted: remote surfaces keep
     // authority to say yes or no about a purchase. Only the instrument has no
     // path in.
@@ -468,6 +469,39 @@ describe('through a real adapter, not just the hook', () => {
     );
     expect(spawned).toBeDefined();
     expectTierClean('the transcript', harness.tiers.transcript());
+  });
+});
+
+describe('credential-shaped replies stop before card-talk and downstream storage', () => {
+  const SECRET = 'SYNTHETIC_CHANNEL_SECRET_DO_NOT_TRANSMIT';
+
+  test('safe refusal and notice contain no protected value, even beside a short number', async () => {
+    const harness = buildHarness({ pendingApproval: true });
+    const decision = await harness.ingress(`Approve in room 4021 using password=${SECRET}`);
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toBe('judgment-input-refused:credential-material');
+    expect(harness.stages).toEqual(['deliverSurfaceNotice']);
+    expect(readings.log.query()).toHaveLength(0);
+    expect(harness.notices).toHaveLength(1);
+    expect(harness.notices[0]!.text).toContain('secure credential setup');
+    expect(JSON.stringify(harness.notices)).not.toContain(SECRET);
+    expect(JSON.stringify(loggedText)).not.toContain(SECRET);
+    expect(harness.tiers.policyAudit()).not.toContain(SECRET);
+    expect(harness.tiers.approvalStore()).not.toContain(SECRET);
+    expect(harness.tiers.transcript()).not.toContain(SECRET);
+  });
+
+  test('protected reply text is cleared from the per-message origin cell', async () => {
+    const harness = buildHarness();
+    const context = harness.helper.buildSurfaceAdapterContext();
+    const refused = await context.authorizeSurfaceIngress({
+      surface: 'ntfy', userId: OWNER_ID, channelId: AGENT_TOPIC,
+      text: `password=${SECRET} and reference 4021`,
+    });
+    expect(refused.reason).toContain('judgment-input-refused');
+    context.trySpawnAgent({ mode: 'spawn', task: 'unrelated follow-up' }, 'protected-input.test', 'session-1');
+    expect(harness.tiers.transcript()).not.toContain(SECRET);
+    expect(JSON.stringify(loggedText)).not.toContain(SECRET);
   });
 });
 
