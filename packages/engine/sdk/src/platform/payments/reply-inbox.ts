@@ -28,6 +28,16 @@ interface Waiter {
   readonly channels: readonly CommandAuthorityChannel[];
   readonly notice: string;
   settle(answer: { readonly answer: PaymentAnswer; readonly channel: CommandAuthorityChannel } | null): void;
+  cancel(error: Error): void;
+}
+
+/** Shutdown is a failed wait, never the silence that can permit a veto purchase. */
+export class PaymentReplyInboxClosedError extends Error {
+  readonly code = 'PAYMENT_REPLY_INBOX_CLOSED';
+  constructor() {
+    super('The payment reply inbox was closed before the window could finish.');
+    this.name = 'PaymentReplyInboxClosedError';
+  }
 }
 
 export type PaymentReplyOffer =
@@ -37,13 +47,17 @@ export type PaymentReplyOffer =
 export class PaymentReplyInbox implements PaymentReplySource {
   readonly #waiting = new Set<Waiter>();
   readonly #now: () => number;
+  readonly #offers = new Set<Promise<PaymentReplyOffer>>();
+  #closed = false;
+  #closing: Promise<void> | null = null;
 
   constructor(options: { readonly now?: () => number } = {}) {
     this.#now = options.now ?? Date.now;
   }
 
   waitForAnswer(input: Parameters<PaymentReplySource['waitForAnswer']>[0]): ReturnType<PaymentReplySource['waitForAnswer']> {
-    return new Promise((resolve) => {
+    const waiting = new Promise<Awaited<ReturnType<PaymentReplySource['waitForAnswer']>>>((resolve, reject) => {
+      if (this.#closed) { reject(new PaymentReplyInboxClosedError()); return; }
       let timer: ReturnType<typeof setTimeout> | undefined;
       const waiter: Waiter = {
         kind: input.kind,
@@ -54,10 +68,33 @@ export class PaymentReplyInbox implements PaymentReplySource {
           if (timer !== undefined) clearTimeout(timer);
           resolve(answer);
         },
+        cancel: (error) => {
+          if (!this.#waiting.delete(waiter)) return;
+          if (timer !== undefined) clearTimeout(timer);
+          reject(error);
+        },
       };
       this.#waiting.add(waiter);
       timer = setTimeout(() => waiter.settle(null), Math.max(0, input.deadlineMs - this.#now()));
     });
+    // A host may tear down while a legacy caller has not attached its handler
+    // yet. Observe rejection without changing what an awaiting caller receives.
+    void waiting.catch(() => {});
+    return waiting;
+  }
+
+  /**
+   * Stop admission, reject waiting windows and drain reply readings already
+   * accepted. The owner must await this before releasing its graph. No pending
+   * window resolves null here; only its actual deadline can establish silence.
+   */
+  close(): Promise<void> {
+    if (this.#closing) return this.#closing;
+    this.#closed = true;
+    const error = new PaymentReplyInboxClosedError();
+    for (const waiter of this.#waiting) waiter.cancel(error);
+    this.#closing = Promise.allSettled(this.#offers).then(() => {});
+    return this.#closing;
   }
 
   /** How many windows are waiting for an answer. */
@@ -69,7 +106,16 @@ export class PaymentReplyInbox implements PaymentReplySource {
    * Offer an inbound owner message that arrived on `channel`. The caller has
    * already established that the sender is the owner.
    */
-  async offer(channel: CommandAuthorityChannel, text: string): Promise<PaymentReplyOffer> {
+  offer(channel: CommandAuthorityChannel, text: string): Promise<PaymentReplyOffer> {
+    if (this.#closed) return Promise.resolve({ consumed: false, reason: 'no-window' });
+    // Track admission before the judgment port can synchronously request close.
+    const work = Promise.resolve().then(() => this.readOffer(channel, text));
+    this.#offers.add(work);
+    void work.then(() => this.#offers.delete(work), () => this.#offers.delete(work));
+    return work;
+  }
+
+  private async readOffer(channel: CommandAuthorityChannel, text: string): Promise<PaymentReplyOffer> {
     const waiting = [...this.#waiting].filter((waiter) => waiter.channels.includes(channel));
     if (waiting.length === 0) return { consumed: false, reason: 'no-window' };
     if (waiting.length > 1) return { consumed: false, reason: 'several-windows' };

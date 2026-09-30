@@ -202,6 +202,7 @@ export class DaemonServer {
     this.hostedSessions = resolved.hostedSessions;
 
     const collaborators = createDaemonFacadeCollaborators({
+      paymentReplies: config.paymentReplies,
       runtime: resolved,
       pendingSurfaceReplies: this.pendingSurfaceReplies,
       authToken: () => this.authToken,

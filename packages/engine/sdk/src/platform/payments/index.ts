@@ -261,7 +261,7 @@ export type { PaymentsConfigReader } from './payments-config.js';
 
 export { createJevMerchantJudge, judgeMerchant } from './merchant-judge-model.js';
 
-export { PaymentReplyInbox } from './reply-inbox.js';
+export { PaymentReplyInbox, PaymentReplyInboxClosedError } from './reply-inbox.js';
 export type { PaymentReplyOffer } from './reply-inbox.js';
 
 export { registry as paymentsJudgmentRegistry } from './judgment-registry.js';
