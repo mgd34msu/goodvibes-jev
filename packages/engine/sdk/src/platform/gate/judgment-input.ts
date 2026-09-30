@@ -116,10 +116,13 @@ function inlineProblem(text: string): JudgmentInputProblem | undefined {
       if (problem && literalValue(match[2]!)) return problem;
     }
   }
+  // Start once per contiguous scheme-character run, rather than restarting a
+  // greedy scan at every letter of a long document. The prefix preserves the
+  // original earliest letter-started candidate after digits or punctuation.
   // URL userinfo has a password by definition, unlike a word in prose.
-  for (const match of text.matchAll(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g)) {
+  for (const match of text.matchAll(/(?<![A-Za-z0-9+.-])[0-9+.-]*([A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+)/g)) {
     try {
-      const url = new URL(match[0]);
+      const url = new URL(match[1]!);
       if (url.password.length > 0) return 'credential-material';
       for (const [key, value] of url.searchParams) {
         const problem = protectedKey(key);

@@ -132,6 +132,28 @@ describe('pre-judgment protected input refusal', () => {
     expect(judgmentInputProblem({ content: `${PAN} `.repeat(10_000) })).toBe('card-material');
   });
 
+  test('long unbroken document text is scanned linearly without a partial prefix shortcut', () => {
+    const started = performance.now();
+    const long = 'x'.repeat(128 * 1024);
+    expect(judgmentInputProblem({ content: long })).toBeUndefined();
+    expect(judgmentInputProblem({ content: `${long} https://user:synthetic@example.test` })).toBe('credential-material');
+    expect(judgmentInputProblem({ content: `${long} https://example.test?api%5Fkey=synthetic` })).toBe('credential-material');
+    expect(judgmentInputProblem({ content: `${'+.'.repeat(64 * 1024)}https://user:synthetic@example.test` })).toBe('credential-material');
+    // A regression formerly took tens of seconds for just the first value.
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(log.requests).toEqual([]);
+  });
+
+  test('linear URL scan preserves embedded scheme and multiple URL behavior', () => {
+    for (const prefix of ['', '1', '123+..', '://', '@', '/', ' abc+']) {
+      expect(judgmentInputProblem({ content: `${prefix}https://user:synthetic@example.test` })).toBe('credential-material');
+    }
+    expect(judgmentInputProblem({ content: 'https://example.test/safe https://user:synthetic@example.test' })).toBe('credential-material');
+    expect(judgmentInputProblem({ content: '123+..https://example.test/safe' })).toBeUndefined();
+    expect(judgmentInputProblem({ content: 'https://example.test?view=docs' })).toBeUndefined();
+    expect(log.requests).toEqual([]);
+  });
+
   test('bounds refuse complete oversized data without a partial reading', async () => {
     const args = { content: 'x'.repeat(1_000_001) };
     expect((await gate().manager.checkDetailed('write', args)).approved).toBe(false);
