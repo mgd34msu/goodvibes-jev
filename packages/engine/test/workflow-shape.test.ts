@@ -192,7 +192,7 @@ describe('ci.yml: build once, restore everywhere', () => {
     const matrix = ci.jobs!['platform-matrix']!;
     const include = (matrix.strategy?.matrix as { include?: Array<{ platform: string; 'test-cmd': string }> })?.include ?? [];
     const bun = include.find((r) => r.platform === 'bun');
-    expect(bun?.['test-cmd']).toBe('bun packages/engine/scripts/test.ts');
+    expect(bun?.['test-cmd']).toBe('bun packages/engine/scripts/test.ts && bun run products:test');
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
   });
 

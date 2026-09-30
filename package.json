@@ -23,7 +23,7 @@
     "products/*"
   ],
   "scripts": {
-    "build": "bun packages/engine/scripts/build.ts",
+    "build": "bun packages/engine/scripts/build.ts && bun run products:build",
     "prepare:sdk": "bun packages/engine/scripts/prepare-sdk-package.ts",
     "sync:version": "bun packages/engine/scripts/sync-version-fallback.ts",
     "refresh:contracts": "bun packages/engine/scripts/refresh-contract-artifacts.ts && bun packages/engine/scripts/generate-foundation-io-entries.ts && bun packages/engine/scripts/generate-openapi-contract.ts && bun packages/engine/scripts/generate-webui-facade.ts && bun packages/engine/scripts/generate-homeassistant-client.ts",
@@ -39,8 +39,13 @@
     "sbom:check": "bun packages/engine/scripts/sbom-check.ts",
     "license-names:read": "bun packages/engine/scripts/read-license-names.ts",
     "pretest": "bun packages/engine/scripts/typecheck.ts",
-    "test": "bun run test:judgment && bun packages/engine/scripts/test.ts",
+    "test": "bun run test:judgment && bun packages/engine/scripts/test.ts && bun run products:test",
     "test:judgment": "bun packages/engine/scripts/test.ts --cwd ../judgment test",
+    "products:check": "bun packages/engine/scripts/product-workspaces.ts check",
+    "products:build": "bun packages/engine/scripts/product-workspaces.ts build",
+    "products:test": "bun packages/engine/scripts/product-workspaces.ts test",
+    "products:typecheck": "bun packages/engine/scripts/product-workspaces.ts typecheck",
+    "migration:complete": "bun packages/engine/scripts/product-workspaces.ts complete",
     "test:rn": "bun packages/engine/scripts/test.ts test/rn-bundle-node-imports.test.ts",
     "test:workers": "bun packages/engine/scripts/test.ts test/workers/workers.test.ts",
     "test:workers:wrangler": "bun packages/engine/scripts/test.ts test/workers-wrangler/wrangler.test.ts",
