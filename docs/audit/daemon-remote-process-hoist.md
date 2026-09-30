@@ -49,3 +49,12 @@ status and deadline expiry are protocol/runtime facts. POSIX versus Windows is
 an explicit runtime platform branch. No prose meaning, ranking, guessed
 permission or heuristic fallback is added. The backend and route admission
 contracts remain work for their subsequent slices.
+
+## Platform acceptance boundary
+
+The real descendant process-group assertions are a named POSIX-only test
+boundary. They run on this Linux executor. Windows reports that coverage as
+unavailable rather than registering passing no-op assertions. Direct-child
+and stream-deadline tests remain ordinary tests. Windows process-tree behavior
+is not verified by this migration. The repository's no-skipped-tests gate
+remains unchanged.

@@ -75,7 +75,8 @@ afterEach(async () => {
 function simulateShortSocketPath() {
   const original = Buffer.byteLength;
   spyOn(Buffer, 'byteLength').mockImplementation(((value: Parameters<typeof Buffer.byteLength>[0], encoding?: BufferEncoding) => {
-    if (typeof value === 'string' && value.includes('/ssh-keys/owner-') && /\/m[a-f0-9]{8}$/.test(value)) return 90;
+    const path = typeof value === 'string' ? value.replaceAll('\\', '/') : '';
+    if (path.includes('/ssh-keys/owner-') && /\/m[a-f0-9]{8}$/.test(path)) return 90;
     return original(value, encoding);
   }) as typeof Buffer.byteLength);
 }
@@ -193,7 +194,7 @@ describe('SSH owned teardown', () => {
     } finally { releaseFirst?.(0); await result; }
   });
 
-  test.skipIf(process.platform === 'win32')('teardown asks a mocked short-path multiplexing master to exit', async () => {
+  test('teardown asks a mocked short-path multiplexing master to exit', async () => {
     simulateShortSocketPath();
     const item = backend();
     await item.dispatch(peer(), 'uptime');
@@ -205,7 +206,7 @@ describe('SSH owned teardown', () => {
     expect(existsSync(captures[0]!.file)).toBe(false);
   });
 
-  test.skipIf(process.platform === 'win32')('failed master cleanup is visible but still removes the private key', async () => {
+  test('failed master cleanup is visible but still removes the private key', async () => {
     simulateShortSocketPath();
     controlExit = 1;
     const item = backend();

@@ -51,3 +51,12 @@ provider authorization or remote connection is provisioned.
 All decisions are explicit lifecycle state, filename/marker grammar, filesystem
 facts, PID probe results or declared enum membership. No credential value is
 read for semantic judgment, logged, or sent to a model.
+
+## Platform acceptance boundary
+
+The real symlink cleanup fixtures run inside an explicit POSIX test boundary.
+They use only owned temporary files and pass on this Linux executor. Windows
+symlink privileges/configuration are not changed for tests; that coverage is
+reported unavailable on Windows. The fully mocked SSH multiplexing tests run
+without a platform skip, with fixture path separators normalized. No claim of
+live Windows SSH or filesystem verification is made.

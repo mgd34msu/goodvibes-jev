@@ -91,28 +91,35 @@ describe('remote process deadline and failure ownership', () => {
     } finally { child.finish(137); }
   });
 
-  for (const exitEarly of [false, true]) {
-    test.skipIf(process.platform === 'win32')(`deadline closes inherited pipes with parent already exited = ${exitEarly}`, async () => {
-      const directory = makeProjectTempDir('remote-process-group');
-      const marker = join(directory, 'grandchild-ran');
-      const pidFile = join(directory, 'grandchild.pid');
-      const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected'); }, 2000)`;
-      const parent = `process.on('SIGTERM', () => {}); Bun.spawn([process.execPath, '--no-env-file', '-e', ${JSON.stringify(descendant)}], {stdout: 'inherit', stderr: 'inherit'}); ${exitEarly ? 'process.exit(0)' : 'setTimeout(() => {}, 10000)'}`;
-      const started = Date.now();
-      let descendantPid: number | undefined;
-      try {
-        const result = await runProcess({ args: code(parent), timeoutMs: 1000 });
-        expect(result.timedOut).toBe(true);
-        expect(Date.now() - started).toBeLessThan(1800);
-        expect(existsSync(pidFile)).toBe(true);
-        descendantPid = Number(readFileSync(pidFile, 'utf8'));
-        await new Promise((resolve) => setTimeout(resolve, 2100));
-        expect(existsSync(marker)).toBe(false);
-      } finally {
-        // Keep the regression itself safe when run against the old implementation.
-        if (!descendantPid && existsSync(pidFile)) descendantPid = Number(readFileSync(pidFile, 'utf8'));
-        if (descendantPid) { try { process.kill(descendantPid, 'SIGKILL'); } catch {} }
-      }
-    }, 7000);
+  // POSIX process groups do not exist on Windows. Keep this an explicit
+  // platform suite boundary, never a passing no-op inside a registered test.
+  if (process.platform !== 'win32') {
+    for (const exitEarly of [false, true]) {
+      test(`POSIX: deadline closes inherited pipes with parent already exited = ${exitEarly}`, async () => {
+        const directory = makeProjectTempDir('remote-process-group');
+        const marker = join(directory, 'grandchild-ran');
+        const pidFile = join(directory, 'grandchild.pid');
+        const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => { require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected'); }, 2000)`;
+        const parent = `process.on('SIGTERM', () => {}); Bun.spawn([process.execPath, '--no-env-file', '-e', ${JSON.stringify(descendant)}], {stdout: 'inherit', stderr: 'inherit'}); ${exitEarly ? 'process.exit(0)' : 'setTimeout(() => {}, 10000)'}`;
+        const started = Date.now();
+        let descendantPid: number | undefined;
+        try {
+          const result = await runProcess({ args: code(parent), timeoutMs: 1000 });
+          expect(result.timedOut).toBe(true);
+          expect(Date.now() - started).toBeLessThan(1800);
+          expect(existsSync(pidFile)).toBe(true);
+          descendantPid = Number(readFileSync(pidFile, 'utf8'));
+          await new Promise((resolve) => setTimeout(resolve, 2100));
+          expect(existsSync(marker)).toBe(false);
+        } finally {
+          // Keep the regression itself safe when run against the old implementation.
+          if (!descendantPid && existsSync(pidFile)) descendantPid = Number(readFileSync(pidFile, 'utf8'));
+          if (descendantPid) { try { process.kill(descendantPid, 'SIGKILL'); } catch {} }
+        }
+      }, 7000);
+    }
+  } else {
+    console.warn('[coverage] POSIX descendant process-group assertions are unavailable on Windows.');
   }
+
 });

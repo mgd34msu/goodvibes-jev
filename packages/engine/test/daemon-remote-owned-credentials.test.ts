@@ -80,42 +80,48 @@ describe('owned credential scratch', () => {
     await owned.close();
   });
 
-  test.skipIf(process.platform === 'win32')('symlinked roots or parent components refuse without touching the target', async () => {
-    const base = makeProjectTempDir('credential-root-symlink');
-    const target = join(base, 'target');
-    mkdirSync(target);
-    writeFileSync(join(target, 'preserved'), 'untouched');
-    const linked = join(base, 'linked');
-    symlinkSync(target, linked, 'dir');
-    for (const root of [linked, join(linked, 'nested')]) {
-      const owned = new OwnedCredentialDirectory({ rootDirectory: root, logger });
-      await expect(owned.write('dummy', 'cred')).rejects.toThrow('could not be prepared');
-      await owned.close();
-    }
-    expect(readdirSync(target)).toEqual(['preserved']);
-  });
+  // Real POSIX symlink fixtures require no extra OS privileges. Windows
+  // symlink privilege/configuration is not part of this test environment.
+  if (process.platform !== 'win32') {
+    test('POSIX: symlinked roots or parent components refuse without touching the target', async () => {
+      const base = makeProjectTempDir('credential-root-symlink');
+      const target = join(base, 'target');
+      mkdirSync(target);
+      writeFileSync(join(target, 'preserved'), 'untouched');
+      const linked = join(base, 'linked');
+      symlinkSync(target, linked, 'dir');
+      for (const root of [linked, join(linked, 'nested')]) {
+        const owned = new OwnedCredentialDirectory({ rootDirectory: root, logger });
+        await expect(owned.write('dummy', 'cred')).rejects.toThrow('could not be prepared');
+        await owned.close();
+      }
+      expect(readdirSync(target)).toEqual(['preserved']);
+    });
 
-  test.skipIf(process.platform === 'win32')('symlinked entries and marker files are never followed by cleanup', async () => {
-    const root = fixtureRoot();
-    mkdirSync(root, { recursive: true });
-    const outside = makeProjectTempDir('credential-outside');
-    writeFileSync(join(outside, 'preserved'), 'untouched');
-    const dead = seedOwner(root, 1000);
-    symlinkSync(outside, join(dead, 'outside-link'), 'dir');
-    symlinkSync(outside, join(root, 'owner-1001-abcdefghijklmnop'), 'dir');
-    const markerLink = join(root, 'owner-1002-abcdefghijklmnop');
-    mkdirSync(markerLink);
-    const externalMarker = join(outside, 'owner.json');
-    writeFileSync(externalMarker, JSON.stringify({ kind: 'goodvibes-remote-credential-owner', version: 1, pid: 1002, directory: basename(markerLink) }));
-    symlinkSync(externalMarker, join(markerLink, 'owner.json'));
-    const owned = new OwnedCredentialDirectory({ rootDirectory: root, logger, probeOwner: () => 'dead' });
-    await owned.directory();
-    await owned.close();
-    expect(readFileSync(join(outside, 'preserved'), 'utf8')).toBe('untouched');
-    expect(existsSync(dead)).toBe(false);
-    expect(existsSync(markerLink)).toBe(true);
-    expect(existsSync(externalMarker)).toBe(true);
-  });
+    test('POSIX: symlinked entries and marker files are never followed by cleanup', async () => {
+      const root = fixtureRoot();
+      mkdirSync(root, { recursive: true });
+      const outside = makeProjectTempDir('credential-outside');
+      writeFileSync(join(outside, 'preserved'), 'untouched');
+      const dead = seedOwner(root, 1000);
+      symlinkSync(outside, join(dead, 'outside-link'), 'dir');
+      symlinkSync(outside, join(root, 'owner-1001-abcdefghijklmnop'), 'dir');
+      const markerLink = join(root, 'owner-1002-abcdefghijklmnop');
+      mkdirSync(markerLink);
+      const externalMarker = join(outside, 'owner.json');
+      writeFileSync(externalMarker, JSON.stringify({ kind: 'goodvibes-remote-credential-owner', version: 1, pid: 1002, directory: basename(markerLink) }));
+      symlinkSync(externalMarker, join(markerLink, 'owner.json'));
+      const owned = new OwnedCredentialDirectory({ rootDirectory: root, logger, probeOwner: () => 'dead' });
+      await owned.directory();
+      await owned.close();
+      expect(readFileSync(join(outside, 'preserved'), 'utf8')).toBe('untouched');
+      expect(existsSync(dead)).toBe(false);
+      expect(existsSync(markerLink)).toBe(true);
+      expect(existsSync(externalMarker)).toBe(true);
+    });
+  } else {
+    console.warn('[coverage] Real POSIX symlink cleanup assertions are unavailable on Windows.');
+  }
 
   test('unknown file kinds refuse before creating a directory', async () => {
     const root = fixtureRoot();
