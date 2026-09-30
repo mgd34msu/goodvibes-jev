@@ -115,3 +115,18 @@ This slice is not a claim that the entire extraction family is complete:
   with an explicit no-write hold boundary.
 
 Live calibration and entity-aliasing work remain separately tracked.
+
+## Document-only preflight correction
+
+Refresh and search-text preflight now project every complete `searchText`, `text`
+and `content` candidate from both structure and metadata, plus excerpt, summary
+and sections. Unrelated metadata such as `retrievedAt` never enters the privacy
+scan or judgment request. Property descriptors are inspected before reading any
+consumed field: accessors are refused without execution, and non-enumerable data
+candidates (including section entries) are still checked before the first reading.
+
+Synthetic regressions cover an ordinary epoch value that happens to match a PAN
+shape, both with an actionable fake port and with no port, protected text after
+the sample limit in later candidates, and accessor refusals with zero getter
+invocations and zero requests. Missing judgments still hold normally; no privacy
+threshold, full-text check or request budget is relaxed.

@@ -1,5 +1,5 @@
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { assertJudgmentInput } from '../gate/judgment-input.js';
+import { assertJudgmentInput, JudgmentInputError } from '../gate/judgment-input.js';
 import { extractionReadability } from './batteries/extraction-readability.js';
 import type { KnowledgeExtractionRecord } from './types.js';
 
@@ -15,7 +15,7 @@ import type { KnowledgeExtractionRecord } from './types.js';
 export const KNOWLEDGE_EXTRACTOR_VERSION = 3;
 
 export function readKnowledgeExtractorVersion(metadata: Record<string, unknown>): number {
-  const value = metadata.extractorVersion;
+  const value = readDocumentFields(metadata, ['extractorVersion']).extractorVersion;
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
@@ -45,7 +45,7 @@ export async function knowledgeExtractionNeedsRefresh(
   currentExtractorVersion: number = KNOWLEDGE_EXTRACTOR_VERSION,
 ): Promise<boolean> {
   if (!extraction) return true;
-  if (readKnowledgeExtractorVersion(extraction.metadata) < currentExtractorVersion) return true;
+  if (readKnowledgeExtractorVersion(readDocumentFields(extraction, ['metadata']).metadata) < currentExtractorVersion) return true;
   // Inspect all candidate fields before a bounded sample of any field leaves.
   assertKnowledgeExtractionInput(extraction);
   const searchText = await readKnowledgeSearchText(extraction.structure) ?? await readKnowledgeSearchText(extraction.metadata);
@@ -57,8 +57,9 @@ export async function knowledgeExtractionNeedsRefresh(
 }
 
 export async function readKnowledgeSearchText(record: Record<string, unknown>): Promise<string | undefined> {
-  assertJudgmentInput(record);
-  const value = record.searchText ?? record.text ?? record.content;
+  const candidates = readDocumentFields(record, ['searchText', 'text', 'content']);
+  assertJudgmentInput(candidates);
+  const value = candidates.searchText ?? candidates.text ?? candidates.content;
   return typeof value === 'string' && await hasUsefulKnowledgeExtractionText(value) ? value : undefined;
 }
 
@@ -101,8 +102,27 @@ export async function requireExtractionJudgment<T>(read: () => Promise<T>): Prom
 /** Preflight document content, not database ids, timestamps or unrelated bookkeeping. */
 export function assertKnowledgeExtractionInput(extraction: KnowledgeExtractionRecord | null | undefined): void {
   if (!extraction) return;
+  const document = readDocumentFields(extraction, ['structure', 'metadata', 'excerpt', 'summary', 'sections']);
+  assertJudgmentInput(document.sections);
+  // Array iteration can consume non-enumerable data entries too. The preceding
+  // check rejects accessors before their descriptors are projected as data.
+  const sections = Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(document.sections))
+    .filter(([key]) => key !== 'length').map(([key, descriptor]) => [key, descriptor.value as unknown]));
   assertJudgmentInput({
-    structure: extraction.structure, metadata: extraction.metadata,
-    excerpt: extraction.excerpt, summary: extraction.summary, sections: extraction.sections,
+    structure: readDocumentFields(document.structure, ['searchText', 'text', 'content']),
+    metadata: readDocumentFields(document.metadata, ['searchText', 'text', 'content']),
+    excerpt: document.excerpt, summary: document.summary, sections,
   });
+}
+
+/** Project only consumed fields, without executing getters or losing hidden data fields. */
+function readDocumentFields<T extends object, K extends keyof T>(record: T, fields: readonly K[]): Pick<T, K> {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) throw new JudgmentInputError('unsupported-input');
+  const prototype: unknown = Object.getPrototypeOf(record);
+  if (prototype !== Object.prototype && prototype !== null) throw new JudgmentInputError('unsupported-input');
+  return Object.fromEntries(fields.map((field) => {
+    const descriptor = Object.getOwnPropertyDescriptor(record, field);
+    if (descriptor?.get !== undefined || descriptor?.set !== undefined) throw new JudgmentInputError('unsupported-input');
+    return [field, descriptor?.value as unknown];
+  })) as Pick<T, K>;
 }

@@ -6,6 +6,7 @@ import {
   KNOWLEDGE_EXTRACTOR_VERSION,
   KNOWLEDGE_EXTRACTION_SAMPLE_CHARS,
   KnowledgeExtractionJudgmentHoldError,
+  assertKnowledgeExtractionInput,
   hasUsefulKnowledgeExtractionText,
   knowledgeExtractionNeedsRefresh,
   looksBinaryLikeText,
@@ -97,5 +98,70 @@ describe('knowledge extraction refresh policy', () => {
     expect(fake.requests).toHaveLength(calls);
     installJudgmentPort(undefined);
     await expect(hasUsefulKnowledgeExtractionText('password=synthetic-fixture')).rejects.toBeInstanceOf(JudgmentInputError);
+  });
+
+  test('omits unrelated epoch bookkeeping from preflight and readings, including without a port', async () => {
+    const text = 'Readable document text.';
+    const metadata = { extractorVersion: KNOWLEDGE_EXTRACTOR_VERSION, retrievedAt: 1790726400000 };
+    const record = extraction({ structure: { searchText: text, retrievedAt: metadata.retrievedAt }, metadata });
+    const fake = answer(0.99);
+    expect(await knowledgeExtractionNeedsRefresh(record)).toBe(false);
+    expect(await readKnowledgeSearchText({ ...metadata, text })).toBe(text);
+    expect(fake.requests.map((request) => request.state)).toEqual([{ sample: text }, { sample: text }]);
+    installJudgmentPort(undefined);
+    // Missing judgment still holds, but irrelevant metadata is not a privacy refusal.
+    await expect(knowledgeExtractionNeedsRefresh(record)).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+    await expect(readKnowledgeSearchText({ ...metadata, text })).rejects.toBeInstanceOf(KnowledgeExtractionJudgmentHoldError);
+  });
+
+  test('preflights every full later text candidate before any earlier readable field starts a request', async () => {
+    const fake = answer(0.99);
+    const protectedTail = `${'Ordinary text. '.repeat(1_000)} apiKey=synthetic-fixture`;
+    for (const field of ['searchText', 'text', 'content']) {
+      for (const container of ['structure', 'metadata'] as const) {
+        const record = extraction({ structure: { searchText: 'First field is readable' } });
+        Object.defineProperty(record[container], field, { value: protectedTail });
+        await expect(knowledgeExtractionNeedsRefresh(record)).rejects.toBeInstanceOf(JudgmentInputError);
+      }
+      await expect(readKnowledgeSearchText({ searchText: 'Earlier text', [field]: protectedTail })).rejects.toBeInstanceOf(JudgmentInputError);
+    }
+    for (const overrides of [{ excerpt: protectedTail }, { summary: protectedTail }, { sections: ['Safe section', protectedTail] }]) {
+      await expect(knowledgeExtractionNeedsRefresh(extraction({ structure: { searchText: 'Earlier text' }, ...overrides }))).rejects.toBeInstanceOf(JudgmentInputError);
+    }
+    const hiddenSection = ['Safe section'];
+    Object.defineProperty(hiddenSection, 1, { value: protectedTail });
+    await expect(knowledgeExtractionNeedsRefresh(extraction({ summary: 'Earlier text', sections: hiddenSection }))).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(fake.requests).toHaveLength(0);
+    installJudgmentPort(undefined);
+    await expect(readKnowledgeSearchText({ searchText: 'Earlier text', content: protectedTail })).rejects.toBeInstanceOf(JudgmentInputError);
+  });
+
+  test('refuses consumed accessors without invoking them and ignores unrelated metadata accessors', async () => {
+    const fake = answer(0.99);
+    let invoked = 0;
+    const getter = { get() { invoked += 1; return 'Getter must not execute'; } };
+    for (const field of ['structure', 'metadata', 'excerpt', 'summary', 'sections'] as const) {
+      const record = extraction({ structure: { searchText: 'Readable first field' } });
+      Object.defineProperty(record, field, getter);
+      await expect(knowledgeExtractionNeedsRefresh(record)).rejects.toBeInstanceOf(JudgmentInputError);
+      expect(() => assertKnowledgeExtractionInput(record)).toThrow(JudgmentInputError);
+    }
+    for (const container of ['structure', 'metadata'] as const) {
+      for (const field of ['searchText', 'text', 'content']) {
+        const record = extraction({ structure: { searchText: 'Readable first field' } });
+        Object.defineProperty(record[container], field, getter);
+        await expect(knowledgeExtractionNeedsRefresh(record)).rejects.toBeInstanceOf(JudgmentInputError);
+        await expect(readKnowledgeSearchText(record[container])).rejects.toBeInstanceOf(JudgmentInputError);
+      }
+    }
+    const sections = ['Safe section'];
+    Object.defineProperty(sections, 1, getter);
+    await expect(knowledgeExtractionNeedsRefresh(extraction({ summary: 'Readable first field', sections }))).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(invoked).toBe(0);
+    expect(fake.requests).toHaveLength(0);
+    const record = extraction({ summary: 'Ordinary document summary' });
+    Object.defineProperty(record.metadata, 'retrievedAt', getter);
+    expect(await knowledgeExtractionNeedsRefresh(record)).toBe(false);
+    expect(invoked).toBe(0);
   });
 });
