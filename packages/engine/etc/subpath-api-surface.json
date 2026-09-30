@@ -50786,6 +50786,16 @@
       "text": "export interface DispatchPayload { args?: string[]; stdin?: string; env?: Record<string, string>; timeoutMs?: number; cwd?: string; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
+      "name": "DispatchRequest",
+      "kind": "interface",
+      "required": [
+        "command",
+        "peerId",
+        "principalId"
+      ],
+      "text": "export interface DispatchRequest { peerId: string; command: string; payload?: DispatchPayload; principalId: string; async?: boolean; }"
+    },
+    {
       "name": "DistributedApprovalBridge",
       "kind": "interface",
       "required": [
@@ -51143,6 +51153,30 @@
         "token"
       ],
       "text": "export interface HandshakeToken { readonly sessionId: string; readonly token: string; readonly epoch: number; readonly issuedAt: number; readonly expiresAt: number; }"
+    },
+    {
+      "name": "HostDistributedRuntime",
+      "kind": "class",
+      "publicMembers": [
+        "approvePairRequest",
+        "cancelWork",
+        "claimWork",
+        "completeWork",
+        "constructor",
+        "disconnectPeer",
+        "getNodeHostContract",
+        "heartbeatPeer",
+        "invokePeer",
+        "listPairRequests",
+        "listPeers",
+        "listWork",
+        "rejectPairRequest",
+        "requestPairing",
+        "revokePeerToken",
+        "rotatePeerToken",
+        "verifyPairRequest"
+      ],
+      "text": "export declare class HostDistributedRuntime implements DistributedRuntimeRouteService { private readonly manager; private readonly dispatcher; constructor(manager: DistributedRuntimeManager, dispatcher: RemoteDispatcher); listPairRequests(): unknown; requestPairing(input: Record<string, unknown>): Promise<unknown>; approvePairRequest(requestId: string, input: Record<string, unknown>): Promise<unknown | null>; rejectPairRequest(requestId: string, input: Record<string, unknown>): Promise<unknown | null>; verifyPairRequest(requestId: string, challenge: string, input: Record<string, unknown>): Promise<unknown | null>; listPeers(): unknown; rotatePeerToken(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; revokePeerToken(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; disconnectPeer(peerId: string, input: Record<string, unknown>): Promise<unknown | null>; getNodeHostContract(): unknown; heartbeatPeer(auth: RemotePeerAuth, input: Record<string, unknown>): Promise<unknown>; claimWork(auth: RemotePeerAuth, input: Record<string, unknown>): Promise<unknown>; completeWork(auth: RemotePeerAuth, workId: string, input: Record<string, unknown>): Promise<unknown | null>; listWork(): unknown; cancelWork(workId: string, input: Record<string, unknown>): Promise<unknown | null>; invokePeer(input: Record<string, unknown>): Promise<unknown>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; RemotePeerAuth = export type RemotePeerAuth = unknown;"
     },
     {
       "name": "INSTALLED_COMMANDS",
@@ -52047,6 +52081,27 @@
       "text": "export interface RemoteConnectionSnapshot { readonly connectionId: string; readonly identity: DurableIdentity; readonly endpoint: string; readonly transportState: string; readonly reconnectAttempts: number; readonly lastConnectedAt: number | undefined; readonly health: RemoteHealth; readonly tasks: readonly RemoteTaskSnapshot[]; readonly messagesSent: number; readonly messagesReceived: number; readonly lastAckedOffset: number; readonly lastError: string | undefined; }"
     },
     {
+      "name": "RemoteDispatcher",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "dispatch",
+        "teardown"
+      ],
+      "text": "export declare class RemoteDispatcher { private readonly registry; private readonly backends; private readonly workEnqueuer?; private readonly logger; private readonly active; private closed; private closing; constructor(options: RemoteDispatcherOptions); dispatch(request: DispatchRequest): Promise<RemoteInvokeResult>; private assertOpen; private performDispatch; teardown(): Promise<void>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "RemoteDispatcherOptions",
+      "kind": "interface",
+      "required": [
+        "credentials",
+        "homeDirectory",
+        "logger",
+        "registry"
+      ],
+      "text": "export interface RemoteDispatcherOptions { registry: PeerRegistry; credentials: RemoteHostCredentialStore; logger: RemoteHostLogger; homeDirectory: string; workEnqueuer?: RemoteWorkEnqueuer; backends?: Map<PeerRecord['backendKind'], Backend>; } ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; }"
+    },
+    {
       "name": "RemoteExecutionArtifact",
       "kind": "interface",
       "required": [
@@ -52106,6 +52161,19 @@
         "warn"
       ],
       "text": "export interface RemoteHostLogger { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }"
+    },
+    {
+      "name": "RemoteInvokeResult",
+      "kind": "interface",
+      "required": [
+        "backendKind",
+        "completed",
+        "peerId",
+        "stderr",
+        "stdout",
+        "stdoutDigest"
+      ],
+      "text": "export interface RemoteInvokeResult { peerId: string; backendKind: PeerRecord['backendKind']; exitCode?: number; workId?: string; completed: boolean; stdout: string; stderr: string; stdoutDigest: string; }"
     },
     {
       "name": "RemoteNegotiationSnapshot",
@@ -52367,6 +52435,25 @@
       "text": "export interface RemoteTaskSnapshot { readonly taskId: string; readonly agentId: string; readonly title: string; readonly status: RemoteTask['status']; readonly updatedAt: number; readonly progress: number | undefined; readonly error: string | undefined; }"
     },
     {
+      "name": "RemoteWorkEnqueuer",
+      "kind": "interface",
+      "required": [
+        "enqueue"
+      ],
+      "text": "export interface RemoteWorkEnqueuer { enqueue(item: RemoteWorkItemInput): Promise<{ workId: string; }>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "RemoteWorkItemInput",
+      "kind": "interface",
+      "required": [
+        "backendKind",
+        "command",
+        "peerId",
+        "queuedBy"
+      ],
+      "text": "export interface RemoteWorkItemInput { peerId: string; command: string; payload?: DispatchPayload; backendKind: PeerRecord['backendKind']; queuedBy: string; }"
+    },
+    {
       "name": "ReplayConfig",
       "kind": "interface",
       "required": [
@@ -52512,6 +52599,11 @@
       "name": "SETUP_SOLUTION_SHAPES",
       "kind": "const",
       "text": "SETUP_SOLUTION_SHAPES: Readonly<Record<SetupSolutionShape, string>> ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
+      "name": "STDOUT_PREVIEW_LIMIT",
+      "kind": "const",
+      "text": "STDOUT_PREVIEW_LIMIT = 4096"
     },
     {
       "name": "SchemaFreshness",
@@ -53250,6 +53342,11 @@
       "name": "createAgentGraph",
       "kind": "function",
       "text": "export declare function createAgentGraph(options: { readonly runtimeBus: RuntimeEventBus; readonly workingDirectory: string; readonly configManager: ConfigManager; readonly providerRegistry: ProviderRegistry; readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined; }): AgentGraph; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; RuntimeStore = export type RuntimeStore = StoreApi<RuntimeState>;"
+    },
+    {
+      "name": "createBackends",
+      "kind": "function",
+      "text": "export declare function createBackends(ctx: BackendContext): Map<PeerRecord['backendKind'], Backend>; ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; }"
     },
     {
       "name": "createChannelComposition",

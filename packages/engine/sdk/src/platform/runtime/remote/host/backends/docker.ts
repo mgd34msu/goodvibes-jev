@@ -10,6 +10,8 @@ import {
   buildRemoteShellCommand,
 } from './types.js';
 import { runProcess } from './process-runner.js';
+import { BackendLifetime } from './backend-lifetime.js';
+import { redactOwnedCredential } from './credential-output.js';
 import { tokenizeCommand } from './local-process.js';
 
 /**
@@ -19,61 +21,79 @@ import { tokenizeCommand } from './local-process.js';
  * docker argv itself is fully tokenized (no shell on the daemon side).
  */
 export function createDockerBackend(ctx: BackendContext): Backend {
+  const lifetime = new BackendLifetime();
   return {
     kind: 'docker',
-    async dispatch(
+    dispatch(
       peer: PeerRecord,
       command: string,
       payload?: DispatchPayload,
     ): Promise<BackendDispatchResult> {
-      if (peer.backendConfig.kind !== 'docker') {
-        throw new BackendDispatchError(
-          `Peer '${peer.peerId}' is not a docker peer.`,
-          'REMOTE_BACKEND_KIND_MISMATCH',
-        );
-      }
-      const config = peer.backendConfig as { kind: 'docker' } & DockerBackendConfig;
-      if (tokenizeCommand(command).length === 0) {
-        throw new BackendDispatchError('Empty command.', 'REMOTE_BACKEND_BAD_COMMAND');
-      }
-
-      // Resolve DOCKER_HOST. When it is a secret reference, pull the real value
-      // from the credential store and pass it via env (never argv).
-      const env: Record<string, string> = { ...(payload?.env ?? {}) };
-      if (config.dockerHost) {
-        const resolved = config.dockerHost.startsWith('goodvibes://')
-          ? await ctx.credentials.resolveRef(config.dockerHost)
-          : config.dockerHost;
-        if (!resolved) {
+      return lifetime.run(async (signal) => {
+        if (peer.backendConfig.kind !== 'docker') {
           throw new BackendDispatchError(
-            `Could not resolve dockerHost for peer '${peer.peerId}'.`,
-            'REMOTE_BACKEND_CREDENTIAL_MISSING',
+            `Peer '${peer.peerId}' is not a docker peer.`,
+            'REMOTE_BACKEND_KIND_MISMATCH',
           );
         }
-        env.DOCKER_HOST = resolved;
-      }
+        const config: { kind: 'docker' } & DockerBackendConfig = { ...peer.backendConfig };
+        if (tokenizeCommand(command).length === 0) {
+          throw new BackendDispatchError('Empty command.', 'REMOTE_BACKEND_BAD_COMMAND');
+        }
 
-      const innerCommand = buildRemoteShellCommand(command, payload?.args);
+        // Resolve DOCKER_HOST. When it is a secret reference, pull the real value
+        // from the credential store and pass it via env (never argv).
+        const env: Record<string, string> = { ...(payload?.env ?? {}) };
+        let credential: string | null = null;
+        if (config.dockerHost) {
+          let resolved: string | null;
+          if (config.dockerHost.startsWith('goodvibes://')) {
+            try { resolved = await lifetime.waitFor(() => ctx.credentials.resolveRef(config.dockerHost!)); }
+            catch {
+              lifetime.assertOpen();
+              throw new BackendDispatchError(`Could not read dockerHost for peer '${peer.peerId}'.`, 'REMOTE_BACKEND_CREDENTIAL_FAILED');
+            }
+            credential = resolved;
+          } else { resolved = config.dockerHost; }
+          if (!resolved) {
+            throw new BackendDispatchError(
+              `Could not resolve dockerHost for peer '${peer.peerId}'.`,
+              'REMOTE_BACKEND_CREDENTIAL_MISSING',
+            );
+          }
+          env.DOCKER_HOST = resolved;
+        }
 
-      const args = ['docker', 'exec'];
-      if (payload?.stdin !== undefined) args.push('-i');
-      args.push(config.containerName, 'sh', '-c', innerCommand);
+        const innerCommand = buildRemoteShellCommand(command, payload?.args);
 
-      ctx.logger.info('remote docker dispatch', {
-        peerId: peer.peerId,
-        container: config.containerName,
+        const args = ['docker', 'exec'];
+        if (payload?.stdin !== undefined) args.push('-i');
+        args.push(config.containerName, 'sh', '-c', innerCommand);
+
+        ctx.logger.info('remote docker dispatch', {
+          peerId: peer.peerId,
+          container: config.containerName,
+        });
+        lifetime.assertOpen();
+        let result;
+        try { result = await runProcess({
+          args,
+          timeoutMs: resolveTimeout(payload),
+          signal,
+          env,
+          ...(payload?.stdin !== undefined ? { stdin: payload.stdin } : {}),
+        }); } catch {
+          lifetime.assertOpen();
+          throw new BackendDispatchError(`Could not execute Docker for peer '${peer.peerId}'.`);
+        }
+        const stderr = redactOwnedCredential(result.stderr, credential ?? '');
+        return {
+          exitCode: result.timedOut ? 124 : result.exitCode,
+          stdout: redactOwnedCredential(result.stdout, credential ?? ''),
+          stderr: result.timedOut ? `${stderr}\n[remote] docker exec timed out` : stderr,
+        };
       });
-      const result = await runProcess({
-        args,
-        timeoutMs: resolveTimeout(payload),
-        env,
-        ...(payload?.stdin !== undefined ? { stdin: payload.stdin } : {}),
-      });
-      return {
-        exitCode: result.timedOut ? 124 : result.exitCode,
-        stdout: result.stdout,
-        stderr: result.timedOut ? `${result.stderr}\n[remote] docker exec timed out` : result.stderr,
-      };
     },
+    teardown: () => lifetime.close(async () => {}),
   };
 }

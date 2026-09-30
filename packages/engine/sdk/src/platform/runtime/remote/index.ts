@@ -56,6 +56,10 @@ export { createLocalProcessBackend, tokenizeCommand } from './host/backends/loca
 export { createDockerBackend } from './host/backends/docker.js';
 export { createCloudTerminalBackend } from './host/backends/cloud-terminal.js';
 export { createSshBackend } from './host/backends/ssh.js';
+export { createBackends } from './host/backends/index.js';
+export { RemoteDispatcher, STDOUT_PREVIEW_LIMIT } from './host/dispatcher.js';
+export type { RemoteWorkItemInput, RemoteWorkEnqueuer, RemoteInvokeResult, RemoteDispatcherOptions, DispatchRequest } from './host/dispatcher.js';
+export { HostDistributedRuntime } from './host/service.js';
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
 

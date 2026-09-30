@@ -9,6 +9,7 @@ import {
   resolveTimeout,
 } from './types.js';
 import { runProcess } from './process-runner.js';
+import { BackendLifetime } from './backend-lifetime.js';
 
 /** Split a command string into argv, honoring single/double quotes. */
 export function tokenizeCommand(command: string): string[] {
@@ -69,48 +70,53 @@ export function tokenizeCommand(command: string): string[] {
  * allowlist on backendConfig restricts which executables may run.
  */
 export function createLocalProcessBackend(ctx: BackendContext): Backend {
+  const lifetime = new BackendLifetime();
   return {
     kind: 'local-process',
-    async dispatch(
+    dispatch(
       peer: PeerRecord,
       command: string,
       payload?: DispatchPayload,
     ): Promise<BackendDispatchResult> {
-      if (peer.backendConfig.kind !== 'local-process') {
-        throw new BackendDispatchError(
-          `Peer '${peer.peerId}' is not a local-process peer.`,
-          'REMOTE_BACKEND_KIND_MISMATCH',
-        );
-      }
-      const config = peer.backendConfig as { kind: 'local-process' } & LocalProcessBackendConfig;
-      const tokens = tokenizeCommand(command);
-      if (tokens.length === 0 || tokens[0]!.length === 0) {
-        throw new BackendDispatchError('Empty command.', 'REMOTE_BACKEND_BAD_COMMAND');
-      }
-      const executable = tokens[0]!;
-      if (config.allowedCommands !== undefined) {
-        if (!config.allowedCommands.includes(executable)) {
+      return lifetime.run(async (signal) => {
+        if (peer.backendConfig.kind !== 'local-process') {
           throw new BackendDispatchError(
-            `Command '${executable}' is not in the peer allowlist.`,
-            'REMOTE_BACKEND_COMMAND_DENIED',
+            `Peer '${peer.peerId}' is not a local-process peer.`,
+            'REMOTE_BACKEND_KIND_MISMATCH',
           );
         }
-      }
-      const args = [...tokens, ...(payload?.args ?? [])];
-      const cwd = payload?.cwd ?? config.cwd;
-      ctx.logger.info('remote local-process dispatch', { peerId: peer.peerId, executable });
-      const result = await runProcess({
-        args,
-        timeoutMs: resolveTimeout(payload),
-        ...(cwd !== undefined ? { cwd } : {}),
-        ...(payload?.env !== undefined ? { env: payload.env } : {}),
-        ...(payload?.stdin !== undefined ? { stdin: payload.stdin } : {}),
+        const config = peer.backendConfig as { kind: 'local-process' } & LocalProcessBackendConfig;
+        const tokens = tokenizeCommand(command);
+        if (tokens.length === 0 || tokens[0]!.length === 0) {
+          throw new BackendDispatchError('Empty command.', 'REMOTE_BACKEND_BAD_COMMAND');
+        }
+        const executable = tokens[0]!;
+        if (config.allowedCommands !== undefined) {
+          if (!config.allowedCommands.includes(executable)) {
+            throw new BackendDispatchError(
+              `Command '${executable}' is not in the peer allowlist.`,
+              'REMOTE_BACKEND_COMMAND_DENIED',
+            );
+          }
+        }
+        const args = [...tokens, ...(payload?.args ?? [])];
+        const cwd = payload?.cwd ?? config.cwd;
+        ctx.logger.info('remote local-process dispatch', { peerId: peer.peerId, executable });
+        const result = await runProcess({
+          args,
+          timeoutMs: resolveTimeout(payload),
+          signal,
+          ...(cwd !== undefined ? { cwd } : {}),
+          ...(payload?.env !== undefined ? { env: payload.env } : {}),
+          ...(payload?.stdin !== undefined ? { stdin: payload.stdin } : {}),
+        });
+        return {
+          exitCode: result.timedOut ? 124 : result.exitCode,
+          stdout: result.stdout,
+          stderr: result.timedOut ? `${result.stderr}\n[remote] command timed out` : result.stderr,
+        };
       });
-      return {
-        exitCode: result.timedOut ? 124 : result.exitCode,
-        stdout: result.stdout,
-        stderr: result.timedOut ? `${result.stderr}\n[remote] command timed out` : result.stderr,
-      };
     },
+    teardown: () => lifetime.close(async () => {}),
   };
 }
