@@ -21,3 +21,12 @@ export type {
 
 export { InboundPoller } from './poller.js';
 export type { ProviderStatus, PollerOptions } from './poller.js';
+
+export {
+  DEFAULT_LIMIT, MAX_LIMIT, encodePageCursor, decodePageCursor,
+  normalizeInboxQuery, toWireItem, aggregateInbox,
+} from './aggregator.js';
+export type {
+  InboxListInput, ChannelInboxItem, ChannelInboxProviderStatus,
+  InboxListOutput, InboxListQuery, InboxAggregatorSources,
+} from './aggregator.js';

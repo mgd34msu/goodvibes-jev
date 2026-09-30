@@ -29769,6 +29769,36 @@
       "text": "export type AdapterFactory = (ctx: AdapterContext) => InboundProviderAdapter;"
     },
     {
+      "name": "ChannelInboxItem",
+      "kind": "interface",
+      "required": [
+        "bodyPreview",
+        "from",
+        "id",
+        "kind",
+        "provider",
+        "receivedAt",
+        "unread"
+      ],
+      "text": "export interface ChannelInboxItem { id: string; provider: string; kind: string; from: string; subject?: string; bodyPreview: string; receivedAt: number; unread: boolean; routeId?: string; }"
+    },
+    {
+      "name": "ChannelInboxProviderStatus",
+      "kind": "interface",
+      "required": [
+        "itemCount",
+        "provider",
+        "state",
+        "storedCount"
+      ],
+      "text": "export interface ChannelInboxProviderStatus { provider: string; state: 'ready' | 'empty' | 'unconfigured' | 'error' | 'pending'; itemCount: number; storedCount: number; configured?: boolean; lastSyncAt?: number; syncing?: boolean; error?: string; }"
+    },
+    {
+      "name": "DEFAULT_LIMIT",
+      "kind": "const",
+      "text": "DEFAULT_LIMIT = 50"
+    },
+    {
       "name": "INBOX_ITEM_CAP",
       "kind": "const",
       "text": "INBOX_ITEM_CAP = 5000"
@@ -29827,6 +29857,15 @@
       "text": "export interface InboundProviderAdapter { readonly id: string; readonly pollIntervalMs: number; poll(opts: ProviderPollOptions): Promise<ProviderPollResult>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "InboxAggregatorSources",
+      "kind": "interface",
+      "required": [
+        "poller",
+        "store"
+      ],
+      "text": "export interface InboxAggregatorSources { readonly store: InboxCursorStore; readonly poller: InboundPoller; }"
+    },
+    {
       "name": "InboxCursorStore",
       "kind": "class",
       "publicMembers": [
@@ -29851,6 +29890,32 @@
       "name": "InboxCursorStoreOptions",
       "kind": "interface",
       "text": "export interface InboxCursorStoreOptions { readonly itemTtlMs?: number; readonly itemCap?: number; readonly sweepIntervalMs?: number; readonly onSweep?: (summary: InboxSweepSummary) => void; readonly onSweepError?: (message: string) => void; readonly now?: () => number; readonly setIntervalImpl?: typeof setInterval; readonly clearIntervalImpl?: typeof clearInterval; }"
+    },
+    {
+      "name": "InboxListInput",
+      "kind": "interface",
+      "text": "export interface InboxListInput { provider?: string; limit?: number; since?: number; cursor?: string; }"
+    },
+    {
+      "name": "InboxListOutput",
+      "kind": "interface",
+      "required": [
+        "hasMore",
+        "items",
+        "partial",
+        "providers",
+        "total",
+        "truncated"
+      ],
+      "text": "export interface InboxListOutput { items: ChannelInboxItem[]; total: number; truncated: boolean; hasMore: boolean; cursor?: string; nextCursor?: string; providers: ChannelInboxProviderStatus[]; partial: boolean; }"
+    },
+    {
+      "name": "InboxListQuery",
+      "kind": "interface",
+      "required": [
+        "limit"
+      ],
+      "text": "export interface InboxListQuery { providers?: string[]; limit: number; since?: number; after?: InboxPosition; }"
     },
     {
       "name": "InboxPosition",
@@ -29898,6 +29963,11 @@
         "warn"
       ],
       "text": "export interface IntakeLogger { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }"
+    },
+    {
+      "name": "MAX_LIMIT",
+      "kind": "const",
+      "text": "MAX_LIMIT = 500"
     },
     {
       "name": "POLL_CADENCE_MS",
@@ -29953,6 +30023,11 @@
       "text": "export type RouteResolver = (input: { provider: string; fromDigest: string; kind: InboundChannelItem['kind']; }) => Promise<string | undefined> | string | undefined; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
+      "name": "aggregateInbox",
+      "kind": "function",
+      "text": "export declare function aggregateInbox(sources: InboxAggregatorSources, query: InboxListQuery): InboxListOutput;"
+    },
+    {
       "name": "buildAdapters",
       "kind": "function",
       "text": "export declare function buildAdapters(ctx: AdapterContext, requested?: readonly string[]): Map<string, InboundProviderAdapter>; ;; via Map = interface Map<K, V> { clear(): void; delete(key: K): boolean; forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void; get(key: K): V | undefined; has(key: K): boolean; set(key: K, value: V): this; readonly size: number; }"
@@ -29963,6 +30038,21 @@
       "text": "export declare function clearAdapterRegistry(): void;"
     },
     {
+      "name": "decodePageCursor",
+      "kind": "function",
+      "text": "export declare function decodePageCursor(raw: string): InboxPosition;"
+    },
+    {
+      "name": "encodePageCursor",
+      "kind": "function",
+      "text": "export declare function encodePageCursor(position: InboxPosition): string;"
+    },
+    {
+      "name": "normalizeInboxQuery",
+      "kind": "function",
+      "text": "export declare function normalizeInboxQuery(body: unknown, query?: Readonly<Record<string, string>>): InboxListQuery; ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+    },
+    {
       "name": "registerAdapterFactory",
       "kind": "function",
       "text": "export declare function registerAdapterFactory(id: string, factory: AdapterFactory): void;"
@@ -29971,6 +30061,11 @@
       "name": "registeredProviderIds",
       "kind": "function",
       "text": "export declare function registeredProviderIds(): string[];"
+    },
+    {
+      "name": "toWireItem",
+      "kind": "function",
+      "text": "export declare function toWireItem(item: InboundChannelItem): ChannelInboxItem;"
     }
   ],
   "./platform/integrations": [
