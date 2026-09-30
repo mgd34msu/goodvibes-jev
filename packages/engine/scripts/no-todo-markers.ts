@@ -1,7 +1,7 @@
 // no-todo-markers.ts
 //
-// CI gate: fails the build if TODO, FIXME, XXX, HACK, or STUB appears in any
-// non-exempt source file.
+// CI gate: flags unfinished-code markers in non-exempt source. Recorded
+// literal judgment fixture data is classified separately from implementation.
 //
 // Usage:
 //   bun run todo:check
@@ -20,14 +20,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import type { Dirent } from 'node:fs';
 import { resolve, relative, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sourceMarkerFindings } from './no-todo-marker-rules.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-
-/** Regex that matches any marker (word-boundary anchored). */
-const MARKER_RE = /\b(TODO|FIXME|XXX|HACK|STUB)\b/;
 
 /** Source extensions we care about. */
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs']);
@@ -108,22 +106,8 @@ for (const root of SCAN_ROOTS) {
     } catch {
       continue;
     }
-    const lines = content.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line === undefined) continue;
-      const m = MARKER_RE.exec(line);
-      if (m) {
-        findings.push({
-          rel: relative(REPO_ROOT, absPath).replace(/\\/g, '/'),
-          line: i + 1,
-          col: m.index + 1,
-          // Group 1 spans the whole match for this pattern, so m[0] is the
-          // same string; it is typed non-optional where m[1] is not.
-          marker: m[1] ?? m[0],
-          text: line.trimEnd(),
-        });
-      }
+    for (const finding of sourceMarkerFindings(absPath, content)) {
+      findings.push({ rel: relative(REPO_ROOT, absPath).replace(/\\/g, '/'), ...finding });
     }
   }
 }
@@ -131,7 +115,7 @@ for (const root of SCAN_ROOTS) {
 // ─── Report ─────────────────────────────────────────────────────────────────
 
 if (findings.length === 0) {
-  console.log('todo-check: OK, no TODO/FIXME/XXX/HACK/STUB markers in non-exempt source files.');
+  console.log('todo-check: OK, no unfinished-code markers outside recorded literal judgment fixture data.');
   process.exit(0);
 }
 
@@ -141,7 +125,7 @@ for (const f of findings) {
   console.error(`    ${f.text}\n`);
 }
 console.error(
-  'Markers are forbidden in published source.\n' +
+  'Unfinished-code markers are forbidden in published implementations.\n' +
   'Move work-in-progress notes to *.test.ts or a tracking doc.\n',
 );
 process.exit(1);
