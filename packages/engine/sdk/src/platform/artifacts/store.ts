@@ -347,23 +347,26 @@ export class ArtifactStore {
       stream: input.stream,
       expectedSizeBytes: input.sizeBytes,
     });
-    const record: ArtifactRecord = {
-      id,
-      kind: input.kind ?? await inferArtifactKind(normalizeMimeType(input.mimeType, filename), filename),
-      mimeType: normalizeMimeType(input.mimeType, filename),
-      filename,
-      sizeBytes,
-      sha256,
-      createdAt: Date.now(),
-      ...(retentionMs ? { expiresAt: Date.now() + retentionMs } : {}),
-      ...(input.sourceUri ? { sourceUri: input.sourceUri } : {}),
-      acquisitionMode: input.acquisitionMode ?? 'inline-data',
-      fetchMode: input.fetchMode ?? 'not-applicable',
-      metadata: input.metadata ?? {},
-      contentPath,
-      metadataPath,
-    };
+    let record: ArtifactRecord;
     try {
+      // Kind inference is a judgment call and can reject after the bytes were
+      // spooled. It belongs to the same cleanup boundary as metadata writing.
+      record = {
+        id,
+        kind: input.kind ?? await inferArtifactKind(normalizeMimeType(input.mimeType, filename), filename),
+        mimeType: normalizeMimeType(input.mimeType, filename),
+        filename,
+        sizeBytes,
+        sha256,
+        createdAt: Date.now(),
+        ...(retentionMs ? { expiresAt: Date.now() + retentionMs } : {}),
+        ...(input.sourceUri ? { sourceUri: input.sourceUri } : {}),
+        acquisitionMode: input.acquisitionMode ?? 'inline-data',
+        fetchMode: input.fetchMode ?? 'not-applicable',
+        metadata: input.metadata ?? {},
+        contentPath,
+        metadataPath,
+      };
       await writeFile(metadataPath, `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
     } catch (error) {
       rmSync(contentPath, { force: true });

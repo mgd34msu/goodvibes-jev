@@ -62,8 +62,12 @@ export function getSkippedGateReason(gateName: string, cwd: string, pkgScripts: 
 
 function killGateProcess(proc: ReturnType<typeof Bun.spawn>, reason: string): void {
   try {
-    proc.kill();
+    // The shell owns a fresh process group. Killing only the shell leaves its
+    // children running with our stdout/stderr pipes open, so the timeout would
+    // still wait for them and their side effects could continue afterward.
+    process.kill(-proc.pid, 'SIGKILL');
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
     process.stderr.write(`[contract-gates] failed to kill gate process after ${reason}: ${summarizeError(error)}\n`);
   }
 }
@@ -80,7 +84,7 @@ export async function executeGateCommand(
   timeoutMs: number = CONTRACT_CONFIG_DEFAULTS.gateTimeoutMs,
 ): Promise<{ passed: boolean; output: string }> {
   try {
-    const proc = Bun.spawn(['/bin/sh', '-c', command], { stdout: 'pipe', stderr: 'pipe', ...(cwd ? { cwd } : {}) });
+    const proc = Bun.spawn(['/bin/sh', '-c', command], { detached: true, stdout: 'pipe', stderr: 'pipe', ...(cwd ? { cwd } : {}) });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -88,16 +92,22 @@ export async function executeGateCommand(
     }, timeoutMs);
     timer.unref?.();
     let exitCode: number;
+    let stdout: string;
+    let stderr: string;
     try {
-      exitCode = await proc.exited;
+      // Drain both streams while the command runs, and keep the deadline until
+      // they close too: a shell can exit before a child releases its pipes.
+      [exitCode, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
     } catch (error) {
       killGateProcess(proc, 'exit-error');
       throw error;
     } finally {
       clearTimeout(timer);
     }
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
     const output = [stdout, stderr, timedOut ? `Gate timed out after ${timeoutMs} ms and was stopped.` : '']
       .filter(Boolean)
       .join('\n')
