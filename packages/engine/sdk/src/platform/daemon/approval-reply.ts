@@ -120,6 +120,7 @@ export async function tryResolveApprovalReplyFromChannel(
   selection?.recordAction(action);
   await broker.resolveApproval(target.id, {
     approved,
+    disposition: approved ? 'approved' : reply.reading.choice === 'amend' ? 'amended' : 'denied',
     actor: userId,
     actorSurface: surface,
     // Preserve ALL owner guidance without guessing where a verb ends. Amend

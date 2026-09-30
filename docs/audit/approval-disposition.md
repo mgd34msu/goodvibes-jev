@@ -43,8 +43,10 @@ markerless. The generic client approval raiser chooses an approve/deny URL from
 that boolean, so the HTTP URL alone is NOT evidence of an explicit trust choice.
 HTTP markers are optional, checked against the action, and absent stays absent.
 Known interactive button and explicit operator/transport operations supply their
-own marker. The channel-reply producer is a coordinated Wintermute change, not
-claimed integrated in this checkout.
+own marker. The channel-reply producer maps settled approve/reject/amend readings
+to approved/denied/amended through the actual broker input. Amendments preserve
+the owner's full guidance while refusing the original proposal, without creating
+a remembered rule. The ordinary awaited decision remains markerless.
 
 The shared-record output schema and approve/deny input schemas carry the optional
 field. Ordinary prompt schema/results do not. Generated operator contracts,
@@ -62,6 +64,11 @@ retained with real broker-backed fixture records. Its two original whole-runtime
 wiring assertions remain pending the actual daemon services/server port and are
 not declared migrated by these component tests.
 
-This is not final combined Buzz/Wintermute validation, a live judgment proof or a
-publication. Full daemon boot/hosted-session composition and product parity remain
-separate acceptance gates.
+Combined channel/broker/trust fixtures exercise the real producer and current
+record consumer: explicit approval and denial persist their respective workspace
+choices, while amendment and cancellation leave trust undecided and write no
+trust file. Late channel approve/reject/amend readings cannot replace a cancelled
+record. Existing privacy snapshot and workflow containment assertions remain in
+the combined checkout. These fixtures use explicit offline judgment answers;
+they are not a live judgment proof or a publication. Full daemon boot/hosted-session
+composition, live calibration and product parity remain separate acceptance gates.

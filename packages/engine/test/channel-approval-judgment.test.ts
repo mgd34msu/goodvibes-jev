@@ -103,6 +103,7 @@ describe('channel replies use settled meaning instead of leading words', () => {
     expect(decision).toEqual({ approved, reason: text });
     const record = h.broker.getApproval(ask.approval.id)!;
     expect(record.status).toBe(approved ? 'approved' : 'denied');
+    expect(record.decision).toMatchObject({ approved, disposition: approved ? 'approved' : choice === 'amend' ? 'amended' : 'denied' });
     expect(record.audit.at(-1)?.note).toBe(text);
     expect(record.audit.at(-1)?.actorSurface).toBe('slack');
     expect(record.resolvedBy).toBe(OWNER);
@@ -134,6 +135,7 @@ describe('channel replies use settled meaning instead of leading words', () => {
     expect((await h.send(text)).status).toBe(200);
     expect(h.submitted).toEqual([text]);
     expect(h.broker.getApproval(ask.approval.id)?.status).toBe('pending');
+    expect(h.broker.getApproval(ask.approval.id)?.decision).toBeUndefined();
     expect(actionOf(readings.log.query({ battery: REPLY_BATTERY })[0]!)).toContain('no resolution');
   });
 
@@ -346,6 +348,21 @@ describe('authorization and failures are fail closed', () => {
     expect((await h.ingress('yes')).allowed).toBe(true);
     expect(h.broker.getApproval(ask.approval.id)?.status).toBe('pending');
     expect(actionOf(readings.log.query({ battery: REPLY_BATTERY })[0]!)).toContain('proposal or route changed');
+  });
+
+  test.each(['approve', 'reject', 'amend'] as const)('a cancelled ask cannot receive a late %s disposition', async (choice) => {
+    const h = await harness();
+    const ask = await h.ask();
+    readings.set({ reply: choice, beforeReply: async () => {
+      await h.broker.cancelApproval(ask.approval.id, 'other-owner', 'web', 'Stop waiting for this ask.');
+    } });
+    expect((await h.ingress('My answer to the original ask.')).allowed).toBe(true);
+    expect(await ask.decision).toEqual({ approved: false, remember: false });
+    const current = h.broker.getApproval(ask.approval.id)!;
+    expect(current.status).toBe('cancelled');
+    expect(current.decision).toMatchObject({ approved: false, disposition: 'cancelled' });
+    expect(current.resolvedBy).toBe('other-owner');
+    expect(actionOf(readings.log.query({ battery: REPLY_BATTERY })[0]!)).toContain('no longer pending');
   });
 
   test('an ask resolved while judgment runs is not overwritten or consumed', async () => {
