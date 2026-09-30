@@ -122,3 +122,7 @@ export type { RouteResolverInput, RouteResolver as InboxProfileRouteResolver } f
 
 // Encrypted host draft mirror, bound to the canonical channels.drafts contracts.
 export * from './host-drafts/index.js';
+
+export { registerRouting, registerRoutingMethods } from './host-routing/registration.js';
+export type { RoutingRegistration } from './host-routing/registration.js';
+export type { RoutingHostContext } from './host-routing/registration-types.js';

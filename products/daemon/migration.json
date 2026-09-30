@@ -355,6 +355,27 @@
       "targets": [
         "packages/engine/test/daemon-host-handler-contract.test.ts"
       ]
+    },
+    {
+      "source": "src/daemon/handlers/routing/index.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/channels/host-routing/registration.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/register.test.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/daemon-routing-register.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/routing/helpers.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/test/_helpers/routing-registration.ts"
+      ]
     }
   ],
   "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."

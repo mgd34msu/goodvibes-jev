@@ -13153,6 +13153,29 @@
       "text": "export interface RoutingChannelRoute { assignmentId: string; channelId: string; surfaceKind: string; routeId?: string; profileId: string; label?: string; createdAt: string; updatedAt: string; }"
     },
     {
+      "name": "RoutingHostContext",
+      "kind": "interface",
+      "required": [
+        "catalog",
+        "logger",
+        "workingDirectory"
+      ],
+      "text": "export interface RoutingHostContext { readonly catalog: GatewayMethodCatalog; readonly workingDirectory: string; readonly logger: { info(message: string, meta?: unknown): void; warn(message: string, meta?: unknown): void; error(message: string, meta?: unknown): void; }; }"
+    },
+    {
+      "name": "RoutingRegistration",
+      "kind": "interface",
+      "required": [
+        "close",
+        "initialize",
+        "resolveProfileId",
+        "resolver",
+        "store",
+        "unregister"
+      ],
+      "text": "export interface RoutingRegistration { readonly unregister: Unregister; readonly initialize: () => Promise<void>; readonly close: () => Promise<void>; readonly resolveProfileId: (surfaceKind: string, routeId?: string) => string | null; readonly resolver: RoutingResolver; readonly store: RouteStore; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Unregister = export type Unregister = () => void;"
+    },
+    {
       "name": "RoutingResolver",
       "kind": "interface",
       "required": [
@@ -13265,6 +13288,16 @@
       "name": "registerDraftMethods",
       "kind": "function",
       "text": "export declare function registerDraftMethods(ctx: HandlerContext, options?: RegisterDraftsOptions): DraftRegistration;"
+    },
+    {
+      "name": "registerRouting",
+      "kind": "const",
+      "text": "registerRouting: (ctx: HandlerContext) => RoutingRegistration"
+    },
+    {
+      "name": "registerRoutingMethods",
+      "kind": "function",
+      "text": "export declare function registerRoutingMethods(ctx: HandlerContext): RoutingRegistration;"
     },
     {
       "name": "resolveChannelDeliverySurfaceKind",
