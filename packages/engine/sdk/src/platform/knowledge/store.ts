@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { prepareKnowledgeIssueRecord, writeKnowledgeIssueRow, commitKnowledgeNodeIssueWrites, type KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 import { SQLiteStore } from '../state/sqlite-store.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -692,67 +693,32 @@ export class KnowledgeStore {
 
   async upsertIssue(input: KnowledgeIssueUpsertInput, mutation?: KnowledgeIssueOperatorMutation): Promise<KnowledgeIssueRecord> {
     await this.init();
-    const existing = input.id ? this.issues.get(input.id) : undefined;
-    const lifecycle = prepareKnowledgeIssueUpsert(existing, input, mutation);
-    if (existing && lifecycle.preserve) return existing;
-    const now = nowMs();
-    const _sourceId = stableText(input.sourceId);
-    const _nodeId = stableText(input.nodeId);
-    const mergedIssueMetadata = lifecycle.metadata;
-    const issueSource = _sourceId !== null
-      ? this.sources.get(_sourceId)
-      : existing?.sourceId
-        ? this.sources.get(existing.sourceId)
-        : null;
-    const issueNode = _nodeId !== null
-      ? this.nodes.get(_nodeId)
-      : existing?.nodeId
-        ? this.nodes.get(existing.nodeId)
-        : null;
-    const issueSpaceId = preferRelatedNonDefaultSpace(
-      getExplicitKnowledgeSpaceId({ metadata: mergedIssueMetadata }),
-      inferRecordReferenceSpaceId({
-        sourceId: _sourceId ?? existing?.sourceId,
-        nodeId: _nodeId ?? existing?.nodeId,
-        metadata: mergedIssueMetadata,
-        sources: this.sources,
-        nodes: this.nodes,
-      }) ?? getExplicitKnowledgeSpaceId(issueSource) ?? getExplicitKnowledgeSpaceId(issueNode),
-    );
-    const issueMetadata = issueSpaceId
-      ? ensureKnowledgeSpaceMetadata(mergedIssueMetadata, issueSpaceId)
-      : mergedIssueMetadata;
-    const record: KnowledgeIssueRecord = {
-      id: existing?.id ?? input.id ?? `issue-${randomUUID().slice(0, 8)}`,
-      severity: input.severity,
-      code: input.code,
-      message: input.message.trim(),
-      status: lifecycle.status,
-      ...(_sourceId !== null ? { sourceId: _sourceId } : {}),
-      ...(_nodeId !== null ? { nodeId: _nodeId } : {}),
-      metadata: issueMetadata,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    this.sqlite.run(`
-      INSERT OR REPLACE INTO knowledge_issues (
-        id, severity, code, message, status, source_id, node_id, metadata, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      record.id,
-      record.severity,
-      record.code,
-      record.message,
-      record.status,
-      record.sourceId ?? null,
-      record.nodeId ?? null,
-      JSON.stringify(record.metadata),
-      record.createdAt,
-      record.updatedAt,
-    ]);
+    const { record, preserve } = prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: this.nodes }, input, mutation);
+    if (preserve) return record;
+    writeKnowledgeIssueRow(this.sqlite, record);
     this.issues.set(record.id, record);
     await this.sqlite.save();
     return record;
+  }
+
+  /** Bounded ordinary writes with a synchronous guard at the all-or-none commit point. */
+  async applyGuardedNodeIssueWrites(input: KnowledgeGuardedNodeIssueWrites, beforeWrite: () => void): Promise<void> {
+    await this.init();
+    if (input.nodes.length > 100 || input.issues.length > 100
+      || new Set(input.nodes.map((node) => node.id)).size !== input.nodes.length
+      || new Set(input.issues.map((issue) => issue.id)).size !== input.issues.length
+      || input.nodes.some((node) => !node.id || !this.nodes.has(node.id))
+      || input.issues.some((issue) => !issue.id || !this.issues.has(issue.id))) {
+      throw new Error('Guarded knowledge writes require at most 100 distinct existing nodes and issues.');
+    }
+    const nodes = input.nodes.map((node) => this.prepareNodeMutation(node));
+    const nodeView = new Map(this.nodes);
+    for (const { record } of nodes) nodeView.set(record.id, record);
+    const issues = input.issues.map((issue) => prepareKnowledgeIssueRecord({ issues: this.issues, sources: this.sources, nodes: nodeView }, issue));
+    beforeWrite();
+    commitKnowledgeNodeIssueWrites({ sqlite: this.sqlite, nodes: this.nodes, issues: this.issues, nodeRevisions: this.nodeRevisions },
+      nodes, issues.filter((issue) => !issue.preserve).map((issue) => issue.record));
+    await this.sqlite.save();
   }
 
   async replaceIssueRecord(record: KnowledgeIssueRecord): Promise<void> {

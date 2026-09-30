@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -28,35 +31,23 @@ interface TriageDecisionScript {
   readonly category?: string;
 }
 
-/**
- * A fake semantic LLM that reads the triage records out of the prompt and decides
- * per-issue by code. No real model call. Records every completeJson invocation so a
- * test can prove the decision cache prevents re-spend on unchanged issues.
- */
+let previousPort: JudgmentPort | undefined;
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(() => { installJudgmentPort(previousPort); });
+/** Authored synthetic readings. The content generator cannot decide triage. */
 function createFakeTriageLlm(
-  decide: (record: { readonly issueId: string; readonly code: string; readonly node?: Record<string, unknown> }) => TriageDecisionScript,
+  decide: (record: { readonly issueId: string; readonly code: string; readonly node?: Record<string, unknown> | undefined }) => TriageDecisionScript,
 ): { readonly llm: KnowledgeSemanticLlm; readonly calls: unknown[] } {
   const calls: unknown[] = [];
-  const llm: KnowledgeSemanticLlm = {
-    completeText: async () => null,
-    completeJson: async (input) => {
-      calls.push(input);
-      const payload = JSON.parse(input.prompt) as { issues: readonly { issueId: string; code: string; node?: Record<string, unknown> }[] };
-      return {
-        decisions: payload.issues.map((record) => {
-          const scripted = decide(record);
-          return {
-            issueId: record.issueId,
-            action: scripted.action,
-            category: scripted.category ?? 'not_applicable',
-            confidence: scripted.confidence,
-            reason: scripted.reason,
-          };
-        }),
-      };
-    },
-  };
-  return { llm, calls };
+  const fake = fakePort((name, question, state) => {
+    const input = state as { reference: string; issue: { code: string }; subject?: Record<string, unknown> };
+    if (name !== 'action') return noulAnswer(0.99);
+    calls.push(input);
+    const scripted = decide({ issueId: input.reference, code: input.issue.code, node: input.subject });
+    return choiceAnswer(question, scripted.action, scripted.confidence / 100);
+  });
+  installJudgmentPort(fake.port);
+  return { calls, llm: { completeText: async () => null, completeJson: async () => { throw new Error('Triage must use registered judgment readings.'); } } };
 }
 
 function createTriageService(llm: KnowledgeSemanticLlm | null): {
@@ -96,14 +87,14 @@ const TRIAGE_SNAPSHOT = {
   ],
 };
 
-describe('Home Graph LLM issue triage', () => {
+describe('Home Graph judgment issue triage', () => {
   test('thresholds decisions, applies rejects with honest provenance, and reviews the rest', async () => {
     const { llm, calls } = createFakeTriageLlm((record) => {
       if (record.code === 'homegraph.device.unknown_battery') {
         return { action: 'reject', confidence: 95, reason: 'Software/mains object; not battery tracked.' };
       }
-      // missing_manual: below the 85 threshold on purpose, left for a human.
-      return { action: 'review', confidence: 60, reason: 'Needs a human to confirm a manual is required.' };
+      // A settled recommendation to seek human review still writes no manual fact.
+      return { action: 'review', confidence: 96, reason: 'Needs a human to confirm a manual is required.' };
     });
     const { root, store, service } = createTriageService(llm);
     try {
@@ -127,7 +118,7 @@ describe('Home Graph LLM issue triage', () => {
       expect(applied.length).toBe(batteryIssues.length);
       expect(triage.applied).toBe(batteryIssues.length);
       expect(triage.reviewed).toBe(manualIssues.length);
-      // Below-threshold reviews were never auto-applied.
+      // Human-review recommendations were never auto-applied.
       expect(triage.decisions.filter((decision) => decision.code === 'homegraph.device.missing_manual').every((decision) => !decision.applied)).toBe(true);
 
       // Applied rejects resolved their issues and derived facts onto the node.
@@ -136,14 +127,20 @@ describe('Home Graph LLM issue triage', () => {
         expect(openAfter.issues.some((issue) => issue.id === battery.id)).toBe(false);
         const resolved = store.getIssue(battery.id)!;
         expect(resolved.status).toBe('resolved');
-        const reviewValue = (resolved.metadata.review as Record<string, unknown>).value as Record<string, unknown>;
-        expect(reviewValue.source).toBe('homegraph-triage');
-        expect(reviewValue.confidence).toBe(95);
+        const automatic = resolved.metadata.triage as Record<string, unknown>;
+        expect(automatic.source).toBe('homegraph-triage');
+        expect(automatic.confidence).toBe(95);
+        expect(automatic.origin).toBe('automatic-judgment');
+        expect(resolved.metadata.review).toBeUndefined();
+        expect(resolved.metadata.suppression).toBeUndefined();
       }
       const browse = await service.browse({ installationId: 'house-1' });
       const frontDoorNode = browse.nodes.find((node) => node.title === 'Front Door Sensor');
       expect(frontDoorNode?.metadata.batteryPowered).toBe(false);
       expect(frontDoorNode?.metadata.batteryType).toBe('none');
+      expect(frontDoorNode?.metadata.review).toBeUndefined();
+      expect(frontDoorNode?.metadata.reviewedFacts).toBeUndefined();
+      expect((frontDoorNode?.metadata.reviewProvenance as Record<string, unknown>)?.state).not.toBe('reviewed');
 
       // Reviewed issues stay open, but now carry a cached triage decision.
       for (const manual of manualIssues) {
@@ -151,7 +148,7 @@ describe('Home Graph LLM issue triage', () => {
         expect(open.status).toBe('open');
         const cached = open.metadata.triage as Record<string, unknown>;
         expect(cached.action).toBe('review');
-        expect(cached.confidence).toBe(60);
+        expect(cached.confidence).toBe(96);
         expect(typeof cached.fingerprint).toBe('string');
       }
 
@@ -211,13 +208,13 @@ describe('Home Graph LLM issue triage', () => {
     }
   });
 
-  test('is a no-op when no semantic LLM is configured', async () => {
+  test('is a no-op when no judgment port is configured', async () => {
     const { root, service } = createTriageService(null);
     try {
       await service.syncSnapshot(TRIAGE_SNAPSHOT);
       const result = await service.runRefinement({ installationId: 'house-1', triage: true, skipGapRefinement: true });
       expect(result.triage!.configured).toBe(false);
-      expect(result.triage!.reason).toBe('triage-llm-not-configured');
+      expect(result.triage!.reason).toBe('triage-judgment-not-configured');
       expect(result.triage!.processed).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -269,7 +266,7 @@ describe('Home Graph LLM issue triage', () => {
   });
 
   test('runs over the daemon refinement/run route with the triage option', async () => {
-    const { llm, calls } = createFakeTriageLlm(() => ({ action: 'review', confidence: 40, reason: 'uncertain' }));
+    const { llm, calls } = createFakeTriageLlm(() => ({ action: 'review', confidence: 96, reason: 'uncertain' }));
     const { root, artifactStore, service } = createTriageService(llm);
     try {
       await service.syncSnapshot(TRIAGE_SNAPSHOT);
