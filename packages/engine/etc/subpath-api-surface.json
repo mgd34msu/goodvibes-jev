@@ -15517,6 +15517,15 @@
   ],
   "./platform/config": [
     {
+      "name": "AtRestCipher",
+      "kind": "interface",
+      "required": [
+        "decrypt",
+        "encrypt"
+      ],
+      "text": "export interface AtRestCipher { encrypt(plaintext: string): Promise<string>; decrypt(ciphertext: string): Promise<string>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
       "name": "AtomicWriteOptions",
       "kind": "interface",
       "text": "export interface AtomicWriteOptions { readonly mode?: number; readonly mkdirp?: boolean; }"
@@ -15937,6 +15946,17 @@
         "key"
       ],
       "text": "export declare class DaemonConfigUnreachableError extends Error { readonly code = \"DAEMON_UNREACHABLE\"; readonly key: string; readonly endpoint: string; constructor(key: string, endpoint: string, cause: string); }"
+    },
+    {
+      "name": "DaemonCredentialStore",
+      "kind": "interface",
+      "required": [
+        "has",
+        "put",
+        "resolveConfigSecret",
+        "resolveRef"
+      ],
+      "text": "export interface DaemonCredentialStore { resolveRef(ref: string): Promise<string | null>; resolveConfigSecret(configKey: string): Promise<string | null>; put(secretKey: string, value: string, opts?: { scope?: SecretScope; medium?: 'plaintext' | 'secure'; }): Promise<void>; has(secretKey: string): Promise<boolean>; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "DaemonEnabledReader",
@@ -16905,9 +16925,19 @@
       "text": "export declare function controlPlaneScheme(binding: ControlPlaneBinding): 'http' | 'https';"
     },
     {
+      "name": "createAtRestCipher",
+      "kind": "function",
+      "text": "export declare function createAtRestCipher(store: DaemonCredentialStore, keyName?: string): AtRestCipher;"
+    },
+    {
       "name": "createCredentialStatusProvider",
       "kind": "function",
       "text": "export declare function createCredentialStatusProvider(secrets: SecretsMetadataSource): CredentialStatusProviderLike; ;; via CredentialStatusProviderLike = export interface CredentialStatusProviderLike { list(): Promise<readonly CredentialStatusRecord[]>; get(key: string): Promise<CredentialStatusRecord | null>; } ;; SecretsMetadataSource = type SecretsMetadataSource = Pick<SecretsManager, 'get' | 'list' | 'listDetailed'>;"
+    },
+    {
+      "name": "createDaemonCredentialStore",
+      "kind": "function",
+      "text": "export declare function createDaemonCredentialStore(secrets: Pick<SecretsManager, 'get' | 'set'>): DaemonCredentialStore; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "createEffectiveConfigView",

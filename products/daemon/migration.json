@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "cli-contracts",
+  "phase": "cli-config-contracts",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -103,7 +103,77 @@
       "targets": [
         "products/daemon/LICENSE"
       ]
+    },
+    {
+      "source": "src/config/checkpoint-settings.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/checkpoint-settings.ts"
+      ]
+    },
+    {
+      "source": "src/config/config-key-guard.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/config-key-guard.ts"
+      ]
+    },
+    {
+      "source": "src/config/run-daemon-config-migration.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/run-daemon-config-migration.ts"
+      ]
+    },
+    {
+      "source": "src/config/secret-config.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/secret-config.ts"
+      ]
+    },
+    {
+      "source": "src/config/secrets.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/secrets.ts"
+      ]
+    },
+    {
+      "source": "src/config/surface.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/config/surface.ts"
+      ]
+    },
+    {
+      "source": "src/test/config/config-key-guard.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/config/config-key-guard.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/config/daemon-credential-scope.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/config/daemon-credential-scope.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/cluster/replication-policy-drift.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/cluster/replication-policy-drift.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/handlers/credentials.ts",
+      "disposition": "HOIST",
+      "targets": [
+        "packages/engine/sdk/src/platform/config/daemon-credential-store.ts"
+      ]
     }
   ],
-  "remaining": "The daemon entry point, runtime composition, provider/handler wiring, scripts and other source modules remain unported or not yet mapped here. Existing engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
+  "remaining": "Full daemon entry/runtime composition, provider and remaining handler wiring, scripts, original test scaffolding and other unmapped source modules remain pending. Engine hoists are tracked in docs/inventory/daemon.md. This workspace is not a bootable daemon and does not satisfy migration:complete."
 }

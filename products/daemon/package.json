@@ -3,7 +3,7 @@
   "version": "1.28.25",
   "private": true,
   "type": "module",
-  "description": "Partial daemon migration: real CLI vocabulary, parsing, help and completion contracts; runtime composition is pending.",
+  "description": "Partial daemon migration: CLI and configuration contracts; full runtime composition is pending.",
   "license": "MIT",
   "engines": {
     "bun": "1.3.14",
@@ -19,7 +19,7 @@
   "scripts": {
     "build": "bunx tsc -p tsconfig.build.json",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "test": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test/cli"
+    "test": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/daemon src/test"
   },
   "dependencies": {
     "@goodvibes-jev/engine": "workspace:*"

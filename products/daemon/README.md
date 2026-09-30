@@ -1,7 +1,7 @@
-# Daemon CLI contracts (partial migration)
+# Daemon contracts (partial migration)
 
 This workspace contains the pinned daemon's real command vocabulary, parser,
-help, shell completion and version helpers. It preserves the 20-command target
+help, shell completion, version helpers and daemon configuration adapters. It preserves the 20-command target
 contract and delegates argument parsing to the shared engine terminal shell.
 
 It is not a bootable daemon yet. There is no daemon binary entry or substitute
@@ -15,7 +15,10 @@ From this directory:
 - `bun run typecheck` checks source and tests
 - `bun run test` runs the original CLI assertions through the guarded runner
 
-The `@goodvibes-jev/daemon/cli` export exposes these contracts for composition.
+The `@goodvibes-jev/daemon/cli` export exposes the CLI contracts for composition.
+Configuration adapters remain internal product modules and consume the public
+engine config contract. They retain the historical `tui` storage root and
+daemon-owned config migration; tests use only dummy values in isolated stores.
 The package is private during migration. Its initial version preserves the
 pinned daemon package version, not a newly published release.
 

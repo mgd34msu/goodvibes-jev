@@ -8,8 +8,7 @@
     "outDir": "dist"
   },
   "include": [
-    "src/cli/**/*.ts",
-    "src/version.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "src/test",
