@@ -94,10 +94,9 @@ Stored receipts never authorize a new write without fresh selected support reads
 
 ## Verification and remaining scope
 
-Focused reader/write-boundary tests: 41 tests, 396 assertions. Expanded offline
-knowledge/Home Graph/node-authority regression: 369 tests, 2,541 assertions across
-37 files, plus the added mid-profile rollback regression (19 page-boundary tests,
-106 assertions). These include foreign space before generation, private metadata omission,
+Expanded offline knowledge/Home Graph/node-authority regression: 371 tests,
+2,549 assertions across 37 files, including the full reader/write-boundary suite
+and mid-profile rollback regression. These include foreign space before generation, private metadata omission,
 late unsupported claims preventing all writes, stale extraction, immutable
 prepared handles, operator decisions after preparation, and unsupported legacy
 source references. Explicit fixtures do not measure live model calibration.
