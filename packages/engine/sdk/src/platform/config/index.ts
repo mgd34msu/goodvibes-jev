@@ -7,7 +7,7 @@
  */
 
 export { ConfigManager } from './manager.js';
-export type { DeepReadonly, ConfigKeyTier, ConfigKeySource } from './manager.js';
+export type { DeepReadonly, ConfigKeyTier, ConfigKeySource, DaemonConfigPatch } from './manager.js';
 export { SHARED_CONFIG_KEYS, isSharedConfigKey } from './shared-config-tier.js';
 export {
   DAEMON_OWNED_CONFIG_KEYS,

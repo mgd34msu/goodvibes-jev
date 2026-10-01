@@ -31,6 +31,12 @@ function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '');
 }
 
+/** Format a bind host and port as HTTP authority, retaining IPv6 brackets. */
+export function formatHttpOrigin(host: string, port: number): string {
+  const authorityHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return `http://${authorityHost}:${port}`;
+}
+
 /** http:// on anything other than loopback is served in the clear on the LAN. */
 export function isHttpOnLan(origin: string): boolean {
   if (!origin.startsWith('http://')) return false;
@@ -74,7 +80,7 @@ export function resolvePairingWebOrigin(
   }
   const port = resolveWebPort(configManager.get('web.port'));
   const resolvedHost = stableUrlHostForBindHost(webBindHost(configManager), probe);
-  const origin = `http://${resolvedHost.host}:${port}`;
+  const origin = formatHttpOrigin(resolvedHost.host, port);
   return { origin, resolvedHost, httpOnLan: isHttpOnLan(origin), fromPublicBaseUrl: false };
 }
 

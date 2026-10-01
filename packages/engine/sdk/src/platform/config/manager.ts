@@ -37,6 +37,10 @@ import { DEFAULT_CONFIG_SNAPSHOT, cloneDefaultConfig, coerceSchemaValue, ensureS
 import { resolveWithProfileFallback, type ConfigProfileFallbackReader } from './profile-fallback.js';
 import { ingestManagerSettings, toConfigLoadFailure, UnknownSettingFormsQueue, type IngestionNoticeSink, type SettingsIngestionNotice } from './manager-ingestion.js';
 import { persistCategoryKeyRemoval, persistCategoryPatch, type CategoryIoDeps } from './manager-category-io.js';
+import { isSecretBearingConfigKey } from './secret-bearing-config-keys.js';
+
+/** Typed values for a single daemon-settings update; scope is checked at runtime. */
+export type DaemonConfigPatch = { readonly [K in ConfigKey]?: ConfigValue<K> };
 
 /** Deep immutable type, prevents mutation of nested objects returned from getAll(). */
 export type DeepReadonly<T> = {
@@ -311,6 +315,57 @@ export class ConfigManager {
     if (useSharedTier) this.sharedKeysPresent.add(key);
     this.notifyListeners(key, previousValue, value);
     this.emitConfigHook(key, previousValue, value);
+  }
+
+  /**
+   * Atomically update non-credential daemon settings in their one owned file.
+   * Every value and managed lock is checked before persistence. Live values and
+   * notifications are published only after the whole file has been replaced.
+   * This is not a transaction across config tiers or concurrent processes.
+   */
+  setDaemonValues(patch: DaemonConfigPatch): void {
+    this.requireWritable();
+    if (!this.daemonTierPath) throw new ConfigError('A daemon settings file is required for this update.');
+    const prepared = Object.entries(patch).filter(([, value]) => value !== undefined).map(([rawKey, value]) => {
+      const schema = CONFIG_SCHEMA.find((setting) => setting.key === rawKey);
+      if (!schema || !isDaemonOwnedConfigKey(rawKey) || isSecretBearingConfigKey(rawKey)) {
+        throw new ConfigError('The update contains an unsupported daemon setting.');
+      }
+      const key = schema.key;
+      let next: unknown;
+      try {
+        next = JSON.parse(JSON.stringify(coerceSchemaValue(key, schema, value)));
+        const validType = schema.type === 'enum'
+          ? typeof next === 'string' && schema.enumValues?.includes(next)
+          : schema.type === 'object'
+            ? next !== null && typeof next === 'object'
+            : typeof next === schema.type && (schema.type !== 'number' || (typeof next === 'number' && Number.isFinite(next)));
+        if (!validType || (schema.validate && !schema.validate(next))) throw new Error('invalid');
+      } catch {
+        throw new ConfigError(`Invalid value for daemon setting ${key}.`);
+      }
+      if (getManagedSettingLock(key, this.configDir)) {
+        throw new ConfigError(`Setting ${key} is managed and cannot be changed.`);
+      }
+      const { parent, field } = this.resolvePath(key);
+      return { key, next, parent, field, previous: parent[field] };
+    });
+    if (prepared.length === 0) return;
+    try {
+      const raw = readDaemonTierFile(this.daemonTierPath);
+      for (const { key, next } of prepared) writeRawDotPath(raw, key, next);
+      writeJsonFileAtomic(this.daemonTierPath, raw);
+    } catch {
+      throw new ConfigError('Could not persist daemon settings; the update was not applied.');
+    }
+    for (const { key, next, parent, field } of prepared) {
+      parent[field] = next;
+      this.daemonKeysPresent.add(key);
+    }
+    for (const { key, next, previous } of prepared) {
+      this.notifyListeners(key, previous, next);
+      this.emitConfigHook(key, previous, next);
+    }
   }
 
   /**

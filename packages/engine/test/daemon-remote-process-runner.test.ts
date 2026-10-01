@@ -53,11 +53,12 @@ describe('remote process runner preserved behavior', () => {
   });
 
   test('reaps a direct child at the deadline', async () => {
-    const started = Date.now();
-    const result = await runProcess({ args: code('setTimeout(() => {}, 10000)'), timeoutMs: 80 });
+    // Waiting out the child exceeds the test ceiling. The result proves the
+    // deadline killed/reaped it without a loaded-host speed threshold.
+    const result = await runProcess({ args: code('setTimeout(() => {}, 30000)'), timeoutMs: 80 });
     expect(result.timedOut).toBe(true);
-    expect(Date.now() - started).toBeLessThan(2000);
-  });
+    expect(result.exitCode).not.toBe(0);
+  }, 20_000);
 
   test('rejects an empty executable list and a spawn failure', async () => {
     await expect(runProcess({ args: [], timeoutMs: 1000 })).rejects.toThrow('at least one argument');

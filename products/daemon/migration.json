@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "configured-runtime-command-adapters",
+  "phase": "configured-runtime-service-and-setup-commands",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -561,6 +561,55 @@
       "disposition": "PORT",
       "targets": [
         "products/daemon/src/test/daemon/service-lifecycle-commands.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/pair-command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/pair-command.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/webui-command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/webui-command.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/provision-wake-model.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/provision-wake-model.ts"
+      ]
+    },
+    {
+      "source": "src/core/pairing-banner.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/core/pairing-banner.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/pair-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/pair-command.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/webui-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/webui-command.test.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/provision-wake-model.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/provision-wake-model.test.ts"
       ]
     }
   ],

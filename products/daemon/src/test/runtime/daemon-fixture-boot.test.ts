@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BenchmarkStore, ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { registerInboxSurface, type InboundProviderAdapter } from '@goodvibes-jev/engine/sdk/platform/intake';
@@ -7,6 +7,9 @@ import { startDaemonFixture, type DaemonFixture } from '../../testing/daemon-fix
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
 import { trackIntervals } from '../helpers/intervals.js';
 import { GOODVIBES_DAEMON_SURFACE_ROOT } from '../../config/surface.js';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { contractPath } from '@goodvibes-jev/engine/sdk/platform/contract';
 
 function rootWithBenchmarks(label: string): string {
   const root = makeOwnedTempDir(label);
@@ -77,6 +80,65 @@ test('failed inbox acquisition releases the real base graph and the same owned r
     expect(await fixture.invoke('channels.inbox.list')).toMatchObject({ items: [], total: 0 });
     await fixture.stop(); expect(intervals.remaining()).toEqual([]);
   } finally { try { await fixture?.stop(); } finally { intervals.restore(); discovery.mockRestore(); } }
+}, 30_000);
+
+test('runtime shutdown cancels contract work, flushes its pending store and detaches new admission', async () => {
+  const discovery = spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]);
+  const signals: AbortSignal[] = [];
+  const events: string[] = [];
+  const heldReading: JudgmentPort = {
+    model: 'fixture-held-reading',
+    ask(request) {
+      if (request.context?.site !== 'contract.request-shape' || !request.signal) {
+        return Promise.reject(new Error('Unexpected contract disposal fixture reading'));
+      }
+      const signal = request.signal;
+      signals.push(signal);
+      return new Promise((_resolve, reject) => {
+        const abort = () => reject(new DOMException('Fixture reading cancelled', 'AbortError'));
+        if (signal.aborted) abort();
+        else signal.addEventListener('abort', abort, { once: true });
+      });
+    },
+  };
+  let fixture: DaemonFixture | undefined;
+  let previous: ReturnType<typeof installJudgmentPort>;
+  let readingInstalled = false;
+  const schedule = globalThis.setTimeout;
+  const delayedWrites: ReturnType<typeof setTimeout>[] = [];
+  try {
+    fixture = await startDaemonFixture({ root: rootWithBenchmarks('daemon-contract-disposal'),
+      inboxFactory: (context, _routing, options) => registerInboxSurface(context, { ...options, adapters: new Map() }),
+    });
+    previous = installJudgmentPort(heldReading); readingInstalled = true;
+    const runner = fixture.services.contractRunner;
+    runner.on((event) => events.push(event.type));
+    // Hold the store's debounce beyond the test ceiling: the file below must
+    // be written by owned shutdown, not by winning a race with its timer.
+    globalThis.setTimeout = ((callback: never, delay?: number, ...args: never[]) => {
+      const timer = schedule(callback, delay === 250 ? 60_000 : delay, ...args);
+      if (delay === 250) delayedWrites.push(timer);
+      return timer;
+    }) as typeof setTimeout;
+    const started = runner.start({ ask: 'Fixture held contract', sessionId: 'fixture-session', origin: 'cli',
+      projectRoot: fixture.workingDirectory, isolation: 'shared' });
+    globalThis.setTimeout = schedule;
+    expect(events).toContain('CONTRACT_CREATED');
+    expect(signals).toHaveLength(1);
+    expect(delayedWrites.length).toBeGreaterThan(0);
+    expect(signals[0]!.aborted).toBe(false);
+    installJudgmentPort(previous); readingInstalled = false;
+    await fixture.stop();
+    expect(signals[0]!.aborted).toBe(true);
+    const saved = JSON.parse(readFileSync(contractPath(fixture.workingDirectory, started.contract.id), 'utf8'));
+    expect(saved.contract.id).toBe(started.contract.id);
+    expect(saved.contract.ask).toBe('Fixture held contract');
+    expect(() => fixture!.services.agentManager.spawn({ mode: 'spawn', task: 'Late fixture admission' })).toThrow('No contract runner is composed');
+  } finally {
+    globalThis.setTimeout = schedule;
+    if (readingInstalled) installJudgmentPort(previous);
+    try { await fixture?.stop(); } finally { for (const timer of delayedWrites) clearTimeout(timer); discovery.mockRestore(); }
+  }
 }, 30_000);
 
 test.each(['benchmarks', 'providers'])('shutdown awaits accepted %s metadata before releasing its owned graph', async (kind) => {

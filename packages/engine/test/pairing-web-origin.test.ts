@@ -46,6 +46,18 @@ describe('resolvePairingWebOrigin', () => {
     expect(resolved.fromPublicBaseUrl).toBe(false);
     expect(resolved.httpOnLan).toBe(true);
   });
+
+  test.each([
+    ['::1', '[::1]', false], ['[::1]', '[::1]', false],
+    ['2001:db8::5', '[2001:db8::5]', true], ['[2001:db8::5]', '[2001:db8::5]', true],
+  ] as const)('custom IPv6 host %s retains URL authority brackets', (host, authority, onLan) => {
+    const cfg = fakeConfig({ 'web.publicBaseUrl': '', 'web.hostMode': 'custom', 'web.host': host, 'web.port': 3141 });
+    const resolved = resolvePairingWebOrigin(cfg, stableProbe);
+    expect(resolved.origin).toBe(`http://${authority}:3141`);
+    expect(new URL(resolved.origin).hostname).toBe(authority);
+    expect(resolved.httpOnLan).toBe(onLan);
+    expect(cfg.writes).toEqual([]);
+  });
 });
 
 describe('ensurePublicBaseUrl', () => {
