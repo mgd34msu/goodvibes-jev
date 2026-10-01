@@ -54532,7 +54532,7 @@
     {
       "name": "SessionContinuityHints",
       "kind": "interface",
-      "text": "export interface SessionContinuityHints { readonly pendingApprovals?: number | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly openPanels?: readonly string[] | undefined; }"
+      "text": "export interface SessionContinuityHints { readonly pendingApprovals?: number | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; }"
     },
     {
       "name": "SessionLivenessCheck",
@@ -54610,7 +54610,7 @@
         "toolResultCount",
         "userTurnCount"
       ],
-      "text": "export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly openPanels?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
+      "text": "export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
     },
     {
       "name": "SessionSnapshot",
@@ -55699,6 +55699,11 @@
       "name": "loadRecoveryConversation",
       "kind": "function",
       "text": "export declare function loadRecoveryConversation(options?: SessionPersistenceOptions, sessionId?: string): SessionSnapshot | null;"
+    },
+    {
+      "name": "loadedReturnContext",
+      "kind": "function",
+      "text": "export declare function loadedReturnContext(raw: unknown): SessionReturnContextSummary | undefined;"
     },
     {
       "name": "makeRuntimeFleetProbe",
@@ -63875,7 +63880,7 @@
         "sessionId",
         "status"
       ],
-      "text": "export interface UiContinuitySnapshot { readonly sessionId: string; readonly status: string; readonly recoveryState: string; readonly lastSessionPointer: string | null; readonly recoveryFilePresent: boolean; readonly recoveryFile: Record<string, unknown> | null; readonly returnContext?: SessionReturnContextSummary | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly openPanels?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
+      "text": "export interface UiContinuitySnapshot { readonly sessionId: string; readonly status: string; readonly recoveryState: string; readonly lastSessionPointer: string | null; readonly recoveryFilePresent: boolean; readonly recoveryFile: Record<string, unknown> | null; readonly returnContext?: SessionReturnContextSummary | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
     },
     {
       "name": "UiContractsSnapshot",
@@ -65086,7 +65091,7 @@
         "timestamp",
         "title"
       ],
-      "text": "export interface SessionInfo { name: string; title: string; model: string; provider: string; timestamp: number; messageCount: number; filePath: string; titleSource?: ConversationTitleSource | undefined; returnContext?: SessionReturnContextSummary | undefined; } ;; via ConversationTitleSource = export type ConversationTitleSource = 'system' | 'user'; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly openPanels?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
+      "text": "export interface SessionInfo { name: string; title: string; model: string; provider: string; timestamp: number; messageCount: number; filePath: string; titleSource?: ConversationTitleSource | undefined; returnContext?: SessionReturnContextSummary | undefined; } ;; via ConversationTitleSource = export type ConversationTitleSource = 'system' | 'user'; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
     },
     {
       "name": "SessionManager",
@@ -65113,7 +65118,7 @@
         "timestamp",
         "title"
       ],
-      "text": "export interface SessionMeta { title: string; model: string; provider: string; timestamp: number; titleSource?: ConversationTitleSource | undefined; returnContext?: SessionReturnContextSummary | undefined; schemaVersion?: number | undefined; saveSource?: 'user' | 'auto' | undefined; } ;; via ConversationTitleSource = export type ConversationTitleSource = 'system' | 'user'; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly openPanels?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
+      "text": "export interface SessionMeta { title: string; model: string; provider: string; timestamp: number; titleSource?: ConversationTitleSource | undefined; returnContext?: SessionReturnContextSummary | undefined; schemaVersion?: number | undefined; saveSource?: 'user' | 'auto' | undefined; } ;; via ConversationTitleSource = export type ConversationTitleSource = 'system' | 'user'; ;; SessionReturnContextSummary = export interface SessionReturnContextSummary { readonly activityLabel: string; readonly statusLabel: string; readonly lastUserPrompt?: string | undefined; readonly lastAssistantReply?: string | undefined; readonly pendingApprovals: number; readonly toolCallCount: number; readonly toolResultCount: number; readonly assistantTurnCount: number; readonly userTurnCount: number; readonly lastRole?: string | undefined; readonly activeTasks?: number | undefined; readonly blockedTasks?: number | undefined; readonly remoteContracts?: number | undefined; readonly remoteRunners?: readonly string[] | undefined; readonly worktreeCount?: number | undefined; readonly worktreePaths?: readonly string[] | undefined; readonly lines: readonly string[]; readonly assistedNarrative?: string | undefined; }"
     },
     {
       "name": "SessionTaskGraph",
