@@ -124,6 +124,20 @@ class RefusingCursorStore implements MailboxCursorPort {
   }
 }
 
+/** Drive retry timers only until the terminal snapshot being asserted exists. */
+async function driveClockToTerminal(
+  clock: Pick<FakeClock, 'waitForDue' | 'advance'>,
+  hasTerminal: () => boolean,
+): Promise<void> {
+  for (let round = 0; round < 30 && !hasTerminal(); round += 1) {
+    await clock.waitForDue(3_600_000, 'the next wait');
+    // I/O can announce the terminal failure while readiness is pending. Its
+    // newly scheduled wait is the hourly recheck, not another retry to drive.
+    if (hasTerminal()) return;
+    await clock.advance(3_600_000);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Supervisor doubles
 // ---------------------------------------------------------------------------
@@ -244,6 +258,40 @@ function buildSupervisorRig(options: {
 }
 
 describe('a cursor-store write that fails does not end inbound mail in silence', () => {
+  test('a terminal arriving during clock readiness does not advance its hourly recheck', async () => {
+    const clock = new FakeClock();
+    const before = clock.now();
+    const shutdown = new AbortController();
+    let terminal = false;
+    let rechecked = false;
+    let beganWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => { beganWaiting = resolve; });
+    const driving = driveClockToTerminal({
+      waitForDue: async (maxMs, what) => {
+        beganWaiting();
+        await clock.waitForDue(maxMs, what);
+      },
+      advance: (ms) => clock.advance(ms),
+    }, () => terminal);
+
+    // A barrier, not a scheduling guess: the driver is already waiting for a
+    // timer when the terminal callback arrives and schedules the hourly probe.
+    await waiting;
+    terminal = true;
+    const recheck = clock.sleep(3_600_000, shutdown.signal).then(() => {
+      if (!shutdown.signal.aborted) rechecked = true;
+    });
+    try {
+      await driving;
+      expect(rechecked).toBe(false);
+      expect(clock.now()).toBe(before);
+      expect(clock.pending).toBe(1);
+    } finally {
+      shutdown.abort();
+      await recheck;
+    }
+  });
+
   /**
    * The reviewer's reproduction, through the supervisor rather than through the
    * drain: a REAL IMAP source against a scripted server, with a cursor store
@@ -332,12 +380,9 @@ describe('a cursor-store write that fails does not end inbound mail in silence',
       await clock.advance(600_000);
       await waitFor(() => mailbox.connectionCount >= 2, 'a reconnect after the refused write');
 
-      // 3. A store that never recovers becomes a terminal failure that is
-      //    announced, and time passing does not resurrect it.
-      for (let round = 0; round < 30 && observer.terminals.length === 0; round += 1) {
-        await clock.waitForDue(3_600_000, 'the next wait');
-        await clock.advance(3_600_000);
-      }
+      // 3. A store that never recovers becomes an announced terminal failure.
+      //    Stop at that snapshot; its later hourly recheck is a new attempt.
+      await driveClockToTerminal(clock, () => observer.terminals.length > 0);
       expect(observer.terminals.length).toBeGreaterThanOrEqual(1);
       const terminal = observer.terminals[0] as InboundMailTerminalFailure;
       expect(terminal.reason).toBe('local-store-unwritable');
