@@ -26,9 +26,10 @@ a new claim that every current engine file is byte-identical to that release.
 The engine already contains substantial Jev-specific work. The other bases are
 the original product inventories. The WebUI metadata later named `5050483`
 (1.13.20), while its inventory still described `9856cba` (1.13.19). Their paths
-are identical, but package/schema/settings content differs. The applied source
-record now names the inventory's actual baseline; `dadf577` (2.0.0) is the new
-forward target.
+are identical, but package/schema/settings content differs. That historical
+discrepancy is retained here. The applied WebUI source record and partial
+workspace now use `dadf577` (2.0.0), with all 666 tracked paths accounted for;
+its remaining semantic replacements and full product parity are still open.
 
 The ecosystem index and adjacent app, Home Assistant, plugin, Codex and desktop
 repositories were checked. Their latest published source changes predate this
@@ -53,8 +54,13 @@ must not regain write/edit/exec tools through a follow-up turn.
 
 Daemon setup sources are unchanged across the new target. Existing reviewed
 setup fixes can carry forward, while composition and SDK integration continue.
-The applied daemon migration record stays on its current source until that
-reconciliation is represented accurately.
+The applied daemon migration record now uses `254699bf`. Its reviewed ledger
+accounts for seven added, seven deleted and 27 modified paths, while preserving
+86 valid existing mappings and adding three mappings to already-landed wire,
+version and adapted contract-lifecycle tests (89 total). The latter preserves
+shutdown intent, not a legacy WRFC implementation. Real wire/streaming behavior and channel tool
+authority have separate landed evidence. Six executable/release/packaging
+acceptance items remain deferred; this accounting advance is not full migration.
 
 ### WebUI
 
@@ -70,11 +76,14 @@ assets, themes, PWA and auth/connection behavior. Reconcile new and removed
 inventory paths, including semantic status-tone decisions that moved to shared
 helpers. Work and approval views must render the Jev contract/gate state.
 
-One concrete compatibility regression needs coverage: `SessionDetail` currently
-formats `contextWindow` as an always-present number. Unknown/null windows must
-render honestly without crashing or inventing percentages. Verify meaningful
-interaction tests, a real build and screenshots against the pinned upstream
-app; record connected-daemon and live-provider limitations separately.
+The real workspace, browser-safe theme/payment imports, nullable-context
+rendering and pairing-lifetime repair have landed. Synthetic browser and LAN
+proof cover the implemented flows. The authenticated palette caller and fixed
+status catalogs now include reviewed auth-lifetime guards, while production
+authority/reference installation and the dynamic-error caller remain open.
+Complete contract/gate actions and connected-daemon/live-provider parity remain
+separate completion work. Unknown/null context windows must stay honest, without
+invented percentages or model-name-based window guesses.
 
 ### TUI
 

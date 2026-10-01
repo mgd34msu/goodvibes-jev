@@ -11,7 +11,7 @@ function stagedChecks(files: readonly string[], failingGate = ''): { checks: str
   const root = makeProjectTempDir('product-commit-hook'); roots.push(root);
   const bin = join(root, 'bin'); mkdirSync(bin);
   const log = join(root, 'checks');
-  writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$CHECK_LOG"\nif [ "$*" = "$FAILING_GATE" ]; then exit 1; fi\n');
+  writeFileSync(join(bin, 'bun'), '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$CHECK_LOG"\nif [ "$*" = "$FAILING_GATE" ]; then exit 1; fi\nif [ "$*" != "run credential-scope:check" ]; then exit 127; fi\n');
   chmodSync(join(bin, 'bun'), 0o755);
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, CHECK_LOG: log, FAILING_GATE: failingGate };
   function command(args: string[]): void {
@@ -31,8 +31,9 @@ function stagedChecks(files: readonly string[], failingGate = ''): { checks: str
   };
 }
 
-const gates = ['run credential-scope:check', 'run build', 'run typecheck', 'run api:check'];
-for (const file of [
+const sourceScopes = [
+  'packages/engine/sdk/src/index.ts',
+  'packages/engine/package.json',
   'products/daemon/src/cli/parser.ts',
   'products/tui/src/components/fixture.tsx',
   'products/daemon/src/test/cli/parser.test.ts',
@@ -40,22 +41,23 @@ for (const file of [
   'products/daemon/package.json',
   'products/daemon/tsconfig.build.json',
   'products/daemon/migration.json',
-]) {
-  test(`product change invokes the full real gate chain: ${file}`, () => {
-    expect(stagedChecks([file])).toEqual({ checks: gates, exitCode: 0 });
-  });
-}
-test('engine source and exports invoke the same gate chain', () => {
-  expect(stagedChecks(['packages/engine/sdk/src/index.ts'])).toEqual({ checks: gates, exitCode: 0 });
-  expect(stagedChecks(['packages/engine/package.json'])).toEqual({ checks: gates, exitCode: 0 });
+];
+
+test('a credential classification failure rejects every protected source/config scope', () => {
+  for (const file of sourceScopes) {
+    const result = stagedChecks([file], 'run credential-scope:check');
+    expect(result.exitCode, file).not.toBe(0);
+    expect(result.checks, file).toContain('run credential-scope:check');
+  }
 });
-test('documentation-only changes do not invoke build gates', () => {
+
+test('classified source can commit without build/compiler/API tooling installed', () => {
+  // The fixture has only the credential checker; every other bun command fails.
+  const result = stagedChecks(sourceScopes);
+  expect(result.exitCode).toBe(0);
+  expect(result.checks).toEqual(['run credential-scope:check']);
+});
+
+test('documentation-only commits do not invoke application tooling', () => {
   expect(stagedChecks(['products/daemon/README.md'])).toEqual({ checks: [], exitCode: 0 });
 });
-for (const [index, gate] of gates.entries()) {
-  test(`product changes are rejected without running later gates when ${gate} fails`, () => {
-    const result = stagedChecks(['products/daemon/src/cli/parser.ts'], gate);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.checks).toEqual(gates.slice(0, index + 1));
-  });
-}
