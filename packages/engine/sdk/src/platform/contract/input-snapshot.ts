@@ -351,9 +351,9 @@ export function contractInputPath(snapshot: ContractInputSnapshot): string {
 }
 
 /** A planner can resume only from its recorded input generation, never today's source or a result tree. */
-export async function assertContractInputView(snapshot: ContractInputSnapshot, signal?: AbortSignal): Promise<void> {
+export async function assertContractInputView(snapshot: ContractInputSnapshot, signal?: AbortSignal, viewPath = contractInputPath(snapshot)): Promise<void> {
   assertContractInputObjects(snapshot, snapshot.sourceRoot);
-  const root = contractInputPath(snapshot);
+  const root = viewPath;
   if (gitText(root, ['rev-parse', 'HEAD']) !== snapshot.inputCommit) throw new Error('contract input view no longer names the recorded commit');
   for (const file of snapshot.files) {
     signal?.throwIfAborted();

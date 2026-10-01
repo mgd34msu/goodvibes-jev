@@ -32,6 +32,7 @@ import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFres
 import { NUDGE_GATE_TAIL_LINES } from './nudge.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
+import { prepareFixPlannerInput } from './fix-planner-input.js';
 import { readPlannerBounds } from './planner.js';
 import { describeStall, detectStall, standingOf, type StallReason } from './progress.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
@@ -203,12 +204,14 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
    */
   async function planFix(run: ContractRun, brief: FixBrief, round: number): Promise<void> {
     const { contract } = run;
+    const input = await prepareFixPlannerInput(run);
     const route = await context.routeSelector({ purpose: 'planner', contract: run.view() });
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
     for (let attempt = 0; ; attempt += 1) {
+      await input.assertCurrent();
       const result = await context.decompositionRunner.run({
         goal: contract.ask,
-        workingDir: contract.worktreePath ?? contract.projectRoot,
+        workingDir: input.workingDirectory,
         systemPrompt: buildFixPlannerPrompt(),
         userPrompt: buildFixPlannerRequest(brief, repair),
         bounds: readPlannerBounds(context.configManager),
@@ -218,12 +221,14 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       });
       if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
       if (run.terminal) return;
+      await input.assertCurrent();
       if (result.status !== 'completed') {
         run.control.fail('planning', `the fix for ${brief.scope} ${brief.targetId} could not be planned: the planner agent ${result.status === 'cancelled' ? 'was stopped' : 'failed'}${result.detail === undefined ? '' : `: ${result.detail}`}`);
         return;
       }
       const checked = await checkFixPlan(run, brief, result.output);
       if (run.terminal) return;
+      await input.assertCurrent();
       if (checked.problems.length === 0 && checked.group !== undefined) {
         const { group, units } = buildFixGroup(brief, round, checked.group);
         startFixGroup(run, brief, round, group, units, checked.decisionIds, route);
