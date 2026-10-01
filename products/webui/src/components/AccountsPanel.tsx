@@ -118,7 +118,7 @@ export function AccountsPanel({ data, isLoading, isError, error, onRetry }: Acco
                   </span>
                 </div>
                 <div className="gv-row__trailing">
-                  <StatusBadge value={row.authFreshness} />
+                  <StatusBadge value={row.authFreshness} catalogId={`account-auth.${row.authFreshness}`} />
                 </div>
               </li>
             ))}

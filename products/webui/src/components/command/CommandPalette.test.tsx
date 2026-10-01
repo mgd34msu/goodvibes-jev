@@ -9,11 +9,32 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { CommandPalette, formatShortcut } from './CommandPalette';
 import { getCommands, registerCommand, unregisterCommand, type CommandDef } from '../../lib/commands';
+import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let closes = 0;
 let opener: HTMLButtonElement;
+const originalFetch = globalThis.fetch;
+type RankRequest = BrowserJudgmentRequest<'webui.palette.command-rank'>;
+function answer(request: RankRequest, outcome: 'act' | 'confirm' | 'escalate' = 'act', selected = 0): Response {
+  const count = request.input.candidates.length;
+  return new Response(JSON.stringify({ protocolVersion: 1, battery: request.battery, batteryVersion: 1, requestId: request.requestId,
+    ...(outcome === 'act' ? { status: 'settled', value: { registryVersion: request.input.registryVersion,
+      accepted: [{ candidateIndex: selected, probability: 0.93 }], rejected: Array.from({ length: count }, (_, i) => i).filter((i) => i !== selected) } }
+      : { status: 'held', reason: 'uncertain' }), outcome,
+    readings: Object.fromEntries(Array.from({ length: count }, (_, i) => [`candidate_${i}`, { kind: 'yes-no',
+      probability: i === selected ? 0.93 : 0.03, verdict: i === selected ? 'yes' : 'no', outcome: i === selected ? outcome : 'act' }])),
+    evidence: Array.from({ length: count }, (_, i) => ({ decisionId: `fixture-${i}`, model: 'fixture-v1', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+async function until(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Expected palette state did not appear');
+}
 
 function renderPalette(open: boolean): void {
   flushSync(() => {
@@ -46,6 +67,7 @@ function cmd(id: string, overrides: Partial<CommandDef> = {}): CommandDef {
 }
 
 beforeEach(() => {
+  globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ status: 'held', error: { code: 'JUDGMENT_UNAVAILABLE' } }), { status: 503 })) as typeof fetch;
   for (const c of getCommands()) unregisterCommand(c.id);
   closes = 0;
   opener = document.createElement('button');
@@ -61,6 +83,7 @@ afterEach(() => {
   container.remove();
   opener.remove();
   for (const c of getCommands()) unregisterCommand(c.id);
+  globalThis.fetch = originalFetch;
 });
 
 describe('CommandPalette: rendering', () => {
@@ -148,11 +171,11 @@ describe('CommandPalette: keyboard', () => {
     expect(input.getAttribute('aria-activedescendant')).toBe(active.id);
   });
 
-  test('Enter runs the active command and closes', () => {
+  test('Enter runs an explicitly browsed command and closes', () => {
+    for (const c of getCommands()) unregisterCommand(c.id);
     let ran = '';
     registerCommand(cmd('run', { title: 'Run me', group: 'navigation', run: () => { ran = 'run'; } }));
     renderPalette(true);
-    type('run me');
     key('Enter');
     expect(ran).toBe('run');
     expect(closes).toBe(1);
@@ -183,14 +206,15 @@ describe('CommandPalette: pointer, filter, registry, focus', () => {
     expect(closes).toBe(2);
   });
 
-  test('typing narrows the results; clearing restores them', () => {
+  test('typing clears unranked rows while reading; clearing restores manual browse', () => {
     registerCommand(cmd('a', { title: 'Alpha command' }));
     registerCommand(cmd('b', { title: 'Beta command' }));
     registerCommand(cmd('c', { title: 'Gamma place', group: 'navigation' }));
     renderPalette(true);
     expect(options().length).toBe(3);
     type('command');
-    expect(options().map((o) => o.querySelector('.cmd-item-title')?.textContent).sort()).toEqual(['Alpha command', 'Beta command']);
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector('[data-search-status="loading"]')).not.toBeNull();
     type('');
     expect(options().length).toBe(3);
   });
@@ -208,5 +232,94 @@ describe('CommandPalette: pointer, filter, registry, focus', () => {
     renderPalette(true);
     renderPalette(false);
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+describe('CommandPalette: admitted semantic search', () => {
+  let ran: string[];
+  beforeEach(() => {
+    for (const c of getCommands()) unregisterCommand(c.id);
+    ran = [];
+    registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('chat.new') }));
+    registerCommand(cmd('nav.chat', { title: 'Go to Chat', group: 'navigation', run: () => ran.push('nav.chat') }));
+  });
+
+  test('a nonlexical answer selects only the real indexed command and keeps Enter behavior', async () => {
+    globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest)) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    key('Enter'); expect(ran).toEqual([]);
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']); expect(closes).toBe(1);
+  });
+
+  test('ArrowDown during a deferred reading preserves the first actionable result', async () => {
+    let pending!: { request: RankRequest; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+      pending = { request: JSON.parse(String(init?.body)) as RankRequest, finish };
+    })) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => Boolean(pending));
+    key('ArrowDown'); key('ArrowDown'); key('Enter');
+    expect(ran).toEqual([]);
+    pending.finish(answer(pending.request));
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']); expect(closes).toBe(1);
+  });
+
+  test.each(['confirm', 'escalate'] as const)('%s holds have no inferred executable rows', async (outcome) => {
+    globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest, outcome)) as typeof fetch;
+    renderPalette(true); type('New Chat');
+    await until(() => document.querySelector('[data-search-status="held"]') !== null);
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(outcome === 'confirm' ? 'need review' : 'could not resolve');
+    key('Enter'); expect(ran).toEqual([]); expect(closes).toBe(0);
+  });
+
+  test('an unavailable service offers explicit manual browse without invented matches', async () => {
+    renderPalette(true); type('New Chat');
+    await until(() => document.querySelector('[data-search-status="unavailable"]') !== null);
+    key('Enter'); expect(ran).toEqual([]); expect(options()).toHaveLength(0);
+    const browse = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Browse all commands');
+    browse!.focus();
+    flushSync(() => browse!.click());
+    expect(document.activeElement).toBe(document.querySelector('input[aria-label="Search commands"]'));
+    expect(document.querySelector('[role="listbox"]')?.getAttribute('aria-label')).toBe('Browse all commands');
+    expect(options()).toHaveLength(2);
+    key('ArrowDown'); expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']);
+  });
+
+  test('editing the query aborts the old request and a late answer cannot replace newer matches', async () => {
+    let first!: { request: RankRequest; signal: AbortSignal; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => {
+      const request = JSON.parse(String(init?.body)) as RankRequest;
+      if (request.input.query.kind === 'inline' && request.input.query.text === 'first') {
+        return new Promise<Response>((finish) => { first = { request, signal: init!.signal!, finish }; });
+      }
+      return Promise.resolve(answer(request, 'act', 1));
+    }) as typeof fetch;
+    renderPalette(true); type('first');
+    await until(() => Boolean(first));
+    type('second'); expect(first.signal.aborted).toBe(true);
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('Go to Chat');
+    first.finish(answer(first.request, 'act', 0));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(activeTitle()).toBe('Go to Chat');
+    key('Enter'); expect(ran).toEqual(['nav.chat']);
+  });
+
+  test('closing aborts a pending request and reopening starts from manual browse', async () => {
+    let pending!: { request: RankRequest; signal: AbortSignal; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => { pending = { request: JSON.parse(String(init?.body)) as RankRequest, signal: init!.signal!, finish }; })) as typeof fetch;
+    renderPalette(true); type('New Chat');
+    await until(() => Boolean(pending));
+    renderPalette(false); expect(pending.signal.aborted).toBe(true);
+    pending.finish(answer(pending.request));
+    renderPalette(true);
+    expect((document.querySelector('input[aria-label="Search commands"]') as HTMLInputElement).value).toBe('');
+    expect(options()).toHaveLength(2); expect(ran).toEqual([]);
   });
 });

@@ -188,6 +188,7 @@ interface RequestOptions {
   body?: unknown;
   query?: JsonRecord;
   authenticated?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -298,12 +299,14 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function requestJson<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  options.signal?.throwIfAborted();
   const method = options.method ?? 'GET';
   const headers: HeadersInit = {
     ...(options.authenticated === false ? {} : await authHeaders()),
     ...(method === 'GET' || options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
   };
   const url = buildUrl(path, options.query);
+  options.signal?.throwIfAborted();
   // routedFetch (not the bare global fetch) so REST-routed methods traverse the relay when
   // the active route is relay, otherwise a mutating call (permission respond, session
   // control) would hit an unreachable direct URL over relay and never reach the daemon's
@@ -312,6 +315,7 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
     method,
     credentials: 'include',
     headers,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(method === 'GET' || options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
   // Every response, success or failure, is a chance to learn the daemon's current
@@ -320,6 +324,7 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
   // call passes through.
   recordObservedClientCompatibilityFloor(readClientCompatibilityFloor(response.headers));
   const body = await readJson(response);
+  options.signal?.throwIfAborted();
   if (!response.ok) {
     throw Object.assign(new Error(`${method} ${path} failed: ${response.status} ${response.statusText}`.trim()), {
       status: response.status,
@@ -2657,6 +2662,16 @@ export async function invokeMethod<TMethodId extends OperatorTypedMethodId>(
   input?: OperatorMethodInput<TMethodId>,
 ): Promise<OperatorMethodOutput<TMethodId>> {
   return sdk.operator.invoke(methodId, input);
+}
+
+/** Direct authenticated, cancellable call to the generated judgment route. */
+export async function runBrowserJudgment(
+  input: OperatorMethodInput<'judgment.battery.run'>,
+  signal: AbortSignal,
+): Promise<OperatorMethodOutput<'judgment.battery.run'>> {
+  const route = webuiRouteFor('judgment.battery.run');
+  if (!route || route.method !== 'POST') throw new Error('Command judgment is unavailable.');
+  return requestJson(route.path, { method: route.method, body: input, signal });
 }
 
 export async function getCurrentAuth(): Promise<unknown> {

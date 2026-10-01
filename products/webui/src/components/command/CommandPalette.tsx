@@ -9,9 +9,10 @@
  * whatever held it before the palette opened.
  */
 import { ArrowRight, CornerDownLeft, MessageSquare, Search, Settings, Zap } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { type CommandDef, filterCommands, getCommands, subscribeCommands } from '../../lib/commands';
+import { type CommandDef, getCommandRegistryRevision, getCommands, subscribeCommands } from '../../lib/commands';
+import { isCommandSearchCurrent, rankCommandSnapshot, type CommandSearchResult } from '../../lib/command-judgment';
 import {
   buildPaletteSections,
   PALETTE_SECTION_LABELS,
@@ -51,34 +52,63 @@ export function formatShortcut(shortcut: string): string {
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
-  const [allCommands, setAllCommands] = useState<CommandDef[]>(() => getCommands());
+  const [snapshot, setSnapshot] = useState(() => ({ commands: getCommands(), revision: getCommandRegistryRevision() }));
+  const [search, setSearch] = useState<{ query: string; revision: number; result?: CommandSearchResult }>();
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
   const phone = useMediaQuery(PHONE_QUERY);
   useModalFocus(open, panelRef, inputRef);
   const isTop = useOverlayLayer(open);
   useTopLayerEscape(open, isTop, onClose);
 
-  useEffect(() => subscribeCommands(() => setAllCommands(getCommands())), []);
+  // Clear before the next visible frame, including a close/open in quick succession.
+  useLayoutEffect(() => { if (!open) setQuery(''); }, [open]);
 
-  // Every open starts from an empty search on the first result.
+  useEffect(() => subscribeCommands(() => setSnapshot({ commands: getCommands(), revision: getCommandRegistryRevision() })), []);
+
+  // Each search owns a request and index map. Closing, editing or replacing any
+  // registered session snapshot invalidates it before another result can act.
   useEffect(() => {
-    if (open) {
+    if (!open) {
+      wasOpen.current = false;
+      setSearch(undefined);
+      return;
+    }
+    if (!wasOpen.current) {
+      wasOpen.current = true;
       setQuery('');
       setActiveIndex(0);
+      setSearch(undefined);
+      return;
     }
-  }, [open]);
+    if (!query.trim()) { setSearch(undefined); return; }
+    const abort = new AbortController();
+    setSearch({ query, revision: snapshot.revision });
+    const timer = setTimeout(() => {
+      void rankCommandSnapshot(query, snapshot, abort.signal).then((result) => {
+        if (!abort.signal.aborted && isCommandSearchCurrent(snapshot)) setSearch({ query, revision: snapshot.revision, result });
+      }).catch(() => {
+        if (!abort.signal.aborted && isCommandSearchCurrent(snapshot)) setSearch({ query, revision: snapshot.revision,
+          result: { status: 'unavailable', reason: 'unavailable' } });
+      });
+    }, 200);
+    return () => { clearTimeout(timer); abort.abort(); };
+  }, [open, query, snapshot]);
 
-  const sections = useMemo(() => buildPaletteSections(filterCommands(allCommands, query)), [allCommands, query]);
+  const searching = query.trim().length > 0;
+  const result = search?.query === query && search.revision === snapshot.revision ? search.result : undefined;
+  const visibleCommands = !searching ? snapshot.commands : result?.status === 'ready' ? result.commands : [];
+  const sections = useMemo(() => buildPaletteSections(visibleCommands), [visibleCommands]);
   // The keyboard order is the on-screen order: section by section.
   const ordered = useMemo(() => sections.flatMap((group) => group.commands), [sections]);
   // Each command's keyboard position, so a row knows whether it is the active one.
   const orderIndex = useMemo(() => new Map(ordered.map((cmd, index) => [cmd, index])), [ordered]);
 
   useEffect(() => {
-    if (activeIndex >= ordered.length) setActiveIndex(Math.max(0, ordered.length - 1));
+    if (activeIndex < 0 || activeIndex >= ordered.length) setActiveIndex(Math.max(0, Math.min(activeIndex, ordered.length - 1)));
   }, [ordered.length, activeIndex]);
 
   useEffect(() => {
@@ -90,10 +120,11 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   const runCommand = useCallback(
     (cmd: CommandDef) => {
+      if (!open || !isCommandSearchCurrent(snapshot) || !ordered.includes(cmd)) return;
       onClose();
       cmd.run();
     },
-    [onClose],
+    [onClose, open, ordered, snapshot],
   );
 
   const onKeyDown = useCallback(
@@ -107,7 +138,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           return;
         case 'ArrowDown':
           event.preventDefault();
-          setActiveIndex((i) => Math.min(i + 1, ordered.length - 1));
+          setActiveIndex((i) => Math.max(0, Math.min(i + 1, ordered.length - 1)));
           return;
         case 'ArrowUp':
           event.preventDefault();
@@ -124,12 +155,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           setActiveIndex(Math.max(0, ordered.length - 1));
           return;
         case 'Enter': {
+          if (event.target instanceof Element && event.target.closest('button')) return;
           event.preventDefault();
           const cmd = ordered[activeIndex];
           if (cmd) runCommand(cmd);
           return;
         }
         case 'Tab':
+          // With no ranked rows, let keyboard users reach the explicit browse button.
+          if (!ordered.length) return;
           // Focus stays in the search field; Tab steps through the results.
           event.preventDefault();
           setActiveIndex((i) => (event.shiftKey ? Math.max(i - 1, 0) : Math.min(i + 1, ordered.length - 1)));
@@ -183,10 +217,21 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
           )}
         </div>
 
-        {ordered.length === 0 ? (
-          <p className="cmd-empty" role="status">No results for “{query.trim()}”</p>
+        {searching && result?.status !== 'ready' ? (
+          <div className="cmd-empty" role="status" aria-live="polite" data-search-status={result?.status ?? 'loading'}>
+            <p>{!result ? 'Finding commands…'
+              : result.status === 'held' ? result.reason === 'uncertain'
+                ? result.reading.outcome === 'confirm' ? 'Command matches need review.' : 'Command search could not resolve these matches.'
+                : result.reason === 'permission' ? 'Command search is not permitted for this source.'
+                : result.reason === 'source' ? 'The command list changed or is unavailable. Try again.'
+                : 'Command search cannot read this request.'
+              : 'Command search is unavailable right now.'}</p>
+            <button type="button" onClick={() => { setQuery(''); setActiveIndex(0); inputRef.current?.focus(); }}>Browse all commands</button>
+          </div>
+        ) : ordered.length === 0 ? (
+          <p className="cmd-empty" role="status">{searching ? `No results for “${query.trim()}”` : 'No commands available'}</p>
         ) : (
-          <div ref={listRef} id="cmd-listbox" className="cmd-list" role="listbox" aria-label="Commands">
+          <div ref={listRef} id="cmd-listbox" className="cmd-list" role="listbox" aria-label={searching ? 'Matching commands' : 'Browse all commands'}>
             {sections.map(({ section, commands }) => (
               <div key={section} className="cmd-group" role="group" aria-labelledby={`cmd-group-label-${section}`}>
                 <div id={`cmd-group-label-${section}`} className="cmd-group-label" role="presentation">
