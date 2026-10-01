@@ -9,16 +9,17 @@
  *
  * Read by `bun run package-readmes:read` for every package directory the
  * release publishes; the readings are stored by content hash in
- * etc/package-readme-readings.json, and the offline check passes a README only
- * on a stored, settled yes to `documents` and, for a public package, a
- * settled no to `stale`. Both questions ride one request per README.
+ * etc/package-readme-readings.json. Offline editorial reporting recognizes a
+ * favorable reading only on a stored, settled yes to `documents` and, for a
+ * public package, a settled no to `stale`. Findings are advisory and do not
+ * block deterministic correctness CI. Both questions ride one request per README.
  *
  * State: `{ name, description, readme }`, the package name and description
  * from its package.json and the README text.
  *
- * Band: medium stakes. A release gate on published documentation: a wrong yes
- * on `stale` blocks a release until a person rewords; a wrong no ships
- * outdated wording to npm.
+ * Band: medium stakes, preserved for editorial review of published
+ * documentation: a wrong yes on `stale` prompts unnecessary rewording; a
+ * wrong no can leave outdated wording unnoticed.
  */
 import { defineBattery, PINNED_MODEL, STAKES_BANDS, yesNo } from '@goodvibes-jev/judgment';
 

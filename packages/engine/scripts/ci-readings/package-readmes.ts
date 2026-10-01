@@ -8,8 +8,9 @@
 // published package in stale internal or umbrella terms, is read through Jev
 // (`engine.gates.package-readme`) and stored by the content hash of the
 // README, package name and description in etc/package-readme-readings.json.
-// The check is offline: a README passes only on a stored, settled yes to
-// `documents` and, for a public package, a settled no to `stale`.
+// Reporting is offline and advisory: a favorable reading needs a stored,
+// settled yes to `documents` and, for a public package, a settled no to `stale`.
+// Missing, stale or adverse evidence never blocks deterministic correctness CI.
 //
 // Test-harness override:
 //   PACKAGE_README_READINGS, the stored readings file in place of etc/package-readme-readings.json
@@ -17,7 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { packageReadme, type PackageReadmeState } from './package-readme.ts';
-import { describeAnswer, isSettled, stateHash, type StoredEntry } from './stored-readings.ts';
+import { decisionId, describeAnswer, isSettled, readingModel, stateHash, type StoredEntry, type StoredReadings } from './stored-readings.ts';
 
 export const READINGS_PATH = process.env['PACKAGE_README_READINGS']
   ?? resolve(import.meta.dir, '..', '..', 'etc', 'package-readme-readings.json');
@@ -37,7 +38,7 @@ export function readmeQuestions(isPublic: boolean): ('documents' | 'stale')[] {
   return isPublic ? ['documents', 'stale'] : ['documents'];
 }
 
-/** Why a README fails the check, from its stored readings; empty when it passes. */
+/** Editorial findings from current readings; empty only when all requested answers are favorable and settled. */
 export function readmeProblems(
   dir: string,
   state: PackageReadmeState,
@@ -49,7 +50,7 @@ export function readmeProblems(
   for (const question of readmeQuestions(isPublic)) {
     const answer = entry?.answers[question];
     if (answer === undefined) {
-      problems.push(`${dir}/README.md has no stored ${packageReadme.name} reading for its current text; run \`bun run package-readmes:read\` and commit etc/package-readme-readings.json`);
+      problems.push(`${dir}/README.md has no stored ${packageReadme.name} reading for its current text (missing or stale content evidence); run \`bun run package-readmes:read\` and commit packages/engine/etc/package-readme-readings.json`);
       break;
     }
     if (question === 'documents' && !isSettled(answer, 'yes')) {
@@ -64,4 +65,17 @@ export function readmeProblems(
     }
   }
   return problems;
+}
+
+/** Preserve model and battery provenance when reporting editorial evidence. */
+export function readmeAdvisories(
+  dir: string,
+  state: PackageReadmeState,
+  isPublic: boolean,
+  stored: StoredReadings | null,
+): string[] {
+  if (stored !== null && (stored.decision !== decisionId(packageReadme) || stored.model !== readingModel(packageReadme))) {
+    return [`${dir}/README.md has stale editorial evidence (decision ${stored.decision}, model ${stored.model}; expected ${decisionId(packageReadme)}, model ${readingModel(packageReadme)}); run \`bun run package-readmes:read\` to refresh it`];
+  }
+  return readmeProblems(dir, state, isPublic, stored?.readings ?? {});
 }
