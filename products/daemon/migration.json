@@ -1,7 +1,7 @@
 {
   "sourceRevision": "443e5ee4d6cda0d36d57e2886398d0836074a4a9",
   "status": "partial",
-  "phase": "configured-runtime-graph",
+  "phase": "configured-runtime-command-adapters",
   "entrypoints": [
     "src/cli/index.ts"
   ],
@@ -470,6 +470,62 @@
       "disposition": "HOIST",
       "targets": [
         "packages/engine/sdk/src/platform/intake/providers/route-util.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/local-daemon-state.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/local-daemon-state.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/local-daemon-state.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/local-daemon-state.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/status-command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/status-command.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/status-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/status-command.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/sessions-command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/sessions-command.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/sessions-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/sessions-command.test.ts"
+      ]
+    },
+    {
+      "source": "src/daemon/config-command.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/daemon/config-command.ts"
+      ]
+    },
+    {
+      "source": "src/test/daemon/config-command.test.ts",
+      "disposition": "PORT",
+      "targets": [
+        "products/daemon/src/test/daemon/config-command.test.ts"
       ]
     }
   ],
