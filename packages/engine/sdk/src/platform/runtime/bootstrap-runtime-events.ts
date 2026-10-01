@@ -25,6 +25,76 @@ export interface HostRuntimeEventBridgeOptions {
   readonly contractRunner: Pick<ContractRunner, 'get' | 'list'>;
 }
 
+/** The runtime event restated by one of this module's operator-feed lines. */
+export interface RuntimeEventNotice {
+  readonly type: string;
+  /** Shared with runtimeEventKey for terminal events that a host also records from the bus. */
+  readonly key?: string | undefined;
+  readonly title: string;
+  readonly level: 'info' | 'warning';
+  /** The line's detail, without its bracket tag or status mark. */
+  readonly detail: string;
+}
+
+const agentRef = (agentId: string): string => agentId.slice(-8);
+const contractRef = (contractId: string): string => contractId;
+
+/**
+ * Match only the declared formats emitted below, never classify arbitrary
+ * prose. Contract ids are kept whole, exactly as the producer prints them.
+ * Repeated checks, nudges and owner requests lack a complete event identity
+ * in their lines, so they deliberately have no deduplication key.
+ */
+const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
+  readonly pattern: RegExp;
+  readonly type: string;
+  readonly title: string;
+  readonly level: 'info' | 'warning';
+  readonly identity?: { readonly field: 'agentId' | 'contractId'; readonly ref: (id: string) => string } | undefined;
+}> = [
+  { pattern: /^\[Agents\] \u2713 \S+ (\S+): ".*" \u2014 completed in \d+s \(\d+ tool calls\)$/s, type: 'AGENT_COMPLETED', title: 'Agent finished', level: 'info', identity: { field: 'agentId', ref: agentRef } },
+  { pattern: /^\[Agents\] \u2717 \S+ (\S+): ".*" \u2014 failed in \d+s: .*/s, type: 'AGENT_FAILED', title: 'Agent failed', level: 'warning', identity: { field: 'agentId', ref: agentRef } },
+  { pattern: /^\[Contract\] \u2713 (\S+) PASSED: \d+ of \d+ criteria met, \d+ corrections$/, type: 'CONTRACT_PASSED', title: 'Workstream passed', level: 'info', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] \u2717 (\S+) FAILED: /s, type: 'CONTRACT_FAILED', title: 'Workstream failed', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] (\S+) cancelled: .* \(\d+ files modified\)$/s, type: 'CONTRACT_CANCELLED', title: 'Workstream cancelled', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] Commit committed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes committed', level: 'info', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] Commit applied for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes applied', level: 'info', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] Commit skipped for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit skipped', level: 'info', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] Commit failed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit failed', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Contract\] \S+ started: /s, type: 'CONTRACT_CREATED', title: 'Workstream started', level: 'info' },
+  { pattern: /^\[Contract\] \S+ (?:queued|shaping|planning|checking-plan|running|judging|fixing|committing|awaiting-owner|passed|failed|cancelled) -> (?:queued|shaping|planning|checking-plan|running|judging|fixing|committing|awaiting-owner|passed|failed|cancelled)$/, type: 'CONTRACT_STATUS_CHANGED', title: 'Workstream status changed', level: 'info' },
+  { pattern: /^\[Contract\] \u2713 Check \S+ of (?:unit|group|deliverable) \S+: \d+\/\d+ criteria met, pass$/, type: 'CONTRACT_CHECKED', title: 'Check passed', level: 'info' },
+  { pattern: /^\[Contract\] \u2717 Check \S+ of (?:unit|group|deliverable) \S+: \d+\/\d+ criteria met, (?:nudge|await-owner|stall)$/, type: 'CONTRACT_CHECKED', title: 'Check needs attention', level: 'warning' },
+  { pattern: /^\[Contract\] Nudged unit \S+ \([^\n)]*\)(?: on [^\n]+)?$/, type: 'CONTRACT_NUDGED', title: 'Corrections requested', level: 'info' },
+  { pattern: /^\[Contract\] Criterion \S+ of unit \S+ regressed \(met at \S+\)$/, type: 'CONTRACT_CRITERION_REGRESSED', title: 'Requirement regressed', level: 'warning' },
+  { pattern: /^\[Contract\] (?:unit|group|deliverable) \S+ stalled, routed to (?:split|fresh|owner): /s, type: 'CONTRACT_STALLED', title: 'Workstream stalled', level: 'warning' },
+  { pattern: /^\[Contract\] \S+ needs the owner: /s, type: 'CONTRACT_ESCALATED', title: 'Owner decision needed', level: 'warning' },
+  { pattern: /^\[Contract\]\s+\u2713 Gate: .+ passed$/, type: 'CONTRACT_GATE_RESULT', title: 'Quality check passed', level: 'info' },
+  { pattern: /^\[Contract\]\s+[\u2713\u2717] Gate: .+ skipped$/, type: 'CONTRACT_GATE_RESULT', title: 'Quality check skipped', level: 'info' },
+  { pattern: /^\[Contract\]\s+\u2717 Gate: .+ FAILED$/, type: 'CONTRACT_GATE_RESULT', title: 'Quality check failed', level: 'warning' },
+];
+
+/** Read a declared operator-feed line, or return undefined for an unrelated line. */
+export function runtimeEventOfNotice(text: string): RuntimeEventNotice | undefined {
+  const line = text.trim();
+  for (const entry of RUNTIME_EVENT_NOTICE_LINES) {
+    const match = entry.pattern.exec(line);
+    if (!match) continue;
+    const detail = line.replace(/^\[[^\]\n]+\]\s*/, '').replace(/^[\u2713\u2717]\s*/, '');
+    const key = entry.identity ? `${entry.type}:${entry.identity.ref(match[1] ?? '')}` : undefined;
+    return { type: entry.type, ...(key ? { key } : {}), title: entry.title, level: entry.level, detail };
+  }
+  return undefined;
+}
+
+/** The matching notice key from a bus payload; absent if its line has no complete identity. */
+export function runtimeEventKey(type: string, payload: unknown): string | undefined {
+  const identity = RUNTIME_EVENT_NOTICE_LINES.find((entry) => entry.type === type && entry.identity)?.identity;
+  if (!identity || !payload || typeof payload !== 'object') return undefined;
+  const id = (payload as Record<string, unknown>)[identity.field];
+  return typeof id === 'string' && id.length > 0 ? `${type}:${identity.ref(id)}` : undefined;
+}
+
 function withRouter(
   getSystemMessageRouter: () => HostRuntimeMessageRouter | null,
   action: (router: HostRuntimeMessageRouter) => void,

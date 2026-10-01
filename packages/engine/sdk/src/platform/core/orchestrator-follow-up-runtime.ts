@@ -24,6 +24,7 @@ export interface OrchestratorFollowUpRuntimeOptions {
   readonly getProviderRegistry: () => ProviderRegistry;
   readonly getCurrentModel: () => ModelDefinition;
   readonly routeLowPriorityMessage: (message: string) => void;
+  /** Add billed usage to totals without replacing the main turn's context size. */
   readonly applyUsage: (usage: ReturnType<typeof normalizeUsage>) => void;
 }
 
@@ -113,12 +114,13 @@ export class OrchestratorFollowUpRuntime {
 
       const content = response.content.trim();
       if (content.length > 0) {
+        const normalizedUsage = normalizeUsage(response.usage);
         this.options.conversation.addAssistantMessage(content, {
-          usage: response.usage,
+          usage: normalizedUsage,
           model: model.displayName,
           provider: model.provider,
+          followUp: true,
         });
-        const normalizedUsage = normalizeUsage(response.usage);
         this.options.applyUsage(normalizedUsage);
         this.options.scrollToEnd(this.options.getViewportHeight());
         this.options.requestRender();
