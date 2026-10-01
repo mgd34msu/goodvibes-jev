@@ -13,7 +13,7 @@ import { emitContractEvent } from '../../sdk/src/platform/contract/events.js';
 import { Notifier } from '../../sdk/src/platform/integrations/notifier.js';
 import { WebhookNotifier } from '../../sdk/src/platform/integrations/webhooks.js';
 import { registerBootstrapHookBridge } from '../../sdk/src/platform/runtime/bootstrap-hook-bridge.js';
-import { registerHostRuntimeEvents } from '../../sdk/src/platform/runtime/bootstrap-runtime-events.js';
+import { registerHostRuntimeEvents, registerContractRuntimeEvents } from '../../sdk/src/platform/runtime/bootstrap-runtime-events.js';
 import { createDomainDispatch, createRuntimeStore } from '../../sdk/src/platform/runtime/store/index.js';
 import { createUiRuntimeEvents } from '../../sdk/src/platform/runtime/ui-events.js';
 import { classifySystemMessageKind } from '../../sdk/src/platform/runtime/system-message-policy.js';
@@ -121,9 +121,11 @@ describe('the lifecycle hook bridge', () => {
 });
 
 describe('the host runtime event bridge', () => {
-  function host(options: { contracts?: readonly ContractView[]; agents?: ReadonlyArray<{ id: string; status: string; cohort?: string; startedAt: number; template: string; toolCallCount: number; task: string }> } = {}) {
+  function host(options: { contractsOnly?: boolean; contracts?: readonly ContractView[]; agents?: ReadonlyArray<{ id: string; status: string; cohort?: string; startedAt: number; template: string; toolCallCount: number; task: string }> } = {}) {
     const bus = new RuntimeEventBus();
     const store = createRuntimeStore();
+    const domainDispatch = createDomainDispatch(store);
+    const dispatched = spyOn(domainDispatch, 'dispatchContractEvent');
     const lines: Array<{ channel: 'low' | 'high' | 'contract'; text: string }> = [];
     const followUps: ConversationFollowUpItem[] = [];
     const agents = options.agents ?? [];
@@ -133,9 +135,9 @@ describe('the host runtime event bridge', () => {
       list: () => agents,
     };
     const contracts = options.contracts ?? [];
-    const { unsubs, agentStatusIntervalRef } = registerHostRuntimeEvents({
+    const registration: Parameters<typeof registerHostRuntimeEvents>[0] = {
       runtimeBus: bus,
-      domainDispatch: createDomainDispatch(store),
+      domainDispatch,
       getSystemMessageRouter: () => ({
         low: (text) => lines.push({ channel: 'low', text }),
         high: (text) => lines.push({ channel: 'high', text }),
@@ -148,10 +150,14 @@ describe('the host runtime event bridge', () => {
         get: (id: string) => contracts.find((contract) => contract.id === id) ?? null,
         list: () => [...contracts],
       },
-    });
+    };
+    const { unsubs, agentStatusIntervalRef } = options.contractsOnly
+      ? { unsubs: registerContractRuntimeEvents(registration), agentStatusIntervalRef: { value: null } }
+      : registerHostRuntimeEvents(registration);
     return {
-      bus, store, lines, followUps,
+      bus, store, lines, followUps, contractDispatches: () => dispatched.mock.calls.length,
       stop(): void {
+        dispatched.mockRestore();
         for (const unsub of unsubs) unsub();
         if (agentStatusIntervalRef.value) clearInterval(agentStatusIntervalRef.value);
       },
@@ -187,9 +193,32 @@ describe('the host runtime event bridge', () => {
         { key: `contract:${CTR}:cancelled`, summary: '"Add a parser" was cancelled: stopped by the owner' },
       ]);
       expect(h.store.getState().contracts.contracts.get(CTR)?.status).toBe('cancelled');
+      expect(h.contractDispatches()).toBe(ALL_CONTRACT_EVENTS.length);
     } finally {
       h.stop();
     }
+  });
+
+  test('the contract-only bridge adds no state dispatch or timer and unsubscribes all lifecycle handlers', async () => {
+    resetWorkstreamLabelsForTests();
+    const intervals = spyOn(globalThis, 'setInterval');
+    const h = host({ contractsOnly: true });
+    try {
+      expect(intervals).not.toHaveBeenCalled();
+      emitContractEvent(h.bus, 's1', SAMPLES.CONTRACT_CREATED);
+      emitContractEvent(h.bus, 's1', SAMPLES.CONTRACT_FAILED);
+      await delivered();
+      expect(h.lines.map((line) => line.channel)).toEqual(['contract', 'contract']);
+      expect(h.followUps[0]?.summary).toContain('"Add a parser"');
+      expect(h.contractDispatches()).toBe(0);
+      expect(h.store.getState().contracts.contracts.size).toBe(0);
+      const lineCount = h.lines.length;
+      h.stop();
+      emitContractEvent(h.bus, 's1', SAMPLES.CONTRACT_CANCELLED);
+      await delivered();
+      expect(h.lines).toHaveLength(lineCount);
+      expect(h.followUps).toHaveLength(1);
+    } finally { h.stop(); intervals.mockRestore(); }
   });
 
   test('a turn-end check that only records history writes no line', async () => {

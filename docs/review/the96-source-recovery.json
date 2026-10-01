@@ -1,0 +1,36 @@
+{
+  "purpose": "Source recovery evidence only; do not merge this branch",
+  "fullCandidateHead": "8a126390a1e1ad99da721a81d49eafd9de1430c3",
+  "fullCandidateTree": "1ed1e3bfb3559291c3f5901c12770766a76db830",
+  "sourceBase": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "missingGeneratedOutput": [
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "gitBlobOid": "6097c82cb9ff49ea8a3642565d93c39b9db8b844",
+      "sha256": "ea021270758fe0a3e28f7f1b68c669df982772ac2798e7b22cc7fef7d8358453",
+      "sizeBytes": 8564438
+    }
+  ],
+  "publicationLimit": "The large generated API blob transfer returned no result and was interrupted. Read-only reconciliation returned404 for the exact blob and intended complete branch. No upload retry was attempted.",
+  "validation": "These source files are byte-identical to the full local candidate. Focused10tests29assertions, checked SDK/engine-test/public declarations and aggregate API checks passed on that full candidate. The first API run failed on equivalent ownerReply union order; one clean declaration refresh passed with no source or snapshot change. This evidence-only tree omits the generated API output, has not passed full CI, and is not a complete publication.",
+  "sourceFiles": [
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/bootstrap-runtime-events.ts",
+      "gitBlobOid": "59cf757f91ac2b5fa46fda535421c8cf840f8155",
+      "sha256": "f1b709b5400f74d09cbfc4cd3b725d249fc5861d34b97564837a537f58294e54",
+      "sizeBytes": 20819
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/runtime/bootstrap.ts",
+      "gitBlobOid": "15ebbbfe65bf706261f814d122adb7f48c85246b",
+      "sha256": "b3cbed44950fd8b43f89bad5bd4f9dc9ad8c3e17df0199510e20b58844677109",
+      "sizeBytes": 5770
+    },
+    {
+      "path": "packages/engine/test/contract/event-consumers.test.ts",
+      "gitBlobOid": "15db9bb5717289a9b2e596d04d5a3de028c8416f",
+      "sha256": "8b9c4dcecb809b3500d57fa92efbc08e3f4e2ebc97fcd68b1b5a22348a47f5a8",
+      "sizeBytes": 14665
+    }
+  ]
+}
