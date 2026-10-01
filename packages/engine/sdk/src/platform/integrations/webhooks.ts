@@ -1,3 +1,6 @@
+import { deliveryHttpStatus, describeStructuralDeliveryError } from './delivery-diagnostics.js';
+import { NotificationEnvelope, type NotificationPrivacyReader } from '../runtime/notification-envelope.js';
+import type { NotificationDelivery } from '../runtime/turn-notification.js';
 import { logger } from '../utils/logger.js';
 import type { RuntimeEventBus, AgentEvent } from '../runtime/events/index.js';
 import type { ContractEvent } from '../../events/contract.js';
@@ -6,6 +9,27 @@ import { instrumentedFetch, createTimeoutController } from '../utils/fetch-with-
 import { isNotifySuppressed } from '../utils/notify.js';
 import { workstreamLabel } from '../channels/workstream-labels.js';
 import { HttpStatusError } from '@goodvibes-jev/engine/errors';
+
+const WEBHOOK_POLICY_ERRORS = {
+  blocked: 'WebhookNotifier: blocked URL',
+  suppressed: 'WebhookNotifier: delivery suppressed under test (pass { force: true } to enable)',
+  privacy: 'Notification privacy changed before delivery',
+} as const;
+class WebhookPolicyError extends Error {
+  constructor(readonly kind: keyof typeof WEBHOOK_POLICY_ERRORS) {
+    super(WEBHOOK_POLICY_ERRORS[kind]);
+    Object.freeze(this);
+  }
+}
+function describeWebhookError(error: unknown): string {
+  try {
+    if (error instanceof WebhookPolicyError) {
+      const kind = error.kind;
+      if (kind === 'blocked' || kind === 'suppressed' || kind === 'privacy') return WEBHOOK_POLICY_ERRORS[kind];
+    }
+  } catch { /* Even prototype/field inspection of an unknown rejection may throw. */ }
+  return describeStructuralDeliveryError(error);
+}
 
 // ---------------------------------------------------------------------------
 // WebhookNotifier
@@ -26,6 +50,7 @@ export class WebhookNotifier {
   private urls: string[];
   private unsubscribers: Array<() => void> = [];
   private readonly timeoutMs: number;
+  private readonly metadataOnly: NotificationPrivacyReader | undefined;
   private readonly maxConcurrent: number;
   private readonly maxBodyBytes: number;
   private readonly signingSecret?: string | Uint8Array | undefined;
@@ -40,6 +65,7 @@ export class WebhookNotifier {
 
   constructor(urls: string[] = [], options: WebhookNotifierOptions = {}) {
     this.urls = validateWebhookUrls(urls);
+    this.metadataOnly = options.metadataOnly;
     this.timeoutMs = normalizeWebhookTimeoutMs(options.timeoutMs);
     this.maxConcurrent = normalizePositiveInteger(options.maxConcurrent, 8, 1, 32);
     this.maxBodyBytes = normalizePositiveInteger(options.maxBodyBytes, 64 * 1024, 1_024, 256 * 1024);
@@ -50,8 +76,8 @@ export class WebhookNotifier {
   /**
    * Create a WebhookNotifier from a list of URLs (e.g. from persisted config).
    */
-  static fromConfig(urls: string[]): WebhookNotifier {
-    return new WebhookNotifier(urls);
+  static fromConfig(urls: string[], options: WebhookNotifierOptions = {}): WebhookNotifier {
+    return new WebhookNotifier(urls, options);
   }
 
   // -------------------------------------------------------------------------
@@ -103,23 +129,34 @@ export class WebhookNotifier {
    * logged and returned but do not throw, remaining URLs still receive the notification.
    */
   async send(text: string): Promise<WebhookNotifierSendResult> {
-    if (this.urls.length === 0) {
+    return this.sendEnvelope(NotificationEnvelope.legacy(text, this.metadataOnly));
+  }
+
+  /** Snapshot typed facts once; each recipient independently checks current privacy. */
+  async sendNotification(delivery: NotificationDelivery): Promise<WebhookNotifierSendResult> {
+    return this.sendEnvelope(NotificationEnvelope.typed(delivery, this.metadataOnly));
+  }
+
+  private async sendEnvelope(envelope: NotificationEnvelope): Promise<WebhookNotifierSendResult> {
+    const urls = [...this.urls];
+    if (urls.length === 0) {
       return { attempted: 0, delivered: 0, failed: 0, results: [] };
     }
 
-    const results = await mapSettledWithConcurrency(this.urls, this.maxConcurrent, (url) => this.postOne(url, text));
-    const deliveries = this.urls.map((url, i): WebhookNotifierDeliveryResult => {
+    const results = await mapSettledWithConcurrency(urls, this.maxConcurrent, (url) => this.postOne(url, envelope));
+    const deliveries = urls.map((url, i): WebhookNotifierDeliveryResult => {
       const result = results[i]!;
       if (result.status === 'fulfilled') {
         return { url, ok: true };
       }
-      const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      return { url, ok: false, error };
+      const error = describeWebhookError(result.reason);
+      const status = deliveryHttpStatus(result.reason);
+      return { url, ok: false, error, ...(status === undefined ? {} : { status }) };
     });
 
     for (const delivery of deliveries) {
       if (!delivery.ok) {
-        logger.warn('WebhookNotifier: delivery failed', { url: delivery.url, error: delivery.error });
+        logger.warn('WebhookNotifier: delivery failed', { url: delivery.url, error: delivery.error, ...(delivery.status === undefined ? {} : { status: delivery.status }) });
       }
     }
     return {
@@ -136,15 +173,18 @@ export class WebhookNotifier {
   async test(): Promise<WebhookNotifierDeliveryResult[]> {
     if (this.urls.length === 0) return [];
 
-    const results = await mapSettledWithConcurrency(this.urls, this.maxConcurrent, (url) => this.postOne(url, 'goodvibes-sdk: webhook test'));
+    const urls = [...this.urls];
+    const envelope = NotificationEnvelope.probe();
+    const results = await mapSettledWithConcurrency(urls, this.maxConcurrent, (url) => this.postOne(url, envelope));
 
-    return this.urls.map((url, i) => {
+    return urls.map((url, i) => {
       const result = results[i]!;
       if (result.status === 'fulfilled') {
         return { url, ok: true };
       } else {
-        const error = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        return { url, ok: false, error };
+        const error = describeWebhookError(result.reason);
+        const status = deliveryHttpStatus(result.reason);
+        return { url, ok: false, error, ...(status === undefined ? {} : { status }) };
       }
     });
   }
@@ -157,34 +197,43 @@ export class WebhookNotifier {
     this.detach();
 
     this.unsubscribers.push(
-      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', ({ payload }) => {
-        this.sendRuntimeNotification(`Agent completed: ${payload.agentId}`);
+      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', (event) => {
+        this.sendRuntimeNotification(() => `Agent completed: ${event.payload.agentId}`);
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<AgentEvent, { type: 'AGENT_FAILED' }>>('AGENT_FAILED', ({ payload }) => {
-        this.sendRuntimeNotification(`Agent failed: ${payload.agentId}, ${payload.error}`);
+      bus.on<Extract<AgentEvent, { type: 'AGENT_FAILED' }>>('AGENT_FAILED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `Agent failed: ${payload.agentId}, ${payload.error}`;
+        });
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', (event) => {
         // Named in plain words: a webhook body is read by whatever the operator
         // pointed it at, which makes it outward-facing text.
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} passed all its checks.`);
+        this.sendRuntimeNotification(() => `${workstreamLabel(event.payload.contractId)} passed all its checks.`);
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason}`);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason}`;
+        });
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', ({ payload }) => {
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason}`);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason}`;
+        });
       }),
     );
 
@@ -203,7 +252,7 @@ export class WebhookNotifier {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async postOne(url: string, text: string): Promise<void> {
+  private async postOne(url: string, envelope: NotificationEnvelope): Promise<void> {
     // SSRF tier filter, block requests to internal/private hosts.
     const hostname = extractHostname(url);
     if (hostname !== null) {
@@ -212,7 +261,7 @@ export class WebhookNotifier {
       // targets stay refused here alongside the absolute SSRF block.
       if (trustResult.tier === 'blocked' || trustResult.tier === 'localhost') {
         emitSsrfDeny(hostname, url, trustResult.reason);
-        throw new Error(`WebhookNotifier: blocked URL, ${trustResult.reason}`);
+        throw new WebhookPolicyError('blocked');
       }
     }
 
@@ -222,50 +271,55 @@ export class WebhookNotifier {
     // for tests that exercise this delivery layer itself.
     if (isNotifySuppressed(this.force)) {
       logger.debug('WebhookNotifier: delivery suppressed under test', { url });
-      throw new Error('WebhookNotifier: delivery suppressed under test (pass { force: true } to enable)');
+      throw new WebhookPolicyError('suppressed');
     }
 
     const signal = createTimeoutController(this.timeoutMs);
     try {
-      const body = truncateUtf8(text, this.maxBodyBytes);
-      const headers: Record<string, string> = { 'Content-Type': 'text/plain' };
-      if (this.signingSecret) {
-        Object.assign(headers, await createWebhookSignatureHeaders(body, this.signingSecret));
-      }
-      const res = await instrumentedFetch(url, {
-        method: 'POST',
-        headers,
-        body,
-        signal: signal.signal,
-      });
-      if (!res.ok) {
-        let responseText = '';
-        try {
-          responseText = await res.text();
-        } catch (error) {
-          logger.warn('WebhookNotifier: failed to read non-2xx response body', {
-            url,
-            status: res.status,
-            error: error instanceof Error ? error.message : String(error),
-          });
+      // The envelope can only downgrade once. If signing yielded while any
+      // recipient observed restriction, discard that body/signature pair and
+      // prepare/sign the redacted body once. No unbounded retry is possible.
+      for (let preparation = 0; preparation < 2; preparation += 1) {
+        const prepared = envelope.prepare();
+        const body = truncateUtf8(prepared.text, this.maxBodyBytes);
+        const headers: Record<string, string> = { 'Content-Type': 'text/plain' };
+        if (this.signingSecret) {
+          Object.assign(headers, await createWebhookSignatureHeaders(body, this.signingSecret));
         }
-        throw new HttpStatusError(`HTTP ${res.status}: ${truncateUtf8(responseText, 4_096)}`, { status: res.status });
+        if (!envelope.isCurrent(prepared.revision)) continue;
+        const res = await instrumentedFetch(url, {
+          method: 'POST', headers, body, signal: signal.signal,
+        });
+        envelope.refreshPrivacy();
+        if (!res.ok) {
+          // A remote response can echo previously permitted private content.
+          // Status is diagnostic evidence; the arbitrary body is never retained.
+          try { await res.body?.cancel(); } catch { /* status remains authoritative */ }
+          throw new HttpStatusError(`HTTP ${res.status}`, { status: res.status });
+        }
+        return;
       }
+      throw new WebhookPolicyError('privacy');
     } finally {
+      envelope.refreshPrivacy();
       signal.dispose();
     }
   }
 
-  private sendRuntimeNotification(text: string): void {
-    void this.send(text).catch((error) => {
+  private sendRuntimeNotification(readText: () => string): void {
+    // The existing envelope admits content and normalizes formatter errors.
+    // Own that synchronous admission in a promise before dispatch can fail.
+    void (async () => this.sendEnvelope(NotificationEnvelope.legacy(readText, this.metadataOnly)))().catch((error) => {
       logger.warn('WebhookNotifier: runtime event notification dispatch failed', {
-        error: error instanceof Error ? error.message : String(error),
+        error: describeStructuralDeliveryError(error),
       });
     });
   }
 }
 
 export interface WebhookNotifierOptions {
+  /** Read live on admission and every actual attempt; only literal false permits content. */
+  metadataOnly?: NotificationPrivacyReader | undefined;
   timeoutMs?: number | undefined;
   maxConcurrent?: number | undefined;
   maxBodyBytes?: number | undefined;
@@ -283,6 +337,8 @@ export interface WebhookNotifierDeliveryResult {
   readonly url: string;
   readonly ok: boolean;
   readonly error?: string | undefined;
+  /** Validated HTTP status without arbitrary response wording. */
+  readonly status?: number | undefined;
 }
 
 export interface WebhookNotifierSendResult {
