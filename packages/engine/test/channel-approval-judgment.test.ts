@@ -297,9 +297,11 @@ describe('authorization and failures are fail closed', () => {
     await h.ask();
     if (unavailable === 'target') await h.ask('export_data', 'Export customer data');
     readings.set({ unavailable });
-    await expect(h.send('approve')).rejects.toThrow('judgment unavailable');
+    await expect(h.send('approve')).rejects.toMatchObject({ kind: 'unavailable', message: 'the judgment provider could not answer' });
     expect(h.broker.listApprovals().every((record) => record.status === 'pending')).toBe(true);
-    expect(readings.log.query({ battery: unavailable === 'reply' ? REPLY_BATTERY : TARGET_BATTERY })[0]?.status).toBe('failed');
+    const [failure] = readings.log.query({ battery: unavailable === 'reply' ? REPLY_BATTERY : TARGET_BATTERY });
+    expect(failure).toMatchObject({ status: 'failed', error: { kind: 'unavailable', message: 'the judgment provider could not answer' } });
+    expect(JSON.stringify(failure)).not.toContain('judgment unavailable');
     expect(h.submitted).toEqual([]);
   });
 
@@ -308,9 +310,11 @@ describe('authorization and failures are fail closed', () => {
     const ask = await h.ask();
     await h.ask('export_data', 'Export customer data');
     readings.set({ target: ask.approval.id, unavailable: 'reply' });
-    await expect(h.send('approve the deployment')).rejects.toThrow('judgment unavailable');
+    await expect(h.send('approve the deployment')).rejects.toMatchObject({ kind: 'unavailable', message: 'the judgment provider could not answer' });
     expect(h.broker.listApprovals().every((record) => record.status === 'pending')).toBe(true);
-    expect(readings.log.query({ battery: REPLY_BATTERY })[0]?.status).toBe('failed');
+    const [failure] = readings.log.query({ battery: REPLY_BATTERY });
+    expect(failure).toMatchObject({ status: 'failed', error: { kind: 'unavailable', message: 'the judgment provider could not answer' } });
+    expect(JSON.stringify(failure)).not.toContain('judgment unavailable');
     expect(actionOf(readings.log.query({ battery: TARGET_BATTERY })[0]!)).toContain('awaiting reply reading');
   });
 

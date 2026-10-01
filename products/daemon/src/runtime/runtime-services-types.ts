@@ -1,3 +1,4 @@
+import type { BrowserJudgmentService } from '@goodvibes-jev/engine/sdk/platform/judgment-browser';
 /**
  * runtime-services-types.ts, the public contract createRuntimeServices() takes
  * and returns.
@@ -65,6 +66,8 @@ import type { DaemonInboxFactory } from './daemon-handler-composition.js';
 import type { TriggerManager } from '@goodvibes-jev/engine/sdk/platform/triggers';
 
 export interface RuntimeServicesOptions {
+  /** Explicit server-side installation. Receives this graph's recorded port, never browser credentials. */
+  readonly createBrowserJudgment?: ((judgment: JudgmentServices) => BrowserJudgmentService) | undefined;
   /** Required explicit composition until built-in inbox migration is complete. */
   readonly inboxFactory: DaemonInboxFactory;
   readonly runtimeBus: RuntimeEventBus;
@@ -225,6 +228,7 @@ export interface RuntimeServices {
   readonly contractRunner: ContractRunner;
   readonly contractOperator: ContractOperatorService;
   readonly judgment: JudgmentServices;
+  readonly browserJudgment?: BrowserJudgmentService | undefined;
   /** Canonical saved conversation plus its contract trees. */
   sessionSnapshot(sessionId: string, conversation: Omit<SessionSnapshot, 'contracts'>): SessionSnapshot;
   readonly processManager: ProcessManager;

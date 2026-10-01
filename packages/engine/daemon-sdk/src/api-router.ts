@@ -1,4 +1,5 @@
 import { dispatchAutomationRoutes } from './automation.js';
+import { dispatchBrowserJudgmentRoutes } from './browser-judgment-routes.js';
 import { dispatchGatewayRestRoutes } from './gateway-rest-routes.js';
 import { dispatchOperatorRoutes } from './operator.js';
 import { dispatchRemoteRoutes } from './remote.js';
@@ -41,6 +42,8 @@ export async function dispatchDaemonApiRoutes(
   handlers: DaemonApiRouteHandlers,
   extensions?: readonly DaemonApiRouteExtension[],
 ): Promise<Response | null> {
+  const judgment = await dispatchBrowserJudgmentRoutes(req, handlers);
+  if (judgment !== null) return judgment;
   // Gateway-hoisted verb families (skills.*, principals.*, checkin.*, ci.*,
   // channels.profiles.*, sessions.permissionMode/contextUsage) that advertise a
   // REST http binding are served here, ahead of the built-ins. Every one of

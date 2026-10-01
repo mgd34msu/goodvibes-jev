@@ -104,12 +104,21 @@ describe('failover groups', () => {
   ];
 
   test('entries are grouped only after the identity readings say they are the same model', async () => {
-    const { port } = identityPort((state) => (JSON.stringify(state).includes('"id":"opus-5"') ? 'beta:vendor/opus-5' : 'none'));
+    const matches: Readonly<Record<string, string>> = { 'opus-5': 'beta:vendor/opus-5', 'vendor/opus-5': 'alpha:opus-5' };
+    // Read the queried model, not an id that merely occurs among its candidates.
+    const pick = (state: EntryType): string => matches[(state as { context: { model: { id: string } } }).context.model.id] ?? 'none';
+    const { port, requests } = identityPort(pick);
     installJudgmentPort(port);
     const identities = new SyntheticIdentities({ models: () => models });
     expect(buildSyntheticCanonicalModels(models, identities)).toEqual([]);
     const asked = await identities.readAll(models);
     expect(asked).toBe(3);
+    for (const request of requests) {
+      const question = request.questions['pick']!;
+      expect(question.type).toBe('choice');
+      if (question.type !== 'choice') throw new Error('expected the identity Choice question');
+      expect(Object.hasOwn(question.criteria, pick(request.state))).toBe(true);
+    }
     const groups = buildSyntheticCanonicalModels(models, identities);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.backends.map((backend) => backend.registryKey)).toEqual(['alpha:opus-5', 'beta:vendor/opus-5']);

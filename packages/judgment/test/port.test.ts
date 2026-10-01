@@ -101,6 +101,9 @@ describe('createSystemOnePort', () => {
     ['noul out of range', { ...GOOD_ANSWERS, urgent: { type: 'noul', noul: 1.4 } }],
     ['choice outside criteria', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, choice: 'sales' } }],
     ['choice missing a probability', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, probabilities: { billing: 1 } } }],
+    ['choice has zero total probability', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, probabilities: { billing: 0, technical: 0 } } }],
+    ['choice exceeds unit total probability', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, probabilities: { billing: 1, technical: 1 } } }],
+    ['choice is not a maximum', { ...GOOD_ANSWERS, team: { ...GOOD_ANSWERS.team, probabilities: { billing: 0.1, technical: 0.9 } } }],
     ['score above the top level', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, score: 2.5 } }],
     ['score missing a level', { ...GOOD_ANSWERS, mood: { ...GOOD_ANSWERS.mood, probabilities: { '0': 1 } } }],
   ])('treats %s as an invalid response', async (_label, answers) => {
