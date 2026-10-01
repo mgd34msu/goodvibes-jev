@@ -23,6 +23,7 @@ export { JUDGMENT_EVAL_SUITE, judgmentEvalScenarios } from './judgment-suite.js'
 export { EvalRegistry } from './eval-registry.js';
 export {
   COST_HISTORY_LENGTH,
+  COST_TRACKER_MAX_AGENTS,
   CostTracker,
   type CostTrackerOptions,
   type CostTrackerUsage,
