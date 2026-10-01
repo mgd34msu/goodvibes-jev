@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-agent-source-recovery",
+  "evidenceParent": "9186d97ab00a3db0a6f4b158b659630d494a0177",
+  "evidenceParentTree": "1a3db866ef041863b0092edc2a4c8eed271ff88f",
+  "runtimePathsUnchanged": true,
+  "earlierCheckpointArtifactsUnchanged": true,
+  "source": {
+    "commit": "119467cf5b60bd51232af3613d66ccc80933d42d",
+    "tree": "1bcc7514e310c0958890e47bce5c9ed65f9cd45d",
+    "baseCommit": "74a344ad46bdd0eee004e1a121f1842c343378fa",
+    "baseTree": "5cd5cb06bdfa17593a4b1e746dc8ded14de70e0d",
+    "changedPaths": 21,
+    "scope": "products/agent only",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "a715aa59af17c631c12076c0847e90f61d958e282165405b15131ba099861030"
+  },
+  "reconstruction": {
+    "priorEvidenceCommit": "9186d97ab00a3db0a6f4b158b659630d494a0177",
+    "priorPacketDirectory": "docs/review/recovery/agent/checkpoints/74a344ad",
+    "method": "Reconstruct 74a344ad through prior public-source evidence, decompress and apply source.patch.gz in that disposable index, and verify the complete final tree",
+    "patch": {
+      "bytes": 95164,
+      "sha256": "54727c11c350d13bf68c0723820047668bf552737ed6fdf7f0e951005fcaaec1",
+      "gzipBytes": 25662,
+      "gzipSha256": "d01ab21e19d134281bb85a14bf69f891e96596ec77f006b460b05f3a8f5ebb0c"
+    },
+    "verifiedTree": "1bcc7514e310c0958890e47bce5c9ed65f9cd45d",
+    "exactTemporaryIndexReconstruction": "passed",
+    "unpublishedLocalCommitsRequired": false
+  },
+  "postimages": [
+    {
+      "path": "products/agent/RECOVERY.md",
+      "gitBlob": "b3b0902df4919b68da71a89fd3e2470e36043fdf",
+      "bytes": 4310,
+      "sha256": "a46935f93e37012d8ce78a85673fa7326225b9fdce62271f4a9e9e4da087738a"
+    },
+    {
+      "path": "products/agent/src/cli/fleet-command.ts",
+      "gitBlob": "f09b113668bbbf58cbc7ad405d835ee5f695699b",
+      "bytes": 7235,
+      "sha256": "d4a70f11a42aafd3b925de75ded7b3bbcf97811f47387bcb1fc36e5e3f33d118"
+    },
+    {
+      "path": "products/agent/src/cli/management.ts",
+      "gitBlob": "8fe6b593f65905668aaad7d986b1db0fe63c21e6",
+      "bytes": 32611,
+      "sha256": "4973c81655041a8fbebc3ad03296a84431ae8237c268ac088774325384b96a5c"
+    },
+    {
+      "path": "products/agent/src/core/agent-view-render.ts",
+      "gitBlob": "3a7a7110f0db38e90c88b0158225f1aa5c0c2497",
+      "bytes": 8007,
+      "sha256": "095efe2181a9fb486e5967bcd7620efc14c6df3830e7260b416dbdb3a28b51c2"
+    },
+    {
+      "path": "products/agent/src/core/conversation-render-context.ts",
+      "gitBlob": "e7c5bfd0811a2a9957168673baa5ce2e4633f131",
+      "bytes": 4783,
+      "sha256": "c50bdf0cfd5e0cc548e3e3814470fd34770eb96b321bc6c00426726eafdc006c"
+    },
+    {
+      "path": "products/agent/src/core/work-tree-contract.ts",
+      "gitBlob": "bcdf0684921e443a10c908676741b50f9e76f8b8",
+      "bytes": 7645,
+      "sha256": "102a7f000ee6f1f8cc4172277cf73fc85b36b5dbf0e5f91d41737e58cde1517e"
+    },
+    {
+      "path": "products/agent/src/core/work-tree-model.ts",
+      "gitBlob": "8c493a9f00b59bfd7b3a29c40acbd72886b906a9",
+      "bytes": 34238,
+      "sha256": "4855e63348c7b30566874677271112642a4a4776c10967621f7a9daaae60f85e"
+    },
+    {
+      "path": "products/agent/src/core/work-tree-sources.ts",
+      "gitBlob": "b798adde3669f72f992c17bc0efa2c9560f4d603",
+      "bytes": 7015,
+      "sha256": "da6b9c6a09f66b51f0475f523e03e862a3a99f7ca767c8d5c630bfee1f1e9629"
+    },
+    {
+      "path": "products/agent/src/core/work-tree-wiring.ts",
+      "gitBlob": "a8ea2e980221564224cb8aaa747e6dd265de5194",
+      "bytes": 8315,
+      "sha256": "5b7948c1019df10d0eec310109dd3610ab98aba8aa3f4afcab99a67df1d311fc"
+    },
+    {
+      "path": "products/agent/src/input/commands/conversation-runtime.ts",
+      "gitBlob": "844b73b45560e5bea5b57e0d3c5c50e2dd0acbb2",
+      "bytes": 9019,
+      "sha256": "44007d5883a8e31575dfbb5c5a54c56812a0ed0a5dae8ce41be1acc5287bac75"
+    },
+    {
+      "path": "products/agent/src/input/commands/session-workflow.ts",
+      "gitBlob": "5d57d49a7a9081466a41463b5f7cf3661ae65bf2",
+      "bytes": 20942,
+      "sha256": "196e7d309dbd9c200507b6bc0030eda895008ff2ed2d1d571bbced92a24a1f8f"
+    },
+    {
+      "path": "products/agent/src/interactive.ts",
+      "gitBlob": "6e96c27b585f434c462ba6d16c5a83af4ef9dea7",
+      "bytes": 41961,
+      "sha256": "ca2113a8d625b400259d409ae478a2f401394229f5aa943128eb484f1ce55a44"
+    },
+    {
+      "path": "products/agent/src/renderer/lane-graph/bead.ts",
+      "gitBlob": "a0cf5530667468f505b4eaaf59aef3d2b7906d03",
+      "bytes": 36843,
+      "sha256": "4a63e5a7c0c22c09a9178d9a86b6228cdd3807c1196f7afe5b1869de7edeb956"
+    },
+    {
+      "path": "products/agent/src/renderer/lane-graph/paint.ts",
+      "gitBlob": "dcbcc8196c06d67389a221fbeac80f009f3772ea",
+      "bytes": 24482,
+      "sha256": "24ff8c4b82ab830d576fac3616d655ec603417b29010b08f87246592b0347000"
+    },
+    {
+      "path": "products/agent/src/runtime/index.ts",
+      "gitBlob": "6cda4a464b7c80dc549bb09c0df359002281c2e9",
+      "bytes": 36074,
+      "sha256": "d434bc1185225a01f9a06fd099508e461d173b6ce1a4da4d970cd990f683474d"
+    },
+    {
+      "path": "products/agent/src/runtime/store/domains/index.ts",
+      "gitBlob": "26253b291d84aef71a2d8c1d567c9a93b4e7bff4",
+      "bytes": 5251,
+      "sha256": "8652b7975c52797c107d0be44eadb4d9e5649bb9780c740b658c8b1fe59a1a75"
+    },
+    {
+      "path": "products/agent/src/runtime/ui-read-models.ts",
+      "gitBlob": "0eea779307e4bb6931ec5d4a27b30988002a50f5",
+      "bytes": 2073,
+      "sha256": "82981d59bf8ea5209443dcc1dd3d24ab7ee9fd3f9379ac7140469220d8e08948"
+    },
+    {
+      "path": "products/agent/src/shell/session-views.ts",
+      "gitBlob": "fc0a14346dd486d3885429f46174d713b20b069c",
+      "bytes": 29758,
+      "sha256": "5171eb65dc48bbed85ccc01b4c7e41988ae8ae67d2e28522b1f279d99ab48320"
+    },
+    {
+      "path": "products/agent/src/test/cli/fleet-command.test.ts",
+      "gitBlob": "975a59b60cbd68a515e50ec252b2062f9a044a05",
+      "bytes": 4585,
+      "sha256": "b0b39dfb6694ab602ad381b5960a5fd6b0d93dbd890c0139aff8ea1642aa9539"
+    },
+    {
+      "path": "products/agent/src/test/core/work-tree-contract.test.ts",
+      "gitBlob": "801783234fff8d02a52b2bfb0dad62a3cd7345ee",
+      "bytes": 12355,
+      "sha256": "ba8bf585e52e087fe56770cd191b02a1674e459b6b6d9c1911bdf780e2cdde72"
+    },
+    {
+      "path": "products/agent/src/test/helpers/contract-work-tree-fixtures.ts",
+      "gitBlob": "a461de44d6d7471c37cc227d9a844dc92be88d7b",
+      "bytes": 2152,
+      "sha256": "b2a50b6ed011f374bb2a413466aa33a5fb49ed62fe1c4e9dd0987368c8067135"
+    }
+  ],
+  "proof": {
+    "focusedTests": {
+      "status": "passed",
+      "tests": 311,
+      "assertions": 2830,
+      "files": 26,
+      "appliesOnlyTo": "119467cf5b60bd51232af3613d66ccc80933d42d",
+      "scope": "Ordinary contract-view/fleet adapters and combined component regressions"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "fullSourceTypes": {
+      "status": "queued_at_source_checkpoint",
+      "passingExactCheckpointProof": false
+    },
+    "actualMain": {
+      "status": "not_passed",
+      "reason": "Held notification seam remains unresolved at this snapshot"
+    },
+    "binaryInteractiveAcceptance": {
+      "status": "not_established"
+    },
+    "logsArchive": {
+      "path": "proof-logs.tar.gz",
+      "gzipBytes": 11182,
+      "gzipSha256": "bc81c496b0eff9bef1e347e7eb838f36ca96bcdd7556c358fae73a9be1a72444",
+      "members": {
+        "contract-view-combined.log": {
+          "bytes": 34843,
+          "sha256": "bf821c2c18038cd010a12ce9db142f936c34cfd03b0ffe1197e09b2ebc0facf1"
+        },
+        "contract-view-combined.exit": {
+          "bytes": 2,
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+        },
+        "contract-view-combined-command.json": {
+          "bytes": 1312,
+          "sha256": "c585e0c71adda699f0ffaa33acb4495f66d61839a86957f35b535628afe913ed"
+        },
+        "contract-cli-views-verified.log": {
+          "bytes": 5857,
+          "sha256": "4811cdab98e7c3f1e09c10e30f3b3ca45bce0ee70d8e667ed9f582abde04b519"
+        },
+        "contract-cli-views-offline.log": {
+          "bytes": 3804,
+          "sha256": "a5c81de14923f613eda5add51655fc6db2acf55a261f9d8b783d8c2dd779d0e1"
+        },
+        "contract-view-source-inputs.json": {
+          "bytes": 1155,
+          "sha256": "bf3a2778bf9f1507e132bd5ce0a51b7d7b2c69cde6d35f006dc040241447c00d"
+        },
+        "contract-view-checkpoint.log": {
+          "bytes": 638,
+          "sha256": "c8421102c39d3c88c872a4eef91a8ea9653938c5bee820da352ae8d8121a53af"
+        }
+      },
+      "deterministicMetadata": true
+    }
+  },
+  "credentialPreflight": {
+    "patchAndAllPostimagesAndProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "verifiedInputsIdenticalToPublicMain": [
+        "packages/engine/sdk/src",
+        "packages/engine/scripts",
+        "packages/engine/etc",
+        "packages/engine/package.json",
+        "packages/engine/errors/src",
+        "packages/judgment/src",
+        "packages/judgment/package.json"
+      ],
+      "scope": "Fresh exact SDK credential inputs only; not full Agent product coverage"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "versioning": "311/2830 belongs only to 119467cf. Later diagnostic reductions and private-update changes are not included or attributed to this checkpoint.",
+  "outstandingGates": [
+    "Notification dependency repair/reconciliation and actual main acceptance",
+    "Full source and consumer type acceptance",
+    "Interactive and binary/end-to-end acceptance",
+    "Remaining private-workspace and semantic migration obligations",
+    "Source review and full repository/product CI",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply its patch to main."
+}

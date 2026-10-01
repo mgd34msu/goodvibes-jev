@@ -1,0 +1,63 @@
+{
+  "base": "74a344ad46bdd0eee004e1a121f1842c343378fa",
+  "head": "119467cf5b60bd51232af3613d66ccc80933d42d",
+  "tree": "1bcc7514e310c0958890e47bce5c9ed65f9cd45d",
+  "patch": {
+    "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-checkpoint.patch",
+    "sha256": "54727c11c350d13bf68c0723820047668bf552737ed6fdf7f0e951005fcaaec1"
+  },
+  "sourcePaths": [
+    "products/agent/RECOVERY.md",
+    "products/agent/src/cli/fleet-command.ts",
+    "products/agent/src/cli/management.ts",
+    "products/agent/src/core/agent-view-render.ts",
+    "products/agent/src/core/conversation-render-context.ts",
+    "products/agent/src/core/work-tree-contract.ts",
+    "products/agent/src/core/work-tree-model.ts",
+    "products/agent/src/core/work-tree-sources.ts",
+    "products/agent/src/core/work-tree-wiring.ts",
+    "products/agent/src/input/commands/conversation-runtime.ts",
+    "products/agent/src/input/commands/session-workflow.ts",
+    "products/agent/src/interactive.ts",
+    "products/agent/src/renderer/lane-graph/bead.ts",
+    "products/agent/src/renderer/lane-graph/paint.ts",
+    "products/agent/src/runtime/index.ts",
+    "products/agent/src/runtime/store/domains/index.ts",
+    "products/agent/src/runtime/ui-read-models.ts",
+    "products/agent/src/shell/session-views.ts",
+    "products/agent/src/test/cli/fleet-command.test.ts",
+    "products/agent/src/test/core/work-tree-contract.test.ts",
+    "products/agent/src/test/helpers/contract-work-tree-fixtures.ts"
+  ],
+  "status": "Ordinary contract view/fleet adapter source checkpoint.311 tests/2830 assertions pass; full type check queued; main remains blocked on held notification seam. No shared engine edits or stopped overlay.",
+  "proofs": [
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-combined.log",
+      "sha256": "bf821c2c18038cd010a12ce9db142f936c34cfd03b0ffe1197e09b2ebc0facf1"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-combined.exit",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-combined-command.json",
+      "sha256": "c585e0c71adda699f0ffaa33acb4495f66d61839a86957f35b535628afe913ed"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-cli-views-verified.log",
+      "sha256": "4811cdab98e7c3f1e09c10e30f3b3ca45bce0ee70d8e667ed9f582abde04b519"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-cli-views-offline.log",
+      "sha256": "a5c81de14923f613eda5add51655fc6db2acf55a261f9d8b783d8c2dd779d0e1"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-source-inputs.json",
+      "sha256": "bf3a2778bf9f1507e132bd5ce0a51b7d7b2c69cde6d35f006dc040241447c00d"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/contract-view-checkpoint.log",
+      "sha256": "c8421102c39d3c88c872a4eef91a8ea9653938c5bee820da352ae8d8121a53af"
+    }
+  ]
+}
