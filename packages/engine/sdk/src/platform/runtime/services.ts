@@ -56,6 +56,7 @@ import { emitProviderVoiceUsage } from './emitters/providers.js';
 import { AppendOnlyRetentionScheduler, runStartupAppendOnlySweep } from './retention/append-only-registry.js';
 import { createDisposalScope, registerRuntimePollers } from './disposal.js';
 import { composeJudgment, type JudgmentServices } from './judgment-services.js';
+import type { BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
 import { resolveMemoryVectorDbPath } from '../state/memory-vector-store.js';
 import type { RuntimeEventBus } from './events/index.js';
 import { createDomainDispatch } from './store/index.js';
@@ -240,6 +241,8 @@ export interface RuntimeServices {
   readonly memoryRegistry: MemoryRegistry;
   /** The installed judgment port and the state root's decision log. */
   readonly judgment: JudgmentServices;
+  /** Optional borrowed browser transport capability; its host retains async lifecycle ownership. */
+  readonly browserJudgment?: BrowserJudgmentCapability | undefined;
   /** Repo code index (Stage A): schema-initialized eagerly; the build is never auto-triggered here (would walk arbitrary workingDirectories incl. test fixtures). */
   readonly codeIndexStore: CodeIndexStore;
   /** Stage B tool-site incremental reindex scheduler (bound to codeIndexStore). */

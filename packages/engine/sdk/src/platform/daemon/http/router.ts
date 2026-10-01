@@ -1,4 +1,6 @@
 import type { ConfigManager } from '../../config/manager.js';
+import { deriveControlPlaneBaseUrl, readControlPlaneBinding } from '../../config/control-plane-base-url.js';
+import { createBrowserJudgmentHttpHandler, type BrowserJudgmentCapability } from '@goodvibes-jev/engine/daemon-sdk';
 import type { ServiceRegistry } from '../../config/service-registry.js';
 import { isValidConfigKey } from '../../config/schema.js';
 import { createCredentialStatusProvider } from '../../config/credential-status.js';
@@ -141,6 +143,8 @@ interface DaemonHttpRouterContext {
   readonly runtimeStore: RuntimeStore | null;
   readonly runtimeDispatch: DomainDispatch | null;
   readonly batchManager?: DaemonBatchManager | null | undefined;
+  /** Borrowed from the runtime graph; the graph owns admission shutdown and awaited drain. */
+  readonly browserJudgment?: BrowserJudgmentCapability | undefined;
   readonly githubWebhookSecret: string | null;
   readonly authToken: () => string | null;
   readonly buildSurfaceAdapterContext: () => SurfaceAdapterContext;
@@ -647,7 +651,22 @@ export class DaemonHttpRouter {
         new KnowledgeGraphqlService(this.context.agentKnowledgeService),
       )),
     };
-    return dispatchDaemonApiRoutes(req, handlers, [
+    const postBrowserJudgment = createBrowserJudgmentHttpHandler({
+      authenticate: (request) => {
+        const token = this.context.extractAuthToken(request);
+        return token ? this.context.describeAuthenticatedPrincipal(token) : null;
+      },
+      sameOrigins: () => {
+        const binding = readControlPlaneBinding((key) => this.getConfigValue(key));
+        return (['loopback', 'external'] as const).flatMap((audience) => {
+          try { return [new URL(deriveControlPlaneBaseUrl(binding, audience)).origin]; }
+          catch { return []; }
+        });
+      },
+      cors: () => resolveWebuiServingPosture(this.context.configManager).cors,
+      service: this.context.browserJudgment,
+    });
+    return dispatchDaemonApiRoutes(req, { ...handlers, postBrowserJudgment }, [
       (candidate) => dispatchAliasedKnowledgeRoutes(candidate, '/api/goodvibes-agent/knowledge', agentKnowledgeHandlers),
       clusterGroupRouteExtension(() => this.clusterGroupVerbs, {
         requireAdmin: (candidate) => this.context.requireAdmin(candidate),

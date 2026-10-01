@@ -819,6 +819,11 @@
       "types": "./sdk/dist/platform/pairing/index.d.ts",
       "import": "./sdk/dist/platform/pairing/index.js"
     },
+    "./sdk/platform/judgment-browser": {
+      "bun": "./sdk/src/platform/judgment-browser/index.ts",
+      "types": "./sdk/dist/platform/judgment-browser/index.d.ts",
+      "import": "./sdk/dist/platform/judgment-browser/index.js"
+    },
     "./sdk/platform/gate": {
       "bun": "./sdk/src/platform/gate/index.ts",
       "types": "./sdk/dist/platform/gate/index.d.ts",

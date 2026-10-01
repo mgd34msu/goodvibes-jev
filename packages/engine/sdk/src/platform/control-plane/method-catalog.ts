@@ -1,3 +1,4 @@
+import { builtinBrowserJudgmentMethodDescriptors } from './method-catalog-browser-judgment.js';
 import {
   builtinGatewayAdminMethodDescriptors,
 } from './method-catalog-admin.js';
@@ -131,6 +132,7 @@ const BUILTIN_GATEWAY_EVENTS: readonly GatewayEventDescriptor[] = builtinGateway
 
 const BUILTIN_GATEWAY_METHODS: readonly GatewayMethodDescriptor[] = [
   ...builtinGatewayControlMethodDescriptors,
+  ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,
   ...builtinGatewayChannelTestMethodDescriptors,
   ...builtinGatewayCostMethodDescriptors,
