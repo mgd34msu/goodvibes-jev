@@ -6,6 +6,9 @@ import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { repairProfileFixtureReading, repairUsefulFixtureReading, type RepairProfileFixtureValues, type RepairUsefulFixtureValues } from './repair-profile-fixture-readings.js';
 export interface AnswerFixtureReadings {
+  gapSubject?: number;
+  /** Exact authored new/previous question pairs; equality only covers literal repeated fixture requests. */
+  gapEquivalence?: ReadonlyArray<readonly [string, string, number]>;
   /** Exact authored original span outcomes; absent spans receive a settled no. */
   excerpts?: ReadonlyArray<readonly [string, number]>;
   /** Authored exact category/value pairs; unlisted source spans are never selected. */
@@ -39,6 +42,12 @@ export function useKnowledgeAnswerReadings(defaults: Pick<AnswerFixtureReadings,
   let fake = makePort();
   function makePort() {
     return fakePort((name, question, state) => {
+      if (name === 'gapSubject') return noulAnswer(table.gapSubject ?? 0.01);
+      if (name === 'sameQuestion') {
+        const input = state as { question: { query: string }; candidate: { query: string } };
+        return noulAnswer(table.gapEquivalence?.find(([query, previous]) => query === input.question.query && previous === input.candidate.query)?.[2]
+          ?? (input.question.query === input.candidate.query ? 0.99 : 0.01));
+      }
       if (name === 'excerptUseful') {
         const text = (state as { candidate?: { text?: string } }).candidate?.text;
         return noulAnswer(table.excerpts?.find(([original]) => original === text)?.[1] ?? 0.01);

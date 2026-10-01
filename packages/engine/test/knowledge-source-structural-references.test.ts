@@ -21,6 +21,7 @@ import { supportHash } from '../sdk/src/platform/knowledge/semantic/verification
 import { sourceRankingContent } from '../sdk/src/platform/knowledge/semantic/answer-source-ranking.js';
 import { enrichKnowledgeSource } from '../sdk/src/platform/knowledge/semantic/enrichment.js';
 import { sourceSemanticHash } from '../sdk/src/platform/knowledge/semantic/utils.js';
+import { prepareAnswerGapUniverse } from '../sdk/src/platform/knowledge/semantic/answer-gaps.js';
 
 const spaceId = 'homeassistant:house';
 let previous: JudgmentPort | undefined; const roots: string[] = [], services: HomeGraphService[] = [];
@@ -44,6 +45,33 @@ function candidate(source: GeneratedFactSupportInput['source'], extraction: Gene
 }
 
 describe('fresh generated source and extraction references (THE36)', () => {
+  test('answer-gap equivalence retains the actual minted URI proof through structural snapshots', async () => {
+    const fake = readings(); const { store, source, dbPath } = await fixture('00001af0');
+    expect(judgmentInputProblem(source.canonicalUri)).toBe('card-material');
+    const question = 'What is the power consumption of the AC-7?';
+    const prepare = () => prepareAnswerGapUniverse(store, spaceId, question).prepare({ spaceId, sources: [source] });
+    const first = await (await prepare().read()).persist('No evidence establishes power consumption.');
+    const before = fake.requests.length;
+    const second = await (await prepare().read()).persist('The question remains unanswered.');
+    expect(second?.id).toBe(first?.id); expect(fake.requests.length).toBeGreaterThan(before);
+    expect(JSON.stringify(fake.requests.slice(before))).not.toContain(source.canonicalUri!);
+    expect(JSON.stringify(fake.requests.slice(before))).not.toContain(source.id);
+    expect(second?.sourceId).toBe(source.id); expect(store.getSource(source.id)?.canonicalUri).toBe(source.canonicalUri);
+    const reopened = new KnowledgeStore({ dbPath }); await reopened.init(); const unknown = reopened.getSource(source.id)!;
+    const requests = fake.requests.length;
+    await expect(prepareAnswerGapUniverse(reopened, spaceId, question).prepare({ spaceId, sources: [unknown] }).read()).rejects.toBeInstanceOf(JudgmentInputError);
+    expect(fake.requests).toHaveLength(requests);
+  });
+
+  test('answer-gap source URI text receives privacy checks without a producer proof', async () => {
+    readings(); const { store, source } = await fixture('00001af0');
+    const unknown = await store.upsertSource({ ...structuredClone(source), id: 'copied-source', canonicalUri: 'https://manuals.example.test/4111111111111111' });
+    const fake = readings();
+    await expect(prepareAnswerGapUniverse(store, spaceId, 'What is its power consumption?')
+      .prepare({ spaceId, sources: [unknown] }).read()).rejects.toMatchObject({ name: 'JudgmentInputError', problem: 'card-material' });
+    expect(fake.requests).toHaveLength(0);
+  });
+
   test('the real generator reproduces a protected-shaped source identity without changing its value', () => {
     expect(homeGraphSourceId(spaceId, 'note', 'synthetic-artifact-323')).toBe('hg-src-1470179648492cbe3c32885b');
     expect(judgmentInputProblem(homeGraphSourceId(spaceId, 'note', 'synthetic-artifact-323'))).toBe('card-material');

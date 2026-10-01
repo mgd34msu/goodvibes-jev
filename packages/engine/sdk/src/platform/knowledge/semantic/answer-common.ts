@@ -30,34 +30,6 @@ export type AnswerFactRecord = KnowledgeNodeRecord & {
   readonly linkedObjectIds?: readonly string[] | undefined;
 };
 
-export const GENERIC_ANSWER_INTENT_TOKENS = new Set([
-  'capabilities',
-  'capability',
-  'configuration',
-  'configure',
-  'device',
-  'feature',
-  'features',
-  'function',
-  'functions',
-  'install',
-  'mode',
-  'modes',
-  'procedure',
-  'setting',
-  'settings',
-  'setup',
-  'spec',
-  'specification',
-  'specifications',
-  'specs',
-  'object',
-  'support',
-  'supported',
-  'supports',
-  'thing',
-]);
-
 export function isBroadKnowledgeSpaceAlias(spaceId: string): boolean {
   return normalizeKnowledgeSpaceId(spaceId) === 'homeassistant';
 }
