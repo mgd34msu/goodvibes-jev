@@ -246,6 +246,20 @@ describe('source preflight and retention boundary', () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  test('choice confidence is preserved separately from its selected probability', async () => {
+    // TypeSafe's documented Choice example has a .61 maximum with .42 confidence.
+    // Confidence summarizes the distribution, rather than repeating its maximum.
+    const answer = { type: 'choice' as const, choice: 'ok', confidence: 0.42,
+      probabilities: { ok: 0.61, warning: 0.35, bad: 0.04, neutral: 0 } };
+    const fake = configured(() => answer);
+    expect(await readStatusTone(fake.port, { kind: 'text', vocabulary: 'badge', status: 'available', domain: 'session' }))
+      .toEqual({ status: 'uncertain', reason: 'unsettled', outcome: 'escalate' });
+    expect(fake.entries).toHaveLength(1);
+    const entry = fake.entries[0];
+    if (!entry || !('answers' in entry)) throw new Error('Expected a recorded successful judgment response');
+    expect(entry.answers).toEqual({ badge: answer });
+  });
+
   test('strict answer validation rejects extra fields/answers and contradictory distributions', () => {
     const questions = { match: commandRankBattery.items.match.question };
     for (const answers of [null, {}, { match: null }, { match: noulAnswer(-0.1) }, { match: noulAnswer(Infinity) }, { match: { ...noulAnswer(0.9), explanation: 'echoed private input' } }, { match: noulAnswer(0.9), extra: noulAnswer(0.9) }]) {
@@ -253,7 +267,7 @@ describe('source preflight and retention boundary', () => {
     }
     const choices = { badge: statusToneBattery.items.badge.question };
     const valid = choiceAnswer(choices.badge, 'ok', 0.9);
-    for (const answer of [{ ...valid, confidence: 0.8 }, { ...valid, choice: 'other' }, { ...valid, probabilities: { ...valid.probabilities, neutral: 0.5 } }, { ...valid, probabilities: { ok: 0.9 } }, { ...valid, probabilities: { ...valid.probabilities, other: 0 } }]) {
+    for (const answer of [{ ...valid, confidence: 1.1 }, { ...valid, choice: 'warning' }, { ...valid, choice: 'other' }, { ...valid, probabilities: { ...valid.probabilities, neutral: 0.5 } }, { ...valid, probabilities: { ok: 0.9 } }, { ...valid, probabilities: { ...valid.probabilities, other: 0 } }]) {
       expect(() => validateWebuiAnswers(choices, { badge: answer })).toThrow('Invalid WebUI judgment response.');
     }
     expect(validateWebuiAnswers(choices, { badge: valid })).toMatchObject({ badge: valid });

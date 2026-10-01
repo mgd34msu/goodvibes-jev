@@ -52,7 +52,7 @@ function array(value: unknown, max: number): readonly unknown[] {
 /**
  * Strict pre-log answer projection for the first three WebUI batteries.
  * Unlike the foundation wire check this rejects extensions, omitted/extra
- * options, inconsistent choice confidence, and non-normalized distributions.
+ * options, non-maximal choices, and non-normalized distributions.
  */
 export function validateWebuiAnswers<Q extends Questions>(questions: Q, raw: unknown): JudgmentResult<Q>['answers'] {
   try {
@@ -76,9 +76,10 @@ export function validateWebuiAnswers<Q extends Questions>(questions: Q, raw: unk
       const confidence = probability(answer['confidence']);
       const values = Object.values(probabilities);
       // Numerical representation tolerance, not a semantic confidence threshold.
+      // TypeSafe confidence summarizes distribution shape; it is not the
+      // selected option's probability (https://docs.typesafe.ai/confidence).
       if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > 1e-6
-        || Math.abs(probabilities[selected]! - confidence) > 1e-6
-        || values.some((value) => value > confidence + 1e-6)) return INVALID();
+        || values.some((value) => value > probabilities[selected]! + 1e-6)) return INVALID();
       return [name, { type: 'choice', choice: selected, confidence, probabilities }];
     });
     return Object.fromEntries(entries) as JudgmentResult<Q>['answers'];
