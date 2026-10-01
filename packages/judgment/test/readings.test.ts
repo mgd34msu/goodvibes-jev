@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   STAKES_BANDS,
+  JudgmentError,
   assertBand,
   readChoice,
   readScore,
@@ -9,6 +10,7 @@ import {
   type ScoreResponse,
   type YesNoBand,
 } from '../src/index.ts';
+import { choiceAnswer } from '../src/testing/index.ts';
 
 const BAND: YesNoBand = { yes: { actAt: 0.8, confirmAt: 0.6 }, no: { actAt: 0.8, confirmAt: 0.6 } };
 const noul = (p: number) => ({ type: 'noul', noul: p }) as const;
@@ -54,7 +56,7 @@ describe('readChoice', () => {
     type: 'choice',
     choice: choiceLabel,
     confidence,
-    probabilities: { check_balance: 0, approve_transfer: 0 },
+    probabilities: { check_balance: choiceLabel === 'check_balance' ? 0.8 : 0.2, approve_transfer: choiceLabel === 'approve_transfer' ? 0.8 : 0.2 },
   });
   const band = {
     actAt: 0.6,
@@ -76,6 +78,31 @@ describe('readChoice', () => {
   test('carries the choice and its probabilities', () => {
     const reading = readChoice(answer('check_balance', 0.9), band);
     expect(reading).toMatchObject({ kind: 'choice', choice: 'check_balance', confidence: 0.9 });
+  });
+
+  test.each([
+    { a: 0, b: 0, c: 0, d: 0 },
+    { a: 1, b: 1, c: 1, d: 1 },
+    { a: 0.1, b: 0.9, c: 0, d: 0 },
+  ])('refuses malformed or nonmaximal choice distributions', (probabilities) => {
+    expect(() => readChoice({ type: 'choice', choice: 'a', confidence: 0.99, probabilities }, band)).toThrow(JudgmentError);
+  });
+
+  test('preserves independent confidence and permits a tied maximum', () => {
+    const reading = readChoice({ type: 'choice', choice: 'returns', confidence: 0.42,
+      probabilities: { returns: 0.61, billing: 0.35, shipping: 0.04 } }, { actAt: 0.8, confirmAt: 0.5 });
+    expect(reading).toEqual({ kind: 'choice', choice: 'returns', confidence: 0.42,
+      probabilities: { returns: 0.61, billing: 0.35, shipping: 0.04 }, outcome: 'escalate' });
+    expect(readChoice({ type: 'choice', choice: 'b', confidence: 0,
+      probabilities: { a: 0.5, b: 0.5 } }, { actAt: 0.8, confirmAt: 0.5 }).choice).toBe('b');
+  });
+
+  test('the weak-confidence helper still creates a valid, genuinely uncertain answer', () => {
+    const weak = choiceAnswer({ type: 'choice', instructions: 'Choose', criteria: { a: null, b: null } }, 'a', 0.3);
+    expect(weak.confidence).toBe(0.3);
+    expect(weak.probabilities.a).toBeGreaterThanOrEqual(weak.probabilities.b!);
+    expect(readChoice(weak as ChoiceResponse<{ a: null; b: null }>, { actAt: 0.8, confirmAt: 0.5 }))
+      .toMatchObject({ choice: 'a', confidence: 0.3, outcome: 'escalate' });
   });
 });
 

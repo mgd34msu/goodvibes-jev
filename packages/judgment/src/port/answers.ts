@@ -52,11 +52,41 @@ function headlineProblem(question: Question, answer: RawAnswer): string | undefi
   return undefined;
 }
 
+/** Choice is an argmax over a unit distribution; confidence is a separate statistic. */
+function choiceDistributionProblem(question: Question, answer: RawAnswer): string | undefined {
+  if (question.type !== 'choice') return undefined;
+  const values = distributionKeys(question).map((key) => answer.probabilities![key]!);
+  // Accommodate only accumulated IEEE-754 addition error, not missing mass or
+  // a confidence/calibration threshold. Never renormalize an endpoint's answer.
+  const roundoff = Number.EPSILON * Math.max(1, values.length) * 4;
+  if (Math.abs(values.reduce((sum, value) => sum + value, 0) - 1) > roundoff) return 'probabilities that do not sum to 1';
+  const selected = answer.probabilities![answer.choice!]!;
+  if (values.some((value) => value > selected)) return 'a choice below the highest probability';
+  return undefined;
+}
+
 /** Why an answer cannot be trusted for its question, or undefined when it can. */
 function answerProblem(question: Question, answer: RawAnswer): string | undefined {
   if (answer.type !== question.type) return `type ${String(answer.type)}, expected ${question.type}`;
+  if (question.type === 'choice' && (!answer.probabilities || typeof answer.probabilities !== 'object' || Array.isArray(answer.probabilities))) return 'no probabilities object';
   const invalid = probabilityFields(question, answer).find(({ value }) => !isNumberWithin(value, 0, 1));
-  return headlineProblem(question, answer) ?? (invalid === undefined ? undefined : `no valid ${invalid.what}`);
+  return headlineProblem(question, answer) ?? (invalid === undefined ? choiceDistributionProblem(question, answer) : `no valid ${invalid.what}`);
+}
+
+/** Snapshot and validate standalone readChoice inputs through the same wire rules. */
+export function captureChoiceAnswer(answer: RawAnswer): { readonly choice: string; readonly confidence: number; readonly probabilities: Readonly<Record<string, number>> } {
+  try {
+    const { type, choice, confidence, probabilities: raw } = answer;
+    if (type !== 'choice' || typeof choice !== 'string' || typeof confidence !== 'number'
+      || !raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid distribution');
+    const probabilities = Object.fromEntries(Object.entries(raw));
+    const criteria = Object.fromEntries(Object.keys(probabilities).map((key) => [key, null]));
+    const captured = { type, choice, confidence, probabilities };
+    if (answerProblem({ type: 'choice', instructions: 'Choice reading', criteria }, captured) !== undefined) throw new Error('invalid choice');
+    return { choice: choice!, confidence: confidence!, probabilities };
+  } catch {
+    throw new JudgmentError('invalid-response', 'the choice answer did not match its probability distribution');
+  }
 }
 
 const isPresentObject = <T extends object>(value: T | null | undefined): value is T => typeof value === 'object' && value !== null;

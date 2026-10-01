@@ -42,6 +42,7 @@ import { join } from 'node:path';
 function readingPort(category: string, yes: readonly string[] = [], confidence = 0.95) {
   return fakePort((name: string, question: Question) => {
     if (name === 'category') return choiceAnswer(question, category, confidence);
+    if (name === 'connection_failure') return choiceAnswer(question, 'none', confidence);
     return noulAnswer(yes.includes(name) ? 0.95 : 0.05);
   });
 }

@@ -73,6 +73,31 @@ describe('recording port trust boundary', () => {
   });
 
   test.each([
+    { a: 0, b: 0, c: 0, d: 0 },
+    { a: 1, b: 1, c: 1, d: 1 },
+    { a: 0.01, b: 0.99, c: 0, d: 0 },
+  ])('refuses invalid choice distributions before any answered entry is recorded', async (probabilities) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const questions = { q: { type: 'choice', instructions: 'Choose', criteria: { a: null, b: null, c: null, d: null } } } as const;
+    const raw = { ...result(), answers: { q: { type: 'choice', choice: 'a', confidence: 0.99, probabilities, privateText: SECRET } } };
+    const error = exposedError(await withDecisionLog(borrowed(raw), log).ask({ state: 'fixture', questions }).catch((e: unknown) => e));
+    expect(error.kind).toBe('invalid-response');
+    expect(error.message).toBe('the judgment provider returned an invalid response');
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(log.query({ status: 'failed' })).toHaveLength(1);
+    expect(JSON.stringify(log.query())).not.toContain(SECRET);
+  });
+
+  test('records confidence separately from the selected option probability', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const questions = { q: { type: 'choice', instructions: 'Choose', criteria: { returns: null, billing: null, shipping: null } } } as const;
+    const choice = { type: 'choice', choice: 'returns', confidence: 0.42, probabilities: { returns: 0.61, billing: 0.35, shipping: 0.04 } } as const;
+    const answer = await withDecisionLog(borrowed({ ...result(), answers: { q: choice } }), log).ask({ state: 'fixture', questions });
+    expect(answer.answers.q).toEqual(choice);
+    expect(log.get(answer.decisionId!)).toMatchObject({ status: 'answered', answers: { q: choice } });
+  });
+
+  test.each([
     new Error(SECRET, { cause: new Error(SECRET) }),
     SECRET,
     { toString() { throw new Error(SECRET); }, rawBody: SECRET },

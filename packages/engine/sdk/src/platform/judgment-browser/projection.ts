@@ -1,4 +1,5 @@
 import type { Reading } from '@goodvibes-jev/judgment/decisions';
+import { checkAnswers } from '@goodvibes-jev/judgment';
 import {
   BrowserJudgmentError, judgmentRecord, type BrowserJudgmentRequest,
 } from '@goodvibes-jev/engine/daemon-sdk';
@@ -15,6 +16,9 @@ function validateReading(reading: Reading): void {
     judgmentRecord(reading, ['kind', 'choice', 'confidence', 'probabilities', 'outcome']);
     if (!probability(reading.confidence) || !Object.hasOwn(reading.probabilities, reading.choice)
       || !Object.values(reading.probabilities).every(probability)) return invalid();
+    checkAnswers({ choice: { type: 'choice', instructions: 'Closed result validation',
+      criteria: Object.fromEntries(Object.keys(reading.probabilities).map((key) => [key, null])) } },
+    { choice: { type: 'choice', choice: reading.choice, confidence: reading.confidence, probabilities: reading.probabilities } });
   } else return invalid(); // First browser readers expose no score rubric.
 }
 
@@ -76,10 +80,14 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
         const index = add(accepted.candidateIndex); const p = accepted.probability;
         if (!probability(p) || p > previous || (p === previous && index < previousIndex)) return invalid();
         const reading = result.readings[`candidate_${index}`];
-        if (reading?.kind !== 'yes-no' || reading.probability !== p) return invalid();
+        if (reading?.kind !== 'yes-no' || reading.verdict !== 'yes' || reading.probability !== p) return invalid();
         previous = p; previousIndex = index;
       }
-      value.rejected.forEach(add);
+      for (const item of value.rejected) {
+        const index = add(item);
+        const reading = result.readings[`candidate_${index}`];
+        if (reading?.kind !== 'yes-no' || reading.verdict !== 'no') return invalid();
+      }
       if (seen.size !== count) return invalid();
     }
   } catch { return invalid(); }

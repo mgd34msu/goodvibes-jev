@@ -30,6 +30,9 @@ describe('closed held projections', () => {
         { [key]: { ...reading, choice: 'private_state' } },
         { [key]: { ...reading, probabilities: { private_state: 0.5, other: 0.5 } } },
         { [key]: { ...reading, private_state: 'synthetic-private' } },
+        { [key]: { ...reading, probabilities: Object.fromEntries(tones.map((tone) => [tone, 0])) } },
+        { [key]: { ...reading, probabilities: Object.fromEntries(tones.map((tone) => [tone, 1])) } },
+        { [key]: { ...reading, probabilities: Object.fromEntries(tones.map((tone) => [tone, tone === 'ok' ? 0.01 : tone === 'bad' ? 0.99 : 0])) } },
       ]) expect(() => check(req, held(bad))).toThrow(BrowserJudgmentError);
     }
   });
@@ -38,5 +41,10 @@ describe('closed held projections', () => {
     expect(() => check(req, held({ candidate_0: unknownReading, candidate_1: unknownReading }))).not.toThrow();
     for (const readings of [{ candidate_0: unknownReading }, { private_state: unknownReading, candidate_1: unknownReading },
       { candidate_0: unknownReading, candidate_1: { ...unknownReading, probability: NaN } }]) expect(() => check(req, held(readings))).toThrow(BrowserJudgmentError);
+  });
+  test('choice confidence need not equal the selected probability', () => {
+    const req = request('webui.status.badge-tone', { vocabulary: 'badge', source: { kind: 'catalog', labelId: 'fixture' } });
+    expect(() => check(req, held({ badge: { kind: 'choice', choice: 'ok', confidence: 0.42, outcome: 'escalate',
+      probabilities: { ok: 0.61, warning: 0.35, bad: 0.04, neutral: 0 } } }))).not.toThrow();
   });
 });

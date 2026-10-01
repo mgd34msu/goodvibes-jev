@@ -88,6 +88,14 @@ request override or captured port default, while `model` remains the responding
 provider's separately validated model identifier. Invalid answers fail with
 `JudgmentError.kind === 'invalid-response'` rather than becoming usable readings.
 
+Choice probabilities must sum to one (allowing only floating-point addition
+roundoff), and the selected option must have the highest probability; ties are
+valid. The same validation applies to standalone `readChoice`. This follows the
+[TypeSafe Choice response contract](https://docs.typesafe.ai/primitives/choice).
+[Confidence is a separate statistic](https://docs.typesafe.ai/confidence), so it
+is preserved rather than equated with the selected probability or recomputed.
+Malformed distributions are refused, never silently renormalized.
+
 Recorded calls expose a fixed, value-free message for each `JudgmentError.kind`.
 Upstream exception text, stack, cause and extra properties are not preserved in
 the returned error or decision entry. Diagnose failures through the typed kind,
