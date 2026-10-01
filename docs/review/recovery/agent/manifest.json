@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "repository": "mgd34msu/goodvibes-jev",
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "scope": "Ordinary Agent source reconstruction and informational CLI checkpoint; incomplete product acceptance",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-agent-source-recovery",
+  "evidenceParent": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+  "evidenceParentTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+  "evidencePathsRoot": "docs/review/recovery/agent",
+  "runtimePathsUnchanged": true,
+  "publicSources": {
+    "main": {
+      "repository": "mgd34msu/goodvibes-jev",
+      "commit": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+      "tree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+      "verifiedThroughGitHub": true
+    },
+    "upstream": {
+      "repository": "mgd34msu/goodvibes-agent",
+      "revision": "f05fe636c120baa469037efe7d7391c3d9503635",
+      "tree": "7f5575e17a8f52f638b145830f9a4fc4e4bf650f",
+      "files": 1650,
+      "verifiedThroughGitHub": true,
+      "allFileSha256ValuesVerified": 1650
+    }
+  },
+  "candidate": {
+    "localCommit": "4336fd37e8c2052ffb7233fd0ae9b0fab8d5ec46",
+    "tree": "ee3ced1a7d0325dc445abe867b18c44693093435",
+    "parent": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+    "changedPaths": 1655,
+    "scope": "products/agent plus 21 additive root bun.lock lines",
+    "authorManifestSha256": "c347bdfcabacc01df088e76989b0c2e464d2de447a19531a837239ea74d6201c",
+    "localCommitRequiredForReconstruction": false
+  },
+  "reconstruction": {
+    "method": "Disposable Git index: public main tree + pinned upstream tree under products/agent; deterministic text import renames; residual Git patch",
+    "materializedTree": "9d05f563a18d881180a87f3db1c30e2cbfe12e2d",
+    "retargetTree": "89f12b971e7e704622b491e00ab084938717de16",
+    "retargetedFiles": 775,
+    "textFileSuffixes": [
+      ".cjs",
+      ".js",
+      ".json",
+      ".md",
+      ".mjs",
+      ".sh",
+      ".ts",
+      ".tsx",
+      ".yaml",
+      ".yml"
+    ],
+    "replacements": {
+      "@pellux/goodvibes-sdk": "@goodvibes-jev/engine/sdk",
+      "@pellux/goodvibes-terminal-shell": "@goodvibes-jev/engine/terminal-shell",
+      "@pellux/goodvibes-toolchain": "@goodvibes-jev/engine/toolchain",
+      "@pellux/goodvibes-transport-core": "@goodvibes-jev/engine/transport-core",
+      "@pellux/goodvibes-daemon": "@goodvibes-jev/daemon"
+    },
+    "textDecoding": "UTF-8; skip undecodable files; normalize CRLF/CR only for files whose text replacement changes content; preserve Git mode",
+    "finalTree": "ee3ced1a7d0325dc445abe867b18c44693093435",
+    "verification": "Exact final tree reproduced by the published reconstruct.py script",
+    "scriptSha256": "505f87f255d14ae0cbc65d51c1896317a48ff4e68583b6560846fdf04cf60d54",
+    "residualPatch": {
+      "path": "residual.patch.gz",
+      "format": "git diff --binary --full-index, deterministic gzip mtime=0",
+      "uncompressedBytes": 103120,
+      "uncompressedSha256": "5f4ff9d14a11ff1d1d8399e5e82609c9428196026e114ab30e27794dc3fd92c1",
+      "gzipBytes": 29767,
+      "gzipSha256": "a467153ce698f102e764502e4ab805405fd5975b2bddecf24a4c9ead54f3b61a",
+      "base64Bytes": 39692
+    },
+    "residualPostimages": [
+      {
+        "path": "bun.lock",
+        "bytes": 302770,
+        "sha256": "b8ff44563cbeea1735cb3aeb04146755e20ec0fe801a67091e98dfa2b87f9c3d",
+        "gitBlob": "874d2f2ec0e3c5f8ed886d1bee6915a6f113d23d"
+      },
+      {
+        "path": "products/agent/RECOVERY.md",
+        "bytes": 1634,
+        "sha256": "9be0f136f6baf247776887abda6552f868af9d6d4e4c67cb48191e6de456a4ff",
+        "gitBlob": "518e3d10a21e9ea36806a7682645d9578b2bd448"
+      },
+      {
+        "path": "products/agent/bin/goodvibes-agent.ts",
+        "bytes": 139,
+        "sha256": "80456d50c6aef57ea01b3a5d76b74040e9a9ed1cca7408783bf78efac4f09c51",
+        "gitBlob": "19a8d0f23486a1ca736c0a5a5d3b3d10516884c8"
+      },
+      {
+        "path": "products/agent/package.json",
+        "bytes": 2376,
+        "sha256": "3b5364696087af973568c36d67e4d53ac4a7046874ff00f50fecc94b3b499422",
+        "gitBlob": "c79fad8e9b493029c5b4df63a24dd47c6bede63f"
+      },
+      {
+        "path": "products/agent/src/cli/metadata.ts",
+        "bytes": 1198,
+        "sha256": "3d32d354390b5834dba2791df6a4011e6d05ccf048efacb1818cae48b5e54ef6",
+        "gitBlob": "64af39111859d36167c7329ae0799b40a52dfe0e"
+      },
+      {
+        "path": "products/agent/src/interactive.ts",
+        "bytes": 41808,
+        "sha256": "4b89c9a437d761bc403a403b9f0a1608391629ee854bd5e4710b933311ac3c51",
+        "gitBlob": "8d73b8d5ebe581f1ebb8138b79b95c3ad7e7e096"
+      },
+      {
+        "path": "products/agent/src/main.ts",
+        "bytes": 572,
+        "sha256": "a2b56c676b51e9f78debf2c9d16548a2dccefb3ad500145bf36e39f655698d8f",
+        "gitBlob": "c5460f59ca65929ea5a7207fc523dc8e6b91c0d5"
+      },
+      {
+        "path": "products/agent/src/runtime/update-check.ts",
+        "bytes": 1888,
+        "sha256": "91edb157fa6073f070daa5839668e6a356251e43bad2aa1d4a1aa4c3a9b0357d",
+        "gitBlob": "206380b5425cb860847a9eb4ebfb50d6852cf025"
+      },
+      {
+        "path": "products/agent/src/test/cli/metadata-startup.test.ts",
+        "bytes": 2260,
+        "sha256": "e77dfa7f2035318211fa8c478c29ef4147b5fd91ca3138fde665e08b7ccca220",
+        "gitBlob": "c28bd66fa3ebd27ca5a70aa6a9637b72cfbf303b"
+      },
+      {
+        "path": "products/agent/tsconfig.json",
+        "bytes": 398,
+        "sha256": "c1510280afe7edb7740d8bee682ff65c1362bafd4c7d5bd2d46f55c7abfa7bd4",
+        "gitBlob": "ec7221d2d280aec14aa6b2e37692b0b23f54feed"
+      }
+    ]
+  },
+  "proof": {
+    "focusedTests": {
+      "status": "passed",
+      "tests": 58,
+      "assertions": 461,
+      "files": 6,
+      "scope": "Informational source/package CLI and ordinary CLI/theme/diff/markdown/terminal-size renderer checks"
+    },
+    "actualCli": {
+      "status": "passed",
+      "exitCode": 0,
+      "scope": "Help, version, completion and parser errors through source/package launchers; informational graph only"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Repository credential-scope hook only",
+      "engineSdkFilesChecked": 2633
+    },
+    "sourceTypes": {
+      "status": "failed",
+      "typescriptDiagnostics": 146,
+      "exitCode": 2,
+      "logFileName": "source-types-first.log",
+      "logSha256": "98eb9d699d49c25e86984c7beb9361b456de54b4a2910ca7c86cea656913c0a4"
+    },
+    "interactiveAcceptance": {
+      "status": "unverified"
+    },
+    "buildAndBinaryAcceptance": {
+      "status": "unverified"
+    },
+    "endToEndAcceptance": {
+      "status": "unverified"
+    },
+    "fullMigrationAcceptance": {
+      "status": "unverified"
+    },
+    "sourceProofReceipts": [
+      {
+        "fileName": "materialization-manifest.json",
+        "sha256": "74ddac77e6153c9e5d43c828f127bb990a4ccc3a37ae727ea41f05054b7baf72"
+      },
+      {
+        "fileName": "import-retarget.json",
+        "sha256": "6f29dda45db878b8d8a2309ea9fdda6208e631917de0ee52493c3a86bd7908b9"
+      },
+      {
+        "fileName": "install.log",
+        "sha256": "cef648e652117c44d6edb3fd5bf0024f7baa10dae901f79b2b8cac087e250eb3"
+      },
+      {
+        "fileName": "help-before.log",
+        "sha256": "351103a0bd4164ef689c9c7e2577b2ac1cfcb1908a270fb37dfb99ed2b63d47f"
+      },
+      {
+        "fileName": "help-after.log",
+        "sha256": "a16e25ca5639c51105627ba5be1d7efc92e17658b66bdd9cef35409baad72f43"
+      },
+      {
+        "fileName": "cli-render-verified.log",
+        "sha256": "49e8ff1b7c89b4a625b39c6ca5cff6cffa997b372a309fe02ac85c6672003ac4"
+      },
+      {
+        "fileName": "source-checkpoint.log",
+        "sha256": "fd498e95fa4399a9509d34548ae8154b74e90fad8b50fffe33f121a811277121"
+      }
+    ]
+  },
+  "credentialPreflight": {
+    "trackedArtifactSecretPatternScan": {
+      "status": "passed",
+      "artifacts": [
+        "residual.patch (decompressed)",
+        "reconstruct.py"
+      ],
+      "patterns": [
+        "private_key",
+        "github_token",
+        "aws_access_key",
+        "slack_token",
+        "openai_key",
+        "credential_url"
+      ],
+      "findings": 0
+    },
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "sourceTree": "ee3ced1a7d0325dc445abe867b18c44693093435",
+      "command": "bun packages/engine/scripts/check-credential-scope.ts",
+      "engineSdkFilesChecked": 2633,
+      "scope": "Fresh isolated exact-tree SDK check; does not establish full Agent product credential coverage",
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true,
+    "sourceMethod": "Only tracked immutable Git tree objects and named verified proof artifacts; no private files or dependency archive traversal"
+  },
+  "outstandingGates": [
+    "Resolve 146 source typecheck diagnostics and rerun types on a new immutable checkpoint",
+    "Complete shared runtime and semantic migration",
+    "Actual interactive startup and TUI behavior acceptance",
+    "Product build, binary packaging and end-to-end acceptance",
+    "Independent review and full repository/product CI",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "limitations": [
+    "The informational CLI intentionally does not load the interactive graph",
+    "Pinned upstream standalone scripts, release records and lock are retained source provenance, not an accepted monorepo release or installation contract",
+    "The source checkpoint remains incomplete and is not ready for interactive product use",
+    "This evidence commit contains reconstruction data only; do not merge it as implementation",
+    "No local-only ancestor or candidate commit is required to reconstruct the tree"
+  ]
+}
