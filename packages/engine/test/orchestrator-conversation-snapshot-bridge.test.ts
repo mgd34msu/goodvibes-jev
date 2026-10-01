@@ -150,6 +150,7 @@ function makeMinimalRunContext(overrides: {
         selectable: true,
       }],
       getContextWindowForModel: () => 128_000,
+      getKnownContextWindowForModel: () => 128_000,
       recordContextWindowRejection: () => {},
     },
     resolveProviderForRecord: () => ({

@@ -69,6 +69,7 @@ function makeContext(workingDirectory: string, provider: LLMProvider, emitted: E
       getForModel: () => provider,
       listModels: () => [FAKE_MODEL],
       getContextWindowForModel: () => 0,
+      getKnownContextWindowForModel: () => 0,
       recordContextWindowRejection: () => {},
     },
     getFullRegistry: () => new ToolRegistry(),

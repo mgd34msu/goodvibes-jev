@@ -296,18 +296,54 @@ const result = ListProviderModelsResponseSchema.safeParse(responseBody);
 
 ---
 
-## Context-window fallback helpers (`./platform/providers`)
+## Context-window knowledge (`./platform/providers`)
 
-New in 0.35.0, `@goodvibes-jev/engine/sdk/platform/providers` exports `inferFallbackContextWindow(provider, modelId?)` and `FALLBACK_CONTEXT_WINDOW` (`128000`) so consumers can share the family-aware, pre-catalog context-window fallback instead of hardcoding their own. It is a last-resort default, used only when neither the live catalog nor the provider API reports a context window for a model.
+`ProviderRegistry.getKnownContextWindowForModel(model)` and the corresponding
+`ProviderApiRegistry` method return `number | null`. A positive value is a
+source-stated ceiling or an explicit user constraint; `null` means the capacity
+is unknown. Meters, percentage warnings, model recommendations and automatic
+compaction must use this nullable API. `getContextWindowForModel(model)` remains
+a numeric compatibility API for budget calculations; its value can be an
+estimate or an accepted lower bound and must not be promoted into a known limit.
 
-```ts
-import {
-  inferFallbackContextWindow,
-  FALLBACK_CONTEXT_WINDOW,
-} from '@goodvibes-jev/engine/sdk/platform/providers';
+Custom provider files may omit `contextWindow`. Remote missing/fallback windows
+and the legacy provider-file `8192` guess are resolved from the catalog. Exact
+provider IDs or declared aliases identify the provider; non-exact model IDs
+require the existing `routing.model-identity` reading and stay unknown while it
+is pending or unsettled. An own-provider catalog row states a window. Other
+providers' most frequent figure (one vote per provider, ties smaller) is only a
+cross-provider estimate and leaves the known window `null`. IDs are never
+stripped, case-folded or guessed equal for this resolution.
 
-const ctx = inferFallbackContextWindow('openai', 'gpt-5.5'); // 400000
-```
+`contextWindowProvenance` distinguishes `provider_api`, `configured_cap`,
+`observed_limit`, `accepted_floor`, `catalog` and `fallback`.
+`contextWindowOrigin` distinguishes provider-file values, user overrides,
+own-provider catalog rows, cross-provider consensus estimates and family
+defaults. `describeContextWindowSource(model)` describes that definition's source.
+The picker additionally carries a numeric `contextWindow`, nullable
+`knownContextWindow`, `contextWindowSource` and detailed `contextWindowOrigin`;
+its numeric display value alone is not authoritative. `contextWindowAcceptedFloor`
+retains the accepted lower bound separately when a larger estimate is displayed;
+all later ceiling sources must meet that floor.
+
+A successful billed input larger than a stated or observed ceiling disproves
+that ceiling. The largest accepted input persists in the optional `accepted`
+section of the existing version-2 override file; it is a lower bound, not a
+maximum. A contradicted learned rejection ceiling is removed. A later supported
+ceiling at least as large as the floor may restore known capacity. Explicit
+user overrides remain deliberate constraints and are never disproven this way.
+Clearing an override clears learned ceilings and accepted floors too.
+
+`knownFallbackContextWindow(provider, modelId)` returns the existing Jev-read
+family estimate, or `FALLBACK_CONTEXT_WINDOW` (`128000`) before a family reading
+settles. `readFallbackContextWindow(provider, modelId, site)` requests that
+reading. Neither API turns a family estimate into an observed capacity.
+
+Automatic preflight, post-turn and independent session compaction skip unknown
+windows; a provider's explicit context-full warning still permits recovery.
+Small-window keep-last-N compaction does nothing when all messages are already
+within the kept set. Session resume repair preserves history when no known
+ceiling can justify token-based trimming; explicit manual recovery is unchanged.
 
 ---
 

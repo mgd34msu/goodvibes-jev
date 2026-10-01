@@ -34,6 +34,7 @@ import { getGitHubCopilotTokenCachePath } from './github-copilot.js';
 import { summarizeError } from '../utils/error-display.js';
 import { knownFallbackContextWindow } from './context-window-fallback.js';
 import { ContextWindowOverrideStore, getContextWindowOverridesPath } from './context-window-overrides.js';
+import { CatalogContextWindowResolver } from './context-window-catalog.js';
 import { splitModelRegistryKey, withRegistryKey } from './registry-helpers.js';
 import { computeConfiguredProviderIds } from './registry-configured-ids.js';
 import { initProviderCatalog, refreshProviderCatalog } from './registry-catalog-lifecycle.js';
@@ -50,7 +51,7 @@ import type {
   ModelDefinition, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
 export type {
-  ContextWindowProvenance, ModelDefinition, ModelTier, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
+  ContextWindowOrigin, ContextWindowProvenance, ModelDefinition, ModelTier, ProviderRegistryOptions, RuntimeProviderRegistration, TokenLimits,
 } from './registry-types.js';
 
 /**
@@ -94,6 +95,13 @@ export class ProviderRegistry {
   private _modelRegistryRevision = 0;
   /** Persisted per-model context-window overrides; lazy-constructed (needs persistence root). */
   private _contextWindowOverrideStore: ContextWindowOverrideStore | null = null;
+  private readonly catalogWindows = new CatalogContextWindowResolver(
+    () => this.catalogModels,
+    (name) => this.discoveredProviderNames.has(name),
+    (name) => this.providers.get(name),
+    CATALOG_PROVIDER_NAME_ALIASES,
+    () => this._invalidateModelRegistry(),
+  );
 
   constructor(options: ProviderRegistryOptions) {
     this.configManager = options.configManager;
@@ -193,7 +201,7 @@ export class ProviderRegistry {
       catalogModels: this.getCatalogBuiltins(),
       discoveredModels: this.discoveredModels,
       suppressedCatalogRegistryKeys: this.getSuppressedCatalogModelRegistryKeys(),
-    }).map((model) => this.contextWindowOverrideStore().apply(model));
+    }).map((model) => this.contextWindowOverrideStore().apply(this.catalogWindows.apply(model)));
     return this._cachedModelRegistry;
   }
 
@@ -473,6 +481,9 @@ export class ProviderRegistry {
     return this.modelLimitsService.getContextWindowForModel(modelDef);
   }
 
+  /** The window a source states, or null when unknown (a guess, or disproven by a larger accepted request): what meters and compaction use. */
+  getKnownContextWindowForModel(modelDef: ModelDefinition): number | null { return this.modelLimitsService.getKnownContextWindowForModel(modelDef); }
+
   getTokenLimitsForModel(modelDef: ModelDefinition): Required<TokenLimits> {
     return this.modelLimitsService.getTokenLimitsForModel(modelDef);
   }
@@ -581,7 +592,7 @@ export class ProviderRegistry {
       description: `${resolvedModelId}, builtin provider default; model catalog has not hydrated yet.`,
       capabilities: { toolCalling: true, codeEditing: true, reasoning: false, multimodal: false },
       contextWindow: knownFallbackContextWindow(providerId, resolvedModelId),
-      contextWindowProvenance: 'fallback',
+      contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'family_default' },
       selectable: true,
       tier: isFree ? 'free' : 'standard',
     });
@@ -634,12 +645,15 @@ export class ProviderRegistry {
     this._invalidateModelRegistry();
   }
 
-  /** A request with real billed input succeeded, raise a too-pessimistic learned ceiling. */
+  /** A request with real billed input succeeded (see ContextWindowOverrideStore.reconcileSuccessfulInput). */
   reconcileObservedContextWindow(registryKey: string, successfulInputTokens: number): void {
-    const before = this.contextWindowOverrideStore().getObserved(registryKey);
-    if (before === null || successfulInputTokens <= before) return;
-    this.contextWindowOverrideStore().reconcileSuccess(registryKey, successfulInputTokens);
-    this._invalidateModelRegistry();
+    const model = (): ModelDefinition | undefined => {
+      const definition = findModelDefinition(registryKey, this.getModelRegistry());
+      // A resolved OpenRouter ceiling can be smaller than a raw registry
+      // estimate; success must be compared with the number callers use.
+      return definition ? { ...definition, contextWindow: this.modelLimitsService.getContextWindowForModel(definition) } : undefined;
+    };
+    if (this.contextWindowOverrideStore().reconcileSuccessfulInput(registryKey, successfulInputTokens, model)) this._invalidateModelRegistry();
   }
 
   /** Switch to a different model. Accepts a registryKey or a bare model id (resolved via the shared resolver). */
@@ -688,6 +702,7 @@ export class ProviderRegistry {
     }
 
     this.customModels = result.models;
+    this.catalogWindows.setCustomProviders(result.providers.map(({ config }) => config));
     this._invalidateModelRegistry();
 
     return { warnings, added: diff.added, removed: diff.removed, updated: diff.updated };

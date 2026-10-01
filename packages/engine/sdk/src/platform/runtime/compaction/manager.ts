@@ -201,7 +201,12 @@ export class CompactionManager {
 
     const runStart = Date.now();
     const { messages, tokenCount, trigger, isPromptTooLong } = opts;
-    const threshold = Math.floor(this._contextWindow * this._thresholdFraction);
+    const contextWindow = this._contextWindow;
+    // No known ceiling means no automatic threshold. Manual compaction and
+    // provider prompt-too-long recovery remain explicit reasons to run.
+    // Guard before state transitions/events, including invalid legacy values.
+    if (trigger === 'auto' && !isPromptTooLong && (!Number.isFinite(contextWindow) || contextWindow <= 0)) return null;
+    const threshold = Math.floor(contextWindow * this._thresholdFraction);
 
     // ── Transition: idle → checking_threshold ────────────────────────────────
     this._transition('checking_threshold');
@@ -598,12 +603,12 @@ export class CompactionManager {
         failReason: 'No boundary commit available for repair.',
       };
     }
-    // The repair's own default is a hardcoded 80_000, "80% of a typical 100K
-    // context window", a fair guess when it was written. This manager holds
-    // the REAL window for the model in play, so the ceiling is computed from
-    // it rather than assumed: on a 1M-token model that constant was throwing
-    // away messages a resumed session could comfortably have kept.
-    return runResumeRepair({ commit, maxTokens: Math.floor(this._contextWindow * 0.8) });
+    // With no supported ceiling, token count cannot justify deleting history.
+    // Infinity is internal to this comparison only, never persisted as a limit
+    // or returned in a repair action (the overflow branch cannot fire).
+    const window = this._contextWindow;
+    const maxTokens = Number.isFinite(window) && window > 0 ? Math.floor(window * 0.8) : Number.POSITIVE_INFINITY;
+    return runResumeRepair({ commit, maxTokens });
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

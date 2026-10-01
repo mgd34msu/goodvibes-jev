@@ -29,7 +29,7 @@ export function createSessionCompactionManager(
   sessionId: string,
   bus: RuntimeEventBus | null,
   flags: FeatureFlagManager | null,
-  getProviderRegistry: () => Pick<ProviderRegistry, 'getContextWindowForModel' | 'getCurrentModel'> | undefined,
+  getProviderRegistry: () => Pick<ProviderRegistry, 'getKnownContextWindowForModel' | 'getCurrentModel'> | undefined,
 ): CompactionManager | null {
   if (!bus || !flags) return null;
   return createCompactionManager({
@@ -38,7 +38,9 @@ export function createSessionCompactionManager(
     flags,
     contextWindow: () => {
       const registry = getProviderRegistry();
-      return registry ? registry.getContextWindowForModel(registry.getCurrentModel()) : 0;
+      // The manager's legacy numeric API uses 0 for unknown; automatic runs
+      // reject that sentinel before any threshold arithmetic or mutation.
+      return registry ? registry.getKnownContextWindowForModel(registry.getCurrentModel()) ?? 0 : 0;
     },
   });
 }
