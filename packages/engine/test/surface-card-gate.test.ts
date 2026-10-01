@@ -91,6 +91,8 @@ interface HarnessOptions {
   readonly pendingApproval?: boolean;
   /** Seed a pending work proposal so proposal-reply resolution has something to consume. */
   readonly pendingProposal?: boolean;
+  /** Keep proposal metadata reproducible without changing the process clock. */
+  readonly proposalNow?: (() => number) | undefined;
 }
 
 function buildHarness(options: HarnessOptions = {}) {
@@ -114,7 +116,7 @@ function buildHarness(options: HarnessOptions = {}) {
   /** Everything put on the channel. */
   const notices: Array<{ routeId: string | undefined; text: string }> = [];
 
-  const proposals = disposables.add(new WorkProposalStore());
+  const proposals = disposables.add(new WorkProposalStore({ now: options.proposalNow }));
   if (options.pendingProposal) {
     const proposal = proposals.create({
       surfaceKind: 'ntfy',
@@ -271,6 +273,27 @@ function expectTierClean(label: string, contents: string): void {
   }
 }
 
+/** Refusal must leave these entire stores unchanged, including generated metadata. */
+function snapshotStoredTiers(harness: ReturnType<typeof buildHarness>) {
+  return {
+    config: harness.tiers.config(),
+    secrets: harness.tiers.secrets(),
+    policyAudit: harness.tiers.policyAudit(),
+    approvalStore: harness.tiers.approvalStore(),
+    workProposals: harness.tiers.workProposals(),
+    transcript: harness.tiers.transcript(),
+  };
+}
+
+function expectStoredTiersUnchanged(
+  before: ReturnType<typeof snapshotStoredTiers>,
+  after: ReturnType<typeof snapshotStoredTiers>,
+): void {
+  for (const tier of Object.keys(before) as Array<keyof typeof before>) {
+    expect(after[tier], `${tier} changed during refusal`).toBe(before[tier]);
+  }
+}
+
 describe('a card number on a remote channel is refused', () => {
   test('the decision is not-allowed and its reason names the shape, not the digits', async () => {
     const harness = buildHarness();
@@ -295,22 +318,51 @@ describe('a card number on a remote channel is refused', () => {
     expect(decision.reason).toContain('card-shapes-refused');
   });
 
-  test('the refused digits reach no durable tier: each asserted by name', async () => {
-    const harness = buildHarness({ pendingApproval: true, pendingProposal: true });
+  test.each([
+    ['the CI timestamp containing a card fragment', 1790826411125],
+    ['a timestamp without a card fragment', 1700000000000],
+  ])('the refused digits reach no durable tier with %s', async (_label, now) => {
+    const harness = buildHarness({ pendingApproval: true, pendingProposal: true, proposalNow: () => now });
+    const before = snapshotStoredTiers(harness);
+    expect(harness.proposals.listPending()).toHaveLength(1);
+    expect(harness.proposals.listPending()[0]).toMatchObject({
+      createdAt: now, expiresAt: now + 10 * 60_000,
+      task: 'refactor the parser', summary: 'refactor the parser', delivered: true,
+    });
+
     await harness.ingress(`no, charge my card ${CARD} cvv 123 expiry 07/29 instead`);
 
-    expectTierClean('config', harness.tiers.config());
-    expectTierClean('secrets', harness.tiers.secrets());
-    expectTierClean('the channel policy audit trail', harness.tiers.policyAudit());
-    // The approval store is the nearest thing this repo has to a payments
-    // store: the payments capability itself lives in goodvibes-agent, which
-    // §11.0 verified has no inbound channel path at all. This is the store a
-    // veto's steering note would have been written into.
-    expectTierClean('the approval store', harness.tiers.approvalStore());
-    expectTierClean('the work proposal store', harness.tiers.workProposals());
-    expectTierClean('the transcript', harness.tiers.transcript());
+    // These stores must not be written at all. Comparing the complete snapshots
+    // detects new records and changes to every field, without mistaking an
+    // existing timestamp or random UUID containing "4111" for refused content.
+    // The approval store includes the steering note a veto could otherwise write.
+    expectStoredTiersUnchanged(before, snapshotStoredTiers(harness));
+    // Logs and notices DO receive new refusal output, which must still contain
+    // none of the protected digits, even a partial or truncated card number.
     expectTierClean('the logs', harness.tiers.logs());
     expectTierClean('the delivered notices', harness.tiers.notices());
+  });
+
+  test('the old substring check rejects ordinary proposal metadata before any ingress', () => {
+    const harness = buildHarness({ pendingProposal: true, proposalNow: () => 1790826411125 });
+    const proposal = harness.proposals.listPending()[0]!;
+    expect(proposal.task).toBe('refactor the parser');
+    expect(proposal.summary).toBe('refactor the parser');
+    expect(() => expectTierClean('generated timestamp', JSON.stringify({ createdAt: proposal.createdAt })))
+      .toThrow('contains the card fragment "4111"');
+    expect(() => expectTierClean('the existing proposal', harness.tiers.workProposals()))
+      .toThrow('contains the card fragment "4111"');
+  });
+
+  test.each(CARD_FRAGMENTS)('the store snapshot check catches newly persisted card material %s', (fragment) => {
+    const harness = buildHarness({ pendingProposal: true, proposalNow: () => 1790826411125 });
+    const before = snapshotStoredTiers(harness);
+    const leaked = harness.proposals.create({
+      surfaceKind: 'ntfy', task: `use ${fragment}`, summary: `use ${fragment}`, ttlMs: 10 * 60_000,
+    });
+    harness.proposals.markDelivered(leaked.id);
+    expect(() => expectStoredTiersUnchanged(before, snapshotStoredTiers(harness)))
+      .toThrow('workProposals changed during refusal');
   });
 
   test('the logs record the refusal but never the message', async () => {
