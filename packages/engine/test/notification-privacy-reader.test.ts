@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { CONFIG_SCHEMA } from '../sdk/src/platform/config/schema.ts';
+import { withTestTimeout } from './_helpers/test-timeout.ts';
 import {
   NOTIFICATIONS_METADATA_ONLY_KEY,
   readNotificationsMetadataOnly,
@@ -35,6 +36,49 @@ describe('the live, fail-closed notification privacy reader', () => {
       expect(readNotificationsMetadataOnly(() => { throw error; })).toBe(true);
     }
   });
+
+  test('async and thenable results cannot authorize or leak rejected private errors in a real process', async () => {
+    const readerPath = resolve(import.meta.dir, '../sdk/src/platform/runtime/notification-privacy.ts');
+    const source = `
+      import { readNotificationsMetadataOnly } from ${JSON.stringify(readerPath)};
+      const privateError = () => new Error('synthetic-private-config-failure');
+      let rejectLate;
+      const lateFailure = new Promise((_, reject) => { rejectLate = reject; });
+      let resolveLate;
+      const lateFalse = new Promise((resolve) => { resolveLate = resolve; });
+      const getters = [
+        async () => { throw privateError(); },
+        () => Promise.reject(privateError()),
+        () => lateFailure,
+        () => ({ then(_resolve, reject) { reject(privateError()); } }),
+        () => ({ get then() { throw privateError(); } }),
+        () => ({ then() { throw privateError(); } }),
+        async () => false,
+        () => Promise.resolve(false),
+        () => lateFalse,
+      ];
+      const results = getters.map((get) => readNotificationsMetadataOnly(get));
+      if (results.some((result) => result !== true)) throw new Error('Async result authorized notification content');
+      rejectLate(privateError());
+      resolveLate(false);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      console.log('malformed readers stayed metadata-only');
+    `;
+    const child = Bun.spawn([process.execPath, '--eval', source], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+    try {
+      // Observe the real runtime's unhandled-rejection behavior, not the test
+      // runner's hooks. Drain both streams while awaiting the owned child.
+      const [code, stdout, stderr] = await withTestTimeout(Promise.all([
+        child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+      ]), 30_000, 'Notification privacy subprocess did not settle');
+      expect(code, stderr).toBe(0);
+      expect(stderr).toBe('');
+      expect(stdout.trim()).toBe('malformed readers stayed metadata-only');
+    } finally {
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      await child.exited.catch(() => undefined);
+    }
+  }, 35_000);
 });
 
 describe('actual ConfigManager reads before the new schema is installed', () => {

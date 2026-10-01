@@ -14,6 +14,9 @@ boolean `false` permits content-bearing notification text. Boolean `true`, a
 missing key, malformed values (including `"false"` and `0`), and a throwing
 getter all require metadata-only output. Read errors are not logged or echoed;
 they may contain private persisted values. There is no cached snapshot.
+Async and thenable callback results remain non-authorizing even if they resolve
+to false. Their rejection is consumed through an owned promise without making
+the reader asynchronous or emitting failure details.
 
 This deliberately differs from upstream's permissive boolean parser and its
 absent/invalid-to-false fallback. The setting is not in this build's schema yet.
@@ -39,6 +42,10 @@ malformed preferences and malformed sections remain restrictive without changing
 the input files. The current-schema absence assertion is intentional: schema
 adoption must reconcile these tests with the separate persisted-value refusal
 policy rather than silently making an invalid restriction permissive.
+An owned, timeout-bounded Bun subprocess additionally proves that immediately
+and later rejected promises, throwing thenables and then-accessor failures do
+not leak private errors or fail the process; eventual false resolutions never
+authorize content. The same regression fails on the preceding implementation.
 
 The preserved combined theme/config work remains blocked on its genuine
 credential-key readings. Its exact privacy-key ingestion refusal must still be
