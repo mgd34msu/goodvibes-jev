@@ -31,7 +31,7 @@
  * blast radius.
  */
 
-import { resolveCaptureAuthority, type CaptureAuthorityDecision } from './authority.js';
+import { resolveCaptureAuthority, type CaptureAuthorityDecision, type CaptureChannelIdentity } from './authority.js';
 
 /**
  * The tools a conversational turn is spawned with.
@@ -198,6 +198,56 @@ export interface ConversationalTurnConfigReader {
   get(key: 'profile.ownerChannels' | 'occasions.nudgeChannel'): string;
 }
 
+/** Adapt a loose configuration reader without treating malformed values as authority. */
+export function conversationalTurnConfigReaderFrom(
+  reader: { get(key: string): unknown } | undefined,
+): ConversationalTurnConfigReader | undefined {
+  if (!reader) return undefined;
+  return {
+    get: (key) => {
+      try {
+        const value = reader.get(key);
+        return typeof value === 'string' ? value : '';
+      } catch {
+        // Older embedding schemas may not have these keys. Unknown settings
+        // grant no channel authority, but must not prevent a conversational reply.
+        return '';
+      }
+    },
+  };
+}
+
+/** Capabilities for a conversation, also usable before it has a session id. */
+export function conversationalTurnCapabilities(
+  channel: CaptureChannelIdentity,
+  options: {
+    readonly configReader?: ConversationalTurnConfigReader | undefined;
+    readonly tools?: readonly string[] | undefined;
+  } = {},
+): {
+  readonly tools: string[];
+  readonly restrictTools: true;
+  readonly captureAuthority: CaptureAuthorityDecision;
+} {
+  const captureAuthority = resolveCaptureAuthority({
+    channel,
+    ownerChannels: options.configReader?.get('profile.ownerChannels') ?? '',
+    // A reminder destination is not an owner grant for a newly offered tool
+    // that can read personal data. Only profile.ownerChannels authorizes this
+    // channel capability; the legacy authority resolver remains unchanged.
+    nudgeChannels: '',
+  });
+  return {
+    // Routing may narrow the declared set, never widen it. Profile includes
+    // personal reads as well as writes, so an untrusted channel must not see
+    // that tool at all, even when its routing explicitly requested it.
+    tools: (options.tools ?? CONVERSATIONAL_TURN_TOOLS).filter((tool) =>
+      CONVERSATIONAL_TURN_TOOLS.includes(tool) && (tool !== 'profile' || captureAuthority.canCapture)),
+    restrictTools: true,
+    captureAuthority,
+  };
+}
+
 /**
  * The spawn-input fragment for a conversational turn: the tools, the
  * instruction, and the bound write authority.
@@ -212,25 +262,26 @@ export interface ConversationalTurnConfigReader {
  */
 export function conversationalTurnSpawnOptions(
   input: ConversationalTurnInputLike,
-  options: { readonly configReader?: ConversationalTurnConfigReader | undefined } = {},
+  options: {
+    readonly configReader?: ConversationalTurnConfigReader | undefined;
+    /** Exact ingress identity supplied by the host; surfaceId can be an account, not a channel. */
+    readonly channel?: CaptureChannelIdentity | undefined;
+    readonly tools?: readonly string[] | undefined;
+  } = {},
 ): {
   readonly tools: string[];
   readonly restrictTools: true;
   readonly context: string;
   readonly captureAuthority: CaptureAuthorityDecision;
 } {
-  const captureAuthority = resolveCaptureAuthority({
-    channel: {
-      ...(input.surfaceKind === undefined ? {} : { surfaceKind: input.surfaceKind }),
-      ...(input.surfaceId === undefined ? {} : { address: input.surfaceId }),
-      routed: input.routeId !== undefined || input.surfaceKind !== undefined,
-    },
-    ownerChannels: options.configReader?.get('profile.ownerChannels') ?? '',
-    nudgeChannels: options.configReader?.get('occasions.nudgeChannel') ?? '',
-  });
+  const capabilities = conversationalTurnCapabilities(options.channel ?? {
+    ...(input.surfaceKind === undefined ? {} : { surfaceKind: input.surfaceKind }),
+    ...(input.surfaceId === undefined ? {} : { address: input.surfaceId }),
+    routed: input.routeId !== undefined || input.surfaceKind !== undefined,
+  }, options);
+  const { captureAuthority } = capabilities;
   return {
-    tools: [...CONVERSATIONAL_TURN_TOOLS],
-    restrictTools: true,
+    ...capabilities,
     context: buildConversationalTurnContext({
       sessionId: input.sessionId,
       ...(input.surfaceKind === undefined ? {} : { surfaceKind: input.surfaceKind }),

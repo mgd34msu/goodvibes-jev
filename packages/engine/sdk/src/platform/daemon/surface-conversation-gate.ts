@@ -36,6 +36,11 @@ import {
 } from '../agents/conversation-gate.js';
 import type { WorkProposalRecord, WorkProposalStore } from '../agents/work-proposal-store.js';
 import type { SurfaceNoticeDelivery } from './types.js';
+import {
+  conversationalTurnCapabilities,
+  conversationalTurnConfigReaderFrom,
+  conversationalTurnSpawnOptions,
+} from '../personal-capture/spawn-contract.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 
@@ -119,7 +124,12 @@ export function gateSurfaceSpawn(
     // message IS and what the reply should LOOK like are one decision, made
     // here, once.
     return deps.trySpawnAgent(
-      { ...input, outsideContract: true, replyStyle: 'conversational' },
+      {
+        ...input,
+        ...conversationalFirstTurnOptions(deps, origin, input.tools, sessionId),
+        outsideContract: true,
+        replyStyle: 'conversational',
+      },
       logLabel,
       sessionId,
     );
@@ -169,6 +179,26 @@ export function gateSurfaceSpawn(
     summary,
     ...(sessionId ? { sessionId } : {}),
   }, { status: 202 });
+}
+
+/** Bind the current ingress identity, never another route in the same session. */
+function conversationalFirstTurnOptions(
+  deps: Pick<ConversationGateDeps, 'configManager'>,
+  origin: SurfaceIngressOrigin | null,
+  tools: readonly string[] | undefined,
+  sessionId: string | undefined,
+): Partial<SpawnInput> {
+  const channel = {
+    routed: true,
+    ...(origin?.surface ? { surfaceKind: origin.surface } : {}),
+    ...(origin?.channelId ? { address: origin.channelId } : {}),
+  };
+  const options = { configReader: conversationalTurnConfigReaderFrom(deps.configManager), tools };
+  // Even a sessionless or unidentified ingress gets an explicit bound authority;
+  // the profile tool's local-owner default must not leak into a channel turn.
+  return sessionId
+    ? conversationalTurnSpawnOptions({ sessionId, surfaceKind: origin?.surface }, { ...options, channel })
+    : conversationalTurnCapabilities(channel, options);
 }
 
 /**
