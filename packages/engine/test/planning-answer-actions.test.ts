@@ -189,6 +189,57 @@ describe('full-input privacy before the planning judgment boundary', () => {
 });
 
 describe('planning reading cancellation', () => {
+  for (const blockedCall of [1, 2]) {
+    test(`abort promptly settles the public helper when call ${blockedCall} never responds`, async () => {
+      const fake = harness({ scope: 0.99, specific: 0.99 });
+      const entered = deferred();
+      const originalAsk = fake.port.ask;
+      let calls = 0;
+      fake.port.ask = async (request) => {
+        if (++calls === blockedCall) { entered.resolve(); return new Promise(() => {}); }
+        return originalAsk(request);
+      };
+      const controller = new AbortController();
+      const result = read(question({ recommendedAnswer: 'Only change retry.ts.' }), { signal: controller.signal })
+        .then(() => 'resolved', () => 'aborted');
+      await entered.promise;
+      controller.abort();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const state = await Promise.race([result, new Promise<string>((resolve) => { timer = setTimeout(() => resolve('still pending'), 100); })]);
+        expect(state).toBe('aborted');
+        expect(fake.notes.filter(({ note }) => note.kind === 'action')).toEqual([]);
+      } finally { clearTimeout(timer); }
+    });
+  }
+
+  for (const blockedCall of [1, 2]) {
+    test(`a late rejection from call ${blockedCall} stays observed after prompt cancellation`, async () => {
+      const fake = harness({ scope: 0.99, specific: 0.99 });
+      const entered = deferred(); const release = deferred(); const finished = deferred();
+      const originalAsk = fake.port.ask;
+      let calls = 0;
+      fake.port.ask = async (request) => {
+        if (++calls !== blockedCall) return originalAsk(request);
+        entered.resolve();
+        await release.promise;
+        finished.resolve();
+        throw new Error('synthetic late provider rejection');
+      };
+      const controller = new AbortController();
+      const result = read(question({ recommendedAnswer: 'Only change retry.ts.' }), { signal: controller.signal })
+        .then(() => false, () => true);
+      await entered.promise;
+      controller.abort();
+      expect(await result).toBe(true);
+      release.resolve();
+      await finished.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fake.notes.filter(({ note }) => note.kind === 'action')).toEqual([]);
+      expect(fake.entries.at(-1)?.status).toBe('failed');
+    });
+  }
+
   test('an already-aborted read asks and records nothing', async () => {
     const fake = harness({ scope: 0.99 });
     const controller = new AbortController(); controller.abort();

@@ -1,6 +1,7 @@
 import type { JsonValue, YesNoReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError, snapshotJudgmentInput } from '../../gate/judgment-input.js';
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import type { ProjectPlanningQuestion } from './types.js';
 import { planningAnswerTopic, planningRecommendationSpecific } from './batteries/answer-actions.js';
 
@@ -77,10 +78,10 @@ export async function readProjectPlanningAnswerActions(
   const state = { question: facts };
   const callOptions = signal === undefined ? {} : { signal };
   const port = judgmentPort(TOPIC_SITE);
-  const topics = await planningAnswerTopic.run(port, state, { site: TOPIC_SITE, ...callOptions });
+  const topics = await executePolicyCheck(() => planningAnswerTopic.run(port, state, { site: TOPIC_SITE, ...callOptions }), signal);
   signal?.throwIfAborted();
   const recommendation = question.recommendedAnswer?.trim()
-    ? await planningRecommendationSpecific.run(port, state, { site: RECOMMENDATION_SITE, ...callOptions })
+    ? await executePolicyCheck(() => planningRecommendationSpecific.run(port, state, { site: RECOMMENDATION_SITE, ...callOptions }), signal)
     : null;
   signal?.throwIfAborted();
   const specific = recommendation?.readings.specific ?? null;
