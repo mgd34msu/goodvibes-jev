@@ -1,0 +1,78 @@
+{
+  "name": "@goodvibes-jev/agent",
+  "version": "2.1.0",
+  "private": true,
+  "description": "GoodVibes personal operator assistant TUI with a proactive Agent product brain, isolated Agent Knowledge, local profiles, routines, skills, personas, and explicit build delegation.",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "main": "src/main.ts",
+  "bin": {
+    "goodvibes-agent": "bin/goodvibes-agent.ts"
+  },
+  "files": [
+    "bin",
+    "dist/package",
+    "LICENSE",
+    "src",
+    "!src/test",
+    "!src/**/*.test.ts",
+    "!src/**/__tests__",
+    "!src/cli/package-verification.ts",
+    "!src/verification",
+    "tsconfig.json",
+    "README.md",
+    "CHANGELOG.md",
+    "docs/*.md",
+    "release/release-notes.md",
+    "release/performance-snapshot.json",
+    "release/release-readiness.json",
+    "release/live-verification/live-verification.json",
+    "release/live-verification/live-verification.md"
+  ],
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "tui": "bun run src/main.ts",
+    "dev:watch": "bun --watch src/main.ts",
+    "build": "bun build src/main.ts --target=bun --outdir dist/package",
+    "build:binary": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
+    "test": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/agent src/test",
+    "test:e2e": "bun ../../packages/engine/scripts/test.ts --cwd ../../products/agent --timeout=120000 src/test/e2e/startup-first-turn.e2e.test.ts src/test/e2e/first-start-workspace.e2e.test.ts"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgd34msu/goodvibes-jev.git",
+    "directory": "products/agent"
+  },
+  "bugs": {
+    "url": "https://github.com/mgd34msu/goodvibes-jev/issues"
+  },
+  "homepage": "https://github.com/mgd34msu/goodvibes-jev/tree/main/products/agent",
+  "keywords": [
+    "goodvibes",
+    "agent",
+    "operator",
+    "assistant",
+    "tui",
+    "bun",
+    "automation",
+    "ai"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "dependencies": {
+    "@goodvibes-jev/engine": "workspace:*",
+    "@goodvibes-jev/daemon": "workspace:*",
+    "onnxruntime-web": "^1.27.0",
+    "sql.js": "^1.14.1",
+    "sqlite-vec": "^0.1.9",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3"
+  }
+}

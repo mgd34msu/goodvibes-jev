@@ -1,0 +1,299 @@
+import { describe, test, expect, beforeEach } from 'bun:test';
+import { ConversationManager } from '../../core/conversation';
+import { getDisplayWidth } from '../../utils/terminal-width.ts';
+
+// ConversationManager has renderer dependencies for display;
+// we test the LLM message interface and state management which are renderer-independent.
+
+describe('ConversationManager', () => {
+  let cm: ConversationManager;
+
+  beforeEach(() => {
+    // Fixed width avoids terminal dependency
+    cm = new ConversationManager(() => 80);
+  });
+
+  describe('message accumulation', () => {
+    test('starts with empty LLM messages', () => {
+      expect(cm.getMessagesForLLM()).toEqual([]);
+    });
+
+    test('addUserMessage adds a user message', () => {
+      cm.addUserMessage('hello');
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatchObject({ role: 'user', content: 'hello' });
+    });
+
+    test('addAssistantMessage adds an assistant message', () => {
+      cm.addAssistantMessage('hi there');
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatchObject({ role: 'assistant', content: 'hi there' });
+    });
+
+    test('addAssistantMessage with tool calls includes them', () => {
+      const toolCalls = [{ id: 'c1', name: 'read', arguments: { path: 'foo.ts' } }];
+      cm.addAssistantMessage('calling tool', { toolCalls });
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs[0]).toMatchObject({ role: 'assistant', toolCalls });
+    });
+
+    test('addToolResults adds tool result messages', () => {
+      cm.addToolResults([{ callId: 'c1', success: true, output: 'file content' }]);
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatchObject({ role: 'tool', callId: 'c1', content: 'file content' });
+    });
+
+    test('addToolResults carries through the matching tool name when a prior assistant tool call exists', () => {
+      cm.addAssistantMessage('calling tool', {
+        toolCalls: [{ id: 'call-web-1', name: 'web_search', arguments: { query: 'dllm language model' } }],
+      });
+      cm.addToolResults([{ callId: 'call-web-1', success: true, output: 'file content' }]);
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs[1]).toMatchObject({ role: 'tool', callId: 'call-web-1', name: 'web_search' });
+    });
+
+    test('addToolResults with failure includes error message', () => {
+      cm.addToolResults([{ callId: 'c2', success: false, error: 'permission denied' }]);
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs[0]).toMatchObject({ role: 'tool', callId: 'c2' });
+      expect((msgs[0] as { content: string }).content).toContain('Error: permission denied');
+    });
+
+    test('addToolResults with no output uses default message', () => {
+      cm.addToolResults([{ callId: 'c3', success: true }]);
+      const msgs = cm.getMessagesForLLM();
+      expect((msgs[0] as { content: string }).content).toBe('Tool completed successfully.');
+    });
+
+    test('system messages are excluded from LLM messages', () => {
+      cm.addSystemMessage('internal info');
+      expect(cm.getMessagesForLLM()).toEqual([]);
+    });
+
+    test('message order is preserved', () => {
+      cm.addUserMessage('question');
+      cm.addAssistantMessage('calling', { toolCalls: [{ id: 'c1', name: 'tool', arguments: {} }] });
+      cm.addToolResults([{ callId: 'c1', success: true, output: 'result' }]);
+      cm.addAssistantMessage('final answer');
+
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs[0].role).toBe('user');
+      expect(msgs[1].role).toBe('assistant');
+      expect(msgs[2].role).toBe('tool');
+      expect(msgs[3].role).toBe('assistant');
+    });
+  });
+
+  describe('resetAll', () => {
+    test('resets all messages', () => {
+      cm.addUserMessage('test');
+      cm.addAssistantMessage('response');
+      cm.resetAll();
+      expect(cm.getMessagesForLLM()).toEqual([]);
+    });
+  });
+
+  describe('block lookup', () => {
+    test('prefers the block containing a line over the nearest later block start', () => {
+      cm.addAssistantMessage([
+        '```ts',
+        'function first() {',
+        '  const value = 1;',
+        '  return value;',
+        '}',
+        '```',
+        '',
+        '```ts',
+        'function second() {',
+        '  return 2;',
+        '}',
+        '```',
+      ].join('\n'));
+      cm.getDisplayBlocks();
+
+      const [firstBlock, secondBlock] = cm.getBlockRegistry().filter((block) => block.type === 'code');
+      expect(firstBlock).toEqual(expect.objectContaining({ type: 'code' }));
+      expect(secondBlock).toEqual(expect.objectContaining({ type: 'code' }));
+
+      const targetLine = firstBlock!.startLine + firstBlock!.lineCount - 1;
+      expect(Math.abs(secondBlock!.startLine - targetLine)).toBeLessThan(Math.abs(firstBlock!.startLine - targetLine));
+      expect(cm.findNearestBlock(targetLine, 'code')).toBe(firstBlock);
+    });
+  });
+
+  describe('splash suppression', () => {
+    test('rebuilds history when splash suppression changes', () => {
+      const splashConversation = new ConversationManager(() => 40);
+      const before = splashConversation.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join('')).join('\n');
+      expect(before).toContain('██████╗');
+
+      splashConversation.setSplashSuppressed(true);
+      const after = splashConversation.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join('')).join('\n');
+      expect(after).not.toContain('██████╗');
+    });
+
+    test('rebuilds splash against a narrower width provider before suppression', () => {
+      let width = 96;
+      const splashConversation = new ConversationManager(() => width);
+      const wide = splashConversation.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join(''));
+      expect(wide.join('\n')).toContain('[ ｇｏｏｄ ｖｉｂｅｓ ・ Ａ Ｉ ・ いい雰囲気 ]');
+      expect(wide.filter((line) => getDisplayWidth(line) > width)).toEqual([]);
+
+      width = 34;
+      splashConversation.setWidthProvider(() => width);
+      const narrow = splashConversation.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join(''));
+      expect(narrow.join('\n')).toContain('██████╗');
+      expect(narrow.filter((line) => getDisplayWidth(line) > width)).toEqual([]);
+
+      splashConversation.setSplashSuppressed(true);
+      const suppressed = splashConversation.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join(''));
+      expect(suppressed.join('\n')).not.toContain('██████╗');
+      expect(suppressed.filter((line) => getDisplayWidth(line) > width)).toEqual([]);
+    });
+  });
+
+  describe('display-only command output survives rebuilds', () => {
+    const text = (c: ConversationManager): string => c.getDisplayBlocks().map((line) => line.map((cell) => cell.char).join('')).join('\n');
+
+    test('printed output stays through a resize, in place (live defect: /context window output vanished on resize)', () => {
+      let width = 120;
+      const c = new ConversationManager(() => width);
+      c.addUserMessage('first question');
+      c.addAssistantMessage('first answer', { model: 'm1' });
+      c.getDisplayBlocks();
+      c.log('Context window for Free Models Router: 200,000 tokens');
+      c.addUserMessage('second question');
+      expect(text(c)).toContain('Context window for Free Models Router: 200,000 tokens');
+
+      width = 90;
+      const after = text(c);
+      expect(after).toContain('Context window for Free Models Router: 200,000 tokens');
+      expect(after.indexOf('first answer')).toBeLessThan(after.indexOf('Context window for Free Models Router'));
+      expect(after.indexOf('Context window for Free Models Router')).toBeLessThan(after.indexOf('second question'));
+      width = 120;
+      expect(text(c).split('Context window for Free Models Router').length - 1).toBe(1);
+    });
+
+    test('printed before the first message, it replaces the splash and stays through a resize', () => {
+      let width = 120;
+      const c = new ConversationManager(() => width);
+      expect(text(c)).toContain('██████╗');
+      c.log('Context window for Free Models Router: 200,000 tokens');
+      let shown = text(c);
+      expect(shown).toContain('Context window for Free Models Router: 200,000 tokens');
+      expect(shown).not.toContain('██████╗');
+      width = 90;
+      shown = text(c);
+      expect(shown).toContain('Context window for Free Models Router: 200,000 tokens');
+      expect(shown).not.toContain('██████╗');
+    });
+
+    test('output printed while a reply streams stays below the streamed text across deltas and a resize', () => {
+      let width = 120;
+      const c = new ConversationManager(() => width);
+      c.addUserMessage('question');
+      c.getDisplayBlocks();
+      c.startStreamingBlock();
+      c.updateStreamingBlock('partial answer');
+      c.log('printed mid-turn');
+      c.updateStreamingBlock('partial answer grows');
+      let shown = text(c);
+      expect(shown).toContain('printed mid-turn');
+      expect(shown.indexOf('partial answer grows')).toBeLessThan(shown.indexOf('printed mid-turn'));
+      width = 100;
+      c.updateStreamingBlock('partial answer grows more');
+      shown = text(c);
+      expect(shown.split('printed mid-turn').length - 1).toBe(1);
+      expect(shown.indexOf('partial answer grows more')).toBeLessThan(shown.indexOf('printed mid-turn'));
+    });
+
+    test('clearing the display drops kept display-only output', () => {
+      let width = 120;
+      const c = new ConversationManager(() => width);
+      c.addUserMessage('q');
+      c.getDisplayBlocks();
+      c.log('old receipt');
+      c.clearDisplay();
+      width = 100;
+      expect(text(c)).not.toContain('old receipt');
+      expect(c.getDisplayOnlyCount()).toBe(0);
+    });
+  });
+
+  describe('clearDisplay', () => {
+    test('clearDisplay zeros getDisplayBlocks', () => {
+      cm.addUserMessage('hello');
+      cm.addAssistantMessage('world');
+      // Force display to be populated
+      expect(cm.getDisplayBlocks().length).toBeGreaterThan(0);
+
+      cm.clearDisplay();
+      expect(cm.getDisplayBlocks().length).toBe(0);
+    });
+
+    test('clearDisplay leaves LLM message history intact', () => {
+      cm.addUserMessage('hello');
+      cm.addAssistantMessage('world');
+      const snapshotBefore = cm.getMessageSnapshot();
+
+      cm.clearDisplay();
+
+      const snapshotAfter = cm.getMessageSnapshot();
+      expect(snapshotAfter.length).toBe(snapshotBefore.length);
+    });
+
+    test('after clearDisplay, a new message adds only that message to the display', () => {
+      cm.addUserMessage('hello');
+      cm.addAssistantMessage('world');
+      cm.clearDisplay();
+      expect(cm.getDisplayBlocks().length).toBe(0);
+
+      cm.addUserMessage('new message after clear');
+      // Display now contains lines from the new message only
+      const blocks = cm.getDisplayBlocks();
+      expect(blocks.length).toBeGreaterThan(0);
+      const displayText = blocks.map((line) => line.map((cell) => cell.char).join('')).join('\n');
+      expect(displayText).toContain('new message after clear');
+      // The old messages should NOT appear in display after clear
+      expect(displayText).not.toContain('hello');
+      expect(displayText).not.toContain('world');
+    });
+
+    test('getMessagesForLLM is unaffected by clearDisplay', () => {
+      cm.addUserMessage('persistent user');
+      cm.addAssistantMessage('persistent assistant');
+      cm.clearDisplay();
+      const msgs = cm.getMessagesForLLM();
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0]).toMatchObject({ role: 'user', content: 'persistent user' });
+      expect(msgs[1]).toMatchObject({ role: 'assistant', content: 'persistent assistant' });
+    });
+  });
+
+  describe('toJSON / fromJSON', () => {
+    test('toJSON returns serializable object with messages', () => {
+      cm.addUserMessage('hi');
+      const json = cm.toJSON() as { messages: unknown[]; timestamp: number };
+      expect(json.messages).toHaveLength(1);
+      expect(typeof json.timestamp).toBe('number');
+    });
+
+    test('fromJSON restores messages', () => {
+      cm.addUserMessage('original');
+      const json = cm.toJSON() as { messages: Array<{ role: string; content: string }> };
+
+      const cm2 = new ConversationManager(() => 80);
+      cm2.fromJSON(json as { messages: never[] });
+      expect(cm2.getMessagesForLLM()).toHaveLength(1);
+      expect(cm2.getMessagesForLLM()[0]).toMatchObject({ role: 'user', content: 'original' });
+    });
+
+    test('fromJSON with empty messages array produces empty conversation', () => {
+      cm.fromJSON({ messages: [] });
+      expect(cm.getMessagesForLLM()).toEqual([]);
+    });
+  });
+});

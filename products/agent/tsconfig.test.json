@@ -1,0 +1,10 @@
+{
+  // Everything tsc checks in CI: src/ (tests included), scripts/ and bin/.
+  // tsconfig.json covers only the shipped source.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "scripts", "bin"],
+  "exclude": []
+}

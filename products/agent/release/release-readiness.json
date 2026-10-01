@@ -1,0 +1,611 @@
+{
+  "schemaVersion": 1,
+  "gate": "goodvibes-agent-release-readiness",
+  "checkedAt": "2026-06-04",
+  "policy": {
+    "summary": "A release requires every release capability to meet the release quality standard, be owned, be evidenced, and be free of unknown or gap status.",
+    "blockerStatuses": [
+      "unknown",
+      "gap"
+    ],
+    "stableLinePolicy": "Stable release lines must have zero blocker statuses before release.",
+    "sourceNaming": "Use neutral evidence aliases only.",
+    "qualityGate": "Release quality means every listed capability has release-quality capability coverage, user access, model access, safety-boundary evidence, and release evidence.",
+    "requiredQualityDimensions": [
+      "capabilityCoverage",
+      "userAccess",
+      "modelAccess",
+      "safetyBoundary",
+      "releaseEvidence"
+    ]
+  },
+  "sources": [
+    {
+      "id": "release-surface-review",
+      "kind": "release-surface-review",
+      "observedAt": "2026-06-04",
+      "evidence": "Release surface coverage review."
+    },
+    {
+      "id": "runtime-contract-review",
+      "kind": "runtime-contract-review",
+      "observedAt": "2026-06-04",
+      "evidence": "Runtime contract compatibility review."
+    },
+    {
+      "id": "goodvibes-agent",
+      "kind": "agent-package",
+      "observedAt": "2026-06-04",
+      "evidence": "Current goodvibes-agent worktree."
+    },
+    {
+      "id": "goodvibes-connected-host",
+      "kind": "connected-host",
+      "observedAt": "2026-06-04",
+      "evidence": "Connected-host route, operator, channel, media, pairing, and automation contracts reviewed under runtime-contract-review; packaged Agent docs mirror the owned boundaries."
+    },
+    {
+      "id": "goodvibes-companion",
+      "kind": "companion-app",
+      "observedAt": "2026-06-04",
+      "evidence": "Companion command-depth, pairing, shared-session, media attachment, and realtime foreground-event inventory reviewed under runtime-contract-review."
+    }
+  ],
+  "items": [
+    {
+      "id": "operator-workspace-primary-surface",
+      "capability": "Terminal-first personal operator workspace launches by default and exposes the high-signal workflows from one TUI surface.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/agent-workspace-categories.ts; src/renderer/agent-workspace.ts; src/tools/agent-route-planner.ts; src/tools/agent-support-tool.ts; src/tools/agent-sessions-tool.ts; src/tools/agent-audit-tool.ts; docs/getting-started.md",
+      "action": "Keep Agent workspace as the first-screen product surface and avoid adding a marketing or coding-first entrypoint.",
+      "quality": {
+        "capabilityCoverage": "Matches the release expectation that the product opens into the real operator workspace, with visible assistant-first Home lanes for setup, chat/model, connected browser cockpit/PWA handoff, project work, Personal Ops, research/docs, background supervision, and safety/recovery plus deeper setup, runtime posture, local context, channels, media, planning, and delegation categories.",
+        "userAccess": "The user can open the workspace by default or through /agent, /home, and /operator, start from the assistant cockpit lanes including the browser cockpit handoff, then browse or search deeper workspace categories and actions directly.",
+        "modelAccess": "route action:\"plan|status\" plus lower-level agent_harness mode:\"route_decision\" choose the preferred visible Agent route for a plain user task, including alternatives, missing fields, confirmation boundary, workspace matches, and harness mode matches across setup, settings, Personal Ops, research, autonomy, execution, delegation, computer/browser, workspace, host, device, channel, security, Local Context, and Knowledge surfaces without executing tools; host/daemon health, doctor, readiness, service, and compatibility wording prefers host action:\"status\" before repair or lifecycle effects, normal settings/configuration wording prefers settings action:\"list\" before set/reset/import effects, model provider/local-cookbook/local-server-smoke/route-fit wording prefers models action:\"provider|local|smoke|route\" before credential, smoke, benchmark, or route-change effects, Personal Ops briefing/queue/fresh-read/connector setup wording prefers personal_ops action:\"briefing|queue|intake|lane\" before live provider reads or effects, direct reminder/schedule/cron/lifecycle wording prefers schedule action:\"list\" before confirmed schedule effects, command-shaped background work prefers execution action:\"processes\" plus first-class terminal/process routes, interactive PTY/stdin/sudo wording prefers execution action:\"process_capabilities\" before hidden process starts or credential effects and surfaces certified daemon runtime records when published, external memory-provider/backend/sync/import-export wording prefers memory action:\"provider\" or the certified external provider checklist before provider effects, browser-backed research runner wording prefers research action:\"runner\" readiness, visual research report rendering wording prefers research action:\"plan\" plus report artifacts before browser/PWA rendering is claimed, voice workflow/TTS-provider wording prefers device action:\"voice|provider\" before capture, playback, or picker effects, browser cockpit/PWA wording prefers computer action:\"browser\" before visible open handoffs, channel setup/triage/delivery-receipt/send wording prefers channels action:\"setup|triage|deliveries|channel\" before confirmed external delivery, permission posture/finding/blocked-action wording prefers security action:\"status|finding|explain\" before policy changes or risky work, support-bundle/session/audit evidence wording prefers support action:\"status|bundle\", sessions action:\"list|get\", and audit action:\"readiness|evidence|item|artifact\" before bundle export/import/share, session lifecycle, or audit drill-in effects, broader ongoing or watcher-like background work stays on autonomy intake, file undo/redo/recovery wording prefers execution action:\"recovery\", media generation wording prefers media provider readiness plus confirmed agent_media_generate saved artifacts, and screenshot, browser-navigation/control, screen-observation, and desktop-control wording prefers computer action:\"plan\" before live UI tools are considered; workspace action:\"status|actions|action|run|surfaces|surface|open|shortcuts|keybindings|keybinding|run_keybinding|set_keybinding|reset_keybinding|commands|command|run_command|cli_commands|cli_command\" plus autonomy action:\"intake|queue|item|status\" plus computer action:\"status|plan|control|browser|setup|mcp|open_browser\" plus device action:\"status|capability|voice|provider|open_tts_provider|open_tts_voice\" plus models action:\"status|route|local|providers|provider|smoke\" plus personal_ops action:\"briefing|status|queue|intake|lane|read\" plus channels action:\"status|channel|setup|triage|deliveries\" plus schedule action:\"list|create|remind|edit|run|pause|resume|delete\" expose the same assistant-first cockpit, workspace map, connected browser cockpit/PWA route with service/web setup fallback, workspace category coverage, visible autonomy queue live records, model provider/local-cookbook/smoke/route-fit routes, Personal Ops briefing/queue/fresh-read routes, channel setup/triage/delivery history, schedule post-action nextRoutes, mobile/PWA controls, Agent onboarding marker status, browser/PWA receipt reporting that distinguishes satisfied artifact/live read-model evidence from missing publication, visible navigation routes, keyboard route controls, and command/action execution to the model without requiring harness mode memorization; lower-level agent_harness mode:\"summary\", mode:\"route_decision\", mode:\"workspace\", mode:\"workspace_categories\", mode:\"workspace_actions\", mode:\"workspace_action\", mode:\"run_workspace_action\", mode:\"autonomy_intake\", mode:\"autonomy_queue\", mode:\"autonomy_queue_item\", mode:\"agent_orchestration\", mode:\"agent_orchestration_agent\", mode:\"ui_surfaces\", mode:\"ui_surface\", mode:\"open_ui_surface\", mode:\"shortcuts\", mode:\"keybindings\", mode:\"keybinding\", mode:\"run_keybinding\", mode:\"set_keybinding\", and mode:\"reset_keybinding\" remain detailed compatibility routes for route inspection and release verification, including managed multi-agent milestones, work-plan dispatch receipts, task/run diagnostics, bounded redacted output descriptors, automation telemetry, and compact modelRoute hints.",
+        "safetyBoundary": "The workspace stays Agent-first and avoids hidden connected-host lifecycle control, coding-first entrypoints, and marketing-only surfaces.",
+        "releaseEvidence": "release-readiness inventory plus package-facing README and getting-started docs cite the workspace files and keep this as a required release item."
+      }
+    },
+    {
+      "id": "first-run-onboarding",
+      "capability": "First-run setup covers provider access, Agent Knowledge, local behavior libraries, channels, voice/media, and connected-host posture.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/setup-wizard-checkpoint.ts; src/agent/setup-wizard-artifact-receipts.ts; src/input/setup-wizard-live-receipts.ts; src/input/agent-workspace.ts; src/input/agent-workspace-categories.ts; src/runtime/onboarding/verify.ts; src/tools/agent-settings-import-tool.ts; src/tools/agent-harness-setup-posture.ts",
+      "action": "Keep setup review tied to the Agent workspace, Agent-owned settings, and connected-host readiness checks.",
+      "quality": {
+        "capabilityCoverage": "Covers first-run provider setup, a guided setup wizard with progress/current-step/saved-checkpoint/backtracking/repeated-smoke-blocker focus, visible connected-host auth and install-smoke checklist rows, GoodVibes settings import, Agent Knowledge readiness, VIBE.md personality health, local behavior libraries, channels, voice/media, browser/desktop control readiness, sudo execution posture with SUDO_PASSWORD presence-only guidance, support posture, connected-host compatibility, live service probe evidence, token-safe connected-host auth posture with exact pairing route ids, confirmed SDK-backed local token create/repair, token-safe install smoke checks, confirmed setup smoke execution, optional durable redacted setup smoke artifacts, durable setup receipts from saved artifacts, live setup read-model snapshots, and ordered setup receipt event streams, certified setup receipt schema/version/provenance/publication/cursor evidence, latest-smoke and history/trend Home/setup summary surfacing, primary handoff cards for every actionable setup row, read-only setup repair decisions for the safest next token/status/bootstrap/lifecycle/no-action route, setup closeout decisions from critical blocker, saved smoke, durable setup receipt, and completion-marker evidence, confirmed onboarding finish through the workspace action route, offline GoodVibes host bootstrap guidance, recommended diagnostic/status repair cards, setup-state fixtures, setup serviceLifecycleDecision gates, inspect-first confirmed connected-host service repair routes through the Agent workspace, certified service receipt outcomes for services.status/install/start/restart, and exact install/start/restart/no-action lifecycle decisions from services.status receipts.",
+        "userAccess": "The user gets the Agent workspace with setup readiness, a guided Start wizard that highlights the current setup step, saved setup checkpoint, stale-checkpoint auto-advance evidence, repeated smoke blocker, and closeout state, visible Start actions to show/save/clear the setup checkpoint, visible connected-host auth and install-smoke checklist rows beside runtime/model setup, current settings, GoodVibes import preview/apply, reviewable readiness state, primary handoffs from setup blockers to the safest visible workspace form, diagnostic, user-run guidance, or confirmed route, sudo posture with blocked background escalation routes and presence-only credential status, a direct setup repair decision route for the current blocker or a named host/auth/service target, confirmed local connected-host token create/repair, confirmed token-safe setup smoke, saved redacted setup smoke evidence artifacts, live/saved durable setup receipt auto-advance for service/auth/install-smoke/browser-PWA rows, ordered event-stream setup receipts with schema/provenance/publication/cursor evidence, and latest result, trend, recent runs, and frequent blockers surfaced in the setup summary, token-safe connected-host auth status with exact pairing route ids, setup closeout that says fix blocker, run final smoke, finish setup, or complete, confirmed Apply & close marker write, offline install/trust/verify/service/reconnect commands when no host is reachable, exact service status/install/start/restart repair options when the connected-host operator endpoint supports them, serviceLifecycleDecision status gates, and success criteria plus certified receipt outcomes and exact lifecycle decisions when service methods return status proof.",
+        "modelAccess": "setup action:\"status|item|repair|checkpoint|save_checkpoint|clear_checkpoint|token|smoke|finish|import_settings\" gives the preferred direct first-run setup route; settings action:\"list|get|set|reset|import\" gives the preferred direct Agent settings and redacted shared GoodVibes settings import route; host action:\"status|capabilities|capability|services|service|methods|method\" gives the preferred direct connected-host diagnostics route; import_goodvibes_settings action:\"preview|apply\" remains available for compatibility; agent_harness mode:\"summary\", mode:\"setup_posture\", mode:\"setup_item\", mode:\"setup_repair\", mode:\"setup_checkpoint\", mode:\"mark_setup_checkpoint\", mode:\"clear_setup_checkpoint\", mode:\"provision_connected_host_token\", mode:\"run_setup_smoke\", mode:\"settings\", mode:\"get_setting\", mode:\"set_setting\", and mode:\"reset_setting\" remain available for detailed setup/settings compatibility and expose setup marker state, a guided setupWizard with progress/current step/checkpoint state/checkpoint autoAdvance evidence/backtracking routes/rerun and save-smoke routes/repeated-blocker focus, setupWizard.closeout and top-level setupCloseout decisions with blocker/smoke/marker evidence plus certified receipt counts and event-stream counts, a prioritized first-run setup plan with connected-host/provider/auth blockers, sudo execution posture, primaryHandoff and handoffs cards with kind/effect/userRoute/modelRoute/safety/confirmation metadata, nextSetupActions and summary nextSetupHandoffs handoff routes, a read-only setup repair decision that selects token repair, connected-host status, services.status receipt, user-run bootstrap, or no lifecycle action without executing it, confirmed setup checkpoint save/clear, confirmed local token provisioning, token-safe install smoke checks, confirmed redacted smoke evidence collection, optional artifact capture for user-run smoke output, latest saved smoke artifact result, merged durable setup receipt artifacts, live setup read-model snapshots, and ordered setup receipt event streams for service/auth/install-smoke/browser-PWA auto-advance with redacted summaries, source ids, schema status/version, repair/action provenance, host publication guarantees, publisher, cursor, and sequence evidence, setup smoke history/trend/recent-run/frequent-blocker metadata, local model readiness and cookbook follow-through, VIBE.md personality health counts for applied/blocked/truncated files, shared GoodVibes settings import counts, browser/desktop-control ready-attention-setup readiness, SUDO_PASSWORD presence-only guidance with blocked background sudo/stdin password routes, exact follow-up routes, live service probe evidence, setup serviceLifecycleDecision gates, token-safe connected-host auth posture with pairing route ids, recommended repair cards, offline GoodVibes host bootstrap commands, connected-host repair cards with success criteria, certified service repair receipt outcomes and lifecycleDecision outputs from agent_operator_method, derived capability flags, provider route, provider-account counts, subscription counts, local behavior discovery, channel/media/setup signals, single setup-item lookup, and checkpoint inspection; mode:\"run_workspace_action\" actionId:\"onboarding-apply-close\" writes the confirmed user onboarding markers, mode:\"run_workspace_action\" actionId:\"import-goodvibes-tui-settings\" remains available for visible workspace parity; settings rows include compact first-class modelRoute hints, and visible UI, workspace, and command routes remain for confirmed setup mutations.",
+        "safetyBoundary": "Setup reads and writes Agent-owned settings only, keeps token values redacted, imports secret-backed values through the secret manager, stores setup checkpoints as only the visible setup step id, label, source, timestamp, and generic note without explicit user request text, exposes setup repair as a read-only decision that never starts, installs, restarts, writes tokens, imports settings, or opens UI by itself, exposes missing-host bootstrap commands as user-run guidance, runs setup smoke only as a confirmed redacted evidence collection route without implicit shell/package/host commands, redacts token/secret/password/credential/authorization/api-key-like values before optional artifact storage or setup receipt history/detail surfacing, treats setup closeout as advisory until confirmed Apply & close writes only the user onboarding markers, exposes sudo as credential presence, blocked route, and foreground guidance only without reading, storing, printing, or injecting raw password values, exposes connected-host auth as presence/path/fingerprint posture plus pairing route ids only, creates or repairs the local canonical operator token only through confirmed SDK-backed setup while preserving valid tokens and leaving env tokens untouched, exposes connected-host service install/start/restart only as confirmed operator-method repair routes that remain inspect-first until services.status lifecycleDecision evidence proves need, and intentionally excludes service stop/uninstall from first-run setup.",
+        "releaseEvidence": "Readiness evidence cites Agent workspace, verification, and direct harness sources, while ledger accounting and package-facing docs cover model-visible setup posture plus artifact, live read-model, and ordered event-stream setup receipt consumption."
+      }
+    },
+    {
+      "id": "provider-model-routing",
+      "capability": "Provider and model selection includes active model visibility, custom provider setup, model refresh, pinned models, and reasoning effort.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/agent-workspace-categories.ts; src/input/commands/local-provider-runtime.ts; src/input/commands/shell-core.ts; src/tools/agent-harness-model-routing.ts; src/tools/agent-harness-local-model-endpoints.ts; docs/providers-and-routing.md",
+      "action": "Preserve workspace-first model/provider controls and scriptable mirrors.",
+      "quality": {
+        "capabilityCoverage": "Covers active model visibility, custom provider setup, model refresh, favorites, pinned models, context windows, provider-health posture split across SDK type availability, daemon publication, Agent consumption, provider fallback, exact route-health read models, live latency, rate-limit posture, and redacted error posture, reasoning effort controls, visible route-readiness inspection, readiness scoring across latency/context/tools/vision/cost/privacy, hardware-scored local model recommendations, setup/download guidance, local endpoint candidates with exact endpoint inspection, daemon-published local serving diagnostics for certified schema/version/provenance/publication/publisher metadata, server version, loaded models, context/tool support, resource pressure, start/repair receipt ids, receipt status, exact confirmed start/repair routes when host-published, and redacted summaries, model-list smoke commands, success criteria, failure triage, confirmed models action:\"smoke\" checks, provider-add and refresh route hints, confirmed local benchmark execution through agent_model_compare, saved benchmark-evidence review, saved local benchmark history with filtered benchmark analytics, and revealed winner judgments feeding matching recipe confidence.",
+        "userAccess": "The user can operate provider and model routing from the Agent workspace, /model, /provider, model picker, provider workspace, scriptable CLI mirrors, and explicit Model Routing actions for route readiness, local cookbook guidance, route-level provider health, certified daemon-published local serving diagnostics when available, confirmed local server checks, local benchmark execution, and benchmark evidence review.",
+        "modelAccess": "Route planning prefers models action:\"provider\" for provider account/subscription wording, action:\"local\" for Ollama/local cookbook/hardware-fit wording, action:\"smoke\" for local server health checks, and action:\"route\" for context/tool/latency/cost/privacy route-fit wording before credential, smoke, benchmark, or route-change effects; models action:\"status|route|local|providers|provider|smoke\" exposes current provider/model route, selectable models, provider ids, provider/subscription posture, pinned models, reasoning support, context windows, readiness scores/dimensions, providerHealth with SDK provider-health type availability, daemon publication status, Agent consumption status, exact route-health matching, source record ids, missing signals, live latency, rate-limit posture, and redacted error posture when a daemon-published read model is reachable, safe route setting keys, hardware-scored local model cookbook, setup/download guidance, local endpoint candidates with exact route/provider inspection, daemonDiagnostics publication posture, endpoint servingDiagnostics for certified schema/version/provenance/publication/publisher metadata, server version, loaded models, context/tool support, resource pressure, start/repair receipt ids, receipt status, source path, exact confirmed start/repair routes when host-published, redacted summaries, model-list smoke commands, success criteria, failure triage, confirmed local model-list smoke results, provider-add and refresh route hints, confirmed local benchmark workspace action route, saved local benchmark history with judgment evidence and a benchmark-filtered analytics route, and single route/model/endpoint/provider lookup; lower-level agent_harness mode:\"model_routing\", mode:\"model_route\", mode:\"provider_accounts\", mode:\"provider_account\", and confirmed mode:\"run_local_model_smoke\" remain compatibility routes; workspace action hints expose Inspect route readiness, Check local servers through models action:\"smoke\", and Review benchmark evidence; visible picker, settings, workspace, and command routes remain for confirmed selection, refresh, benchmark execution, judgment review/apply, pin/unpin, custom provider, and setting mutations.",
+        "safetyBoundary": "Provider auth and model changes are explicit, secret-backed where needed, and do not print raw credentials. Daemon-published provider health and local serving diagnostics are read-only metadata consumption with secret redaction; host-published start/repair routes are only surfaced as separate confirmed actions, and Agent still requires separate confirmation for local smoke probes, provider edits, catalog refresh, benchmark execution, server start/repair, and route changes.",
+        "releaseEvidence": "Provider routing docs, direct harness source, local serving diagnostics tests, package-facing text checks, and readiness item evidence keep this feature required for stable releases."
+      }
+    },
+    {
+      "id": "provider-account-posture",
+      "capability": "Provider auth and subscription posture are inspectable without printing tokens, with login/logout flows requiring explicit confirmation.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/provider-accounts-runtime.ts; src/input/commands/subscription-runtime.ts; src/input/agent-workspace-categories.ts; src/tools/agent-harness-provider-account-metadata.ts",
+      "action": "Keep account inspection read-only by default and confirmation-gate login mutations.",
+      "quality": {
+        "capabilityCoverage": "Covers account snapshots, subscriptions, usage windows, auth route posture, and login/logout safety without token leakage.",
+        "userAccess": "The user can inspect provider accounts and subscription state through Agent workspace routes and /accounts, /auth, and /subscription commands.",
+        "modelAccess": "models action:\"providers|provider|status|route\" exposes provider auth route posture, subscription freshness, usage windows, route issues, repair guidance, single-provider lookup, and related routing/readiness context; settings action:\"list|get|set|reset\" exposes per-setting first-class modelRoute hints, while lower-level agent_harness mode:\"provider_accounts\", mode:\"provider_account\", mode:\"model_routing\", mode:\"model_route\", and settings compatibility modes remain detail routes and login/logout remains a visible confirmation-gated user flow.",
+        "safetyBoundary": "Account inspection is read-only by default, auth mutations require explicit confirmation, and captured output redacts tokens.",
+        "releaseEvidence": "Readiness evidence points to provider account and subscription command implementations, with package policy guarding token-safe docs and release smoke."
+      }
+    },
+    {
+      "id": "isolated-agent-knowledge",
+      "capability": "Agent Knowledge uses the isolated Agent route family only, with ask, search, source review, connector inspection, ingest, reindex, and consolidation actions.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/knowledge.ts; src/cli/agent-knowledge-command.ts; docs/knowledge-artifacts-and-multimodal.md",
+      "action": "Never fall back to default knowledge or non-Agent product knowledge segments.",
+      "quality": {
+        "capabilityCoverage": "Covers isolated Agent Knowledge ask, search, source review, connectors, ingest, reindex, consolidation, graph operations, and status without default knowledge fallback.",
+        "userAccess": "The user can operate Agent Knowledge from the workspace, /knowledge, and goodvibes-agent knowledge CLI mirrors.",
+        "modelAccess": "agent_knowledge and agent_knowledge_ingest expose status, ask/search, source/node/issue lists, item lookup, map summary, connector inspection, and ingest; workspace action:\"actions|action|run|commands|command|run_command\" exposes review, packet/explain, consolidation, reindex, and command-backed routes without requiring harness mode memorization; lower-level agent_harness mode:\"workspace_actions\", mode:\"workspace_action\", mode:\"run_workspace_action\", mode:\"commands\", mode:\"command\", mode:\"run_command\", mode:\"operator_methods\", mode:\"operator_method\", mode:\"tools\", and mode:\"tool\" remain available for detailed compatibility route metadata and tool schemas.",
+        "safetyBoundary": "Connected-host Knowledge traffic targets only /api/goodvibes-agent/knowledge/*, rejects non-Agent space-selection flags, normalizes parseable public Agent-route scope aliases, and fails closed on known non-Agent payload markers; local Knowledge service review/consolidation routes remain isolated to Agent Knowledge.",
+        "releaseEvidence": "Package-facing required text, architecture policy, readiness evidence, and live verification checks require isolated Knowledge status, ask, search, library, item, map, connector outcomes, Agent-route scope alias normalization, and response contamination detection."
+      }
+    },
+    {
+      "id": "artifact-ingest-boundary",
+      "capability": "Artifacts, file ingest, URL lists, bookmarks, browser history, and generated media are explicit Agent Knowledge or artifact workflows instead of silent memory promotion.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/agent-workspace-categories.ts; src/input/commands/knowledge.ts; src/agent/media-generation.ts; src/tools/agent-harness-document-ops.ts; docs/knowledge-artifacts-and-multimodal.md",
+      "action": "Keep source-to-knowledge handoff explicit and confirmation-gated.",
+      "quality": {
+        "capabilityCoverage": "Covers explicit handling for artifacts, files, URL lists, bookmarks, browser history, generated media, reviewed source promotion, document-operation readiness, visible review packet timeline including stale preset attention, visible review packet wizard progress/routes/refreshed-preset lineage, reusable review packet preset artifacts with missing/superseded id freshness checks and confirmed refresh-to-new-preset routes, confirmed review packet archive-reference sharing, route-decision receipt artifacts for apply and leave-unchanged evidence, visible reviewer-readiness preflight, review packet defaults that prefill export/handoff/archive/apply/leave-unchanged/save-preset/share forms from latest packet evidence with preset fallback only when live evidence is missing, inline readiness badges before export/archive/apply, reviewer-ready document export appendices, confirmed artifact package directory or ZIP archive export, and confirmed blind model comparison side-by-side, handoff diff section jumps with recent-handoff choices, plus task/document/benchmark-filtered analytics/synthesis/handoff/handoff archive with matching route-decision receipt evidence.",
+        "userAccess": "The user can use workspace ingest forms, reviewer-ready document export, review packet share, artifact export/package/archive forms, media generation, notes, bookmarks, and Knowledge ingest mirrors with clear review steps.",
+        "modelAccess": "agent_knowledge_ingest exposes URL/file/URL-list/bookmarks/browser-history/connector ingest, agent_documents exposes confirmed document artifact export with comment/suggestion summary appendices and review metadata counts, agent_review_packet_presets exposes confirmed save and refresh plus read-only list/show freshness checks and recommended reuse routes for reusable review packet preset artifacts without changing documents, model routing, handoffs, archives, or source presets, agent_review_packet_share validates saved reviewer handoff archives and sends confirmed plain-text archive references through configured channel targets without printing or attaching ZIP bytes, agent_artifacts exposes saved artifact browse/show/export/package/archive routes with confirmation-gated writes, research exposes a read-only next-action briefing, read-only planning, bounded public source-candidate search with confirmed capture routes, direct browser-runner readiness, certified SDK/daemon browser-backed runner records with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata, redacted current URLs/log tails, visible control routes, source/page receipt ids, certified browser/PWA visual report render records with render routes, redacted render URLs, visual sections, citation coverage, and source-map evidence, visible project-local run/source inspection, reviewed-source bundles, saved report artifact inspection, confirmed run lifecycle controls, confirmed source triage, and sourced report artifact saves with citation coverage repair metadata, optional strict body-citation enforcement, and optional visual report packet sections; lower-level agent_research_runs, agent_research_sources, agent_research_report, agent_harness mode:\"research_briefing\", agent_harness mode:\"research_workflow\", agent_harness mode:\"research_runs\", agent_harness mode:\"research_run\", agent_harness mode:\"research_queue\", and agent_harness mode:\"research_source\" remain detail routes; Agent Workspace Research exposes browser-runner and visual-report readiness plus Research briefing, Plan workflow, public search, direct runner, and report artifact actions for research action:\"briefing|plan|search|runner|reports\", device exposes direct device/voice/browser/PWA/provider posture and confirmed visible browser/TTS picker handoffs, agent_media_generate exposes confirmed generated artifacts, agent_model_compare exposes confirmed blind model comparison with delayed reveal plus side-by-side reviewer views, section-jump reviewer handoff diffs with recent-handoff choices from artifact metadata, task/document/benchmark-filtered saved judgment analytics/synthesis, apply-winner and leave-unchanged route-decision receipts, reviewer handoff artifacts, and reviewer handoff ZIP archives that auto-include matching route-decision receipt artifacts in README counts, archive metadata, and redacted manifests, research action:\"briefing\" exposes one read-only next-action queue across visible runs, source review, saved report artifacts, certified live runner/render evidence, browser readiness, and exact follow-up routes; research action:\"runner\" exposes the direct browser-runner readiness contract; research action:\"plan\" exposes a read-only ordered route plan across run state, public web/fetch or browser posture, browser-runner contracts, certified live browser-runner records, certified visual-render records, source capture/review, visual-report packet saving, and optional Knowledge promotion; research action:\"search\" exposes bounded public web result packets, source summaries, redacted capture arguments, and exact confirmed add_source routes without writing the queue; research action:\"runs|run\" exposes research run phase/progress/log-tail/control posture plus browser-backed runner readiness, certified live runner/render evidence, fallback routes, source review, report, and Knowledge promotion routes; research action:\"sources|source|bundle\" exposes source credibility, bundle, and report handoff posture; research action:\"reports|report_artifact\" exposes saved report artifact lists, visual packet metadata, citation coverage, certified renderer evidence, and bounded previews, mode:\"document_ops\" and mode:\"document_ops_lane\" expose documents, review packet timeline state including stale preset attention, review packet wizard progress/routes/refreshed-preset lineage/share handoff, route-decision receipt state, review packet preset/default freshness state, visible reviewer-readiness preflight, inline readiness badge state in workspace editor snapshots before export/archive/apply, uploads, exports, source checks, media artifacts, artifact browsing, and model comparison readiness, device action:\"voice|provider\" exposes media readiness while mode:\"media_posture\" and mode:\"media_provider\" remain detail routes, and mode:\"sessions\" and mode:\"session\" exposes bookmark/session artifact posture.",
+        "safetyBoundary": "No artifact, generated media, research run, or research source is silently promoted into durable memory or non-Agent knowledge.",
+        "releaseEvidence": "Readiness and docs cite Knowledge/artifact/media boundaries, and package policy requires those docs in the installable package."
+      }
+    },
+    {
+      "id": "local-memory-notes-personas",
+      "capability": "VIBE.md, project context files, and Agent-local memory posture, notes, personas, and runtime profiles support durable personal context without default knowledge contamination.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/vibe-file.ts; src/agent/vibe-confirmation-routes.ts; src/tools/agent-vibe-tool.ts; src/tools/agent-personal-ops-tool.ts; src/tools/agent-harness-personal-ops.ts; src/agent/project-context-files.ts; src/agent/prompt-context-receipts.ts; src/tools/agent-harness-project-context.ts; src/tools/agent-harness-prompt-context.ts; src/tools/agent-harness-learning-curator.ts; src/tools/agent-learning-consolidation-tool.ts; src/input/agent-workspace-snapshot.ts; src/renderer/agent-workspace.ts; src/input/commands/vibe-runtime.ts; src/tools/agent-harness-memory-posture.ts; src/agent/persona-registry.ts; src/agent/note-registry.ts; src/cli/memory-command.ts; src/input/commands/personas-runtime.ts",
+      "action": "Keep local context libraries Agent-owned and secret-rejecting.",
+      "quality": {
+        "capabilityCoverage": "Covers safe project/global VIBE.md personality discovery, direct vibe status/show/init/import-persona model routes, VIBE init/import preview confirmationRoutes, safe project context discovery for .hermes.md, HERMES.md, AGENTS.md, CLAUDE.md, HERMES_HOME/SOUL.md, .cursorrules, and .cursor/rules/*.mdc files, visible Local Context and Personas workspace health counts for VIBE.md/project context files, Local Context prompt receipt outcome timeline with exact drill-in and outcome filters, status/init/show/import-persona flows, setup and learning-curator health cards for blocked/truncated VIBE.md files, opt-in VIBE.md profile starter export/import/application, durable local memory, memory posture, vector/embedding health, supervised Knowledge semantic refinement task inspection, confirmed bounded semantic refinement runs, scratch notes, personas, profiles, search/review/stale/delete flows, duplicate-consolidation preview/merge/stale/delete/rollback/recreate receipts with exact-id post-delete recreate guidance, prompt injection gates for VIBE.md, project context files, and reviewed/confident setup-ready behavior, read-only prompt-context inspection plus sanitized prompt-context receipts for applied order/recent receipt ids/exact receipt-turn-outcome filters/selected records/suppressed records/token budget/prompt hash/terminal outcome, score-driven learning prompt plans for prompt-active/suppressed/proposal/consolidation queues, and promotion without knowledge contamination.",
+        "userAccess": "The user can manage VIBE.md, prompt context inspection with a compact Local Context receipt outcome timeline plus exact latest receipt and outcome filter routes, project context inspection, and records through Agent workspace Local Context, Memory, Notes, Personas, Profiles, /vibe, /memory, /personas, /agent-profile starter flows with --include-vibe, and the Memory posture row.",
+        "modelAccess": "Runtime prompt context applies secret-scanned VIBE.md files, secret-scanned project context files, and only reviewed memory at the durable confidence threshold plus reviewed setup-ready skills, routines, bundles, and personas while listing suppressed records as review/setup work; vibe action:\"status|show|init|import_persona\" exposes the direct model route for read-only VIBE.md inspection, confirmed VIBE.md creation, and confirmed VIBE.md-to-persona import without default Knowledge writes, and unconfirmed init/import previews expose exact model and CLI confirmationRoutes; runtime prompt builds write durable sanitized prompt-context receipts with ids, turn/source/model/provider, selected and suppressed record refs, segment counts, prompt hash, size, timestamp, and terminal outcome/status/stopReason/bounded error-or-cancel detail without storing raw prompt or response text; context action:\"prompt|receipts|receipt\" exposes applied prompt composition order, recent receipt ids, exact receiptId/turnId/outcomeStatus filters, turn outcomes, selected VIBE.md/project context/memory/routine/skill/persona records, suppressed records, bounded prompt previews when includeParameters is true, and approximate token budget without mutation; Agent workspace Local Context exposes VIBE.md/project context health counts, compact prompt receipt outcome timeline counts/latest rows/detail/exact latest receipt route/outcome filter routes, and action route hints for Prompt context, Inspect VIBE.md, Inspect project context, and Inspect one context file; context action:\"files|file\" exposes loaded, truncated, and blocked .hermes.md/HERMES.md/AGENTS.md/CLAUDE.md/SOUL.md/Cursor context files with target-aware subdirectory lookup and bounded bodies; lower-level agent_harness mode:\"project_context\", mode:\"project_context_file\", and mode:\"prompt_context\" remain available for compatibility/detail coverage; /vibe exposes user-facing status/init/show/import-persona routes and Agent workspace Personas exposes VIBE.md status/init/import commands; /agent-profile and profile CLI starter flows expose vibeIncluded template summaries and opt-in --include-vibe export/from-discovered/profile creation; agent_local_registry exposes record lookup/search/get/create/update/review/use/delete for memory, notes, personas, skills, skill bundles, and routines; memory action:\"status|provider|list|search|get\" exposes local memory counts, direct memory record lookup/search, prompt-active recall, vector stats, embedding-provider doctor warnings, provider inspection, route-planner preference for external provider/backend/sync/import-export setup posture, and external-memory setup contract maps for Honcho, OpenViking, Mem0, Hindsight, Holographic, RetainDB, ByteRover, Supermemory, and daemon-published similar backends with provider-specific next-route packets, certified schema/version/publication/publisher/provenance checks, setup/status/read/write/sync/forget checklist items, required receipt fields, certified durable receipt evidence, and sanitized certified live read-model records when the SDK/daemon publishes concrete setup/status/read/write/sync/forget records for Agent to consume; memory action:\"refinement|run_refinement\" exposes the SDK-backed Agent Knowledge semantic self-improvement task ledger and confirmed bounded KnowledgeService.runRefinement route with space/source/refinement-target scoping, task/source follow-up routes, and no hidden prompt-memory writes; lower-level agent_harness mode:\"memory_posture\", mode:\"memory_provider\", mode:\"memory_refinement\", and mode:\"run_memory_refinement\" remain available for compatibility/detail coverage; agent_harness mode:\"setup_posture\" exposes VIBE.md personality health counts and handoff routes; memory action:\"curator|candidate\" exposes a score-driven prompt plan with prompt-active records, suppressed review/setup/low-confidence/personality/consolidation counts, proposal queues, consolidation queues, ordering rules, and exact review routes plus ranked local review, stale, setup, low-confidence, VIBE.md blocked/truncated health, duplicate-consolidation candidates with visible diffs plus update/stale/delete/rollback/recreate routes, an ordered duplicate-consolidation batch review plan, first-class agent_learning_consolidation preview/merge/stale/delete/rollback/recreate phase routes with durable receipts, delete-after-stale enforcement, deleteRecovery payloads, and exact-id recreate refusal when current records would collide, reviewed-note memory/behavior proposal, completed-work memory/behavior proposal, completed-research memory/behavior proposal, saved-session memory/behavior proposal, and promotion candidates with existing safe routes; lower-level agent_harness mode:\"learning_curator\" and mode:\"learning_candidate\" remain available for compatibility/detail coverage; route planning prefers personal_ops action:\"briefing\" for daily/calendar briefings, action:\"queue\" for saved review queues, action:\"intake\" for fresh provider-read planning, and action:\"lane\" for connector setup posture before live provider reads or effects; personal_ops action:\"briefing|status|queue|intake|lane|read\" exposes the preferred direct route for a read-only daily Personal Ops briefing plan, read-only saved inbox/calendar review queue, request-to-route Personal Ops planning, lane inspection, and one confirmed read-only inbox/calendar operation, while lower-level modes mode:\"personal_ops_briefing\", mode:\"personal_ops_queue\", mode:\"personal_ops_intake\", mode:\"personal_ops\", mode:\"personal_ops_lane\", and mode:\"run_personal_ops_read\" remain available for harness inspection; Personal Ops surfaces Agent-owned note, routine, schedule-receipt, delivery, task, and reminder live records plus honest email/calendar connector readiness, classified MCP read/write tool hints, schema-derived inbox/calendar operation records with required fields/sample inputs/schema routes/confirmation flags/fresh-read routes, inbox triage/draft and calendar agenda/conflict workflow cards with prerequisites/inspect routes/send-edit boundaries, ordered connector-read/local-compose/setup-repair/confirmed-effect execution plans, confirmed read-only MCP inbox/calendar execution with required-field checks, bounded redacted output, normalized review cards, structured next-route packets for lane/queue inspection, confirmed refresh, saved artifact reopen, local draft/reminder work, and confirmed-effect boundaries, optional saved redacted review-card artifacts, saved review artifacts resurfaced as redacted inbox thread/calendar event queue records, certified provider-effect receipts for inbox/calendar/task/reminder outcomes, fresh daemon/SDK provider-backed inbox/calendar/task/reminder queue records with durable ids, labels, redacted snippets/notes, agenda windows, conflict signals, due times, cadence, delivery targets, source paths, freshness status, schema/version/publication/publisher/provenance/receipt evidence, read-only inspect routes, and confirmed follow-up boundaries only for published provider routes, and a unified read-only queue view with artifact inspect routes, freshness status, confirmed refresh routes when a matching read connector is ready, local draft/reminder follow-up routes, certified provider-effect boundaries, task workflow cards for visible work-plan review and connected-host task review, reminder workflow cards for confirmed reminders and connected schedule review, and matching MCP connector setup routes; agent_harness exposes confirmed workspace editor routes when the user starts from visible workspace forms. agent_harness mode:\"learning_auto_promote\" exposes the confirmed autonomous learning auto-promotion pass to the model.",
+        "safetyBoundary": "VIBE.md, project context files, and local libraries reject secret-looking content; blocked/truncated personality or context files are surfaced instead of silently applied; --include-vibe refuses blocked VIBE.md files; and destructive or cross-surface promotion actions stay confirmation-gated.",
+        "releaseEvidence": "Readiness evidence cites local registries and CLI/runtime commands, with package policy requiring model-visible local action docs."
+      }
+    },
+    {
+      "id": "skills-routines-behavior-library",
+      "capability": "Local skills, skill bundles, routines, and learned behavior capture reusable operator behavior from reviewed user workflows.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/skill-registry.ts; src/agent/routine-registry.ts; src/input/agent-workspace-learned-behavior.ts; src/input/commands/agent-skills-runtime.ts",
+      "action": "Keep behavior capture local until the user explicitly promotes or exports it.",
+      "quality": {
+        "capabilityCoverage": "Covers local skills, skill bundles, routines, learned behavior capture, imports, review states, and reusable operator workflows.",
+        "userAccess": "The user can manage skills, routines, bundles, and learned behavior through workspace routes and /skills or /routines commands.",
+        "modelAccess": "agent_local_registry and memory action:\"curator|candidate\" expose skill/routine actions, editor schemas, selected-record promotion, prompt-active/suppressed/proposal/consolidation planning, local learning review cards, and routine schedule prefill to the model; lower-level agent_harness mode:\"learning_curator\" and mode:\"learning_candidate\" remain available for compatibility/detail coverage; agent_harness mode:\"propose_skill_drafts\" exposes a confirmed pass that drafts up to 3 skills from recent learning candidates, requiring confirm:true and explicitUserRequest, and returns proposed/skipped counts with skill ids. agent_harness mode:\"learning_auto_promote\" exposes the confirmed autonomous learning auto-promotion pass to the model.",
+        "safetyBoundary": "Behavior capture remains local until the user explicitly promotes, exports, schedules, or deletes a reviewed record.",
+        "releaseEvidence": "Readiness evidence cites registry and command sources, and release docs describe local behavior library ownership."
+      }
+    },
+    {
+      "id": "routine-schedule-promotion",
+      "capability": "Local routines can be promoted to connected-host schedules only by explicit confirmation, with redacted receipts and reconciliation.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/routine-schedule-promotion.ts; src/agent/routine-schedule-receipts.ts; src/input/commands/routines-runtime.ts; docs/getting-started.md",
+      "action": "Keep local routine start separate from durable connected-host schedule creation.",
+      "quality": {
+        "capabilityCoverage": "Covers explicit promotion from local routines to durable connected schedules with receipts, redaction, reconciliation, delivery options, and post-action schedule nextRoutes.",
+        "userAccess": "The user can promote routines through workspace schedule forms or /routines and /schedule mirrors using explicit confirmation.",
+        "modelAccess": "workspace action:\"actions|action|run\" exposes routine selection, schedule editor schemas, confirmed dispatch, and post-action schedule nextRoutes; first-class reminder/operator route guidance remains available for exact schedule or connected-host effects.",
+        "safetyBoundary": "Local routine execution stays separate from durable schedule creation, and schedule promotion requires explicit confirmation and redacted receipts.",
+        "releaseEvidence": "Readiness evidence cites schedule promotion and receipts code plus docs, with live verification covering connected schedule posture."
+      }
+    },
+    {
+      "id": "autonomous-schedule-creation",
+      "capability": "Direct recurring autonomous Agent work can be created as one visible connected schedule only with explicit task, cadence, success criteria, and request provenance.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/autonomy-schedule.ts; src/tools/agent-schedule-tool.ts; src/tools/agent-autonomy-schedule-tool.ts; src/tools/agent-harness-autonomy-intake.ts; src/tools/agent-harness-autonomy-queue.ts; src/tools/agent-harness-autonomy-watcher-read-models.ts; docs/tools-and-commands.md",
+      "action": "Keep autonomous schedules distinct from reminders and routine promotion, with success criteria and confirmation required before schedule creation.",
+      "quality": {
+        "capabilityCoverage": "Covers natural-language recurring Agent work through non-mutating confirmation-route previews, confirmed schedules.create payloads, explicit task and success criteria capture, safe execution policy, delivery options, visible queue/intake routes, trigger workflow posture for time-based wakeups/schedules, incoming webhook/event watchers, Gmail/email connector-gated triggers, control-plane event streams, certified watcher receipt success criteria, a source-owned watcher evidence contract for durable run-history receipts, provider source records, redacted event payload descriptors, and queue correlation, plus live SDK/daemon watcher run-history/source read-model consumption when those records are published.",
+        "userAccess": "The user can ask for ongoing work in normal language, inspect missing fields and trigger posture through autonomy intake, and supervise created schedules through the schedule workspace and autonomy queue.",
+        "modelAccess": "schedule action:\"create\" exposes the preferred confirmed creation route, non-mutating preview confirmationRoutes, and post-create nextRoutes while preserving the lower-level agent_autonomy_schedule contract; autonomy action:\"intake|queue|item|status\" exposes route selection, missing fields, triggerWorkflowSummary, triggerWorkflows with ready/attention/setup-needed/not-published status, published watchers.create/list/run/start/stop posture, watcher receipt outcome criteria, source-owned watcherEvidenceContract fields, visible webhook/event-trigger setup intake, queue cards, normalized live-record controls, live SDK/daemon watcher run-history/source records with bounded redacted output chunks and provider-source inspect/refresh controls, exact confirmed research-run checkpoint/pause/resume/cancel routes, exact confirmed watcher controls only when published by the host, and exact confirmed host cancel/retry/edit routes without requiring harness mode names; lower-level agent_harness mode:\"autonomy_intake\", mode:\"autonomy_queue\", mode:\"autonomy_queue_item\", mode:\"tools\", and mode:\"tool\" remain available for detailed compatibility inspection and tool schema discovery; agent_operator_method certifies watchers.create/patch/run/start/stop/delete receipts after confirmed calls.",
+        "safetyBoundary": "Schedule creation requires confirm:true, explicitUserRequest, task, cadence, and successCriteria; watcher creation is an admin connected-host mutation requiring trusted source/scope, task or run target, success criteria, confirm:true, and explicitUserRequest; watcher receipt certification is derived only from confirmed daemon method receipts and never from hidden polling or raw operator tokens; auto-approval and unsafe external content remain disabled in the generated schedule policy.",
+        "releaseEvidence": "Readiness evidence cites the Agent autonomy schedule implementation, harness intake/queue wiring, live watcher read-model adapter, package docs, and focused tool tests."
+      }
+    },
+    {
+      "id": "connected-schedule-editing",
+      "capability": "Existing connected schedules can be edited by id with explicit confirmation for cadence, name, exact prompt, or autonomous-task changes.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/schedule-edit.ts; src/tools/agent-schedule-tool.ts; src/tools/agent-schedule-edit-tool.ts; src/input/commands/schedule-runtime.ts; src/tools/agent-harness-autonomy-queue.ts; docs/tools-and-commands.md",
+      "action": "Keep schedule edits exact-id, read-only diff previewed, and confirmation-gated through automation.jobs.patch.",
+      "quality": {
+        "capabilityCoverage": "Covers confirmed connected schedule patching for cadence, display name, exact prompt, or rebuilt autonomous task prompt using the public automation.jobs.patch route, with unconfirmed read-only schedules.list current-state diffs and confirmationRoutes when the connected host exposes schedule records.",
+        "userAccess": "The user can edit schedules through the Automation workspace form or /schedule edit with preview-before-confirm behavior that shows before/after name, cadence, and prompt-presence changes when current state is available.",
+        "modelAccess": "schedule action:\"edit\" exposes the preferred read-only diff preview, non-mutating preview confirmationRoutes, confirmed edit route, and post-edit nextRoutes while preserving the lower-level agent_schedule_edit contract; autonomy action:\"queue|item\" and workspace action:\"action\" expose live schedule edit next steps and editor schemas.",
+        "safetyBoundary": "Schedule edits require confirm:true or --yes plus explicit request provenance, and do not create hidden local jobs or bypass public operator routes.",
+        "releaseEvidence": "Readiness evidence cites the schedule edit implementation, workspace/queue wiring, docs, and focused model-tool plus slash-command tests."
+      }
+    },
+    {
+      "id": "reminders-and-notifications",
+      "capability": "Reminder scheduling and notification delivery are explicit, confirmed, and routed through configured targets without leaking tokens.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/reminder-schedule.ts; src/input/commands/notify-runtime.ts; src/tools/agent-notify-tool.ts; src/tools/agent-harness-notification-metadata.ts; src/tools/agent-reminder-schedule-tool.ts",
+      "action": "Keep reminder delivery opt-in and redacted.",
+      "quality": {
+        "capabilityCoverage": "Covers reminders, notification targets, webhook delivery, redacted readiness, explicit one-shot sends, confirmed reminder workflow cards with preview confirmationRoutes, autonomous schedule creation records, and connected schedule review/control records.",
+        "userAccess": "The user can schedule reminders and manage notifications from the Agent workspace and /notify or /schedule commands.",
+        "modelAccess": "schedule action:\"remind|create|edit|run|pause|resume|delete\", personal_ops action:\"briefing|status|queue|intake|lane|read\", agent_reminder_schedule, agent_notify, agent_autonomy_schedule, agent_schedule_edit, agent_operator_action, and agent_harness mode:\"personal_ops_briefing\", mode:\"personal_ops_queue\", mode:\"personal_ops_intake\", mode:\"personal_ops\", mode:\"personal_ops_lane\", mode:\"notifications\", and mode:\"notification_target\" plus command/workspace action metadata expose briefing, review queue, reminder preview confirmationRoutes, connected schedule, post-action schedule nextRoutes, and notification flows to the model.",
+        "safetyBoundary": "Delivery is opt-in, exact-target, confirmation-gated where mutating, and does not render stored tokens.",
+        "releaseEvidence": "Readiness evidence cites reminder, notify, and tool implementations, with live outcome certification covering externally backed delivery."
+      }
+    },
+    {
+      "id": "channel-readiness-send",
+      "capability": "Agent can inspect channel readiness, accounts, policies, status, setup guidance, delivery receipts, and send one confirmed delivery.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/channels-runtime.ts; src/input/agent-workspace-channel-triage.ts; src/agent/channel-delivery.ts; src/agent/channel-delivery-receipts.ts; src/tools/agent-channel-send-tool.ts; src/tools/agent-harness-channel-metadata.ts; docs/channels-remote-and-api.md",
+      "action": "Keep channel delivery exact-target, confirmation-gated, and inspectable through redacted receipts.",
+      "quality": {
+        "capabilityCoverage": "Covers channel readiness, ordered per-channel setup guide, account posture, setup schema guidance, allowlist policy, live status/doctor checks, read-only channel triage, redacted confirmed-send receipt history, and one-message confirmed delivery across configured channel surfaces.",
+        "userAccess": "The user can inspect setup progress, channel readiness, triage blockers/retries/messages/routes, recent redacted send receipts, and send channel messages through Agent Workspace -> Channels, /channels guide, /channels triage, /channels deliveries, and /channels mirrors.",
+        "modelAccess": "Route planning prefers channels action:\"setup\" for channel setup wording, action:\"triage\" for blocker/retry/error wording, action:\"deliveries\" for delivery history wording, and action:\"channel\" or status search for send/notify wording before confirmed external delivery; channels action:\"status|channel|setup|triage|deliveries\" exposes structured readiness, current setup guide step, daemon delivery attempts, visible surface messages, route bindings, redacted receipt history, delivery posture, risk labels, safe config-key names, allowlist/status/doctor routes, and explicit test-send boundary; lower-level agent_harness mode:\"channels\", mode:\"channel\", mode:\"channel_setup_guide\", mode:\"channel_triage\", and mode:\"channel_deliveries\" remain available for compatibility/detail coverage; agent_channel_send exposes the exact confirmed send route and returns the receipt id when the Agent shell path is available. The unified-inbox and channel draft/routing surfaces also expose agent_harness mode:\"unified_inbox\", mode:\"channel_drafts\", mode:\"channel_draft_save\", mode:\"channel_draft_send\", mode:\"channel_routing\", mode:\"channel_routing_assign\", and mode:\"channel_routing_remove\" to the model with confirmation-gated sends.",
+        "safetyBoundary": "Channel sends require explicit target and confirmation, the setup guide and receipt ledger are read-only, receipts redact webhook/link addresses and bound/redact message previews, does not infer routes from chat, and does not expose secret values.",
+        "releaseEvidence": "Readiness evidence cites channel runtime/tool/docs sources, and live certification requires real external channel outcome coverage before release."
+      }
+    },
+    {
+      "id": "companion-pairing",
+      "capability": "Companion pairing is QR-first, hides raw tokens by default, and requires explicit confirmation to display manual tokens.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/agent-workspace-categories.ts; src/input/commands/qrcode-runtime.ts; src/tools/agent-harness-pairing-posture.ts; src/cli/help.ts",
+      "action": "Keep token display redacted unless the user explicitly asks for manual pairing output.",
+      "quality": {
+        "capabilityCoverage": "Covers QR-first companion pairing, manual-token fallback, shared-session posture, realtime client readiness, safe token display, and a read-only companion device capability map for pairing, mobile command routing, browser/PWA, voice/TTS, notifications, browser/desktop control, and certified camera/screen/location/local device command posture when permission-scoped SDK/daemon records are published.",
+        "userAccess": "The user can pair through workspace access routes, /pair, and /qrcode, with manual token display requiring explicit confirmation; device and mobile readiness is inspectable through device posture and the Voice & Media Device capability map action before the user tries a phone/browser/voice handoff.",
+        "modelAccess": "device action:\"status|capability\" exposes companion pairing endpoint binding, pairing surface id, token presence/fingerprint, route catalog, deviceCapabilitySummary, compact deviceCapabilities rows, the device-capability-map route, connected-host status/capability routes, channel readiness routes, and single pairing-route lookup without returning raw tokens or QR payloads; lower-level agent_harness mode:\"pairing_posture\" and mode:\"pairing_route\" remain detailed compatibility routes; Agent workspace actionId:\"device-capability-map\" routes to device action:\"status\".",
+        "safetyBoundary": "Raw pairing tokens are hidden by default and only displayed when the user explicitly requests manual output.",
+        "releaseEvidence": "Readiness evidence cites workspace, QR runtime, direct harness, and help surfaces, with live certification covering connected-host pairing readiness."
+      }
+    },
+    {
+      "id": "approvals-and-automation-actions",
+      "capability": "Approvals, automation jobs, runs, and schedules expose read-only status plus narrow confirmed approve, deny, cancel, run, pause, resume, retry, run-now, enable, disable, and delete actions.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/agent/operator-actions.ts; src/tools/agent-schedule-tool.ts; src/input/commands/operator-actions-runtime.ts; src/input/commands/schedule-runtime.ts; docs/tools-and-commands.md",
+      "action": "Do not create or mutate broad automation definitions from ordinary chat.",
+      "quality": {
+        "capabilityCoverage": "Covers approval queues, automation jobs/runs/schedules, status views, and narrow confirmed approve, deny, cancel, run, pause, resume, retry, run-now, enable, disable, and delete operations.",
+        "userAccess": "The user can operate approvals and automation through workspace forms and exact /approval, /automation, and /schedule mirrors.",
+        "modelAccess": "schedule action:\"list|run|pause|resume|delete\" exposes the preferred schedule status/lifecycle path with post-action nextRoutes while preserving agent_operator_briefing, agent_operator_action, and agent_harness command and workspace metadata for read-only status and exact confirmed actions.",
+        "safetyBoundary": "Ordinary chat cannot silently create or mutate broad automation definitions; every mutation is exact and confirmation-gated.",
+        "releaseEvidence": "Readiness evidence cites operator action and runtime sources, and live certification covers externally backed automation outcomes."
+      }
+    },
+    {
+      "id": "planning-workplan",
+      "capability": "Planning, workplan status, and task visibility support personal operator work without auto-spawning parallel implementation jobs.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/tools/agent-work-plan-tool.ts; src/runtime/services.ts; src/input/agent-workspace-workplan-editor-submission.ts; docs/tools-and-commands.md",
+      "action": "Keep planning serial and explicit until the user asks for execution.",
+      "quality": {
+        "capabilityCoverage": "Covers planning interviews, visible work-plan state, confirmed dispatch of approved plan items into visible Agent spawn/batch-spawn jobs with saved linked-agent receipts, closeout surfacing in managed orchestration cards, certified live remote capture/export/closeout outcome records, certified workspace/worktree isolation evidence with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata, task status, and project planning without implicit parallel execution jobs.",
+        "userAccess": "The user can inspect and update planning from /plan, /workplan, workspace planning panels, and task/status surfaces, approved selected plan items can be dispatched to visible agents only through confirmation, and linked dispatch receipts plus certified live remote outcome/workspace evidence with missing certification signals appear in Agent orchestration closeout cards.",
+        "modelAccess": "agent_work_plan exposes list/get/create/update/set_status/dispatch_agents/remove/clear_completed for visible Agent-local work plans; dispatch_agents previews selected ids, then calls first-class agent spawn or batch-spawn after confirm:true plus explicitUserRequest, writes linked-agent receipts, and returns next routes for orchestration, work-plan detail, agent inspect/wait/message/cancel, and closeout; agent_harness mode:\"agent_orchestration\" and mode:\"agent_orchestration_agent\" correlate linked work-plan items, dispatch receipt counts, closeout routes, remote artifact review routes, certified daemon/SDK live capture/export/closeout outcome records, and certified workspace/worktree isolation evidence with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata and missing-signal surfacing; personal_ops action:\"briefing|status|queue|intake|lane\" plus lower-level agent_harness mode:\"personal_ops_briefing\", mode:\"personal_ops_queue\", mode:\"personal_ops_intake\", mode:\"personal_ops\", and mode:\"personal_ops_lane\" expose daily briefing, review queue, request planning, visible work-plan, connected-host task review, and host task operation cards.",
+        "safetyBoundary": "Planning stays serial and explicit until the user asks for execution; agent dispatch requires selected work-plan ids, confirm:true, explicit user request provenance, and first-class visible Agent routes.",
+        "releaseEvidence": "Readiness evidence cites planning coordinator and command sources, with verification ledger accounting for onboarding and work-plan surfaces."
+      }
+    },
+    {
+      "id": "explicit-build-delegation",
+      "capability": "Build, fix, review, and implementation work uses local read/edit/exec with confirmed file recovery when the current Agent workspace is sufficient, and delegates to GoodVibes TUI/shared-session routes when isolation, parallelism, remote execution, separate worktrees, or delegated review is useful.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/tools/agent-execution-tool.ts; src/tools/agent-computer-tool.ts; src/tools/agent-harness-execution-posture.ts; src/tools/agent-harness-sudo-posture.ts; src/tools/agent-harness-agent-orchestration.ts; src/tools/agent-harness-remote-read-models.ts; src/tools/agent-harness-background-processes.ts; src/tools/agent-harness-execution-history.ts; src/tools/agent-harness-file-recovery.ts; src/input/commands/delegation-runtime.ts; src/input/agent-workspace-delegation-editor-submission.ts; src/tools/agent-harness-delegation-posture.ts; src/tools/agent-delegation-tool.ts; docs/tools-and-commands.md",
+      "action": "Prefer local execution for ordinary current-workspace tasks and use delegation only when it improves the user outcome.",
+      "quality": {
+        "capabilityCoverage": "Covers local read/search/analyze, edit/write, bounded foreground shell, setup-linked sudo posture with SUDO_PASSWORD presence-only guidance, tracked local background process start/list/status/log/wait/stop with process-style poll/log/kill/write and session-id aliases, read-only process parity reporting for terminal background start plus process list/poll/wait/log/kill/write/PTY/sudo semantics, route-planner preference for process capability posture when users ask about interactive CLI, PTY, stdin, sudo, or privilege prompts, dynamic SDK/daemon substrate probes for ProcessManager stdin/PTY methods, terminal/PTY operator routes, session-input routes, and credential routes, confirmed stdin write dispatch when a safe ProcessManager stdin method is discovered, certified daemon/SDK interactive runtime read models for live process output chunks, typed PTY session routes, sudo credential mediation routes, and browser/desktop command receipts with redacted output, schema/version/publication/publisher/provenance evidence, and exact confirmed control routes, Work workspace process supervision with tracked process counts and stdin/PTY/sudo parity, visible Agent manager orchestration with serial-by-default spawn/batch-spawn policy, managed multi-agent milestones, per-agent plan cards, confirmed approved work-plan dispatch with linked-agent receipts and post-dispatch next routes, closeout cards, auto-attached remote artifact review routes, remote-runner contract/artifact evidence, certified daemon/SDK live capture/export/closeout outcome records, certified workspace/worktree isolation evidence with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata and missing-signal surfacing, live subagent records, safe inspect/message/wait/cancel routes, web/fetch, process monitor/live tail/tool inspector supervision routes, grouped execution-history activity cards with redacted records, verification evidence, bounded process-output summaries, exact inspect routes, confirmed FileUndoManager recovery, first-class computer action:\"status|control|browser|setup|mcp|open_browser\" browser/PWA and browser/desktop ready-attention-setup routing with workflow cards/checklists/fallback routes, and explicit shared-session/task delegation for isolation, remote, parallel, worktree, or review handoff with structured handoff briefs.",
+        "userAccess": "The user can inspect execution posture, sudo posture, tracked background processes, the process parity/doctor report, execution history activity cards, exact records, Agent orchestration cards, work-plan links, approved work-plan dispatch receipts, closeout review cards, remote artifact review routes, certified live remote outcome records, certified workspace/worktree isolation evidence with missing certification signals, and file recovery from first-class execution/workspace surfaces plus lower-level agent_harness detail routes, use local tools in the current workspace, open visible process monitor/live tail/tool inspector supervision, apply confirmed undo/redo snapshots, or delegate from Agent workspace forms and /delegate with original ask, reason, success criteria, workspace hint, priority, and explicit review intent when a handoff is useful.",
+        "modelAccess": "execution action:\"status|route|history|record|processes|process_capabilities|process|recovery\" exposes local-vs-delegated route selection, sudo posture, delegation decision cards, registered execution tools, process monitor/live tail/tool inspector supervision routes, certified interactive runtime records, strict browser/desktop ready-attention-setup state with workflow cards, setup checklists, fallback routes, exact setup/execution routes, background-process routes, direct process parity/doctor reporting, grouped activity cards, exact records, and file recovery posture without requiring harness mode names; execution action:\"capabilities|doctor|parity\" aliases route straight to the read-only process capability report, including certified daemon/SDK live process output, PTY session, sudo mediation, and browser/desktop receipt evidence when published; computer action:\"status|plan|control|browser|setup|mcp|open_browser\" exposes browser/PWA readiness, browser/screenshot/desktop-control workflow planning, browser/desktop-control posture, certified browser/desktop command receipt routes, setup/repair routes, MCP/tool discovery, and confirmed browser cockpit opens without requiring harness mode names; lower-level agent_harness mode:\"execution_posture\", mode:\"execution_route\", and mode:\"browser_control_route\" remain compatibility routes; first-class terminal and process tools expose terminal(command, background:true) start plus process(action:list|poll|wait|log|kill|write|capabilities) lifecycle UX over the same tracked ProcessManager records; mode:\"setup_item\" setupItemId:\"sudo-execution-posture\" exposes foreground-supervised escalation guidance, credential presence only, blocked background sudo/stdin password routes, and missing SDK/daemon mediation contracts unless certified runtime mediation records are published; mode:\"agent_orchestration\" and mode:\"agent_orchestration_agent\" expose visible Agent records, serial-by-default policy, managed multi-agent plan milestones, per-agent plan cards, work-plan links, dispatch receipt counts, closeout cards, remote-runner contract/artifact evidence, certified daemon/SDK live capture/export/closeout outcome records, certified workspace/worktree isolation evidence with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata and missing-signal surfacing, auto-attached remote artifact review routes matched by runner id, approved work-plan dispatch route, spawn/batch-spawn decision cards, templates, and exact first-class agent list/inspect/message/wait/cancel routes; agent_work_plan action:\"dispatch_agents\" converts selected approved work-plan ids into first-class agent spawn or batch-spawn with saved linked-agent receipts after confirmation and next routes for orchestration, work-plan detail, agent inspect/wait/message/cancel, and closeout; mode:\"background_processes\" and mode:\"background_process\" expose tracked local process status, bounded redacted output with byte/count/truncation metadata, processId/processSessionId/sessionId aliases, certified daemon live output chunks when published, and a process parity matrix with SDK/daemon substrate probes; mode:\"run_background_process\" starts, waits on, stops/kills, polls, logs with explicit truncation metadata, dispatches write only through a discovered safe ProcessManager stdin method after confirmation, returns unsupported guidance without fake write support, or reports capabilities for tracked local processes plus certified interactive runtime records with confirmation and explicit user request required for start/wait/stop/kill/write; the capability report distinguishes GoodVibes session-input routes from local process stdin; mode:\"execution_history\" and mode:\"execution_history_item\" expose grouped activity cards, bounded redacted tool/shell/edit records, verification evidence, bounded process-output summaries, supervision routes, and file-recovery handoffs; mode:\"file_recovery\" and mode:\"run_file_recovery\" expose confirmed local file undo/redo; first-class delegation action:\"status|routes|route\" exposes local-first, TUI handoff, delegated-review, remote-inspection, and hidden-fanout-blocked lanes with required fields, success evidence, status routes, recovery routes, delegated-review policy, and confirmed workspace/slash-command handoff routes, while lower-level agent_harness mode:\"delegation_posture\" and mode:\"delegation_route\" remain compatibility routes.",
+        "safetyBoundary": "Local execution remains governed by first-class tool policies; tracked background process start/wait/stop/write requires confirmation, output is bounded and redacted, process parity reporting is read-only, stdin write dispatches only through a discovered safe ProcessManager method and never echoes input data, PTY remains unsupported until a typed interactive session contract exists, hidden sudo prompts are blocked, and sudo posture reports only non-secret credential presence plus foreground guidance without reading, storing, printing, or injecting raw password values; execution history keeps secret-looking args redacted and bounded, and cards attach only bounded summaries instead of raw hidden logs; file recovery requires explicit confirmation and does not expose file contents; delegated review or implementation remains a visible confirmed flow and is not the default when local execution is sufficient.",
+        "releaseEvidence": "Readiness evidence cites execution posture, computer adapter, file recovery, delegation runtime, direct harness source, and docs, with package boundary checks rejecting hidden execution and unconfirmed handoff drift."
+      }
+    },
+    {
+      "id": "mcp-tool-trust",
+      "capability": "MCP servers, tool inventory, trust posture, secrets, and security review are inspectable and confirmation-gated from the Agent workspace.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/mcp-runtime.ts; src/input/commands/security-runtime.ts; src/input/commands/product-runtime.ts; src/input/agent-workspace-categories.ts; src/tools/agent-harness-mcp-metadata.ts; src/tools/agent-security-tool.ts; src/tools/agent-policy-explanation.ts",
+      "action": "Keep tool trust changes explicit and do not silently install or expose tools.",
+      "quality": {
+        "capabilityCoverage": "Covers MCP server setup, tool inventory, trust posture, security review, secrets, and confirmation-gated trust changes.",
+        "userAccess": "The user can review MCP and tool trust through Agent workspace, /mcp, /security, /trust, and settings surfaces.",
+        "modelAccess": "agent_harness mode:\"mcp_servers\" and mode:\"mcp_server\" exposes read-only server posture, trust mode, role, quarantine state, and optional per-server tool inventory; security action:\"status|finding|explain\" plus lower-level mode:\"security_posture\", mode:\"security_finding\", and mode:\"policy_explain\" exposes trust/security posture, exact findings, and read-only policy explanations for one model action, with route-planner preference for permission-status, finding/incident, and blocked-action wording; mode:\"tools\" and mode:\"tool\" expose compact model tool rows with direct harness inspection routes and detailed schemas on request; settings action:\"list|get|set\" exposes per-setting first-class modelRoute hints and confirmed setting routes.",
+        "safetyBoundary": "Tool trust changes, secret writes, and server mutations are explicit and do not silently install or expose tools.",
+        "releaseEvidence": "Readiness evidence cites MCP/security/product runtimes and the direct MCP server harness catalog, with package text policy and the verification ledger documenting model-visible harness boundaries."
+      }
+    },
+    {
+      "id": "voice-tts-media",
+      "capability": "Voice, live TTS, image input, media provider readiness, and confirmed image/video artifact generation are available from the TUI.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/tts-runtime.ts; src/input/commands/local-runtime.ts; src/input/agent-workspace-voice-media.ts; src/input/agent-workspace-categories.ts; src/renderer/agent-workspace.ts; src/tools/agent-harness-media-posture.ts; docs/voice-and-live-tts.md",
+      "action": "Keep spoken output and generated media out of durable knowledge unless explicitly ingested.",
+      "quality": {
+        "capabilityCoverage": "Covers voice review, live TTS, image input, media provider readiness, transcription/voice posture, voice workflow readiness for push-to-talk, voice memo transcription, spoken responses, certified SDK/daemon wake-word records when permission-scoped evidence is published, honest not-published wake-word capture when it is not, and confirmed image/video artifact generation.",
+        "userAccess": "The user can operate voice and media through Agent Workspace -> Voice & Media and /tts, /voice, /image, and /media commands, with Voice workflows, Device capability map, and Browser/PWA readiness actions visible before trying spoken input, output, mobile, or browser handoffs.",
+        "modelAccess": "device action:\"voice|provider|status|open_tts_provider|open_tts_voice\" exposes voice/media provider readiness, selected TTS setup, artifact availability, safe secret-key names, model routes, voice workflow summary, exact push-to-talk/transcription/spoken-response/wake-word workflow lookup, certified SDK/daemon permission-scoped live voice records when published, setup routes, and policy boundaries; computer action:\"browser|open_browser|control|setup|mcp\" exposes browser-tool posture and the connected browser handoff; lower-level agent_harness mode:\"media_posture\", mode:\"media_provider\", mode:\"pairing_posture\", and mode:\"ui_surface\" remain detailed compatibility routes; Agent workspace actionId:\"voice-workflow-posture\" routes to device action:\"voice\", actionId:\"device-capability-map\" routes to device action:\"status\", and actionId:\"browser-cockpit-readiness\" routes to computer action:\"browser\"; agent_media_generate performs confirmed media generation.",
+        "safetyBoundary": "Spoken output and generated media are not durable knowledge unless the user explicitly ingests reviewed artifacts; always-listening wake capture stays not-published until a certified permission-scoped runtime contract exists, and certified wake records only expose redacted receipt evidence plus exact user-visible controls.",
+        "releaseEvidence": "Readiness evidence cites voice/media runtime/docs and direct harness sources, while ledger accounting and live certification cover media and connected-host outcomes."
+      }
+    },
+    {
+      "id": "conversation-session-artifacts",
+      "capability": "Session save/load/export/search, transcript review, bookmarks, image attachment, and context references are handled inside the TUI.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/input/commands/session-workflow.ts; src/input/commands/conversation-runtime.ts; src/input/session-picker-modal.ts; src/input/agent-workspace-categories.ts; src/tools/agent-sessions-tool.ts; src/tools/agent-harness-session-metadata.ts",
+      "action": "Keep conversation controls local and visible.",
+      "quality": {
+        "capabilityCoverage": "Covers save/load/export/search, transcript review, bookmarks, image attachment, context references, session continuity, and artifact follow-up.",
+        "userAccess": "The user can manage sessions and conversation artifacts through TUI controls, workspace actions, pickers, overlays, and /save, /load, /sessions, /conversation, /bookmarks, and /image commands.",
+        "modelAccess": "sessions action:\"list|get\" exposes current session posture, saved-session metadata/search, bookmark counts, saved bookmark file counts, and single-session lookup; lower-level agent_harness mode:\"sessions\" and mode:\"session\" remain available for compatibility/detail inspection; visible save/resume/export/delete/bookmark flows remain confirmation-gated user routes.",
+        "safetyBoundary": "Conversation controls stay visible and local; file/URL context references do not silently ingest into Agent Knowledge.",
+        "releaseEvidence": "Readiness evidence cites session workflow, workspace, and direct harness sources, while ledger accounting and package text checks cover sessions/bookmarks, overlays, and command catalog docs."
+      }
+    },
+    {
+      "id": "support-auth-trust-bundles",
+      "capability": "Support, auth, subscription, and trust bundles can be exported or inspected with redaction and explicit confirmation.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/cli/bundle-command.ts; src/input/commands/recall-bundle.ts; src/input/commands/security-runtime.ts; src/input/commands/platform-access-runtime.ts; src/input/commands/product-runtime.ts; src/input/agent-workspace-categories.ts; src/tools/agent-harness-security-posture.ts; src/tools/agent-security-tool.ts; src/tools/agent-support-tool.ts; src/tools/agent-policy-explanation.ts",
+      "action": "Keep sensitive bundle export confirmation-gated.",
+      "quality": {
+        "capabilityCoverage": "Covers support, auth, subscription, trust, recall, and portable bundle inspection/export/import with redaction and confirmation.",
+        "userAccess": "The user can export and inspect bundles through workspace routes and /bundle, /auth, /trust, /subscription, and recall bundle commands.",
+        "modelAccess": "security action:\"status|finding|explain\" plus lower-level agent_harness mode:\"security_posture\", mode:\"security_finding\", and mode:\"policy_explain\" exposes redacted token, policy, MCP, plugin, incident, auth, support-bundle posture, exact findings, and policy explanations for one model action, with route-planner preference for permission-status, finding/incident, and blocked-action wording; support action:\"status|bundle\" exposes bundle routes and redacted existing-bundle inspection without returning raw config, token, or secret values, while lower-level agent_harness mode:\"support_bundles\" and mode:\"support_bundle\" remain available for detail.",
+        "safetyBoundary": "Sensitive bundle export/import and trust changes are confirmation-gated and redact secret values.",
+        "releaseEvidence": "Readiness evidence cites bundle, security, auth, trust, workspace, and direct harness sources, with package policy and ledger accounting guarding token-safe documentation and install smoke."
+      }
+    },
+    {
+      "id": "doctor-compat-status",
+      "capability": "Agent status, doctor, compatibility, health, auth review, and connected-host route posture are available from CLI and TUI.",
+      "owner": "agent",
+      "status": "covered",
+      "evidence": "src/cli/status.ts; src/cli/management.ts; src/input/commands/health-runtime.ts; src/input/commands/compat-runtime.ts",
+      "action": "Keep diagnostics read-only and linked to connected-host repair guidance.",
+      "quality": {
+        "capabilityCoverage": "Covers status, doctor, compatibility, health, auth review, connected-host route posture, and Agent Knowledge readiness.",
+        "userAccess": "The user can run workspace health routes and goodvibes-agent status, doctor, compat, and auth review mirrors.",
+        "modelAccess": "host action:\"status|capabilities|capability|services|service|methods|method\" gives the preferred connected-host diagnostics route; agent_harness mode:\"operator_methods\", mode:\"operator_method\", mode:\"service_posture\", mode:\"service_endpoint\", mode:\"connected_host\", mode:\"connected_host_capability\", mode:\"connected_host_status\", mode:\"daemon\", mode:\"daemon_status\", mode:\"cli_commands\", mode:\"cli_command\", mode:\"setup_posture\", mode:\"setup_item\", mode:\"mcp_servers\", and mode:\"mcp_server\" plus models action:\"status|providers\" expose the same diagnostics to the model, with compact connected-host modelRoute hints for follow-up route selection.",
+        "safetyBoundary": "Diagnostics are read-only, redact token state, and provide repair guidance without lifecycle control.",
+        "releaseEvidence": "Readiness evidence cites status/health/compat sources, with live verification requiring CLI status, compat, doctor, connected-host, model, and Agent Knowledge checks."
+      }
+    },
+    {
+      "id": "release-package-install",
+      "capability": "Package metadata, docs, Bun-only install, runtime build, compiled binary smoke, committed performance snapshot fixture evaluation, publish checks, install checks, and release workflows are guarded by shared release metadata verification.",
+      "owner": "release",
+      "status": "covered",
+      "evidence": "release/performance-snapshot.json; src/cli/package-verification.ts; scripts/release.ts; scripts/publish-check.ts; scripts/package-install-check.ts; .github/workflows/ci.yml",
+      "action": "Keep release validation centralized and package-facing docs aligned with Agent product boundaries.",
+      "quality": {
+        "capabilityCoverage": "Covers package identity, Bun-only install, runtime build, package docs, compact model tool and harness metadata policy, searchable harness mode discovery, command/CLI/tool route metadata, keyboard route metadata, operator/audit route metadata, stripped registered schema descriptions, compiled binary smoke, pack/install smoke, publish checks, performance checks, and tarball policy.",
+        "userAccess": "The user receives one installable package with goodvibes-agent as the executable and package-facing docs included in the tarball.",
+        "modelAccess": "agent_harness exposes package-facing slash-command, CLI mirror, keybinding, tool catalog, connected-host, and operator/audit route metadata plus mode:\"modes\" and mode:\"mode\" discovery so the assistant can operate installed surfaces instead of hidden nested processes.",
+        "safetyBoundary": "The package excludes tests, private verification internals, connected-host binaries, lifecycle ownership, and forbidden boundary paths.",
+        "releaseEvidence": "Shared package verification, compact model tool/harness metadata checks, searchable harness mode catalog ledger, command/CLI/tool route guards, keyboard route guards, connected-host route guards, operator/audit route guards, stripped schema-description checks, release scripts, committed performance snapshot fixture, and release workflow policy keep the package gate required for every release."
+      }
+    },
+    {
+      "id": "live-release-evidence",
+      "capability": "Live release verification records external outcome checks for compiled CLI, connected-host status, health, model routes, and isolated Agent Knowledge.",
+      "owner": "release",
+      "status": "covered",
+      "evidence": "src/verification/live-verifier.ts; scripts/verify-live.ts; docs/release-and-publishing.md",
+      "action": "Run live verification for stable releases after product work is complete.",
+      "quality": {
+        "capabilityCoverage": "Covers external outcome checks for compiled CLI, connected-host status/health/model routes, host compatibility, isolated Agent Knowledge status/ask/search/source/node/issue/map/connector routes, and packaged evidence for item inspection.",
+        "userAccess": "Release operators and maintainers inspect the packaged live-verification artifacts as audit material; end users receive releases backed by recorded external outcome checks rather than a separate product surface.",
+        "modelAccess": "host action:\"services|service|status\" mirrors service endpoint posture and live-readiness posture into the main conversation for assistant use; lower-level agent_harness mode:\"service_posture\", mode:\"service_endpoint\", and mode:\"connected_host_status\" remain compatibility routes with compact modelRoute follow-up diagnostics.",
+        "safetyBoundary": "Live reports redact local paths, private network addresses, and token values while refusing host incompatibility as a passing state.",
+        "releaseEvidence": "release/live-verification JSON and Markdown reports are required release evidence and are current for this release line."
+      }
+    },
+    {
+      "id": "release-readiness-inventory-gate",
+      "capability": "The release-quality inventory is staged with release metadata and blocks stable releases when unknown or gap entries remain.",
+      "owner": "release",
+      "status": "covered",
+      "evidence": "release/release-readiness.json; src/tools/agent-audit-tool.ts; src/tools/agent-harness-release-evidence.ts; src/tools/agent-harness-release-readiness.ts; src/tools/agent-harness-tool.ts; src/cli/package-verification.ts; scripts/release.ts",
+      "action": "Keep this inventory current whenever quality evidence or ownership changes.",
+      "quality": {
+        "capabilityCoverage": "Makes release-quality coverage a release criterion for each capability item rather than accepting a bare covered status.",
+        "userAccess": "Release operators and maintainers inspect the packaged release-readiness inventory as audit material for every capability, owner, action, evidence, and quality dimension.",
+        "modelAccess": "audit action:\"readiness|item|evidence|artifact\" plus lower-level agent_harness mode:\"release_evidence\", mode:\"release_evidence_artifact\", mode:\"release_readiness\", mode:\"release_readiness_item\", mode:\"modes\", and mode:\"mode\" expose the same operator/audit release evidence bundle, inventory, and harness capability catalog to the model with summary, search, single-artifact, single-item, and single-mode lookup routes; route action:\"plan\" prefers audit readiness or evidence for release readiness, release evidence, verification ledger, and operator/audit wording, while package verification keeps the packaged files present.",
+        "safetyBoundary": "The inventory uses neutral evidence aliases and excludes local or private evidence details from the repository.",
+        "releaseEvidence": "Package verification requires required item ids, zero blocker statuses, quality dimensions, fresh live evidence, searchable harness mode discovery, compact tool metadata, command/CLI/tool route metadata, keyboard route metadata, connected-host route metadata, operator/audit route metadata, and release script staging."
+      }
+    },
+    {
+      "id": "connected-host-channel-core",
+      "capability": "Core external messaging surfaces, route bindings, delivery records, ingress, egress, account lifecycle, directory lookup, target resolution, and render policy are owned by the connected host.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: channel surface and automation contract inventory reviewed under runtime-contract-review; docs/channels-remote-and-api.md",
+      "action": "Agent should keep readiness and confirmed send UX while connected-host owns adapters and lifecycle.",
+      "quality": {
+        "capabilityCoverage": "Covers core external messaging routes, delivery records, ingress/egress, account lifecycle, directory lookup, target resolution, render policy, and adapter contracts through connected-host ownership.",
+        "userAccess": "The user sees channel readiness, redacted confirmed-send receipts, and confirmed sends in Agent while connected-host owns adapter lifecycle and route execution.",
+        "modelAccess": "channels action:\"status|channel|setup|triage|deliveries\", agent_channel_send, lower-level agent_harness mode:\"channels\", mode:\"channel\", mode:\"channel_setup_guide\", mode:\"channel_triage\", and mode:\"channel_deliveries\", connected-host capability, channel workspace, slash-command, and settings metadata expose channel operation boundaries to the model. The unified-inbox and channel draft/routing surfaces also expose agent_harness mode:\"unified_inbox\", mode:\"channel_drafts\", mode:\"channel_draft_save\", mode:\"channel_draft_send\", mode:\"channel_routing\", mode:\"channel_routing_assign\", and mode:\"channel_routing_remove\" to the model with confirmation-gated sends.",
+        "safetyBoundary": "Agent never owns host lifecycle or secret-bearing adapters; it routes exact confirmed delivery through public connected-host contracts.",
+        "releaseEvidence": "Readiness evidence cites connected-host evidence alias and Agent channel docs, with live outcome certification covering real delivery before release."
+      }
+    },
+    {
+      "id": "connected-host-automation-runtime",
+      "capability": "Durable jobs, runs, schedules, route bindings, deliveries, watchers, and service lifecycle are connected-host responsibilities.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: automation runtime and operator API contract inventory reviewed under runtime-contract-review; docs/tools-and-commands.md",
+      "action": "Agent should expose read-only status and narrow confirmed actions, not host lifecycle ownership.",
+      "quality": {
+        "capabilityCoverage": "Covers durable jobs, runs, schedules, watchers, deliveries, route bindings, and service lifecycle through connected-host runtime ownership, including published watcher create/list/run/start/stop operator methods, Agent-certified watcher receipt outcomes, Agent-visible handoff requirements for durable watcher run/source records, and Agent consumption of published watcher run/source read models.",
+        "userAccess": "The user can inspect automation state, route trigger setup through autonomy intake, and run narrow confirmed actions from Agent without managing host services.",
+        "modelAccess": "schedule action:\"list|run|pause|resume|delete\", autonomy action:\"intake|queue|item\", agent_operator_briefing, agent_operator_action, agent_operator_method, host action:\"methods|method|capability\", lower-level agent_harness mode:\"operator_methods|operator_method\", and connected-host capability reports expose automation status/action/watcher boundaries, post-action schedule nextRoutes, certified watcher receipts, source-owned watcher run/source evidence requirements, and published watcher run/source read models to the model. Remote orchestration also exposes agent_harness mode:\"remote_snapshot\", mode:\"remote_peers\", mode:\"remote_work\", mode:\"remote_pair_requests\", mode:\"remote_pair_approve\", mode:\"remote_pair_reject\", mode:\"remote_peers_invoke\", and mode:\"remote_work_cancel\" to the model with confirmation-gated peer/work control.",
+        "safetyBoundary": "Agent does not create broad host automation definitions or lifecycle operations from chat; watcher creation stays an admin confirmed operator method with trusted source/scope and explicit user request, and receipt certification uses only returned daemon fields.",
+        "releaseEvidence": "Readiness evidence cites connected-host automation inventory and Agent tools docs, with live certification covering external automation outcomes."
+      }
+    },
+    {
+      "id": "connected-host-operator-api",
+      "capability": "Operator API covers methods, events, auth, realtime transport, status, control-plane catalogs, and WebSocket/SSE event feeds.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: operator API and realtime transport contract inventory reviewed under runtime-contract-review; docs/connected-host.md",
+      "action": "Agent should use public operator routes only.",
+      "quality": {
+        "capabilityCoverage": "Covers operator methods, events, auth, realtime transport, status, control-plane catalogs, WebSocket/SSE feeds, and route families.",
+        "userAccess": "The user receives status, health, model route, work/approval/automation, and realtime posture through Agent diagnostics and workspace surfaces.",
+        "modelAccess": "host action:\"status|capabilities|capability|services|service|methods|method\" plus agent_harness mode:\"operator_methods\", mode:\"operator_method\", mode:\"service_posture\", mode:\"service_endpoint\", mode:\"connected_host\", mode:\"connected_host_capability\", mode:\"connected_host_status\", and first-class operator tools expose public operator routes and endpoint diagnostics to the model, with compact connected-host route hints in posture, capability, and status results.",
+        "safetyBoundary": "Agent uses public authenticated operator routes only and does not expose lifecycle or non-Agent host internals.",
+        "releaseEvidence": "Readiness evidence cites connected-host operator inventory and connected-host docs, with live verification requiring status, health, and model route checks."
+      }
+    },
+    {
+      "id": "connected-host-agent-knowledge-routes",
+      "capability": "The connected host owns Agent Knowledge route handlers, source ingestion, connectors, graph operations, refinement, jobs, and schedules.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: isolated Agent Knowledge route contract reviewed under runtime-contract-review; docs/knowledge-artifacts-and-multimodal.md",
+      "action": "Agent should target only the isolated Agent Knowledge route family.",
+      "quality": {
+        "capabilityCoverage": "Covers Agent Knowledge handlers, ingestion, connectors, graph operations, refinement, jobs, schedules, ask, search, and status through isolated connected-host routes.",
+        "userAccess": "The user can operate isolated Agent Knowledge from TUI and CLI without selecting or leaking into non-Agent knowledge spaces.",
+        "modelAccess": "agent_knowledge, agent_knowledge_ingest, host action:\"methods|method|capability\", agent_harness mode:\"operator_methods\" and mode:\"operator_method\", and connected-host capability reports expose isolated Knowledge operation to the model.",
+        "safetyBoundary": "Only /api/goodvibes-agent/knowledge/* routes are allowed. Agent rejects alternate knowledge space routing, normalizes parseable public Agent-route scope aliases, and fails closed on known non-Agent payload markers.",
+        "releaseEvidence": "Readiness evidence cites connected-host evidence alias and Knowledge docs, with live verification requiring isolated status, ask, search, library, item, map, connector checks, Agent-route scope alias normalization, and response contamination detection."
+      }
+    },
+    {
+      "id": "connected-host-media-routes",
+      "capability": "Voice synthesis, streaming voice, transcription, realtime voice session setup, media analysis, artifact storage, and media provider route handlers are connected-host responsibilities.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: media and voice route contract inventory reviewed under runtime-contract-review; docs/voice-and-live-tts.md",
+      "action": "Agent should keep TUI controls and artifact UX rather than provider runtime ownership.",
+      "quality": {
+        "capabilityCoverage": "Covers voice synthesis, streaming voice, transcription, realtime voice setup, media analysis, artifact storage, and media provider route handlers through connected-host ownership.",
+        "userAccess": "The user can inspect media readiness and generate artifacts from Agent while provider runtime ownership stays outside the package.",
+        "modelAccess": "agent_media_generate and device action:\"voice|provider\" expose media provider readiness, selected TTS setup, browser-tool posture, artifact availability, safe secret-key names, model routes, voice workflow posture, and single provider lookup; lower-level agent_harness mode:\"media_posture\" and mode:\"media_provider\" remain detailed compatibility routes; connected-host capability metadata exposes ownership boundaries.",
+        "safetyBoundary": "Agent stores generated bytes as artifacts and does not print inline base64 or silently ingest media into knowledge.",
+        "releaseEvidence": "Readiness evidence cites connected-host media inventory and voice/media docs, with live certification covering externally backed media outcomes."
+      }
+    },
+    {
+      "id": "connected-host-provider-accounts",
+      "capability": "Provider account snapshots, usage windows, OAuth/service route metadata, and provider usage endpoints are owned by the connected host.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: provider account and usage route contract inventory reviewed under runtime-contract-review; src/input/commands/provider-accounts-runtime.ts; src/tools/agent-harness-provider-account-metadata.ts",
+      "action": "Agent should inspect and guide provider auth without owning provider service internals.",
+      "quality": {
+        "capabilityCoverage": "Covers provider account snapshots, usage windows, OAuth/service route metadata, auth routes, and provider usage endpoints through connected-host ownership.",
+        "userAccess": "The user can inspect account posture and usage from Agent surfaces while provider services remain connected-host responsibilities.",
+        "modelAccess": "models action:\"status|route|providers|provider\" plus host action:\"services|service|status|capability\" and agent_harness mode:\"service_posture\", mode:\"service_endpoint\", mode:\"connected_host_status\", and mode:\"connected_host_capability\" expose account and routing posture to the model.",
+        "safetyBoundary": "Agent guides and inspects auth without owning provider service internals or printing raw secrets.",
+        "releaseEvidence": "Readiness evidence cites connected-host provider account inventory and Agent provider-account runtime sources."
+      }
+    },
+    {
+      "id": "connected-host-pairing-realtime",
+      "capability": "Companion pairing, token bootstrap, realtime event delivery, browser/mobile-safe client surfaces, and transport compatibility are connected-host responsibilities.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: pairing, token bootstrap, realtime, browser-safe, and mobile-safe transport inventory reviewed under runtime-contract-review; docs/channels-remote-and-api.md",
+      "action": "Agent should render pairing and status UX while the connected host owns token issuance and realtime transport.",
+      "quality": {
+        "capabilityCoverage": "Covers token bootstrap, QR pairing, realtime delivery, browser/mobile-safe client surfaces, foreground events, and transport compatibility through connected-host ownership.",
+        "userAccess": "The user pairs companion clients and sees realtime compatibility from Agent while token issuance remains outside Agent.",
+        "modelAccess": "device action:\"status|capability\" plus host action:\"status|capabilities|capability|services|service\" and agent_harness mode:\"pairing_posture\", mode:\"pairing_route\", mode:\"service_posture\", mode:\"service_endpoint\", mode:\"connected_host\", mode:\"connected_host_capability\", and mode:\"connected_host_status\" expose pairing endpoint binding, token fingerprint, route catalog, device capability map status for browser/mobile/voice/delivery/desktop readiness, realtime/status boundaries, and single route/capability lookup without returning raw tokens or QR payloads; connected-host rows include compact modelRoute hints for safe follow-up.",
+        "safetyBoundary": "Agent renders pairing UX and status without owning token issuance or exposing raw tokens by default.",
+        "releaseEvidence": "Readiness evidence cites connected-host pairing/realtime inventory and channel docs, with live certification covering pairing readiness."
+      }
+    },
+    {
+      "id": "connected-host-cloud-batch",
+      "capability": "Batch provider jobs, queue signals, optional Cloudflare provisioning, worker proxying, DLQ posture, and batch tick processing are connected-host responsibilities.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: batch job, queue, worker proxy, DLQ, and tick-processing inventory reviewed under runtime-contract-review; docs/connected-host.md",
+      "action": "Agent should not implement cloud provisioning or batch worker internals.",
+      "quality": {
+        "capabilityCoverage": "Covers batch jobs, queue signals, optional cloud provisioning, worker proxying, DLQ posture, and tick processing through connected-host ownership.",
+        "userAccess": "The user sees batch and queue posture through Agent diagnostics where exposed, without Agent shipping cloud provisioning controls.",
+        "modelAccess": "agent_harness connected-host capability reports and operator briefing/action tools expose allowed batch/automation posture to the model.",
+        "safetyBoundary": "Agent does not implement cloud provisioning, batch workers, listener hosting, or service lifecycle internals.",
+        "releaseEvidence": "Readiness evidence cites connected-host batch inventory and connected-host docs, with release certification requiring connected-host compatibility."
+      }
+    },
+    {
+      "id": "additional-channel-adapter-matrix",
+      "capability": "The release channel coverage includes additional long-tail chat surfaces beyond the current connected-host core surface set.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: long-tail channel type, plugin, enterprise delivery, routed delivery, and setup-schema inventory reviewed under runtime-contract-review; docs/channels-remote-and-api.md",
+      "action": "Keep the long-tail channel matrix registered in the connected-host surface union, plugin registry, delivery strategies, setup schemas, and operator channel routes.",
+      "quality": {
+        "capabilityCoverage": "Covers the long-tail channel matrix through connected-host surface unions, plugin registry, delivery strategies, setup schemas, and operator channel routes.",
+        "userAccess": "The user sees all configured channel readiness, recent redacted delivery receipts, and exact send paths through Agent channel surfaces.",
+        "modelAccess": "channels action:\"status|channel|setup|triage|deliveries\", agent_channel_send, lower-level agent_harness mode:\"channels\", mode:\"channel\", mode:\"channel_setup_guide\", mode:\"channel_triage\", and mode:\"channel_deliveries\", channel workspace, command, settings, and connected-host capability reports expose the channel matrix to the model. The unified-inbox and channel draft/routing surfaces also expose agent_harness mode:\"unified_inbox\", mode:\"channel_drafts\", mode:\"channel_draft_save\", mode:\"channel_draft_send\", mode:\"channel_routing\", mode:\"channel_routing_assign\", and mode:\"channel_routing_remove\" to the model with confirmation-gated sends.",
+        "safetyBoundary": "Agent keeps adapter setup and secret-bearing lifecycle in connected-host ownership while confirmed sends stay exact-target.",
+        "releaseEvidence": "Readiness evidence cites connected-host long-tail channel inventory and Agent channel docs, with live outcome certification covering external sends."
+      }
+    },
+    {
+      "id": "telephony-conversation-channel",
+      "capability": "The release coverage includes phone-call style conversation or notification delivery as a channel-class surface.",
+      "owner": "connected-host",
+      "status": "covered",
+      "evidence": "goodvibes-connected-host: telephony channel adapter and routed delivery inventory reviewed under runtime-contract-review; docs/channels-remote-and-api.md; src/agent/channel-delivery.ts; src/input/agent-workspace-channels.ts; src/tools/agent-harness-channel-metadata.ts; src/agent/reminder-schedule.ts; src/agent/routine-schedule-args.ts",
+      "action": "Keep telephony owned by the connected host and expose Agent readiness/send UX through existing channel routes.",
+      "quality": {
+        "capabilityCoverage": "Covers phone-call style conversation or notification delivery as a channel-class surface through connected-host telephony adapters and routed delivery.",
+        "userAccess": "The user can inspect telephony readiness and send via channel/reminder/routine delivery routes when configured.",
+        "modelAccess": "channels action:\"status|channel|setup|triage|deliveries\", agent_channel_send, agent_reminder_schedule, and lower-level agent_harness mode:\"channels\", mode:\"channel\", mode:\"channel_setup_guide\", mode:\"channel_triage\", and mode:\"channel_deliveries\" plus connected-host metadata expose telephony as a routed channel surface to the model. The unified-inbox and channel draft/routing surfaces also expose agent_harness mode:\"unified_inbox\", mode:\"channel_drafts\", mode:\"channel_draft_save\", mode:\"channel_draft_send\", mode:\"channel_routing\", mode:\"channel_routing_assign\", and mode:\"channel_routing_remove\" to the model with confirmation-gated sends.",
+        "safetyBoundary": "Agent does not own telephony adapter credentials or service lifecycle and uses explicit target/confirmation rules for delivery.",
+        "releaseEvidence": "Readiness evidence cites connected-host telephony inventory and Agent channel/reminder/routine sources."
+      }
+    },
+    {
+      "id": "mobile-device-command-depth",
+      "capability": "The release coverage includes deeper mobile-device command surfaces beyond pairing, chat, voice, camera/media attachment, and realtime client support.",
+      "owner": "companion",
+      "status": "covered",
+      "evidence": "goodvibes-companion: companion command-depth, pairing, chat, shared-session, approvals, tasks, provider/model controls, attachments, and realtime foreground-event inventory reviewed under runtime-contract-review; docs/channels-remote-and-api.md",
+      "action": "Keep the companion app aligned with public connected-host contracts for secure auth, QR pairing, companion chat, shared sessions, approvals, tasks, provider/model controls, attachments, realtime foreground events, and permission-scoped device APIs that can populate the Agent capability map.",
+      "quality": {
+        "capabilityCoverage": "Covers companion command depth beyond pairing: chat, shared sessions, approvals, tasks, provider/model controls, attachments, realtime foreground events, and Agent-visible ready/attention/setup-needed/not-published posture for mobile command routing, browser/PWA, voice/TTS, notifications, browser/desktop control, voice workflows, certified camera/screen/location/local device command records, and certified wake-word records when permission-scoped SDK/daemon evidence is published.",
+        "userAccess": "The user gets companion-facing command depth through the companion app and Agent pairing/session surfaces, with the Agent Voice & Media Device capability map, Browser/PWA readiness, and voice workflow posture showing what is ready, what needs setup, and which camera/screen/location/wake-word contracts are certified or not published yet.",
+        "modelAccess": "device action:\"status|capability|voice\" exposes the companion device capability map, device-capability-map route, voice workflow readiness, certified SDK/daemon device capability records with schema/version/publication/publisher/provenance/freshness-cursor/receipt metadata, permission scopes, exact inspect/control routes, and redacted summaries; computer action:\"plan|browser|open_browser\" exposes browser/screenshot/desktop-control planning, Browser/PWA readiness, certified browser-native category routes and first-run receipts when published, and confirmed browser cockpit handoff; lower-level agent_harness mode:\"pairing_posture\", mode:\"pairing_route\", mode:\"browser_control_route\", and mode:\"media_posture\" remain compatibility routes; Voice & Media action route hints expose voice-workflow-posture and device-capability-map through device actions, and browser-cockpit-readiness through computer action:\"browser\"; models action:\"status|route|providers|provider\", host action:\"status|capabilities|capability|methods\", connected_host, connected_host_capability, connected_host_status, operator methods, and first-class operator/channel/media tools expose pairing, shared-session, task, approval, provider/model, attachment, and mobile route boundaries for companion workflows.",
+        "safetyBoundary": "Companion commands align to public connected-host contracts for secure auth and do not bypass Agent confirmation or token policy.",
+        "releaseEvidence": "Readiness evidence cites companion evidence alias and channel docs, with live certification covering companion/pairing outcomes."
+      }
+    },
+    {
+      "id": "live-outcome-certification",
+      "capability": "Every externally backed capability needs fresh live evidence before a stable release, including real channel sends, schedule execution, provider usage, media generation, pairing, and Agent Knowledge answers.",
+      "owner": "release",
+      "status": "covered",
+      "evidence": "release/live-verification/live-verification.json; release/live-verification/live-verification.md; strict live verification on 2026-06-04 reported 19 pass, 0 warn, 0 fail, 0 skip across compiled CLI, connected-host, model route, and isolated Agent Knowledge checks.",
+      "action": "Keep strict live verification current for every stable release and rerun it after connected-host, provider, channel, media, pairing, Agent Knowledge, or package-runtime changes.",
+      "quality": {
+        "capabilityCoverage": "Requires fresh external outcome evidence for externally backed capabilities, including channel sends, schedule execution, provider usage, media generation, pairing, and Agent Knowledge answers.",
+        "userAccess": "Release operators and maintainers inspect strict live outcome certification artifacts before stable publication; end users receive releases only after those outcomes are recorded.",
+        "modelAccess": "The model can inspect live-verification artifacts through audit action:\"artifact\" plus lower-level agent_harness mode:\"release_evidence_artifact\" and inspect host action:\"services|service|status\" plus mode:\"service_posture\", mode:\"service_endpoint\", and mode:\"connected_host_status\" for the endpoint and live posture used by the release gate.",
+        "safetyBoundary": "Live certification redacts token values, local paths, and private addresses and treats warnings, failures, and skips as release blockers.",
+        "releaseEvidence": "The current strict live verification artifacts record pass-only release evidence and are required by package verification for this release line."
+      }
+    }
+  ]
+}
