@@ -1,0 +1,60 @@
+/*
+ * providers.css: the non-list parts of the Accounts panel and the Credential
+ * status panel (AccountsPanel.tsx, CredentialStatusPanel.tsx); the credential
+ * rows themselves are kit rows (src/components/ui/Row.tsx).
+ */
+
+/* Credential status panel: the two non-list outcomes. */
+.credential-status__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.credential-status__degraded {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.credential-status__degraded strong {
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
+
+.credential-status__degraded span {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+/* Accounts panel. */
+.accounts-panel__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.accounts-panel__summary {
+  margin: 0 0 var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.accounts-panel__windows,
+.accounts-panel__issues,
+.accounts-panel__actions-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.accounts-panel__issues li {
+  color: var(--warn);
+}

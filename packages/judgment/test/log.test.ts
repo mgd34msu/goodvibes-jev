@@ -76,7 +76,8 @@ describe('withDecisionLog + SqliteDecisionLog', () => {
     expect((error as JudgmentError).kind).toBe('unavailable');
     const [entry] = log.query({ status: 'failed' });
     if (entry?.status !== 'failed') throw new Error('expected a failed entry');
-    expect(entry.error).toEqual({ kind: 'unavailable', message: 'System One answered HTTP 529' });
+    expect(entry.error).toEqual({ kind: 'unavailable', message: 'the judgment provider could not answer' });
+    expect((error as JudgmentError).status).toBe(529);
     expect(entry.requestedModel).toBe('jev-1.13.0');
     expect(entry.requestId).toBe('req-bad');
   });

@@ -1,0 +1,377 @@
+/*
+ * chat-view.css: the chat's layout (design doc "Chat", "Type", "Space and
+ * radius", "Motion", "Phone"). Tokens only.
+ *
+ *   thread ... the scrolling transcript; a centered 720 reading column with 24
+ *              of gutter (16 on a phone)
+ *   dock ..... queued messages, the turn notice and the composer, pinned to the
+ *              bottom above the safe area
+ *   new ...... data-state="new": the greeting, the centered composer and four
+ *              suggestions, vertically centered (on a phone the composer docks)
+ *   find ..... the small glass find bar under the header (Ctrl F)
+ */
+
+.chat-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  color: var(--text);
+  background: var(--canvas);
+  overflow: hidden;
+}
+
+/* ── Thread ────────────────────────────────────────────────── */
+.chat-thread {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-main .messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 32px 24px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.chat-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: var(--reading-width);
+  margin: 0 auto;
+}
+
+.jump-to-bottom {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  z-index: 2;
+  display: inline-grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  color: var(--text);
+  border-radius: var(--radius-full);
+  transform: translateX(-50%);
+  animation: gv-rise-in var(--motion-menu) var(--ease-standard);
+}
+
+.jump-to-bottom:hover {
+  background: var(--surface-2);
+}
+
+/* ── Dock ──────────────────────────────────────────────────── */
+.chat-dock {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 24px max(16px, env(safe-area-inset-bottom, 0px));
+}
+
+.chat-dock > * {
+  width: 100%;
+  max-width: var(--reading-width);
+  margin-inline: auto;
+}
+
+/* The settled-turn notice ("Live updates are off…", Retry). One quiet line. */
+.chat-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 28px;
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.chat-status__text::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 8px 1px 0;
+  vertical-align: middle;
+  content: "";
+  background: var(--warn);
+  border-radius: var(--radius-full);
+}
+
+/* ── New chat ──────────────────────────────────────────────── */
+.chat-main[data-state="new"] {
+  justify-content: center;
+  padding-bottom: 8vh;
+}
+
+.chat-main[data-state="new"] .chat-thread {
+  flex: none;
+}
+
+.chat-main[data-state="new"] .messages {
+  flex: none;
+  padding-top: 0;
+  padding-bottom: 28px;
+  overflow: visible;
+}
+
+.chat-main[data-state="new"] .chat-dock {
+  padding-bottom: 16px;
+}
+
+.chat-main[data-state="new"] .chat-dock > * {
+  max-width: 680px;
+}
+
+.chat-welcome {
+  display: flex;
+  justify-content: center;
+}
+
+.chat-greeting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-medium);
+  line-height: 36px;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.chat-greeting__spark {
+  flex: none;
+}
+
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.chat-suggestion {
+  max-width: 100%;
+}
+
+.chat-suggestion svg {
+  color: var(--text-2);
+}
+
+/* ── Find bar ──────────────────────────────────────────────── */
+.chat-find {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: var(--z-banner);
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100% - 32px));
+  max-height: min(560px, calc(100% - 16px));
+  padding: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  animation: gv-rise-in var(--motion-menu) var(--ease-standard);
+}
+
+/* ── Title in the shell header ─────────────────────────────── */
+.chat-title {
+  display: flex;
+  min-width: 0;
+  margin-left: -8px;
+}
+
+.chat-title-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.chat-title-button__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-title-button__icon {
+  flex: none;
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease-out;
+}
+
+.chat-title-button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.chat-title-button:hover:not(:disabled) .chat-title-button__icon,
+.chat-title-button:focus-visible .chat-title-button__icon {
+  opacity: 1;
+}
+
+.chat-title-button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.chat-title-input {
+  width: min(480px, 100%);
+  min-width: 0;
+  height: 32px;
+  margin-left: -8px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-base) / var(--leading-ui) var(--font-ui);
+}
+
+.shell-header--phone .chat-title {
+  justify-content: center;
+}
+
+.shell-header--phone .chat-title,
+.shell-header--phone .chat-title-input {
+  margin-left: 0;
+}
+
+/* ── Working line (thinking shimmer) ───────────────────────── */
+.chat-working {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 28px;
+}
+
+.chat-working__label {
+  color: transparent;
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  background: linear-gradient(90deg, var(--text-3) 0%, var(--text) 40%, var(--text-3) 80%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: gv-shimmer 2.2s linear infinite;
+}
+
+.chat-working__label--still {
+  color: var(--text-2);
+  background: none;
+  animation: none;
+}
+
+@keyframes gv-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-working__label {
+    color: var(--text-2);
+    background: none;
+    animation: none;
+  }
+}
+
+/* ── Search jump-to-message highlight ──────────────────────── */
+.message--search-highlight {
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 8px var(--accent-soft);
+  transition:
+    background var(--motion-slow) var(--ease-standard),
+    box-shadow var(--motion-slow) var(--ease-standard);
+}
+
+/* ── Phone ─────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+  .chat-main .messages {
+    padding: 20px 16px 12px;
+  }
+
+  .chat-dock {
+    padding: 8px 12px max(12px, env(safe-area-inset-bottom, 0px));
+  }
+
+  /* New chat on a phone: the greeting centers in the space above, the
+     composer docks at the bottom with the suggestions just above it. */
+  .chat-main[data-state="new"] {
+    justify-content: flex-start;
+    padding-bottom: 0;
+  }
+
+  .chat-main[data-state="new"] .chat-thread {
+    flex: 1 1 auto;
+  }
+
+  .chat-main[data-state="new"] .messages {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    padding-bottom: 12px;
+  }
+
+  .chat-main[data-state="new"] .chat-dock {
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  }
+
+  .chat-main[data-state="new"] .chat-suggestions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    order: -1;
+    padding: 0 0 4px;
+  }
+
+  .chat-main[data-state="new"] .chat-suggestion {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .chat-suggestion__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-greeting {
+    font-size: var(--text-2xl);
+    line-height: 30px;
+  }
+
+  .chat-find {
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+}

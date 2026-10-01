@@ -1,0 +1,91 @@
+/*
+ * Pairing hand-off offer decisions (pairing.handoff.*): a divided list inside
+ * the kit Dialog. No row is a card; the footer holds the one primary action.
+ */
+
+.pairing-handoff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pairing-handoff-posture-notice {
+  margin: 0;
+}
+
+.pairing-handoff-note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+/* Standalone one-shot banner (App.tsx, a plain #pair=<token> hand-off with no
+   offer set): the shared .banner with its own dismiss button on the right. */
+.pairing-posture-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pairing-posture-notice__dismiss {
+  margin-left: auto;
+}
+
+.pairing-handoff-offers,
+.pairing-handoff-results {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pairing-handoff-offer,
+.pairing-handoff-result {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pairing-handoff-offer:last-child,
+.pairing-handoff-result:last-child {
+  border-bottom: 0;
+}
+
+.pairing-handoff-offer__label {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.pairing-handoff-offer__desc {
+  margin: var(--space-1) 0 0 26px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.pairing-handoff-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pairing-handoff-result__name {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.pairing-handoff-result__status {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.pairing-handoff-result__detail {
+  flex-basis: 100%;
+  padding-left: 15px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}

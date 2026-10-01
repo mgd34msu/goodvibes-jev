@@ -8,3 +8,9 @@
 # this exception names only the pre-repair commit/path/rule/line in history.
 # https://www.rfc-editor.org/rfc/rfc6455.html#section-1.2
 bc7b1a33f8f3ead6757a434886d1e0eb990c12fb:products/daemon/src/test/daemon/daemon-wire.test.ts:generic-api-key:155
+# Imported WebUI test-only examples, now generated per fixture: two synthetic
+# pairing tokens and a public VAPID sample (never a private signing key).
+# Exact historical findings only; production paths and future values are scanned.
+92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/src/components/pairing/PairingQrScanner.test.tsx:generic-api-key:24
+92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/src/lib/pairing-qr.test.ts:generic-api-key:25
+92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/e2e/support/mock-daemon.ts:generic-api-key:1254

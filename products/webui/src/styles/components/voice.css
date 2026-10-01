@@ -1,0 +1,252 @@
+/*
+ * voice.css: spoken output, dictation and wake-word controls. Tokens only, so
+ * voice controls sit in the same system as the rest of the chat surface.
+ */
+
+/* ── Read-aloud button (per assistant message action row) ──────────────────
+   A kit IconButton; only the playing state needs a rule. */
+
+.voice-speak-btn.is-playing {
+  color: var(--text);
+}
+
+/* ── Mic (composer) ─────────────────────────────────────────────────────────── */
+
+.voice-mic {
+  position: relative;
+  display: inline-flex;
+}
+
+.voice-mic-btn.is-recording {
+  color: var(--bad);
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-mic-btn.is-recording {
+    animation: none;
+  }
+}
+
+/* An honest floating note above the mic (secure-context pointer, permission denied,
+   recording/transcribing status). Scrolls inside its own box on narrow viewports. */
+.voice-mic-note {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: var(--z-overlay);
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 12px;
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  white-space: normal;
+}
+
+/* ── Voice settings popover (composer) ──────────────────────────────────────── */
+
+.voice-settings {
+  position: relative;
+  display: inline-flex;
+}
+
+.voice-settings-popover .gv-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.voice-settings-action {
+  align-self: flex-start;
+}
+
+.voice-settings-title {
+  font-weight: var(--weight-medium);
+}
+
+.voice-settings-shared {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  margin: 0;
+}
+
+.voice-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.voice-settings-field__label {
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.voice-settings-hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.voice-settings-unavailable {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  margin: 0;
+}
+
+/* Local voice setup section — a distinct sub-block below the provider/voice
+   selects, not a new popover shape (see VoiceSettings.tsx's header comment). */
+.voice-settings-local {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.voice-settings-local-receipt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.voice-settings-local-receipt p {
+  margin: 0;
+}
+
+/* Live per-component install progress (voice.local.status's installInProgress). */
+.voice-settings-local-progress {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+}
+
+.voice-settings-local-progress li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-settings-local-progress__name {
+  font-family: var(--font-mono);
+}
+
+.voice-settings-local-progress li[data-phase='done'] .voice-settings-local-progress__phase {
+  color: var(--ok);
+}
+
+.voice-settings-local-progress li[data-phase='error'] .voice-settings-local-progress__phase,
+.voice-settings-local-progress__error {
+  color: var(--bad);
+}
+
+/* Shared spinner for loading/transcribing states. */
+.voice-spin {
+  animation: voice-rotate 0.9s linear infinite;
+}
+
+@keyframes voice-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-spin {
+    animation: none;
+  }
+}
+
+/* ─── Wake word ──────────────────────────────────────────────────────────────
+   The persistent banner (voice.wake.indicator: "banner"). Deliberately NOT a
+   toast: a toast dismisses itself, and an indicator that vanishes while the
+   microphone is still open is the exact failure the indicator row prevents. */
+.wake-banner {
+  flex-wrap: wrap;
+}
+
+.wake-banner__label {
+  font-weight: var(--weight-medium);
+}
+
+.wake-banner__detail {
+  opacity: 0.85;
+}
+
+.wake-banner.is-live .wake-banner__label::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: wake-banner-pulse 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes wake-banner-pulse {
+  from { opacity: 1; }
+  to   { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wake-banner.is-live .wake-banner__label::before {
+    animation: none;
+  }
+}
+
+/* The wake-word block inside the voice popover. */
+.voice-settings-wake {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.voice-settings-field--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-settings-wake-reasons {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.voice-settings-wake-reasons li + li {
+  margin-top: 6px;
+}
+
+.voice-settings-wake-reasons code {
+  font-size: var(--text-xs);
+}

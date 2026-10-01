@@ -10,7 +10,7 @@ import type { OperatorMethodId } from './operator-method-ids.js';
  * call sites) hand-written on top of these generated primitives.
  *
  * Contract product version: 2.0.23
- * Methods: 512 total, 440 REST-routed, 72 ws-only invoke.
+ * Methods: 513 total, 441 REST-routed, 72 ws-only invoke.
  */
 
 export type WebuiHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -695,6 +695,10 @@ export const WEBUI_METHOD_ROUTES: Readonly<Record<string, WebuiRouteDefinition>>
   "intelligence.snapshot": {
     "method": "GET",
     "path": "/api/intelligence"
+  },
+  "judgment.battery.run": {
+    "method": "POST",
+    "path": "/api/judgment/batteries/run"
   },
   "homeassistant.homeGraph.askHomeGraph": {
     "method": "POST",
@@ -2080,6 +2084,7 @@ export const WEBUI_METHOD_DISPOSITION: Readonly<Record<string, WebuiMethodDispos
   "voice.wake.provision": "rest",
   "voice.wake.status": "rest",
   "intelligence.snapshot": "rest",
+  "judgment.battery.run": "rest",
   "homeassistant.homeGraph.askHomeGraph": "rest",
   "homeassistant.homeGraph.browse": "rest",
   "homeassistant.homeGraph.export": "rest",
@@ -11639,6 +11644,45 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
       "warningCount": 0,
       "totalRequests": 0,
       "avgLatencyMs": 0
+    }
+  },
+  "judgment.battery.run": {
+    "input": {
+      "protocolVersion": 1,
+      "requestId": "sample",
+      "battery": "webui.errors.daemon-refusal",
+      "batteryVersion": 1,
+      "input": {
+        "errorRef": "sample"
+      }
+    },
+    "output": {
+      "protocolVersion": 1,
+      "requestId": "sample",
+      "battery": "webui.errors.daemon-refusal",
+      "batteryVersion": 1,
+      "status": "settled",
+      "value": {
+        "session_not_found": false,
+        "session_closed": false,
+        "session_active": false,
+        "session_not_local": false,
+        "method_unknown": false
+      },
+      "readings": {},
+      "outcome": "act",
+      "evidence": [
+        {
+          "decisionId": "sample",
+          "model": "sample",
+          "requestedModel": "sample",
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0
+          },
+          "latencyMs": 0
+        }
+      ]
     }
   },
   "homeassistant.homeGraph.askHomeGraph": {

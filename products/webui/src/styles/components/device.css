@@ -1,0 +1,80 @@
+/*
+ * Paired-phone capability surfaces: the phone-node page and the grants panel.
+ * Rows, buttons and notices come from the kit; this file is page layout only.
+ */
+
+.phone-node-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: 760px;
+}
+
+.device-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.device-page__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.device-page__text {
+  min-width: 0;
+}
+
+.device-page__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: 28px;
+}
+
+.device-page__description {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.device-page__empty {
+  padding: var(--space-3) 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  list-style: none;
+}
+
+.device-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.device-panel__result {
+  margin: 0 0 var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.device-panel__when {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .device-page__header {
+    flex-direction: column;
+  }
+}
+
+/* A grant's meta line carries several facts: wrap instead of clipping. */
+.phone-node-view .gv-row__meta,
+.device-grants .gv-row__meta {
+  white-space: normal;
+}

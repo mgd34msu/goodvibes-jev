@@ -1,0 +1,51 @@
+/*
+ * Principals and channel profiles (principals.*, channels.profiles.*).
+ * Lists are kit Rows; the create and edit forms are plain fields.
+ */
+
+.principals-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.principals-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.principals-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.principals-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 420px;
+  margin-bottom: var(--space-3);
+}
+
+.principals-form__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* A row's meta line may carry several identities: let it wrap instead of clipping. */
+.principals-row .gv-row__meta {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.principals-row--editing {
+  display: block;
+}
+
+@media (max-width: 899px) {
+  .principals-form {
+    max-width: none;
+  }
+}

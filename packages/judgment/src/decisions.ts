@@ -8,3 +8,7 @@ export * from './batteries/index.ts';
 export * from './readings/index.ts';
 export * from './port/types.ts';
 export { isPinnedJudgmentModel, validEndpointURL } from './port/endpoint-validation.ts';
+export { estimateTokens, LIMITS } from './port/limits.ts';
+export { NONE } from './batteries/decision.ts';
+export { mapLimit } from './patterns/common.ts';
+export { defineDispatch, type Dispatch } from './patterns/dispatch.ts';

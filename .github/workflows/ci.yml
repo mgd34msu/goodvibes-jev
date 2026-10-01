@@ -214,6 +214,78 @@ jobs:
         if: matrix.platform == 'bun'
         run: bun run sweep:wake-race
 
+  # One browser lane exercises the production WebUI on both viewport sizes and
+  # an actual LAN HTTP origin. Its daemon is a synthetic, loopback-only fixture.
+  webui-browser:
+    name: WebUI browser (phone, desktop, LAN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [build]
+    defaults:
+      run:
+        working-directory: products/webui
+        shell: bash
+    env:
+      DESIGN_PROOF_SHOTS: e2e/.artifacts/screenshots
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Setup Bun + deps (cached)
+        uses: ./.github/actions/setup
+      - name: Download workspace package output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workspace-build-output
+          path: /tmp/workspace-build-output
+      - name: Restore workspace package output
+        working-directory: .
+        run: |
+          tar -xzf /tmp/workspace-build-output/workspace-build-output.tgz -C .
+          find packages/engine/*/dist packages/judgment/dist -type f -exec touch {} +
+      - name: Install official Playwright Chromium and OS dependencies
+        run: bunx playwright install --with-deps chromium
+      - name: Check workspace exports and generated data
+        run: bun run release:gate && bun run generated:check
+      - name: Exercise the production app with synthetic daemon fixtures
+        id: browser-proof
+        run: |
+          set -euo pipefail
+          mkdir -p e2e/.artifacts
+          bun run e2e --project=phone --project=desktop --project=lan-origin --workers=2 2>&1 | tee e2e/.artifacts/browser.log
+      - name: Record browser execution outcome
+        if: always()
+        env:
+          BROWSER_OUTCOME: ${{ steps.browser-proof.outcome }}
+        run: |
+          mkdir -p e2e/.artifacts
+          {
+            echo "Browser command outcome: ${BROWSER_OUTCOME}"
+            if [ "$BROWSER_OUTCOME" = skipped ]; then
+              echo "The browser command did not run. No browser proof was produced."
+            else
+              echo "Consult the Playwright report for executed, failed, and skipped assertions."
+              echo "A setup, build, or launch failure is not a passing browser assertion."
+            fi
+          } | tee e2e/.artifacts/execution.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain browser reports, traces, and screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: webui-browser-proof
+          path: |
+            products/webui/e2e/.artifacts/execution.txt
+            products/webui/e2e/.artifacts/browser.log
+            products/webui/e2e/.artifacts/report
+            products/webui/e2e/.artifacts/test-output
+            products/webui/e2e/.artifacts/screenshots
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
+
   # A separate, mandatory live OS-boundary proof. Pin a supported VM runner
   # with unprivileged namespaces; never disable AppArmor, change sysctls, or
   # run the fixtures as root to make a failing host look supported.
@@ -401,6 +473,7 @@ jobs:
       - security-audit
       - build
       - platform-matrix
+      - webui-browser
       - exec-containment-proof
       - types-resolution-check
       - types-resolution-shards

@@ -1,0 +1,88 @@
+/*
+ * memory-provenance.css: the "Memory: N" chip under an assistant reply (owner
+ * preference, default off). A neutral chip; the records it expands to read as
+ * divided rows. Tokens only.
+ */
+
+.memory-provenance-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 4px;
+}
+
+.memory-provenance-chip__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 0;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  transition: color var(--motion-fast) ease-out;
+}
+
+.memory-provenance-chip__toggle:hover {
+  color: var(--text);
+}
+
+.memory-provenance-chip__details {
+  width: min(560px, 100%);
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.memory-provenance-chip__details > .form-note {
+  margin: 6px 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.memory-provenance-chip__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-provenance-chip__list li {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.memory-provenance-chip__list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.memory-provenance-chip__list strong {
+  color: var(--text);
+  font-weight: var(--weight-medium);
+}
+
+.memory-provenance-chip__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-provenance-chip__missing {
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .memory-provenance-chip__toggle {
+    height: 44px;
+  }
+}

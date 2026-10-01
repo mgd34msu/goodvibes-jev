@@ -1,0 +1,14 @@
+# Build output
+dist/
+coverage/
+
+# Dependencies
+node_modules/
+
+# GoodVibes runtime
+.goodvibes/
+
+# Generated / binary
+*.min.js
+*.min.css
+bun.lockb

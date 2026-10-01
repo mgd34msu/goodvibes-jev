@@ -1,0 +1,87 @@
+/* Steer composer (Work session and hosted session details): kit field and button, a status line, dispatch rows. */
+.steer-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.steer-composer__mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.steer-composer__stream-note {
+  margin: 0;
+  color: var(--warn);
+  font-size: var(--text-meta);
+}
+
+.steer-composer__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.steer-composer__input.gv-input {
+  min-height: 64px;
+}
+
+.steer-composer__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.steer-composer__hint {
+  margin-right: auto;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+
+.steer-composer__dispatches {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.steer-dispatch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+
+.steer-dispatch__text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.steer-dispatch__state {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.steer-dispatch__error {
+  flex-basis: 100%;
+  color: var(--bad);
+  font-size: var(--text-meta);
+}
+
+@media (pointer: coarse) {
+  .steer-composer__hint {
+    display: none;
+  }
+}

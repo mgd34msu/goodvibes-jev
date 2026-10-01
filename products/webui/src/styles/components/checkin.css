@@ -1,0 +1,124 @@
+/*
+ * Check-ins page (CheckInView): settings facts, the last manual run, and the
+ * receipts as divided rows. Page frame, headings and Facts come from the
+ * data-view template (data-view.css); this file adds the page's own spacing.
+ */
+
+.checkin-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  max-width: 720px;
+}
+
+.checkin-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.checkin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A cron expression is code: mono. */
+.checkin-code {
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.checkin-edit-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.checkin-edit-form > .gv-field {
+  align-self: stretch;
+  max-width: 420px;
+}
+
+.checkin-edit-form__code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.checkin-edit-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.checkin-run-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.checkin-run-result__summary {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.checkin-receipts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A receipt reads like any row; its summary may wrap, and the reason, message
+   and error lines sit under the meta line in --text-3. */
+.checkin-receipt {
+  align-items: flex-start;
+}
+
+.checkin-receipt__summary {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.checkin-receipt__detail {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.checkin-receipt__error {
+  color: var(--bad);
+}
+
+.checkin-receipt__outcome {
+  align-self: flex-start;
+  gap: 6px;
+  padding-top: 2px;
+  text-align: right;
+}
+
+@media (max-width: 480px) {
+  .checkin-receipt {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .checkin-receipt__outcome {
+    align-self: flex-start;
+    margin-left: 0;
+    padding-top: 0;
+    text-align: left;
+  }
+}

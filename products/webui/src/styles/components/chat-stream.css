@@ -1,0 +1,113 @@
+/*
+ * chat-stream.css: the live turn. The caret is a 2 px accent bar with no
+ * per-token animation beyond a slow blink (still with reduced motion); Stop is
+ * a quiet pill at the end of the working line; running tool calls list under
+ * it with a per-call Cancel. Tokens only.
+ */
+
+@keyframes gv-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background-color: var(--accent);
+  border-radius: 1px;
+  animation: gv-caret-blink 1s step-end infinite;
+}
+
+.stream-caret--reduced {
+  animation: none;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-caret {
+    animation: none;
+  }
+}
+
+.stream-stop-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  font: var(--weight-medium) var(--text-sm) / 1 var(--font-ui);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.stream-stop-btn svg {
+  fill: currentColor;
+}
+
+.stream-stop-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* Running tool calls: cancel one call without ending the turn. */
+.active-tool-calls {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.active-tool-call {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.active-tool-call__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.active-tool-call__cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px; /* phone-width tap target */
+  padding: 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.active-tool-call__cancel:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .active-tool-call__cancel {
+    min-height: 28px;
+  }
+}
+
+@media (pointer: coarse) {
+  .stream-stop-btn {
+    height: 44px;
+  }
+}

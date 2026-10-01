@@ -1,0 +1,1282 @@
+/*
+ * Component kit (src/components/ui). Every value comes from tokens.css.
+ * Measurements follow the design document's "Components", "Menus and modals",
+ * "Space and radius", "Phone" and "Motion" sections.
+ */
+
+/* ── Button ─────────────────────────────────────────────────── */
+.gv-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-base) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, border-color var(--motion-fast) ease-out,
+    color var(--motion-fast) ease-out, opacity var(--motion-fast) ease-out;
+}
+
+.gv-button svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.gv-button--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--text-sm);
+}
+
+.gv-button--primary {
+  color: var(--primary-fg);
+  background: var(--primary-bg);
+}
+
+.gv-button--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary-bg) 88%, var(--canvas));
+}
+
+.gv-button--secondary {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.gv-button--secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--line-strong));
+}
+
+.gv-button--outline {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.gv-button--outline:hover:not(:disabled),
+.gv-button--ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.gv-button--ghost {
+  color: var(--text-2);
+}
+
+.gv-button--ghost:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.gv-button--danger {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+.gv-button--danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+}
+
+/* A destructive row action behind a confirm: quiet until pointed at. */
+.gv-button--quiet-danger {
+  color: var(--text-2);
+}
+
+.gv-button--quiet-danger:hover:not(:disabled),
+.gv-button--quiet-danger:focus-visible {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+/* Disabled: 40% opacity, same shape, never a different color family. */
+.gv-button:disabled,
+.gv-icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── IconButton ─────────────────────────────────────────────── */
+.gv-icon-button {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.gv-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gv-icon-button:hover:not(:disabled),
+.gv-icon-button[aria-expanded="true"],
+.gv-icon-button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.gv-icon-button--sm {
+  width: 28px;
+  height: 28px;
+}
+
+@media (pointer: coarse) {
+  .gv-icon-button,
+  .gv-icon-button--sm {
+    width: 44px;
+    height: 44px;
+  }
+
+  .gv-button {
+    min-height: 44px;
+  }
+}
+
+/* ── Field / Input ─────────────────────────────────────────── */
+.gv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gv-field__label {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.gv-field__help {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.gv-field__error {
+  color: var(--bad);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.gv-input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  transition: border-color var(--motion-fast) ease-out, box-shadow var(--motion-fast) ease-out;
+}
+
+textarea.gv-input {
+  height: auto;
+  min-height: 80px;
+  padding: 8px 12px;
+  resize: vertical;
+}
+
+.gv-input::placeholder {
+  color: var(--text-3);
+}
+
+.gv-input:focus,
+.gv-input:focus-visible,
+.gv-select__trigger:focus-visible,
+.gv-select__trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Search fields (settings, Work, Library): no glow. Focus is a quiet border
+   change, and only for keyboard focus (owner review 2026-09-30). */
+.gv-input--search:focus {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
+.gv-input--search:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  box-shadow: none;
+}
+
+.gv-input[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+/* ── Select ─────────────────────────────────────────────────── */
+.gv-select__trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gv-select__trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gv-select__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gv-select__value--placeholder {
+  color: var(--text-3);
+}
+
+.gv-select__chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* ── Floating surfaces: popover, menu, listbox, tooltip ───────── */
+.gv-popover {
+  position: fixed;
+  z-index: var(--z-palette);
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  animation: gv-rise-in var(--motion-menu) var(--ease-standard) both;
+}
+
+.gv-popover:focus {
+  outline: none;
+}
+
+.gv-option,
+.gv-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-item);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gv-option svg,
+.gv-menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-2);
+}
+
+.gv-option[data-active="true"],
+.gv-menu-item:hover:not(:disabled),
+.gv-menu-item:focus-visible {
+  background: var(--line-strong);
+  outline: none;
+  box-shadow: none;
+}
+
+.gv-option[aria-disabled="true"],
+.gv-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gv-option__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gv-option__check {
+  margin-left: auto;
+  color: var(--accent) !important;
+}
+
+.gv-menu-item__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gv-menu-item__hint,
+.gv-kbd {
+  margin-left: auto;
+  color: var(--text-3);
+  font: var(--weight-medium) 11.5px / 1 var(--font-mono);
+}
+
+.gv-menu-item--wrap {
+  padding-block: 6px;
+  white-space: normal;
+}
+
+.gv-menu-item--wrap .gv-menu-item__label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.gv-menu-item--danger {
+  color: var(--bad);
+}
+
+.gv-menu {
+  min-width: 240px;
+}
+
+.gv-menu__separator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--line);
+  border: 0;
+}
+
+.gv-menu__meta {
+  padding: 6px 10px 8px;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  white-space: normal;
+}
+
+.gv-menu__row {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--text);
+}
+
+.gv-menu__row svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text-2);
+}
+
+.gv-menu__row-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.gv-menu__text {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+}
+
+/* Segmented radios inside a menu (the account menu's theme row). */
+.gv-menu-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  background: var(--surface-2);
+  border-radius: 9px;
+}
+
+.gv-menu-seg__item {
+  height: 24px;
+  padding: 0 10px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-item);
+  font: var(--weight-regular) var(--text-sm) / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.gv-menu-seg__item[aria-checked="true"] {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+.gv-menu-seg__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gv-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  max-width: 260px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--glass-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  pointer-events: none;
+  animation: gv-fade-in var(--motion-fast) ease-out both;
+}
+
+.gv-tooltip .gv-kbd {
+  margin-left: 8px;
+}
+
+/* ── Segmented ─────────────────────────────────────────────── */
+.gv-segmented {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  overflow-x: auto;
+  background: var(--surface-2);
+  border-radius: 9px;
+  scrollbar-width: none;
+}
+
+.gv-segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.gv-segmented__item {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-item);
+  font: var(--weight-regular) var(--text-sm) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out, color var(--motion-fast) ease-out;
+}
+
+.gv-segmented__item:hover {
+  color: var(--text-2);
+}
+
+.gv-segmented__item[aria-checked="true"] {
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+}
+
+.gv-segmented__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .gv-segmented__item {
+    height: 38px;
+    min-width: 44px;
+  }
+}
+
+/* ── Toggle ─────────────────────────────────────────────────── */
+.gv-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gv-toggle__track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  transition: background-color var(--motion-fast) ease-out, border-color var(--motion-fast) ease-out;
+}
+
+.gv-toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-3);
+  border-radius: 50%;
+  transition: transform var(--motion-fast) ease-out, background-color var(--motion-fast) ease-out;
+}
+
+.gv-menu-item--switch .gv-toggle__track {
+  margin-left: auto;
+}
+
+.gv-toggle[aria-checked="true"] .gv-toggle__track,
+.gv-menu-item--switch[aria-checked="true"] .gv-toggle__track {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.gv-toggle[aria-checked="true"] .gv-toggle__thumb,
+.gv-menu-item--switch[aria-checked="true"] .gv-toggle__thumb {
+  background: var(--on-accent);
+  transform: translateX(14px);
+}
+
+.gv-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Chip and StatusDot ─────────────────────────────────────── */
+.gv-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-meta);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.gv-chip--sm {
+  height: 20px;
+  padding: 0 7px;
+  font-size: var(--text-xs);
+}
+
+.gv-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.gv-dot--ok { color: var(--ok); }
+.gv-dot--warn { color: var(--warn); }
+.gv-dot--bad { color: var(--bad); }
+.gv-dot--info { color: var(--info); }
+.gv-dot--idle { color: var(--text-3); }
+.gv-dot--live { color: var(--accent); }
+
+.gv-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Row ────────────────────────────────────────────────────── */
+.gv-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.gv-row {
+  position: relative;
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gv-row--selected {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.gv-row__main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
+}
+
+button.gv-row__main {
+  cursor: pointer;
+}
+
+button.gv-row__main::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+
+.gv-row:hover:not(.gv-row--selected):has(button.gv-row__main) {
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+}
+
+.gv-row__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.gv-row__title {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gv-row__meta {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gv-row__trailing {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Overlays: scrim, dialog, sheet, drawer ─────────────────── */
+.gv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+}
+
+.gv-overlay > .scrim {
+  position: absolute;
+  inset: 0;
+  animation: gv-fade-in var(--motion-base) var(--ease-standard) both;
+}
+
+.gv-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  transform: translate(-50%, -50%);
+  animation: gv-dialog-in var(--motion-base) var(--ease-standard) both;
+}
+
+.gv-dialog:focus {
+  outline: none;
+}
+
+.gv-dialog--confirm {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.gv-dialog--wide {
+  width: min(880px, calc(100vw - 32px));
+}
+
+.gv-dialog--large {
+  width: min(880px, calc(100vw - 32px));
+  height: min(640px, calc(100dvh - 48px));
+}
+
+@keyframes gv-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.gv-dialog__header {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 16px 0 20px;
+}
+
+.gv-dialog__header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.gv-dialog__titles {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.gv-dialog__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 24px;
+}
+
+.gv-dialog__description {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.gv-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+  color: var(--text);
+}
+
+.gv-confirm .gv-dialog__body {
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+
+.gv-confirm__target {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.gv-confirm .gv-dialog__footer {
+  padding-top: 16px;
+}
+
+.gv-dialog__footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
+.gv-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100vw);
+  max-height: calc(100dvh - 48px);
+  margin: 0 auto;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-bottom: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  animation: gv-slide-in-up var(--motion-slow) var(--ease-standard) both;
+}
+
+.gv-sheet:focus {
+  outline: none;
+}
+
+.gv-sheet__grabber {
+  width: 36px;
+  height: 4px;
+  flex: none;
+  margin: 8px auto 4px;
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+}
+
+.gv-sheet__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 16px;
+}
+
+.gv-sheet .gv-menu-item,
+.gv-sheet .gv-option {
+  min-height: 44px;
+}
+
+/* Phone: every dialog becomes a bottom sheet with a grabber (design doc "Phone"). */
+@media (max-width: 899px) {
+  .gv-dialog,
+  .gv-dialog--confirm,
+  .gv-dialog--wide,
+  .gv-dialog--large {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: auto;
+    max-height: calc(100dvh - 32px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-bottom: 0;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+    transform: none;
+    animation: gv-slide-in-up var(--motion-slow) var(--ease-standard) both;
+  }
+
+  .gv-dialog::before {
+    display: block;
+    width: 36px;
+    height: 4px;
+    flex: none;
+    margin: 8px auto 0;
+    content: "";
+    background: var(--line-strong);
+    border-radius: var(--radius-full);
+  }
+}
+
+.gv-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: 100vw;
+  overflow: hidden;
+}
+
+.gv-drawer:focus {
+  outline: none;
+}
+
+.gv-drawer--left {
+  left: 0;
+  border-left: 0;
+  border-radius: 0 var(--radius-sheet) var(--radius-sheet) 0;
+  animation: gv-slide-in-left var(--motion-slow) var(--ease-standard) both;
+}
+
+.gv-drawer--right {
+  right: 0;
+  border-right: 0;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  animation: gv-slide-in-right var(--motion-slow) var(--ease-standard) both;
+}
+
+.gv-overlay--passthrough {
+  pointer-events: none;
+}
+
+.gv-overlay--passthrough > .gv-drawer {
+  pointer-events: auto;
+}
+
+.gv-drawer__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gv-drawer__title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gv-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* A right drawer on phone is a bottom sheet over the scrim, with a grabber and
+   20 top radius (design doc "Menus and modals", "Phone"). */
+.gv-drawer--sheet {
+  top: auto;
+  right: 0;
+  left: 0;
+  width: 100%;
+  max-height: calc(100dvh - 48px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-right: 1px solid var(--line-strong);
+  border-bottom: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  animation: gv-slide-in-up var(--motion-slow) var(--ease-standard) both;
+}
+
+.gv-drawer--sheet > .gv-drawer__body {
+  flex: 0 1 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gv-popover,
+  .gv-tooltip,
+  .gv-dialog,
+  .gv-sheet,
+  .gv-drawer,
+  .gv-overlay > .scrim {
+    animation: none !important;
+  }
+}
+
+/* ── Checkbox ───────────────────────────────────────────────── */
+.gv-checkbox {
+  position: relative;
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  cursor: pointer;
+}
+
+.gv-checkbox--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.gv-checkbox__input {
+  position: absolute;
+  inset: -1px;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.gv-checkbox__box {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  transition: background var(--motion-fast) ease-out, border-color var(--motion-fast) ease-out;
+}
+
+.gv-checkbox__mark {
+  pointer-events: none;
+  width: 12px;
+  height: 12px;
+  color: var(--on-accent);
+  stroke-width: 3;
+  opacity: 0;
+}
+
+.gv-checkbox__box:has(.gv-checkbox__input:checked) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.gv-checkbox__input:checked ~ .gv-checkbox__mark {
+  opacity: 1;
+}
+
+.gv-checkbox__box:has(.gv-checkbox__input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.gv-checkbox__label {
+  min-width: 0;
+}
+
+@media (pointer: coarse) {
+  .gv-checkbox {
+    min-height: 44px;
+  }
+}
+
+/* ── Radio (shares the checkbox box) ────────────────────────── */
+.gv-radio__box {
+  border-radius: var(--radius-full);
+}
+
+.gv-radio__dot {
+  pointer-events: none;
+  width: 6px;
+  height: 6px;
+  background: var(--on-accent);
+  border-radius: var(--radius-full);
+  opacity: 0;
+}
+
+.gv-checkbox__input:checked ~ .gv-radio__dot {
+  opacity: 1;
+}
+
+/* ── Date field ─────────────────────────────────────────────── */
+.gv-date {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.gv-date__input.gv-input {
+  padding-right: 40px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gv-date__button {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.gv-date__button:hover:not(:disabled),
+.gv-date__button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.gv-date__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.gv-date__button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gv-date__popover.gv-popover {
+  width: 280px;
+  max-width: calc(100vw - 16px);
+  padding: 12px;
+}
+
+.gv-date__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.gv-date__month {
+  font-weight: var(--weight-medium);
+}
+
+.gv-date__nav {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.gv-date__nav:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.gv-date__nav svg {
+  width: 16px;
+  height: 16px;
+}
+
+.gv-date__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gv-date__week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.gv-date__weekday {
+  padding: 4px 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.gv-date__day {
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.gv-date__day:hover {
+  background: var(--surface-2);
+}
+
+.gv-date__day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.gv-date__day--outside {
+  color: var(--text-3);
+}
+
+.gv-date__day--today {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.gv-date__day--selected,
+.gv-date__day--selected:hover {
+  color: var(--primary-fg);
+  background: var(--primary-bg);
+}
+
+/* ── Choice list (a dialog that picks one of a few options) ─── */
+.gv-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gv-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-base) / var(--leading-ui) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease-out;
+}
+
+.gv-choice:hover:not(:disabled),
+.gv-choice[aria-pressed="true"] {
+  background: var(--surface-2);
+}
+
+.gv-choice:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gv-choice__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.gv-choice__check {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--text);
+}

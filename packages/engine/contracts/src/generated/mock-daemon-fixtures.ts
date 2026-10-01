@@ -9424,6 +9424,42 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
       "avgLatencyMs": 0
     }
   },
+  "judgment.battery.run": {
+    "methodId": "judgment.battery.run",
+    "http": {
+      "method": "POST",
+      "path": "/api/judgment/batteries/run"
+    },
+    "status": 200,
+    "body": {
+      "protocolVersion": 1,
+      "requestId": "sample",
+      "battery": "webui.errors.daemon-refusal",
+      "batteryVersion": 1,
+      "status": "settled",
+      "value": {
+        "session_not_found": false,
+        "session_closed": false,
+        "session_active": false,
+        "session_not_local": false,
+        "method_unknown": false
+      },
+      "readings": {},
+      "outcome": "act",
+      "evidence": [
+        {
+          "decisionId": "sample",
+          "model": "sample",
+          "requestedModel": "sample",
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0
+          },
+          "latencyMs": 0
+        }
+      ]
+    }
+  },
   "homeassistant.homeGraph.askHomeGraph": {
     "methodId": "homeassistant.homeGraph.askHomeGraph",
     "http": {

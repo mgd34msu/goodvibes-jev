@@ -21,6 +21,8 @@ function wordingPort() {
           : says(state, 'timeout') ? 'timeout' : 'unknown';
       return choiceAnswer(question, category, 0.95);
     }
+    if (name === 'failure__connection_failure') return choiceAnswer(question,
+      says(state, 'connection refused') ? 'refused' : says(state, 'timeout') ? 'timed_out' : 'none', 0.95);
     if (name === 'failure__rate_limited') return noulAnswer(says(state, 'rate', 'too many requests', 'quota') ? 0.95 : 0.05);
     if (name === 'failure__context_exceeded') return noulAnswer(says(state, 'context', 'too many tokens', 'too long') ? 0.95 : 0.05);
     if (name === 'failure__transient_network') return noulAnswer(says(state, 'fetch failed', 'socket hang up', 'connection refused', 'timeout') ? 0.95 : 0.05);

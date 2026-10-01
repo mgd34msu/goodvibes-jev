@@ -42,7 +42,7 @@ import {
   type Outcome,
   type Question,
   type YesNoReading,
-} from '@goodvibes-jev/judgment';
+} from '@goodvibes-jev/judgment/decisions';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 
 const LOW = STAKES_BANDS.low;

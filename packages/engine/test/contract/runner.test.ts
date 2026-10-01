@@ -11,7 +11,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
+import { readingsOf, SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
 import { installJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { acquireSharedTree, sharedTreeWaiters } from '../../sdk/src/platform/contract/index.js';
@@ -195,9 +195,20 @@ describe('transport retry through the failure reading', () => {
     installJudgmentPort(withDecisionLog(judgmentPort('test'), log));
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'the contract to end');
-    const retry = h.store.get(contract.id)!.decisions.find((decision) => decision.action === 'transport-retry')!;
+    const done = h.store.get(contract.id)!;
+    expect(done.status).toBe('passed');
+    expect(done.units[0]!.transportRetries).toBe(1);
+    const retry = done.decisions.find((decision) => decision.action === 'transport-retry')!;
+    expect(retry).toBeDefined();
     expect(retry.decisionIds).toHaveLength(1);
-    expect(log.get(retry.decisionIds[0]!)?.context.site).toBe('contract.transport-retry');
+    const entry = log.get(retry.decisionIds[0]!)!;
+    expect(entry).toMatchObject({ status: 'answered', context: { battery: 'engine.failure-reading', site: 'contract.transport-retry' } });
+    expect(readingsOf(entry)).toMatchObject({
+      category: { kind: 'choice', choice: 'network', outcome: 'act' },
+      connection_failure: { kind: 'choice', choice: 'none', outcome: 'act' },
+      transient_network: { kind: 'yes-no', verdict: 'yes', outcome: 'act' },
+      before_response: { kind: 'yes-no', verdict: 'yes', outcome: 'act' },
+    });
     log[Symbol.dispose]();
   });
 
@@ -220,8 +231,10 @@ describe('transport retry through the failure reading', () => {
   });
 
   test('a failure Jev does not read as transient fails at once with failureKind other', async () => {
+    using log = new SqliteDecisionLog(':memory:');
     const h = use(makeHarness({
       plan: oneUnitPlan(1),
+      decisionLog: log,
       scripts: { u1: () => [{ text: 'starting', stop: { kind: 'error', message: 'TypeError: cannot read properties of undefined' } }] },
     }));
     const { contract } = startContract(h);
@@ -229,6 +242,12 @@ describe('transport retry through the failure reading', () => {
     const done = h.store.get(contract.id)!;
     expect(done.failureKind).toBe('other');
     expect(done.units[0]!.transportRetries).toBe(0);
+    const [entry] = log.query({ site: 'contract.transport-retry' });
+    expect(entry?.status).toBe('answered');
+    expect(readingsOf(entry!)).toMatchObject({
+      category: { kind: 'choice', choice: 'unknown', outcome: 'act' },
+      transient_network: { kind: 'yes-no', verdict: 'no', outcome: 'act' },
+    });
   });
 });
 

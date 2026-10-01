@@ -1,0 +1,136 @@
+/*
+ * model-workspace.css: the "Change model" workspace (ModelWorkspaceModal).
+ * Model rows are kit Rows: name left; context, price and one secondary
+ * action right; a hairline between; the selected row carries the accent marker.
+ */
+
+/* The target switcher scrolls inside its own track, never the page. */
+.model-workspace-targets {
+  display: flex;
+  min-width: 0;
+  margin-bottom: var(--space-4);
+}
+
+.model-workspace-routing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.model-workspace-routing__current strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
+}
+
+.model-workspace-enable-toggle {
+  flex: none;
+}
+
+.model-workspace-available-only {
+  flex: none;
+  align-self: end;
+  min-height: 36px;
+}
+
+.model-workspace-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.model-workspace-filter-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.model-workspace-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-workspace-filter__label {
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-meta);
+}
+
+.model-workspace-filter__note {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.model-workspace-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.model-workspace-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.model-workspace-group__title {
+  margin: 0 0 var(--space-2);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-meta);
+}
+
+.model-workspace-row__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.model-workspace-figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* The current row's "Current" label stays readable (it is a disabled button). */
+.model-workspace-row .gv-button:disabled {
+  color: var(--text-2);
+  opacity: 1;
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .model-workspace-row {
+    flex-wrap: wrap;
+  }
+
+  .model-workspace-row .gv-row__trailing {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .model-workspace-figures {
+    align-items: flex-start;
+    text-align: left;
+  }
+}

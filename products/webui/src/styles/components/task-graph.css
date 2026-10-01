@@ -1,0 +1,41 @@
+/*
+ * TaskGraphPanel: a vertical list of kit rows, legible at phone width by
+ * construction (no fixed-width diagram). The row shape comes from the kit
+ * (ui.css .gv-row); this file only spaces the panel and its pool line.
+ */
+
+.task-graph-panel {
+  min-width: 0;
+}
+
+.task-graph-panel__pool,
+.task-graph-panel__empty {
+  margin: 0 0 var(--space-3);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.task-graph-panel__empty {
+  margin-bottom: 0;
+}
+
+.task-graph-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+/* Node titles can be long: wrap instead of truncating. */
+.task-graph-node__title {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.task-graph-node .gv-row__trailing {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

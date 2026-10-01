@@ -130,11 +130,32 @@ function importFindings(root: string, product: ProductSource, files: readonly st
 }
 
 function typeCoverage(directory: string, files: readonly string[]): { tsconfigs: string[]; findings: string[] } {
-  const tsconfigs = files.filter((file) => /^tsconfig(?:\.[\w-]+)?\.json$/.test(basename(file)));
+  const candidates = files.filter((file) => /^tsconfig(?:\.[\w-]+)?\.json$/.test(basename(file)));
+  const configs = new Map(candidates.map((file) => [file, ts.readConfigFile(file, ts.sys.readFile)]));
+  const inherited = new Set<string>();
+  for (const [file, config] of configs) {
+    const value = object(config.config)?.extends;
+    const bases = typeof value === 'string' ? [value] : strings(value) ?? [];
+    for (const base of bases) {
+      if (!base.startsWith('.')) continue;
+      const path = resolve(dirname(file), base);
+      if (configs.has(path)) inherited.add(path);
+      else if (configs.has(`${path}.json`)) inherited.add(`${path}.json`);
+    }
+  }
+  // An options-only file inherited by a real project is not another compiler
+  // program. Counting its implicit default include would also hide files the
+  // actual projects exclude. Keep conventional and explicitly scoped projects.
+  const tsconfigs = candidates.filter((file) => {
+    const config = configs.get(file)!;
+    const raw = object(config.config);
+    return config.error !== undefined || basename(file) === 'tsconfig.json' || !inherited.has(file)
+      || raw !== undefined && ['files', 'include', 'exclude', 'references'].some((key) => Object.hasOwn(raw, key));
+  });
   const covered = new Set<string>();
   const findings: string[] = [];
   for (const file of tsconfigs) {
-    const config = ts.readConfigFile(file, ts.sys.readFile);
+    const config = configs.get(file)!;
     if (config.error !== undefined) { findings.push(`${file}: invalid TypeScript configuration`); continue; }
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dirname(file), undefined, file);
     for (const diagnostic of parsed.errors) findings.push(`${file}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`);

@@ -1,0 +1,111 @@
+/*
+ * attempt-comparison.css: AttemptComparison.tsx, the best-of-N comparison
+ * dialog. Candidates are sections divided by hairlines (the one you would pick
+ * carries the 2px accent marker), never cards. The pick button sits in the
+ * dialog footer.
+ */
+
+.attempt-cmp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.attempt-cmp__intro {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.attempt-cmp__judgment {
+  margin-top: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+}
+
+.attempt-cmp__judgment p {
+  margin: 0;
+}
+
+.attempt-cmp__reasons {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.attempt-cmp__candidates {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.attempt-cmp__candidate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.attempt-cmp__candidate--selected {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.attempt-cmp__candidate-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  flex-wrap: wrap;
+}
+
+.attempt-cmp__pick-radio {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.attempt-cmp__candidate-title {
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.attempt-cmp__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.attempt-cmp__candidate-meta {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+.attempt-cmp__branch {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.attempt-cmp__failure,
+.attempt-cmp__error {
+  margin: 0;
+  color: var(--bad);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.attempt-cmp__note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}

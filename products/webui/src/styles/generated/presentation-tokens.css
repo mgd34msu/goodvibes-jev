@@ -1,0 +1,69 @@
+/*
+ * GENERATED FILE. DO NOT EDIT BY HAND.
+ * Produced by scripts/generate-presentation-tokens.ts from
+ * @goodvibes-jev/engine/sdk/platform/presentation, the presentation contract
+ * the TUI and agent already render through. See that package's own
+ * docstring for the parity-audit provenance.
+ *
+ * This is a layer SEPARATE from src/styles/tokens.css: tokens.css owns the
+ * web UI's own brand palette / layout / motion tokens (an explicitly
+ * webui-only, NOT-contract layer, documented at its own top); this file
+ * owns only the values the SDK contract actually defines: status glyphs
+ * and the state tone-color table.
+ *
+ * Regenerate: `bun run presentation:generate`.
+ * `bun run generated:check` verifies it before every build.
+ */
+
+:root {
+  /* Status glyphs: GLYPHS.status, quoted for `content:` use. All 16 keys are
+   * emitted for parity with the TS mirror (one snapshot, not a hand-picked
+   * subset) even though only 4 (success/warn/failure/info, the good/warn/bad/
+   * info bucket STATE_GLYPHS aliases) have a real `var()` consumer today: see
+   * `.badge[data-contract-state]::before` in src/styles.css (FleetView.tsx /
+   * WorkstreamView.tsx StateBadge). The other 12 (pending/active/idle/blocked/
+   * skipped/review/retry/handoff/reference/partial/dualPane/star) have no
+   * consumer YET. Kept checked-in so a future component reaching for a more
+   * specific glyph than the 4-bucket alias affords never has to regenerate first. */
+  --contract-glyph-success: "✓";
+  --contract-glyph-failure: "✕";
+  --contract-glyph-pending: "•";
+  --contract-glyph-active: "●";
+  --contract-glyph-idle: "◌";
+  --contract-glyph-info: "○";
+  --contract-glyph-warn: "⚠";
+  --contract-glyph-blocked: "⊘";
+  --contract-glyph-skipped: "◇";
+  --contract-glyph-review: "◈";
+  --contract-glyph-retry: "↻";
+  --contract-glyph-handoff: "⇢";
+  --contract-glyph-reference: "↗";
+  --contract-glyph-partial: "◐";
+  --contract-glyph-dual-pane: "◆";
+  --contract-glyph-star: "★";
+
+  /* State tone colors: TONE_TOKENS.state (dark / default). Consumed by the same
+   * `.badge[data-contract-state]::before` rule (src/styles.css), deliberately only
+   * for the glyph's own tint, never the badge's overall background/text color: this
+   * web UI's own palette (tokens.css) is NOT repainted onto the contract's colors
+   * (see presentation-bridge.ts's header for why: glyphs, not colors, are the
+   * cross-surface parity mechanism). */
+  --contract-state-info: #38bdf8;
+  --contract-state-good: #22c55e;
+  --contract-state-warn: #f59e0b;
+  --contract-state-bad: #ef4444;
+  --contract-state-blocked: #f97316;
+  --contract-state-active: #60a5fa;
+  --contract-state-reasoning: #a855f7;
+}
+
+/* State tone colors: light-mode override (resolveTones('light')). */
+:root[data-theme="light"] {
+  --contract-state-info: #0369a1;
+  --contract-state-good: #22c55e;
+  --contract-state-warn: #f59e0b;
+  --contract-state-bad: #ef4444;
+  --contract-state-blocked: #f97316;
+  --contract-state-active: #60a5fa;
+  --contract-state-reasoning: #7c3aed;
+}

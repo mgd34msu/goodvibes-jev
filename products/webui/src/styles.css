@@ -1,0 +1,205 @@
+/* Self-hosted Geist and Geist Mono (400, 500, 600), bundled by Vite: no font CDN. */
+@import './styles/fonts.css';
+@import './styles/tokens.css';
+/* Generated from the SDK presentation contract: see
+   src/styles/generated/presentation-tokens.css's own header for what this
+   layer is (and is not) and scripts/generate-presentation-tokens.ts for how
+   it is produced. */
+@import './styles/generated/presentation-tokens.css';
+/* Glass and scrim: the one floating material and the one modal backdrop. */
+@import './styles/materials.css';
+
+/*
+ * Global rules only: element defaults, focus, the view frame, the inline
+ * notice, and the two small shared classes still in use. Every component
+ * styles itself in src/styles/components/ (the kit in ui.css).
+ */
+
+/* === Global rendering === */
+:root {
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text);
+  background: var(--canvas);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  color: var(--text);
+  /* Flat canvas. --page-art is `none` in every slate theme; only the opt-in
+     GoodVibes Neon theme paints its glow and grid there. */
+  background: var(--page-art), var(--canvas);
+  background-color: var(--canvas);
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+/* Inline code outside chat prose (chat's own rule is in markdown.css): a quiet
+   chip, never accent colored. Code blocks and code frames reset it. */
+code {
+  padding: 1px 5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-size: 0.9em;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Focus is always visible: a 2px accent outline with a 3px soft halo, never removed. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring);
+}
+
+/* === View frame (ShellLayout) === */
+.view-frame {
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 26px 28px 36px;
+}
+
+:root[data-density="compact"] .view-frame {
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+
+/* === Inline notice: .banner.warning / .banner.info ===
+   A flat surface with a strong hairline and the text in --text; the status hue
+   lives only on the notice's icon, or on a leading dot when it has none
+   (design doc "Color": status is never a background larger than a chip). The
+   page-level banners under the shell header are styled in shell.css. */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.banner > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.banner:not(:has(> svg))::before {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-3);
+  content: '';
+}
+
+.banner.warning > svg { color: var(--warn); }
+.banner.warning::before { background: var(--warn); }
+.banner.info > svg { color: var(--info); }
+.banner.info::before { background: var(--info); }
+
+@media (max-width: 480px) {
+  .banner {
+    flex-wrap: wrap;
+  }
+}
+
+/* === Small shared classes still in use === */
+
+/* The current model line in Settings, Models and providers (ModelsSection). */
+.current-model {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.current-model div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.current-model strong {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-model span {
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+  overflow-wrap: anywhere;
+}
+
+/* A short help line under a control (MemoryProvenanceChip). */
+.form-note {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+/* === Phone widths === */
+@media (max-width: 680px) {
+  .view-frame {
+    padding: 16px 14px 36px;
+  }
+
+  /* The steer send button is the hero's final tap: a full 44px target. */
+  .steer-composer__send {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

@@ -14,6 +14,7 @@
 // instead of silently dropping its verbs out of typed-IO coverage.
 
 import { builtinGatewayAdminMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-admin.ts';
+import { builtinBrowserJudgmentMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-browser-judgment.ts';
 import { builtinGatewayChannelMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-channels.ts';
 import { builtinGatewayChannelTestMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-channels-test.ts';
 import { builtinGatewayCostMethodDescriptors } from '../sdk/src/platform/control-plane/method-catalog-cost.ts';
@@ -51,6 +52,7 @@ import type { GatewayMethodDescriptor } from '../sdk/src/platform/control-plane/
 /** Every builtin gateway method descriptor, in method-catalog.ts's own order. */
 export const ALL_GATEWAY_METHOD_DESCRIPTORS: readonly GatewayMethodDescriptor[] = [
   ...builtinGatewayControlMethodDescriptors,
+  ...builtinBrowserJudgmentMethodDescriptors,
   ...builtinGatewayChannelMethodDescriptors,
   ...builtinGatewayChannelTestMethodDescriptors,
   ...builtinGatewayCostMethodDescriptors,

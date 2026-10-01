@@ -1,0 +1,467 @@
+/*
+ * settings.css: the schema-driven config rows the settings dialog renders
+ * (SettingsField, FeatureUnitCard and their specialized editors), the passkey
+ * step-up pieces and the card entry form. The dialog's own frame and the
+ * block / row primitives live in settings-dialog.css. Tokens only.
+ */
+
+/* ── Typed field editor: label and description left, the kit control right ── */
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-6);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-field:last-child {
+  border-bottom: none;
+}
+
+.settings-field--stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-field--stacked .settings-field-control {
+  justify-content: flex-start;
+  margin-top: var(--space-2);
+}
+
+.settings-field-text {
+  min-width: 0;
+}
+
+.settings-field-label {
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-ui);
+}
+
+.settings-field-persisted,
+.settings-field-error {
+  grid-column: 1 / -1;
+}
+
+.settings-field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 2px;
+}
+
+.settings-field-key {
+  padding: 0;
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-field-default,
+.settings-field-hint {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.settings-field-desc {
+  margin: var(--space-1) 0 0;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  line-height: var(--leading-meta);
+}
+
+.settings-field-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The kit Select and Input sit at a fixed 220 beside their label. */
+.settings-field-input,
+.settings-field-select {
+  width: 220px;
+  max-width: 100%;
+}
+
+.settings-field--stacked .settings-field-input,
+.settings-field--stacked .settings-field-select {
+  width: 100%;
+}
+
+.settings-field-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-field-error {
+  margin-top: var(--space-2);
+}
+
+/* Daemon-owned chip: this key's writes land in the daemon's own store and apply
+   to every connected client, not just this browser. */
+.feature-unit-daemon-badge {
+  margin-left: var(--space-2);
+  vertical-align: middle;
+}
+
+/* What the daemon reported back (persistedTo) right after a successful save. */
+.settings-field-persisted,
+.feature-unit-persisted {
+  margin: var(--space-1) 0 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.settings-daemon-flag {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+/* ── Feature unit (a capability and its settings): a flat block, no card ── */
+.feature-unit {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.feature-unit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.feature-unit-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.feature-unit-title h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-ui);
+}
+
+.feature-unit-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-meta);
+}
+
+.feature-unit-desc {
+  margin: var(--space-2) 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.feature-unit-note {
+  margin: var(--space-1) 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+/* Enablement change saved this session; the daemon applies it on restart. */
+.feature-unit-pending {
+  margin: var(--space-1) 0;
+  color: var(--warn);
+  font-size: var(--text-meta);
+}
+
+/* Enum enablement: the feature's mode select in the unit header. */
+.feature-unit-mode {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.feature-unit-mode-label {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.feature-unit-mode-desc {
+  margin: var(--space-1) 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.feature-unit-fields {
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+
+.settings-raw-note {
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.settings-advanced {
+  margin-top: var(--space-4);
+}
+
+/* Phone: a row's control moves under its text. */
+@media (max-width: 899px) {
+  .settings-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-field-control {
+    justify-content: flex-start;
+    margin-top: var(--space-2);
+  }
+
+  .settings-field-input,
+  .settings-field-select {
+    width: 100%;
+  }
+
+  .feature-unit-head {
+    flex-wrap: wrap;
+  }
+}
+
+/* ── Step-up (passkey) settings and the inline ceremony ───────────────────── */
+.settings-stepup .gv-field {
+  max-width: 420px;
+}
+
+.stepup-note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.stepup-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.stepup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.stepup-ceremony {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.stepup-lead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text);
+  line-height: var(--leading-ui);
+}
+
+.stepup-lead svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+.stepup-target {
+  margin: 0;
+}
+
+.stepup-target code {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ─── Model prices editor (pricing.modelPrices) ──────────────────────────── */
+
+.model-prices-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.model-prices-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.model-prices-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.model-prices-form-prices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-3);
+}
+
+.model-prices-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-prices-add {
+  align-self: flex-start;
+}
+
+/* Fallback object-JSON form (object-typed keys without a dedicated editor). */
+.settings-field-object {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-field-object textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.settings-field-object .gv-button {
+  align-self: flex-start;
+}
+
+/* daemon.timezone: searchable IANA zone picker. */
+.timezone-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 360px;
+}
+
+.timezone-picker-search,
+.timezone-picker-select {
+  width: 100%;
+}
+
+/* payments.budget.* (unit: 'money' schema keys): currency-labeled amount input. */
+.money-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.money-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.money-field-currency {
+  min-width: 3ch;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* payments.cvvHandling: enum select plus the trade-off warning on 'prompt'. */
+.cvv-handling-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.cvv-prompt-warning {
+  max-width: 42rem;
+}
+
+/* ── Account status rows (mail and calendar) ───────────────────────────────── */
+.account-status__detail {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The key of a stored credential: an environment-style name, mono. */
+.credential-status__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.accounts-panel__notes {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+  white-space: normal;
+}
+
+/* ── Card entry ────────────────────────────────────────────────────────────
+   The panel where a card number, expiry, security code and cardholder name
+   are typed. See PaymentCardEntry.tsx for the six conditions the owner's
+   ruling carried; the only one with a stylesheet half is the concealment
+   below. */
+.settings-card-list {
+  width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.settings-card-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  width: 100%;
+  margin-bottom: var(--space-3);
+}
+
+.settings-card-form__submit {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .settings-card-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+  Visual concealment for the number and security code while they are typed.
+
+  Deliberately NOT type="password": a password input is the strongest single
+  signal a password manager looks for, and "must not present as a field a
+  manager offers to save" is a condition of the ruling, which outranks a nicer
+  mask. -webkit-text-security gets the same look with none of the semantics.
+
+  Stated honestly: this is cosmetic, and a browser without the property shows
+  the characters as typed. It is not what keeps the value safe: the value's
+  safety is that it goes out over the authenticated daemon channel in a POST
+  body, is never returned by any method, and is cleared from component state on
+  submit.
+*/
+.settings-card-concealed {
+  -webkit-text-security: disc;
+  text-security: disc;
+}

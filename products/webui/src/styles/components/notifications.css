@@ -1,0 +1,18 @@
+/* NotificationSettings: banners and setting rows come from the kit; only the action group needs a rule. */
+
+.notifications-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.notifications-install {
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 899px) {
+  .notifications-actions {
+    justify-content: flex-start;
+  }
+}

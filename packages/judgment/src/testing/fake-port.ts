@@ -29,9 +29,13 @@ export const noulAnswer = (p: number) => ({ type: 'noul', noul: p });
 
 export function choiceAnswer(question: Question, chosen: string, confidence = 0.9) {
   if (question.type !== 'choice') throw new Error('not a choice');
-  const probabilities = Object.fromEntries(Object.keys(question.criteria).map((option) => [option, option === chosen ? confidence : 0]));
+  // Synthetic confidence is independent of probability. Preserve prior valid
+  // distributions, but keep the selected option maximal for weak-confidence
+  // fixtures too; those must exercise uncertainty, not malformed responses.
+  const probability = Math.max(confidence, 1 - confidence);
+  const probabilities = Object.fromEntries(Object.keys(question.criteria).map((option) => [option, option === chosen ? probability : 0]));
   const rest = Object.keys(question.criteria).filter((option) => option !== chosen);
-  if (rest.length > 0) probabilities[rest[0]!] = 1 - confidence;
+  if (rest.length > 0) probabilities[rest[0]!] = 1 - probability;
   return { type: 'choice', choice: chosen, confidence, probabilities };
 }
 
