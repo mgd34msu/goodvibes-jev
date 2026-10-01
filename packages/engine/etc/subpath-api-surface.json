@@ -33734,6 +33734,40 @@
       "text": "export interface ProjectPlanningAmbiguity { readonly phrase: string; readonly resolution: string; readonly examples?: readonly string[] | undefined; readonly resolvedAt?: number | undefined; readonly metadata?: Record<string, unknown> | undefined; } ;; via Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
+      "name": "ProjectPlanningAnswerAction",
+      "kind": "interface",
+      "required": [
+        "answer",
+        "detail",
+        "id",
+        "label"
+      ],
+      "text": "export interface ProjectPlanningAnswerAction { readonly id: string; readonly label: string; readonly detail: string; readonly answer: string; readonly kind?: 'answer' | 'approve'; readonly disabled?: boolean; }"
+    },
+    {
+      "name": "ProjectPlanningAnswerActionsReading",
+      "kind": "interface",
+      "required": [
+        "actions",
+        "decisionIds",
+        "question",
+        "recommendation",
+        "recommendationSpecific",
+        "topics"
+      ],
+      "text": "export interface ProjectPlanningAnswerActionsReading { readonly question: ProjectPlanningAnswerQuestion; readonly actions: readonly ProjectPlanningAnswerAction[]; readonly recommendation: string | null; readonly topics: Readonly<Record<'scope' | 'tasks' | 'verification' | 'approval', YesNoReading>>; readonly recommendationSpecific: YesNoReading | null; readonly decisionIds: readonly string[]; } ;; via Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; YesNoReading = export interface YesNoReading { readonly kind: 'yes-no'; readonly probability: number; readonly verdict: 'yes' | 'no' | 'uncertain'; readonly outcome: Outcome; }"
+    },
+    {
+      "name": "ProjectPlanningAnswerQuestion",
+      "kind": "type",
+      "text": "export type ProjectPlanningAnswerQuestion = Readonly<Pick<ProjectPlanningQuestion, 'id' | 'prompt' | 'whyItMatters' | 'recommendedAnswer' | 'consequence' | 'status'>>; ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+    },
+    {
+      "name": "ProjectPlanningAnswerReadOptions",
+      "kind": "interface",
+      "text": "export interface ProjectPlanningAnswerReadOptions { readonly signal?: AbortSignal; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
       "name": "ProjectPlanningDecision",
       "kind": "interface",
       "required": [
@@ -34193,6 +34227,11 @@
       "text": "export declare function buildGeneratedKnowledgePageGraph(sources: readonly KnowledgeSourceRecord[], nodes: readonly KnowledgeNodeRecord[], edges: readonly KnowledgeEdgeRecord[], isGeneratedSource?: (source: KnowledgeSourceRecord) => boolean): GeneratedKnowledgePageGraph;"
     },
     {
+      "name": "buildProjectPlanningAnswerActions",
+      "kind": "function",
+      "text": "export declare function buildProjectPlanningAnswerActions(question: ProjectPlanningQuestion, draftAnswer: string, reading?: ProjectPlanningAnswerActionsReading): readonly ProjectPlanningAnswerAction[];"
+    },
+    {
       "name": "collectBrowserKnowledge",
       "kind": "function",
       "text": "export declare function collectBrowserKnowledge(filter?: BrowserKnowledgeFilter): Promise<BrowserKnowledgeCollectResult>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
@@ -34461,6 +34500,11 @@
       "name": "readKnowledgeSourceAuthority",
       "kind": "function",
       "text": "export declare function readKnowledgeSourceAuthority(source: KnowledgeSourceRecord, policy?: KnowledgePageSourceQualityPolicy): Promise<KnowledgeSourceAuthority>; ;; via KnowledgeSourceAuthority = export type KnowledgeSourceAuthority = 'official-vendor' | 'vendor' | 'secondary' | 'unverified'; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "readProjectPlanningAnswerActions",
+      "kind": "function",
+      "text": "export declare function readProjectPlanningAnswerActions(input: ProjectPlanningQuestion, options?: ProjectPlanningAnswerReadOptions): Promise<ProjectPlanningAnswerActionsReading>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "renderKnowledgeMap",
