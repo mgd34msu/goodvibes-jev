@@ -105,3 +105,29 @@ phase rather than falsely declaring a preexisting runtime.
 The combined five-file service selection passes 135 tests / 619 assertions;
 87 engine migration/service tests pass with 310 assertions. Final compiler,
 API and aggregate evidence is recorded on the repair commit and PR.
+
+## Ordinary uninstall requires a confirmed stop
+
+The command's ordinary uninstall path had the same preservation defect: it
+removed the managed definition after a denied stop, even while the returned
+status still reported a running service. It now requires both an error-free
+stop result and no observed running service before calling uninstall. A
+nonzero, missing, timed-out or thrown result returns a nonzero incomplete
+receipt and does not remove the recovery definition. Empty error text is not
+treated as success, and no diagnostic text is interpreted as proof that a
+service was already stopped.
+
+Eight new preservation/receipt cases fail on the original command; a ninth
+case checks successful active-to-stopped removal while a neighboring unit
+remains unchanged. Three existing legacy-note fixtures now report an inactive
+target after a successful stop. Their original removal and note assertions
+remain. The old absent-unit test that treated an unconfirmed stop as success
+now expects an incomplete result. All runners and files remain synthetic and
+owned by the tests; the engine manager API is unchanged.
+
+The same command also reports an incomplete outcome if the final returned
+status is still installed or running. Injected adapter exceptions during
+uninstall have a separate receipt: removal may already have happened, and the
+included status is explicitly the last confirmed pre-removal observation.
+This is bounded adapter-exception hardening, not evidence of a routine
+default-runner failure. It performs no automatic retry or additional removal.

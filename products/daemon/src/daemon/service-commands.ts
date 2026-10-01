@@ -22,7 +22,8 @@
  *     old "install implies enabled + running" behavior.
  *   - `uninstall()` only REMOVES the unit file; there is no manager-level
  *     `disable` verb (only start/stop/restart exist). So `uninstall-service`
- *     calls `stop()` then `uninstall()`, and honestly tells the caller that a
+ *     requires a successful stop with no observed running service before
+ *     `uninstall()`, and honestly tells the caller that a
  *     stray "enabled" symlink may remain until `systemctl --user daemon-reload`
  *     (offered back as a suggested follow-up) or the next login cleans it up.
  *
@@ -194,6 +195,7 @@ export interface DaemonServiceCliResult {
   readonly exitCode: number;
   /** Honest, human-readable stdout lines describing exactly what happened. */
   readonly lines: readonly string[];
+  /** Last confirmed observation; an incomplete receipt identifies when this predates the failed action. */
   readonly status: ManagedServiceStatus;
 }
 
@@ -490,11 +492,43 @@ export async function runDaemonServiceCli(input: DaemonServiceCliInput): Promise
         : ok('install', started);
     }
     case 'uninstall-service': {
-      const stopped = manager.stop();
-      const uninstalled = manager.uninstall();
-      if (uninstalled.actionError) return failed('uninstall', uninstalled);
+      const before = manager.status();
+      let stopped: ManagedServiceStatus;
+      try {
+        stopped = manager.stop();
+      } catch {
+        return failed('uninstall', {
+          ...before,
+          actionError: 'stopping could not be confirmed; the service definition was not removed',
+        });
+      }
+      if (stopped.actionError !== undefined || stopped.running) {
+        return failed('uninstall', {
+          ...stopped,
+          actionError: 'stopping could not be confirmed; the service definition was not removed' +
+            (stopped.actionError ? `: ${stopped.actionError}` : ''),
+        });
+      }
+      let uninstalled: ManagedServiceStatus;
+      try {
+        uninstalled = manager.uninstall();
+      } catch {
+        return {
+          ...failed('uninstall', stopped),
+          lines: [
+            'service uninstall incomplete: removal or final status could not be confirmed; removal may already have happened. Verify before retrying.',
+            'last confirmed state before removal:',
+            ...statusLines(stopped),
+          ],
+        };
+      }
+      if (uninstalled.actionError !== undefined || uninstalled.installed || uninstalled.running) {
+        return failed('uninstall', {
+          ...uninstalled,
+          actionError: uninstalled.actionError || 'removal is incomplete: the platform still reports an installed or running service',
+        });
+      }
       const extra: string[] = [];
-      if (stopped.actionError) extra.push(`(it may not have been running: ${stopped.actionError})`);
       // This command only ever touches the TRACKED unit (whatever name/path
       // actually resolved, not necessarily the SERVICE_NAME constant) above,
       // say so explicitly when an install-script unit also exists, so its

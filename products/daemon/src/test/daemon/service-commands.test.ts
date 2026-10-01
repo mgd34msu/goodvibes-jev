@@ -313,12 +313,14 @@ describe('runDaemonServiceCli (systemd path, real PlatformServiceManager, stubbe
     expect(result.lines.join('\n')).toContain('daemon-reload');
   });
 
-  test('uninstall-service reports ok even when stop fails (service was never running)', async () => {
+  test('uninstall-service reports an unconfirmed stop even when no definition was present', async () => {
     const runner: ManagedServiceActionRunner = () => ({ status: 1, stderr: 'Unit not loaded' });
     const result = await runDaemonServiceCli(baseInput({ subcommand: 'uninstall-service', actionRunner: runner }));
 
-    expect(result.ok).toBe(true);
-    expect(result.lines.some((line) => line.includes('may not have been running'))).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.lines.join('\n')).toContain('stopping could not be confirmed');
+    expect(result.lines.join('\n')).toContain('not removed');
   });
 
   test('service-status is read-only and reports not-installed before any install', async () => {
@@ -601,7 +603,7 @@ describe('runDaemonServiceCli: install-script unit detection', () => {
       await runDaemonServiceCli(
         baseInput({ subcommand: 'install-service', legacyUnitFileExists: () => false, actionRunner: fakeRunner(0, 'active').runner, configManager }),
       );
-      const { runner } = fakeRunner(0, 'active');
+      const { runner } = fakeRunner(0, 'inactive');
       const result = await runDaemonServiceCli(
         baseInput({ subcommand: 'uninstall-service', legacyUnitFileExists: () => true, actionRunner: runner, configManager }),
       );
@@ -618,7 +620,7 @@ describe('runDaemonServiceCli: install-script unit detection', () => {
       const trackedPath = join(dir, '.config', 'systemd', 'user', 'goodvibes.service');
       expect(existsSync(trackedPath)).toBe(true);
 
-      const { runner } = fakeRunner(0, 'active');
+      const { runner } = fakeRunner(0, 'inactive');
       const result = await runDaemonServiceCli(baseInput({ subcommand: 'uninstall-service', legacyUnitFileExists: () => true, actionRunner: runner }));
 
       expect(result.ok).toBe(true);
@@ -630,7 +632,7 @@ describe('runDaemonServiceCli: install-script unit detection', () => {
 
     test('legacy unit absent: no legacy note', async () => {
       await runDaemonServiceCli(baseInput({ subcommand: 'install-service', legacyUnitFileExists: () => false, actionRunner: fakeRunner(0, 'active').runner }));
-      const result = await runDaemonServiceCli(baseInput({ subcommand: 'uninstall-service', legacyUnitFileExists: () => false, actionRunner: fakeRunner(0, 'active').runner }));
+      const result = await runDaemonServiceCli(baseInput({ subcommand: 'uninstall-service', legacyUnitFileExists: () => false, actionRunner: fakeRunner(0, 'inactive').runner }));
 
       expect(result.ok).toBe(true);
       expect(result.lines.join('\n')).not.toContain('goodvibes-daemon.service');
