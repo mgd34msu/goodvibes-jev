@@ -35,7 +35,7 @@ import type { SystemMessageKind } from '@/runtime/index.ts';
  * When a message has no recorded kind (added via bare addSystemMessage), it
  * defaults to 'system' and is therefore navigable.
  */
-const NAVIGABLE_KINDS: ReadonlySet<SystemMessageKind> = new Set(['system', 'wrfc']);
+const NAVIGABLE_KINDS: ReadonlySet<SystemMessageKind> = new Set(['system', 'contract']);
 
 type Message = ConversationMessageSnapshot;
 

@@ -39,3 +39,47 @@ which is not in this workspace's main base. Its corrected isolated SDK candidate
 is preserved separately at `82458f6262384ef4b204b8543ed76bb266aa473c`; shared
 integration and caller acceptance remain held. Captured-input behavior dependent
 on the separately held PR56 work is outside this reconstruction checkpoint.
+
+## Ordinary contract and input component checkpoint
+
+The next source checkpoint replaces the TUI's retired WRFC composition with the
+public client contract runner, contract intake and operator service. Both agent
+orchestrator dependency replacements preserve the actual contract hooks, approval
+handlers and permission manager. The main conversation prompt now awaits the
+public conversation-audience tier reading with the turn signal. Runtime snapshots
+project the current session's recorded contracts; the client owns judgment.
+
+The work tree projects real groups, units, attempts, criteria, checks, nudges and
+owner questions. Session and fleet views route cancellation and replies through
+the actual runner. Typed tool outcomes preserve cancellation and leave legacy
+unknown outcomes neutral. Failed or skipped commit notes stay visible at 80 columns
+in collapsed lanes and folded turns. Owner/group/unit rollups are excluded from
+leaf usage totals. Late contract updates invalidate inactive views. The glyph
+choice uses the public read-only reader rather than an undeclared ConfigKey.
+
+The local-only sandbox commands retain public SDK review, profiles, presets,
+bundles and session operations. QEMU provisioning routes and writes are retired;
+obsolete invocations explain the retirement. The permissions provenance display
+names the actual SDK read-secrets decision site instead of the retired static path
+rules. No shared policy or captured-input implementation changed.
+
+The combined guarded component run passes **350 tests / 1,362 assertions across
+23 files**, covering renderer surfaces, real input-handler typeahead, onboarding
+and saved-session choices, contract views/controls, the public contract operator,
+disk-backed resume notices, and local sandbox/setup adapters. All source/test
+fixtures use isolated state and synthetic services. No golden frame was updated.
+
+These are startup/input component tests. Actual main launch, compiled binary,
+PTY first-turn proof, whole product types and broader migration acceptance remain
+open. A bounded source diagnostic during this checkpoint reported 192 lines of
+remaining errors, with none in the recovered contract/fleet display files; this
+is not a passing typecheck or an exact count after later caller fixes. Remaining
+work includes asynchronous command/readers, legacy fixture cleanup, private
+workspace launcher/updater/build behavior and the other listed JEV/HOIST items.
+
+On 2026-10-01, GitHub confirmed notification prerequisite PR52 is still open,
+draft and unmerged at `b4c59e5a10829a903ac157e10e3ff414dcafc72f`, with its legacy
+adapter privacy repair held. The missing notification builders/typed delivery and
+factory option are not copied or substituted here. PR57 planning generation
+integration remains separately held; its archived callers do not establish
+current-base acceptance.

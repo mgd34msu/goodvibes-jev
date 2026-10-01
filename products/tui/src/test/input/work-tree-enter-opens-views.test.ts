@@ -66,7 +66,7 @@ describe('work-tree rows carry what Enter opens', () => {
     };
     appendConversationMessages(ctx, scene.messages, 120, []);
     const lanes = ctx.blockRegistry.filter((b) => b.workTree?.kind === 'lane');
-    expect(lanes.map((b) => b.workTree?.agentId)).toEqual(['eng', 'wrfc', 'cc']);
+    expect(lanes.map((b) => b.workTree?.agentId)).toEqual(['eng', 'contract-owner', 'cc']);
     expect(lanes.every((b) => typeof b.workTree?.colorIndex === 'number' && b.workTree.colorIndex > 0)).toBe(true);
   });
 

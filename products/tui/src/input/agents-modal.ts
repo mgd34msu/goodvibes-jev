@@ -2,8 +2,8 @@
  * agents-modal.ts, the Agents modal (/agents, F2, ctrl+o, ctrl+p "agents" and
  * every old console name: fleet, cockpit, tasks, wrfc, inspector, ops, …).
  *
- * One list of everything running or finished this session (agents, WRFC
- * chains and their members, workflows, watchers, schedules, background
+ * One list of everything running or finished this session (agents, contracts
+ * and their members, workflows, watchers, schedules, background
  * processes, third-party agents hosted over ACP, observed foreign sessions)
  * plus the daemon-hosted conversation this terminal is attached to. The right
  * side tails the selected one live.
@@ -22,6 +22,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import type { ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
@@ -46,7 +47,7 @@ import { liveSteerableLabels, reconcileSteerBadges, steerBadgeGlyph, steerRefusa
 import { FleetStopTracker, fleetKillConfirmArgs, fleetStateDisplay, toggleFleetPause } from '../views/fleet-stop.ts';
 import { formatFleetCost, renderFleetDetailLines } from '../views/fleet-format.ts';
 import { hasFleetCost } from '../views/fleet-read-model.ts';
-import { parseAgentLedger, renderFleetAgentTranscript, renderFleetChainSummary, renderFleetLedgerFallback, renderFleetTranscriptLoading } from '../views/fleet-transcript.ts';
+import { parseAgentLedger, renderFleetAgentTranscript, renderFleetContractSummary, renderFleetLedgerFallback, renderFleetTranscriptLoading } from '../views/fleet-transcript.ts';
 import { isObservedExternalNode } from '../views/fleet-observed-render.ts';
 import type { HostedSessionFeed } from '../views/hosted-session-feed.ts';
 import { formatElapsed } from '../utils/format-elapsed.ts';
@@ -591,9 +592,16 @@ export class AgentsModal implements SurfaceModal {
     const tab = activeFleetTab(this.tabs);
     if (!tab) return [];
     const live = this.findNode(tab.nodeId);
-    if (tab.kind === 'wrfc-chain') {
-      const members = this.deps.readModel.getSnapshot().rows.filter((row) => row.node.parentId === tab.nodeId);
-      return renderFleetChainSummary(members, width, live === null || isTerminalProcessState(live.state));
+    if (tab.kind === 'contract') {
+      const descendants = new Set([tab.nodeId]);
+      const members = this.deps.readModel.getSnapshot().rows.filter((row) => {
+        if (!row.node.parentId || !descendants.has(row.node.parentId)) return false;
+        descendants.add(row.node.id);
+        return true;
+      });
+      // The SDK contract fleet adapter publishes its ContractView as raw. Remote/pruned rows may omit it.
+      const contract = live?.kind === 'contract' ? live.raw as ContractView | undefined : undefined;
+      return renderFleetContractSummary(members, width, live === null || isTerminalProcessState(live.state), contract);
     }
     const isTerminal = live ? isTerminalProcessState(live.state) : true;
     const snapshot = this.deps.actions.getConversationSnapshot(tab.nodeId);

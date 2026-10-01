@@ -4,8 +4,6 @@ import { afterAll } from 'bun:test';
 import { ArchetypeLoader } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { AgentMessageBus } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { AgentOrchestrator } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { createFixWorkstreamRunner } from '@goodvibes-jev/engine/sdk/platform/orchestration';
 import { AutomationManager } from '@goodvibes-jev/engine/sdk/platform/automation';
 import { ChannelPolicyManager } from '@goodvibes-jev/engine/sdk/platform/channels';
 import { RouteBindingManager } from '@goodvibes-jev/engine/sdk/platform/channels';
@@ -66,7 +64,6 @@ let featureFlags: FeatureFlagManager | null = null;
 const spawnTokenManagers = new Map<string, SpawnTokenManager>();
 const projectIndexes = new Map<string, ProjectIndex>();
 const gitServices = new Map<string, GitService>();
-let wrfcController: WrfcController | null = null;
 let agentExecutorForTests: AgentExecutor | null = null;
 
 function getTestRoots(): IntelligenceTestRoots {
@@ -158,7 +155,6 @@ function seedRuntimeProviderTestModels(services: RuntimeServices): void {
 export function resetTestRuntimeServices(): void {
   const previous = runtimeServices;
   runtimeServices = null;
-  wrfcController = null;
   toolLLM = null;
   toolLLMRuntimeServices = null;
   autoHealer = null;
@@ -219,6 +215,7 @@ export function getTestRuntimeServices(): RuntimeServices {
   if (!runtimeServices) {
     const { workingDir, configDir } = nextRuntimeRoots();
     runtimeServices = createRuntimeServices({
+      modelDiscovery: 'skip',
       configManager: new ConfigManager({ surfaceRoot: 'tui',
         configDir,
         workingDir,
@@ -368,31 +365,6 @@ export function getTestRemoteSupervisor(): RemoteSupervisor {
   return getTestRuntimeServices().remoteSupervisor;
 }
 
-export function initTestWrfcController(
-  runtimeBus: RuntimeEventBus,
-  messageBus: AgentMessageBus = getTestAgentMessageBus(),
-): WrfcController {
-  const services = getTestRuntimeServices();
-  wrfcController = new WrfcController(runtimeBus, messageBus, {
-    agentManager: getTestAgentManager(),
-    configManager: getTestConfigManager(),
-    projectRoot: services.shellPaths.workingDirectory,
-    fixWorkstreamRunner: createFixWorkstreamRunner({ engine: services.orchestrationEngine }),
-  });
-  return wrfcController;
-}
-
-export function getTestWrfcController(): WrfcController {
-  if (!wrfcController) {
-    wrfcController = getTestRuntimeServices().wrfcController;
-  }
-  return wrfcController;
-}
-
-export function resetTestWrfcController(): void {
-  wrfcController = null;
-}
-
 export function getTestToolLLM(): ToolLLM {
   const services = getTestRuntimeServices();
   if (!toolLLM || toolLLMRuntimeServices !== services) {
@@ -530,7 +502,6 @@ export function resetTestGitServices(cwd?: string): void {
 
 export function resetAllTestServiceState(): void {
   resetTestRuntimeServices();
-  resetTestWrfcController();
   resetTestToolLLM();
   resetTestAutoHealer();
   resetTestCodeIntelligence();

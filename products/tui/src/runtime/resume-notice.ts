@@ -3,7 +3,7 @@
  *
  * item 1: a supervision-journey audit of 1.7.0 found that the TUI
  * accumulates rich resumable state on disk (a saved conversation, workspace
- * checkpoints, WRFC chain history) but never surfaces any of it at startup,
+ * checkpoints, contract history) but never surfaces any of it at startup,
  * an operator has no way to know it exists short of already knowing the
  * right command. This module builds ONE compact, honest system-message block
  * printed after the splash and before the first prompt, summarizing exactly
@@ -38,50 +38,24 @@
  *     as well would announce the same snapshot twice.
  */
 
-import { readLastSessionPointer, type SessionSurface } from '@/runtime/index.ts';
-import type { WrfcChain } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { readLastSessionPointer } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import type { SessionSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import type { ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { SessionManager } from '@goodvibes-jev/engine/sdk/platform/sessions';
 import type { WorkspaceCheckpointManager } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import type { SystemMessageRouter } from '../core/system-message-router.ts';
 
-// ─── Chain outcome ───────────────────────────────────────────────────────────
+/** Recorded lifecycle outcomes are authoritative; active persisted work is resumable. */
+export type ContractOutcome = 'passed' | 'failed' | 'cancelled' | 'interrupted';
 
-/**
- * Honest, human-facing outcome of a WRFC chain, derived from real chain
- * state rather than guessed. `chain.state` alone cannot distinguish a
- * user-cancelled chain from an ordinary review/gate failure. The SDK now
- * records that distinction first-class as `chain.failureKind` ('cancelled'
- * vs 'transport'/'other'), set by cancelChain()/failChain(), so that field
- * is the primary source of truth. Snapshots persisted before the field
- * existed lack it; for those we fall back to the owner-decision log, where
- * cancelChain() also records a `chain_cancelled` decision. A chain still
- * non-terminal after rehydrate's zombie-reap check (see wrfc-persistence.ts)
- * is reported as 'interrupted', re-imported and live again, not history.
- */
-export type ChainOutcome = 'passed' | 'failed' | 'cancelled' | 'interrupted';
-
-/** Terminal WRFC states (mirrors wrfc-persistence.ts's own TERMINAL_STATES). */
-function isTerminalState(state: WrfcChain['state']): boolean {
-  return state === 'passed' || state === 'failed';
-}
-
-export function describeChainOutcome(chain: WrfcChain): ChainOutcome {
-  if (!isTerminalState(chain.state)) return 'interrupted';
-  if (chain.state === 'passed') return 'passed';
-  // Primary: the SDK's first-class failureKind, authoritative for chains
-  // failed/cancelled under the current SDK.
-  if (chain.failureKind === 'cancelled') return 'cancelled';
-  // Fallback for pre-failureKind snapshots: consult the owner-decision log,
-  // where cancelChain() records a chain_cancelled decision.
-  if (chain.failureKind === undefined) {
-    const lastAction = chain.ownerDecisions.length > 0 ? chain.ownerDecisions[chain.ownerDecisions.length - 1]?.action : undefined;
-    if (lastAction === 'chain_cancelled') return 'cancelled';
-  }
-  return 'failed';
+export function describeContractOutcome(contract: Pick<ContractView, 'status'>): ContractOutcome {
+  return contract.status === 'passed' || contract.status === 'failed' || contract.status === 'cancelled'
+    ? contract.status
+    : 'interrupted';
 }
 
 /** Pick the most recently completed (or, if still interrupted, most recently created) chain from a set. Null if the set is empty. */
-export function mostRecentChain(chains: readonly WrfcChain[]): WrfcChain | null {
+export function mostRecentContract(chains: readonly ContractView[]): ContractView | null {
   if (chains.length === 0) return null;
   return [...chains].sort((a, b) => (b.completedAt ?? b.createdAt ?? 0) - (a.completedAt ?? a.createdAt ?? 0))[0]!;
 }
@@ -95,8 +69,8 @@ export interface ResumeNoticeFacts {
   readonly lastSessionId: string | null;
   /** Number of workspace checkpoints. Null when the checkpoint manager is unavailable in this session (not the same as zero). */
   readonly checkpointCount: number | null;
-  /** Outcome of the most recently known WRFC chain. Null when there is no chain history at all. */
-  readonly lastChainOutcome: ChainOutcome | null;
+  /** Outcome of the most recently known contract. Null when there is no chain history at all. */
+  readonly lastContractOutcome: ContractOutcome | null;
   /** Whether /recall (memory) is wired up in this session. */
   readonly memoryAvailable: boolean;
 }
@@ -115,7 +89,7 @@ export function buildResumeNotice(facts: ResumeNoticeFacts): string | null {
   const checkpointsKnown = facts.checkpointCount !== null;
   const checkpointCount = facts.checkpointCount ?? 0;
   const hasCheckpoints = checkpointsKnown && checkpointCount > 0;
-  const hasChainHistory = facts.lastChainOutcome !== null;
+  const hasChainHistory = facts.lastContractOutcome !== null;
 
   if (!hasSession && !hasCheckpoints && !hasChainHistory) return null;
 
@@ -125,7 +99,7 @@ export function buildResumeNotice(facts: ResumeNoticeFacts): string | null {
   // (anchored to an existing session, or checkpoints genuinely exist even
   // without one), never guessed when the manager is unavailable.
   if (checkpointsKnown && (hasSession || hasCheckpoints)) summary.push(plural(checkpointCount, 'checkpoint'));
-  if (hasChainHistory) summary.push(`last chain: ${facts.lastChainOutcome}`);
+  if (hasChainHistory) summary.push(`last workstream: ${facts.lastContractOutcome}`);
 
   const lead = hasSession ? 'Previous session found' : 'Workspace history found';
   let notice = `${lead}: ${summary.join(', ')}`;
@@ -150,8 +124,8 @@ export interface ResumeNoticeDeps {
   readonly sessionManager: Pick<SessionManager, 'load'>;
   /** Undefined when checkpoints are not wired up in this session at all. Only `list()` is needed. */
   readonly checkpointManager: Pick<WorkspaceCheckpointManager, 'list'> | undefined;
-  /** The full known-chain set from WrfcPersistence.knownChains, gathered post-rehydrate. */
-  readonly chainHistory: readonly WrfcChain[];
+  /** The full known-chain set from contractRunner.list, gathered after shared contract recovery. */
+  readonly contractHistory: readonly ContractView[];
   readonly memoryAvailable: boolean;
   readonly router: Pick<SystemMessageRouter, 'high'>;
 }
@@ -200,13 +174,13 @@ async function readCheckpointCount(mgr: ResumeNoticeDeps['checkpointManager']): 
 export async function announceResumeState(deps: ResumeNoticeDeps): Promise<void> {
   const session = readLastSessionTurns(deps);
   const checkpointCount = await readCheckpointCount(deps.checkpointManager);
-  const lastChain = mostRecentChain(deps.chainHistory);
+  const lastChain = mostRecentContract(deps.contractHistory);
 
   const notice = buildResumeNotice({
     turnCount: session?.turnCount ?? null,
     lastSessionId: session?.lastSessionId ?? null,
     checkpointCount,
-    lastChainOutcome: lastChain ? describeChainOutcome(lastChain) : null,
+    lastContractOutcome: lastChain ? describeContractOutcome(lastChain) : null,
     memoryAvailable: deps.memoryAvailable,
   });
 

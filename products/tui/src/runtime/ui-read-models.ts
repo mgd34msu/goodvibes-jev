@@ -11,7 +11,7 @@ export type {
   UiAutomationSnapshot,
   UiRoutesSnapshot,
   UiWatchersSnapshot,
-  UiOrchestrationSnapshot,
+  UiContractsSnapshot,
   UiCommunicationSnapshot,
   UiControlPlaneSnapshot,
 } from '@/runtime/index.ts';

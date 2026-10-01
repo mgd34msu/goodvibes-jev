@@ -12,7 +12,9 @@
 import { join } from 'node:path';
 import { Orchestrator, type OrchestratorUserInputOptions } from '@goodvibes-jev/engine/sdk/platform/core';
 import { AcpManager } from '@goodvibes-jev/engine/sdk/platform/acp';
-import { getTierForContextWindow, getTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { readTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { factsFor } from '@goodvibes-jev/engine/sdk/platform/routing';
+import { resumeContracts } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { PermissionRequestHandler } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { WorkspaceTrustLevel } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
@@ -55,15 +57,6 @@ import { startMcpConfigAutoReload } from '../mcp/runtime-reload.ts';
 import { GOODVIBES_TUI_SURFACE_ROOT } from '../config/surface.ts';
 
 type ExternalServiceFactories = NonNullable<Parameters<typeof startExternalServices>[4]>;
-
-const TUI_ORCHESTRATION_GUARDRAILS = [
-  '## GoodVibes TUI Orchestration Guardrails',
-  '- If the user asks to make, build, implement, create, add, fix, update, or patch something, preserve that implementation request. Do not restate it as design-only, planning-only, read-only, or no-write work unless the user explicitly requested that.',
-  '- Do not add "Do not write files", restrict tools to read/find/inspect, or remove write/exec capability for implementation work unless the user explicitly asked for read-only analysis.',
-  '- For one deliverable that needs WRFC, reviewed implementation, testing, verification, or review/fix cycles, use one `agent` spawn with `template: "engineer"` and `reviewMode: "wrfc"` whose `task` is the full user request. Do not batch-spawn sibling Engineer/Reviewer/Tester/Verifier roots for the same deliverable.',
-  '- Use `batch-spawn` only for genuinely independent sidecar tasks. Review, test, verify, and fix phases for one deliverable belong inside the WRFC owner chain.',
-  '- If an `agent` tool result reports `authoritativeWrfcChain: true`, `continueRootSpawning: false`, or `orchestrationStopSignal: "wrfc_owner_chain_started"`, stop spawning root agents for that deliverable and wait/report status instead.',
-].join('\n');
 
 function joinPromptParts(...parts: Array<string | null | undefined>): string {
   return parts.map((part) => part?.trim()).filter((part): part is string => Boolean(part)).join('\n\n');
@@ -189,7 +182,6 @@ export async function bootstrapRuntime(
     requestRender,
     setRenderRequest,
     runtimeSessionIdRef,
-    wrfcPersistence,
     sessionSpine,
     sessionInboundInputs,
     sessionUnionCache,
@@ -219,13 +211,17 @@ export async function bootstrapRuntime(
     scrollToEnd: (vHeight: number) => orchestratorRefs.scrollToEnd(vHeight),
     toolRegistry,
     permissionManager,
-    getSystemPrompt: () => {
+    getSystemPrompt: async (signal) => {
+      signal?.throwIfAborted();
       const currentModel = providerRegistry.getCurrentModel();
-      // An unknown window (null) picks the standard tier, never the small-model one.
-      const tier = getTierForContextWindow(providerRegistry.getKnownContextWindowForModel(currentModel));
-      // The main session is a conversation: never the agent-run completion-report demand.
-      const supplement = getTierPromptSupplement(tier, { audience: 'conversation' });
-      return joinPromptParts(runtime.systemPrompt, TUI_ORCHESTRATION_GUARDRAILS, supplement);
+      const supplement = await readTierPromptSupplement(
+        factsFor({ catalog: providerRegistry }, currentModel),
+        providerRegistry.modelTiers,
+        'tui.conversation-system-prompt',
+        { audience: 'conversation', signal },
+      );
+      signal?.throwIfAborted();
+      return joinPromptParts(runtime.systemPrompt, supplement);
     },
     hookDispatcher,
     flagManager: services.featureFlags,
@@ -234,7 +230,8 @@ export async function bootstrapRuntime(
     sessionId: runtime.sessionId,
     services: {
       agentManager: services.agentManager,
-      wrfcController: services.wrfcController,
+      contractRunner: services.contractRunner,
+      contractIntake: services.contractIntake,
     },
   });
   conversationFollowUpRef.value = (item) => orchestrator.enqueueConversationFollowUp(item);
@@ -309,10 +306,10 @@ export async function bootstrapRuntime(
   });
   const systemMessageRouter = shell.systemMessageRouter;
   systemMessageRouterRef.value = systemMessageRouter;
-  wrfcPersistence.rehydrate();
+  await resumeContracts(services.contractRunner, services.workingDirectory);
   const commandRegistry = shell.commandRegistry;
   const commandContext = shell.commandContext;
-  // Boot resume notice (item 1): after rehydrate() so chain history is ready, before
+  // Boot resume notice (item 1): after contract recovery so persisted work history is ready, before
   // the operator can type anything. Fire-and-forget, same as main.ts's non-blocking
   // `void workspaceCheckpointManager.init().catch(() => {})`, local file I/O only,
   // resolves well before a human can react to the first rendered frame.
@@ -320,7 +317,7 @@ export async function bootstrapRuntime(
     surface: services.surface,
     sessionManager: services.sessionManager,
     checkpointManager: services.workspaceCheckpointManager,
-    chainHistory: wrfcPersistence.knownChains,
+    contractHistory: services.contractRunner.list({ includeTerminal: true }),
     memoryAvailable: Boolean(commandContext.clients?.knowledgeApi?.memory),
     router: systemMessageRouter,
   }).catch(() => {

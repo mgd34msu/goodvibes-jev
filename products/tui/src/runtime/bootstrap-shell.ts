@@ -199,19 +199,11 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     conversation,
     (kind) => {
       const ui = getConfigSnapshot(configManager).ui;
-      if (kind === 'wrfc') return ui.wrfcMessages;
+      if (kind === 'contract') return ui.contractMessages;
       if (kind === 'operational') return ui.operationalMessages;
       return ui.systemMessages;
     },
-    {
-      // Suppress stale WRFC replay re-notifications for chains that can no
-      // longer act, gone (killed/removed → getChain null) or terminal
-      // (passed/failed). (item 1c.)
-      isChainTerminal: (chainId) => {
-        const chain = services.wrfcController.getChain(chainId);
-        return chain === null || chain.state === 'passed' || chain.state === 'failed';
-      },
-    },
+
   );
   orchestrator.setSystemMessageRouter(systemMessageRouter);
 
@@ -281,8 +273,8 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     webhookNotifier: services.webhookNotifier,
     sessionMemoryStore: services.sessionMemoryStore,
     sessionLineageTracker: services.sessionLineageTracker,
-    wrfcController: services.wrfcController,
-    workstreamEngine: services.workstreamCommands,
+    contractRunner: services.contractRunner,
+    contractOperator: services.contractOperator,
     codeIndexStore: services.codeIndexStore,
     codeIndexReindexScheduler: services.codeIndexReindexScheduler,
     isPassiveCodeInjectionFlagEnabled: () => services.featureFlags.isEnabled('agent-passive-code-injection'),

@@ -52,8 +52,8 @@ import { cancelAllAgentRuns } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { MediaProviderRegistry, ensureBuiltinMediaProviders } from '@goodvibes-jev/engine/sdk/platform/media';
 import { MultimodalService } from '@goodvibes-jev/engine/sdk/platform/multimodal';
 import { MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore, resolveCanonicalMemoryDbPath } from '@goodvibes-jev/engine/sdk/platform/state';
-import { buildExecPromptAnswerHandler } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/exec-prompt-wiring';
-import { buildLocalhostFetchApproval } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/localhost-fetch-approval';
+import { createApprovalDerivedHandlers } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { FeatureAnnouncementStore, featureAnnouncementsPath } from '@goodvibes-jev/engine/sdk/platform/runtime/feature-announcements';
 import { createNotificationDispatcher, wireRuntimeNotificationBridge, wireMemoryPressureNotice } from './notification-dispatch.ts';
 import { createDurabilityServices } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { MemorySpineClient, createLocalMemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
@@ -72,14 +72,13 @@ import { SessionChangeTracker } from '@goodvibes-jev/engine/sdk/platform/session
 import { ApiTokenAuditor, UserAuthManager } from '@goodvibes-jev/engine/sdk/platform/security';
 import { WebhookNotifier } from '@goodvibes-jev/engine/sdk/platform/integrations';
 import { createRemoteExecutionServices } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
-import { WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { createContractIntake, createContractOperatorService } from '@goodvibes-jev/engine/sdk/platform/contract';
 import { KeybindingsManager } from '../input/keybindings.ts';
 import { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
 import { deriveFeatureStates, bindFeatureSettingsBridge } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 import { createChannelComposition } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { applyProviderOptimizerConfigMode, bindProviderOptimizerFeatureFlag } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { createFleetServices } from '@goodvibes-jev/engine/terminal-shell';
-import { createFixWorkstreamRunner, createWorkstreamServices } from '@goodvibes-jev/engine/sdk/platform/orchestration';
 import { codeIndexDbPath, createCodeIndexServices, createStoreRerooter, isCodeInjectionSettingEnabled } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { WorkspaceTrustManager } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { ensureConfiguredModelIsRoutable } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -180,12 +179,13 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     homeDirectory,
     featureFlags,
     requestApproval,
+    ...(options.modelDiscovery === undefined ? {} : { modelDiscovery: options.modelDiscovery }),
     ...(options.daemonHomeDirectory === undefined ? {} : { daemonHome: options.daemonHomeDirectory }),
   });
   const runtimeDispatch = createDomainDispatch(options.runtimeStore);
   const workspaceTrustManager = new WorkspaceTrustManager({ shellPaths, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT });
   const {
-    agentManager, agentMessageBus, agentOrchestrator, archetypeLoader,
+    agentManager, agentMessageBus, agentOrchestrator, archetypeLoader, contractRunner,
     contextAccountingHolder, providerRegistry, providerCapabilityRegistry, cacheHitTracker,
     favoritesStore, benchmarkStore, modelLimitsService, toolLLM,
     secretsManager, serviceRegistry, subscriptionManager, hookDispatcher, hookActivityTracker,
@@ -196,12 +196,11 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   } = client;
   void clientMcpRegistry; void clientSandboxRegistry;
   disposalScope.registry.add('client runtime services', () => client.dispose());
+  const contractOperator = createContractOperatorService({ runner: contractRunner, workingDirectory });
+  const contractIntake = createContractIntake({ runner: contractRunner, projectRoot: workingDirectory });
 
   ensureConfiguredModelIsRoutable(providerRegistry, configManager);
-  providerRegistry.initCustomProviders();
-  // Background, TTL-respecting live model discovery so provider model lists
-  // refresh from their own listing APIs.
-  providerRegistry.initProviderModelDiscovery();
+  // Custom providers and model discovery belong to the client composition.
 
   // A daemon-scoped credential goes to the daemon over `credentials.set`, which
   // writes the value AND points the config key at it in one verified sequence.
@@ -259,19 +258,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     runtimeStore: options.runtimeStore,
     runtimeBus: options.runtimeBus,
   });
-  // WRFC over the client's own agent graph, the "floor, not ceiling" case,
-  // verbatim: the review/fix workstream controller needs the agent manager and
-  // the message bus, and nothing daemon-side at all.
-  const wrfcController = new WrfcController(options.runtimeBus, agentMessageBus, {
-    agentManager,
-    configManager,
-    projectRoot: workingDirectory,
-    // A chain's fix phase: review findings become a dependency-graph
-    // workstream on the one orchestration engine, composed further down
-    // (createWorkstreamServices); the runner reads it when a fix cycle starts.
-    fixWorkstreamRunner: createFixWorkstreamRunner({ engine: () => orchestrationEngine }),
-  });
-  agentManager.setWrfcController(wrfcController);
   const sessionBroker = new SharedSessionBroker({
     storePath: shellPaths.resolveProjectPath('tui', 'control-plane', 'sessions.json'),
     routeBindings,
@@ -445,11 +431,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // strategy registered on the exposed one reached nothing. The SDK's
   // RuntimeServices contract requires the field; it now names the real router.
   const channelDeliveryRouter = deliveryManager.getDeliveryRouter();
-  // The phase/work-item orchestration engine, constructed before the process
-  // registry so its fleet nodes can be folded in below.
-  const { orchestrationEngine, workstreamCommands } = createWorkstreamServices({
-    agentManager, configManager, adaptivePlanner, runtimeBus: options.runtimeBus, projectRoot: workingDirectory,
-  });
   // Repo source-tree code index, sharing memoryEmbeddingRegistry with MemoryStore.
   const { codeIndexStore, codeIndexReindexScheduler } = createCodeIndexServices({ workingDirectory, surfaceRoot: GOODVIBES_TUI_SURFACE_ROOT, configManager, memoryEmbeddingRegistry, isReindexPaused: () => pauseController.isPaused('code-index-reindex'), admitExpensiveWork });
   const codeInjectionOrchestratorDeps = { codeIndex: codeIndexStore, isCodeInjectionSettingEnabled: () => isCodeInjectionSettingEnabled(configManager), codeIndexReindexScheduler };
@@ -459,8 +440,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     ...(options.currentSessionId ? { currentSessionId: options.currentSessionId } : {}),
   });
   const { processRegistry } = createFleetServices({ // Shared archive-aware fleet registry, see fleet-services.ts
-    agentManager, wrfcController,
-    orchestrationEngine,
+    agentManager, contractRunner,
     codeIndexService: codeIndexStore,
     processManager, watcherRegistry, workflow, approvalBroker, sessionBroker,
     messageBus: agentMessageBus,
@@ -518,14 +498,19 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     runtimeStore: options.runtimeStore, runtimeBus: options.runtimeBus,
     getConversationTitle: options.getConversationTitle,
   });
-  // A loopback fetch that isn't allow-listed asks once through the CLIENT raiser;
-  // "allow for this project" persists and later fetches never ask.
-  const localhostFetchApproval = buildLocalhostFetchApproval({ requestApproval: (input) => requestApproval(input), configManager });
-  // Exec stuck on a terminal prompt rides the same raiser; the typed answer feeds
-  // the continuing run. Built once and shared with every setDependencies site,
-  // a wholesale replace that forgets it hangs interactive prompts.
-  const execPromptAnswerHandler = buildExecPromptAnswerHandler({ requestApproval: (input) => requestApproval(input) });
+  const approvalHandlers = createApprovalDerivedHandlers({
+    requestApproval,
+    configManager,
+    featureFlags,
+    announcementStore: new FeatureAnnouncementStore(featureAnnouncementsPath(configManager)),
+  });
+  const { execPromptAnswerHandler, localhostFetchApproval } = approvalHandlers;
   agentOrchestrator.setDependencies({
+    ...approvalHandlers,
+    permissionManager: client.permissionManager,
+    contractRunner,
+    contractHooks: contractRunner.hooks(),
+    agentManager,
     surfaceRoot: surface.surfaceRoot,
     execPromptAnswerHandler,
     localhostFetchApproval,
@@ -664,10 +649,15 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     agentMessageBus,
     agentOrchestrator,
     contextAccountingHolder,
-    wrfcController,
+    permissionManager: client.permissionManager,
+    sandboxEscalationHandler: approvalHandlers.sandboxEscalationHandler,
+    onSandboxedRun: approvalHandlers.onSandboxedRun,
+    contractRunner,
+    contractOperator,
+    contractIntake,
+    judgment: client.judgment,
+    sessionSnapshot: (sessionId, conversation) => ({ ...conversation, contracts: contractRunner.list({ sessionId, includeTerminal: true }) }),
     processManager,
-    orchestrationEngine,
-    workstreamCommands,
     codeIndexStore,
     codeIndexReindexScheduler,
     storeSnapshotScheduler, appendOnlyRetentionScheduler, stopDurabilityHousekeeping, stopWakeHousekeeping,

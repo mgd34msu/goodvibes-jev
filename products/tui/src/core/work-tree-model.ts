@@ -20,6 +20,8 @@
  * Pure: every live fact comes in through WorkTreeSources.
  */
 
+import type { ContractView, ContractUnitView } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { contractIsActive, contractCommitNote, contractStatusSummary, projectContractTree } from './work-tree-contract.ts';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
 import {
@@ -38,10 +40,9 @@ import {
   type BeadBody,
   type BeadStatus,
   type BeadSummary,
-  type CallOutcome,
 } from '../renderer/lane-graph/bead.ts';
 import { SPINE, type LaneId } from '../renderer/lane-graph/layout.ts';
-import { userMessageFingerprint, type AgentLaneInfo, type TurnOutcome, type TurnTiming, type WorkTreeSources, type WrfcPhaseInfo } from './work-tree-sources.ts';
+import { userMessageFingerprint, type AgentLaneInfo, type TurnOutcome, type TurnTiming, type WorkTreeSources } from './work-tree-sources.ts';
 
 type Message = ConversationMessageSnapshot;
 type AssistantMessage = Extract<Message, { role: 'assistant' }>;
@@ -86,7 +87,7 @@ export interface BeadModel {
   readonly body: BeadBody | null;
   readonly open: boolean;
   readonly expanded: boolean;
-  /** WRFC fix rows: the finding this call answers. */
+  /** A correction row can identify the finding it answers. */
   readonly answers?: string | undefined;
 }
 
@@ -132,7 +133,7 @@ export interface TurnModel {
   /** Collapse keys of every bead in the turn (search and /expand reach them). */
   readonly beadKeys: readonly string[];
   /**
-   * System notices that arrived while the turn ran ([WRFC] …, [Agents] …,
+   * System notices that arrived while the turn ran ([Contracts] …, [Agents] …,
    * compaction receipts), in order. A notice is not a step of the turn: it is
    * drawn after the turn, outside its lanes (conversation-rendering.ts), the
    * way a notice between turns is.
@@ -180,12 +181,6 @@ export function transcriptUnits(messages: readonly Message[], offset = 0): Trans
   return units;
 }
 
-function outcomeOf(content: string): CallOutcome {
-  if (/^Error: cancelled by user\b/.test(content)) return 'cancelled';
-  if (/^Error: /.test(content)) return 'error';
-  return 'ok';
-}
-
 function hasProse(message: AssistantMessage): boolean {
   return typeof message.content === 'string' && message.content.trim().length > 0;
 }
@@ -204,7 +199,7 @@ function spawnedAgentIds(call: ToolCall, result: string | undefined): string[] {
   if (toolFamily(call.name) !== 'agent') return [];
   const mode = call.arguments.mode;
   if (mode !== 'spawn' && mode !== 'batch-spawn' && !(mode === undefined && typeof call.arguments.task === 'string')) return [];
-  if (!result || !result.includes('agentId')) return [];
+  if (!result) return [];
   try {
     const parsed: unknown = JSON.parse(result);
     const ids: string[] = [];
@@ -212,6 +207,7 @@ function spawnedAgentIds(call: ToolCall, result: string | undefined): string[] {
       if (depth > 3 || value === null || typeof value !== 'object') return;
       if (Array.isArray(value)) { for (const v of value) visit(v, depth + 1); return; }
       const rec = value as Record<string, unknown>;
+      if (rec.contractStarted === true && typeof rec.ownerAgentId === 'string' && rec.ownerAgentId.length > 0) { ids.push(rec.ownerAgentId); return; }
       if (typeof rec.agentId === 'string' && rec.agentId.length > 0) ids.push(rec.agentId);
       for (const [key, child] of Object.entries(rec)) if (key !== 'agentId') visit(child, depth + 1);
     };
@@ -255,13 +251,13 @@ function makeBead(
   call: ToolCall,
   messageIndex: number,
   callIndex: number,
-  result: { content: string; index: number } | undefined,
+  result: { content: string; index: number; outcome?: ToolMessage['outcome'] } | undefined,
   ownerActive: boolean,
   extra: { answers?: string } = {},
 ): { bead: BeadModel; t: number | undefined } {
   const id = `${scope}c:${messageIndex}:${callIndex}`;
   const content = result?.content;
-  const outcome = content !== undefined ? outcomeOf(content) : undefined;
+  const outcome = result?.outcome;
   const status = beadStatus({
     outcome,
     content,
@@ -340,10 +336,14 @@ function inheritTimes(rows: readonly TimedRow[], start: number | undefined): Tim
 }
 
 function laneOutcome(info: AgentLaneInfo, rows: readonly TimedRow[]): LaneModel['outcome'] {
+  if (info.contract) {
+    const status = info.contract.status;
+    return status === 'passed' ? 'ok' : status === 'failed' ? 'err' : status === 'cancelled' ? 'warn' : 'run';
+  }
   if (info.status === 'running' || info.status === 'pending') return 'run';
   if (info.status === 'failed') return 'err';
   if (info.status === 'cancelled') return 'warn';
-  if (info.wrfcPassed === false) return 'warn';
+
   // A lane carries a failure when one of ITS OWN calls failed; a failure deeper
   // down shows on the merge row of the lane it happened in.
   const carriesFailure = rows.some((r) => r.row.kind === 'bead' && r.row.bead.lane === info.id && r.row.bead.status === 'err');
@@ -351,15 +351,15 @@ function laneOutcome(info: AgentLaneInfo, rows: readonly TimedRow[]): LaneModel[
 }
 
 function laneTexts(info: AgentLaneInfo, name: string, rows: readonly TimedRow[], outcome: LaneModel['outcome'], ctx: BuildContext): { merge: string; fold: string; time: string | undefined } {
-  const tools = info.wrfcPhases ? plural(info.wrfcPhases.length, 'phase') : plural(info.toolCallCount, 'tool');
+  const tools = info.contract ? plural(info.contract.units.length, 'unit') : plural(info.toolCallCount, 'tool');
   const end = info.completedAt ?? ctx.now;
   const elapsed = info.startedAt !== undefined ? formatBeadTime(end - info.startedAt) : undefined;
   const cost = info.costUsd !== undefined ? formatCost(info.costUsd) : undefined;
   const failedTools = rows.filter((r) => r.row.kind === 'bead' && r.row.bead.lane === info.id && r.row.bead.status === 'err').length;
   const nested = rows.filter((r) => r.row.kind === 'spawn' || r.row.kind === 'folded').length;
   let lead: string;
-  if (info.wrfcPhases) {
-    lead = outcome === 'run' ? `${name} running` : info.wrfcPassed === false || outcome === 'err' ? `${name} failed` : `${name} passed`;
+  if (info.contract) {
+    lead = `${name} ${contractStatusSummary(info.contract)}`;
   } else if (info.status === 'failed') {
     lead = `${name} failed${info.error ? `: ${firstLine(info.error, 60)}` : ''}`;
   } else if (info.status === 'cancelled') {
@@ -370,7 +370,7 @@ function laneTexts(info: AgentLaneInfo, name: string, rows: readonly TimedRow[],
     lead = `${name} finished`;
   }
   const merge = [lead, tools, nested > 0 ? `${plural(nested, 'agent')} inside` : undefined, elapsed, cost].filter(Boolean).join(' · ');
-  const fold = [tools, cost].filter(Boolean).join(' · ');
+  const fold = [info.contract ? contractStatusSummary(info.contract) : undefined, tools, cost].filter(Boolean).join(' · ');
   return { merge, fold, time: elapsed };
 }
 
@@ -381,9 +381,9 @@ function laneTexts(info: AgentLaneInfo, name: string, rows: readonly TimedRow[],
 function agentLaneRows(ctx: BuildContext, info: AgentLaneInfo, scope: string, depth: number, ancestors: readonly string[]): TimedRow[] {
   const lane = info.id;
   const active = info.status === 'running' || info.status === 'pending';
-  if (info.wrfcPhases) return wrfcLaneRows(ctx, info, scope, active);
-  const results = new Map<string, { content: string; index: number }>();
-  info.messages.forEach((m, i) => { if (m.role === 'tool' && m.callId) results.set(m.callId, { content: m.content, index: i }); });
+  if (info.contract) return contractLaneRows(ctx, info.contract, lane, scope);
+  const results = new Map<string, { content: string; index: number; outcome?: ToolMessage['outcome'] }>();
+  info.messages.forEach((m, i) => { if (m.role === 'tool' && m.callId) results.set(m.callId, { content: m.content, index: i, outcome: m.outcome }); });
   const items: Pending[] = [];
   info.messages.forEach((m, messageIndex) => {
     if (m.role !== 'assistant') return;
@@ -395,75 +395,23 @@ function agentLaneRows(ctx: BuildContext, info: AgentLaneInfo, scope: string, de
   return inheritTimes(resolvePending(items), info.startedAt);
 }
 
-/** A WRFC chain's lane: write, review, fix and confirm as beads, a fix pointing at the finding it answers. */
-function wrfcLaneRows(ctx: BuildContext, info: AgentLaneInfo, scope: string, active: boolean): TimedRow[] {
-  const rows: TimedRow[] = [];
-  const phases = info.wrfcPhases ?? [];
-  let lastFindings: readonly string[] | undefined;
-  let fixed = false;
-  phases.forEach((phase, k) => {
-    const label = phaseLabel(phase, fixed);
-    if (phase.role === 'fixer') fixed = true;
-    const running = phase.status === 'running' || phase.status === 'pending';
-    const status: BeadStatus = running ? (active ? 'run' : 'cancel')
-      : phase.status === 'failed' ? 'err'
-        : phase.status === 'cancelled' ? 'cancel'
-          : phase.role === 'reviewer' && (phase.passed === false || (phase.findings?.length ?? 0) > 0) ? 'warn' : 'ok';
-    if (status === 'run') ctx.live = true;
-    const id = `${scope}w:${info.id}:${k}`;
+/** The same typed tree appears in a main lane and in the owner's full-screen view. */
+function contractLaneRows(ctx: BuildContext, contract: ContractView, lane: LaneId, scope: string): TimedRow[] {
+  return projectContractTree(contract).map((row) => {
+    const id = `${scope}${row.id}`;
     const key = beadKeyOf(id);
     ctx.beadKeys.push(key);
-    const findings = phase.findings ?? [];
-    const summary: BeadSummary | null = status === 'run' ? null
-      : phase.role === 'reviewer'
-        ? (findings.length > 0 ? { text: plural(findings.length, 'finding'), tone: 'warn' } : phase.passed === false ? { text: 'changes requested', tone: 'warn' } : { text: 'pass', tone: 'good' })
-        : status === 'err' ? { text: 'failed', tone: 'bad' } : null;
-    const answers = phase.role === 'fixer' ? (lastFindings?.[0] ?? undefined) : undefined;
-    if (phase.role === 'reviewer') lastFindings = findings.length > 0 ? findings : lastFindings;
-    const bodyLines = [
-      ...findings.map((f) => `• ${f}`),
-      ...(phase.output ? phase.output.split('\n') : []),
-    ].filter((l) => l.trim().length > 0);
-    const end = phase.completedAt ?? ctx.now;
-    // A phase is an agent, not a tool call: the bead's call carries its phase id and label only.
-    const call: ToolCall = { id, name: label, arguments: {} };
-    rows.push({
-      t: phase.startedAt,
-      row: {
-        kind: 'bead',
-        bead: {
-          id,
-          lane: info.id,
-          call,
-          messageIndex: -1,
-          resultIndex: undefined,
-          scope,
-          result: phase.output,
-          status,
-          name: label,
-          arg: firstLine(phase.role === 'reviewer' && findings.length > 0 ? findings[0]! : phase.task, 90),
-          summary,
-          time: phase.startedAt !== undefined ? formatBeadTime(end - phase.startedAt) : undefined,
-          body: bodyLines.length > 0 ? { kind: 'text', lines: bodyLines } : null,
-          open: bodyLines.length > 0 && ctx.collapse.get(key) === false,
-          expanded: ctx.collapse.get(beadMoreKeyOf(id)) === true,
-          answers,
-        },
-      },
-    });
+    if (row.status === 'run' || row.status === 'wait') ctx.live = true;
+    const lines = row.lines.flatMap((line) => line.split('\n').map(cellText));
+    const result = lines.join('\n');
+    const body: BeadBody | null = lines.length > 0 ? { kind: 'text', lines } : null;
+    return { t: undefined, row: { kind: 'bead', bead: {
+      id, lane, call: { id, name: row.name, arguments: {} }, messageIndex: -1, resultIndex: undefined,
+      scope, result, status: row.status, name: row.name, arg: firstLine(row.arg, 120), summary: { ...row.summary, text: cellText(row.summary.text) },
+      time: undefined, body, open: body !== null && ctx.collapse.get(key) === false,
+      expanded: ctx.collapse.get(beadMoreKeyOf(id)) === true,
+    } } };
   });
-  return inheritTimes(rows, info.startedAt);
-}
-
-function phaseLabel(phase: WrfcPhaseInfo, afterFix: boolean): string {
-  switch (phase.role) {
-    case 'engineer': return 'write';
-    case 'reviewer': return afterFix ? 'confirm' : 'review';
-    case 'fixer': return 'fix';
-    case 'integrator': return 'integrate';
-    case 'verifier': return 'verify';
-    default: return phase.role;
-  }
 }
 
 /** The row(s) one call contributes: a bead, or a spawn with its child lane(s). */
@@ -474,7 +422,7 @@ function callRows(
   call: ToolCall,
   messageIndex: number,
   callIndex: number,
-  result: { content: string; index: number } | undefined,
+  result: { content: string; index: number; outcome?: ToolMessage['outcome'] } | undefined,
   ownerActive: boolean,
   depth: number,
   ancestors: readonly string[],
@@ -493,7 +441,7 @@ function callRows(
     const outcome = laneOutcome(info, childRows);
     if (outcome === 'run') ctx.live = true;
     // A hosted agent's lane is named for its harness ("Claude Code"), its task marked hosted.
-    const name = cellText(info.wrfcPhases ? 'WRFC chain' : info.hostedLabel ?? info.name);
+    const name = cellText(info.contract ? 'Contract' : info.hostedLabel ?? info.name);
     const texts = laneTexts(info, name, childRows, outcome, ctx);
     const arg = `${info.hostedLabel ? 'hosted · ' : ''}${firstLine(info.task, 100)}`;
     const laneModel: LaneModel = {
@@ -564,12 +512,12 @@ export function buildTurnModel(input: BuildTurnInput): TurnModel {
   const active = turnActiveNow && isLatest;
   const callsLive = callsMayRun && isLatest;
 
-  const results = new Map<string, { content: string; index: number }>();
+  const results = new Map<string, { content: string; index: number; outcome?: ToolMessage['outcome'] }>();
   const members: number[] = [];
   for (let abs = unit.start; abs <= unit.end; abs++) {
     members.push(abs);
     const m = at(abs);
-    if (m.role === 'tool' && m.callId) results.set(m.callId, { content: m.content, index: abs });
+    if (m.role === 'tool' && m.callId) results.set(m.callId, { content: m.content, index: abs, outcome: m.outcome });
   }
 
   // The answer: the last assistant message, when it has prose and no calls.
@@ -661,6 +609,15 @@ export function buildTurnModel(input: BuildTurnInput): TurnModel {
   if (toolCount > 0) parts.push(plural(toolCount, 'tool'));
   if (ctx.lanes > 0) parts.push(plural(ctx.lanes, 'agent'));
   if (head.reasoningContent || head.reasoningSummary) parts.push('reasoning');
+  const contractNotes = new Set<string>();
+  for (const { row } of rows) {
+    if (row.kind !== 'spawn' && row.kind !== 'folded') continue;
+    const contract = sources.agent?.(row.lane.id)?.contract;
+    const note = contract && contractCommitNote(contract);
+    if (note && contract?.commit?.status !== 'committed') contractNotes.add(`${contract!.status} · ${note}`);
+  }
+  // Keep the outcome note ahead of counts so it survives an 80-column folded header.
+  parts.splice(model ? 1 : 0, 0, ...contractNotes);
   // A finished turn whose end was never recorded states no time rather than a wrong one.
   if (timing && (timing.endedAt !== undefined || active)) parts.push(formatBeadTime((timing.endedAt ?? now) - timing.startedAt));
 
@@ -679,50 +636,38 @@ export function buildTurnModel(input: BuildTurnInput): TurnModel {
   };
 }
 
-/**
- * A WRFC chain owner opened full screen. The owner never takes a turn of its
- * own (it supervises), so its view is built from its chain: each phase agent
- * (engineer, reviewer, fixer, …) branches off the owner's spine as a lane
- * drawn from that agent's own transcript, the way main draws any spawned
- * agent. The header names the chain and counts phases, not tools.
- */
-export function buildWrfcOwnerModel(input: {
+/** A contract owner supervises the public tree and the actual planner/unit transcripts. */
+export function buildContractOwnerModel(input: {
   readonly info: AgentLaneInfo;
   readonly sources: WorkTreeSources;
   readonly collapse: ReadonlyMap<string, boolean>;
 }): TurnModel {
   const { info, sources } = input;
+  const contract = info.contract;
   const now = sources.now?.() ?? Date.now();
   const ctx: BuildContext = { sources, collapse: input.collapse, waiting: sources.waitingCallIds?.() ?? new Set<string>(), now, lanes: 0, live: false, beadKeys: [] };
-  const active = info.status === 'running' || info.status === 'pending';
-  const scope = `wrfc:${info.id}/`;
-  const items: Pending[] = [];
-  (info.wrfcPhases ?? []).forEach((phase, k) => {
-    // The phase is an agent the chain spawned: the same shape main's spawn
-    // call has, so its lane, beads and merge row come from the one path.
-    const call: ToolCall = { id: `${scope}${phase.agentId}`, name: 'agent', arguments: { mode: 'spawn', task: phase.task } };
-    items.push(...callRows(ctx, SPINE, scope, call, -1, k, { content: JSON.stringify({ agentId: phase.agentId }), index: -1 }, active, 0, [info.id]));
-  });
-  const rows = inheritTimes(resolvePending(items), info.startedAt);
-  const phases = info.wrfcPhases?.length ?? 0;
-  const parts = ['WRFC chain', plural(phases, 'phase')];
-  if (active) parts.push('working');
-  else if (info.wrfcPassed === true) parts.push('passed');
-  else if (info.wrfcPassed === false || info.status === 'failed') parts.push('failed');
-  if (info.startedAt !== undefined) parts.push(formatBeadTime((info.completedAt ?? now) - info.startedAt));
-  return {
-    turnKey: `${scope}turn`,
-    headIndex: -1,
-    memberIndexes: [],
-    folded: false,
-    headerText: parts.join(' · '),
-    rows: [{ kind: 'head' }, ...rows.map((r) => r.row)],
-    live: ctx.live || active,
-    toolCount: 0,
-    agentCount: ctx.lanes,
-    beadKeys: ctx.beadKeys,
-    notices: [],
+  const scope = `contract:${contract?.id ?? info.id}/`;
+  const active = contract ? contractIsActive(contract) : info.status === 'running' || info.status === 'pending';
+  const items: Pending[] = contract ? contractLaneRows(ctx, contract, SPINE, scope) : [];
+  const agentIds = new Set(contract?.plannerAgentIds ?? []);
+  const addUnitAgents = (unit: ContractUnitView): void => {
+    for (const id of unit.agentIds) agentIds.add(id);
+    for (const attempt of unit.attemptUnits ?? []) addUnitAgents(attempt);
   };
+  for (const unit of contract?.units ?? []) addUnitAgents(unit);
+  let index = 0;
+  for (const agentId of agentIds) {
+    if (agentId === info.id) continue;
+    // This is a structural link to a real agent, never an invented execution outcome.
+    const call: ToolCall = { id: `${scope}agent:${agentId}`, name: 'agent', arguments: { mode: 'spawn' } };
+    items.push(...callRows(ctx, SPINE, scope, call, -1, index++, { content: JSON.stringify({ agentId }), index: -1 }, active, 0, [info.id]));
+  }
+  const rows = resolvePending(items);
+  const parts = ['Contract', contract ? contractStatusSummary(contract) : info.status, plural(contract?.units.length ?? 0, 'unit')];
+  if (contract) parts.push(formatBeadTime((contract.completedAt ?? now) - contract.createdAt));
+  return { turnKey: `${scope}turn`, headIndex: -1, memberIndexes: [], folded: false,
+    headerText: parts.join(' · '), rows: [{ kind: 'head' }, ...rows.map((r) => r.row)], live: ctx.live || active,
+    toolCount: 0, agentCount: ctx.lanes, beadKeys: ctx.beadKeys, notices: [] };
 }
 
 /**
@@ -794,6 +739,6 @@ export function orphanResultBead(message: ToolMessage, index: number, collapse: 
   // A result stored without its call and without a tool name is named from
   // its own shape when that is unambiguous, otherwise "result", never "tool".
   const call: ToolCall = { id: message.callId, name: message.toolName ?? inferResultToolName(message.content), arguments: {} };
-  const { bead } = makeBead(ctx, SPINE, 'o', call, index, 0, { content: message.content, index }, false);
+  const { bead } = makeBead(ctx, SPINE, 'o', call, index, 0, { content: message.content, index, outcome: message.outcome }, false);
   return bead;
 }

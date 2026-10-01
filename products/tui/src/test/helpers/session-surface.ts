@@ -6,7 +6,7 @@
  * its own scope can pass while the real reader and writer disagree.
  */
 import { utimesSync } from 'node:fs';
-import { createSessionSurface, type SessionSurface } from '@/runtime/index.ts';
+import { createSessionSurface, type SessionSurface } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { GOODVIBES_TUI_SURFACE_ROOT } from '../../config/surface.ts';
 
 export function makeTestSurface(dir: string, homeDir: string = dir): SessionSurface {

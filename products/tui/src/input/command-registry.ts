@@ -309,7 +309,7 @@ export interface CommandSessionServices {
    */
   readonly hydrateSessionUsage?: () => void;
   /** The orchestration engine's command-facing facade, see runtime/workstream-services.ts. */
-  readonly workstreamEngine?: import('@goodvibes-jev/engine/sdk/platform/orchestration').WorkstreamCommandService;
+  readonly contractOperator?: import('@goodvibes-jev/engine/sdk/platform/contract').ContractOperatorService;
   /** The repo source-tree code index, see runtime/code-index-services.ts. */
   readonly codeIndexStore?: import('@goodvibes-jev/engine/sdk/platform/state').CodeIndexStore;
   /** Tool-site reindex scheduler, `/codebase status` reports its last activity. */

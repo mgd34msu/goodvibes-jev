@@ -2,10 +2,8 @@ import { dirname, join } from 'path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { atomicWriteFileSync } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandRegistry } from '../command-registry.ts';
-import type { ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
 import { listHookPointContracts } from '@goodvibes-jev/engine/sdk/platform/hooks';
-import { renderQemuWrapperTemplate } from '@/runtime/index.ts';
 import type { SetupTransferBundle } from './local-setup-transfer.ts';
 import {
   buildSetupTransferBundle,
@@ -57,8 +55,6 @@ export function registerLocalSetupCommands(registry: CommandRegistry): void {
           `  mcp elevated: ${snapshot.elevatedMcpCount}`,
           `  remote runners: ${snapshot.remoteRunnerCount}`,
           `  sandbox backend: ${ctx.platform.configManager.get('sandbox.vmBackend')}`,
-          `  qemu image: ${String(ctx.platform.configManager.get('sandbox.qemuImagePath')) || '(not configured)'}`,
-          `  qemu wrapper: ${String(ctx.platform.configManager.get('sandbox.qemuExecWrapper')) || '(not configured)'}`,
           '',
           `  service ids: ${snapshot.services.join(', ') || '(none)'}`,
           `  plugin dirs: ${snapshot.pluginDirectories.join(', ') || '(none)'}`,
@@ -71,12 +67,6 @@ export function registerLocalSetupCommands(registry: CommandRegistry): void {
         ctx.print([
           'Startup Doctor',
           ...snapshot.issues.map((issue) => `  [${issue.severity.toUpperCase()}] ${issue.area}: ${issue.message}`),
-          ...(`${ctx.platform.configManager.get('sandbox.vmBackend')}` === 'qemu' && !String(ctx.platform.configManager.get('sandbox.qemuImagePath')).trim()
-            ? ['  [WARN] sandbox: qemu backend selected without qemuImagePath'] : []),
-          ...(`${ctx.platform.configManager.get('sandbox.vmBackend')}` === 'qemu' && !String(ctx.platform.configManager.get('sandbox.qemuExecWrapper')).trim()
-            ? ['  [WARN] sandbox: qemu backend selected without qemuExecWrapper', '    next: /sandbox qemu setup'] : []),
-          ...(`${ctx.platform.configManager.get('sandbox.vmBackend')}` === 'qemu' && String(ctx.platform.configManager.get('sandbox.qemuExecWrapper')).trim()
-            ? ['  [INFO] sandbox: wrapper bridge can be validated with GV_SANDBOX_WRAPPER_MODE=host-exec before wiring a real guest transport'] : []),
           ...(snapshot.serviceIssues.length > 0
             ? ['', '  Service issues:', ...snapshot.serviceIssues.map((issue) => `    - ${issue}`)]
             : []),
@@ -153,7 +143,6 @@ export function registerLocalSetupCommands(registry: CommandRegistry): void {
             createdAt: artifact.createdAt,
           })),
         }, null, 2) + '\n', 'utf-8');
-        writeFileSync(join(targetDir, 'qemu-wrapper.template.sh'), renderQemuWrapperTemplate(), { encoding: 'utf-8', mode: 0o755 });
         ctx.print(`Exported support bundle to ${targetDir}`);
         return;
       }
@@ -200,7 +189,7 @@ export function registerLocalSetupCommands(registry: CommandRegistry): void {
             const bundle = JSON.parse(readFileSync(targetPath, 'utf-8')) as SetupTransferBundle;
             for (const entry of CONFIG_SCHEMA) {
               if (Object.prototype.hasOwnProperty.call(bundle.config, entry.key)) {
-                ctx.platform.configManager.setDynamic(entry.key as ConfigKey, (bundle.config as Record<string, unknown>)[entry.key]);
+                ctx.platform.configManager.setDynamic(entry.key, (bundle.config as Record<string, unknown>)[entry.key]);
               }
             }
             if (bundle.services) {

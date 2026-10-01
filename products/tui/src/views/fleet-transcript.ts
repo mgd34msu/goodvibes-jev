@@ -17,16 +17,19 @@
 //     running, 'frozen' once it has completed but the snapshot has not yet
 //     been evicted from the retention ring.
 //   - 'unavailable'   , a terminal agent whose snapshot came back empty
-//     (evicted past the retention bound, or an agent kind, e.g. the WRFC
+//     (evicted past the retention bound, or an agent kind, e.g. the contract
 //     owner, that never registered a live conversation source at all).
 //     the Agents modal degrades to the on-disk event ledger (renderFleetLedgerFallback)
 //     for this case; this module never fabricates transcript content.
 //
-// A 'wrfc-chain' tab has no single conversation of its own (it coordinates
+// A 'contract' tab has no single conversation of its own (it coordinates
 // member agents, each of which has its own), so it gets a live member
-// summary (renderFleetChainSummary) instead of a transcript.
+// summary (renderFleetContractSummary) instead of a transcript.
 // ---------------------------------------------------------------------------
 
+import type { ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { cellText } from '../renderer/lane-graph/bead.ts';
+import { projectContractTree, contractStatusSummary } from '../core/work-tree-contract.ts';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { createEmptyLine, type Line } from '@goodvibes-jev/engine/sdk/platform/types';
@@ -156,27 +159,28 @@ export function renderFleetAgentTranscript(
 }
 
 // ---------------------------------------------------------------------------
-// Chain summary, 'wrfc-chain' tabs have no single conversation
+// Contract summary, 'contract' tabs have no single conversation
 // ---------------------------------------------------------------------------
 
-/**
- * Render a live one-line-per-member summary for an attached wrfc-chain tab.
- *
- * `chainDoneOrAbsent` disambiguates an empty member list: a completed
- * chain prunes its wrapper node (zombie reap), so zero members can mean the
- * chain FINISHED, not that it has not started. When the chain node is absent
- * (pruned) or terminal, say so honestly instead of the "(no member agents yet)"
- * not-started wording.
- */
-export function renderFleetChainSummary(
+/** Render the public contract tree; when its retained view is unavailable, show only known member facts. */
+export function renderFleetContractSummary(
   memberRows: readonly FleetTreeRow[],
   width: number,
-  chainDoneOrAbsent: boolean,
+  contractDoneOrAbsent: boolean,
+  contract?: ContractView | undefined,
 ): Line[] {
   const C = DEFAULT_VIEW_PALETTE;
+  if (contract) {
+    const rows = projectContractTree(contract);
+    return [
+      buildViewLine(width, [[cellText(` Contract ${contract.id} · ${contractStatusSummary(contract)}`), C.value]]),
+      ...rows.map((row) => buildViewLine(width, [[cellText(` ${row.name} ${row.arg} · ${row.summary.text}`), row.summary.tone === 'bad' ? C.bad ?? C.value : row.summary.tone === 'warn' ? C.warn ?? C.value : C.value]])),
+      ...rows.flatMap((row) => row.lines.flatMap((line) => line.split('\n').map((part) => buildViewLine(width, [[cellText(`   ${part}`), C.dim]])))),
+    ];
+  }
   if (memberRows.length === 0) {
-    const message = chainDoneOrAbsent
-      ? ' chain completed: members no longer tracked'
+    const message = contractDoneOrAbsent
+      ? ' contract no longer tracked: lifecycle unavailable'
       : ' (no member agents yet)';
     return [buildViewLine(width, [[message, C.dim]])];
   }

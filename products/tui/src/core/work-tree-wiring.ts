@@ -1,7 +1,7 @@
 /**
  * work-tree-wiring.ts, connecting the conversation work tree to the live
  * runtime: the timing store fed by tool and turn events, agent lanes read
- * from the agent manager (WRFC chains from the chain controller, cost from
+ * from the agent manager (contracts from the contract runner, cost from
  * the fleet read model), the call a permission prompt is holding, and the
  * per-session fold state.
  *
@@ -10,12 +10,12 @@
  */
 
 import type { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
-import type { WrfcChain } from '@goodvibes-jev/engine/sdk/platform/agents';
+import type { ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { UiRuntimeEvents } from '@/runtime/index.ts';
 import type { ConversationManager } from './conversation.ts';
-import { WorkTreeTimingStore, userMessageFingerprint, type AgentLaneInfo, type TurnOutcome, type WrfcPhaseInfo } from './work-tree-sources.ts';
+import { WorkTreeTimingStore, userMessageFingerprint, type AgentLaneInfo, type TurnOutcome } from './work-tree-sources.ts';
 import { loadWorkTreeFolds, loadWorkTreeTurnOutcomes, saveWorkTreeFolds, sweepOrphanWorkTreeFolds } from './work-tree-fold-store.ts';
 import { onSemanticSummaryReady } from '../renderer/lane-graph/semantic-memo.ts';
 import { onSyntaxHighlightReady } from '../renderer/code-block.ts';
@@ -26,7 +26,9 @@ export interface WorkTreeWiringDeps {
   readonly conversation: ConversationManager;
   readonly events: UiRuntimeEvents;
   readonly agentManager: Pick<AgentManager, 'getStatus' | 'getConversationSnapshot'>;
-  readonly listChains: () => readonly WrfcChain[];
+  readonly listContracts: () => readonly ContractView[];
+  /** Contract lifecycle/commit/owner events can arrive after the main turn stops. */
+  readonly onContractsChanged?: ((listener: () => void) => (() => void)) | undefined;
   readonly fleetNodes: () => readonly ProcessNode[];
   /** The call id a permission prompt is holding, if any. */
   readonly pendingCallId: () => string | undefined;
@@ -37,12 +39,6 @@ export interface WorkTreeWiringDeps {
   readonly requestRender: () => void;
 }
 
-function firstLines(text: string | undefined, n: number): string | undefined {
-  if (!text) return undefined;
-  const lines = text.split('\n').filter((l) => l.trim().length > 0).slice(0, n);
-  return lines.length > 0 ? lines.join('\n') : undefined;
-}
-
 /** A finished agent's transcript never changes: read it once. */
 interface SnapshotMemo { readonly stamp: string; readonly messages: readonly ConversationMessageSnapshot[] }
 
@@ -50,6 +46,7 @@ export function wireWorkTree(deps: WorkTreeWiringDeps): { readonly timings: Work
   const timings = new WorkTreeTimingStore();
   const unsubs: Array<() => void> = [];
   const { conversation, events } = deps;
+  if (deps.onContractsChanged) unsubs.push(deps.onContractsChanged(() => { conversation.workTree.invalidate(); deps.requestRender(); }));
 
   unsubs.push(events.tools.on('TOOL_EXECUTING', (ev) => timings.callStarted(ev.callId, ev.startedAt)));
   unsubs.push(events.tools.on('TOOL_SUCCEEDED', (ev) => timings.callSettled(ev.callId, ev.durationMs, Date.now())));
@@ -95,37 +92,10 @@ export function wireWorkTree(deps: WorkTreeWiringDeps): { readonly timings: Work
     return node && node.costState !== 'unpriced' && typeof node.costUsd === 'number' ? node.costUsd : undefined;
   };
 
-  const wrfcPhases = (record: AgentRecord): { phases: WrfcPhaseInfo[]; passed: boolean | undefined } | undefined => {
-    const chain = deps.listChains().find((c) => c.ownerAgentId === record.id || (c.engineerAgentId === record.id && c.ownerAgentId === c.engineerAgentId));
-    if (!chain) return undefined;
-    const phases: WrfcPhaseInfo[] = [];
-    for (const id of chain.allAgentIds) {
-      if (id === chain.ownerAgentId && id !== chain.engineerAgentId) continue;
-      const phase = deps.agentManager.getStatus(id);
-      if (!phase) continue;
-      const role = (phase.wrfcRole ?? (id === chain.engineerAgentId ? 'engineer' : id === chain.reviewerAgentId ? 'reviewer' : id === chain.fixerAgentId ? 'fixer' : 'engineer')) as WrfcPhaseInfo['role'];
-      const latestReview = role === 'reviewer' && id === chain.reviewerAgentId ? chain.reviewerReport : undefined;
-      phases.push({
-        agentId: id,
-        role,
-        task: phase.task,
-        status: phase.status,
-        startedAt: phase.startedAt,
-        completedAt: phase.completedAt,
-        findings: latestReview?.issues.map((issue) => issue.description),
-        passed: latestReview ? (chain.lastReviewVerdict?.passed ?? latestReview.passed) : undefined,
-        output: firstLines(phase.fullOutput, 6),
-      });
-    }
-    phases.sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-    const passed = chain.state === 'passed' ? true : chain.state === 'failed' ? false : undefined;
-    return { phases, passed };
-  };
-
   const agent = (agentId: string): AgentLaneInfo | null => {
     const record = deps.agentManager.getStatus(agentId);
     if (!record) return null;
-    const wrfc = wrfcPhases(record);
+    const contract = deps.listContracts().find((view) => view.ownerAgentId === record.id);
     return {
       id: record.id,
       name: record.template,
@@ -136,9 +106,8 @@ export function wireWorkTree(deps: WorkTreeWiringDeps): { readonly timings: Work
       toolCallCount: record.toolCallCount,
       costUsd: costOf(record.id),
       error: record.error,
-      messages: wrfc ? [] : messagesOf(record),
-      wrfcPhases: wrfc?.phases,
-      wrfcPassed: wrfc?.passed,
+      messages: contract ? [] : messagesOf(record),
+      contract,
     };
   };
 

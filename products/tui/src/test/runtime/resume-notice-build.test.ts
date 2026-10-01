@@ -1,117 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import type { WrfcChain } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { buildResumeNotice, describeChainOutcome, mostRecentChain } from '@/runtime/resume-notice.ts';
+import { buildResumeNotice, describeContractOutcome, mostRecentContract } from '../../runtime/resume-notice.ts';
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
-
-function makeChain(overrides: Partial<WrfcChain> = {}): WrfcChain {
-  return {
-    id: `chain-${crypto.randomUUID().slice(0, 8)}`,
-    state: 'engineering',
-    task: 'implement the feature',
-    ownerAgentId: 'agent-owner',
-    allAgentIds: ['agent-owner'],
-    fixAttempts: 0,
-    reviewCycles: 0,
-    reviewScores: [],
-    createdAt: Date.now(),
-    ownerDecisions: [],
-    ...overrides,
-  } as WrfcChain;
-}
-
-// ─── describeChainOutcome ────────────────────────────────────────────────────
-
-describe('describeChainOutcome', () => {
-  test('passed chain reports passed', () => {
-    expect(describeChainOutcome(makeChain({ state: 'passed' }))).toBe('passed');
+describe('recorded contract outcomes', () => {
+  test.each(['passed', 'failed', 'cancelled'] as const)('%s remains distinct', status => {
+    expect(describeContractOutcome(contractFixture({ status }))).toBe(status);
   });
-
-  test('a still-non-terminal chain (genuinely interrupted) reports interrupted', () => {
-    expect(describeChainOutcome(makeChain({ state: 'reviewing' }))).toBe('interrupted');
-  });
-
-  test('a failed chain whose last owner decision is chain_cancelled reports cancelled, not failed', () => {
-    const chain = makeChain({
-      state: 'failed',
-      ownerDecisions: [
-        { id: '1', ts: new Date().toISOString(), action: 'spawn_engineer', state: 'engineering', reason: 'start' },
-        { id: '2', ts: new Date().toISOString(), action: 'chain_cancelled', state: 'failed', reason: 'operator killed it' },
-      ],
-    });
-    expect(describeChainOutcome(chain)).toBe('cancelled');
-  });
-
-  test('an ordinary failed chain (last decision is chain_failed) reports failed', () => {
-    const chain = makeChain({
-      state: 'failed',
-      ownerDecisions: [
-        { id: '1', ts: new Date().toISOString(), action: 'review_failed', state: 'reviewing', reason: 'score too low' },
-        { id: '2', ts: new Date().toISOString(), action: 'chain_failed', state: 'failed', reason: 'gate exhausted' },
-      ],
-    });
-    expect(describeChainOutcome(chain)).toBe('failed');
-  });
-
-  test('a zombie-reaped chain (no owner decision recorded for the reap) reports failed, not cancelled', () => {
-    const chain = makeChain({
-      state: 'failed',
-      error: 'zombie chain reaped at rehydrate: no member agent survived the restart',
-      ownerDecisions: [
-        { id: '1', ts: new Date().toISOString(), action: 'spawn_engineer', state: 'engineering', reason: 'start' },
-      ],
-    });
-    expect(describeChainOutcome(chain)).toBe('failed');
-  });
-
-  test('a failed chain with no owner decisions at all reports failed (never throws)', () => {
-    expect(describeChainOutcome(makeChain({ state: 'failed', ownerDecisions: [] }))).toBe('failed');
-  });
-
-  // ── first-class failureKind (current SDK) ──
-  test('failureKind cancelled reports cancelled even with no chain_cancelled decision logged', () => {
-    const chain = makeChain({ state: 'failed', failureKind: 'cancelled', ownerDecisions: [] });
-    expect(describeChainOutcome(chain)).toBe('cancelled');
-  });
-
-  test('failureKind other/transport reports failed', () => {
-    expect(describeChainOutcome(makeChain({ state: 'failed', failureKind: 'other', ownerDecisions: [] }))).toBe('failed');
-    expect(describeChainOutcome(makeChain({ state: 'failed', failureKind: 'transport', ownerDecisions: [] }))).toBe('failed');
-  });
-
-  test('failureKind takes precedence over the owner-decision log (a genuine failure is not misread as cancelled)', () => {
-    const chain = makeChain({
-      state: 'failed',
-      failureKind: 'other',
-      ownerDecisions: [
-        { id: '1', ts: new Date().toISOString(), action: 'chain_cancelled', state: 'failed', reason: 'stale decision from an earlier attempt' },
-      ],
-    });
-    expect(describeChainOutcome(chain)).toBe('failed');
+  test('active recovered work is interrupted, and latest completed/created record wins', () => {
+    const active = contractFixture({ id: 'active', status: 'awaiting-owner', completedAt: undefined, createdAt: 3000 });
+    const failed = contractFixture({ id: 'failed', status: 'failed', createdAt: 1000, completedAt: 2000 });
+    expect(describeContractOutcome(active)).toBe('interrupted');
+    expect(mostRecentContract([failed, active])).toBe(active);
+    expect(mostRecentContract([])).toBeNull();
   });
 });
-
-// ─── mostRecentChain ─────────────────────────────────────────────────────────
-
-describe('mostRecentChain', () => {
-  test('empty set returns null', () => {
-    expect(mostRecentChain([])).toBeNull();
-  });
-
-  test('picks the chain with the latest completedAt', () => {
-    const older = makeChain({ completedAt: 1000 });
-    const newer = makeChain({ completedAt: 2000 });
-    expect(mostRecentChain([older, newer])!.id).toBe(newer.id);
-  });
-
-  test('falls back to createdAt when completedAt is absent (still-interrupted chains)', () => {
-    const older = makeChain({ createdAt: 1000 });
-    const newer = makeChain({ createdAt: 2000 });
-    expect(mostRecentChain([older, newer])!.id).toBe(newer.id);
-  });
-});
-
-// ─── buildResumeNotice ───────────────────────────────────────────────────────
 
 describe('buildResumeNotice', () => {
   test('nothing to report (no session, no checkpoints, no chain history, no recovery snapshot) prints no notice', () => {
@@ -119,7 +21,7 @@ describe('buildResumeNotice', () => {
       turnCount: null,
       lastSessionId: null,
       checkpointCount: null,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     })).toBeNull();
   });
@@ -129,7 +31,7 @@ describe('buildResumeNotice', () => {
       turnCount: 5,
       lastSessionId: 'abc123',
       checkpointCount: 0,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     });
     expect(notice).toBe('Previous session found: 5 turns, 0 checkpoints: /resume to continue (or /session resume abc123 directly)');
@@ -140,7 +42,7 @@ describe('buildResumeNotice', () => {
       turnCount: 1,
       lastSessionId: 'abc123',
       checkpointCount: 3,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     });
     expect(notice).toBe('Previous session found: 1 turn, 3 checkpoints: /resume to continue (or /session resume abc123 directly) · /checkpoints to browse');
@@ -151,11 +53,11 @@ describe('buildResumeNotice', () => {
       turnCount: 4,
       lastSessionId: 'abc123',
       checkpointCount: 2,
-      lastChainOutcome: 'cancelled',
+      lastContractOutcome: 'cancelled',
       memoryAvailable: false,
     });
     expect(notice).toBe(
-      'Previous session found: 4 turns, 2 checkpoints, last chain: cancelled: /resume to continue (or /session resume abc123 directly) · /checkpoints to browse',
+      'Previous session found: 4 turns, 2 checkpoints, last workstream: cancelled: /resume to continue (or /session resume abc123 directly) · /checkpoints to browse',
     );
   });
 
@@ -164,7 +66,7 @@ describe('buildResumeNotice', () => {
       turnCount: 1,
       lastSessionId: 'abc123',
       checkpointCount: 0,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: true,
     });
     expect(notice).toBe('Previous session found: 1 turn, 0 checkpoints: /resume to continue (or /session resume abc123 directly) · /recall for memory');
@@ -175,7 +77,7 @@ describe('buildResumeNotice', () => {
       turnCount: 1,
       lastSessionId: 'abc123',
       checkpointCount: 0,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     });
     expect(notice).not.toContain('last chain');
@@ -186,7 +88,7 @@ describe('buildResumeNotice', () => {
       turnCount: 2,
       lastSessionId: 'abc123',
       checkpointCount: null,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     });
     expect(notice).toBe('Previous session found: 2 turns: /resume to continue (or /session resume abc123 directly)');
@@ -198,10 +100,10 @@ describe('buildResumeNotice', () => {
       turnCount: null,
       lastSessionId: null,
       checkpointCount: 4,
-      lastChainOutcome: 'passed',
+      lastContractOutcome: 'passed',
       memoryAvailable: false,
     });
-    expect(notice).toBe('Workspace history found: 4 checkpoints, last chain: passed: /checkpoints to browse');
+    expect(notice).toBe('Workspace history found: 4 checkpoints, last workstream: passed: /checkpoints to browse');
     expect(notice).not.toContain('/session resume');
   });
 
@@ -210,7 +112,7 @@ describe('buildResumeNotice', () => {
       turnCount: null,
       lastSessionId: null,
       checkpointCount: 0,
-      lastChainOutcome: null,
+      lastContractOutcome: null,
       memoryAvailable: false,
     })).toBeNull();
   });
@@ -228,7 +130,7 @@ describe('buildResumeNotice', () => {
       turnCount: 5,
       lastSessionId: 'abc123',
       checkpointCount: 2,
-      lastChainOutcome: 'passed',
+      lastContractOutcome: 'passed',
       memoryAvailable: true,
     });
     expect(notice).not.toContain('recovery');

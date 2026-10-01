@@ -128,10 +128,10 @@ export interface BootstrapCommandSectionOptions {
   readonly webhookNotifier?: import('@goodvibes-jev/engine/sdk/platform/integrations').WebhookNotifier;
   readonly sessionMemoryStore?: import('@goodvibes-jev/engine/sdk/platform/core').SessionMemoryStore;
   readonly sessionLineageTracker?: import('@goodvibes-jev/engine/sdk/platform/core').SessionLineageTracker;
-  readonly wrfcController?: import('@goodvibes-jev/engine/sdk/platform/agents').WrfcController;
+  readonly contractRunner?: import('@goodvibes-jev/engine/sdk/platform/contract').ContractRunner;
   readonly changeTracker?: import('@goodvibes-jev/engine/sdk/platform/sessions').SessionChangeTracker;
   readonly hydrateSessionUsage?: () => void;
-  readonly workstreamEngine?: import('@goodvibes-jev/engine/sdk/platform/orchestration').WorkstreamCommandService;
+  readonly contractOperator?: import('@goodvibes-jev/engine/sdk/platform/contract').ContractOperatorService;
   readonly codeIndexStore?: CodeIndexStore;
   readonly codeIndexReindexScheduler?: import('@goodvibes-jev/engine/sdk/platform/state').CodeIndexReindexScheduler;
   readonly isPassiveCodeInjectionFlagEnabled?: () => boolean;
@@ -319,7 +319,7 @@ export function createBootstrapCommandActions(
 export function createBootstrapCommandSessionSection(
   options: Pick<
     BootstrapCommandSectionOptions,
-    'conversation' | 'runtime' | 'sessionManager' | 'sessionMemoryStore' | 'sessionLineageTracker' | 'wrfcController' | 'changeTracker' | 'hydrateSessionUsage' | 'workstreamEngine' | 'codeIndexStore' | 'codeIndexReindexScheduler' | 'isPassiveCodeInjectionFlagEnabled' | 'getMainSessionTurnInjections'
+    'conversation' | 'runtime' | 'sessionManager' | 'sessionMemoryStore' | 'sessionLineageTracker' | 'contractRunner' | 'changeTracker' | 'hydrateSessionUsage' | 'contractOperator' | 'codeIndexStore' | 'codeIndexReindexScheduler' | 'isPassiveCodeInjectionFlagEnabled' | 'getMainSessionTurnInjections'
   >,
 ): BootstrapCommandSessionSection {
   return {
@@ -328,10 +328,10 @@ export function createBootstrapCommandSessionSection(
     sessionManager: options.sessionManager,
     sessionMemoryStore: options.sessionMemoryStore,
     sessionLineageTracker: options.sessionLineageTracker,
-    wrfcController: options.wrfcController,
+    contractRunner: options.contractRunner,
     changeTracker: options.changeTracker,
     hydrateSessionUsage: options.hydrateSessionUsage,
-    workstreamEngine: options.workstreamEngine,
+    contractOperator: options.contractOperator,
     codeIndexStore: options.codeIndexStore,
     codeIndexReindexScheduler: options.codeIndexReindexScheduler,
     isPassiveCodeInjectionFlagEnabled: options.isPassiveCodeInjectionFlagEnabled,

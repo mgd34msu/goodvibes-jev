@@ -1,9 +1,8 @@
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { CommandContext } from '../command-registry.ts';
 import { discoverSkills } from '../../views/skills-discovery.ts';
-import { buildSandboxReview, isRunningInWsl } from '@/runtime/index.ts';
-import { renderQemuWrapperTemplate } from '@/runtime/index.ts';
+import { buildSandboxReview } from '@goodvibes-jev/engine/sdk/platform/runtime/sandbox';
 import { getPluginDirectories } from '@goodvibes-jev/engine/sdk/platform/plugins';
 import { listBuiltinSubscriptionProviders } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SetupReviewSnapshot } from './local-setup-transfer.ts';
@@ -97,13 +96,9 @@ export async function buildSetupReviewSnapshot(ctx: CommandContext): Promise<Set
       message: remoteRunnerCount > 0 ? `${remoteRunnerCount} remote runner contract(s)` : 'no remote runner contracts registered',
     },
     {
-      severity: sandboxSecureModeReady || `${ctx.platform.configManager.get('sandbox.vmBackend')}` === 'local' ? 'pass' : 'warn',
+      severity: 'pass',
       area: 'sandbox',
-      message: `${ctx.platform.configManager.get('sandbox.vmBackend')}` === 'local'
-        ? 'local mode (virtualization disabled by default)'
-        : sandboxSecureModeReady
-          ? `QEMU enabled: REPL=${sandboxReplIsolation}, MCP=${sandboxMcpIsolation}`
-          : 'QEMU sandboxing requires running GoodVibes inside WSL on Windows',
+      message: `local backend: REPL=${sandboxReplIsolation}, MCP=${sandboxMcpIsolation}; no VM guest`,
     },
   ];
 
@@ -135,40 +130,21 @@ export async function buildSetupReviewSnapshot(ctx: CommandContext): Promise<Set
 }
 
 export function renderSetupSandboxReview(ctx: CommandContext, snapshot: SetupReviewSnapshot): string {
-  const backend = `${ctx.platform.configManager.get('sandbox.vmBackend')}`;
-  const image = String(ctx.platform.configManager.get('sandbox.qemuImagePath') ?? '').trim();
-  const wrapper = String(ctx.platform.configManager.get('sandbox.qemuExecWrapper') ?? '').trim();
-  const host = String(ctx.platform.configManager.get('sandbox.qemuGuestHost') ?? '').trim();
-  const workspace = String(ctx.platform.configManager.get('sandbox.qemuWorkspacePath') ?? '').trim();
-  const lines = [
+  const review = buildSandboxReview(ctx.platform.configManager);
+  return [
     'Setup Sandbox Review',
-    `  backend: ${backend}`,
+    `  backend: ${review.backendProbe?.resolvedBackend ?? review.config.vmBackend}`,
     `  repl isolation: ${snapshot.sandboxReplIsolation}`,
     `  mcp isolation: ${snapshot.sandboxMcpIsolation}`,
-    `  secure mode ready: ${snapshot.sandboxSecureModeReady ? 'yes' : 'no'}`,
-    `  qemu image: ${image || '(not configured)'}`,
-    `  qemu wrapper: ${wrapper || '(not configured)'}`,
-    `  guest host: ${host || '(not configured)'}`,
-    `  guest workspace: ${workspace || '(not configured)'}`,
+    `  host secure mode readiness: ${snapshot.sandboxSecureModeReady ? 'yes' : 'no'}`,
+    '  execution: host-local processes; no VM guest',
+    ...review.host.warnings.map((warning) => `  warning: ${warning}`),
     '',
     '  next:',
-  ];
-  if (backend === 'local') {
-    lines.push('    /sandbox qemu bootstrap');
-    lines.push('    default bundle: ~/.goodvibes/tui/sandbox');
-    lines.push('    /sandbox doctor');
-  } else if (!image || !wrapper) {
-    lines.push('    /sandbox qemu bootstrap');
-    lines.push('    default bundle: ~/.goodvibes/tui/sandbox');
-    lines.push('    /sandbox doctor');
-  } else {
-    lines.push('    /sandbox guest-test eval-js');
-    lines.push('    /sandbox session start eval-py');
-  }
-  if (process.platform === 'win32' && !isRunningInWsl()) {
-    lines.push('    Run GoodVibes inside WSL before enabling QEMU sandboxing.');
-  }
-  return lines.join('\n');
+    '    /sandbox doctor',
+    '    /sandbox profiles',
+    '    /sandbox session list',
+  ].join('\n');
 }
 
 export function exportSetupSupportBundle(
@@ -188,6 +164,5 @@ export function exportSetupSupportBundle(
   if (existsSync(hooksPath)) {
     writeFileSync(join(targetDir, 'hooks.managed.json'), readFileSync(hooksPath, 'utf-8'), 'utf-8');
   }
-  writeFileSync(join(targetDir, 'qemu-wrapper.template.sh'), renderQemuWrapperTemplate(), { encoding: 'utf-8', mode: 0o755 });
   return targetDir;
 }

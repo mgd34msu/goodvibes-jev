@@ -18,7 +18,7 @@
 //   - Tree-walk shape (connectors, cycle guard, leftover pass) is ported
 //     from renderer/process-modal.ts's appendAgentSubtree/
 //     appendAgentGroupEntries, generalized from AgentRecord to ProcessNode
-//     and from WRFC-role ordering to plain startedAt ordering (ProcessNode
+//     and ordered by startedAt (ProcessNode
 //     has no role concept, parentId alone expresses the hierarchy, and the
 //     SDK guarantees every parentId either resolves or the node is a root).
 //   - Cost/token honesty mirrors agent-inspector-shared.ts's
@@ -152,17 +152,14 @@ const RUNNING_STATES = new Set<ProcessState>([
 
 const KIND_TAGS: Record<ProcessKind, string> = {
   agent: 'agent',
-  'wrfc-chain': 'wrfc',
-  'wrfc-subtask': 'wrfc·sub',
+  contract: 'contract',
+  'contract-group': 'group',
+  'contract-unit': 'unit',
   workflow: 'flow',
   trigger: 'trig',
   schedule: 'sched',
   watcher: 'watch',
   'background-process': 'exec',
-  // Orchestration-engine kinds (adapters/orchestration.ts).
-  workstream: 'stream',
-  phase: 'phase',
-  'work-item': 'item',
   // The repo source-tree code index (adapters/code-index.ts).
   // A single leaf node, never a rollup of other flat-list nodes (see
   // ROLLUP_KINDS below), so no other list in this module needs updating.
@@ -413,95 +410,23 @@ export function buildFleetRows(nodes: readonly ProcessNode[]): FleetTreeRow[] {
   return rows;
 }
 
-/**
- * Kinds whose usage/costUsd (and, for 'running', whose derived state) are the
- * SDK's OWN rollup of *other* nodes that ALSO appear individually in the flat
- * list, summing across every flat node would therefore double-count them.
- * Per registry.ts assemble() + wrfc.ts adaptChain/adaptSubtask:
- *   - 'wrfc-chain': usage/costUsd = sum over the chain's member agents
- *     (chain.allAgentIds minus the owner) via adaptChain's aggregateCost/
- *     sumUsage, those member agents are pushed onto the flat node list as
- *     their own 'agent' nodes too. The chain's derived ProcessState ('running'
- *     while any phase is active) likewise just mirrors its members' states.
- *   - 'wrfc-subtask': never carries usage/cost (adaptSubtask always sets
- *     usage: undefined, costUsd: null, costState: 'unpriced') and its
- *     'running' phase state mirrors whichever agent is currently working the
- *     subtask. Excluded for the same "grouping construct, not an actor"
- *     reason as the chain, even though today it can never contribute a
- *     nonzero cost/token reading (defense in depth against a future adapter
- *     change, not load-bearing).
- *
- * Orchestration-engine additions, verified against adapters/orchestration.ts:
- *   - 'workstream': adaptWorkstream SUMS every work-item's usage/costUsd
- *     exactly once (sumWorkItemUsage/aggregateWorkItemCost), the same
- *     "rollup of nodes that also appear individually" shape as adaptChain,
- *     each work item ALSO appears as its own 'work-item' node in the flat
- *     list, so summing over every flat node would double-count. Its derived
- *     state likewise mirrors its items' states, so it is excluded from
- *     runningCount for the same non-double-counting reason as 'wrfc-chain'.
- *   - 'phase': adaptPhase reports NO usage/cost (mirrors adaptSubtask's
- *     "report nothing" choice exactly, usage: undefined, costUsd: null,
- *     costState: 'unpriced') and its 'running' state mirrors whichever
- *     work-item currently occupies it. Same defense-in-depth inclusion as
- *     'wrfc-subtask': never contributes today, excluded anyway in case a
- *     future adapter change gives it one.
- *   - 'work-item' is deliberately NOT in this set: unlike a phase, a work
- *     item carries its OWN direct usage/cost (item.usage, cumulative across
- *     every phase it has visited), it is the leaf contributor, the
- *     'wrfc-subtask'-for-capabilities analogue but the 'agent'-for-usage
- *     analogue. Excluding it would silently zero out real cost/token totals.
- *
- * 'code-index' is deliberately NOT in this set either,
- * adaptCodeIndex yields exactly one standalone ProcessNode per registry
- * (never a parent whose children ALSO appear individually in the flat
- * list), so it is a leaf like 'agent'/'work-item', not a grouping construct.
- * It reports no usage/cost (an index build has no LLM turn), so it never
- * contributes to totalCost/totalTokens regardless, its running state DOES
- * count toward runningCount while building, which is correct: it is a real,
- * distinct unit of work, not an arithmetic sum of other rows.
- */
-const ROLLUP_KINDS = new Set<ProcessKind>(['wrfc-chain', 'wrfc-subtask', 'workstream', 'phase']);
+/** Contract, group and unit nodes roll up the same planner/unit agents also present in the flat list. */
+const ROLLUP_KINDS = new Set<ProcessKind>(['contract', 'contract-group', 'contract-unit']);
 
-/**
- * True for the WRFC owner agent's node specifically: an 'agent'-kind node
- * whose source AgentRecord has wrfcRole === 'owner'. The owner runs no LLM
- * turn itself, at chain completion the SDK backfills owner.usage from
- * aggregateChainUsage(chain) (wrfc-controller.ts completeOwnerAgent), which
- * is the SAME phase-children total already carried by the chain node AND by
- * each phase-child agent's own node. Detected via the opaque `raw` field
- * (the AgentRecord) since ProcessNode itself has no wrfcRole, this is the
- * one place fleet-read-model reaches into `raw` for aggregation honesty
- * rather than drill-down display.
- */
-function isWrfcOwnerAgentNode(node: ProcessNode): boolean {
+/** An owner supervises without taking LLM turns; its recorded usage is the contract's member rollup. */
+function isContractOwnerAgentNode(node: ProcessNode): boolean {
   if (node.kind !== 'agent') return false;
   const raw = node.raw;
-  return typeof raw === 'object' && raw !== null && (raw as { wrfcRole?: unknown }).wrfcRole === 'owner';
+  return typeof raw === 'object' && raw !== null && (raw as { contractRole?: unknown }).contractRole === 'owner';
 }
 
-/**
- * Nodes whose usage/costUsd would double-count against other nodes already
- * in the same flat list (see ROLLUP_KINDS / isWrfcOwnerAgentNode above).
- * Excluded from totalCost/totalTokens. NOT excluded from runningCount by
- * this predicate alone, see isFleetRunningLeaf.
- */
 function isFleetAggregateRollupNode(node: ProcessNode): boolean {
-  return ROLLUP_KINDS.has(node.kind) || isWrfcOwnerAgentNode(node);
+  return ROLLUP_KINDS.has(node.kind) || isContractOwnerAgentNode(node);
 }
 
-/**
- * Nodes that count toward runningCount. Excludes ROLLUP_KINDS (a running
- * wrfc-chain/wrfc-subtask reflects the very same unit of work as its running
- * member agent, which is already counted) but, unlike the cost/token
- * exclusion above, does NOT exclude the WRFC owner agent: the owner is a
- * real, distinct supervising process (not an arithmetic sum of other rows),
- * so counting it as "running" alongside its phase children is not a double
- * count in the way summing its rolled-up usage/cost would be.
- */
+/** Count actual running actors, excluding contract wrappers and observed external work. */
 function isFleetRunningLeaf(node: ProcessNode): boolean {
-  // Observed foreign agents are NEVER counted in our own fleet counts, they
-  // are externally-launched sessions goodvibes only watches, not work it runs.
-  return node.kind !== 'observed-external' && !ROLLUP_KINDS.has(node.kind) && isRunningProcessState(node.state);
+  return node.kind !== 'observed-external' && !ROLLUP_KINDS.has(node.kind) && !isContractOwnerAgentNode(node) && isRunningProcessState(node.state);
 }
 
 /** Build the full FleetSnapshot (rows + honest aggregates) from a flat node list. */
@@ -538,7 +463,7 @@ export function buildFleetSnapshot(nodes: readonly ProcessNode[], capturedAt: nu
  * The fleet's honest leaf cost total, the SAME figure as
  * FleetSnapshot.totalCost, but computed in one pass WITHOUT building the display
  * rows, for cheap per-frame use (the always-visible footer). Excludes rollup
- * aggregates (chain/subtask/workstream/phase) AND the WRFC owner (its usage is a
+ * aggregates (contract/group/unit) AND the contract owner (its usage is a
  * mixed-model rollup of its children), so it is a true leaf-sum with no
  * double-count. Null when nothing priced. Add this to the main session cost for
  * the true "you + fleet" total.
@@ -596,7 +521,7 @@ export interface FleetReadModel {
   kill(id: string, opts?: { readonly cascade?: boolean }): readonly string[];
   /**
    * Queue a human message for a live in-process agent (or a
-   * wrfc-subtask's current live member), delivered at its next turn
+   * contract unit's current live member), delivered at its next turn
    * boundary. Honest refusal (`{queued:false,reason}`) for anything that
    * cannot take mid-run input, see ProcessRegistry.steer's doc comment.
    */

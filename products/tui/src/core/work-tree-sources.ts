@@ -10,6 +10,7 @@
  * still draws, just without times, agent lanes or waiting beads.
  */
 
+import type { ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 
 type Message = ConversationMessageSnapshot;
@@ -48,22 +49,6 @@ export function userMessageFingerprint(message: Message | undefined): string | u
   return `${text.length}:${text.slice(0, 80)}`;
 }
 
-/** One phase of a WRFC chain: the agent that ran it and what it found. */
-export interface WrfcPhaseInfo {
-  readonly agentId: string;
-  readonly role: 'engineer' | 'reviewer' | 'fixer' | 'integrator' | 'verifier' | 'orchestrator' | 'owner';
-  readonly task: string;
-  readonly status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  readonly startedAt?: number | undefined;
-  readonly completedAt?: number | undefined;
-  /** A review's findings (the latest review report's issues), when this phase is that review. */
-  readonly findings?: readonly string[] | undefined;
-  /** Whether this review passed, when known. */
-  readonly passed?: boolean | undefined;
-  /** First lines of the phase agent's report. */
-  readonly output?: string | undefined;
-}
-
 /** What the work tree needs about a spawned agent to draw its lane. */
 export interface AgentLaneInfo {
   readonly id: string;
@@ -79,10 +64,8 @@ export interface AgentLaneInfo {
   readonly error?: string | undefined;
   /** The agent's own transcript (its tool calls become beads in its lane). */
   readonly messages: readonly Message[];
-  /** Set when this agent owns a WRFC chain: its lane shows the chain's phases. */
-  readonly wrfcPhases?: readonly WrfcPhaseInfo[] | undefined;
-  /** Whether the chain passed, for a WRFC owner. */
-  readonly wrfcPassed?: boolean | undefined;
+  /** The public contract view, only on its owner agent; lifecycle and tree facts remain authoritative. */
+  readonly contract?: ContractView | undefined;
   /** The harness name for an agent run by a hosted harness ("Claude Code"): it names the lane. */
   readonly hostedLabel?: string | undefined;
 }

@@ -151,7 +151,6 @@ async function main() {
     ...buildSharedOrchestratorCoreServices({ services: ctx.services, configManager, providerRegistry }),
     favoritesStore: ctx.services.favoritesStore,
   });
-  ctx.services.wrfcController.setPlanManager(ctx.services.planManager);
   let activeConversationWidth = stdout.columns || 80;
   conversation.setWidthProvider(() => activeConversationWidth);
   // Persisted HITL mode + TUI-side config defaults (doc'd at their definitions).
@@ -232,7 +231,7 @@ async function main() {
 
   const unsubs: Array<() => void> = [];
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
-  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listChains: () => ctx.services.wrfcController.listChains(), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
+  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
   let recoveryInterval: ReturnType<typeof setInterval> | null = null;
   let stopSpokenOutputForExit: (() => Promise<void>) | null = null;
   // The optional "used N memories" provenance chip (default OFF), see interaction-seams.ts.
@@ -374,7 +373,7 @@ async function main() {
       agents: {
         agentManager,
         agentMessageBus: ctx.services.agentMessageBus,
-        wrfcController: ctx.services.wrfcController,
+        contractRunner: ctx.services.contractRunner,
       },
       providers: {
         benchmarkStore: ctx.services.benchmarkStore,
@@ -417,6 +416,7 @@ async function main() {
 
   orchestratorRefs.getViewportHeight = getViewportHeight; orchestratorRefs.scrollToEnd = scrollToEnd;
   const views = new SessionViews({
+    contractRunner: ctx.services.contractRunner,
     conversation, agentManager, processManager, fleetNodes: () => ctx.services.processRegistry.query().nodes,
     steer: (id, text) => ctx.views.fleet.actions.steer(id, text), killAgent: (id) => ctx.views.fleet.actions.kill(id, { cascade: true }),
     mainBusy: () => orchestrator.isThinking, mainModel: () => lastHeaderModel, promptText: () => input.prompt, requestRender: () => render(),
@@ -476,9 +476,9 @@ async function main() {
       : (transcript.scrolledBack && !conversation.isSplashShowing() ? { escKey: promptEmpty && !conversation.workTree.focused && !input.indicatorFocused } : null);
     const managerAgents = agentManager.list().filter((a) => a.status === 'running' || a.status === 'pending');
     const runtimeAgents = agentSnapshot.active;
-    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, ctx.services.wrfcController.listChains());
+    const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }));
     const runningAgentCount = runningAgentSummary.count;
-    const runningProcessCount = processManager.list().filter((p) => !p.done).length;
+    const runningProcessCount = processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length;
     const cw = getPromptContentWidth();
     const promptInfo = input.getWrappedPromptInfo(cw);
     const commandArgsHint = buildCommandArgsHint(input.prompt, commandRegistry);
@@ -652,7 +652,7 @@ async function main() {
       autoApprove: isEffectiveDangerMode(configManager), keepAwake: powerChipSource.get().keepAwake,
       microphone: voice && voiceCaptureRowVisible(voice) ? voiceCaptureDescription(voice) : null,
       runningAgents: agentManager.list().filter((a) => a.status === 'running' || a.status === 'pending').length,
-      runningProcesses: processManager.list().filter((p) => !p.done).length,
+      runningProcesses: processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length,
     });
   };
   wireShellUiOpeners({

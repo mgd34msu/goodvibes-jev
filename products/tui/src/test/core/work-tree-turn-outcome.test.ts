@@ -62,6 +62,7 @@ describe('turn header states', () => {
 describe('the transcript rebuilds when the turn stops working', () => {
   test('without any other change, the header drops "working" on the next display', () => {
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true);
     let active = true;
     cm.setWorkTreeSources({ turnActive: () => active });
     cm.addUserMessage('q');
@@ -99,6 +100,7 @@ describe('turn endings are recorded, kept per session and restored', () => {
     const dir = makeProjectTempDir('gv-outcomes');
     dirs.push(dir);
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true);
     cm.fromJSON({ messages: [user('q'), asst('partial')] });
     saveWorkTreeFolds(dir, 'user-abc', [], [{ index: 0, fingerprint: userMessageFingerprint(user('q'))!, outcome: 'failed' }]);
     restoreWorkTreeFolds(cm, dir, 'user-abc');
@@ -109,6 +111,7 @@ describe('turn endings are recorded, kept per session and restored', () => {
 
   test('a reset forgets the old transcript\'s endings and tells listeners', () => {
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true);
     let resets = 0;
     cm.workTree.onReset(() => { resets++; });
     expect(cm.workTree.recordTurnOutcome({ index: 0, fingerprint: '1:q', outcome: 'cancelled' })).toBe(true);
@@ -119,6 +122,7 @@ describe('turn endings are recorded, kept per session and restored', () => {
 
   test('a completed turn replaces an old failed record at the same index', () => {
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true);
     cm.workTree.recordTurnOutcome({ index: 2, fingerprint: '1:q', outcome: 'failed' });
     expect(cm.workTree.recordTurnOutcome({ index: 2, fingerprint: '1:q', outcome: 'completed' })).toBe(true);
     expect(cm.workTree.turnOutcome(2)).toBeUndefined();
@@ -144,11 +148,12 @@ describe('turn-end events drive the header and the sidecar', () => {
     const turns = bus();
     const tools = bus();
     const cm = new ConversationManager(() => 100);
+    cm.setUnicodeCapable(true);
     wireWorkTree({
       conversation: cm,
       events: { turns, tools } as unknown as Parameters<typeof wireWorkTree>[0]['events'],
       agentManager: { getStatus: () => null, getConversationSnapshot: () => [] } as unknown as Parameters<typeof wireWorkTree>[0]['agentManager'],
-      listChains: () => [],
+      listContracts: () => [],
       fleetNodes: () => [],
       pendingCallId: () => undefined,
       turnActive: () => active.value,

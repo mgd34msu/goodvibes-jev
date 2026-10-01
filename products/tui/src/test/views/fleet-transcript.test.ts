@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
 // fleet-transcript.test.ts
 // Pure rendering functions for an Agents modal session
-// tab's content: the live/frozen agent transcript, the wrfc-chain member
+// tab's content: the live/frozen agent transcript, the contract member
 // summary, and the on-disk ledger fallback for an evicted/never-registered
 // conversation snapshot. Isolated from the Agents modal/keyboard input, see
 // the Agents modal tests for the integration-level "attach a tab and render it"
 // coverage.
 // ---------------------------------------------------------------------------
 
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import type { ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fle
 import {
   parseAgentLedger,
   renderFleetAgentTranscript,
-  renderFleetChainSummary,
+  renderFleetContractSummary,
   renderFleetLedgerFallback,
 } from '../../views/fleet-transcript.ts';
 import { MessageLineCache } from '../../core/conversation-line-cache.ts';
@@ -125,7 +126,7 @@ describe('renderFleetAgentTranscript', () => {
   });
 });
 
-describe('renderFleetChainSummary', () => {
+describe('renderFleetContractSummary', () => {
   function makeMemberRow(id: string, label: string, state: ProcessNode['state']): FleetTreeRow {
     const node: ProcessNode = {
       id,
@@ -142,24 +143,32 @@ describe('renderFleetChainSummary', () => {
 
   test('renders one line per member row with its label and state', () => {
     const rows = [makeMemberRow('m1', 'Engineer', 'streaming'), makeMemberRow('m2', 'Reviewer', 'awaiting-approval')];
-    const lines = linesToText(renderFleetChainSummary(rows, 80, false));
+    const lines = linesToText(renderFleetContractSummary(rows, 80, false));
     expect(lines.some((l) => l.includes('Engineer') && l.includes('streaming'))).toBe(true);
     expect(lines.some((l) => l.includes('Reviewer') && l.includes('awaiting-approval'))).toBe(true);
   });
 
   test('d3: an empty member list on a LIVE chain reads "not started yet"', () => {
-    const lines = linesToText(renderFleetChainSummary([], 80, false));
+    const lines = linesToText(renderFleetContractSummary([], 80, false));
     expect(lines.some((l) => l.includes('no member agents yet'))).toBe(true);
-    expect(lines.some((l) => l.includes('chain completed'))).toBe(false);
+    expect(lines.some((l) => l.includes('contract no longer tracked'))).toBe(false);
   });
 
-  test('d3: an empty member list on a completed/pruned chain reads "chain completed", not "yet"', () => {
+  test('d3: an empty member list on a completed/pruned chain reads "contract no longer tracked", not "yet"', () => {
     // A completed chain prunes its wrapper node, so zero members means finished,
     // not not-started, the honest wording must not say "yet".
-    const lines = linesToText(renderFleetChainSummary([], 80, true));
-    expect(lines.some((l) => l.includes('chain completed: members no longer tracked'))).toBe(true);
+    const lines = linesToText(renderFleetContractSummary([], 80, true));
+    expect(lines.some((l) => l.includes('contract no longer tracked: lifecycle unavailable'))).toBe(true);
     expect(lines.some((l) => l.includes('yet'))).toBe(false);
   });
+});
+
+test('contract tabs show typed criteria, owner question and failed commit without changing passed lifecycle', () => {
+  const contract = contractFixture({ commit: { status: 'failed', note: 'not applied' } });
+  const lines = linesToText(renderFleetContractSummary([], 120, true, contract)).join('\n');
+  expect(lines).toContain('passed · commit failed: not applied');
+  expect(lines).toContain('c1 [met] The tests pass');
+  expect(lines).toContain('unit u1');
 });
 
 describe('parseAgentLedger', () => {

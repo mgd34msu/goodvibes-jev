@@ -2,9 +2,9 @@
  * SystemMessageRouter, routes system messages to the appropriate surfaces
  * based on their kind and configured routing target.
  *
- * Delivery is resolved from the message KIND ('system' | 'wrfc' |
+ * Delivery is resolved from the message KIND ('system' | 'contract' |
  * 'operational'), which maps to a configurable routing target
- * (ui.systemMessages / ui.wrfcMessages / ui.operationalMessages, each
+ * (ui.systemMessages / ui.contractMessages / ui.operationalMessages, each
  * 'panel' | 'conversation' | 'both', the SDK's target names). resolveSystemMessageDelivery()
  * turns that target, plus whether a side surface is attached (the SDK's
  * `hasPanel` argument), into a { toPanel, toConversation } decision.
@@ -113,7 +113,7 @@ export class SystemMessageRouter {
    * @param message  - Message text.
    * @param priority - 'high' | 'low' (kept for callers; no longer changes
    *                   delivery now that there is no side surface to emphasize on).
-   * @param kind     - Classification kind ('system' | 'wrfc' | 'operational');
+   * @param kind     - Classification kind ('system' | 'contract' | 'operational');
    *                   used to resolve routing target and conversation navigability.
    */
   routeTypedSystemMessage(
@@ -220,8 +220,8 @@ export class SystemMessageRouter {
     this.routeSystemMessage(message, 'low');
   }
 
-  wrfc(message: string, priority: SystemMessagePriority = 'high'): void {
-    this.routeTypedSystemMessage(message, priority, 'wrfc');
+  contract(message: string, priority: SystemMessagePriority = 'high'): void {
+    this.routeTypedSystemMessage(message, priority, 'contract');
   }
 
   /**

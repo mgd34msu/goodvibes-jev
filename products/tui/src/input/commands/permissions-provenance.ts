@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { ConfigManager, ConfigKey } from '@goodvibes-jev/engine/sdk/platform/config';
 import { CONFIG_SCHEMA } from '@goodvibes-jev/engine/sdk/platform/config';
-import { SHIPPED_CREDENTIAL_READ_RULES } from '@goodvibes-jev/engine/sdk/platform/permissions';
+import { READ_SECRETS_SITE } from '@goodvibes-jev/engine/sdk/platform/permissions';
 
 // ---------------------------------------------------------------------------
 // /permissions provenance report.
@@ -34,28 +34,12 @@ export interface PermissionProvenanceRow {
   readonly note?: string;
 }
 
-/** A shipped (SDK-managed, code-embedded) policy rule, not driven by any config key, so it has no ConfigKey-based tier. */
-export interface ShippedPolicyRuleRow {
-  readonly id: string;
-  readonly effect: 'allow' | 'deny';
-  readonly description: string;
-  readonly toolPattern: string;
-  readonly pathPatterns: readonly string[];
-}
-
 export interface PermissionProvenance {
   readonly sessionMode: string;
   readonly sessionModeLabel: string;
   readonly rows: readonly PermissionProvenanceRow[];
-  /**
-   * Shipped managed policy rules baked into the SDK's PermissionManager
-   * (currently: default-deny reads of well-known credential stores). These
-   * are NOT config-key-driven, there is no on/off setting and no file they
-   * could be recorded in, so they cannot use the shared/project/global/
-   * default tier model above. Listed separately with an honest "shipped
-   * default" origin rather than force-fit into a ConfigKey row.
-   */
-  readonly shippedRules: readonly ShippedPolicyRuleRow[];
+  /** The SDK decision site for read-only secret-material checks. */
+  readonly readSecretsSite: string;
 }
 
 /** The permission-relevant settings, in the order the report lists them. */
@@ -192,23 +176,13 @@ function buildRow(
   return { ...base, origin: recordedSource, originPath, recorded: true, overridden: false, recordedValue };
 }
 
-function buildShippedRuleRows(): ShippedPolicyRuleRow[] {
-  return SHIPPED_CREDENTIAL_READ_RULES.map((rule) => ({
-    id: rule.id,
-    effect: rule.effect,
-    description: rule.description ?? '(no description)',
-    toolPattern: Array.isArray(rule.toolPattern) ? rule.toolPattern.join(', ') : rule.toolPattern,
-    pathPatterns: 'pathPatterns' in rule ? rule.pathPatterns : [],
-  }));
-}
-
 export function buildPermissionProvenance(configManager: ConfigProvenanceManager): PermissionProvenance {
   const mode = configManager.get('permissions.mode' as ConfigKey);
   return {
     sessionMode: String(mode ?? 'prompt'),
     sessionModeLabel: permissionModeLabel(mode),
     rows: PERMISSION_KEYS.map((entry) => buildRow(configManager, entry)),
-    shippedRules: buildShippedRuleRows(),
+    readSecretsSite: READ_SECRETS_SITE,
   };
 }
 
@@ -246,19 +220,9 @@ export function renderPermissionProvenance(provenance: PermissionProvenance): st
   lines.push('  Legend: * = runtime override (not recorded on disk)   ? = origin not recorded');
   lines.push('  Tiers: shared / project / global config file, or the built-in default.');
 
-  if (provenance.shippedRules.length > 0) {
-    lines.push('');
-    lines.push('Shipped policy rules: baked into the SDK, not driven by any config key');
-    lines.push('(origin: shipped default; a user allow-rule always wins over these):');
-    for (const rule of provenance.shippedRules) {
-      lines.push(`  ${rule.id}  [${rule.effect}]  tools: ${rule.toolPattern}`);
-      lines.push(`    ${rule.description}`);
-      lines.push(`    origin: shipped default (SDK-managed policy rule)`);
-      if (rule.pathPatterns.length > 0) {
-        lines.push(`    paths: ${rule.pathPatterns.join(', ')}`);
-      }
-    }
-  }
+  lines.push('');
+  lines.push(`Read-only secret-material checks: ${provenance.readSecretsSite}`);
+  lines.push('  The shared policy reads each call for secret material; uncertain readings use the full permission gate.');
 
   return lines.join('\n');
 }

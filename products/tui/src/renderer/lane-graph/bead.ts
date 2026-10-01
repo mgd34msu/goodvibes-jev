@@ -31,13 +31,13 @@ export function cellText(text: string): string {
  * cancel  ○ cancelled (the row's text is struck through)
  * bg      ▶ a process it started keeps running in the background
  */
-export type BeadStatus = 'ok' | 'warn' | 'err' | 'run' | 'wait' | 'cancel' | 'bg';
+export type BeadStatus = 'unknown' | 'ok' | 'warn' | 'err' | 'run' | 'wait' | 'cancel' | 'bg';
 
-/** How a settled call's result reads (conversation-render-context.ts outcomeOfToolContent). */
+/** The SDK execution outcome, when recorded. Result text does not establish it. */
 export type CallOutcome = 'ok' | 'error' | 'cancelled';
 
 export interface BeadStatusInput {
-  /** Undefined while no result has arrived. */
+  /** Undefined when a result is legacy/imported or has not arrived. */
   readonly outcome: CallOutcome | undefined;
   /** The result text, when settled. */
   readonly content?: string | undefined;
@@ -57,6 +57,7 @@ export interface BeadStatusInput {
  */
 export function beadStatus(input: BeadStatusInput): BeadStatus {
   if (input.outcome === undefined) {
+    if (input.content !== undefined) return 'unknown';
     if (input.waiting) return 'wait';
     return input.ownerActive ? 'run' : 'cancel';
   }
@@ -356,6 +357,7 @@ export function beadSummary(call: ToolCall, status: BeadStatus, content: string 
 }
 
 function rawSummary(call: ToolCall, status: BeadStatus, content: string | undefined): BeadSummary | null {
+  if (status === 'unknown') return { text: 'outcome unknown', tone: 'faint' };
   if (status === 'run') return null;
   if (status === 'wait') return { text: 'waiting for you', tone: 'warn' };
   if (status === 'cancel') return { text: 'cancelled', tone: 'faint' };
@@ -665,6 +667,7 @@ export function beadBody(call: ToolCall, status: BeadStatus, content: string | u
 }
 
 function rawBody(call: ToolCall, status: BeadStatus, content: string | undefined): BeadBody | null {
+  if (status === 'unknown') return content === undefined ? null : { kind: 'text', lines: content.split('\n') };
   const family = toolFamily(call.name);
   if (family === 'edit') {
     const diff = editDiff(call, content);

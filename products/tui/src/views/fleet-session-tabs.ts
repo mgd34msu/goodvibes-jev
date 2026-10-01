@@ -12,10 +12,10 @@
 // `tabs[0..N-1]`. This mirrors the brief's "tree is the root/home tab"
 // framing while keeping the array itself simple (only attached tabs).
 //
-// Attachable kinds: only 'agent' and 'wrfc-chain' carry anything worth
+// Attachable kinds: 'agent', 'acp-agent' and 'contract' carry anything worth
 // attaching to (a transcript for an agent; a live member summary for a
 // chain, see fleet-transcript.ts). workflow/trigger/schedule/watcher/
-// background-process/wrfc-subtask nodes have no transcript and are never
+// background-process/contract-unit nodes have no transcript and are never
 // attachable (the Agents modal shows a status message instead, matching the
 // existing i/K "not supported" convention).
 // ---------------------------------------------------------------------------
@@ -25,10 +25,10 @@ import { MessageLineCache } from '../core/conversation-line-cache.ts';
 import { fleetKindTag } from './fleet-read-model.ts';
 
 /** Node kinds that can be attached as a session tab. */
-export type FleetAttachableKind = 'agent' | 'wrfc-chain' | 'acp-agent';
+export type FleetAttachableKind = 'agent' | 'contract' | 'acp-agent';
 
 export function isAttachableFleetKind(kind: ProcessKind): kind is FleetAttachableKind {
-  return kind === 'agent' || kind === 'wrfc-chain' || kind === 'acp-agent';
+  return kind === 'agent' || kind === 'contract' || kind === 'acp-agent';
 }
 
 /**
@@ -91,7 +91,7 @@ export function appendSteerText(draft: string, ch: string): string {
  * One attached session tab. `agentId` is the SDK attach handle for
  * `AgentManager.getConversationSnapshot(agentId)`, populated only for
  * 'agent' tabs (agent.ts sets ProcessNode.id = record.id, so node.id IS the
- * agentId). 'wrfc-chain' tabs render a live member-summary instead of a
+ * agentId). 'contract' tabs render a live member-summary instead of a
  * transcript (a chain has no single conversation of its own, see
  * fleet-transcript.ts renderFleetChainSummary) and carry an empty agentId,
  * unused.

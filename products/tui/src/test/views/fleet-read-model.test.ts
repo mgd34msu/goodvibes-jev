@@ -239,22 +239,11 @@ describe('buildFleetSnapshot: honest cost/token aggregates', () => {
     expect(snapB.rows[0]!.node.elapsedMs).toBe(123_456);
   });
 
-  // -------------------------------------------------------------------------
-  // Leaf-only aggregation (bug fix): a wrfc-chain node's usage/costUsd is the
-  // SDK's OWN rollup of its member agents (see wrfc.ts adaptChain / registry.ts
-  // assemble()), and those same member agents ALSO appear individually in the
-  // flat node list. Summing over every flat node therefore double-counts,
-  // the chain total gets added ON TOP of the totals its own members already
-  // contribute. Same story for a completed WRFC owner agent: the SDK backfills
-  // owner.usage from aggregateChainUsage(chain) (wrfc-controller.ts
-  // completeOwnerAgent), which is the SAME phase-children total the chain node
-  // (and the phase children themselves) already carry.
-  // -------------------------------------------------------------------------
-
-  test('a wrfc-chain node plus its two member agents contributes cost ONCE (the chain total), not chain+members', () => {
+  // Contract wrappers and owners carry member rollups; summing both would duplicate real cost.
+  test('a contract node plus its two member agents contributes cost ONCE (the chain total), not chain+members', () => {
     const chain = makeNode({
       id: 'chain:c1',
-      kind: 'wrfc-chain',
+      kind: 'contract',
       costState: 'priced',
       costUsd: 0.345,
       usage: { inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 2, turnCount: 2, toolCallCount: 4 },
@@ -278,18 +267,18 @@ describe('buildFleetSnapshot: honest cost/token aggregates', () => {
     expect(snap.totalTokens).toBe(1_200); // members only: (600+200) + (300+100), chain's own usage excluded
   });
 
-  test('runningCount excludes the wrfc-chain rollup row itself; only its running members count', () => {
-    const chain = makeNode({ id: 'chain:c1', kind: 'wrfc-chain', state: 'executing-tool' });
+  test('runningCount excludes the contract rollup row itself; only its running members count', () => {
+    const chain = makeNode({ id: 'chain:c1', kind: 'contract', state: 'executing-tool' });
     const memberA = makeNode({ id: 'member-a', parentId: 'chain:c1', state: 'executing-tool' });
     const memberB = makeNode({ id: 'member-b', parentId: 'chain:c1', state: 'done' });
     const snap = buildFleetSnapshot([chain, memberA, memberB], NOW);
     expect(snap.runningCount).toBe(1);
   });
 
-  test('a wrfc-subtask node never contributes usage/cost even if it somehow carried a priced reading', () => {
+  test('a contract-unit node never contributes usage/cost even if it somehow carried a priced reading', () => {
     const subtask = makeNode({
       id: 'subtask:s1',
-      kind: 'wrfc-subtask',
+      kind: 'contract-unit',
       costState: 'priced',
       costUsd: 5, // hostile fixture: real subtasks never carry this, but the aggregator must not trust kind-mismatched data
     });
@@ -297,7 +286,7 @@ describe('buildFleetSnapshot: honest cost/token aggregates', () => {
     expect(snap.totalCost).toBeNull();
   });
 
-  test('a completed WRFC owner agent (raw.wrfcRole === "owner") is excluded from cost/token totals; its usage is a rollup of its already-counted phase children', () => {
+  test('a completed contract owner agent (raw.contractRole === "owner") is excluded from cost/token totals; its usage is a rollup of its already-counted phase children', () => {
     const engineer = makeNode({
       id: 'engineer-1',
       parentId: 'chain:c2',
@@ -312,9 +301,7 @@ describe('buildFleetSnapshot: honest cost/token aggregates', () => {
       costUsd: 0.1,
       usage: { inputTokens: 200, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 1, turnCount: 1, toolCallCount: 1 },
     });
-    // Owner: SDK-backfilled usage/cost === sum of engineer+reviewer (see
-    // wrfc-controller.ts completeOwnerAgent -> aggregateChainUsage). raw
-    // carries the AgentRecord shape (wrfcRole: 'owner') the SDK actually sets.
+    // The owner carries the same member usage as its contract.
     const owner = makeNode({
       id: 'owner-1',
       kind: 'agent',
@@ -322,16 +309,16 @@ describe('buildFleetSnapshot: honest cost/token aggregates', () => {
       costState: 'priced',
       costUsd: 0.3,
       usage: { inputTokens: 600, outputTokens: 150, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 2, turnCount: 2, toolCallCount: 2 },
-      raw: { wrfcRole: 'owner' },
+      raw: { contractRole: 'owner' },
     });
     const snap = buildFleetSnapshot([owner, engineer, reviewer], NOW);
     expect(snap.totalCost).toBeCloseTo(0.3, 10); // engineer(0.2) + reviewer(0.1), NOT +owner's duplicate 0.3
     expect(snap.totalTokens).toBe(750); // (400+100) + (200+50), owner's duplicate 750 excluded
   });
 
-  test('a non-owner agent node (raw.wrfcRole is engineer/undefined/absent) still contributes normally', () => {
+  test('a non-owner agent node (raw.contractRole is engineer/undefined/absent) still contributes normally', () => {
     const plain = makeNode({ id: 'plain-agent', costState: 'priced', costUsd: 0.1 });
-    const engineer = makeNode({ id: 'eng', costState: 'priced', costUsd: 0.2, raw: { wrfcRole: 'engineer' } });
+    const engineer = makeNode({ id: 'eng', costState: 'priced', costUsd: 0.2, raw: { contractRole: 'unit' } });
     const snap = buildFleetSnapshot([plain, engineer], NOW);
     expect(snap.totalCost).toBeCloseTo(0.3, 10);
   });
@@ -394,9 +381,9 @@ describe('fleetStateGlyph / fleetStateTone / isTerminalProcessState / isRunningP
 
   test('fleetKindTag returns a short tag for every ProcessKind', () => {
     const kinds = [
-      'agent', 'wrfc-chain', 'wrfc-subtask', 'workflow', 'trigger', 'schedule', 'watcher', 'background-process',
+      'agent', 'contract', 'contract-unit', 'workflow', 'trigger', 'schedule', 'watcher', 'background-process',
       // Orchestration-engine kinds.
-      'workstream', 'phase', 'work-item',
+      'contract-group',
       // The repo source-tree code index.
       'code-index',
     ] as const;
@@ -454,92 +441,34 @@ describe("buildFleetSnapshot: 'code-index' leaf node", () => {
 });
 
 // ---------------------------------------------------------------------------
-// orchestration-engine kinds: workstream/phase double-count
-// exclusion (adaptWorkstream sums every work-item once; adaptPhase reports
-// nothing), work-item leaf inclusion (it carries its own direct usage/cost),
-// and buildFleetRows nesting workstream -> phase -> work-item -> agent.
+// Contract wrapper usage is a rollup of actual planner/unit agents, including attempts.
 // ---------------------------------------------------------------------------
 
-describe('buildFleetSnapshot: workstream/phase/work-item rollup', () => {
-  function makeUsage(inputTokens: number, outputTokens: number) {
-    return { inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 1, turnCount: 1, toolCallCount: 1 };
-  }
-
-  test('a workstream node plus its work items contributes cost/tokens ONCE (the workstream total), not workstream+items', () => {
-    const workstream = makeNode({
-      id: 'workstream:w1',
-      kind: 'workstream',
-      costState: 'priced',
-      costUsd: 0.5,
-      usage: makeUsage(900, 300),
-    });
-    const itemA = makeNode({
-      id: 'work-item:i1',
-      kind: 'work-item',
-      parentId: 'workstream:w1',
-      costState: 'priced',
-      costUsd: 0.3,
-      usage: makeUsage(600, 200),
-    });
-    const itemB = makeNode({
-      id: 'work-item:i2',
-      kind: 'work-item',
-      parentId: 'workstream:w1',
-      costState: 'priced',
-      costUsd: 0.2,
-      usage: makeUsage(300, 100),
-    });
-    const snap = buildFleetSnapshot([workstream, itemA, itemB], NOW);
-    expect(snap.totalCost).toBeCloseTo(0.5, 10);
-    expect(snap.totalTokens).toBe(1_200); // items only: (600+200)+(300+100); workstream's own rolled-up usage excluded
-  });
-
-  test('a phase node never contributes usage/cost even if it somehow carried a priced reading', () => {
-    const phase = makeNode({
-      id: 'phase:w1:p1',
-      kind: 'phase',
-      parentId: 'workstream:w1',
-      costState: 'priced',
-      costUsd: 9, // hostile fixture: real phases never carry this (adaptPhase always reports null/unpriced)
-    });
-    const snap = buildFleetSnapshot([phase], NOW);
-    expect(snap.totalCost).toBeNull();
-  });
-
-  test('a work-item leaf DOES contribute its own usage/cost; it is not a rollup kind', () => {
-    const item = makeNode({
-      id: 'work-item:solo',
-      kind: 'work-item',
-      costState: 'priced',
-      costUsd: 0.75,
-      usage: makeUsage(400, 100),
-    });
-    const snap = buildFleetSnapshot([item], NOW);
-    expect(snap.totalCost).toBe(0.75);
-    expect(snap.totalTokens).toBe(500);
-  });
-
-  test('runningCount excludes the workstream and phase rollup rows; only the running work-item (or its agent) counts', () => {
-    const workstream = makeNode({ id: 'workstream:w1', kind: 'workstream', state: 'executing-tool' });
-    const phase = makeNode({ id: 'phase:w1:p1', kind: 'phase', parentId: 'workstream:w1', state: 'executing-tool' });
-    const item = makeNode({ id: 'work-item:i1', kind: 'work-item', parentId: 'phase:w1:p1', state: 'executing-tool' });
-    const snap = buildFleetSnapshot([workstream, phase, item], NOW);
-    expect(snap.runningCount).toBe(1);
-  });
-
-  test('buildFleetRows nests workstream -> phase -> work-item -> agent via parentId, with zero new tree code', () => {
+describe('buildFleetSnapshot: contract/group/unit hierarchy', () => {
+  const usage = { inputTokens: 400, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, llmCallCount: 1, turnCount: 1, toolCallCount: 1 };
+  test('nested wrappers and owner usage count once at the actual agent', () => {
     const nodes = [
-      makeNode({ id: 'workstream:w1', kind: 'workstream', startedAt: NOW - 10_000 }),
-      makeNode({ id: 'phase:w1:p1', kind: 'phase', parentId: 'workstream:w1', startedAt: NOW - 9_000 }),
-      makeNode({ id: 'work-item:i1', kind: 'work-item', parentId: 'phase:w1:p1', startedAt: NOW - 8_000 }),
-      makeNode({ id: 'agent-1', kind: 'agent', parentId: 'work-item:i1', startedAt: NOW - 7_000 }),
+      makeNode({ id: 'contract:c1', kind: 'contract', costState: 'priced', costUsd: 0.5, usage }),
+      makeNode({ id: 'contract:c1:g1', kind: 'contract-group', parentId: 'contract:c1', costState: 'priced', costUsd: 0.5, usage }),
+      makeNode({ id: 'contract:c1:u1', kind: 'contract-unit', parentId: 'contract:c1:g1', costState: 'priced', costUsd: 0.5, usage }),
+      makeNode({ id: 'worker', kind: 'agent', parentId: 'contract:c1:u1', costState: 'priced', costUsd: 0.5, usage }),
+      makeNode({ id: 'owner', kind: 'agent', parentId: 'contract:c1', costState: 'priced', costUsd: 0.5, usage, raw: { contractRole: 'owner' } }),
     ];
-    const rows = buildFleetRows(nodes);
-    const byId = new Map(rows.map((r) => [r.node.id, r]));
-    expect(byId.get('workstream:w1')!.depth).toBe(0);
-    expect(byId.get('phase:w1:p1')!.depth).toBe(1);
-    expect(byId.get('work-item:i1')!.depth).toBe(2);
-    expect(byId.get('agent-1')!.depth).toBe(3);
+    const snapshot = buildFleetSnapshot(nodes, NOW);
+    expect(snapshot.totalCost).toBe(0.5);
+    expect(snapshot.totalTokens).toBe(500);
+    expect(snapshot.runningCount).toBe(1);
+    const depths = new Map(snapshot.rows.map((row) => [row.node.id, row.depth]));
+    expect(depths.get('contract:c1')).toBe(0);
+    expect(depths.get('contract:c1:g1')).toBe(1);
+    expect(depths.get('contract:c1:u1')).toBe(2);
+    expect(depths.get('worker')).toBe(3);
+  });
+  test('a group wrapper alone contributes no duplicate usage', () => {
+    const snapshot = buildFleetSnapshot([makeNode({ id: 'g1', kind: 'contract-group', costState: 'priced', costUsd: 0.5, usage })], NOW);
+    expect(snapshot.totalCost).toBeNull();
+    expect(snapshot.totalTokens).toBeNull();
+    expect(snapshot.runningCount).toBe(0);
   });
 });
 

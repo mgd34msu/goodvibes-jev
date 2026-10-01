@@ -813,7 +813,7 @@ describe('product breadth commands', () => {
     out.length = 0;
     await setup!.handler(['sandbox'], ctx);
     expect(out.join('\n')).toContain('Setup Sandbox Review');
-    expect(out.join('\n')).toContain('/sandbox qemu bootstrap');
+    expect(out.join('\n')).toContain('/sandbox doctor');
 
     const exportPath = join(root, 'artifacts', 'startup-review.json');
     out.length = 0;
@@ -827,7 +827,7 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Exported support bundle');
     expect(existsSync(join(supportDir, 'startup-review.json'))).toBe(true);
     expect(existsSync(join(supportDir, 'remote-summary.json'))).toBe(true);
-    expect(existsSync(join(supportDir, 'qemu-wrapper.template.sh'))).toBe(true);
+    expect(existsSync(join(supportDir, 'qemu-wrapper.template.sh'))).toBe(false);
   });
 
   test('health and guidance commands surface maintenance posture', async () => {
@@ -2048,43 +2048,11 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Sandbox session run');
     expect(out.join('\n')).toContain('session-run-ok');
 
-    const wrapperPath = join(root, 'artifacts', 'qemu-wrapper.sh');
-    out.length = 0;
-    await sandbox!.handler(['scaffold-qemu-wrapper', wrapperPath], ctx);
-    expect(out.join('\n')).toContain('Scaffolded QEMU wrapper');
-
-    out.length = 0;
-    await sandbox!.handler(['guest-test', 'eval-js'], ctx);
-    expect(out.join('\n')).toContain('Sandbox guest test requires sandbox.qemuGuestHost');
-
-    const initDir = join(root, 'artifacts', 'qemu-init');
-    out.length = 0;
-    await sandbox!.handler(['init-qemu', initDir], ctx);
-    expect(out.join('\n')).toContain('Initialized QEMU sandbox bundle');
-    expect(existsSync(join(initDir, 'qemu-wrapper.sh'))).toBe(true);
-    expect(existsSync(join(initDir, 'guest-bundle.json'))).toBe(true);
-    expect(existsSync(join(initDir, 'README.txt'))).toBe(true);
-
-    out.length = 0;
-    await sandbox!.handler(['qemu', 'bootstrap', join(root, 'artifacts', 'qemu-bootstrap'), '1', '--scaffold-only'], ctx);
-    expect(out.join('\n')).toContain('Bootstrapped QEMU sandbox');
-    expect(out.join('\n')).toContain('applied: backend=qemu');
-    expect(out.join('\n')).toContain('image build: skipped');
-
+    // VM provisioning was retired with the local-only SDK backend.
     out.length = 0;
     await sandbox!.handler(['qemu', 'setup'], ctx);
-    expect(out.join('\n')).toContain(join(root, '.goodvibes', 'tui', 'sandbox'));
-    expect(existsSync(join(root, '.goodvibes', 'tui', 'sandbox', 'qemu-wrapper.sh'))).toBe(true);
-
-    out.length = 0;
-    await sandbox!.handler(['set-qemu-guest-host', '127.0.0.1'], ctx);
-    await sandbox!.handler(['set-qemu-guest-port', '2222'], ctx);
-    await sandbox!.handler(['set-qemu-guest-user', 'goodvibes'], ctx);
-    await sandbox!.handler(['set-qemu-workspace', '/workspace'], ctx);
-    await sandbox!.handler(['set-qemu-session-mode', 'launch-per-command'], ctx);
-    expect(out.join('\n')).toContain('Sandbox QEMU guest host set to 127.0.0.1.');
-    expect(out.join('\n')).toContain('Sandbox QEMU guest workspace set to /workspace.');
-    expect(out.join('\n')).toContain('Sandbox QEMU session mode set to launch-per-command.');
+    expect(out.join('\n')).toContain('QEMU sandbox commands have been retired');
+    expect(existsSync(join(root, '.goodvibes', 'tui', 'sandbox', 'qemu-wrapper.sh'))).toBe(false);
   });
 
   test('subscription command manages oauth-backed provider sessions and logout', async () => {

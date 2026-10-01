@@ -7,30 +7,11 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { SessionManager } from '@goodvibes-jev/engine/sdk/platform/sessions';
-import { writeLastSessionPointer } from '@/runtime/index.ts';
-import type { WrfcChain } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { writeLastSessionPointer } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 import { announceResumeState, type ResumeNoticeDeps } from '@/runtime/resume-notice.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { makeTestSurface } from '../helpers/session-surface.ts';
-
-function makeChain(overrides: Partial<WrfcChain> = {}): WrfcChain {
-  return {
-    id: `chain-${crypto.randomUUID().slice(0, 8)}`,
-    state: 'failed',
-    task: 'implement the feature',
-    ownerAgentId: 'agent-owner',
-    allAgentIds: ['agent-owner'],
-    fixAttempts: 0,
-    reviewCycles: 0,
-    reviewScores: [],
-    createdAt: Date.now(),
-    completedAt: Date.now(),
-    ownerDecisions: [
-      { id: '1', ts: new Date().toISOString(), action: 'chain_cancelled', state: 'failed', reason: 'operator killed it' },
-    ],
-    ...overrides,
-  } as WrfcChain;
-}
 
 function saveFixtureSession(workingDirectory: string, sessionId: string, userTurns: number): void {
   const sm = new SessionManager(workingDirectory, { surface: makeTestSurface(workingDirectory) });
@@ -42,7 +23,7 @@ function saveFixtureSession(workingDirectory: string, sessionId: string, userTur
   writeLastSessionPointer(sessionId, { surface: makeTestSurface(workingDirectory) });
 }
 
-function baseDeps(workingDirectory: string): Omit<ResumeNoticeDeps, 'router' | 'checkpointManager' | 'chainHistory' | 'memoryAvailable'> {
+function baseDeps(workingDirectory: string): Omit<ResumeNoticeDeps, 'router' | 'checkpointManager' | 'contractHistory' | 'memoryAvailable'> {
   return {
     surface: makeTestSurface(workingDirectory),
     sessionManager: new SessionManager(workingDirectory, { surface: makeTestSurface(workingDirectory) }),
@@ -57,7 +38,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: undefined,
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });
@@ -73,7 +54,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => [] },
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });
@@ -94,7 +75,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => [{ id: 'wcp_1' }, { id: 'wcp_2' }] as never },
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });
@@ -107,19 +88,19 @@ describe('announceResumeState: fixture-dir matrix', () => {
     const dir = makeProjectTempDir('gv-resume-plus-chain');
     saveFixtureSession(dir, 'sess-abc', 2);
     const messages: string[] = [];
-    const chain = makeChain({ state: 'failed' }); // last owner decision: chain_cancelled
+    const chain = contractFixture({ status: 'cancelled' }); // last owner decision: chain_cancelled
 
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => [{ id: 'wcp_1' }] as never },
-      chainHistory: [chain],
+      contractHistory: [chain],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });
 
     expect(messages).toHaveLength(1);
     expect(messages[0]).toBe(
-      'Previous session found: 2 turns, 1 checkpoint, last chain: cancelled: /resume to continue (or /session resume sess-abc directly) · /checkpoints to browse',
+      'Previous session found: 2 turns, 1 checkpoint, last workstream: cancelled: /resume to continue (or /session resume sess-abc directly) · /checkpoints to browse',
     );
   });
 
@@ -131,7 +112,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => [] },
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: true,
       router: { high: (m) => messages.push(m) },
     });
@@ -147,7 +128,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => [{ id: 'wcp_1' }] as never },
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });
@@ -168,7 +149,7 @@ describe('announceResumeState: fixture-dir matrix', () => {
     await announceResumeState({
       ...baseDeps(dir),
       checkpointManager: { list: async () => { throw new Error('init() rejected forever'); } },
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => messages.push(m) },
     });

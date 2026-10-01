@@ -34,25 +34,21 @@ function makeNode(overrides: Partial<ProcessNode> & { id: string }): ProcessNode
 }
 
 describe('isAttachableFleetKind', () => {
-  test('agent and wrfc-chain are attachable', () => {
+  test('agent and contract are attachable', () => {
     expect(isAttachableFleetKind('agent')).toBe(true);
-    expect(isAttachableFleetKind('wrfc-chain')).toBe(true);
+    expect(isAttachableFleetKind('contract')).toBe(true);
   });
 
   test('every other kind is not attachable', () => {
-    for (const kind of ['wrfc-subtask', 'workflow', 'trigger', 'schedule', 'watcher', 'background-process'] as const) {
+    for (const kind of ['contract-unit', 'workflow', 'trigger', 'schedule', 'watcher', 'background-process'] as const) {
       expect(isAttachableFleetKind(kind)).toBe(false);
     }
   });
 
-  // workstream/phase/work-item are aggregates (workstream,
-  // phase) or delegate-to-their-agent leaves (work-item), none carry their
-  // own transcript, mirroring wrfc-subtask. Users attach the live 'agent'
-  // leaf directly; no default change here, verified explicitly per the brief.
-  test('workstream/phase/work-item are not attachable', () => {
-    for (const kind of ['workstream', 'phase', 'work-item'] as const) {
-      expect(isAttachableFleetKind(kind)).toBe(false);
-    }
+  test('contract groups and units use their actual agent leaf for transcript attachment', () => {
+    expect(isAttachableFleetKind('contract-group')).toBe(false);
+    expect(isAttachableFleetKind('contract-unit')).toBe(false);
+    expect(isAttachableFleetKind('acp-agent')).toBe(true);
   });
 });
 
@@ -80,9 +76,9 @@ describe('attachFleetTab', () => {
     expect(state.activeTabIndex).toBe(1);
   });
 
-  test('a wrfc-chain node attaches with an empty agentId (no single conversation)', () => {
-    const state = attachFleetTab(EMPTY_FLEET_TABS_STATE, makeNode({ id: 'chain-1', kind: 'wrfc-chain' }));
-    expect(state.tabs[0]!.kind).toBe('wrfc-chain');
+  test('a contract node attaches with an empty agentId (no single conversation)', () => {
+    const state = attachFleetTab(EMPTY_FLEET_TABS_STATE, makeNode({ id: 'chain-1', kind: 'contract' }));
+    expect(state.tabs[0]!.kind).toBe('contract');
     expect(state.tabs[0]!.agentId).toBe('');
   });
 

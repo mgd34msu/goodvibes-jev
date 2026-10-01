@@ -20,6 +20,8 @@
  */
 
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { ContractRunner, ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { contractIsActive } from '../core/work-tree-contract.ts';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { AgentManager, ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { ProcessNode, SteerResult } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
@@ -46,6 +48,8 @@ export interface SessionViewsDeps {
   readonly steer: (agentId: string, text: string) => SteerResult;
   /** Stop an agent and the agents it started. */
   readonly killAgent: (agentId: string) => readonly string[];
+  /** Owner views stop/reply through the contract runner, never by killing a synthetic owner agent. */
+  readonly contractRunner?: Pick<ContractRunner, 'get' | 'cancel' | 'reply'> | undefined;
   readonly mainBusy: () => boolean;
   /** The model main is serving (an agent with no model of its own runs on it). */
   readonly mainModel: () => string;
@@ -83,9 +87,9 @@ function agentMark(status: AgentRecord['status']): SessionMark {
 }
 
 /** A process's mark from whether it ended (never parsed from the status text: a timeout or a kill does not read "done"). */
-function processMark(p: { readonly done: boolean; readonly status: string }): SessionMark {
+function processMark(p: Pick<NonNullable<ReturnType<ProcessManager['getStatus']>>, 'done' | 'exitCode' | 'signal' | 'timedOut'>): SessionMark {
   if (!p.done) return 'run';
-  return /^done \(exit 0\)$/.test(p.status) ? 'ok' : 'err';
+  return p.exitCode === 0 && !p.signal && !p.timedOut ? 'ok' : 'err';
 }
 
 function shortCommand(cmd: string): string {
@@ -100,6 +104,7 @@ export class SessionViews implements SessionViewControls {
   /** The most each view could scroll at its last frame. */
   private maxScrollBy = new Map<string, number>();
   private readonly collapse = new Map<string, Map<string, boolean>>();
+  private readonly pendingOwnerReplies = new Set<string>();
   private readonly steers: Array<{ readonly agentId: string; readonly text: string; readonly at: number }> = [];
   private notice: { readonly text: string; readonly tone: 'error' | 'info'; readonly until: number } | null = null;
   private search: { query: string; editing: boolean; current: number } | null = null;
@@ -109,23 +114,27 @@ export class SessionViews implements SessionViewControls {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: SessionViewsDeps) {
-    // A WRFC chain owner is named for what it is, as its lane in main is: its
-    // template ("engineer") would read as the chain's own engineer phase.
-    const agentName = (r: AgentRecord): string => (r.wrfcRole === 'owner' ? 'WRFC chain' : r.template || 'agent');
+    const agentName = (r: AgentRecord): string => (r.contractRole === 'owner' || this.contractOf(r.id) ? 'Contract' : r.template || 'agent');
+    const mark = (r: AgentRecord): SessionMark => {
+      const contract = this.contractOf(r.id);
+      if (!contract) return agentMark(r.status);
+      return contract.status === 'passed' ? 'ok' : contract.status === 'failed' ? 'err' : contract.status === 'cancelled' ? 'cancel' : contract.status === 'awaiting-owner' || contract.status === 'queued' ? 'wait' : 'run';
+    };
     this.focus = new SessionFocus({
       liveAgents: () => deps.agentManager.list()
-        .filter((a) => a.status === 'running' || a.status === 'pending')
-        .map((a) => ({ id: a.id, name: agentName(a), mark: agentMark(a.status) })),
+        .filter((a) => { const contract = this.contractOf(a.id); return contract ? contractIsActive(contract) : a.status === 'running' || a.status === 'pending'; })
+        .map((a) => ({ id: a.id, name: agentName(a), mark: mark(a) })),
       liveProcesses: () => deps.processManager.list()
-        .filter((p) => !p.done)
+        .filter((p) => deps.processManager.getStatus(p.id)?.done === false)
         .map((p) => ({ id: p.id, name: shortCommand(p.cmd), mark: 'run' as const })),
       agent: (id) => {
         const r = deps.agentManager.getStatus(id);
-        return r ? { name: agentName(r), mark: agentMark(r.status) } : null;
+        return r ? { name: agentName(r), mark: mark(r) } : null;
       },
       process: (id) => {
         const p = deps.processManager.list().find((e) => e.id === id);
-        return p ? { name: shortCommand(p.cmd), mark: processMark(p) } : null;
+        const record = p ? deps.processManager.getStatus(p.id) : null;
+        return p && record ? { name: shortCommand(p.cmd), mark: processMark(record) } : null;
       },
       parentAgent: (id) => {
         const parent = deps.fleetNodes().find((n) => n.id === id)?.parentId;
@@ -162,7 +171,7 @@ export class SessionViews implements SessionViewControls {
     const known = new Set<string>();
     for (const p of this.deps.processManager.list()) {
       known.add(p.id);
-      if (p.done && !this.endedSeen.has(p.id)) { this.endedSeen.add(p.id); ended = true; }
+      if (this.deps.processManager.getStatus(p.id)?.done === true && !this.endedSeen.has(p.id)) { this.endedSeen.add(p.id); ended = true; }
     }
     for (const id of this.endedSeen) if (!known.has(id)) this.endedSeen.delete(id);
     return ended;
@@ -212,6 +221,14 @@ export class SessionViews implements SessionViewControls {
     const press = this.focus.pressStop();
     if (press === 'armed') return; // the status line asks for the confirming press
     if (target.kind === 'agent') {
+      const contract = this.contractOf(target.id);
+      if (contract) {
+        if (!this.deps.contractRunner) { this.say('Contract controls are unavailable.', 'error'); return; }
+        const stopped = this.deps.contractRunner.cancel(contract.id, 'Stopped by the user from the contract view');
+        this.say(stopped ? 'Stopped the contract and its agents.' : 'The contract could not be stopped.', stopped ? 'info' : 'error');
+        this.deps.requestRender();
+        return;
+      }
       const stopped = this.deps.killAgent(target.id);
       this.say(stopped.length > 0 ? `Stopped ${name}${stopped.length > 1 ? ` and ${stopped.length - 1} agent${stopped.length === 2 ? '' : 's'} it started` : ''}.` : `${name} could not be stopped.`, stopped.length > 0 ? 'info' : 'error');
     } else {
@@ -244,6 +261,8 @@ export class SessionViews implements SessionViewControls {
     const target = this.focus.current;
     if (target.kind !== 'agent') return false;
     const name = this.focus.nameOf(target);
+    const contract = this.contractOf(target.id);
+    if (contract) return this.replyToOwner(contract, text);
     const result = this.deps.steer(target.id, text);
     if (!result.queued) {
       this.say(`${name} did not take the message: ${result.reason ?? 'refused'}.`, 'error');
@@ -252,6 +271,31 @@ export class SessionViews implements SessionViewControls {
     this.steers.push({ agentId: target.id, text, at: this.now() });
     this.follow();
     this.say(`Sent to ${name}: it arrives at its next turn. Main keeps running.`, 'info');
+    return true;
+  }
+
+  private contractOf(agentId: string): ContractView | undefined {
+    const record = this.deps.agentManager.getStatus(agentId);
+    const current = record?.contractRole === 'owner' && record.contractId ? this.deps.contractRunner?.get(record.contractId) : null;
+    return current ?? this.deps.conversation.getWorkTreeSources().agent?.(agentId)?.contract;
+  }
+
+  private replyToOwner(contract: ContractView, text: string): boolean {
+    const escalation = contract.escalations.filter((entry) => entry.resolvedAt === undefined).at(-1);
+    const runner = this.deps.contractRunner;
+    if (!runner || !escalation) {
+      this.say(runner ? 'There is no open owner question. Message the unit agent to steer its work.' : 'Contract reply controls are unavailable.', 'info');
+      return false;
+    }
+    if (this.pendingOwnerReplies.has(contract.id)) { this.say('The previous owner reply is still being processed.', 'info'); return false; }
+    this.pendingOwnerReplies.add(contract.id);
+    this.say('Reading your reply to the owner question.', 'info');
+    void runner.reply(contract.id, escalation.id, text).then((result) => {
+      const messages = { approved: 'Owner reply accepted; the contract can continue.', amended: 'Owner reply changed the contract.', stopped: 'The contract stopped.', 'asked-again': 'The contract needs clarification; check the new owner question.', refused: 'The contract could not accept that reply; check the owner question.' };
+      this.say(messages[result.action], result.action === 'refused' ? 'error' : 'info');
+    }, (error: unknown) => {
+      this.say(`Owner reply failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    }).finally(() => { this.pendingOwnerReplies.delete(contract.id); this.agentCache = null; this.deps.requestRender(); });
     return true;
   }
 
@@ -369,6 +413,8 @@ export class SessionViews implements SessionViewControls {
 
   private stoppable(target: SessionTarget): boolean {
     if (target.kind === 'agent') {
+      const contract = this.contractOf(target.id);
+      if (contract) return contractIsActive(contract);
       const s = this.deps.agentManager.getStatus(target.id)?.status;
       return s === 'running' || s === 'pending';
     }
@@ -393,17 +439,18 @@ export class SessionViews implements SessionViewControls {
     const colorIndex = this.colorIndexOf(record.id);
     const color = laneColor(colorIndex);
     const parent = this.focus.nameOf(this.focus.parentOf(this.focus.current));
-    const running = record.status === 'running' || record.status === 'pending';
+    const contract = this.contractOf(record.id);
+    const running = contract ? contractIsActive(contract) : record.status === 'running' || record.status === 'pending';
     const header = renderHeaderLine(width, '', undefined, undefined, version, undefined, {
       crumbs: this.crumbs(),
       right: record.model ?? this.deps.mainModel(),
     })[0]!;
     const keys: Array<readonly [string, string]> = [this.escHint()];
-    if (running) keys.push(['ctrl+x', 'stop agent']);
+    if (running) keys.push(['ctrl+x', contract ? 'stop contract' : 'stop agent']);
     const cost = this.deps.fleetNodes().find((n) => n.id === record.id);
     const footer: ShellFooterView = {
       barColor: color,
-      placeholder: running ? `Message ${name}. This steers it; main keeps running.` : `${name} has finished; a message will not reach it.`,
+      placeholder: contract && contract.escalations.some((entry) => entry.resolvedAt === undefined) ? 'Reply to the contract owner question.' : contract && running ? 'Message a unit agent to steer its work.' : running ? `Message ${name}. This steers it; main keeps running.` : `${name} has finished; a message will not reach it.`,
       keys,
       trail: this.mainTrail(),
       notice: this.footerNotice(name),
@@ -416,13 +463,13 @@ export class SessionViews implements SessionViewControls {
       const steers = this.queuedSteers(record.id, messages, running);
       const now = this.now();
       const frame = Math.floor(now / 150);
-      const key = [width, record.id, record.status, record.toolCallCount, messages.length, messages[messages.length - 1]?.content.length ?? 0, steers.length, running ? frame : 0, running ? Math.floor(now / 1000) : 0, colorIndex].join('|');
+      const key = [width, record.id, record.status, record.toolCallCount, messages.length, messages[messages.length - 1]?.content.length ?? 0, steers.length, JSON.stringify(this.contractOf(record.id)), running ? frame : 0, running ? Math.floor(now / 1000) : 0, colorIndex].join('|');
       if (!this.agentCache || this.agentCache.key !== key) {
         const collapse = this.collapse.get(record.id) ?? new Map<string, boolean>();
         this.collapse.set(record.id, collapse);
         const lines = renderAgentView({
           width,
-          agent: info ?? { id: record.id, name, task: record.task, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, toolCallCount: record.toolCallCount, error: record.error, messages: [] },
+          agent: info ? { ...info, contract: this.contractOf(record.id) } : { contract: this.contractOf(record.id), id: record.id, name, task: record.task, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt, toolCallCount: record.toolCallCount, error: record.error, messages: [] },
           messages,
           colorIndex,
           parentName: parent,

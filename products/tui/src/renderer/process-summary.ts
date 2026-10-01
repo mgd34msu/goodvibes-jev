@@ -1,67 +1,55 @@
-export type ProcessSummaryAgent = {
-  readonly id: string;
-  readonly progress?: string;
-};
+import type { ContractView, ContractUnitView } from '@goodvibes-jev/engine/sdk/platform/contract';
+import type { AgentManager } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { RuntimeAgent } from '@goodvibes-jev/engine/sdk/platform/runtime/store';
 
-export type RuntimeProcessSummaryAgent = {
-  readonly id: string;
-  readonly latestProgress?: string;
-};
+type AgentRecord = NonNullable<ReturnType<AgentManager['getStatus']>>;
+export type ProcessSummaryAgent = Pick<AgentRecord, 'id'> & Partial<Pick<AgentRecord, 'progress' | 'status' | 'contractRole'>>;
+export type RuntimeProcessSummaryAgent = Pick<RuntimeAgent, 'id'> & Partial<Pick<RuntimeAgent, 'latestProgress' | 'status' | 'contractRef'>>;
+export type RunningAgentSummary = { readonly count: number; readonly progress?: string };
 
-export type WrfcProcessSummaryChain = {
-  readonly state?: string;
-  readonly ownerAgentId?: string;
-  readonly engineerAgentId?: string;
-  readonly reviewerAgentId?: string;
-  readonly fixerAgentId?: string;
-  readonly allAgentIds?: readonly unknown[];
-};
+function terminal(status: string | undefined): boolean {
+  return status === 'passed' || status === 'completed' || status === 'failed' || status === 'cancelled';
+}
 
-export type RunningAgentSummary = {
-  readonly count: number;
-  readonly progress?: string;
-};
+function memberIds(contract: ContractView): Set<string> {
+  const ids = new Set(contract.plannerAgentIds);
+  const unit = (value: ContractUnitView): void => {
+    for (const id of value.agentIds) ids.add(id);
+    if (value.activeAgentId) ids.add(value.activeAgentId);
+    for (const attempt of value.attemptUnits ?? []) unit(attempt);
+  };
+  for (const value of contract.units) unit(value);
+  return ids;
+}
 
+/** Count actual agents once; contract owner records and group/unit rollups are not extra workers. */
 export function summarizeRunningAgents(
   managerAgents: readonly ProcessSummaryAgent[],
   runtimeAgents: readonly RuntimeProcessSummaryAgent[],
-  wrfcChains: readonly WrfcProcessSummaryChain[],
+  contracts: readonly ContractView[],
 ): RunningAgentSummary {
+  const owners = new Set(contracts.map((contract) => contract.ownerAgentId));
+  const ended = new Set<string>();
+  for (const contract of contracts) if (terminal(contract.status)) {
+    ended.add(contract.ownerAgentId);
+    for (const id of memberIds(contract)) ended.add(id);
+  }
   const runningAgentIds = new Set<string>();
   let progress: string | undefined;
-
   for (const agent of managerAgents) {
+    if (owners.has(agent.id) || agent.contractRole === 'owner' || ended.has(agent.id) || terminal(agent.status)) continue;
     runningAgentIds.add(agent.id);
     if (!progress && agent.progress) progress = agent.progress;
   }
-
   for (const agent of runtimeAgents) {
+    if (owners.has(agent.id) || agent.contractRef?.contractRole === 'owner' || ended.has(agent.id) || terminal(agent.status)) continue;
     runningAgentIds.add(agent.id);
     if (!progress && agent.latestProgress) progress = agent.latestProgress;
   }
-
-  for (const chain of wrfcChains) {
-    if (isTerminalWrfcState(chain.state)) continue;
-    const chainAgentIds = collectChainAgentIds(chain);
-    const hasVisibleChainWork = Array.from(chainAgentIds).some((id) => runningAgentIds.has(id));
-    if (!hasVisibleChainWork || !chain.ownerAgentId) continue;
-    runningAgentIds.add(chain.ownerAgentId);
-    if (!progress) progress = `WRFC chain ${chain.state ?? 'running'}`;
+  if (!progress) for (const contract of contracts) {
+    if (terminal(contract.status)) continue;
+    const members = memberIds(contract);
+    if ([...members].some((id) => runningAgentIds.has(id))) { progress = `Contract ${contract.status}`; break; }
   }
-
   return { count: runningAgentIds.size, progress };
-}
-
-function isTerminalWrfcState(state: string | undefined): boolean {
-  return state === 'passed' || state === 'failed';
-}
-
-function collectChainAgentIds(chain: WrfcProcessSummaryChain): Set<string> {
-  return new Set([
-    chain.ownerAgentId,
-    chain.engineerAgentId,
-    chain.reviewerAgentId,
-    chain.fixerAgentId,
-    ...(chain.allAgentIds ?? []),
-  ].filter((id): id is string => typeof id === 'string' && id.length > 0));
 }

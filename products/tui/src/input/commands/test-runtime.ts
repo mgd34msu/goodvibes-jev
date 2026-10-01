@@ -1,4 +1,4 @@
-import { loadPackageScripts, getSkippedGateReason } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { loadPackageScripts, getSkippedGateReason } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { ToolCall } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { CommandContext, CommandRegistry } from '../command-registry.ts';
 import { requireShellPaths } from './runtime-services.ts';

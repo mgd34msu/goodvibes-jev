@@ -129,10 +129,10 @@ export type CreateBootstrapCommandContextOptions = {
   activatePlan: (planId: string, task: string) => void;
   completeModelSelectionSideEffect?: () => void;
   sessionLineageTracker?: import('@goodvibes-jev/engine/sdk/platform/core').SessionLineageTracker;
-  wrfcController?: import('@goodvibes-jev/engine/sdk/platform/agents').WrfcController;
+  contractRunner?: import('@goodvibes-jev/engine/sdk/platform/contract').ContractRunner;
   componentHealthMonitor: import('@/runtime/index.ts').ComponentHealthMonitor;
   hydrateSessionUsage?: () => void;
-  workstreamEngine?: import('@goodvibes-jev/engine/sdk/platform/orchestration').WorkstreamCommandService;
+  contractOperator?: import('@goodvibes-jev/engine/sdk/platform/contract').ContractOperatorService;
   codeIndexStore?: import('@goodvibes-jev/engine/sdk/platform/state').CodeIndexStore;
   codeIndexReindexScheduler?: import('@goodvibes-jev/engine/sdk/platform/state').CodeIndexReindexScheduler;
   isPassiveCodeInjectionFlagEnabled?: () => boolean;
@@ -198,10 +198,10 @@ export function createBootstrapCommandContext(
     webhookNotifier,
     sessionMemoryStore,
     sessionLineageTracker,
-    wrfcController,
+    contractRunner,
     changeTracker,
     hydrateSessionUsage,
-    workstreamEngine,
+    contractOperator,
     codeIndexStore,
     codeIndexReindexScheduler,
     isPassiveCodeInjectionFlagEnabled,
@@ -261,10 +261,10 @@ export function createBootstrapCommandContext(
     sessionManager,
     sessionMemoryStore,
     sessionLineageTracker,
-    wrfcController,
+    contractRunner,
     changeTracker,
     hydrateSessionUsage,
-    workstreamEngine,
+    contractOperator,
     codeIndexStore,
     codeIndexReindexScheduler,
     isPassiveCodeInjectionFlagEnabled,

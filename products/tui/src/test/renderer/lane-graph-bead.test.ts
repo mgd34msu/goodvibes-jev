@@ -49,6 +49,17 @@ describe('bead status mapping', () => {
     expect(beadStatus({ ...base, outcome: undefined, ownerActive: false })).toBe('cancel');
   });
 
+  test('a settled legacy result has a neutral mark, summary and body even if its text looks like an error', () => {
+    const content = 'Error: cancelled by user';
+    expect(beadStatus({ ...base, outcome: undefined, content, ownerActive: false })).toBe('unknown');
+    expect(beadSummary(call('exec'), 'unknown', content)).toEqual({ text: 'outcome unknown', tone: 'faint' });
+    expect(beadBody(call('exec'), 'unknown', content)).toEqual({ kind: 'text', lines: [content] });
+    const p = { width: 80, gutterWidth: 6, glyphs: laneGlyphs('ascii'), frame: 0 };
+    const line = paintBeadRow([{ role: 'bead', color: 0 }], { status: 'unknown', name: 'exec', arg: '', summary: null, time: undefined, laneColor: '#fff', hasBody: true, open: false }, p);
+    expect(line[3]!.char).toBe('?');
+    expect(line[9]!.strikethrough).toBe(false);
+  });
+
   test('attention: a non-zero exit, a timed-out command, an edit with failed items', () => {
     expect(needsAttention(call('exec'), JSON.stringify({ exit_code: 1, stdout: '' }))).toBe(true);
     expect(needsAttention(call('exec'), JSON.stringify({ exit_code: 0, stdout: 'ok' }))).toBe(false);
@@ -68,7 +79,7 @@ describe('bead status mapping', () => {
     const t = activeTokens();
     const p = { width: 100, gutterWidth: 6, glyphs, frame: 1 };
     const cases: Array<[Parameters<typeof paintBeadRow>[1]['status'], string, string]> = [
-      ['ok', '✓', t.success], ['warn', '!', t.warning], ['err', '✕', t.error], ['run', '◓', laneColor(0)],
+      ['unknown', '·', t.textFaint], ['ok', '✓', t.success], ['warn', '!', t.warning], ['err', '✕', t.error], ['run', '◓', laneColor(0)],
       ['wait', '●', t.warning], ['cancel', '○', t.textFaint], ['bg', '▶', t.success],
     ];
     for (const [status, mark, fg] of cases) {

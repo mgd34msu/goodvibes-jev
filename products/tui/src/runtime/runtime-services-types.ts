@@ -25,7 +25,7 @@ import type {
 } from '@goodvibes-jev/engine/sdk/platform/runtime/client';
 import type { ClientBuildGuard } from './client/build-floors.ts';
 import type { FleetUnionReadModel } from './client/fleet-union.ts';
-import type { ApprovalRaiser } from '@goodvibes-jev/engine/sdk/platform/runtime/client-services';
+import type { ApprovalRaiser, ClientRuntimeServicesOptions } from '@goodvibes-jev/engine/sdk/platform/runtime/client-services';
 import type { PermissionPromptDecision, PermissionPromptRequest } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import type { ConfigManager, ServiceRegistry, SubscriptionManager, ToolLLM } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { SecretsManager } from '../config/secrets.ts';
@@ -38,7 +38,8 @@ import type { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts
 import type { HomeGraphService, KnowledgeService, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import type { MediaProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/media';
 import type { MultimodalService } from '@goodvibes-jev/engine/sdk/platform/multimodal';
-import type { AgentMessageBus, AgentOrchestrator, ArchetypeLoader, WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
+import type { AgentMessageBus, AgentOrchestrator, ArchetypeLoader } from '@goodvibes-jev/engine/sdk/platform/agents';
+import type { ContractIntake, ContractOperatorService, ContractRunner } from '@goodvibes-jev/engine/sdk/platform/contract';
 import type { AgentManager, ContextAccountingHolder, OverflowHandler, ProcessManager, WorkflowServices } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { FileUndoManager, MemoryConsolidationScheduler, MemoryEmbeddingProviderRegistry, MemoryRegistry, MemoryStore, ModeManager, ProjectIndex, CodeIndexStore, CodeIndexReindexScheduler } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { StoreSnapshotScheduler } from '@goodvibes-jev/engine/sdk/platform/state/store-snapshots';
@@ -68,7 +69,6 @@ import type { BenchmarkStore, CacheHitTracker, FavoritesStore, ModelLimitsServic
 import type { KeybindingsManager } from '../input/keybindings.ts';
 import type { AdaptivePlanner, DeterministicReplayEngine, ExecutionPlanManager, SessionLineageTracker, SessionMemoryStore } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { ArchivableProcessRegistry } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
-import type { OrchestrationEngine, WorkstreamCommandService } from '@goodvibes-jev/engine/sdk/platform/orchestration';
 import type { WorkPlanStore } from '@goodvibes-jev/engine/sdk/platform/workflow';
 import type { WorkspaceTrustManager } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
@@ -78,6 +78,7 @@ export interface RuntimeServicesOptions {
   readonly configManager: ConfigManager;
   readonly localUserAuthManager?: UserAuthManager;
   readonly featureFlags?: FeatureFlagManager;
+  readonly modelDiscovery?: ClientRuntimeServicesOptions['modelDiscovery'];
   readonly getConversationTitle?: () => string | undefined;
   readonly workingDir: string;
   readonly homeDirectory: string;
@@ -260,11 +261,15 @@ export interface RuntimeServices {
   readonly agentMessageBus: AgentMessageBus;
   readonly agentOrchestrator: AgentOrchestrator;
   readonly contextAccountingHolder: ContextAccountingHolder; // bound at bootstrap.ts; see context-accounting-source.ts
-  readonly wrfcController: WrfcController;
+  readonly permissionManager: import('@goodvibes-jev/engine/sdk/platform/runtime/client-services').ClientRuntimeServices['permissionManager'];
+  readonly sandboxEscalationHandler: ReturnType<typeof import('@goodvibes-jev/engine/sdk/platform/runtime/bootstrap').createApprovalDerivedHandlers>['sandboxEscalationHandler'];
+  readonly onSandboxedRun: ReturnType<typeof import('@goodvibes-jev/engine/sdk/platform/runtime/bootstrap').createApprovalDerivedHandlers>['onSandboxedRun'];
+  readonly contractRunner: ContractRunner;
+  readonly contractOperator: ContractOperatorService;
+  readonly contractIntake: ContractIntake;
+  readonly judgment: import('@goodvibes-jev/engine/sdk/platform/runtime/client-services').ClientRuntimeServices['judgment'];
+  readonly sessionSnapshot: import('@goodvibes-jev/engine/sdk/platform/runtime/bootstrap').RuntimeServices['sessionSnapshot'];
   readonly processManager: ProcessManager;
-  /** The phase/work-item orchestration engine, see runtime/workstream-services.ts. */
-  readonly orchestrationEngine: OrchestrationEngine;
-  readonly workstreamCommands: WorkstreamCommandService;
   /** The repo source-tree code index, see runtime/code-index-services.ts. */
   readonly codeIndexStore: CodeIndexStore;
   readonly codeIndexReindexScheduler: CodeIndexReindexScheduler; // tool-site reindex

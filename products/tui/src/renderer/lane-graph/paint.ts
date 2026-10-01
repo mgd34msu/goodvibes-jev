@@ -136,6 +136,7 @@ function putRight(line: Line, xr: number, text: string, style: TextStyle): numbe
 function beadMark(status: BeadStatus, glyphs: LaneGlyphs, lane: string, frame: number): { char: string; fg: string } {
   const t = activeTokens();
   switch (status) {
+    case 'unknown': return { char: glyphs.name === 'ascii' ? '?' : '·', fg: t.textFaint };
     case 'ok': return { char: glyphs.ok, fg: t.success };
     case 'warn': return { char: glyphs.warn, fg: t.warning };
     case 'err': return { char: glyphs.err, fg: t.error };

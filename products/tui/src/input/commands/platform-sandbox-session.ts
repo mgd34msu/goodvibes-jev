@@ -1,6 +1,5 @@
-import { resolve } from 'node:path';
 import type { CommandContext } from '../command-registry.ts';
-import { inspectSandboxSessionArtifact, listSandboxProfiles, renderSandboxSessions } from '@/runtime/index.ts';
+import { inspectSandboxSessionArtifact, listSandboxProfiles, renderSandboxSessions } from '@goodvibes-jev/engine/sdk/platform/runtime/sandbox';
 import { requireShellPaths } from './runtime-services.ts';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 
@@ -19,7 +18,6 @@ function findSandboxProfile(configManager: CommandContext['platform']['configMan
 }
 
 export async function handleSandboxSessionCommand(args: string[], ctx: CommandContext): Promise<boolean> {
-  const shellPaths = requireShellPaths(ctx);
   const sessions = ctx.workspace.sandboxSessionRegistry;
   if (!sessions) {
     ctx.print('Sandbox session registry is not wired into this runtime.');
@@ -32,11 +30,12 @@ export async function handleSandboxSessionCommand(args: string[], ctx: CommandCo
   }
   if (mode === 'start') {
     const profileId = args[2];
-    if (!profileId || !findSandboxProfile(ctx.platform.configManager, profileId)) {
+    const profile = profileId ? findSandboxProfile(ctx.platform.configManager, profileId) : undefined;
+    if (!profile) {
       ctx.print(`Usage: /sandbox session start <${SANDBOX_PROFILE_IDS.join('|')}> [label...]`);
       return true;
     }
-    const session = await sessions.start(profileId as (typeof SANDBOX_PROFILE_IDS)[number], args.slice(3).join(' '), ctx.platform.configManager);
+    const session = await sessions.start(profile.id, args.slice(3).join(' '), ctx.platform.configManager);
     ctx.print(`Started sandbox session ${session.id} for ${session.profileId} (${session.shared ? 'shared' : 'dedicated'}, backend=${session.resolvedBackend ?? session.backend}, state=${session.state}, startup=${session.startupStatus ?? 'n/a'}).`);
     if (session.startupDetail) ctx.print(`  ${session.startupDetail}`);
     return true;
@@ -62,7 +61,6 @@ export async function handleSandboxSessionCommand(args: string[], ctx: CommandCo
       `  resolved: ${session.resolvedBackend ?? session.backend}`,
       `  startup: ${session.startupStatus ?? 'n/a'}`,
       ...(session.startupDetail ? [`  detail: ${session.startupDetail}`] : []),
-      ...(session.managedGuestHost || session.managedGuestPort || session.managedGuestPid ? [`  guest: ${session.managedGuestHost ?? '(unset)'}:${session.managedGuestPort ?? 0}  pid=${session.managedGuestPid ?? 'n/a'}`] : []),
       ...(session.lastCommandSummary ? [`  last: ${session.lastCommandSummary}`] : []),
     ].join('\n'));
     return true;
@@ -86,7 +84,7 @@ export async function handleSandboxSessionCommand(args: string[], ctx: CommandCo
       return true;
     }
     try {
-      const result = sessions.execute(sessionId, command, commandArgs, ctx.platform.configManager, { timeoutMs: 10000 });
+      const result = sessions.execute(sessionId, command, commandArgs, { timeoutMs: 10000 });
       const lines = [`Sandbox session run ${sessionId}`, `  status: ${result.status ?? 'n/a'}`];
       const stdout = result.stdout.trim();
       const stderr = result.stderr.trim();
@@ -107,7 +105,7 @@ export async function handleSandboxSessionCommand(args: string[], ctx: CommandCo
         ctx.print('Usage: /sandbox session artifact export <session-id> <path>');
         return true;
       }
-      const targetPath = shellPaths.resolveWorkspacePath(pathArg);
+      const targetPath = requireShellPaths(ctx).resolveWorkspacePath(pathArg);
       sessions.exportArtifact(sessionId, targetPath, ctx.platform.configManager);
       ctx.print(`Sandbox session artifact exported to ${targetPath}`);
       return true;
@@ -118,7 +116,7 @@ export async function handleSandboxSessionCommand(args: string[], ctx: CommandCo
         ctx.print('Usage: /sandbox session artifact inspect <path>');
         return true;
       }
-      const targetPath = shellPaths.resolveWorkspacePath(pathArg);
+      const targetPath = requireShellPaths(ctx).resolveWorkspacePath(pathArg);
       ctx.print(inspectSandboxSessionArtifact(sessions.inspectArtifact(targetPath)));
       return true;
     }

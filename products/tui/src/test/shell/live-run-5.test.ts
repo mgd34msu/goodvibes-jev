@@ -1,5 +1,5 @@
 /**
- * Defects from the fifth live run (a real WRFC chain and a real background
+ * Defects from the fifth live run (a real Contract and a real background
  * process), each pinned against the code path that drew it.
  *
  *  1. The chain owner's view (af0a3b51, template "engineer") said "No
@@ -14,6 +14,7 @@
  *     status line.
  *  9. [WRFC] and [Agents] notices were drawn inside the turn's lane.
  */
+import { contractFixture, contractUnit } from '../helpers/contract-work-tree-fixtures.ts';
 import { describe, expect, test } from 'bun:test';
 import type { ConversationMessageSnapshot } from '@goodvibes-jev/engine/sdk/platform/core';
 import type { AgentManager, ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -36,17 +37,17 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
     records.set(r.id, ({ tools: [], toolCallCount: 0, ...r }) as AgentRecord);
   };
   const task = 'Spawn exactly one background agent whose task is: read src/net/retry.ts';
-  add({ id: 'af0a3b51', template: 'engineer', task, status: 'running', startedAt: NOW - 43_000, wrfcRole: 'owner', wrfcId: 'wrfc-3c7f48cb' });
-  add({ id: 'ca572da6', template: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000, toolCallCount: 1, wrfcRole: 'engineer' });
-  add({ id: 'df40e5d8', template: 'reviewer', task: 'WRFC Review Request', status: 'running', startedAt: NOW - 8_000, wrfcRole: 'reviewer' });
+  add({ id: 'af0a3b51', template: 'engineer', task, status: 'running', startedAt: NOW - 43_000, contractRole: 'owner', contractId: 'contract-1' });
+  add({ id: 'ca572da6', template: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000, toolCallCount: 1, contractRole: 'unit', contractId: 'contract-1', contractUnitId: 'u1' });
+  add({ id: 'df40e5d8', template: 'reviewer', task: 'Inspect the retry cap', status: 'running', startedAt: NOW - 8_000, contractRole: 'unit', contractId: 'contract-1', contractUnitId: 'u2' });
   const transcripts: Record<string, Message[]> = {
     ca572da6: [
       { role: 'user', content: task },
       { role: 'assistant', content: '', toolCalls: [{ id: 'r1', name: 'read', arguments: { files: [{ path: 'src/net/retry.ts' }] } }] },
-      { role: 'tool', callId: 'r1', toolName: 'read', content: JSON.stringify({ success: true, summary: { files_read: 1, total_lines: 20 } }) },
+      { role: 'tool', callId: 'r1', toolName: 'read', outcome: 'ok', content: JSON.stringify({ success: true, summary: { files_read: 1, total_lines: 20 } }) },
       { role: 'assistant', content: 'I read both files and changed nothing.' },
     ],
-    df40e5d8: [{ role: 'user', content: 'WRFC Review Request' }],
+    df40e5d8: [{ role: 'user', content: 'Inspect the retry cap' }],
   };
   const lane = (id: string): AgentLaneInfo | null => {
     const r = records.get(id);
@@ -54,10 +55,8 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
     const base = { id, name: r.template, task: r.task, status: r.status, startedAt: r.startedAt, completedAt: r.completedAt, toolCallCount: r.toolCallCount };
     if (id === 'af0a3b51') {
       return {
-        ...base, messages: [], wrfcPhases: [
-          { agentId: 'ca572da6', role: 'engineer', task, status: 'completed', startedAt: NOW - 42_000, completedAt: NOW - 9_000 },
-          { agentId: 'df40e5d8', role: 'reviewer', task: 'WRFC Review Request', status: 'running', startedAt: NOW - 8_000 },
-        ],
+        ...base, messages: [], contract: contractFixture({ ownerAgentId: 'af0a3b51', ask: task, status: 'running', createdAt: NOW - 43_000, completedAt: undefined,
+          units: [contractUnit({ agentIds: ['ca572da6'] }), contractUnit({ id: 'u2', title: 'Inspect the retry cap', status: 'running', agentIds: ['df40e5d8'] })] }),
       };
     }
     return { ...base, messages: transcripts[id] ?? [] };
@@ -93,21 +92,21 @@ function scene(opts: { processStatus?: string; processDone?: boolean } = {}) {
 
 const text = (lines: readonly import('@goodvibes-jev/engine/sdk/platform/types').Line[]): string[] => lines.map((l) => lineToString(l).replace(/\s+$/, ''));
 
-describe('live run 5: a WRFC owner view shows its chain', () => {
-  test('the owner is named "WRFC chain" on its chip, not by its template', () => {
+describe('live run 5: a contract owner view shows its tree', () => {
+  test('the owner is named "Contract" on its chip, not by its template', () => {
     const { views } = scene();
     const chips = lineToString(views.chips(120)!);
-    expect(chips).toContain('WRFC chain');
+    expect(chips).toContain('Contract');
     expect(chips).not.toContain('engineer');
   });
 
-  test("the owner's view draws each phase agent's own transcript as a lane, not \"No transcript yet\"", () => {
+  test("the owner's view draws each unit agent's own transcript as a lane, not \"No transcript yet\"", () => {
     const { views } = scene();
     views.open({ kind: 'agent', id: 'af0a3b51' });
     const body = text(views.frame(120, '2.0.21')!.body(30)).join('\n');
     expect(body).not.toContain('No transcript yet');
-    expect(body).toContain('◆ WRFC chain');
-    expect(body).toContain('WRFC chain · 2 phases');
+    expect(body).toContain('◆ Contract');
+    expect(body).toContain('Contract · running · 2 units');
     // The engineer phase's own read call, from its own transcript.
     expect(body).toMatch(/read src\/net\/retry\.ts/);
     expect(body).toContain('reviewer');
