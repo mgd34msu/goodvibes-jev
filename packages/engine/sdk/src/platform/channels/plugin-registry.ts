@@ -123,9 +123,10 @@ export class ChannelPluginRegistry {
     this.version += 1;
   }
 
-  unregister(pluginId: string): boolean {
+  /** Expected-instance cleanup is independent of feature-gated visibility. */
+  unregister(pluginId: string, expected?: ChannelPlugin): boolean {
     const plugin = this.plugins.get(pluginId);
-    if (!plugin) return false;
+    if (!plugin || (expected !== undefined && plugin !== expected)) return false;
     this.plugins.delete(pluginId);
     if (this.pluginsBySurface.get(plugin.surface)?.id === pluginId) {
       this.pluginsBySurface.delete(plugin.surface);

@@ -5,6 +5,7 @@ import {
   getPluginDirectories,
   loadPlugin,
   unloadPlugin,
+  PluginCleanupError,
   type LoadedPlugin,
   type PluginLoaderDeps,
   type PluginPathOptions,
@@ -19,7 +20,7 @@ import { PluginQuarantineEngine, type QuarantineRecord } from '../runtime/plugin
 import { isHighRiskCapability, resolveCapabilityManifest } from '../runtime/plugins/manifest.js';
 import type { PluginCapability, PluginManifestV2 } from '../runtime/plugins/types.js';
 import { summarizeError } from '../utils/error-display.js';
-import { DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS, PluginInFlightTracker } from './in-flight.js';
+import { DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS, PluginClosedError, PluginInFlightTracker } from './in-flight.js';
 
 /**
  * PluginState, Persisted state for all plugins.
@@ -86,6 +87,15 @@ export interface PluginReloadSummary {
   notDrained: string[];
 }
 
+/** Mechanical progress evidence for a caller awaiting plugin shutdown. */
+export interface PluginShutdownStatus {
+  readonly state: 'open' | 'closing' | 'closed' | 'failed';
+  readonly lifecycleOperations: number;
+  readonly pendingInstances: number;
+  readonly activeCalls: readonly { readonly pluginName: string; readonly count: number }[];
+  readonly cleanupFailures: number;
+}
+
 /**
  * PluginManager, orchestrates plugin discovery, loading, and persistence.
  */
@@ -93,6 +103,15 @@ export class PluginManager {
   private plugins = new Map<string, LoadedPlugin>();
   private state: PluginState = { ...DEFAULT_STATE, enabled: {}, config: {}, trust: {}, quarantine: {} };
   private deps: PluginLoaderDeps | undefined;
+  private closed = false;
+  private closePromise: Promise<void> | undefined;
+  private closeSettled = false;
+  private closeFailures = 0;
+  private readonly operations = new Set<Promise<unknown>>();
+  private readonly acquired = new Set<LoadedPlugin>();
+  private readonly unloading = new WeakMap<LoadedPlugin, Promise<void>>();
+  private readonly ownedCalls = new Map<PluginInFlightTracker, Set<string>>();
+  private readonly cleanupErrors = new Set<PluginCleanupError>();
   /** Counts calls into loaded plugins so a reload can drain them first. */
   private inFlight = new PluginInFlightTracker();
 
@@ -116,11 +135,13 @@ export class PluginManager {
    * init, Must be called once at startup with application dependencies.
    * Loads state from disk, then discovers and loads all enabled plugins.
    */
-  async init(deps: PluginLoaderDeps): Promise<void> {
-    if (deps.inFlight) this.inFlight = deps.inFlight;
-    this.deps = { ...deps, inFlight: this.inFlight };
-    this.loadState();
-    await this.loadEnabledPlugins();
+  init(deps: PluginLoaderDeps): Promise<void> {
+    return this.ownOperation(async () => {
+      if (deps.inFlight) this.inFlight = deps.inFlight;
+      this.deps = { ...deps, inFlight: this.inFlight };
+      this.loadState();
+      await this.loadEnabledPlugins();
+    });
   }
 
   /** Returns status for all discovered plugins (enabled or not). */
@@ -142,6 +163,7 @@ export class PluginManager {
   }
 
   subscribe(callback: () => void): () => void {
+    if (this.closed) return () => undefined;
     this.subscribers.add(callback);
     return () => this.subscribers.delete(callback);
   }
@@ -165,6 +187,7 @@ export class PluginManager {
     tier: PluginTrustTier,
     note?: string | undefined,
   ): { ok: boolean; error?: string } {
+    if (this.closed) return { ok: false, error: 'Plugin manager is closed' };
     const discovered = this.findDiscoveredPlugin(name);
     if (!discovered) {
       return { ok: false, error: this.notFoundError(name) };
@@ -196,6 +219,7 @@ export class PluginManager {
     name: string,
     publicKey?: string,
   ): { ok: boolean; fingerprint?: string | undefined; error?: string } {
+    if (this.closed) return { ok: false, error: 'Plugin manager is closed' };
     const discovered = this.findDiscoveredPlugin(name);
     if (!discovered) {
       return { ok: false, error: this.notFoundError(name) };
@@ -281,6 +305,7 @@ export class PluginManager {
     name: string,
     reason: string,
   ): { ok: boolean; error?: string } {
+    if (this.closed) return { ok: false, error: 'Plugin manager is closed' };
     const discovered = this.findDiscoveredPlugin(name);
     if (!discovered) {
       return { ok: false, error: this.notFoundError(name) };
@@ -314,6 +339,7 @@ export class PluginManager {
    * liftQuarantine, Remove quarantine from a plugin.
    */
   liftQuarantine(name: string): { ok: boolean; error?: string } {
+    if (this.closed) return { ok: false, error: 'Plugin manager is closed' };
     if (!this.quarantineEngine.isQuarantined(name)) {
       return { ok: false, error: `Plugin '${name}' is not quarantined` };
     }
@@ -329,51 +355,58 @@ export class PluginManager {
   }
 
   /** Enable a plugin by name. Loads it immediately if deps are available. */
-  async enable(name: string): Promise<{ ok: boolean; error?: string }> {
-    if (this.isEnabled(name)) {
-      return { ok: false, error: `Plugin '${name}' is already enabled` };
-    }
-
-    const discovered = this.findDiscoveredPlugin(name);
-    if (!discovered) {
-      return { ok: false, error: this.notFoundError(name) };
-    }
-
-    this.state.enabled[name] = true;
-    this.saveState();
-
-    if (this.deps) {
-      const loaded = await loadPlugin(discovered, this.deps);
-      if (loaded) {
-        this.plugins.set(name, loaded);
-        this.notifySubscribers();
-      } else {
-        // Revert enable on load failure
-        delete this.state.enabled[name];
-        this.saveState();
-        return { ok: false, error: `Plugin '${name}' failed to load, check logs` };
+  enable(name: string): Promise<{ ok: boolean; error?: string }> {
+    return this.ownOperation(async () => {
+      if (this.isEnabled(name)) {
+        return { ok: false, error: `Plugin '${name}' is already enabled` };
       }
-    }
 
-    return { ok: true };
+      const discovered = this.findDiscoveredPlugin(name);
+      if (!discovered) {
+        return { ok: false, error: this.notFoundError(name) };
+      }
+
+      this.state.enabled[name] = true;
+      this.saveState();
+
+      if (this.deps) {
+        const loaded = await this.acquire(discovered, this.deps);
+        if (loaded) {
+          this.plugins.set(name, loaded);
+          this.notifySubscribers();
+        } else {
+          // The admitted operator preference was already saved. Shutdown can
+          // refuse registrations during init; retain that intent for restart.
+          if (this.closed) return { ok: false, error: 'Plugin manager closed during enable; enabled preference retained' };
+          // Revert enable on load failure
+          delete this.state.enabled[name];
+          this.saveState();
+          return { ok: false, error: `Plugin '${name}' failed to load, check logs` };
+        }
+      }
+
+      return this.closed ? { ok: false, error: 'Plugin manager closed during enable' } : { ok: true };
+    });
   }
 
   /** Disable a plugin by name. Deactivates it immediately if active. */
-  async disable(name: string): Promise<{ ok: boolean; error?: string }> {
-    if (!this.isEnabled(name)) {
-      return { ok: false, error: `Plugin '${name}' is not enabled` };
-    }
+  disable(name: string): Promise<{ ok: boolean; error?: string }> {
+    return this.ownOperation(async () => {
+      if (!this.isEnabled(name)) {
+        return { ok: false, error: `Plugin '${name}' is not enabled` };
+      }
 
-    const loaded = this.plugins.get(name);
-    if (loaded) {
-      await unloadPlugin(loaded);
-      this.plugins.delete(name);
-    }
+      const loaded = this.plugins.get(name);
+      if (loaded) {
+        await this.unload(loaded);
+        this.plugins.delete(name);
+      }
 
-    delete this.state.enabled[name];
-    this.saveState();
-    this.notifySubscribers();
-    return { ok: true };
+      delete this.state.enabled[name];
+      this.saveState();
+      this.notifySubscribers();
+      return { ok: true };
+    });
   }
 
   /**
@@ -383,59 +416,63 @@ export class PluginManager {
    * still busy at the timeout is not reloaded; it stays on its current
    * instance and is reported in `notDrained`.
    */
-  async reload(options: { readonly quiesceTimeoutMs?: number | undefined } = {}): Promise<PluginReloadSummary> {
-    const quiesceTimeoutMs = options.quiesceTimeoutMs ?? DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS;
-    const names = Object.keys(this.state.enabled).filter((n) => this.state.enabled[n]);
-    const loadedNames = names.filter((name) => this.plugins.has(name));
-    let reloaded = 0;
-    let failed = 0;
+  reload(options: { readonly quiesceTimeoutMs?: number | undefined } = {}): Promise<PluginReloadSummary> {
+    return this.ownOperation(async () => {
+      const quiesceTimeoutMs = options.quiesceTimeoutMs ?? DEFAULT_PLUGIN_QUIESCE_TIMEOUT_MS;
+      const names = Object.keys(this.state.enabled).filter((n) => this.state.enabled[n]);
+      const loadedNames = names.filter((name) => this.plugins.has(name));
+      let reloaded = 0;
+      let failed = 0;
 
-    const drains = await Promise.all(loadedNames.map(async (name) => ({
-      name,
-      drain: await this.inFlight.quiesce(name, quiesceTimeoutMs),
-    })));
-    const notDrained = new Set<string>();
-    for (const { name, drain } of drains) {
-      if (drain.drained) continue;
-      notDrained.add(name);
-      this.inFlight.resume(name);
-      logger.warn(`[plugins] ${name}: not reloaded, ${drain.inFlight} call(s) still running after ${quiesceTimeoutMs}ms`);
-    }
-
-    try {
-      // Deactivate every drained plugin
-      for (const name of names) {
-        if (notDrained.has(name)) continue;
-        const loaded = this.plugins.get(name);
-        if (loaded) {
-          await unloadPlugin(loaded);
-          this.plugins.delete(name);
-        }
+      const drains = await Promise.all(loadedNames.map(async (name) => ({
+        name,
+        drain: await this.inFlight.quiesce(name, quiesceTimeoutMs),
+      })));
+      if (this.closed) throw new PluginClosedError('manager');
+      const notDrained = new Set<string>();
+      for (const { name, drain } of drains) {
+        if (drain.drained) continue;
+        notDrained.add(name);
+        this.inFlight.resume(name);
+        logger.warn(`[plugins] ${name}: not reloaded, ${drain.inFlight} call(s) still running after ${quiesceTimeoutMs}ms`);
       }
 
-      // Reactivate with cache busting, append timestamp to force fresh import
-      if (this.deps) {
-        const discovered = this.discoverPlugins();
-        const cacheBust = Date.now();
-        for (const d of discovered) {
-          if (!this.isEnabled(d.manifest.name) || notDrained.has(d.manifest.name)) continue;
-          // Pass cacheBust so loadPlugin appends ?t=<timestamp> to the import URL,
-          // forcing Bun to bypass its module cache and re-execute the file.
-          const loaded = await loadPlugin(d, this.deps, cacheBust);
+      try {
+        // Deactivate every drained plugin
+        for (const name of names) {
+          if (notDrained.has(name)) continue;
+          const loaded = this.plugins.get(name);
           if (loaded) {
-            this.plugins.set(d.manifest.name, loaded);
-            reloaded++;
-          } else {
-            failed++;
+            await this.unload(loaded);
+            this.plugins.delete(name);
           }
         }
+
+        // Reactivate with cache busting, append timestamp to force fresh import
+        if (this.deps) {
+          const discovered = this.discoverPlugins();
+          const cacheBust = Date.now();
+          for (const d of discovered) {
+            if (this.closed) break;
+            if (!this.isEnabled(d.manifest.name) || notDrained.has(d.manifest.name)) continue;
+            // Pass cacheBust so loadPlugin appends ?t=<timestamp> to the import URL,
+            // forcing Bun to bypass its module cache and re-execute the file.
+            const loaded = await this.acquire(d, this.deps, cacheBust);
+            if (loaded) {
+              this.plugins.set(d.manifest.name, loaded);
+              reloaded++;
+            } else {
+              failed++;
+            }
+          }
+        }
+      } finally {
+        for (const { name } of drains) this.inFlight.resume(name);
       }
-    } finally {
-      for (const { name } of drains) this.inFlight.resume(name);
-    }
-    failed += notDrained.size;
-    this.notifySubscribers();
-    return { reloaded, failed, notDrained: [...notDrained] };
+      failed += notDrained.size;
+      this.notifySubscribers();
+      return { reloaded, failed, notDrained: [...notDrained] };
+    });
   }
 
   /** Returns whether a plugin is marked as enabled in persisted state. */
@@ -448,14 +485,111 @@ export class PluginManager {
     return this.state.config[name] ?? {};
   }
 
+  /**
+   * Stop this manager's admission, await admitted lifecycle work and calls,
+   * then release every acquired instance. Operator enable/trust/config state
+   * stays unchanged. Unsettled plugin callbacks keep close pending; cleanup
+   * failures reject after all instances have been attempted.
+   */
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.subscribers.clear();
+    const drains: Promise<void>[] = [];
+    for (const [tracker, names] of this.ownedCalls) {
+      for (const name of names) drains.push(tracker.close(name));
+    }
+    const operations = [...this.operations];
+    this.closePromise = Promise.resolve().then(async () => {
+      await Promise.allSettled([...drains, ...operations]);
+      const errors: unknown[] = [...this.cleanupErrors];
+      for (const loaded of [...this.acquired]) {
+        try {
+          await this.unload(loaded);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.plugins.clear();
+      this.deps = undefined;
+      this.closeFailures = errors.length;
+      if (errors.length > 0) throw new AggregateError(errors, 'Plugin manager shutdown cleanup did not complete');
+    });
+    void this.closePromise.then(
+      () => { this.closeSettled = true; },
+      () => { this.closeSettled = true; },
+    );
+    return this.closePromise;
+  }
+
+  shutdownStatus(): PluginShutdownStatus {
+    const counts = new Map<string, number>();
+    for (const [tracker, names] of this.ownedCalls) {
+      for (const name of names) {
+        const count = tracker.inFlight(name);
+        if (count > 0) counts.set(name, (counts.get(name) ?? 0) + count);
+      }
+    }
+    return {
+      state: !this.closed ? 'open' : !this.closeSettled ? 'closing' : this.closeFailures > 0 ? 'failed' : 'closed',
+      lifecycleOperations: this.operations.size,
+      pendingInstances: this.acquired.size,
+      activeCalls: [...counts].map(([pluginName, count]) => ({ pluginName, count })),
+      cleanupFailures: Math.max(this.closeFailures, this.cleanupErrors.size),
+    };
+  }
+
+  private ownOperation<T>(action: () => Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new PluginClosedError('manager'));
+    const pending = Promise.resolve().then(() => {
+      if (this.closed) throw new PluginClosedError('manager');
+      return action();
+    });
+    this.operations.add(pending);
+    void pending.then(
+      () => this.operations.delete(pending),
+      (error: unknown) => {
+        this.operations.delete(pending);
+        if (error instanceof PluginCleanupError) this.cleanupErrors.add(error);
+      },
+    );
+    return pending;
+  }
+
+  private async acquire(discovered: Parameters<typeof loadPlugin>[0], deps: PluginLoaderDeps, cacheBust?: number): Promise<LoadedPlugin | null> {
+    if (this.closed) return null;
+    const tracker = deps.inFlight ?? this.inFlight;
+    const names = this.ownedCalls.get(tracker) ?? new Set<string>();
+    this.ownedCalls.set(tracker, names);
+    names.add(discovered.manifest.name);
+    const loaded = await loadPlugin(discovered, deps, cacheBust, { throwOnCleanupError: true });
+    if (loaded) this.acquired.add(loaded);
+    return loaded;
+  }
+
+  private unload(loaded: LoadedPlugin): Promise<void> {
+    const prior = this.unloading.get(loaded);
+    if (prior) return prior;
+    const pending = Promise.resolve().then(async () => {
+      try {
+        await unloadPlugin(loaded, { throwOnCleanupError: true });
+      } finally {
+        this.acquired.delete(loaded);
+      }
+    });
+    this.unloading.set(loaded, pending);
+    return pending;
+  }
+
   // ─── Private helpers ────────────────────────────────────────────────────────
 
   private async loadEnabledPlugins(): Promise<void> {
     if (!this.deps) return;
     const discovered = this.discoverPlugins();
     for (const d of discovered) {
+      if (this.closed) break;
       if (!this.isEnabled(d.manifest.name)) continue;
-      const loaded = await loadPlugin(d, this.deps);
+      const loaded = await this.acquire(d, this.deps);
       if (loaded) {
         this.plugins.set(d.manifest.name, loaded);
       }
@@ -518,6 +652,7 @@ export class PluginManager {
   }
 
   private notifySubscribers(): void {
+    if (this.closed) return;
     for (const callback of this.subscribers) {
       try {
         callback();
