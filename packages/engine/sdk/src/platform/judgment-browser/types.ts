@@ -5,8 +5,12 @@ import type {
 import type { BrowserJudgmentReferences } from './references.js';
 
 export type BrowserJudgmentProjection<V> =
-  | { readonly status: 'settled'; readonly value: V; readonly readings: Readonly<Record<string, Reading>> }
-  | { readonly status: 'held'; readonly reason: 'uncertain'; readonly readings: Readonly<Record<string, Reading>> };
+  | { readonly status: 'settled'; readonly value: V; readonly readings: Readonly<Record<string, Reading>>;
+      readonly structuralBasis?: { readonly method_unknown: 'http-status-not-404' } }
+  | { readonly status: 'held'; readonly reason: 'uncertain'; readonly readings: Readonly<Record<string, Reading>>;
+      readonly structuralBasis?: { readonly method_unknown: 'http-status-not-404' };
+      /** Server-only minimum outcome for compound uncertainty; never lowers an item outcome. */
+      readonly compoundOutcome?: 'confirm' | 'escalate' };
 
 /** Produced only by the server resolver. A reference proves read access, not outbound permission. */
 export interface BrowserJudgmentResolvedInput<S> {

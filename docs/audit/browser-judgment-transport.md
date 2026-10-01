@@ -42,7 +42,8 @@ precedes projection, logging, or provider access. Each reader additionally owns
 its exact resolved-input limits (including the error/status field limits).
 
 Execution bounds: four logical runs per principal, sixteen total, thirty-second
-logical deadline, four provider calls per run and eight globally. Queueing exists
+logical deadline, four concurrent provider calls per run and eight globally.
+Each adapter's declared total is capped at 64 logical calls. Queueing exists
 only inside already-admitted bounded fan-out. Cancellation removes queued calls.
 Shutdown closes admission, aborts work, and waits for the actual owned promises;
 a five-second failed drain is reported rather than called successful.
@@ -52,21 +53,38 @@ The separate reference store owns at most 64 in-memory snapshots, each at most
 revision and read permission. Reference possession never grants hosted/local
 provider transmission: the separately injected server authorization policy must
 approve the source binding and current route. A route's assertion is checked
-before every provider call and before delivery. Composition must make this
-assertion truthful when live endpoint/model/credential configuration changes.
+before every logical provider call and before delivery. These checks do not yet
+cover the settings port's asynchronous key lookup or each retry/fallback fetch.
+Private-source installation requires an actual-dispatch guard, a finite wire
+attempt budget, and revocation-safe log admission before it may be enabled.
 Assertion hooks are synchronous: any non-undefined result is refused. Grants
 require literal `true`; Promises and other truthy values cannot grant access.
 Rejected thenables are consumed without exposing their rejection text.
 
 Each installed adapter declares its fixed questions and maximum call count. The
 scoped port refuses new/different questions and provides server-owned log context.
-Input text is state, never question text. Error readings remain five independent
-yes/no readings; status selects the requested closed vocabulary; palette values
+Input text is state, never question text. Error readings are independent yes/no
+readings; status selects the requested closed vocabulary; palette values
 contain complete unique candidate indices and finite probabilities with stable
 ties. Held/uncertain results contain readings and aggregate outcome but no value.
 Held readings use the same closed names and vocabularies as settled readings:
 the five error names, `badge` or `library_dot`, and `candidate_0` through the
-last requested candidate. Known machine error codes are handled structurally by
+last requested candidate. One explicitly attributed structural exception permits
+four error readings: `structuralBasis: { method_unknown: 'http-status-not-404' }`
+must match a valid non-404 HTTP status in the resolved server snapshot. Only then
+may `method_unknown` be omitted from readings and its settled value be `false`.
+The browser cannot supply the status or basis, and no fifth model reading is
+invented. A missing or invalid server status cannot establish this fact.
+
+For compound uncertainty, a held adapter projection may declare a server-only
+`compoundOutcome` of `confirm` or `escalate`. The response's single aggregate
+outcome is the strongest genuine item outcome or this minimum; it never lowers
+an item outcome. An all-act compound conflict needs this explicit minimum to
+hold. The instruction itself is omitted from the wire response, and held results
+never contain a value or aggregate `act`. These are additive protocol-v1 adapter
+fields; they do not change the client input schema or grant any provider access.
+
+Known machine error codes are handled structurally by
 callers before this semantic endpoint. They do not become synthetic model readings
 or metadata-only success; an endpoint answer requires a genuine recorded call.
 

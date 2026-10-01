@@ -50702,6 +50702,21 @@ Run one explicitly installed, authorized browser battery. Unconfigured services 
                 ],
                 "additionalProperties": false
               }
+            },
+            "structuralBasis": {
+              "type": "object",
+              "properties": {
+                "method_unknown": {
+                  "type": "string",
+                  "enum": [
+                    "http-status-not-404"
+                  ]
+                }
+              },
+              "required": [
+                "method_unknown"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -50845,7 +50860,6 @@ Run one explicitly installed, authorized browser battery. Unconfigured services 
             "outcome": {
               "type": "string",
               "enum": [
-                "act",
                 "confirm",
                 "escalate"
               ]
@@ -50893,6 +50907,21 @@ Run one explicitly installed, authorized browser battery. Unconfigured services 
                 ],
                 "additionalProperties": false
               }
+            },
+            "structuralBasis": {
+              "type": "object",
+              "properties": {
+                "method_unknown": {
+                  "type": "string",
+                  "enum": [
+                    "http-status-not-404"
+                  ]
+                }
+              },
+              "required": [
+                "method_unknown"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -51280,7 +51309,6 @@ Run one explicitly installed, authorized browser battery. Unconfigured services 
             "outcome": {
               "type": "string",
               "enum": [
-                "act",
                 "confirm",
                 "escalate"
               ]
@@ -51707,7 +51735,6 @@ Run one explicitly installed, authorized browser battery. Unconfigured services 
             "outcome": {
               "type": "string",
               "enum": [
-                "act",
                 "confirm",
                 "escalate"
               ]

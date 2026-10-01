@@ -49964,6 +49964,21 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "structuralBasis": {
+                      "type": "object",
+                      "properties": {
+                        "method_unknown": {
+                          "type": "string",
+                          "enum": [
+                            "http-status-not-404"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "method_unknown"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -50107,7 +50122,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]
@@ -50155,6 +50169,21 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "structuralBasis": {
+                      "type": "object",
+                      "properties": {
+                        "method_unknown": {
+                          "type": "string",
+                          "enum": [
+                            "http-status-not-404"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "method_unknown"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -50542,7 +50571,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]
@@ -50969,7 +50997,6 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = {
                     "outcome": {
                       "type": "string",
                       "enum": [
-                        "act",
                         "confirm",
                         "escalate"
                       ]

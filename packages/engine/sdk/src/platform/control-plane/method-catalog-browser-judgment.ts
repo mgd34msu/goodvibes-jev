@@ -45,10 +45,14 @@ const values = [
   ] },
   objectSchema({ registryVersion: ref, accepted: arraySchema(objectSchema({ candidateIndex: { type: 'number', minimum: 0, maximum: 63 }, probability: p }, ['candidateIndex', 'probability'])), rejected: arraySchema({ type: 'number', minimum: 0, maximum: 63 }) }, ['registryVersion', 'accepted', 'rejected']),
 ];
-const output = (battery: string, value: Record<string, unknown>) => ({ anyOf: [
-  objectSchema({ protocolVersion: literal(1), requestId: STRING_SCHEMA, battery: literal(battery), batteryVersion: literal(1), status: literal('settled'), value, readings, outcome: outcomes, evidence }, ['protocolVersion', 'requestId', 'battery', 'batteryVersion', 'status', 'value', 'readings', 'outcome', 'evidence']),
-  objectSchema({ protocolVersion: literal(1), requestId: STRING_SCHEMA, battery: literal(battery), batteryVersion: literal(1), status: literal('held'), reason: literal('uncertain'), readings, outcome: outcomes, evidence }, ['protocolVersion', 'requestId', 'battery', 'batteryVersion', 'status', 'reason', 'readings', 'outcome', 'evidence']),
-] });
+const output = (battery: string, value: Record<string, unknown>) => {
+  const structural = battery === 'webui.errors.daemon-refusal'
+    ? { structuralBasis: objectSchema({ method_unknown: literal('http-status-not-404') }, ['method_unknown']) } : {};
+  return { anyOf: [
+    objectSchema({ protocolVersion: literal(1), requestId: STRING_SCHEMA, battery: literal(battery), batteryVersion: literal(1), status: literal('settled'), value, readings, outcome: outcomes, evidence, ...structural }, ['protocolVersion', 'requestId', 'battery', 'batteryVersion', 'status', 'value', 'readings', 'outcome', 'evidence']),
+    objectSchema({ protocolVersion: literal(1), requestId: STRING_SCHEMA, battery: literal(battery), batteryVersion: literal(1), status: literal('held'), reason: literal('uncertain'), readings, outcome: { type: 'string', enum: ['confirm', 'escalate'] }, evidence, ...structural }, ['protocolVersion', 'requestId', 'battery', 'batteryVersion', 'status', 'reason', 'readings', 'outcome', 'evidence']),
+  ] };
+};
 
 export const builtinBrowserJudgmentMethodDescriptors = [methodDescriptor({
   id: 'judgment.battery.run', title: 'Run Browser Judgment Battery', category: 'judgment',
