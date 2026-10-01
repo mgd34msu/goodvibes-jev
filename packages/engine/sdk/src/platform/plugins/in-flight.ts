@@ -29,6 +29,15 @@ export class PluginQuiescingError extends Error {
   }
 }
 
+/** A permanent refusal after the plugin owner starts shutdown. */
+export class PluginClosedError extends PluginQuiescingError {
+  constructor(pluginName: string) {
+    super(pluginName);
+    this.name = 'PluginClosedError';
+    this.message = `Plugin '${pluginName}' is closed; the call was refused`;
+  }
+}
+
 /** The outcome of waiting for a plugin's in-flight calls to finish. */
 export interface PluginQuiesceResult {
   /** True when the in-flight count reached zero within the timeout. */
@@ -49,6 +58,45 @@ export class PluginInFlightTracker {
   private readonly quiescing = new Set<string>();
   private readonly idleWaiters = new Map<string, Set<() => void>>();
 
+  private closed = false;
+  private readonly closedPlugins = new Set<string>();
+  private readonly closePromises = new Map<string, Promise<void>>();
+  private closePromise: Promise<void> | undefined;
+
+  /** Whether this owner permanently refuses new work for a plugin. */
+  isClosed(plugin: string): boolean {
+    return this.closed || this.closedPlugins.has(plugin);
+  }
+
+  /**
+   * Permanently refuse admission and await admitted calls. Supplying a name
+   * preserves unrelated plugins when the tracker is shared. No timeout claims
+   * cancellation: a callback that never settles keeps close pending.
+   */
+  close(plugin?: string): Promise<void> {
+    if (plugin !== undefined) {
+      const prior = this.closePromises.get(plugin);
+      if (prior) return prior;
+      this.closedPlugins.add(plugin);
+      const pending = this.waitForIdle(plugin);
+      this.closePromises.set(plugin, pending);
+      return pending;
+    }
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.closePromise = Promise.all([...this.counts.keys()].map((name) => this.waitForIdle(name))).then(() => undefined);
+    return this.closePromise;
+  }
+
+  private waitForIdle(plugin: string): Promise<void> {
+    if (this.inFlight(plugin) === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiters = this.idleWaiters.get(plugin) ?? new Set<() => void>();
+      this.idleWaiters.set(plugin, waiters);
+      waiters.add(resolve);
+    });
+  }
+
   /** Calls into `plugin` currently in flight. */
   inFlight(plugin: string): number {
     return this.counts.get(plugin) ?? 0;
@@ -56,7 +104,7 @@ export class PluginInFlightTracker {
 
   /** Whether new calls into `plugin` are currently refused. */
   isQuiescing(plugin: string): boolean {
-    return this.quiescing.has(plugin);
+    return this.isClosed(plugin) || this.quiescing.has(plugin);
   }
 
   /**
@@ -65,6 +113,7 @@ export class PluginInFlightTracker {
    * plugin is quiescing. The call's own result or error passes through.
    */
   track<T>(plugin: string, call: () => T): T {
+    if (this.isClosed(plugin)) throw new PluginClosedError(plugin);
     if (this.quiescing.has(plugin)) throw new PluginQuiescingError(plugin);
     this.counts.set(plugin, this.inFlight(plugin) + 1);
     let result: T;

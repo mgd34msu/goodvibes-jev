@@ -350,6 +350,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       },
       stateFilePath: shellPaths.resolveUserPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'plugins.json'),
     });
+    disposalScope.ownUntilRegistered('plugins', () => pluginManager.close());
     const workflow = createWorkflowServices();
     hookDispatcher.setTriggerManager(workflow.triggerManager);
     const channelPolicy = new ChannelPolicyManager({
@@ -782,6 +783,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       dispose: (): void => disposalScope.dispose(),
     };
     registerDaemonRuntimeBasePollers(disposalScope.registry, { ...services, contractRunner: contracts }, { stopConfigWatch });
+    // Drain plugin work before releasing the graph it can call into.
+    disposalScope.registry.add('plugins', () => pluginManager.close());
     const handlerOptions = {
       gatewayMethods,
       secretsManager,
