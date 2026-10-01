@@ -11,10 +11,10 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeProjectTempDir } from './helpers/project-temp';
 import {
   findUncoveredFiles,
   isTypeScriptPath,
@@ -80,7 +80,7 @@ describe('isTypeScriptPath', () => {
 
 describe('against the real repo', () => {
   test('hook repository selectors cannot turn product coverage into a monorepo scan', () => {
-    const repo = mkdtempSync(resolve(tmpdir(), 'webui-types-hook-'));
+    const repo = makeProjectTempDir('webui-types-hook-');
     try {
       const product = resolve(repo, 'products/webui');
       mkdirSync(resolve(product, 'src'), { recursive: true });

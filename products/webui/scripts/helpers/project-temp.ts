@@ -82,6 +82,7 @@ export const KNOWN_TEMP_PREFIXES = [
   'webui-gen-presentation-',
   'webui-check-workflows-',
   'webui-sdk-dev-',
+  'webui-types-hook-',
   'temp-root-proof-',
   'pack-bundle-',
   'gv-live-smoke-home-',

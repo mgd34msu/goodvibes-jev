@@ -54,8 +54,8 @@ const PROJECTS: readonly Project[] = [
   },
 ];
 
-// Products join the gate as soon as their real workspace appears. Their own
-// source, test, tooling and coverage typecheck scripts all remain mandatory.
+// Products join the gate as soon as their real workspace appears. Inspection
+// covers every authored file, then each source/test/tooling project runs once.
 const ALL_PROJECTS: readonly Project[] = [...PROJECTS, {
   label: 'product workspace typechecks', command: 'bun', args: ['run', 'products:typecheck'],
 }];

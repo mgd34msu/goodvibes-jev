@@ -45,12 +45,12 @@ test('in-progress validation records missing products, while strict completion r
   expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: product is missing');
 });
 
-test('a real partial workspace participates in build, tests and every declared typecheck', () => {
+test('a partial workspace runs each compiler project once without repeating product aggregates', () => {
   const root = fixture();
   const inspection = inspectProductWorkspaces(root, [source]);
   expect(inspection.findings).toEqual([]);
   for (const mode of ['build', 'test'] as const) expect(productCheckCommands(root, inspection.products, mode)).toEqual([{ kind: 'script', label: `daemon:${mode}`, cwd: join(root, source.path), script: mode }]);
-  expect(productCheckCommands(root, inspection.products, 'typecheck').map((command) => command.kind === 'script' ? command.script : command.file.split('/').at(-1))).toEqual(['tsconfig.json', 'tsconfig.test.json', 'typecheck', 'typecheck:test']);
+  expect(productCheckCommands(root, inspection.products, 'typecheck').map((command) => command.kind === 'script' ? command.script : command.file.split('/').at(-1))).toEqual(['tsconfig.json', 'tsconfig.test.json']);
   expect(inspectProductWorkspaces(root, [source], true).findings).toContain('products/daemon: source module not accounted for: src/main.ts');
 });
 
@@ -68,6 +68,22 @@ test('a product typecheck printing errors cannot report success with exit zero',
   const root = fixture();
   const commands = productCheckCommands(root, inspectProductWorkspaces(root, [source]).products, 'typecheck');
   expect(() => executeProductCommands(root, commands, 'typecheck', () => ({ status: 0, stdout: 'file.ts(1,1): error TS2322: incompatible type\n', stderr: '' }))).toThrow('failed');
+});
+
+test('direct compilation still catches an error owned only by a secondary project', () => {
+  const root = fixture();
+  write(root, 'products/daemon/tsconfig.json', { compilerOptions: { types: [] }, include: ['src/main.ts', 'scripts'] });
+  write(root, 'products/daemon/tsconfig.test.json', { compilerOptions: { types: [] }, files: ['src/main.test.ts'] });
+  write(root, 'products/daemon/src/main.test.ts', 'export const result: string = 42;');
+  const inspection = inspectProductWorkspaces(root, [source]);
+  expect(inspection.findings).toEqual([]);
+  const compiler = resolve(import.meta.dir, '../../../node_modules/typescript/bin/tsc');
+  const projects: string[] = [];
+  expect(() => executeProductCommands(root, productCheckCommands(root, inspection.products, 'typecheck'), 'typecheck', (executable, args, cwd) => {
+    projects.push(args[2]!);
+    return spawnSync(executable, [compiler, ...args.slice(1)], { cwd, encoding: 'utf8', timeout: 20_000 });
+  })).toThrow('daemon:tsconfig.test.json failed');
+  expect(projects).toEqual([join(root, 'products/daemon/tsconfig.json'), join(root, 'products/daemon/tsconfig.test.json')]);
 });
 
 test('strict structural completion requires all module mappings and reviewable parity, proof and audit artifacts', () => {
