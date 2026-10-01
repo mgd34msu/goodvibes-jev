@@ -51,7 +51,7 @@ function decisionIds(ids: readonly (string | undefined)[]): { readonly decisionI
   return present.length === 0 ? {} : { decisionIds: present };
 }
 
-function refusalInput(input: ResolvedDaemonRefusal): ResolvedDaemonRefusal {
+export function snapshotWebuiDaemonRefusal(input: unknown): ResolvedDaemonRefusal {
   // Inspect the COMPLETE source before caps, projection, any hash, or port use.
   const source = object(snapshotJudgmentInput(input), ['methodId', 'status', 'code', 'category', 'message']);
   const methodId = text(source['methodId'], 256);
@@ -94,7 +94,7 @@ function structuredRefusal(source: ResolvedDaemonRefusal): DaemonRefusalValue | 
  */
 export function readStructuredDaemonRefusal(input: ResolvedDaemonRefusal): WebuiReadResult<DaemonRefusalValue> | undefined {
   try {
-    const value = structuredRefusal(refusalInput(input));
+    const value = structuredRefusal(snapshotWebuiDaemonRefusal(input));
     return value === undefined ? undefined : { status: 'ready', value, basis: 'structured' };
   } catch (error) { return failure(error, {}); }
 }
@@ -109,7 +109,7 @@ export function readStructuredDaemonRefusal(input: ResolvedDaemonRefusal): Webui
 export async function readDaemonRefusal(port: JudgmentPort | undefined, input: ResolvedDaemonRefusal, options: WebuiReaderOptions = {}): Promise<WebuiReadResult<DaemonRefusalValue>> {
   try {
     if (options.signal?.aborted) return aborted();
-    const source = refusalInput(input);
+    const source = snapshotWebuiDaemonRefusal(input);
     if (structuredRefusal(source) !== undefined) return { status: 'held', reason: 'unsupported-input' };
     if (!source.message.trim()) return { status: 'held', reason: 'unsupported-input' };
     if (!port) return { status: 'unavailable', reason: 'unconfigured' };
@@ -131,7 +131,7 @@ export async function readDaemonRefusal(port: JudgmentPort | undefined, input: R
   } catch (error) { return failure(error, options); }
 }
 
-function statusInput(input: ResolvedStatus): ResolvedStatus {
+export function snapshotWebuiStatus(input: unknown): ResolvedStatus {
   const source = object(snapshotJudgmentInput(input), ['kind', 'vocabulary', 'tone', 'status', 'domain']);
   const vocabulary = member(source['vocabulary'], ['badge', 'library-dot'] as const);
   if (source['kind'] === 'structured') {
@@ -148,7 +148,7 @@ function statusInput(input: ResolvedStatus): ResolvedStatus {
 export async function readStatusTone(port: JudgmentPort | undefined, input: ResolvedStatus, options: WebuiReaderOptions = {}): Promise<WebuiReadResult<StatusValue>> {
   try {
     if (options.signal?.aborted) return aborted();
-    const source = statusInput(input);
+    const source = snapshotWebuiStatus(input);
     if (source.kind === 'structured') return { status: 'ready', value: { vocabulary: source.vocabulary, tone: source.tone } as StatusValue, basis: 'structured' };
     if (!port) return { status: 'unavailable', reason: 'unconfigured' };
     const item = source.vocabulary === 'badge' ? 'badge' : 'library_dot';
@@ -164,7 +164,7 @@ export async function readStatusTone(port: JudgmentPort | undefined, input: Reso
   } catch (error) { return failure(error, options); }
 }
 
-function rankInput(input: ResolvedCommandRank): ResolvedCommandRank {
+export function snapshotWebuiCommandRank(input: unknown): ResolvedCommandRank {
   const source = object(snapshotJudgmentInput(input), ['query', 'registryVersion', 'candidates']);
   const query = text(source['query'], LIMITS.queryChars);
   const registryVersion = text(source['registryVersion'], 256);
@@ -194,7 +194,7 @@ function rankInput(input: ResolvedCommandRank): ResolvedCommandRank {
 export async function readCommandRank(port: JudgmentPort | undefined, input: ResolvedCommandRank, options: WebuiReaderOptions = {}): Promise<WebuiReadResult<CommandRankValue>> {
   try {
     if (options.signal?.aborted) return aborted();
-    const source = rankInput(input);
+    const source = snapshotWebuiCommandRank(input);
     if (source.candidates.length === 0) return { status: 'ready', basis: 'structured', value: { registryVersion: source.registryVersion, accepted: [], rejected: [] } };
     if (!port) return { status: 'unavailable', reason: 'unconfigured' };
     const runs: { reading: YesNoReading; decisionId: string | undefined; recordAction: (action: string) => void }[] = [];

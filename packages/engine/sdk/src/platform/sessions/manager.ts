@@ -3,7 +3,7 @@ import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import type { AgentRecord } from '../tools/agent/index.js';
 import type { Contract, ContractView } from '../contract/types.js';
-import type { SessionReturnContextSummary } from '../runtime/session-return-context.js';
+import { loadedReturnContext, type SessionReturnContextSummary } from '../runtime/session-return-context.js';
 import type { ConversationTitleSource } from '../core/conversation.js';
 import { summarizeError } from '../utils/error-display.js';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
@@ -266,7 +266,7 @@ export class SessionManager {
       model: meta.model,
       provider: meta.provider,
       titleSource: meta.titleSource ?? 'system',
-      returnContext: meta.returnContext,
+      returnContext: loadedReturnContext(meta.returnContext),
       saveSource: this._resolveSaveSource(filePath, meta.saveSource),
     };
     lines.push(JSON.stringify(metaRecord));
@@ -341,9 +341,7 @@ export class SessionManager {
           provider: String(record.provider ?? ''),
           timestamp: Number(record.timestamp ?? 0),
           titleSource: record.titleSource === 'user' ? 'user' : 'system',
-          returnContext: (record.returnContext && typeof record.returnContext === 'object')
-            ? (record.returnContext as SessionReturnContextSummary)
-            : undefined,
+          returnContext: loadedReturnContext(record.returnContext),
           schemaVersion: fileVersion,
           saveSource: record.saveSource === 'user' || record.saveSource === 'auto' ? record.saveSource : undefined,
         };
@@ -413,9 +411,7 @@ export class SessionManager {
                 provider: String(first.provider ?? ''),
                 timestamp: Number(first.timestamp ?? 0),
                 titleSource: first.titleSource === 'user' ? 'user' : 'system',
-                returnContext: (first.returnContext && typeof first.returnContext === 'object')
-                  ? (first.returnContext as SessionReturnContextSummary)
-                  : undefined,
+                returnContext: loadedReturnContext(first.returnContext),
                 schemaVersion: fileVersion,
               };
             }
@@ -494,9 +490,7 @@ export class SessionManager {
         provider: String(record.provider ?? ''),
         timestamp: Number(record.timestamp ?? 0),
         titleSource: record.titleSource === 'user' ? 'user' : 'system',
-        returnContext: (record.returnContext && typeof record.returnContext === 'object')
-          ? (record.returnContext as SessionReturnContextSummary)
-          : undefined,
+        returnContext: loadedReturnContext(record.returnContext),
         schemaVersion: fileVersion,
         saveSource: record.saveSource === 'user' || record.saveSource === 'auto' ? record.saveSource : undefined,
       };
@@ -529,6 +523,12 @@ export class SessionManager {
     try {
       const record = JSON.parse(lines[0]!) as Record<string, unknown>;
       record.title = newTitle;
+      // A metadata rewrite must not carry retired pane state forward.
+      if ('returnContext' in record) {
+        const returnContext = loadedReturnContext(record.returnContext);
+        if (returnContext) record.returnContext = returnContext;
+        else delete record.returnContext;
+      }
       lines[0]! = JSON.stringify(record);
       this._atomicWrite(filePath, lines.join('\n'));
     } catch (err: unknown) {

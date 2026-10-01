@@ -9,6 +9,13 @@ export {
   resolveProjectPlanningSpace,
 } from './helpers.js';
 export { evaluateProjectPlanningReadiness } from './readiness.js';
+export { readProjectPlanningAnswerActions, buildProjectPlanningAnswerActions } from './answer-actions.js';
+export type {
+  ProjectPlanningAnswerAction,
+  ProjectPlanningAnswerQuestion,
+  ProjectPlanningAnswerActionsReading,
+  ProjectPlanningAnswerReadOptions,
+} from './answer-actions.js';
 export type {
   ProjectPlanningAgentAssignment,
   ProjectPlanningAmbiguity,

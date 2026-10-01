@@ -40,8 +40,11 @@ upstream targets and implementation sequence are recorded in
 - **`packages/engine`:** in progress. It holds the whole sdk tree, and its subsystems are being converted one at a time.
 - **The contract runner:** in progress.
 - **The products:** the daemon has a working partial composition and command
-  adapters in `products/daemon`. TUI, agent and WebUI remain to be ported.
-  Ordinary CI checks the implemented work; it does not establish full product parity.
+  adapters in `products/daemon`. The redesigned WebUI workspace in `products/webui`
+  builds and runs synthetic browser and LAN scenarios; its remaining semantic
+  decisions, connected flows and full parity are still in progress. TUI and Agent
+  ports are in development and are not yet published workspaces. Ordinary CI
+  checks implemented behavior; it does not establish full product parity.
 
 ## How each old module is handled
 
@@ -52,9 +55,9 @@ Every module in the old repositories gets exactly one disposition, recorded in `
 | PORT | Carried over with its behaviour and interface intact; only its imports change. |
 | JEV | Carried over, with its guessed decisions replaced by Jev readings. |
 | HOIST | A product module that is really platform behaviour; it moves into the engine. |
-| DROP | Not carried over. Used only for code specific to WRFC (replaced by the contract runner) or to QEMU sandboxing. |
+| DROP | Not carried over, with a recorded reason. Includes WRFC-specific code replaced by the contract runner, QEMU sandboxing, and owner-authorized removal of unnecessary test/CI infrastructure. Actual behavioral obligations remain explicit. |
 
-The user interfaces are not redesigned. Every screen, panel, command, style and interaction matches the old products.
+The upstream product interfaces are the parity target, including the October 1 redesign recorded in the source snapshots. Screens, panels, commands, styles and interactions carry over while their shared behavior uses the Jev engine.
 
 ## The judgment foundation (`packages/judgment`)
 
@@ -67,7 +70,7 @@ Published as `@goodvibes-jev/judgment`, it provides:
 - **The decision log.** SQLite, one entry per reading, queryable by battery, time range and outcome.
 - **Calibration.** Runs every battery's fixtures live and reports accuracy against confidence. It fails when a battery falls below its floor.
 
-The old heuristics are being removed, not kept as backups. Today the port sends each request to one System One endpoint, retries within the TypeSafe SDK, times out after 10 seconds, and then raises a typed `JudgmentError` to the caller. What each decision site does when Jev cannot answer is not designed yet.
+The old heuristics are being removed, not kept as backups. Converted callers preserve typed unavailable, confirm and escalate outcomes instead of inventing an affirmative answer. The default port uses one configured System One endpoint; an injected failover transport exists, while persisted failover settings and live calibration remain unfinished. Each remaining decision site still needs its own behavior and evidence for an unavailable judgment.
 
 ## The engine (`packages/engine`)
 
@@ -117,8 +120,8 @@ Run these from the repository root:
 ```sh
 bun install
 bun run typecheck                               # every package
-bun run build                                   # build the engine (tests expect a fresh build)
-bun run test                                    # judgment tests, then the engine suite
+bun run build                                   # build the engine and implemented products
+bun run test                                    # judgment, engine and implemented product tests
 
 bun run --cwd packages/judgment proof           # live proof of every pattern and compound
 bun run --cwd packages/judgment calibrate       # live calibration of every battery
@@ -127,7 +130,7 @@ bun run observe:report                          # decision-log analytics
 bun run judgment:lint                           # every registered decision has fixtures; no Jev call outside one
 ```
 
-The root `prepare` script points git at `.githooks/`. When a commit stages engine source, the engine's `package.json`, or product source, tests, scripts or configuration, the pre-commit hook runs the credential scope check, the build, the typecheck and the API report check.
+The root `prepare` script points git at `.githooks/`. The local pre-commit hook runs the source-only credential scope check for engine and product implementation/config changes. Run focused behavior tests during development and `bun run validate` for a complete local integration check. Required CI still runs the full build, types, API, product, browser and containment checks against the reviewed commit. A successful commit alone does not establish merge readiness.
 
 ## License
 

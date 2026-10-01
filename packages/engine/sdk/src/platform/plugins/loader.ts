@@ -13,7 +13,7 @@ import type { VoiceProviderRegistry } from '../voice/index.js';
 import type { MediaProviderRegistry } from '../media/index.js';
 import type { WebSearchProviderRegistry } from '../web-search/index.js';
 import { summarizeError } from '../utils/error-display.js';
-import type { PluginInFlightTracker } from './in-flight.js';
+import { PluginInFlightTracker } from './in-flight.js';
 
 export interface PluginPathOptions {
   readonly cwd: string;
@@ -188,6 +188,21 @@ export interface PluginLoaderDeps {
   inFlight?: PluginInFlightTracker | undefined;
 }
 
+/** Cleanup failures remain observable to an awaited lifetime owner. */
+export class PluginCleanupError extends AggregateError {
+  constructor(pluginName: string, errors: unknown[]) {
+    super(errors, `Plugin '${pluginName}' cleanup did not complete`);
+    this.name = 'PluginCleanupError';
+  }
+}
+
+export interface PluginCleanupOptions {
+  /** Keep legacy best-effort behavior by default; owners can require evidence. */
+  readonly throwOnCleanupError?: boolean;
+}
+
+const registrationLifetimes = new WeakMap<LoadedPlugin, PluginInFlightTracker>();
+
 /**
  * loadPlugin, Load, init, and activate a single plugin.
  * Returns a LoadedPlugin on success, or null on failure.
@@ -199,6 +214,7 @@ export async function loadPlugin(
   discovered: DiscoveredPlugin,
   deps: PluginLoaderDeps,
   cacheBust?: number,
+  options: PluginCleanupOptions = {},
 ): Promise<LoadedPlugin | null> {
   const { manifest, pluginDir } = discovered;
   const entryFile = manifest.main ?? 'index.js';
@@ -227,6 +243,8 @@ export async function loadPlugin(
     cleanup: [],
   };
 
+  const registrations = new PluginInFlightTracker();
+  registrationLifetimes.set(loaded, registrations);
   try {
     // Dynamic import, Bun supports TS imports directly.
     // Append cache-bust query param on reload so Bun re-executes the module.
@@ -271,6 +289,7 @@ export async function loadPlugin(
       pluginConfig: deps.getPluginConfig(manifest.name),
       cleanup: loaded.cleanup,
       inFlight: deps.inFlight,
+      registrations,
     };
 
     const api = createPluginAPI(ctx);
@@ -288,13 +307,21 @@ export async function loadPlugin(
     return loaded;
   } catch (err) {
     logger.error(`[plugins] ${manifest.name}: load failed, ${summarizeError(err)}`);
+    // Stop retained APIs and drain admitted async registrations before cleanup.
+    await registrations.close();
+    const cleanupErrors: unknown[] = [];
     // Run cleanup for anything that was registered before the error
     for (const fn of loaded.cleanup) {
       try {
         fn();
       } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
         logger.warn(`[plugins] ${manifest.name}: cleanup after failed load threw, ${summarizeError(cleanupError)}`);
       }
+    }
+    loaded.cleanup.length = 0;
+    if (options.throwOnCleanupError && cleanupErrors.length > 0) {
+      throw new PluginCleanupError(manifest.name, cleanupErrors);
     }
     return null;
   }
@@ -303,14 +330,17 @@ export async function loadPlugin(
 /**
  * unloadPlugin, Deactivate a plugin and run all cleanup callbacks.
  */
-export async function unloadPlugin(plugin: LoadedPlugin): Promise<void> {
+export async function unloadPlugin(plugin: LoadedPlugin, options: PluginCleanupOptions = {}): Promise<void> {
+  await registrationLifetimes.get(plugin)?.close();
   if (!plugin.active) return;
+  const errors: unknown[] = [];
 
   try {
     if (typeof plugin.entry?.deactivate === 'function') {
       await plugin.entry.deactivate();
     }
   } catch (err) {
+    errors.push(err);
     logger.warn(`[plugins] ${plugin.manifest.name}: deactivate threw, ${summarizeError(err)}`);
   }
 
@@ -318,10 +348,14 @@ export async function unloadPlugin(plugin: LoadedPlugin): Promise<void> {
     try {
       fn();
     } catch (err) {
+      errors.push(err);
       logger.warn(`[plugins] ${plugin.manifest.name}: cleanup threw, ${summarizeError(err)}`);
     }
   }
   plugin.cleanup.length = 0;
   plugin.active = false;
+  if (options.throwOnCleanupError && errors.length > 0) {
+    throw new PluginCleanupError(plugin.manifest.name, errors);
+  }
   logger.info(`[plugins] ${plugin.manifest.name} deactivated`);
 }

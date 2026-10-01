@@ -2,6 +2,8 @@ import type { ToolDefinition } from '../types/tools.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { JudgmentError, type JudgmentPort } from '@goodvibes-jev/judgment';
+import { executePolicyCheck } from '../gate/execute-policy-check.js';
 import { paramFill, paramFillCandidate, paramFillContext } from './batteries/param-fill.js';
 import { booleanValue, booleanValueView } from './batteries/boolean-value.js';
 
@@ -33,12 +35,18 @@ export interface RepairResult {
  * and a JudgmentError from either propagates. Calls that are already correct
  * pass through unchanged, and a call with no such string and no missing
  * required string parameter asks nothing.
+ *
+ * The original execution signal also owns this caller's repair wait. A
+ * cancelled reading cannot apply a late answer, even when a borrowed port
+ * ignores cancellation. Abort reasons are never exposed as repair errors.
  */
 export async function repairToolCall(
   toolName: string,
   args: Record<string, unknown>,
   schema: ToolDefinition,
+  signal?: AbortSignal,
 ): Promise<RepairResult> {
+  assertRepairActive(signal);
   let fixed: Record<string, unknown>;
   const repairs: string[] = [];
   const booleanStrings: Array<{ key: string; value: string }> = [];
@@ -110,6 +118,8 @@ export async function repairToolCall(
     }
 
   } catch (err) {
+    // Cancellation is not a format failure and must not become a warning.
+    assertRepairActive(signal);
     // Never let repair logic crash the caller
     const warning = `Auto-repair skipped for tool '${toolName}': ${summarizeError(err)}`;
     logger.warn('repairToolCall: unexpected error produced warning result', {
@@ -123,13 +133,15 @@ export async function repairToolCall(
   for (const { key, value } of booleanStrings) {
     const description = properties[key]?.['description'];
     const run = await booleanValue.run(
-      judgmentPort(BOOLEAN_VALUE_SITE),
+      repairPort(BOOLEAN_VALUE_SITE, signal),
       booleanValueView(toolName, key, typeof description === 'string' ? description : undefined, value),
-      { site: BOOLEAN_VALUE_SITE },
+      { site: BOOLEAN_VALUE_SITE, ...(signal === undefined ? {} : { signal }) },
     );
+    assertRepairActive(signal);
     const reading = run.readings.boolean_value;
     const meant = reading.outcome === 'act' && reading.choice !== 'neither' ? reading.choice === 'true' : undefined;
     run.recordAction(meant === undefined ? `left ${key} as sent` : `coerced ${key} to ${meant}`);
+    assertRepairActive(signal);
     if (meant !== undefined) {
       fixed[key] = meant;
       repairs.push(`coerced ${key} from '${value}' to boolean ${meant}`);
@@ -141,7 +153,8 @@ export async function repairToolCall(
     if (requiredKey in fixed) continue;
     const targetSchema = properties[requiredKey];
     if (targetSchema?.['type'] !== 'string') continue; // only string params
-    const candidate = await _pickStringCandidate(toolName, schema, requiredKey, fixed, properties, required);
+    const candidate = await _pickStringCandidate(toolName, schema, requiredKey, fixed, properties, required, signal);
+    assertRepairActive(signal);
     if (candidate !== null) {
       fixed[requiredKey] = candidate.value;
       delete fixed[candidate.sourceKey];
@@ -151,6 +164,7 @@ export async function repairToolCall(
     }
   }
 
+  assertRepairActive(signal);
   const repaired = repairs.length > 0;
 
   if (repaired) {
@@ -166,6 +180,42 @@ export async function repairToolCall(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+function assertRepairActive(signal?: AbortSignal): void {
+  // A caller's arbitrary abort reason can contain private context. Keep the
+  // judgment protocol's typed cancellation without retaining that reason.
+  if (signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
+}
+
+/**
+ * Interrupt the ask, before the battery can attach readings or apply an
+ * answer. The existing wait helper drains late rejections and removes this
+ * caller's listener; it never cancels another caller's reading.
+ */
+function repairPort(site: string, signal?: AbortSignal): JudgmentPort {
+  assertRepairActive(signal);
+  const port = judgmentPort(site);
+  if (!signal) return port;
+  const recorder = port.recorder;
+  return {
+    get model() { return port.model; },
+    ...(recorder === undefined ? {} : { recorder: {
+      recordReadings(id, readings) { assertRepairActive(signal); recorder.recordReadings(id, readings); },
+      recordAction(id, action) { assertRepairActive(signal); recorder.recordAction(id, action); },
+    } satisfies JudgmentPort['recorder'] }),
+    ...(port.health === undefined ? {} : { health: () => port.health!() }),
+    async ask(request) {
+      try {
+        const result = await executePolicyCheck(() => port.ask(request), signal);
+        assertRepairActive(signal);
+        return result;
+      } catch (error) {
+        assertRepairActive(signal);
+        throw error;
+      }
+    },
+  };
+}
 
 /**
  * Rule 1: the agent tool's `mode`, when the arguments settle it. `task` and
@@ -196,6 +246,7 @@ async function _pickStringCandidate(
   args: Record<string, unknown>,
   properties: Record<string, Record<string, unknown>>,
   required: string[],
+  signal?: AbortSignal,
 ): Promise<{ sourceKey: string; value: string } | null> {
   const spare = Object.entries(args).filter(([key, value]) => {
     if (required.includes(key)) return false;
@@ -210,13 +261,15 @@ async function _pickStringCandidate(
     return typeof description === 'string' ? description : undefined;
   };
   const selection = await paramFill.select(
-    judgmentPort(PARAM_FILL_SITE),
+    repairPort(PARAM_FILL_SITE, signal),
     paramFillContext(toolName, schema.description, targetKey, describe(targetKey)),
     spare.map(([key, value]) => paramFillCandidate(key, value, describe(key))),
-    { site: PARAM_FILL_SITE },
+    { site: PARAM_FILL_SITE, ...(signal === undefined ? {} : { signal }) },
   );
+  assertRepairActive(signal);
   const filled = selection.chosen !== undefined && selection.outcome === 'act';
   selection.recordAction(filled ? `filled ${targetKey} from ${selection.chosen}` : `left ${targetKey} missing`);
+  assertRepairActive(signal);
   if (!filled) return null;
   const picked = spare.find(([key]) => key === selection.chosen);
   return picked ? { sourceKey: picked[0], value: picked[1] } : null;

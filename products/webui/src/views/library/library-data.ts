@@ -99,13 +99,3 @@ export function useReviewCount(): number {
     .filter((c) => isUndecidedCandidate(firstString(c, ['status']) || 'unknown')).length;
   return queued + proposals + undecided;
 }
-
-/** A status word from the daemon to a StatusDot tone. Unknown words stay idle. */
-export function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'info' | 'idle' {
-  const s = status.toLowerCase();
-  if (['completed', 'complete', 'succeeded', 'success', 'ok', 'ready', 'accepted', 'done', 'healthy'].includes(s)) return 'ok';
-  if (['failed', 'error', 'rejected', 'blocked', 'cancelled'].includes(s)) return 'bad';
-  if (['running', 'queued', 'pending', 'in_progress', 'in-progress', 'indexing'].includes(s)) return 'info';
-  if (['stale', 'warning', 'degraded', 'superseded'].includes(s)) return 'warn';
-  return 'idle';
-}

@@ -4,6 +4,7 @@ import { repairToolCall } from './auto-repair.js';
 import { ToolContractVerifier } from '../runtime/tools/contract-verifier.js';
 import type { ContractVerificationResult, ContractVerifierOptions } from '../runtime/tools/contract-verifier.js';
 import { summarizeError } from '../utils/error-display.js';
+import { JudgmentError } from '@goodvibes-jev/judgment';
 
 /**
  * ToolRegistry - Central registry for all tools available to the LLM.
@@ -99,8 +100,8 @@ export class ToolRegistry {
   /**
    * Execute a named tool with the given arguments. Wraps errors in ToolResult.
    *
-   * `opts.signal` is an additive pass-through to
-   * `tool.execute`, only tools that opt in (exec, fetch) read it. Callers
+   * `opts.signal` cancels pending argument repair and passes through to
+   * `tool.execute`, where tools that opt in (exec, fetch) read it. Callers
    * that don't have a cancellation signal (the common case) omit `opts`.
    */
   async execute(
@@ -121,10 +122,14 @@ export class ToolRegistry {
       };
     }
 
+    const signal = opts?.signal;
     try {
       // Attempt to repair malformed args before execution.
       // Premium models that send correct calls pass through unchanged.
-      const repairResult = await repairToolCall(name, args, tool.definition);
+      const repairResult = await repairToolCall(name, args, tool.definition, signal);
+      // Repair may settle in the same microtask as cancellation. Recheck the
+      // original signal before handing execution to even an unwrapped tool.
+      if (signal?.aborted) throw new JudgmentError('aborted', 'the judgment call was cancelled');
       const effectiveArgs = repairResult.repaired ? repairResult.fixed : args;
 
       const result = await tool.execute(effectiveArgs, opts);
@@ -135,8 +140,9 @@ export class ToolRegistry {
         toolResult.warnings = [...(toolResult.warnings ?? []), ...repairResult.warnings];
       }
 
-      // Surface repairs to the LLM so it knows what was auto-fixed
-      if (repairResult.repaired) {
+      // Surface repairs without corrupting a cancelled tool's
+      // structured output, which the orchestrator preserves for its callers.
+      if (repairResult.repaired && !toolResult.cancelled && !signal?.aborted) {
         const repairNote = `[Auto-repaired: ${repairResult.repairs.join(', ')}]`;
         if (typeof toolResult.output === 'string') {
           toolResult.output = `${repairNote}\n${toolResult.output}`;

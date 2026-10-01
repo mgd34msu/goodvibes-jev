@@ -138,6 +138,7 @@ mock.module('./lib/goodvibes', () => ({
   setExplicitAuthToken: () => Promise.resolve({}),
   clearStoredAuthToken: () => Promise.resolve(undefined),
   invokeMethod: () => Promise.resolve({}),
+  runBrowserJudgment: () => Promise.reject(new Error('Judgment is not installed in this app fixture.')),
   sdk: {
     operator: {
       control: { status: () => Promise.resolve({}), snapshot: () => Promise.resolve({}) },

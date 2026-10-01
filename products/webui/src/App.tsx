@@ -320,7 +320,9 @@ export default function App() {
   const recentChats = useMemo(
     () => chatSessionItems.map((session, index) => {
       const id = bestId(session) || String(index);
-      return { id, title: bestTitle(session, id) };
+      const updatedAt = asRecord(session).updatedAt;
+      return { id, title: bestTitle(session, id), judgmentSessionId: firstString(session, ['id', 'sessionId']),
+        updatedAt: typeof updatedAt === 'number' && Number.isFinite(updatedAt) ? updatedAt : undefined };
     }),
     [chatSessionItems],
   );
@@ -370,6 +372,8 @@ export default function App() {
         title: chat.title || 'Untitled chat',
         group: 'chats',
         keywords: ['chat', 'open', 'recent'],
+        ...(chat.judgmentSessionId ? { judgmentSource: { kind: 'chat' as const, sessionId: chat.judgmentSessionId } } : {}),
+        sourceRevision: chat.updatedAt,
         run: () => handleOpenChat(chat.id),
       });
       return id;
