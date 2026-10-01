@@ -93,11 +93,13 @@ export function createAgentManagerDecompositionRunner(
   return {
     async run(request: DecompositionRunnerRequest): Promise<DecompositionRunResult> {
       const start = now();
+      if (request.signal?.aborted) return { status: 'cancelled', output: '', elapsedMs: 0, detail: 'stopped before planner admission' };
 
       const spawnInput: AgentInput = {
         mode: 'spawn',
         task: request.userPrompt,
         template: 'planner',
+        workingDirectory: request.workingDir,
         tools: [...PLANNER_DECOMPOSITION_TOOLS],
         restrictTools: true,
         executionIntent: { filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' },

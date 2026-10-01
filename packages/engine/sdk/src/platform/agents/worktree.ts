@@ -390,9 +390,9 @@ export class IsolatedWorktree {
   }
 
   /** Add the worktree on a fresh `branch` branched from base (the root tree's current HEAD). */
-  async create(): Promise<void> {
+  async create(startPoint?: string, checkout = true): Promise<void> {
     logger.debug('IsolatedWorktree.create', { path: this.path, branch: this.branch });
-    await this.rootGit.worktreeAdd(this.path, this.branch);
+    await this.rootGit.worktreeAdd(this.path, this.branch, startPoint, checkout);
   }
 
   /**

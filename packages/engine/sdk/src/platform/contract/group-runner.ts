@@ -21,6 +21,8 @@
  *   merged. In shared mode the engine cannot run siblings apart, so the unit
  *   runs once and the decision says so.
  */
+import { initializeContractMemberWorktree } from './input-snapshot.js';
+
 import { spawnSync } from 'node:child_process';
 import type { CreateWorkstreamInput, OrchestrationEngine } from '../orchestration/engine.js';
 import type { FleetCapacityFn } from '../orchestration/elastic-pool.js';
@@ -45,6 +47,7 @@ export interface ContractEngineInput {
   readonly stateRoot: string;
   /** The contract id: its snapshots get their own directory, since every contract names its groups g1, g2... */
   readonly stateNamespace: string;
+  readonly initializeWorktree?: import('../orchestration/worktree-isolation.js').WorktreeIsolationManagerDeps['initializeWorktree'];
   readonly contractUnitSettlement: ContractUnitSettlement;
   readonly fleetCapacity: FleetCapacityFn;
   /** The `contract.best-of-n` selector over this contract's attempts, for `fleet.attempts.judge` (design 6.2). */
@@ -137,6 +140,7 @@ export function createGroupRunner(deps: GroupRunnerDeps): GroupRunner {
       projectRoot: contract.worktreePath ?? contract.projectRoot,
       stateRoot: contract.projectRoot,
       stateNamespace: contract.id,
+      ...(contract.inputSnapshot === undefined ? {} : { initializeWorktree: (worktree: import('../agents/worktree.js').IsolatedWorktree) => initializeContractMemberWorktree(contract.worktreePath!, worktree) }),
       contractUnitSettlement: deps.settlement,
       fleetCapacity: deps.fleetCapacity,
       judgeAttempts: createContractAttemptJudge(run),

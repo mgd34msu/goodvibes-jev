@@ -46,6 +46,7 @@ import { emitContractEvent } from './events.js';
 import type { OwnerReplyOutcome } from './escalation.js';
 import { createGroupRunner, takeBaseline, type ContractEngineInput } from './group-runner.js';
 import { CONTRACT_RUNNER_AGENT_ID } from './nudge.js';
+import { captureContractInput, contractInputPath, materializeContractInput, assertContractInputView, assertContractExecutionView, prepareContractInputParent } from './input-snapshot.js';
 import { planContract, shapeContract, type ContractPlannerDeps, type PlanningOutcome, type ShapeOutcome } from './planner.js';
 import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } from './plan-sync.js';
 import { createContractResume, type ResumeReport } from './resume.js';
@@ -98,6 +99,7 @@ export interface ContractRunnerDeps {
   /** The execution plan: items a unit's agents worked on complete when the unit passes (design 6.5). */
   readonly planManager?: ExecutionPlans | undefined;
   /** The repository summary the planner starts from; defaults to the repo_map tool. */
+  readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   readonly repositoryMap?: ((projectRoot: string) => Promise<string>) | undefined;
   readonly now?: (() => number) | undefined;
 }
@@ -572,14 +574,43 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       configManager: deps.configManager,
       emit: (event) => run.emit(event),
       ...(deps.repositoryMap === undefined ? {} : { repositoryMap: deps.repositoryMap }),
+      readAccessFilter: deps.readAccessFilter,
       now,
     };
+  }
+
+  /** Admit one local generation before shaping, repository mapping or planner execution. */
+  async function prepareInput(run: ContractRun): Promise<void> {
+    const { contract } = run;
+    if (contract.inputSnapshot !== undefined) {
+      await assertContractInputView(contract.inputSnapshot, run.abort.signal);
+      if (contract.isolation === 'worktree') assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, contract.branch!);
+      return;
+    }
+    if (contract.isolation !== 'worktree') return;
+    if (contract.schemaVersion < 2) throw new Error('legacy worktree contract has no recorded input receipt; manual recovery is required');
+    const snapshot = await captureContractInput(contract.projectRoot, { signal: run.abort.signal });
+    contract.inputSnapshot = snapshot;
+    // Persist provenance before any workspace/model admission. Partial creation is retained and holds recovery.
+    if (!deps.store.write(contract.id)) throw new Error('contract input receipt could not be persisted');
+    run.abort.signal.throwIfAborted();
+    const inputPath = contractInputPath(snapshot);
+    await prepareContractInputParent(snapshot, inputPath);
+    await prepareContractInputParent(snapshot, contract.worktreePath!);
+    await new IsolatedWorktree(contract.projectRoot, inputPath, `contract-input/${snapshot.id}`, contract.baseBranch ?? 'main').create(snapshot.inputCommit, false);
+    await materializeContractInput(snapshot, inputPath, run.abort.signal);
+    run.abort.signal.throwIfAborted();
+    await new IsolatedWorktree(contract.projectRoot, contract.worktreePath!, contract.branch!, contract.baseBranch ?? 'main').create(snapshot.inputCommit, false);
+    await materializeContractInput(snapshot, contract.worktreePath!, run.abort.signal);
+    run.decide('created', contract.id, `admitted local input generation ${snapshot.id}; captured ${snapshot.files.length} paths`);
   }
 
   /** Shapes and plans a contract, then runs its groups. */
   async function activate(run: ContractRun): Promise<void> {
     const { contract } = run;
     try {
+      await prepareInput(run);
+      if (run.terminal) return;
       const shaped = await shapeContract(contract, plannerDeps(run), { signal: run.abort.signal });
       if (contract.shape !== undefined) settleSessionMode(run);
       if (!proceed(run, shaped)) return;
@@ -595,6 +626,8 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
   /** Plans a shaped contract from the beginning (a restart stopped its planning), then runs the accepted plan. */
   async function replan(run: ContractRun): Promise<void> {
     try {
+      await prepareInput(run);
+      if (run.terminal) return;
       const planned = await planContract(run.contract, plannerDeps(run), { proposedUnits: run.proposedUnits, signal: run.abort.signal });
       await continuePlanning(run, planned);
     } catch (error) {
@@ -643,11 +676,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner {
       updateOwnerProgress(run);
       return;
     }
-    // A worktree made before a restart stopped planning is the contract's still.
-    if (contract.isolation === 'worktree' && contract.worktreePath !== undefined && contract.branch !== undefined && !existsSync(contract.worktreePath)) {
-      await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').create();
-      if (run.terminal) return;
-    }
+    if (contract.isolation === 'worktree' && (contract.inputSnapshot === undefined || contract.worktreePath === undefined || !existsSync(contract.worktreePath))) throw new Error('contract input workspace is missing; automatic recapture is not allowed');
     groups.startRun(run);
     updateOwnerProgress(run);
   }
