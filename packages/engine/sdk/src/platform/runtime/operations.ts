@@ -1,3 +1,4 @@
+export { TREE_GLYPHS_CONFIG_KEY, readTreeGlyphSet, type TreeGlyphSetName } from './tree-glyph-setting.js';
 export * from './remote/index.js';
 export type { RemoteSessionBundle } from './remote/types.js';
 export * from './tasks/index.js';
