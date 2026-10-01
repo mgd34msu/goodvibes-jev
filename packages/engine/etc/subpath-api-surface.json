@@ -43120,6 +43120,16 @@
       "text": "export declare class TGIProvider extends DiscoveredCompatProvider { }"
     },
     {
+      "name": "TierPromptAudience",
+      "kind": "type",
+      "text": "export type TierPromptAudience = 'agent' | 'conversation';"
+    },
+    {
+      "name": "TierPromptSupplementOptions",
+      "kind": "interface",
+      "text": "export interface TierPromptSupplementOptions { readonly audience?: TierPromptAudience | undefined; }"
+    },
+    {
       "name": "TokenLimits",
       "kind": "interface",
       "text": "export interface TokenLimits { maxOutputTokens?: number | undefined; maxToolResultTokens?: number | undefined; maxToolCalls?: number | undefined; maxReasoningTokens?: number | undefined; }"
@@ -43411,7 +43421,7 @@
     {
       "name": "getTierPromptSupplement",
       "kind": "function",
-      "text": "export declare function getTierPromptSupplement(tier: ModelTier): string;"
+      "text": "export declare function getTierPromptSupplement(tier: ModelTier, options?: TierPromptSupplementOptions): string;"
     },
     {
       "name": "hasKeyForProvider",
@@ -43496,7 +43506,7 @@
     {
       "name": "readTierPromptSupplement",
       "kind": "function",
-      "text": "export declare function readTierPromptSupplement(model: ModelFacts, tiers: Pick<ModelTierStore, 'read'>, site?: string): Promise<string>; ;; via ModelFacts = export interface ModelFacts { readonly registryKey: string; readonly id: string; readonly name: string; readonly provider: string; readonly family?: string | undefined; readonly contextWindow?: number | undefined; readonly maxOutputTokens?: number | undefined; readonly price?: { readonly input: number; readonly output: number; } | 'free' | 'subscription' | 'unpriced' | undefined; readonly reasoning?: boolean | undefined; readonly inputModalities?: readonly string[] | undefined; readonly benchmark?: number | null | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function readTierPromptSupplement(model: ModelFacts, tiers: Pick<ModelTierStore, 'read'>, site?: string, options?: TierPromptSupplementOptions & { readonly signal?: AbortSignal | undefined; }): Promise<string>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; ModelFacts = export interface ModelFacts { readonly registryKey: string; readonly id: string; readonly name: string; readonly provider: string; readonly family?: string | undefined; readonly contextWindow?: number | undefined; readonly maxOutputTokens?: number | undefined; readonly price?: { readonly input: number; readonly output: number; } | 'free' | 'subscription' | 'unpriced' | undefined; readonly reasoning?: boolean | undefined; readonly inputModalities?: readonly string[] | undefined; readonly benchmark?: number | null | undefined; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "reasoningEffortLevels",
