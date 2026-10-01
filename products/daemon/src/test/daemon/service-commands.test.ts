@@ -1382,45 +1382,27 @@ describe('reconcileRedundantLegacyUnit: auto-retire a redundant install-script u
     expect(calls).toEqual([]); // short-circuits before any systemctl call
   });
 
-  test('default runner is hard-timeout-bounded: a hanging systemctl (wedged user bus) degrades to a fast refusal, never a boot hang', async () => {
-    // Reproduces the verifier's frozen-event-loop probe: a fake systemctl that
-    // sleeps forever. Without a spawnSync timeout the reconcile blocked the
-    // daemon's event loop indefinitely; with it, the probe times out (status
-    // null) and the guard refuses within the bound.
-    //
-    // The stub is addressed by ABSOLUTE PATH through `systemctlCommand`. This
-    // test used to prepend its stub's directory to `process.env.PATH`, which
-    // does nothing under Bun (a spawned program is resolved from the PATH
-    // captured at process start): every run of this test actually queried the
-    // HOST's systemctl, so it only passed while the developer's own
-    // goodvibes.service happened to be inactive, and, with an active one, it
-    // could have dispatched a real `systemctl --user disable`.
+  test('default runner times out an invoked systemctl stub and refuses retirement', async () => {
+    // The actual runner gets an absolute fixture executable, never the host's
+    // systemctl. Without its deadline the child eventually prints active, so
+    // the refusal reason changes independently of the test's hang ceiling.
     const dir = makeOwnedTempDir('gv-reconcile-timeout');
     const stub = join(dir, 'systemctl');
-    writeFileSync(stub, '#!/bin/sh\nexec sleep 30\n');
+    const marker = `${stub}.invoked`;
+    writeFileSync(stub, `#!${process.execPath}\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'started');\nsetTimeout(() => process.stdout.write('active\\n'), 2500);\n`);
     chmodSync(stub, 0o755);
     try {
-      const startedAt = Date.now();
       const result = await reconcileRedundantLegacyUnit(baseReconcileInput({
-        // No actionRunner: exercises the DEFAULT spawnSync runner against the
-        // hanging stub, with a short injected timeout to keep the suite fast.
         systemctlCommand: stub,
         systemctlTimeoutMs: 500,
       }));
-      const elapsedMs = Date.now() - startedAt;
-
+      expect(existsSync(marker)).toBe(true);
       expect(result.action).toBe('noop');
-      expect(result.reason).toBe('canonical-not-active'); // timed-out probe = not provably active
-      expect(elapsedMs).toBeGreaterThanOrEqual(400); // the hanging stub really ran and really timed out
-      expect(elapsedMs).toBeLessThan(10_000); // bounded, not the stub's 30s hang
+      expect(result.reason).toBe('canonical-not-active');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-    // The threshold above is 10 s and bun's default per-test budget is 5 s, so
-    // without this the test died of the timeout before `elapsedMs` could ever
-    // reach the number it is compared against, the bound was decorative. The
-    // budget now sits above the threshold so the assertion is what fails.
-  }, 60_000);
+  }, 20_000);
 
   test('one CUMULATIVE deadline covers the whole pass: once exceeded, remaining calls are skipped with a notice', async () => {
     // Pins the degraded-bus (slow-but-completing) shape: per-call timeouts

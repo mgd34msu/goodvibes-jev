@@ -104,5 +104,5 @@ export {
 } from './offer-copy.js';
 export type { PairingOfferCopy } from './offer-copy.js';
 
-export { ensurePublicBaseUrl, isHttpOnLan, resolvePairingWebOrigin } from './web-origin.js';
+export { ensurePublicBaseUrl, formatHttpOrigin, isHttpOnLan, resolvePairingWebOrigin } from './web-origin.js';
 export type { PairingWebOrigin } from './web-origin.js';
