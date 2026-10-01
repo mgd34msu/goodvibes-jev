@@ -82,7 +82,7 @@ React Native, Expo, and Cloudflare Worker bridges follow the same pattern from t
 | Entry point | What it is |
 | --- | --- |
 | [`@goodvibes-jev/engine/sdk`](./sdk) | The full platform runtime (sessions, agents, providers, knowledge, control plane, daemon route handlers) plus thin client factories for Bun, browser, React Native, Expo, and Cloudflare Workers. |
-| [`@goodvibes-jev/engine/toolchain`](./toolchain) | The CI/CD toolchain: release cut, npm publish, per-job-green verification, coverage and SBOM gates. Invoked as `bunx @goodvibes-jev/engine/toolchain <tool>` from every GoodVibes repo's release workflow. |
+| [`@goodvibes-jev/engine/toolchain`](./toolchain) | The CI/CD toolchain: release cut, npm publish, per-job-green verification, and coverage checks. Invoked as `bunx @goodvibes-jev/engine/toolchain <tool>` from every GoodVibes repo's release workflow. |
 | [`@goodvibes-jev/engine/contracts`](./contracts) | Runtime-neutral operator and peer contract artifacts, generated method IDs, and lookup helpers that the `sdk` entry points and every client surface share. |
 
 The same install also carries `errors`, `transport-core`, `transport-http`, `transport-realtime`, `daemon-sdk`, `operator-sdk`, `peer-sdk`, and `terminal-shell`, each imported as `@goodvibes-jev/engine/<name>`; none is a separate install step. The full entry-point matrix is [docs/packages.md](./docs/packages.md).
@@ -135,7 +135,7 @@ bun run build
 | `bun run api:extract` / `bun run api:check` | Regenerate / verify the API Extractor reports under `etc/*.api.md` |
 | `bun run refresh:contracts` | Regenerate contract JSON artifacts and their generated docs after a contract change |
 
-CI (`.github/workflows/ci.yml`) runs `validate`, a standing eval gate scored against a checked-in baseline, a dependency and secret-scan audit, a single `build` that every downstream job restores rather than rebuilding, a `platform-matrix` job (Bun tests plus companion-bundle and Workers runtime legs), a types-resolution check over the packed exports map, `publint`, an SBOM check, and a packaged-artifact conformance lane. On a green `main` push, an auto-release job tags and dispatches the release, but only while the repo's `RELEASE_ARMED` variable is set. Full gate reference: [docs/testing-and-validation.md](./docs/testing-and-validation.md).
+CI (`.github/workflows/ci.yml`) runs `validate`, a standing eval gate scored against a checked-in baseline, a dependency and secret-scan audit, a single `build` that every downstream job restores rather than rebuilding, a `platform-matrix` job (Bun tests plus companion-bundle and Workers runtime legs), a types-resolution check over the packed exports map, `publint`, and a packaged-artifact conformance lane. On a green `main` push, an auto-release job tags and dispatches the release, but only while the repo's `RELEASE_ARMED` variable is set. Full gate reference: [docs/testing-and-validation.md](./docs/testing-and-validation.md).
 
 ---
 
