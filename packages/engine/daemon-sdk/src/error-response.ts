@@ -29,6 +29,8 @@ export interface JsonErrorResponseOptions {
    * Pass `true` only for admin/operator-authenticated callers.
    */
   readonly isPrivileged?: boolean | undefined;
+  /** Trusted issuer output only. A thrown value's errorRef is never forwarded; requires an authenticated privileged response. */
+  readonly errorRef?: string | undefined;
   /**
    * What Jev read in the error's wording. Without it the category comes from
    * structure alone; {@link readErrorResponseBody} supplies it.
@@ -250,7 +252,8 @@ function readBooleanProperty(value: unknown): boolean | undefined {
 }
 
 /**
- * Normalize any thrown value into a `StructuredDaemonErrorBody`.
+ * Normalize any thrown value into an owned, frozen `StructuredDaemonErrorBody`.
+ * Only documented scalar fields are retained; caller identity and serialization hooks are not.
  *
  * Handles `GoodVibesSdkError`, structured error-like objects, plain error-property
  * objects, and raw strings or `Error` instances. Internal pipeline fields
@@ -265,19 +268,50 @@ export function buildErrorResponseBody(
   error: unknown,
   options: JsonErrorResponseOptions = {},
 ): StructuredDaemonErrorBody {
-  // only expose internal pipeline fields to privileged callers.
   const isPrivileged = options.isPrivileged === true;
+  const suppliedReference = isPrivileged ? options.errorRef : undefined;
+  const errorRef = typeof suppliedReference === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedReference)
+    ? suppliedReference : undefined;
+  const body = captureErrorBodyFields(buildUnreferencedErrorResponseBody(error, options, isPrivileged));
+  if (errorRef !== undefined) Object.defineProperty(body, 'errorRef', { value: errorRef, enumerable: true });
+  return Object.freeze(body);
+}
+
+/** Only documented scalar fields enter the owned wire body. No supplied serialization hook is copied or called. */
+function captureErrorBodyFields(input: StructuredDaemonErrorBody): StructuredDaemonErrorBody {
+  const fields = Object.getOwnPropertyDescriptors(input);
+  const value = (key: string): unknown => {
+    const field = fields[key]; return field && Object.hasOwn(field, 'value') ? field.value : undefined;
+  };
+  const error = value('error');
+  const out = Object.assign(Object.create(null) as Record<string, unknown>, { error: typeof error === 'string' ? error : 'Unexpected error' });
+  for (const key of ['hint', 'code', 'provider', 'operation', 'phase', 'requestId', 'providerCode', 'providerType']) {
+    const field = value(key); if (typeof field === 'string') out[key] = field;
+  }
+  const category = value('category'); const source = value('source');
+  if (typeof category === 'string' && normalizeCategory(category) !== undefined) out.category = category;
+  if (typeof source === 'string' && normalizeSource(source) !== undefined) out.source = source;
+  const recoverable = value('recoverable'); if (typeof recoverable === 'boolean') out.recoverable = recoverable;
+  const status = value('status'); if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) out.status = status;
+  const retry = value('retryAfterMs'); if (typeof retry === 'number' && Number.isFinite(retry) && retry >= 0) out.retryAfterMs = retry;
+  return out as unknown as StructuredDaemonErrorBody;
+}
+
+function buildUnreferencedErrorResponseBody(error: unknown, options: JsonErrorResponseOptions, isPrivileged: boolean): StructuredDaemonErrorBody {
+  // Only expose internal pipeline fields to the privilege value captured by the caller.
   if (isStructuredDaemonErrorBody(error)) {
-    if (isPrivileged) return error;
+    const captured = captureErrorBodyFields(error);
+    if (isPrivileged) return captured;
     // strip pipeline-internal fields before returning to unprivileged callers.
     const safe: StructuredDaemonErrorBody = {
-      error: error.error,
-      ...(error.hint !== undefined ? { hint: error.hint } : {}),
-      ...(error.code !== undefined ? { code: error.code } : {}),
-      ...(error.category !== undefined ? { category: error.category } : {}),
-      ...(error.source !== undefined ? { source: error.source } : {}),
-      ...(error.recoverable !== undefined ? { recoverable: error.recoverable } : {}),
-      ...(error.status !== undefined ? { status: error.status } : {}),
+      error: captured.error,
+      ...(captured.hint !== undefined ? { hint: captured.hint } : {}),
+      ...(captured.code !== undefined ? { code: captured.code } : {}),
+      ...(captured.category !== undefined ? { category: captured.category } : {}),
+      ...(captured.source !== undefined ? { source: captured.source } : {}),
+      ...(captured.recoverable !== undefined ? { recoverable: captured.recoverable } : {}),
+      ...(captured.status !== undefined ? { status: captured.status } : {}),
     };
     return safe;
   }
@@ -478,7 +512,7 @@ export async function readJsonErrorResponse(
 function responseFor(body: StructuredDaemonErrorBody, options: JsonErrorResponseOptions): Response {
   const status = options.status ?? body.status ?? 500;
   return Response.json(
-    { ...body, status },
+    Object.assign(Object.create(null) as Record<string, unknown>, body, { status }),
     { status },
   );
 }

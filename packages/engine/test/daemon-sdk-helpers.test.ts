@@ -483,7 +483,7 @@ describe('error-response, buildErrorResponseBody, structured body passthrough', 
     expect(body.recoverable).toBe(false);
   });
 
-  test('StructuredDaemonErrorBody privileged: original object returned as-is', () => {
+  test('StructuredDaemonErrorBody privileged: documented fields are returned in an owned canonical body', () => {
     const structured = {
       error: 'already structured',
       category: 'authentication' as const,
@@ -493,8 +493,10 @@ describe('error-response, buildErrorResponseBody, structured body passthrough', 
       operation: 'chat',
     };
     const body = buildErrorResponseBody(structured, { isPrivileged: true });
-    // Privileged callers get the original object with all fields
-    expect(body).toBe(structured);
+    // Privileged diagnostics are preserved without retaining caller identity/hooks.
+    expect(body).not.toBe(structured);
+    expect(body).toEqual(structured);
+    expect(Object.isFrozen(body)).toBe(true);
     expect((body as { provider?: string }).provider).toBe('openai');
   });
 
