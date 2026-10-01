@@ -4,7 +4,7 @@
  * that policy; unavailable or held readings never authorize disclosure/write.
  */
 import { randomUUID } from 'node:crypto';
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { executePolicyCheck } from '../gate/execute-policy-check.js';
 import {
@@ -40,7 +40,11 @@ interface FileRevision {
 /** Only a genuinely missing file starts empty; read and shape failures propagate. */
 function readRevision(path: string): FileRevision | null {
   let fd: number;
-  try { fd = openSync(path, 'r'); }
+  // Validate the opened object, not a racy pre-stat. A plain read-only open
+  // waits for a FIFO writer before fstat can reject it, blocking cancellation
+  // and the whole event loop. Nonblocking open reaches descriptor validation
+  // immediately; it does not change ordinary regular-file reads.
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw new Error('The account registry could not be read');
