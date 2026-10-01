@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
 import { applyKnowledgeImport, type KnowledgeImportInput, type PrepareKnowledgeImportGraph } from './store-import.js';
 import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
 import { snapshotNodeInput } from './activation/projection.js';
@@ -160,7 +161,9 @@ export class KnowledgeStore {
       throw new RangeError('nodeAutoAcceptConfidence must be a finite 0-100 owner restriction.');
     }
     this.nodeActivationConfidenceFloor = config.nodeAutoAcceptConfidence;
-    this.sqlite = new SQLiteStore(this.dbPath);
+    // Every writer, including ordinary saves and batches, shares this boundary.
+    // Configuration supplied by a caller cannot turn coordination off.
+    this.sqlite = new SQLiteStore(this.dbPath, { coordinated: true });
     void this.init().catch((error: unknown) => {
       logger.error('[knowledge-store] initialization failed', {
         path: this.dbPath,
@@ -367,6 +370,42 @@ export class KnowledgeStore {
 
   getItem(id: string): KnowledgeItemView | null {
     return getKnowledgeItem(this.asReadView(), id);
+  }
+
+  /** Call init() before reading a detached snapshot of the actual stored row. */
+  getSourceSnapshot(selector: { readonly id: string } | { readonly canonicalUri: string }): KnowledgeSourceSnapshot {
+    return this.sqlite.readPersisted((db) => readKnowledgeSourceSnapshot(db, selector));
+  }
+
+  /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */
+  getSourceGeneration(id: string): string | null {
+    return this.getSourceSnapshot({ id }).generation;
+  }
+
+  /** Compare and write synchronously after init; a hold has no durable effects. */
+  async upsertSourceIfCurrent(input: KnowledgeSourceUpsertInput, expectedGeneration: string | null): Promise<KnowledgeSourceWriteResult> {
+    if (expectedGeneration !== null && (typeof expectedGeneration !== 'string' || !/^[a-f0-9]{64}$/.test(expectedGeneration))) {
+      throw new TypeError('Invalid source generation precondition');
+    }
+    let capturedInput: KnowledgeSourceUpsertInput;
+    try { capturedInput = structuredClone(input); } catch { throw new TypeError('Source mutation input must be structured data'); }
+    await this.init();
+    const selector = capturedInput.id ? { id: capturedInput.id }
+      : capturedInput.canonicalUri ? { canonicalUri: capturedInput.canonicalUri } : null;
+    const result = await this.sqlite.transactPersisted<KnowledgeSourceWriteResult>((db) => {
+      const snapshot = selector ? readKnowledgeSourceSnapshot(db, selector) : { source: null, generation: null };
+      if (snapshot.generation !== expectedGeneration) {
+        return { changed: false, value: { kind: 'held', reason: 'source-changed', current: snapshot.source, generation: snapshot.generation } };
+      }
+      const record = prepareKnowledgeSourceRecord(capturedInput, snapshot.source);
+      // No await between the persisted comparison, mutation, and publication.
+      writeKnowledgeSourceRow(db, record);
+      const written = readKnowledgeSourceSnapshot(db, { id: record.id });
+      return { changed: true, value: { kind: 'written', source: written.source!, generation: written.generation! } };
+    }, () => this.refreshSnapshot());
+    if (result.kind === 'completed') return result.value;
+    const current = selector ? this.getSourceSnapshot(selector) : { source: null, generation: null };
+    return { kind: 'held', reason: current.generation === expectedGeneration ? 'pending-local-changes' : 'source-changed', current: current.source, generation: current.generation };
   }
 
   async upsertSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
@@ -981,6 +1020,22 @@ export class KnowledgeStore {
 
   private async initialize(): Promise<void> {
     await this.sqlite.init(createSchema);
+    try {
+      this.refreshSnapshot();
+      // Retention is an initialization mutation, never a side effect of adopting
+      // another writer's current image during a guarded source action. Publish
+      // it through the same baseline check before admitting caller mutations.
+      if (this.pruneJobRuns(MAX_RETAINED_JOB_RUNS) > 0) await this.sqlite.save();
+      this.ready = true;
+    } catch (error) {
+      // No caller mutation can pass init yet. A failed initialization must not
+      // leave its internal retention edits looking ready on the next attempt.
+      this.sqlite.close();
+      throw error;
+    }
+  }
+
+  private refreshSnapshot(): void {
     const snapshot = loadKnowledgeStoreSnapshot(this.sqlite);
     this.sources.clear();
     for (const record of snapshot.sources) this.sources.set(record.id, record);
@@ -994,10 +1049,6 @@ export class KnowledgeStore {
     for (const record of snapshot.extractions) this.extractions.set(record.id, record);
     this.jobRuns.clear();
     for (const record of snapshot.jobRuns) this.jobRuns.set(record.id, record);
-    // Retention at load: an unbounded run history otherwise accretes across
-    // daemon restarts (one record per job run, forever, the incident's
-    // zero-result self-improvement objects were exactly this class).
-    this.pruneJobRuns(MAX_RETAINED_JOB_RUNS);
     this.refinementTasks.clear();
     for (const record of snapshot.refinementTasks) this.refinementTasks.set(record.id, record);
     this.usageRecords.clear();
@@ -1016,6 +1067,5 @@ export class KnowledgeStore {
     }
     this.semanticEnrichmentStates.clear();
     for (const record of snapshot.semanticEnrichmentStates) this.semanticEnrichmentStates.set(record.sourceId, record);
-    this.ready = true;
   }
 }

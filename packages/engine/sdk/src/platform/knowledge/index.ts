@@ -165,6 +165,11 @@ export type {
   ProjectPlanningSpaceInput,
   ProjectPlanningState,
   ProjectPlanningStateResult,
+  ProjectPlanningRevision,
+  ProjectPlanningStateExpectation,
+  ProjectPlanningStateAction,
+  ProjectPlanningStateActionInput,
+  ProjectPlanningStateActionResult,
   ProjectPlanningStateUpsertInput,
   ProjectPlanningStatus,
   ProjectPlanningTask,
@@ -249,6 +254,7 @@ export type {
 } from './knowledge-api.js';
 export { KnowledgeProjectionService } from './projections.js';
 export { KnowledgeStore } from './store.js';
+export type { KnowledgeSourceSnapshot, KnowledgeSourceWriteResult } from './store-source-generation.js';
 export type { KnowledgeGuardedNodeIssueWrites } from './store-node-issue-writes.js';
 export { createKnowledgeNodeOperatorMutation, KnowledgeNodeMutationHeldError } from './store-node-authority.js';
 export type { KnowledgeNodeMutationContext, KnowledgeNodeFieldCorrection } from './store-node-authority.js';
