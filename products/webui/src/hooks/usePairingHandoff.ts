@@ -106,6 +106,12 @@ export function usePairingHandoff(): PairingHandoff {
     void (async () => {
       try {
         await setExplicitAuthToken(token);
+        // First-load auth/boot/health requests may still carry the old token.
+        // Invalidation alone joins an in-flight query when it has no cached data,
+        // leaving a late anonymous 401 authoritative after successful pairing.
+        // Cancel that query lifecycle before starting reads with the new token;
+        // even a transport that cannot abort must not commit its obsolete result.
+        await queryClient.cancelQueries();
         // Auth/boot/health flip to signed-in and the shell reveals.
         await queryClient.invalidateQueries();
         setStatus('idle');
