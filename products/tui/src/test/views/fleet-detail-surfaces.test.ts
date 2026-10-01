@@ -4,33 +4,14 @@
 // ---------------------------------------------------------------------------
 
 import { describe, expect, test } from 'bun:test';
-import type { ProcessNode, ProcessReviewSummary } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
-import { renderFleetDetailLines, renderGraphPostureLines, renderReviewLines } from '../../views/fleet-format.ts';
+import type { ProcessNode } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
+import { renderFleetDetailLines, renderGraphPostureLines } from '../../views/fleet-format.ts';
 import type { WorkstreamGraphSnapshot } from '../../views/workstream-graph-render.ts';
 import { FleetActs, type FleetDiffSurface } from '../../views/fleet-acts.ts';
 import type { FleetGateway, FleetGraphSnapshot } from '../../views/fleet-gateway.ts';
 import { lineToString } from '../setup.ts';
 
-const text = (lines: ReturnType<typeof renderReviewLines>): string => lines.map(lineToString).join('\n');
-
-const review: ProcessReviewSummary = {
-  score: 82,
-  passed: false,
-  cycles: 2,
-  checklist: [
-    { item: 'the parser handles empty input', verified: true, evidence: 'added a test for the empty case', howExercised: 'bun test parser' },
-    { item: 'errors surface a line number', verified: false, evidence: 'no line number in the thrown error' },
-  ],
-};
-
-function chainNode(withReview: boolean): ProcessNode {
-  return {
-    id: 'wrfc-chain:abc', kind: 'wrfc-chain', label: 'implement the parser', state: 'executing-tool',
-    elapsedMs: 1000, costState: 'unpriced',
-    capabilities: { interruptible: true, killable: true, pausable: false, resumable: false, steerable: false },
-    ...(withReview ? { review } : {}),
-  } as ProcessNode;
-}
+const text = (lines: ReturnType<typeof renderGraphPostureLines>): string => lines.map(lineToString).join('\n');
 
 const graph: WorkstreamGraphSnapshot = {
   workstreamId: 'ws-1',
@@ -42,34 +23,6 @@ const graph: WorkstreamGraphSnapshot = {
   edges: [{ from: 'a', to: 'b' }],
   pool: { ready: 1, running: 1, atCap: true, capKey: 'fleet.maxSize', maxSize: 2 } as WorkstreamGraphSnapshot['pool'],
 };
-
-describe('review checklist render (7b)', () => {
-  test('renders the verdict, score, cycles and each checklist item with verified/evidence/howExercised', () => {
-    const t = text(renderReviewLines(review, 100));
-    expect(t).toContain('not passed');
-    expect(t).toContain('score');
-    expect(t).toContain('82');
-    expect(t).toContain('2 cycles');
-    expect(t).toContain('[verified]');
-    expect(t).toContain('the parser handles empty input');
-    expect(t).toContain('evidence: added a test for the empty case');
-    expect(t).toContain('exercised: bun test parser');
-    expect(t).toContain('[unverified]');
-    expect(t).toContain('errors surface a line number');
-  });
-
-  test('an empty checklist is called out as a gate failure, not hidden', () => {
-    const t = text(renderReviewLines({ score: 0, passed: false, cycles: 1, checklist: [] }, 100));
-    expect(t).toContain('emitted no acceptance checklist');
-  });
-
-  test('the fleet detail renders the review section only when node.review is present (never an empty shell)', () => {
-    const withT = text(renderFleetDetailLines(chainNode(true), 100, false, false));
-    expect(withT).toContain('the parser handles empty input');
-    const withoutT = text(renderFleetDetailLines(chainNode(false), 100, false, false));
-    expect(withoutT).not.toContain('review');
-  });
-});
 
 describe('task-graph posture render (7c)', () => {
   test('renders the pool posture and the dependency edges by title', () => {

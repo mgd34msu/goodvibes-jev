@@ -1,3 +1,4 @@
+import { contractFixture } from '../helpers/contract-work-tree-fixtures.ts';
 // ---------------------------------------------------------------------------
 // fleet-headline-stall.test.ts, fleet rows render the read-model's headline
 // (replaced in place, never a scrolling feed) and the stall marker
@@ -112,47 +113,47 @@ describe('fleet row headline + stall marker (full-string, 80 and 60 cols)', () =
 describe('fleet row waiting-on-human: pick + conflict reasons (full-string, 80 and 60 cols)', () => {
   test('80 cols: a ready best-of-N pick reads "needs your pick"', () => {
     const line = renderFleetRowLine(
-      row({ id: 'ws1', label: 'stream', kind: 'workstream', needsAttention: { reason: 'pick' } }),
+      row({ id: 'ws1', label: 'stream', kind: 'contract', needsAttention: { reason: 'pick' } }),
       80,
       false,
       true,
       null,
     );
-    expect(text(line)).toBe('… stream   stream                    1m05s     n/a unpriced needs your pick     ');
+    expect(text(line)).toBe('… contract stream                    1m05s     n/a unpriced needs your pick     ');
   });
 
   test('60 cols: a ready best-of-N pick stays readable and never overflows', () => {
     const line = renderFleetRowLine(
-      row({ id: 'ws1', label: 'stream', kind: 'workstream', needsAttention: { reason: 'pick' } }),
+      row({ id: 'ws1', label: 'stream', kind: 'contract', needsAttention: { reason: 'pick' } }),
       60,
       false,
       true,
       null,
     );
-    expect(text(line)).toBe('… stream   stream       1m05s     n/a unpriced needs your pi');
+    expect(text(line)).toBe('… contract stream       1m05s     n/a unpriced needs your pi');
     expect(text(line).length).toBeLessThanOrEqual(60);
   });
 
   test('80 cols: a merge conflict reads "merge conflict waiting on you"', () => {
     const line = renderFleetRowLine(
-      row({ id: 'wi1', label: 'item', kind: 'work-item', needsAttention: { reason: 'conflict' } }),
+      row({ id: 'wi1', label: 'item', kind: 'contract-unit', needsAttention: { reason: 'conflict' } }),
       80,
       false,
       true,
       null,
     );
-    expect(text(line)).toBe('… item     item                      1m05s     n/a unpriced merge conflict wait…');
+    expect(text(line)).toBe('… unit     item                      1m05s     n/a unpriced merge conflict wait…');
   });
 
   test('60 cols: a merge conflict stays readable and never overflows', () => {
     const line = renderFleetRowLine(
-      row({ id: 'wi1', label: 'item', kind: 'work-item', needsAttention: { reason: 'conflict' } }),
+      row({ id: 'wi1', label: 'item', kind: 'contract-unit', needsAttention: { reason: 'conflict' } }),
       60,
       false,
       true,
       null,
     );
-    expect(text(line)).toBe('… item     item         1m05s     n/a unpriced merge conflic');
+    expect(text(line)).toBe('… unit     item         1m05s     n/a unpriced merge conflic');
     expect(text(line).length).toBeLessThanOrEqual(60);
   });
 
@@ -165,8 +166,8 @@ describe('fleet row waiting-on-human: pick + conflict reasons (full-string, 80 a
 
   test('pick + conflict are counted and jumpable exactly like an approval ask', () => {
     const snapshot = buildFleetSnapshot([
-      makeNode({ id: 'ws1', kind: 'workstream', needsAttention: { reason: 'pick' } }),
-      makeNode({ id: 'wi1', kind: 'work-item', needsAttention: { reason: 'conflict' } }),
+      makeNode({ id: 'ws1', kind: 'contract', needsAttention: { reason: 'pick' } }),
+      makeNode({ id: 'wi1', kind: 'contract-unit', needsAttention: { reason: 'conflict' } }),
       makeNode({ id: 'ap1', state: 'awaiting-approval' }),
       makeNode({ id: 'plain1' }),
     ]);
@@ -176,20 +177,20 @@ describe('fleet row waiting-on-human: pick + conflict reasons (full-string, 80 a
     expect(snapshot.blockedNodeIds).toContain('wi1');
     expect(snapshot.blockedNodeIds).toContain('ap1');
     expect(snapshot.blockedNodeIds).not.toContain('plain1');
-    expect(isBlockedOnUserNode(makeNode({ id: 'ws1', kind: 'workstream', needsAttention: { reason: 'pick' } }))).toBe(true);
-    expect(isBlockedOnUserNode(makeNode({ id: 'wi1', kind: 'work-item', needsAttention: { reason: 'conflict' } }))).toBe(true);
+    expect(isBlockedOnUserNode(makeNode({ id: 'ws1', kind: 'contract', needsAttention: { reason: 'pick' } }))).toBe(true);
+    expect(isBlockedOnUserNode(makeNode({ id: 'wi1', kind: 'contract-unit', needsAttention: { reason: 'conflict' } }))).toBe(true);
   });
 
   test('the detail block names the reason (pick / conflict) in the state slot', () => {
     const pick = renderFleetDetailLines(
-      makeNode({ id: 'ws1', label: 'stream', kind: 'workstream', needsAttention: { reason: 'pick' } }),
+      makeNode({ id: 'ws1', label: 'stream', kind: 'contract', needsAttention: { reason: 'pick' } }),
       80,
       false,
       true,
     );
     expect(text(pick[0]!)).toContain('state needs your pick');
     const conflict = renderFleetDetailLines(
-      makeNode({ id: 'wi1', label: 'item', kind: 'work-item', needsAttention: { reason: 'conflict' } }),
+      makeNode({ id: 'wi1', label: 'item', kind: 'contract-unit', needsAttention: { reason: 'conflict' } }),
       80,
       false,
       true,
@@ -222,31 +223,23 @@ describe('fleet detail block: headline row', () => {
     expect(lines.map(text).some((t) => t.includes('headline'))).toBe(false);
   });
 
-  test('a merge-conflict work item lists its structured conflict files, never clipped', () => {
+  test('a contract workspace and failed-application note wrap without claiming unit conflict paths', () => {
+    const workspace = '/synthetic/very/deeply/nested/worktree/that/is/quite/long/parser-repair';
     const node = makeNode({
-      id: 'work-item:it1',
-      kind: 'work-item',
-      label: 'conflicted',
-      needsAttention: { reason: 'conflict' },
-      raw: { item: { mergeState: 'conflict', conflictFiles: ['src/very/deeply/nested/module/that/is/quite/long/parser.ts', 'README.md'] } },
+      id: 'contract:c1', kind: 'contract', label: 'not applied',
+      raw: contractFixture({ worktreePath: workspace, commit: { status: 'failed', note: 'Not applied to the target tree' } }),
     });
-    const texts = renderFleetDetailLines(node, 60, false, true).map(text);
-    expect(texts.some((t) => t.includes('conflicts') && t.includes('2 file(s)') && t.includes('press Enter to resolve'))).toBe(true);
-    // The long path is fully present across (hard-)wrapped, padded segments,
-    // never truncated with an ellipsis. Stripping whitespace reconstructs it
-    // (wrap only inserts line breaks / indent padding, never drops characters).
-    const stripped = texts.join('').replace(/\s/g, '');
-    expect(stripped).toContain('src/very/deeply/nested/module/that/is/quite/long/parser.ts');
-    expect(stripped).toContain('README.md');
-    expect(texts.some((t) => t.includes('…'))).toBe(false);
-    // Every rendered line stays within the 60-col width (wrapped, never overflowing).
-    for (const line of renderFleetDetailLines(node, 60, false, true)) {
-      expect(text(line).length).toBeLessThanOrEqual(60);
-    }
+    const lines = renderFleetDetailLines(node, 60, false, true);
+    const texts = lines.map(text);
+    expect(texts.some(value => value.includes('Changes failed'))).toBe(true);
+    const paths = texts.filter(value => value.startsWith(' workspace ')).map(value => value.slice(11).trim()).join('');
+    expect(paths).toBe(workspace);
+    expect(texts.some(value => value.includes('press Enter to resolve'))).toBe(false);
+    for (const line of lines) expect(text(line).length).toBeLessThanOrEqual(60);
   });
 
-  test('a non-conflict work item shows no conflict-files block', () => {
-    const node = makeNode({ id: 'work-item:it2', kind: 'work-item', label: 'clean' });
+  test('a contract without detailed facts shows no invented conflict-files block', () => {
+    const node = makeNode({ id: 'contract:c2', kind: 'contract', label: 'clean' });
     expect(renderFleetDetailLines(node, 80, false, false).map(text).some((t) => t.includes('conflicts'))).toBe(false);
   });
 });

@@ -7,7 +7,7 @@
 // renderItem/renderDetail call, with no `this` dependency.
 // ---------------------------------------------------------------------------
 
-import type { ProcessCostState, ProcessNode, ProcessReviewSummary, ProcessUsage } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
+import type { ProcessCostState, ProcessNode, ProcessCheckSummary, ProcessUsage } from '@goodvibes-jev/engine/sdk/platform/runtime/fleet';
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
 import { formatAgentCost } from './agent-inspector-shared.ts';
 import { buildViewLine, DEFAULT_VIEW_PALETTE, type ColumnSpec, type ViewPalette } from './polish.ts';
@@ -15,7 +15,8 @@ import { fleetAttentionText, fleetNodeAttention, fleetStallMarker, fleetUsageTok
 import { fleetStateDisplay } from './fleet-stop.ts';
 import { formatElapsed } from '../utils/format-elapsed.ts';
 import { truncateDisplay } from '../utils/terminal-width.ts';
-import { conflictFilesFromRaw, formatWorkItemIsolationDetailFromRaw } from './fleet-worktree-detail.ts';
+import { contractTree, type ContractView } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { cellText } from '../renderer/lane-graph/bead.ts';
 import { wrapText } from '../utils/terminal-width.ts';
 import { buildAlignedRow } from './polish.ts';
 import { fleetKindTag } from './fleet-read-model.ts';
@@ -159,49 +160,26 @@ export function renderFleetRowLine(
  * 'state' text never claims a past-tense outcome mid-write, and a
  * blocked-on-user node reads 'blocked on you' here too.
  */
-/**
- * The reviewer's acceptance checklist + verdict, from the fleet node's served
- * `review` field (ProcessReviewSummary, rides fleet.snapshot/list). Rendered
- * only when a review has completed, never an empty shell. Each item shows
- * whether it was verified, the evidence, and (when present) how it was
- * exercised, matching what the webui's review detail surfaces.
- */
-export function renderReviewLines(review: ProcessReviewSummary, width: number, palette: ViewPalette = DEFAULT_VIEW_PALETTE): Line[] {
-  const C = palette;
-  const passTone = C.good ?? C.info;
-  const failTone = C.bad ?? C.warn ?? DEFAULT_VIEW_PALETTE.warn;
-  const cyclesLabel = review.cycles === 1 ? '1 cycle' : `${review.cycles} cycles`;
-  const lines: Line[] = [
-    buildViewLine(width, [
-      [' review ', C.label],
-      [review.passed ? '✓ passed' : '✗ not passed', review.passed ? passTone : failTone],
-      ['  score ', C.label], [String(review.score), C.value],
-      ['  ', C.dim], [cyclesLabel, C.dim],
-    ]),
-  ];
-  if (review.checklist.length === 0) {
-    // Empty checklist is itself a gate failure, say so honestly, don't hide it.
-    lines.push(buildViewLine(width, [['   ', C.dim], ['(the reviewer emitted no acceptance checklist; a gate failure)', failTone]]));
+/** The public fleet check summary: recorded criteria and readings, without inferred scores. */
+export function renderCheckLines(check: ProcessCheckSummary, width: number, palette: ViewPalette = DEFAULT_VIEW_PALETTE): Line[] {
+  const lines: Line[] = [buildViewLine(width, [
+    [' checks ', palette.label],
+    [`${check.met}/${check.judged} criteria met · ${check.nudges} corrections`, palette.value],
+  ])];
+  if (check.criteria.length === 0) {
+    lines.push(buildViewLine(width, [['   No recorded criteria.', palette.dim]]));
     return lines;
   }
-  for (const it of review.checklist) {
-    const mark = it.verified ? '[verified]  ' : '[unverified]';
-    const markTone = it.verified ? passTone : failTone;
-    wrapText(it.item, Math.max(1, width - 16)).forEach((seg, i) => {
-      lines.push(buildViewLine(width, i === 0
-        ? [['   ', C.dim], [`${mark} `, markTone], [seg, C.value]]
-        : [['                ', C.dim], [seg, C.value]]));
-    });
-    if (it.evidence) {
-      for (const seg of wrapText(`evidence: ${it.evidence}`, Math.max(1, width - 6))) {
-        lines.push(buildViewLine(width, [['     ', C.dim], [seg, C.dim]]));
-      }
+  for (const criterion of check.criteria) {
+    const tone = criterion.verdict === 'met' ? palette.good ?? palette.info
+      : criterion.verdict === 'unmet' ? palette.bad ?? palette.warn ?? DEFAULT_VIEW_PALETTE.warn
+      : criterion.verdict === 'unshown' ? palette.warn ?? DEFAULT_VIEW_PALETTE.warn : palette.dim;
+    const mark = `[${criterion.verdict}${criterion.outcome ? ` · ${criterion.outcome}` : ''}]`;
+    for (const [index, text] of wrapText(cellText(criterion.text), Math.max(1, width - 4)).entries()) {
+      if (index === 0) lines.push(buildViewLine(width, [[' ', palette.dim], [mark, tone]]));
+      lines.push(buildViewLine(width, [['   ', palette.dim], [text, palette.value]]));
     }
-    if (it.howExercised) {
-      for (const seg of wrapText(`exercised: ${it.howExercised}`, Math.max(1, width - 6))) {
-        lines.push(buildViewLine(width, [['     ', C.dim], [seg, C.dim]]));
-      }
-    }
+    if (criterion.severity) lines.push(buildViewLine(width, [['   severity ', palette.label], [criterion.severity, tone]]));
   }
   return lines;
 }
@@ -298,29 +276,25 @@ export function renderFleetDetailLines(
   ]);
   // Approval history attaches here once session tabs land.
   const line4 = buildViewLine(width, [[' approvals ', C.label], ['—', C.dim]]);
-  const isolationDetail = node.kind === 'work-item' ? formatWorkItemIsolationDetailFromRaw(node.raw) : null;
-  // A merge-conflict row shows its STRUCTURED conflicting-path list, wrapped so a
-  // long path is fully readable, never clipped (STEP 4: the conflict row acts,
-  // and the operator sees exactly which files need resolving before pressing Enter).
-  const conflictFiles = node.kind === 'work-item' ? conflictFilesFromRaw(node.raw) : null;
-  const conflictLines: Line[] = conflictFiles
-    ? [
-      buildViewLine(width, [[' conflicts ', C.label], [`${conflictFiles.length} file(s): press Enter to resolve`, C.warn ?? DEFAULT_VIEW_PALETTE.warn]]),
-      // Prefix is 3 spaces of indent + a 2-col bullet/continuation marker, so
-      // wrap the path at width-5 to keep the composed line within `width`
-      // (a hard-wrapped long path is fully readable, never clipped).
-      ...conflictFiles.flatMap((file) =>
-        wrapText(file, Math.max(1, width - 5)).map((segment, i) =>
-          buildViewLine(width, [['   ', C.dim], [i === 0 ? `• ${segment}` : `  ${segment}`, C.value]]),
-        ),
-      ),
-    ]
-    : [];
-  // The reviewer's acceptance checklist + verdict, when a review has completed
-  // (served on node.review; absent before any review, never an empty shell).
-  const reviewLines = node.review ? renderReviewLines(node.review, width, C) : [];
+  // The contract DTO carries its own workspace/application facts. Unit snapshots
+  // do not expose an individual worktree/conflict list, so none is invented here.
+  const raw = node.kind === 'contract' ? node.raw : (node.raw as { contract?: unknown } | undefined)?.contract;
+  const contract = raw as ContractView | undefined;
+  const contractLines: Line[] = [];
+  if (contract && typeof contract.projectRoot === 'string') {
+    for (const pathLine of wrapText(cellText(contractTree(contract)), Math.max(1, width - 12))) {
+      contractLines.push(buildViewLine(width, [[' workspace ', C.label], [pathLine, C.value]]));
+    }
+    if (contract.commit) {
+      const tone = contract.commit.status === 'failed' ? C.warn ?? DEFAULT_VIEW_PALETTE.warn : C.dim;
+      for (const note of wrapText(cellText(`Changes ${contract.commit.status}: ${contract.commit.note}`), Math.max(1, width - 2))) {
+        contractLines.push(buildViewLine(width, [[' ', C.dim], [note, tone]]));
+      }
+    }
+  }
+  const checkLines = node.check ? renderCheckLines(node.check, width, C) : [];
   // The task graph's edges/pool posture for a workstream row (fetched + cached
   // by fleet-acts); rendered in-view under the chain, /graph still available.
   const graphLines = graphSnapshot ? renderGraphPostureLines(graphSnapshot, width, C) : [];
-  return [line1, line2, ...headlineLine, line3, line4, ...(isolationDetail ? [buildViewLine(width, [[' isolation ', C.label], [isolationDetail, C.dim]])] : []), ...conflictLines, ...reviewLines, ...graphLines];
+  return [line1, line2, ...headlineLine, line3, line4, ...contractLines, ...checkLines, ...graphLines];
 }

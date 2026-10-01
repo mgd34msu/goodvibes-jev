@@ -115,3 +115,16 @@ fixing four new fixture errors. The new async/distribution/modal adapters and
 focused fixtures have no remaining diagnostics in those checks. Remaining errors
 include held PR52/PR57 dependencies and older caller/fixture cleanup. Main launch,
 compiled PTY/first-turn proof and the remaining JEV/HOIST obligations stay open.
+
+## Recorded contract checks and application warnings
+
+Fleet details now render the public `ProcessCheckSummary` criteria, verdicts,
+reading bands, correction counts and severity. They no longer consume the retired
+review-score/checklist field or pretend that a contract unit exposes old work-item
+conflict paths. The actual contract workspace and application note stay visible.
+A failed application has warning presentation in closed beads and folded lanes
+while the recorded contract lifecycle remains `passed`; a skipped commit retains
+its separate status. This corrects a recovered presentation regression identified
+by the Agent port's peer inspection. Guarded changed-display tests pass 156 cases;
+no golden snapshots changed. Remaining legacy graph actions/fixtures and the
+broader source acceptance still require their own migration work.

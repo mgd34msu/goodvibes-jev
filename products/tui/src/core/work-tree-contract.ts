@@ -64,7 +64,7 @@ export function projectContractTree(contract: ContractView): ContractTreeRow[] {
     id: `contract:${contract.id}`,
     name: 'contract',
     arg: contract.goal || contract.ask,
-    status: statusMark(contract.status),
+    status: contract.status === 'passed' && contract.commit?.status === 'failed' ? 'warn' : statusMark(contract.status),
     summary: { text: contractStatusSummary(contract), tone: contract.commit?.status === 'failed' ? 'warn' : tone(statusMark(contract.status)) },
     lines: [
       `Contract ${contract.id} · ${contract.status}`,

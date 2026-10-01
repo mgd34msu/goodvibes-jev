@@ -338,7 +338,7 @@ function inheritTimes(rows: readonly TimedRow[], start: number | undefined): Tim
 function laneOutcome(info: AgentLaneInfo, rows: readonly TimedRow[]): LaneModel['outcome'] {
   if (info.contract) {
     const status = info.contract.status;
-    return status === 'passed' ? 'ok' : status === 'failed' ? 'err' : status === 'cancelled' ? 'warn' : 'run';
+    return status === 'passed' ? (info.contract.commit?.status === 'failed' ? 'warn' : 'ok') : status === 'failed' ? 'err' : status === 'cancelled' ? 'warn' : 'run';
   }
   if (info.status === 'running' || info.status === 'pending') return 'run';
   if (info.status === 'failed') return 'err';

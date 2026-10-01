@@ -60,7 +60,7 @@ describe('public contract projection', () => {
     const contract = contractFixture({ commit: { status, note: 'not applied to the target tree' } });
     const turn = model(contract, new Map([['lane_owner', true]]));
     const folded = turn.rows.find((row) => row.kind === 'folded');
-    expect(folded?.kind === 'folded' ? folded.lane.outcome : null).toBe('ok');
+    expect(folded?.kind === 'folded' ? folded.lane.outcome : null).toBe(status === 'failed' ? 'warn' : 'ok');
     expect(folded?.kind === 'folded' ? folded.lane.foldSummary : '').toContain(`passed · commit ${status}: not applied`);
     expect(contractStatusSummary(contract)).toBe(`passed · commit ${status}: not applied to the target tree`);
     expect(text(draw(contract).lines)).toContain(`commit ${status}: not applied`);
