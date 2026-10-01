@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-agent-source-recovery",
+  "evidenceParent": "26e8bf631c7b79ef75227d27ecc102ae812513a0",
+  "evidenceParentTree": "e92fa4efab6d77580b3f73d84aed11152617dbf2",
+  "runtimePathsUnchanged": true,
+  "earlierCheckpointArtifactsUnchanged": true,
+  "source": {
+    "commit": "74a344ad46bdd0eee004e1a121f1842c343378fa",
+    "tree": "5cd5cb06bdfa17593a4b1e746dc8ded14de70e0d",
+    "baseCommit": "87bdf8a98a4d136bb0188337b940b53dcf9566ad",
+    "baseTree": "8ef56085dc5808e3545c8ac48aa4ad59c994da6e",
+    "changedPaths": 22,
+    "scope": "products/agent plus root bun.lock; no shared engine source changes",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "2fb1b82ab03064e03baa07cdb4ce92dc21bb8928d14b433a43fd312570e8bd4f"
+  },
+  "reconstruction": {
+    "priorEvidenceCommit": "26e8bf631c7b79ef75227d27ecc102ae812513a0",
+    "priorPacketDirectory": "docs/review/recovery/agent/checkpoints/87bdf8a",
+    "method": "Reconstruct 87bdf8a9 through prior public-source evidence; decompress and apply source.patch.gz in that disposable index; verify complete final tree",
+    "patch": {
+      "bytes": 59539,
+      "sha256": "7e55bac8b681f62e01d18663512db3d4f499ded1714f30f02d223e250b535d69",
+      "gzipBytes": 15568,
+      "gzipSha256": "b12fbbda53685da0c9422407bc167d4f291bb6900e1f061849ae2f02b7f77e81"
+    },
+    "verifiedTree": "5cd5cb06bdfa17593a4b1e746dc8ded14de70e0d",
+    "exactTemporaryIndexReconstruction": "passed",
+    "unpublishedLocalCommitsRequired": false
+  },
+  "postimages": [
+    {
+      "path": "bun.lock",
+      "gitBlob": "c35752c622753bc907aefa8735e179ca3b1903ff",
+      "bytes": 302820,
+      "sha256": "8c57356db65945c3867178cc9f44b989403a0d50ebbb4bfe6a744b16729dbb11"
+    },
+    {
+      "path": "products/agent/RECOVERY.md",
+      "gitBlob": "51e7f1100434b91619191b6e0d681500f4074b19",
+      "bytes": 3414,
+      "sha256": "e5843f98a9cc0a3e17497bd2a70ff0e20ae6aee20123b2348760ee9a00efb28f"
+    },
+    {
+      "path": "products/agent/package.json",
+      "gitBlob": "a40d64ca8b4c7ab6a0b19d6a4d1e5c64f0807a66",
+      "bytes": 2422,
+      "sha256": "340ebed4d109b8372fdaff047678486bc19aaa82a8dfc1b366f8ecc64d6a66f9"
+    },
+    {
+      "path": "products/agent/src/agent/prompt-context-receipts.ts",
+      "gitBlob": "fcedcfa831393fc5786749e4225d4c526c8730dc",
+      "bytes": 34314,
+      "sha256": "508d8445aa8c6405f863cb71f2586f19148e2d9dfa67eb3460806677bc1d4de6"
+    },
+    {
+      "path": "products/agent/src/cli/memory-command.ts",
+      "gitBlob": "b9bbe59a7f0cc277f9b1d42f7784ff45625f83b6",
+      "bytes": 31338,
+      "sha256": "53084a38fff963d68f5e566513366b0331ba5be649845086c2916680f1e7a96a"
+    },
+    {
+      "path": "products/agent/src/core/system-message-router.ts",
+      "gitBlob": "1363fc5fe3b0746a9a5534176545934314d86213",
+      "bytes": 6770,
+      "sha256": "032b5e0bb1d9b503c9977ea0728b9c745b58e43cb6c9affe28b34b755d7b6fd4"
+    },
+    {
+      "path": "products/agent/src/input/commands/memory.ts",
+      "gitBlob": "d8b15d84a1370cfc36bdad401f0865545887aeea",
+      "bytes": 6459,
+      "sha256": "36cde42dcda5fd4d10b72da7eba9762df3a6f13cf95fdb98936e47418d25a30c"
+    },
+    {
+      "path": "products/agent/src/input/commands/recall-query.ts",
+      "gitBlob": "ece3a51f10d4fdfca5f5df382d42f6442d4d43fd",
+      "bytes": 8500,
+      "sha256": "77c45ee753ccd363f7fcf694ebcc550f11e0a7b0ed7ca03864c9132f25272a00"
+    },
+    {
+      "path": "products/agent/src/input/commands/recall-review.ts",
+      "gitBlob": "e5af7e714bd3a9089312768621a903ce3b64fcd2",
+      "bytes": 4859,
+      "sha256": "a22206b72d6c4f65e8c4e3b1f3699f2d37e6ac5dd35b17eeb9d148bc79ab098e"
+    },
+    {
+      "path": "products/agent/src/interactive.ts",
+      "gitBlob": "a2b4f585a81a8cdeb6df201c22555d18b971df5a",
+      "bytes": 41695,
+      "sha256": "9db03552637fc95c0840282ae1f10c59b755ec782370989fc3903b8571a85790"
+    },
+    {
+      "path": "products/agent/src/runtime/agent-runtime-events.ts",
+      "gitBlob": "b1bc7686cbb7d6d50add5019672877b20d997d82",
+      "bytes": 12088,
+      "sha256": "a71e536c7f50d8feda42cad865d74011746d2ef0e23bc0d3c241850d34ff66bb"
+    },
+    {
+      "path": "products/agent/src/runtime/bootstrap-core.ts",
+      "gitBlob": "53e253c4885e9d953ba10052834f5844778e31e4",
+      "bytes": 30379,
+      "sha256": "38ce04076b37b8cc02a866ee60db559c6a7b3cff6c2cce9a84b8e0092f34ebda"
+    },
+    {
+      "path": "products/agent/src/runtime/bootstrap.ts",
+      "gitBlob": "9d0f8190fb0520b6e7f04e3200ac062e7edfac5f",
+      "bytes": 39211,
+      "sha256": "38d9e14d274ea7260798e4b3a3929ade2f3a54dc680e2c25064c8442671e06aa"
+    },
+    {
+      "path": "products/agent/src/runtime/index.ts",
+      "gitBlob": "b96258a556fe28300e50c38beacb0a4339b972c1",
+      "bytes": 36102,
+      "sha256": "cf620cf9592974ec6cc34848f8f3e91b88df1e785c60f8fb47996d73d9993c81"
+    },
+    {
+      "path": "products/agent/src/runtime/services.ts",
+      "gitBlob": "eddc5994fa11f6748993b9e70e785bcf720cbb86",
+      "bytes": 132442,
+      "sha256": "7fd455ebd3b124b83dc496bc1ce3406003c222034442fc1ecff4d13474bf915e"
+    },
+    {
+      "path": "products/agent/src/test/input/memory-command-async.test.ts",
+      "gitBlob": "b316038bafd7cb891926f22ec546637d79cf69ee",
+      "bytes": 2007,
+      "sha256": "1af97f9089c97cd9a5773db19f02b1a5090b11407c6b2b24b0eeaa8c008630f4"
+    },
+    {
+      "path": "products/agent/src/test/runtime/agent-runtime-events-child-failure.test.ts",
+      "gitBlob": "e4d14db19f41be814be2206b9f0bf0110c1cd31c",
+      "bytes": 4006,
+      "sha256": "ac5b1080b1ae8a1c74faad7c7f50870b3152ce01c92fe12108a48401f9673a5d"
+    },
+    {
+      "path": "products/agent/src/test/runtime/agent-runtime-events-turn-budget.test.ts",
+      "gitBlob": "b928d43def0249b56c294475c1aad6366606c852",
+      "bytes": 7386,
+      "sha256": "77d81a9051264b7ad980b875a1e7685d0096df4199a880ab5724ce08292cecf6"
+    },
+    {
+      "path": "products/agent/src/test/runtime/public-service-graph.test.ts",
+      "gitBlob": "75b7b98783220a9da66e3efa607fd24882bbc327",
+      "bytes": 2956,
+      "sha256": "e33bc3286d06e052ef5aeb4766d6b9f4a589428b43b916b03283e76b0f13796c"
+    },
+    {
+      "path": "products/agent/src/tools/agent-harness-prompt-context.ts",
+      "gitBlob": "a99f817f0c8891cdf2fd8387bed6e0bfd4ab1c3f",
+      "bytes": 29842,
+      "sha256": "ad0cac1d815928f36678a18ac6f7f5a3db5693f1f1caec574afca5fbd015a7e9"
+    },
+    {
+      "path": "products/agent/src/tools/agent-harness-tool.ts",
+      "gitBlob": "2e15ccf5eb037a63c457b53a122417da0709471c",
+      "bytes": 61083,
+      "sha256": "85c3f35c02b1730ba9205a1635440fc1388bb2d4fdcb30a6679b9b4901e17ccf"
+    },
+    {
+      "path": "products/agent/src/tools/agent-local-registry-memory.ts",
+      "gitBlob": "807c5d99df09e2ccd0b9fe4771b58350ce7c07e5",
+      "bytes": 12074,
+      "sha256": "ba39884b676ab2f4f157c1bbe4c444bab1d6813bcf2fcbeaccf836dd0f8113a3"
+    }
+  ],
+  "proof": {
+    "focusedTests": {
+      "status": "passed",
+      "tests": 281,
+      "assertions": 2723,
+      "files": 23,
+      "appliesOnlyTo": "74a344ad46bdd0eee004e1a121f1842c343378fa",
+      "scope": "Ordinary source/package metadata, renderer, store/profile, offline graph, runtime events and memory-command components"
+    },
+    "separatePresetSmoke": {
+      "status": "passed",
+      "tests": 1,
+      "assertions": 12,
+      "scope": "Actual Agent graph exposes published contract services and disposes offline; a separate control run, not added to the combined count"
+    },
+    "servicesOnlyBundle": {
+      "status": "passed",
+      "scope": "Service entry only; not the product main or binary"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "fullSourceTypes": {
+      "status": "failed",
+      "exitCode": 2
+    },
+    "mainBundle": {
+      "status": "failed",
+      "reason": "Held notification exports buildApprovalNotification, describeToolTarget and resolveTurnName are absent"
+    },
+    "promptParityBinaryInteractiveAcceptance": {
+      "status": "not_established"
+    },
+    "logsArchive": {
+      "path": "proof-logs.tar.gz",
+      "gzipBytes": 11129,
+      "gzipSha256": "396734b2c25c03229b0b1e3421e744ed6a89c72829132d702ef018d7553f3d86",
+      "members": {
+        "service-graph-combined.log": {
+          "bytes": 31737,
+          "sha256": "6057c6a5883461d78afb8cc36f080636b66d500b8a3f44140a7a8fc14a8849fc"
+        },
+        "public-service-graph-preset.log": {
+          "bytes": 252,
+          "sha256": "e377ef4b5d6aee4206e30e79fff6f2e670fcecee58a3e4a9cb8249ff0cb890a2"
+        },
+        "service-graph-types.log": {
+          "bytes": 20225,
+          "sha256": "19e05b51c1efefb8dbb8d0e4865d5b6769dbe04931466398e7c122b6e5d7cb20"
+        },
+        "service-graph-types.exit": {
+          "bytes": 2,
+          "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+        },
+        "services-only-bundle.log": {
+          "bytes": 698,
+          "sha256": "b0a7e0fbc5b71d6c7ae761dd1407ba755ba8bf21424f5ba6a9ad5650ee5deb2d"
+        },
+        "service-graph-bundle-third.log": {
+          "bytes": 784,
+          "sha256": "ccb647bfebcf7ac73b2d8f4fab9c6e38ae601da540bc7ada921c1658483901c4"
+        },
+        "service-graph-checkpoint.log": {
+          "bytes": 568,
+          "sha256": "fc293bfeccb3267bcfbaf7562dd711ad06922ce762b7af88102dfb80b99fc765"
+        }
+      },
+      "deterministicMetadata": true
+    }
+  },
+  "credentialPreflight": {
+    "patchAndAllPostimagesAndProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "verifiedInputsIdenticalToPublicMain": [
+        "packages/engine/sdk/src",
+        "packages/engine/scripts",
+        "packages/engine/etc",
+        "packages/engine/package.json",
+        "packages/engine/errors/src",
+        "packages/judgment/src",
+        "packages/judgment/package.json"
+      ],
+      "scope": "Fresh exact SDK credential inputs only; not full Agent product coverage"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "versioning": "281/2723 belongs only to 74a344ad. Initial 4336fd37 and adapter 87bdf8a9 results remain separately preserved; no full-product acceptance is inferred.",
+  "outstandingGates": [
+    "Notification dependency repair/reconciliation and actual main acceptance",
+    "Full source and consumer type acceptance",
+    "Prompt/context parity",
+    "Interactive and binary/end-to-end acceptance",
+    "Source review and full repository/product CI",
+    "Authorized runtime integration and release acceptance"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply its patch to main."
+}

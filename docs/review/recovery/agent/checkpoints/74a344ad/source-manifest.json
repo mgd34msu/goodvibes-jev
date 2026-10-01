@@ -1,0 +1,64 @@
+{
+  "base": "87bdf8a98a4d136bb0188337b940b53dcf9566ad",
+  "head": "74a344ad46bdd0eee004e1a121f1842c343378fa",
+  "tree": "5cd5cb06bdfa17593a4b1e746dc8ded14de70e0d",
+  "patch": {
+    "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-checkpoint.patch",
+    "sha256": "7e55bac8b681f62e01d18663512db3d4f499ded1714f30f02d223e250b535d69"
+  },
+  "sourcePaths": [
+    "bun.lock",
+    "products/agent/RECOVERY.md",
+    "products/agent/package.json",
+    "products/agent/src/agent/prompt-context-receipts.ts",
+    "products/agent/src/cli/memory-command.ts",
+    "products/agent/src/core/system-message-router.ts",
+    "products/agent/src/input/commands/memory.ts",
+    "products/agent/src/input/commands/recall-query.ts",
+    "products/agent/src/input/commands/recall-review.ts",
+    "products/agent/src/interactive.ts",
+    "products/agent/src/runtime/agent-runtime-events.ts",
+    "products/agent/src/runtime/bootstrap-core.ts",
+    "products/agent/src/runtime/bootstrap.ts",
+    "products/agent/src/runtime/index.ts",
+    "products/agent/src/runtime/services.ts",
+    "products/agent/src/test/input/memory-command-async.test.ts",
+    "products/agent/src/test/runtime/agent-runtime-events-child-failure.test.ts",
+    "products/agent/src/test/runtime/agent-runtime-events-turn-budget.test.ts",
+    "products/agent/src/test/runtime/public-service-graph.test.ts",
+    "products/agent/src/tools/agent-harness-prompt-context.ts",
+    "products/agent/src/tools/agent-harness-tool.ts",
+    "products/agent/src/tools/agent-local-registry-memory.ts"
+  ],
+  "status": "Incomplete ordinary product source checkpoint: real offline graph and services-only bundle pass; main blocked on held notification exports; full types, prompt parity, binary and interactive acceptance remain open. No shared engine source changes.",
+  "proofs": [
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-combined.log",
+      "sha256": "6057c6a5883461d78afb8cc36f080636b66d500b8a3f44140a7a8fc14a8849fc"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/public-service-graph-preset.log",
+      "sha256": "e377ef4b5d6aee4206e30e79fff6f2e670fcecee58a3e4a9cb8249ff0cb890a2"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-types.log",
+      "sha256": "19e05b51c1efefb8dbb8d0e4865d5b6769dbe04931466398e7c122b6e5d7cb20"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-types.exit",
+      "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/services-only-bundle.log",
+      "sha256": "b0a7e0fbc5b71d6c7ae761dd1407ba755ba8bf21424f5ba6a9ad5650ee5deb2d"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-bundle-third.log",
+      "sha256": "ccb647bfebcf7ac73b2d8f4fab9c6e38ae601da540bc7ada921c1658483901c4"
+    },
+    {
+      "path": "/workspace/shared/gv-recovery-agent-proof/service-graph-checkpoint.log",
+      "sha256": "fc293bfeccb3267bcfbaf7562dd711ad06922ce762b7af88102dfb80b99fc765"
+    }
+  ]
+}
