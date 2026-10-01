@@ -1,0 +1,14 @@
+[pre-commit] running credential-scope:check, a stored credential must be classified
+$ bun packages/engine/scripts/check-credential-scope.ts
+credential-scope-check: OK, every secret write in 2633 file(s) names a classified credential or states its scope.
+[recovery/tui-materialization-20261001 25d3865] feat(tui): restore contract views and startup input adapters
+ 61 files changed, 1444 insertions(+), 3234 deletions(-)
+ create mode 100644 products/tui/src/core/work-tree-contract.ts
+ delete mode 100644 products/tui/src/input/commands/platform-sandbox-qemu.ts
+ create mode 100644 products/tui/src/test/core/work-tree-contract.test.ts
+ create mode 100644 products/tui/src/test/helpers/contract-work-tree-fixtures.ts
+ create mode 100644 products/tui/src/test/input/contract-fleet-modal.test.ts
+ create mode 100644 products/tui/src/test/input/local-sandbox-commands.test.ts
+ create mode 100644 products/tui/src/test/input/workstream-contract-command.test.ts
+ delete mode 100644 products/tui/src/test/runtime/sandbox/provisioning.test.ts
+ create mode 100644 products/tui/src/test/shell/session-contract-views.test.ts

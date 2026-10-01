@@ -1,0 +1,539 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-tui-source-recovery",
+  "evidenceParent": "f99a84a58b8f96a6d52583ba3ed6e8abb09f8ee6",
+  "evidenceParentTree": "edec94bafb4d39ebb7406ae79ba22527c32a18c4",
+  "runtimePathsUnchanged": true,
+  "earlierCheckpointArtifactsUnchanged": true,
+  "source": {
+    "commit": "25d3865bbc17ceab7388e3d1ac12f8dc34b7069b",
+    "tree": "1b06d3c236b6549861a8aa893499edddda87067d",
+    "baseCommit": "d08b6758d0a5dfd633759f9168d71167a743f055",
+    "baseTree": "4fc2e2773d198093849dc96154e9a3014d1bcac4",
+    "changedPaths": 61,
+    "scope": "products/tui only",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "fbaf01f562a088033cc823b6c7a9bbd8c28f6be743af97c2f5da725843a4b09d"
+  },
+  "reconstruction": {
+    "priorEvidenceCommit": "f99a84a58b8f96a6d52583ba3ed6e8abb09f8ee6",
+    "priorRecipeDirectory": "docs/review/recovery/tui/d08b6758/source",
+    "method": "Reconstruct the pinned d08 tree from the prior public-source recipe, decompress source.patch.gz, apply it to that disposable index, and verify the complete resulting tree",
+    "rawPatchBytes": 381277,
+    "rawPatchSha256": "31428c1eda4ce2100c7ff6c30ae119ad5bd2b13a796c74b5a2679ab9f8f9598f",
+    "gzipBytes": 93720,
+    "gzipSha256": "ce8d73928a5cac321bff146eb0770a592a44a95139de590a7ffdbac1e21316ac",
+    "base64Bytes": 124960,
+    "verifiedTree": "1b06d3c236b6549861a8aa893499edddda87067d",
+    "exactTemporaryIndexReconstruction": "passed",
+    "unpublishedLocalCommitsRequired": false
+  },
+  "postimages": [
+    {
+      "path": "products/tui/migration-proof.md",
+      "status": "M",
+      "sha256": "d06ba6c507d9dcd032ba1c81c98a06543215736c1117899612430f6ec74aff1a",
+      "gitBlob": "c18588a98de715015e783bf0e1ae68d4ff641e53",
+      "bytes": 5418
+    },
+    {
+      "path": "products/tui/src/core/agent-view-render.ts",
+      "status": "M",
+      "sha256": "706a381b9843721a1c44b45a8f16d4cd26f7e6edd94baf328e26d9415ac104f1",
+      "gitBlob": "19babf5253663646bccfd0422a2256804cd66807",
+      "bytes": 8043
+    },
+    {
+      "path": "products/tui/src/core/conversation-rendering.ts",
+      "status": "M",
+      "sha256": "b2bb4f8a5856731cb76ef20920eded9a3decbc340e18b2975870690b26677150",
+      "gitBlob": "d122e4ff111563d67598050cd9e5f0059c897e2d",
+      "bytes": 14780
+    },
+    {
+      "path": "products/tui/src/core/conversation.ts",
+      "status": "M",
+      "sha256": "5844f31646663c18e1566634e7aec17cfa347ba3d393b4559175a348c2ae2eec",
+      "gitBlob": "5591e781c14331bfaa1c98f4d7b35f65212306ab",
+      "bytes": 35884
+    },
+    {
+      "path": "products/tui/src/core/system-message-router.ts",
+      "status": "M",
+      "sha256": "6a51b1c661f460de4efe9a449a7b277397a70f1ca01512771316a4726d1635d8",
+      "gitBlob": "6b50fad2944f92027e17fcaa43c427fbbc78ebff",
+      "bytes": 11810
+    },
+    {
+      "path": "products/tui/src/core/work-tree-contract.ts",
+      "status": "A",
+      "sha256": "64ff53c81cc1b1c3684cdfb4985b91d5de7cfb1ddbd2562e2c96f0443584b29d",
+      "gitBlob": "dbc7f0be24ef366dd01a6c751b0930f58d402fbc",
+      "bytes": 7565
+    },
+    {
+      "path": "products/tui/src/core/work-tree-model.ts",
+      "status": "M",
+      "sha256": "c39382cf6453d9aefcbb9526f1504e98a8e8023248c410eeae726551cba0a935",
+      "gitBlob": "13dc1c223e86309958947ca8f0d1b73e4f174bd9",
+      "bytes": 34183
+    },
+    {
+      "path": "products/tui/src/core/work-tree-sources.ts",
+      "status": "M",
+      "sha256": "da6b9c6a09f66b51f0475f523e03e862a3a99f7ca767c8d5c630bfee1f1e9629",
+      "gitBlob": "b798adde3669f72f992c17bc0efa2c9560f4d603",
+      "bytes": 7015
+    },
+    {
+      "path": "products/tui/src/core/work-tree-wiring.ts",
+      "status": "M",
+      "sha256": "97d51b8f5726e490cba11e47d1a0edfc7c4c78cf8e36755ae442ab509270ab0a",
+      "gitBlob": "8d2ec0766b6b8ab3b3118239c9a68649313d96ec",
+      "bytes": 7686
+    },
+    {
+      "path": "products/tui/src/input/agents-modal.ts",
+      "status": "M",
+      "sha256": "674aea8cd14df2876863c1170102ba9252ebb7b74da9459a8562cd7b273f8a01",
+      "gitBlob": "2bfdc2bc73d16dbbbc75427a1f9803e2d9f76d1a",
+      "bytes": 37561
+    },
+    {
+      "path": "products/tui/src/input/command-registry.ts",
+      "status": "M",
+      "sha256": "aa7c912681d7296959ecc4137358830fde9befa37a49e54efdfa3b54ad2be5fa",
+      "gitBlob": "461d6e87948cd008f3741717435a8d8e6cd961f9",
+      "bytes": 28926
+    },
+    {
+      "path": "products/tui/src/input/commands/local-setup-review.ts",
+      "status": "M",
+      "sha256": "609906fa8cdb09158213d8b73e2cf13fd82d7c997b512a1fe6b423e2869b7c49",
+      "gitBlob": "7242915be1fe864da32f90c40f6f336c18124f61",
+      "bytes": 7627
+    },
+    {
+      "path": "products/tui/src/input/commands/local-setup.ts",
+      "status": "M",
+      "sha256": "d8279394b015de0412cafb3628fed7711aab68f16c2ced54ace08085f93d7eec",
+      "gitBlob": "3631b7f41564c7f80bdca376baa553326df571b4",
+      "bytes": 11488
+    },
+    {
+      "path": "products/tui/src/input/commands/permissions-provenance.ts",
+      "status": "M",
+      "sha256": "099491a702cc9d4d8421c999ad5e288f9a6fde216fb368a2ec65907057ed2c72",
+      "gitBlob": "658631650b90b5606a195a939c7c09e3b89895cd",
+      "bytes": 10360
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-qemu.ts",
+      "status": "D",
+      "sha256": null,
+      "gitBlob": null
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-runtime.ts",
+      "status": "M",
+      "sha256": "a05ddcd71aa41d0afcd37357ce5ea2aaa721b3eb79bc0054e8ecd418cbe63449",
+      "gitBlob": "cd7c45c06cbf3e39f27e0e3e1e92058a5fc9a762",
+      "bytes": 8229
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-session.ts",
+      "status": "M",
+      "sha256": "197dd288ba511576ff983665fb1f95919ff92daf586483988e969370a76de88b",
+      "gitBlob": "1565d97c6f9bd5eb711d4db83ff97e7bab3562df",
+      "bytes": 5093
+    },
+    {
+      "path": "products/tui/src/input/commands/test-runtime.ts",
+      "status": "M",
+      "sha256": "da57f5d2e87ad373c917b37ad2be13aedea5ac186824630a6442e6d0cae649b3",
+      "gitBlob": "e8a7ae82eb56ce899c95e3dce290f52183152ff6",
+      "bytes": 10834
+    },
+    {
+      "path": "products/tui/src/input/commands/workstream-runtime.ts",
+      "status": "M",
+      "sha256": "cc3cbc0e2cc734501efbdde925006a3804cb924beee067990b90e26ea13c7e95",
+      "gitBlob": "28b898730886f502336cd84d109151a8ec9be740",
+      "bytes": 4649
+    },
+    {
+      "path": "products/tui/src/main.ts",
+      "status": "M",
+      "sha256": "51ac4efda83c3348f04138301cba285b6b6de520339d26f8816fba58fe9f7079",
+      "gitBlob": "9664fd0c27c6b004767b08178fa2a62162f55866",
+      "bytes": 51940
+    },
+    {
+      "path": "products/tui/src/renderer/lane-graph/bead.ts",
+      "status": "M",
+      "sha256": "f029a9a2b7308b0f56ab612b71c7704fea90ae52b0d4fbc1b9d88607c117f5e5",
+      "gitBlob": "30ad5f7e625383f9f401c8a592b83b4205a1fcb5",
+      "bytes": 36999
+    },
+    {
+      "path": "products/tui/src/renderer/lane-graph/paint.ts",
+      "status": "M",
+      "sha256": "37bd3fef795902a4b88e9b05430a2aa101e5ad80ae3a070f0604a7e0c92e3ebc",
+      "gitBlob": "6db9fd6e1cb533da57a95c4910ff84f23a563734",
+      "bytes": 24538
+    },
+    {
+      "path": "products/tui/src/renderer/process-summary.ts",
+      "status": "M",
+      "sha256": "e7a1fb433e4d2a97cb60775e9a2db76f9a743cfd9f30101a05f3c16e3c72c97f",
+      "gitBlob": "9ce5d221e3ff9defaac219f73926c64c73a262c1",
+      "bytes": 2806
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-command-context.ts",
+      "status": "M",
+      "sha256": "73675ecb0b9f55fad015e6e9ce7bb6099be27f41748b0c9a642c363f153bb11f",
+      "gitBlob": "247704c6bab179832a2ce7e94b90120dca0059de",
+      "bytes": 12850
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-command-parts.ts",
+      "status": "M",
+      "sha256": "81718830156c8333e9e6da45f0fc92bc114f28e28e731895f2f2b7cd1a0154d0",
+      "gitBlob": "d9ce9a1d7b1a933796ef20b640c51238ae5c6172",
+      "bytes": 21915
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-core.ts",
+      "status": "M",
+      "sha256": "2a68f4fb4a126b55b6ebe17971553033dff9a1aaf47cd6c7283c4d8d41dbc004",
+      "gitBlob": "a5794616593845075fdb8c0da97683a77ef694d7",
+      "bytes": 36283
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-shell.ts",
+      "status": "M",
+      "sha256": "9837983599f4d1f5e7c09b6a71f029f938a10b7e10486e1f24ed20ba2e3d6280",
+      "gitBlob": "5d4109992ad2709818e4cdfee6d02435ee28c4b2",
+      "bytes": 16118
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap.ts",
+      "status": "M",
+      "sha256": "9bb8d6e98ab6ce468f6aad5ec0dc37a2163c825f9c8f2ef9558c35f598555ee7",
+      "gitBlob": "4ed31b82d1800da9b444862313bc19ae2a0a7479",
+      "bytes": 35987
+    },
+    {
+      "path": "products/tui/src/runtime/resume-notice.ts",
+      "status": "M",
+      "sha256": "0f9cbbbef86b89256d4fc676a115c8ea61f64331a60cc3b53a9fe6a68b4d1edd",
+      "gitBlob": "f3dd6669c989f71c60821546b43e890d8e324d19",
+      "bytes": 10083
+    },
+    {
+      "path": "products/tui/src/runtime/runtime-services-types.ts",
+      "status": "M",
+      "sha256": "1426d6e53a46f93fdd2e2b1f56ca716f393b1d4be4cf4c3c36bd9773dd09ab91",
+      "gitBlob": "af40beb3480ed8d4d4e01f52856f1da14eb22d5f",
+      "bytes": 21553
+    },
+    {
+      "path": "products/tui/src/runtime/sandbox-public-gaps.ts",
+      "status": "M",
+      "sha256": "b5a2fc354f4ce2f8c813c0d68e95f4718369f91c754df90822743cecc8a62e37",
+      "gitBlob": "79ac29be5b957bbe00414b05bbd0adaba903f16f",
+      "bytes": 812
+    },
+    {
+      "path": "products/tui/src/runtime/services.ts",
+      "status": "M",
+      "sha256": "60464298d4d955c18fe00ed2efe85d783ebb5bc75eb11d4842cff6f591f78fe1",
+      "gitBlob": "a666075b685f02788c21a28260def6dfb5452adc",
+      "bytes": 37631
+    },
+    {
+      "path": "products/tui/src/runtime/ui-read-models.ts",
+      "status": "M",
+      "sha256": "1d10119282fc056c4098a1d44d37227c678c1b4444f4eb9b491884d5b56b0b1a",
+      "gitBlob": "9e501b639c4d28cadc932a48d48f5f712ef6d8d1",
+      "bytes": 1755
+    },
+    {
+      "path": "products/tui/src/runtime/ui-services.ts",
+      "status": "M",
+      "sha256": "d40dc8abf734f63ddca1d1388015b15811f165966c2058e2500b942af071d0a1",
+      "gitBlob": "9f69fa94e9a3e57100054c16e1bc64ad0de6142d",
+      "bytes": 9905
+    },
+    {
+      "path": "products/tui/src/shell/session-views.ts",
+      "status": "M",
+      "sha256": "783851c2f1c3b883bae416cf148b5ab027d84eb08e4ba3a2ef0ed9f7fd599e86",
+      "gitBlob": "3b9ad2e5dfd0e327263bfd0ecfc103d36465e826",
+      "bytes": 29802
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-contract.test.ts",
+      "status": "A",
+      "sha256": "8954c56bcde9b3eb044b7191b34c71f54af4fec6ed9a15341a7a8875ae88dba1",
+      "gitBlob": "47f1e8aba43fad3ff2de14a5040cf80b5dea93a2",
+      "bytes": 10664
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-model.test.ts",
+      "status": "M",
+      "sha256": "0a551c086791eec0057cfb4e490a5c6a66e3f4191b495fd4a0b9b7f9c5c92bd5",
+      "gitBlob": "8d6e8d4ed43019bd471e98445fc39e476de85286",
+      "bytes": 11306
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-turn-outcome.test.ts",
+      "status": "M",
+      "sha256": "ab2c9cffbd093d96226795132dec6bc28f31f84ad827c79ab9bcb69f32bf077f",
+      "gitBlob": "cd2a33493996b4ebefd5e38294069fffd4c9c1b3",
+      "bytes": 10875
+    },
+    {
+      "path": "products/tui/src/test/helpers/contract-work-tree-fixtures.ts",
+      "status": "A",
+      "sha256": "b2a50b6ed011f374bb2a413466aa33a5fb49ed62fe1c4e9dd0987368c8067135",
+      "gitBlob": "a461de44d6d7471c37cc227d9a844dc92be88d7b",
+      "bytes": 2152
+    },
+    {
+      "path": "products/tui/src/test/helpers/runtime-services.ts",
+      "status": "M",
+      "sha256": "2216ff93fc6ac891204a623dd316b5946981c08922fa2b143e2a50ee21fa8ace",
+      "gitBlob": "b7e23bfc99982c7d1fee5bba5291bb90b4e0c1d5",
+      "bytes": 18983
+    },
+    {
+      "path": "products/tui/src/test/helpers/session-surface.ts",
+      "status": "M",
+      "sha256": "b8a253ab971753b8557ec7f473691ff6ec9252a4ecf7e519d29ca939381472a2",
+      "gitBlob": "9b5b6cc7b88c8fc8f1ca746718d201ddde1efbde",
+      "bytes": 1463
+    },
+    {
+      "path": "products/tui/src/test/helpers/work-tree-scenes.ts",
+      "status": "M",
+      "sha256": "ca1d13f6ad76e7fe9f6b3b3e9ee94951128b1c0aecfc098005bd75f06e69fdca",
+      "gitBlob": "19eb86d4a240b51f013b7fb1ecddfa5094e27cf6",
+      "bytes": 19796
+    },
+    {
+      "path": "products/tui/src/test/input/contract-fleet-modal.test.ts",
+      "status": "A",
+      "sha256": "ca8b1ea5aeb0fa81359c242f38df755252b32049f66af4a8a96d3e8b00e8aba2",
+      "gitBlob": "f77ea12de907918228c71183b9b22c4d96d3b8e4",
+      "bytes": 2022
+    },
+    {
+      "path": "products/tui/src/test/input/local-sandbox-commands.test.ts",
+      "status": "A",
+      "sha256": "5e3e22fa0b60fc092e5e8a30e19915868cc34e12ef797817d6cc0c46cc7dcf68",
+      "gitBlob": "597c9091217075806335cc9742d38a8afd63cac5",
+      "bytes": 8985
+    },
+    {
+      "path": "products/tui/src/test/input/product-breadth-commands.test.ts",
+      "status": "M",
+      "sha256": "6dfbf52306dc5696819b1419b8f7da90a1d05990840c06e435c78eaa830b3f96",
+      "gitBlob": "95bc47c699920baa95908248bf1a1a9c521f0925",
+      "bytes": 96946
+    },
+    {
+      "path": "products/tui/src/test/input/work-tree-enter-opens-views.test.ts",
+      "status": "M",
+      "sha256": "a17ecf106fe6a87e641cec42d7c04fef1131fa9694b024a5f507c4687591f045",
+      "gitBlob": "08225583684077060871e66e5ff1267bce3eaeb4",
+      "bytes": 4569
+    },
+    {
+      "path": "products/tui/src/test/input/workstream-contract-command.test.ts",
+      "status": "A",
+      "sha256": "c478a24e69cee54a0ac0e5fc5c6d62ffea6a310abfe669e434095eaae03ff87b",
+      "gitBlob": "2e1e1a1a421824dd3d6c79a1c1d46c85c01271e6",
+      "bytes": 4201
+    },
+    {
+      "path": "products/tui/src/test/renderer/lane-graph-bead.test.ts",
+      "status": "M",
+      "sha256": "90b0b4f6bd35d83dcb4779dd68a1862d8ff152d71d6f8fda810b952f1a068914",
+      "gitBlob": "3dee9c07327c1c3387e3b62a450526a501c10bd4",
+      "bytes": 13267
+    },
+    {
+      "path": "products/tui/src/test/renderer/process-summary.test.ts",
+      "status": "M",
+      "sha256": "508bcf24c6cbead21ef8e4af674b0b4af13641899638b7715951fcccbc4d9c21",
+      "gitBlob": "41188bd2cc22ca96b0eaae195218345827cdb328",
+      "bytes": 2365
+    },
+    {
+      "path": "products/tui/src/test/runtime/resume-notice-announce.test.ts",
+      "status": "M",
+      "sha256": "aba890452237671a877a3935b1d7e739bf5d32eaa7096a4eb68b46a22f5e14c0",
+      "gitBlob": "4ba8277732388c8086508291f1103193d941254e",
+      "bytes": 7011
+    },
+    {
+      "path": "products/tui/src/test/runtime/resume-notice-build.test.ts",
+      "status": "M",
+      "sha256": "8026954cffa31a6e3bf41d90d58f38ecdd1dd13693d33f7b3a52319868af2fd7",
+      "gitBlob": "497986b1ebf96b48859c2f3a06f8c39d15e04d49",
+      "bytes": 5627
+    },
+    {
+      "path": "products/tui/src/test/runtime/sandbox/manager.test.ts",
+      "status": "M",
+      "sha256": "b29fdccec85e30f0948cab0483dfb0f05c7fd9ea4910fdebaa7f0cbe80918c20",
+      "gitBlob": "bde7fe14615e432155dd998da2069c373942355d",
+      "bytes": 1579
+    },
+    {
+      "path": "products/tui/src/test/runtime/sandbox/provisioning.test.ts",
+      "status": "D",
+      "sha256": null,
+      "gitBlob": null
+    },
+    {
+      "path": "products/tui/src/test/shell/live-run-5.test.ts",
+      "status": "M",
+      "sha256": "1f55c00c414c88a6453d6f66c23564da1c3807c17eb72ab590f981aaf243207e",
+      "gitBlob": "8e74be584d0abec4ce679b384a8fa54a8155402b",
+      "bytes": 12760
+    },
+    {
+      "path": "products/tui/src/test/shell/session-contract-views.test.ts",
+      "status": "A",
+      "sha256": "bc3f6180cde777a0983dba2515beeef6d78062a007cd4281046b82ce3d5ed582",
+      "gitBlob": "e25d70f92c45bf5a0623584d9699e54da62ecf42",
+      "bytes": 4789
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-read-model.test.ts",
+      "status": "M",
+      "sha256": "c62a4f117f9b5a16527990587f84e5a86dfcb82e64cfc5179dad618d42cdd0b5",
+      "gitBlob": "8e52bcbf98b654b65eaaef880804e0057615d77c",
+      "bytes": 33503
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-session-tabs.test.ts",
+      "status": "M",
+      "sha256": "3c7d0c33ff3b4882f8dc0a15f33c651f722ef4461bae453957e3544d1222e83a",
+      "gitBlob": "eb11392d88a2739e7e3b295e678204b28151af7b",
+      "bytes": 8872
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-transcript.test.ts",
+      "status": "M",
+      "sha256": "e62b8d678625a253e909ba78c759fe691448116d4acdfcda3bf011cf2611b182",
+      "gitBlob": "8750aa7dd9d7ccb167a2560452aba6a5cccb96cf",
+      "bytes": 16935
+    },
+    {
+      "path": "products/tui/src/views/fleet-read-model.ts",
+      "status": "M",
+      "sha256": "3952b041b117477a2492086b40799bf62fd7dd2cd41f96e0fe3baefadc0badc5",
+      "gitBlob": "8c9332145d0696e07790727d2dc4dc5c6ddc55fc",
+      "bytes": 27157
+    },
+    {
+      "path": "products/tui/src/views/fleet-session-tabs.ts",
+      "status": "M",
+      "sha256": "085b38e9d0e639da7a0868884a9d5127f33e80e94ca24336aec7e92a5e7edb08",
+      "gitBlob": "5b8d82e091ea5d3fbb5679698956846f99b93e84",
+      "bytes": 10747
+    },
+    {
+      "path": "products/tui/src/views/fleet-transcript.ts",
+      "status": "M",
+      "sha256": "31e8b6d6c9592471264654d87cc9df85ec35b471017beb42ba8cb2f1deb5d1e4",
+      "gitBlob": "1a3874c43c41b6c99ae42f090a586b2d11530682",
+      "bytes": 17966
+    }
+  ],
+  "proof": {
+    "componentTests": {
+      "status": "passed",
+      "tests": 350,
+      "assertions": 1362,
+      "files": 23,
+      "appliesOnlyTo": "25d3865bbc17ceab7388e3d1ac12f8dc34b7069b"
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2633
+    },
+    "wholeProductTypes": {
+      "status": "not_accepted",
+      "exactCheckpointPassingTypeProof": false,
+      "earlierBoundedDiagnostic": "192 lines during source edits; not a passing exact-checkpoint type proof"
+    },
+    "actualMainBinaryPty": {
+      "status": "not_accepted"
+    },
+    "logs": {
+      "ordinary-contract-input-checkpoint-tests.log": {
+        "bytes": 43622,
+        "sha256": "89f4414cbac094c42c59c6d06234fc7521d8a92231c613ff09aadc68b120d7f3"
+      },
+      "ordinary-contract-input-checkpoint-commit.log": {
+        "bytes": 1114,
+        "sha256": "d8359368e49d437f7f283220cd92b8da2b7a6842e57849298fe6eb0c94a20a1d"
+      }
+    }
+  },
+  "dependenciesAsRecordedAtSourceCheckpoint": {
+    "notificationPr52": "open draft unmerged at b4c59e5a10829a903ac157e10e3ff414dcafc72f, verified 2026-10-01T19:49Z; lazy adapter repair remains held",
+    "planningPr57": "archived callers require separate unmerged generation contract; no candidate integration"
+  },
+  "credentialPreflight": {
+    "decompressedPatchAndAllPostimagesPatternScan": "passed",
+    "publishedProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "verifiedInputsIdenticalToPublicMain": [
+        "packages/engine/sdk/src",
+        "packages/engine/scripts",
+        "packages/engine/etc",
+        "packages/engine/package.json",
+        "packages/engine/errors/src",
+        "packages/judgment/src",
+        "packages/judgment/package.json"
+      ],
+      "scope": "Fresh exact SDK credential classification inputs only; not full TUI product coverage"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "versioning": "The prior d08 checkpoint retains its own 79 renderer tests/550 assertions and failed startup. This checkpoint has separate 350/1362 component proof. Neither establishes full product acceptance.",
+  "outstandingGates": [
+    "Actual main startup and asynchronous caller acceptance",
+    "Full source/test type acceptance",
+    "Private workspace launcher/updater/build implementation",
+    "Current binary, PTY and first-turn proof",
+    "Legacy fixture cleanup and JEV/HOIST semantic obligations",
+    "PR52 notification dependency reconciliation",
+    "PR57 planning-store dependency and caller acceptance",
+    "Independent review, full repository/product CI, and authorized runtime integration"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply the patch to main."
+}

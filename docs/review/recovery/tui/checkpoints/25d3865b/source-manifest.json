@@ -1,0 +1,344 @@
+{
+  "format": 1,
+  "scope": "ordinary TUI product source only; no shared engine or PR56 delta",
+  "baseCommit": "d08b6758d0a5dfd633759f9168d71167a743f055",
+  "baseTree": "4fc2e2773d198093849dc96154e9a3014d1bcac4",
+  "baseRecoveryEvidenceCommit": "f99a84a58b8f96a6d52583ba3ed6e8abb09f8ee6",
+  "commit": "25d3865bbc17ceab7388e3d1ac12f8dc34b7069b",
+  "tree": "1b06d3c236b6549861a8aa893499edddda87067d",
+  "independentTemporaryIndexVerification": "passed",
+  "files": [
+    {
+      "path": "products/tui/migration-proof.md",
+      "status": "M",
+      "sha256": "d06ba6c507d9dcd032ba1c81c98a06543215736c1117899612430f6ec74aff1a"
+    },
+    {
+      "path": "products/tui/src/core/agent-view-render.ts",
+      "status": "M",
+      "sha256": "706a381b9843721a1c44b45a8f16d4cd26f7e6edd94baf328e26d9415ac104f1"
+    },
+    {
+      "path": "products/tui/src/core/conversation-rendering.ts",
+      "status": "M",
+      "sha256": "b2bb4f8a5856731cb76ef20920eded9a3decbc340e18b2975870690b26677150"
+    },
+    {
+      "path": "products/tui/src/core/conversation.ts",
+      "status": "M",
+      "sha256": "5844f31646663c18e1566634e7aec17cfa347ba3d393b4559175a348c2ae2eec"
+    },
+    {
+      "path": "products/tui/src/core/system-message-router.ts",
+      "status": "M",
+      "sha256": "6a51b1c661f460de4efe9a449a7b277397a70f1ca01512771316a4726d1635d8"
+    },
+    {
+      "path": "products/tui/src/core/work-tree-contract.ts",
+      "status": "A",
+      "sha256": "64ff53c81cc1b1c3684cdfb4985b91d5de7cfb1ddbd2562e2c96f0443584b29d"
+    },
+    {
+      "path": "products/tui/src/core/work-tree-model.ts",
+      "status": "M",
+      "sha256": "c39382cf6453d9aefcbb9526f1504e98a8e8023248c410eeae726551cba0a935"
+    },
+    {
+      "path": "products/tui/src/core/work-tree-sources.ts",
+      "status": "M",
+      "sha256": "da6b9c6a09f66b51f0475f523e03e862a3a99f7ca767c8d5c630bfee1f1e9629"
+    },
+    {
+      "path": "products/tui/src/core/work-tree-wiring.ts",
+      "status": "M",
+      "sha256": "97d51b8f5726e490cba11e47d1a0edfc7c4c78cf8e36755ae442ab509270ab0a"
+    },
+    {
+      "path": "products/tui/src/input/agents-modal.ts",
+      "status": "M",
+      "sha256": "674aea8cd14df2876863c1170102ba9252ebb7b74da9459a8562cd7b273f8a01"
+    },
+    {
+      "path": "products/tui/src/input/command-registry.ts",
+      "status": "M",
+      "sha256": "aa7c912681d7296959ecc4137358830fde9befa37a49e54efdfa3b54ad2be5fa"
+    },
+    {
+      "path": "products/tui/src/input/commands/local-setup-review.ts",
+      "status": "M",
+      "sha256": "609906fa8cdb09158213d8b73e2cf13fd82d7c997b512a1fe6b423e2869b7c49"
+    },
+    {
+      "path": "products/tui/src/input/commands/local-setup.ts",
+      "status": "M",
+      "sha256": "d8279394b015de0412cafb3628fed7711aab68f16c2ced54ace08085f93d7eec"
+    },
+    {
+      "path": "products/tui/src/input/commands/permissions-provenance.ts",
+      "status": "M",
+      "sha256": "099491a702cc9d4d8421c999ad5e288f9a6fde216fb368a2ec65907057ed2c72"
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-qemu.ts",
+      "status": "D",
+      "sha256": null
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-runtime.ts",
+      "status": "M",
+      "sha256": "a05ddcd71aa41d0afcd37357ce5ea2aaa721b3eb79bc0054e8ecd418cbe63449"
+    },
+    {
+      "path": "products/tui/src/input/commands/platform-sandbox-session.ts",
+      "status": "M",
+      "sha256": "197dd288ba511576ff983665fb1f95919ff92daf586483988e969370a76de88b"
+    },
+    {
+      "path": "products/tui/src/input/commands/test-runtime.ts",
+      "status": "M",
+      "sha256": "da57f5d2e87ad373c917b37ad2be13aedea5ac186824630a6442e6d0cae649b3"
+    },
+    {
+      "path": "products/tui/src/input/commands/workstream-runtime.ts",
+      "status": "M",
+      "sha256": "cc3cbc0e2cc734501efbdde925006a3804cb924beee067990b90e26ea13c7e95"
+    },
+    {
+      "path": "products/tui/src/main.ts",
+      "status": "M",
+      "sha256": "51ac4efda83c3348f04138301cba285b6b6de520339d26f8816fba58fe9f7079"
+    },
+    {
+      "path": "products/tui/src/renderer/lane-graph/bead.ts",
+      "status": "M",
+      "sha256": "f029a9a2b7308b0f56ab612b71c7704fea90ae52b0d4fbc1b9d88607c117f5e5"
+    },
+    {
+      "path": "products/tui/src/renderer/lane-graph/paint.ts",
+      "status": "M",
+      "sha256": "37bd3fef795902a4b88e9b05430a2aa101e5ad80ae3a070f0604a7e0c92e3ebc"
+    },
+    {
+      "path": "products/tui/src/renderer/process-summary.ts",
+      "status": "M",
+      "sha256": "e7a1fb433e4d2a97cb60775e9a2db76f9a743cfd9f30101a05f3c16e3c72c97f"
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-command-context.ts",
+      "status": "M",
+      "sha256": "73675ecb0b9f55fad015e6e9ce7bb6099be27f41748b0c9a642c363f153bb11f"
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-command-parts.ts",
+      "status": "M",
+      "sha256": "81718830156c8333e9e6da45f0fc92bc114f28e28e731895f2f2b7cd1a0154d0"
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-core.ts",
+      "status": "M",
+      "sha256": "2a68f4fb4a126b55b6ebe17971553033dff9a1aaf47cd6c7283c4d8d41dbc004"
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap-shell.ts",
+      "status": "M",
+      "sha256": "9837983599f4d1f5e7c09b6a71f029f938a10b7e10486e1f24ed20ba2e3d6280"
+    },
+    {
+      "path": "products/tui/src/runtime/bootstrap.ts",
+      "status": "M",
+      "sha256": "9bb8d6e98ab6ce468f6aad5ec0dc37a2163c825f9c8f2ef9558c35f598555ee7"
+    },
+    {
+      "path": "products/tui/src/runtime/resume-notice.ts",
+      "status": "M",
+      "sha256": "0f9cbbbef86b89256d4fc676a115c8ea61f64331a60cc3b53a9fe6a68b4d1edd"
+    },
+    {
+      "path": "products/tui/src/runtime/runtime-services-types.ts",
+      "status": "M",
+      "sha256": "1426d6e53a46f93fdd2e2b1f56ca716f393b1d4be4cf4c3c36bd9773dd09ab91"
+    },
+    {
+      "path": "products/tui/src/runtime/sandbox-public-gaps.ts",
+      "status": "M",
+      "sha256": "b5a2fc354f4ce2f8c813c0d68e95f4718369f91c754df90822743cecc8a62e37"
+    },
+    {
+      "path": "products/tui/src/runtime/services.ts",
+      "status": "M",
+      "sha256": "60464298d4d955c18fe00ed2efe85d783ebb5bc75eb11d4842cff6f591f78fe1"
+    },
+    {
+      "path": "products/tui/src/runtime/ui-read-models.ts",
+      "status": "M",
+      "sha256": "1d10119282fc056c4098a1d44d37227c678c1b4444f4eb9b491884d5b56b0b1a"
+    },
+    {
+      "path": "products/tui/src/runtime/ui-services.ts",
+      "status": "M",
+      "sha256": "d40dc8abf734f63ddca1d1388015b15811f165966c2058e2500b942af071d0a1"
+    },
+    {
+      "path": "products/tui/src/shell/session-views.ts",
+      "status": "M",
+      "sha256": "783851c2f1c3b883bae416cf148b5ab027d84eb08e4ba3a2ef0ed9f7fd599e86"
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-contract.test.ts",
+      "status": "A",
+      "sha256": "8954c56bcde9b3eb044b7191b34c71f54af4fec6ed9a15341a7a8875ae88dba1"
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-model.test.ts",
+      "status": "M",
+      "sha256": "0a551c086791eec0057cfb4e490a5c6a66e3f4191b495fd4a0b9b7f9c5c92bd5"
+    },
+    {
+      "path": "products/tui/src/test/core/work-tree-turn-outcome.test.ts",
+      "status": "M",
+      "sha256": "ab2c9cffbd093d96226795132dec6bc28f31f84ad827c79ab9bcb69f32bf077f"
+    },
+    {
+      "path": "products/tui/src/test/helpers/contract-work-tree-fixtures.ts",
+      "status": "A",
+      "sha256": "b2a50b6ed011f374bb2a413466aa33a5fb49ed62fe1c4e9dd0987368c8067135"
+    },
+    {
+      "path": "products/tui/src/test/helpers/runtime-services.ts",
+      "status": "M",
+      "sha256": "2216ff93fc6ac891204a623dd316b5946981c08922fa2b143e2a50ee21fa8ace"
+    },
+    {
+      "path": "products/tui/src/test/helpers/session-surface.ts",
+      "status": "M",
+      "sha256": "b8a253ab971753b8557ec7f473691ff6ec9252a4ecf7e519d29ca939381472a2"
+    },
+    {
+      "path": "products/tui/src/test/helpers/work-tree-scenes.ts",
+      "status": "M",
+      "sha256": "ca1d13f6ad76e7fe9f6b3b3e9ee94951128b1c0aecfc098005bd75f06e69fdca"
+    },
+    {
+      "path": "products/tui/src/test/input/contract-fleet-modal.test.ts",
+      "status": "A",
+      "sha256": "ca8b1ea5aeb0fa81359c242f38df755252b32049f66af4a8a96d3e8b00e8aba2"
+    },
+    {
+      "path": "products/tui/src/test/input/local-sandbox-commands.test.ts",
+      "status": "A",
+      "sha256": "5e3e22fa0b60fc092e5e8a30e19915868cc34e12ef797817d6cc0c46cc7dcf68"
+    },
+    {
+      "path": "products/tui/src/test/input/product-breadth-commands.test.ts",
+      "status": "M",
+      "sha256": "6dfbf52306dc5696819b1419b8f7da90a1d05990840c06e435c78eaa830b3f96"
+    },
+    {
+      "path": "products/tui/src/test/input/work-tree-enter-opens-views.test.ts",
+      "status": "M",
+      "sha256": "a17ecf106fe6a87e641cec42d7c04fef1131fa9694b024a5f507c4687591f045"
+    },
+    {
+      "path": "products/tui/src/test/input/workstream-contract-command.test.ts",
+      "status": "A",
+      "sha256": "c478a24e69cee54a0ac0e5fc5c6d62ffea6a310abfe669e434095eaae03ff87b"
+    },
+    {
+      "path": "products/tui/src/test/renderer/lane-graph-bead.test.ts",
+      "status": "M",
+      "sha256": "90b0b4f6bd35d83dcb4779dd68a1862d8ff152d71d6f8fda810b952f1a068914"
+    },
+    {
+      "path": "products/tui/src/test/renderer/process-summary.test.ts",
+      "status": "M",
+      "sha256": "508bcf24c6cbead21ef8e4af674b0b4af13641899638b7715951fcccbc4d9c21"
+    },
+    {
+      "path": "products/tui/src/test/runtime/resume-notice-announce.test.ts",
+      "status": "M",
+      "sha256": "aba890452237671a877a3935b1d7e739bf5d32eaa7096a4eb68b46a22f5e14c0"
+    },
+    {
+      "path": "products/tui/src/test/runtime/resume-notice-build.test.ts",
+      "status": "M",
+      "sha256": "8026954cffa31a6e3bf41d90d58f38ecdd1dd13693d33f7b3a52319868af2fd7"
+    },
+    {
+      "path": "products/tui/src/test/runtime/sandbox/manager.test.ts",
+      "status": "M",
+      "sha256": "b29fdccec85e30f0948cab0483dfb0f05c7fd9ea4910fdebaa7f0cbe80918c20"
+    },
+    {
+      "path": "products/tui/src/test/runtime/sandbox/provisioning.test.ts",
+      "status": "D",
+      "sha256": null
+    },
+    {
+      "path": "products/tui/src/test/shell/live-run-5.test.ts",
+      "status": "M",
+      "sha256": "1f55c00c414c88a6453d6f66c23564da1c3807c17eb72ab590f981aaf243207e"
+    },
+    {
+      "path": "products/tui/src/test/shell/session-contract-views.test.ts",
+      "status": "A",
+      "sha256": "bc3f6180cde777a0983dba2515beeef6d78062a007cd4281046b82ce3d5ed582"
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-read-model.test.ts",
+      "status": "M",
+      "sha256": "c62a4f117f9b5a16527990587f84e5a86dfcb82e64cfc5179dad618d42cdd0b5"
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-session-tabs.test.ts",
+      "status": "M",
+      "sha256": "3c7d0c33ff3b4882f8dc0a15f33c651f722ef4461bae453957e3544d1222e83a"
+    },
+    {
+      "path": "products/tui/src/test/views/fleet-transcript.test.ts",
+      "status": "M",
+      "sha256": "e62b8d678625a253e909ba78c759fe691448116d4acdfcda3bf011cf2611b182"
+    },
+    {
+      "path": "products/tui/src/views/fleet-read-model.ts",
+      "status": "M",
+      "sha256": "3952b041b117477a2492086b40799bf62fd7dd2cd41f96e0fe3baefadc0badc5"
+    },
+    {
+      "path": "products/tui/src/views/fleet-session-tabs.ts",
+      "status": "M",
+      "sha256": "085b38e9d0e639da7a0868884a9d5127f33e80e94ca24336aec7e92a5e7edb08"
+    },
+    {
+      "path": "products/tui/src/views/fleet-transcript.ts",
+      "status": "M",
+      "sha256": "31e8b6d6c9592471264654d87cc9df85ec35b471017beb42ba8cb2f1deb5d1e4"
+    }
+  ],
+  "patch": {
+    "bytes": 381277,
+    "sha256": "31428c1eda4ce2100c7ff6c30ae119ad5bd2b13a796c74b5a2679ab9f8f9598f",
+    "gzipBytes": 93720,
+    "gzipSha256": "ce8d73928a5cac321bff146eb0770a592a44a95139de590a7ffdbac1e21316ac"
+  },
+  "proof": {
+    "componentTests": "350 passed, 0 failed, 1362 assertions across 23 files",
+    "normalCommitHook": "passed",
+    "wholeProductTypes": "not passed; last bounded diagnostic during source edits had 192 lines; no owned display-file errors",
+    "actualMainBinaryPty": "not accepted"
+  },
+  "logs": {
+    "ordinary-contract-input-checkpoint-tests.log": {
+      "bytes": 43622,
+      "sha256": "89f4414cbac094c42c59c6d06234fc7521d8a92231c613ff09aadc68b120d7f3"
+    },
+    "ordinary-contract-input-checkpoint-commit.log": {
+      "bytes": 1114,
+      "sha256": "d8359368e49d437f7f283220cd92b8da2b7a6842e57849298fe6eb0c94a20a1d"
+    }
+  },
+  "dependenciesHeld": {
+    "notificationPr52": "open draft unmerged at b4c59e5a10829a903ac157e10e3ff414dcafc72f, verified 2026-10-01T19:49Z; lazy adapter repair remains held",
+    "planningPr57": "archived callers require separate unmerged generation contract; no candidate integration"
+  },
+  "remaining": "Private workspace launcher/updater/build, asynchronous callers, current binary/PTY first turn, legacy fixture cleanup and explicit JEV/HOIST semantic obligations remain."
+}
