@@ -184,6 +184,7 @@ export interface ProviderApiRegistry {
   tryGet(name: string): LLMProvider | undefined;
   getCurrentModel(): ModelDefinition;
   getContextWindowForModel(modelDef: ModelDefinition): number;
+  getKnownContextWindowForModel(modelDef: ModelDefinition): number | null;
   getForModel(modelId: string, provider?: string): LLMProvider;
   getRegistered(name: string): LLMProvider;
   getSelectableModels(): ModelDefinition[];

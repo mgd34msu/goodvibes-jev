@@ -420,7 +420,7 @@ export async function runAgentTask(
       let contextWindowForTurn = 0;
       if (contextWindowAwarenessEnabled || passiveKnowledgeInjectionEnabled) {
         const modelDef = resolveContextWindowModelDefinition(providerRegistry, activeRoute);
-        contextWindowForTurn = context.providerRegistry.getContextWindowForModel(modelDef);
+        contextWindowForTurn = context.providerRegistry.getKnownContextWindowForModel(modelDef) ?? 0; // unknown: skip awareness/compaction
       }
 
       if (contextWindowAwarenessEnabled) {

@@ -46,6 +46,7 @@ function wakingAgent(outcome: 'failed' | 'completed') {
       providerRegistry: {
         getCurrentModel: () => MODEL, getForModel: () => provider, listModels: () => [MODEL],
         getContextWindowForModel: () => 0, recordContextWindowRejection: () => {},
+        getKnownContextWindowForModel: () => 0,
       },
       configManager: { get: ((key: string) => key === 'agents.maxTurns' ? limit : undefined) as ConfigManager['get'] },
       contractHooks: { onTurnEnd: () => {}, holdCompletion: async () => outcome === 'completed'

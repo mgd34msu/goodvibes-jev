@@ -235,6 +235,7 @@ function makeRegistryStub(model: ModelDefinition) {
   return {
     getCurrentModel: () => model,
     getContextWindowForModel: () => model.contextWindow,
+    getKnownContextWindowForModel: () => model.contextWindow,
     listModels: () => [model],
   } as unknown as PreflightDeps['providerRegistry'];
 }
@@ -471,16 +472,16 @@ describe('observed context ceilings', () => {
     });
   });
 
-  test('a successful request above the ceiling raises it (estimates overshoot)', () => {
+  test('a successful request above the ceiling invalidates it instead of inventing a maximum', () => {
     withTempRoot((root) => {
       const registry = makeRegistry(root);
       registry.registerDiscoveredProviders([DISCOVERED_SERVER]);
       registry.recordContextWindowRejection('ollama:qwen3-local', 4000);
       registry.reconcileObservedContextWindow('ollama:qwen3-local', 4800);
-      expect(registry.getObservedContextWindow('ollama:qwen3-local')).toBe(4800);
+      expect(registry.getObservedContextWindow('ollama:qwen3-local')).toBeNull();
       // A success below the ceiling changes nothing.
       registry.reconcileObservedContextWindow('ollama:qwen3-local', 100);
-      expect(registry.getObservedContextWindow('ollama:qwen3-local')).toBe(4800);
+      expect(registry.getObservedContextWindow('ollama:qwen3-local')).toBeNull();
       // No ceiling recorded -> reconcile is a no-op, never invents one.
       registry.reconcileObservedContextWindow('ollama:other-model', 9999);
       expect(registry.getObservedContextWindow('ollama:other-model')).toBeNull();

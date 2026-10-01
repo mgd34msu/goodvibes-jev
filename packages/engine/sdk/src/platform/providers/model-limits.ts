@@ -175,6 +175,13 @@ function buildOrMap(cache: ModelLimitsCache): Map<string, OpenRouterModelData> {
   return map;
 }
 
+/** Accepted input constrains every later ceiling source, not only the raw definition. */
+function acceptedContextFloor(model: ModelDefinition): number {
+  const stated = model.contextWindowAcceptedFloor ?? 0;
+  const legacy = model.contextWindowProvenance === 'accepted_floor' ? model.contextWindow : 0;
+  return Math.max(Number.isFinite(stated) && stated > 0 ? stated : 0, Number.isFinite(legacy) && legacy > 0 ? legacy : 0);
+}
+
 export class ModelLimitsService {
   private cachedData: ModelLimitsCache | null = null;
   private cachedOrMap: Map<string, OpenRouterModelData> | null = null;
@@ -250,23 +257,29 @@ export class ModelLimitsService {
    * provider limit, or OpenRouter's listing.
    */
   reportedContextWindow(modelDef: ModelDefinition): number | undefined {
+    if (modelDef.contextWindowOrigin?.kind === 'consensus') return undefined;
+    const floor = acceptedContextFloor(modelDef);
     // An explicit user-configured cap (configured_cap) is authoritative and must
     // never be widened, or narrowed, by an OpenRouter identity match. provider_api
     // values are likewise trusted, as are learned provider limits
-    // (observed_limit, the provider itself rejected anything larger). All
-    // short-circuit ahead of the OpenRouter lookup.
+    // (observed_limit, the provider itself rejected anything larger), and the
+    // catalog figure already chosen for the model (so its origin stays true).
+    // All short-circuit ahead of the OpenRouter lookup.
     if (
       (modelDef.contextWindowProvenance === 'provider_api' ||
         modelDef.contextWindowProvenance === 'configured_cap' ||
-        modelDef.contextWindowProvenance === 'observed_limit') &&
-      modelDef.contextWindow > 0
+        modelDef.contextWindowProvenance === 'observed_limit' ||
+        modelDef.contextWindowProvenance === 'catalog') &&
+      Number.isFinite(modelDef.contextWindow) && modelDef.contextWindow > 0 && modelDef.contextWindow >= floor
     ) {
       return modelDef.contextWindow;
     }
     const orMap = this.ensureOpenRouterMap();
     if (orMap) {
       const orMatch = findOpenRouterMatch(modelDef.id, modelDef.provider, orMap);
-      if (orMatch?.context_length != null && orMatch.context_length > 0) {
+      // An accepted input is a lower bound, never a ceiling. A smaller
+      // OpenRouter figure has been contradicted by the same observation.
+      if (orMatch?.context_length != null && Number.isFinite(orMatch.context_length) && orMatch.context_length > 0 && orMatch.context_length >= floor) {
         return orMatch.context_length;
       }
     }
@@ -281,8 +294,27 @@ export class ModelLimitsService {
     // the documented family row, or the conservative default until it is read.
     const cw = modelDef.contextWindow;
     return Number.isFinite(cw) && cw > 0
-      ? cw
-      : knownFallbackContextWindow(modelDef.provider, modelDef.id);
+      ? Math.max(cw, acceptedContextFloor(modelDef))
+      : Math.max(knownFallbackContextWindow(modelDef.provider, modelDef.id), acceptedContextFloor(modelDef));
+  }
+
+  /**
+   * A window a source actually states, or null for a guess or a disproven
+   * ceiling. Numeric budget callers retain getContextWindowForModel; meters,
+   * threshold warnings and compaction must use this nullable observation.
+   * Family readings remain estimates, even after their identity is settled.
+   */
+  getKnownContextWindowForModel(modelDef: ModelDefinition): number | null {
+    // Other endpoints may advertise a different cap for the same model.
+    // Their consensus is a useful estimate, not this provider's ceiling.
+    if (modelDef.contextWindowOrigin?.kind === 'consensus') return null;
+    const reported = this.reportedContextWindow(modelDef);
+    if (reported !== undefined) return reported;
+    const provenance = modelDef.contextWindowProvenance;
+    if (provenance === 'fallback' || provenance === 'accepted_floor') return null;
+    // An invalid or absent figure cannot become known by taking a fallback.
+    const window = modelDef.contextWindow;
+    return Number.isFinite(window) && window > 0 && window >= acceptedContextFloor(modelDef) ? window : null;
   }
 
   getToolResultMaxCharsForModel(model: ModelDefinition | null | undefined): number {

@@ -4,7 +4,7 @@
  * order equal to screen order, Enter runs, Escape closes the palette only, the
  * scrim closes it, and focus returns to the opener.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { CommandPalette, formatShortcut } from './CommandPalette';
@@ -272,6 +272,48 @@ describe('CommandPalette: admitted semantic search', () => {
     ran = [];
     registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('chat.new') }));
     registerCommand(cmd('nav.chat', { title: 'Go to Chat', group: 'navigation', run: () => ran.push('nav.chat') }));
+  });
+
+  for (const pending of [true, false]) test(`${pending ? 'pending' : 'settled'} query is never replayed under another account after command re-registration`, async () => {
+    await tokenStore.setToken('offline-account-a');
+    const requests: { input: RankRequest; authorization: string | null }[] = [];
+    let finish!: (value: Response) => void;
+    globalThis.fetch = ((_url, init) => {
+      const input = JSON.parse(String(init?.body)) as RankRequest;
+      requests.push({ input, authorization: new Headers(init?.headers).get('Authorization') });
+      if (pending && requests.length === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return Promise.resolve(answer(input));
+    }) as typeof fetch;
+    renderPalette(true); type('account A private query');
+    await until(() => requests.length === 1);
+    if (!pending) await until(() => options().length === 1);
+    await tokenStore.setToken('offline-account-b');
+    flushSync(() => registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('new-account') })));
+    if (pending) finish(answer(requests[0]!.input));
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    expect(requests).toHaveLength(1);
+    key('Enter'); expect(ran).toEqual([]);
+    type('account B explicit query');
+    await until(() => requests.length === 2 && options().length === 1);
+    expect(requests[1]!.authorization).toBe('Bearer offline-account-b');
+    expect(requests[1]!.input.input.query).toEqual({ kind: 'inline', text: 'account B explicit query' });
+    key('Enter'); expect(ran).toEqual(['new-account']);
+  });
+
+  test('a settled row cannot click or Enter after expiry advances without a storage write', async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await tokenStore.setTokenEntry('offline-account-a', now + 60_000);
+      globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest)) as typeof fetch;
+      renderPalette(true); type('begin afresh');
+      await until(() => options().length === 1);
+      const row = options()[0]!;
+      now += 60_000;
+      row.click(); key('Enter');
+      expect(ran).toEqual([]);
+      await until(() => options().length === 0);
+    } finally { clock.mockRestore(); }
   });
 
   for (const [name, change] of [

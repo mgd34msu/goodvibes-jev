@@ -34,6 +34,9 @@ const SECTION_ICONS: Record<PaletteSection, ReactNode> = {
   settings: <Settings aria-hidden="true" />,
 };
 
+interface QueryInput { readonly text: string; readonly lifetime?: ClientLifetime }
+const EMPTY_QUERY: QueryInput = Object.freeze({ text: '' });
+
 /** "mod+shift+n" → "Ctrl Shift N"; "g c" → "G then C". */
 export function formatShortcut(shortcut: string): string {
   const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform ?? '');
@@ -52,7 +55,11 @@ export function formatShortcut(shortcut: string): string {
 }
 
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
-  const [query, setQuery] = useState('');
+  // A query belongs to the identity that explicitly entered it. Re-registering
+  // commands may refresh that identity's candidates, never replay its text as a
+  // different account's request.
+  const [queryInput, setQueryInput] = useState<QueryInput>(EMPTY_QUERY);
+  const query = queryInput.text;
   const [snapshot, setSnapshot] = useState(() => ({ commands: getCommands(), revision: getCommandRegistryRevision() }));
   const [search, setSearch] = useState<{ query: string; revision: number; lifetime: ClientLifetime; result?: CommandSearchResult }>();
   const [clientLifetime, setClientLifetime] = useState(getClientLifetime);
@@ -67,7 +74,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   useTopLayerEscape(open, isTop, onClose);
 
   // Clear before the next visible frame, including a close/open in quick succession.
-  useLayoutEffect(() => { if (!open) setQuery(''); }, [open]);
+  useLayoutEffect(() => { if (!open) setQueryInput(EMPTY_QUERY); }, [open]);
 
   useEffect(() => subscribeCommands(() => setSnapshot({ commands: getCommands(), revision: getCommandRegistryRevision() })), []);
   useEffect(() => {
@@ -87,16 +94,16 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
     if (!wasOpen.current) {
       wasOpen.current = true;
-      setQuery('');
+      setQueryInput(EMPTY_QUERY);
       setActiveIndex(0);
       setSearch(undefined);
       return;
     }
     if (!query.trim()) { setSearch(undefined); return; }
     const abort = new AbortController();
-    const lifetime = getClientLifetime();
-    if (!isClientLifetimeCurrent(lifetime)) {
-      setSearch({ query, revision: snapshot.revision, lifetime, result: { status: 'unavailable', reason: 'stale' } });
+    const lifetime = queryInput.lifetime;
+    if (!lifetime || !isClientLifetimeCurrent(lifetime)) {
+      setSearch({ query, revision: snapshot.revision, lifetime: lifetime ?? getClientLifetime(), result: { status: 'unavailable', reason: 'stale' } });
       return;
     }
     const current = () => !abort.signal.aborted && isClientLifetimeCurrent(lifetime) && isCommandSearchCurrent(snapshot);
@@ -112,7 +119,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       });
     }, 200);
     return () => { unsubscribe(); clearTimeout(timer); abort.abort(); };
-  }, [open, query, snapshot]);
+  }, [open, query, queryInput.lifetime, snapshot]);
 
   const searching = query.trim().length > 0;
   const result = search?.query === query && search.revision === snapshot.revision
@@ -219,7 +226,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             placeholder="Search chats, places, actions and settings"
             value={query}
             onChange={(e) => {
-              setQuery(e.target.value);
+              setQueryInput({ text: e.target.value, lifetime: getClientLifetime() });
               setActiveIndex(0);
             }}
             aria-label="Search commands"
@@ -245,7 +252,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 : result.reason === 'source' ? 'The command list changed or is unavailable. Try again.'
                 : 'Command search cannot read this request.'
               : 'Command search is unavailable right now.'}</p>
-            <button type="button" onClick={() => { setQuery(''); setActiveIndex(0); inputRef.current?.focus(); }}>Browse all commands</button>
+            <button type="button" onClick={() => { setQueryInput(EMPTY_QUERY); setActiveIndex(0); inputRef.current?.focus(); }}>Browse all commands</button>
           </div>
         ) : ordered.length === 0 ? (
           <p className="cmd-empty" role="status">{searching ? `No results for “${query.trim()}”` : 'No commands available'}</p>

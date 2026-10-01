@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/contracts';
 import { WEBUI_COMMAND_CATALOG_VERSION } from '@goodvibes-jev/engine/sdk/platform/judgment-browser/catalogs';
@@ -44,6 +44,41 @@ afterEach(async () => {
 });
 
 describe('authenticated palette reader', () => {
+  test('a settled direct callback expires by clock alone', async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    let runs = 0;
+    try {
+      await tokenStore.setTokenEntry('offline-account-a', now + 60_000);
+      registerCommand({ id: 'chat.new', title: 'New Chat', group: 'chat', run() { runs++; } });
+      globalThis.fetch = (async (_url, init) => response(wire(JSON.parse(String(init?.body)) as Request))) as typeof fetch;
+      const result = await rankCommandSnapshot('start over', snapshot(), new AbortController().signal);
+      if (result.status !== 'ready') throw new Error('fixture reading did not settle');
+      now += 60_000;
+      result.commands[0]!.run();
+      expect(runs).toBe(0);
+      expect(result.isCurrent()).toBe(false);
+    } finally { clock.mockRestore(); }
+  });
+
+  test('a request begun before expiry cannot adopt a response released after expiry', async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await tokenStore.setTokenEntry('offline-account-a', now + 60_000);
+      let pending!: { input: Request; finish: (value: Response) => void; signal: AbortSignal };
+      globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+        pending = { input: JSON.parse(String(init?.body)) as Request, finish, signal: init!.signal! };
+      })) as typeof fetch;
+      const result = rankCommandSnapshot('start over', snapshot(), new AbortController().signal);
+      while (!pending) await new Promise((resolve) => setTimeout(resolve, 0));
+      now += 60_000;
+      pending.finish(response(wire(pending.input)));
+      expect(await result).toEqual({ status: 'unavailable', reason: 'stale' });
+      expect(pending.signal.aborted).toBe(true);
+    } finally { clock.mockRestore(); }
+  });
+
   test('plain-HTTP LAN without crypto.randomUUID still sends a valid request and settles', async () => {
     const original = crypto.randomUUID;
     let requestId = '';
