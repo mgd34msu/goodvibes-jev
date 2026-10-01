@@ -102,6 +102,8 @@ function makeCountingMemoryRegistry(records: MemoryRecord[]): { registry: TurnKn
 
 interface TestContextOverrides {
   text: string;
+  getSystemPrompt?: OrchestratorTurnLoopContext['getSystemPrompt'];
+  getAbortSignal?: OrchestratorTurnLoopContext['getAbortSignal'];
   provider: LLMProvider;
   memoryRegistry?: TurnKnowledgeRegistrySource | undefined;
   enabled?: boolean;
@@ -145,8 +147,8 @@ function makeContext(opts: TestContextOverrides): {
   const context: OrchestratorTurnLoopContext = {
     conversation,
     toolRegistry: new ToolRegistry(),
-    getSystemPrompt: () => BASE_SYSTEM_PROMPT,
-    getAbortSignal: () => undefined,
+    getSystemPrompt: opts.getSystemPrompt ?? (() => BASE_SYSTEM_PROMPT),
+    getAbortSignal: opts.getAbortSignal ?? (() => undefined),
     hookDispatcher: null,
     requestRender: () => {},
     runtimeBus: null,
@@ -541,5 +543,122 @@ describe('orchestrator-turn-loop: main-session per-turn passive knowledge inject
     expect(turnInjectionRecords).toHaveLength(1);
     expect(turnInjectionRecords[0]!.injectedIds).toEqual(['mem_ratelimit']);
     expect(turnInjectionRecords[0]!.budgetTokens).toBe(800); // DEFAULT_TURN_KNOWLEDGE_BUDGET_TOKENS
+  });
+});
+
+
+describe('orchestrator-turn-loop: awaited system prompts', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+
+  test('awaits the current read set and sends exactly the resolved prompt', async () => {
+    const ready = deferred<void>();
+    const entered = deferred<void>();
+    const controller = new AbortController();
+    let readSet = ['older memory'];
+    const { context, capturedSystemPrompts } = makeContext({
+      text: 'use current memory', provider: finalResponseProvider(), enabled: false,
+      getAbortSignal: () => controller.signal,
+      getSystemPrompt: async (signal) => {
+        expect(signal).toBe(controller.signal);
+        entered.resolve();
+        await ready.promise;
+        return readSet.join('\n');
+      },
+    });
+    const turn = executeOrchestratorTurnLoop(context);
+    await entered.promise;
+    expect(capturedSystemPrompts).toEqual([]);
+    readSet = ['reviewed memory A', 'reviewed memory B'];
+    ready.resolve();
+    await turn;
+    expect(capturedSystemPrompts).toEqual([appendGoodVibesRuntimeAwarenessPrompt(readSet.join('\n'))]);
+  });
+
+  test('aborts immediately while a prompt ignores cancellation and consumes its late rejection', async () => {
+    const pending = deferred<string>();
+    const entered = deferred<void>();
+    const controller = new AbortController();
+    const { context, capturedSystemPrompts } = makeContext({
+      text: 'cancel this read', provider: finalResponseProvider(), enabled: false,
+      getAbortSignal: () => controller.signal,
+      getSystemPrompt: () => { entered.resolve(); return pending.promise; },
+    });
+    const turn = executeOrchestratorTurnLoop(context);
+    await entered.promise;
+    controller.abort();
+    await expect(turn).rejects.toHaveProperty('name', 'AbortError');
+    pending.reject(new Error('late read failure'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(capturedSystemPrompts).toEqual([]);
+  });
+
+  test('never starts a prompt read for an already cancelled turn', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let reads = 0;
+    const { context, capturedSystemPrompts } = makeContext({
+      text: 'cancelled', provider: finalResponseProvider(), enabled: false,
+      getAbortSignal: () => controller.signal,
+      getSystemPrompt: () => { reads++; return 'must not be read'; },
+    });
+    await expect(executeOrchestratorTurnLoop(context)).rejects.toHaveProperty('name', 'AbortError');
+    expect(reads).toBe(0);
+    expect(capturedSystemPrompts).toEqual([]);
+  });
+
+  test('rejects a stale prompt if the active turn signal changes during the read', async () => {
+    const pending = deferred<string>();
+    const entered = deferred<void>();
+    let controller = new AbortController();
+    const { context, capturedSystemPrompts } = makeContext({
+      text: 'old turn', provider: finalResponseProvider(), enabled: false,
+      getAbortSignal: () => controller.signal,
+      getSystemPrompt: () => { entered.resolve(); return pending.promise; },
+    });
+    const turn = executeOrchestratorTurnLoop(context);
+    await entered.promise;
+    controller = new AbortController();
+    pending.resolve('old turn memory');
+    await expect(turn).rejects.toHaveProperty('name', 'AbortError');
+    expect(capturedSystemPrompts).toEqual([]);
+  });
+
+  for (const asynchronous of [false, true]) {
+    test(`propagates a ${asynchronous ? 'rejected' : 'thrown'} prompt failure without provider fallback`, async () => {
+      const error = new Error('memory judgment unavailable');
+      const { context, capturedSystemPrompts } = makeContext({
+        text: 'read memory', provider: finalResponseProvider(), enabled: false,
+        getSystemPrompt: () => { if (asynchronous) return Promise.reject(error); throw error; },
+      });
+      await expect(executeOrchestratorTurnLoop(context)).rejects.toBe(error);
+      expect(capturedSystemPrompts).toEqual([]);
+    });
+  }
+
+  test('provider retry notifications reuse the same resolved prompt and signal', async () => {
+    const controller = new AbortController();
+    let reads = 0;
+    const provider = finalResponseProvider();
+    const { context, capturedSystemPrompts } = makeContext({
+      text: 'retry', enabled: false, getAbortSignal: () => controller.signal,
+      getSystemPrompt: async () => { reads++; return 'single reviewed read set'; },
+      provider: {
+        ...provider,
+        chat: async (request) => {
+          expect(request.signal).toBe(controller.signal);
+          await request.onRetry?.(1, 2, 0, new Error('transient'));
+          expect(request.systemPrompt).toBe(appendGoodVibesRuntimeAwarenessPrompt('single reviewed read set'));
+          return provider.chat(request);
+        },
+      },
+    });
+    await executeOrchestratorTurnLoop(context);
+    expect(reads).toBe(1);
+    expect(capturedSystemPrompts).toHaveLength(1);
   });
 });
