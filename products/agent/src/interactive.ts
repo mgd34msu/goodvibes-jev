@@ -21,7 +21,6 @@ import { registerBuiltinCommands } from './input/commands.ts';
 import { ScheduleManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { InputHistory } from './input/input-history.ts';
 import { ShellPassthrough, SHELL_USAGE_HINT } from './input/shell-passthrough.ts';
-import { getTierPromptSupplement, getTierForContextWindow } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { buildShellFooter, estimateShellFooterHeight } from './renderer/shell-surface.ts';
 import { HEADER_GAP_ROWS, withHeaderGap } from './renderer/header-line.ts';
 import { TranscriptScroll, mainBackToBottom, transcriptEscape } from './shell/transcript-scroll.ts';

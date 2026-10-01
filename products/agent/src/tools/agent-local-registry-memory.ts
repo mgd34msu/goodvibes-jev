@@ -155,7 +155,7 @@ export async function handleMemory(
     const stats = registry.vectorStats();
     const unavailable = describeMemoryIndexUnavailable(stats);
     if (unavailable) {
-      const records = registry.search({ query, limit: 10 });
+      const records = await registry.search({ query, limit: 10 });
       return renderMemorySearch(`literal fallback, ${unavailable}`, query, records.map(formatMemory));
     }
     const results = await memorySpine.searchSemantic({ query, limit: 10 });

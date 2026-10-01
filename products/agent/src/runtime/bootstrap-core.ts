@@ -23,7 +23,6 @@ import type { BootstrapOptions } from './context.ts';
 import { createFeatureFlagManager, deriveFeatureStates, bindFeatureSettingsBridge } from '@/runtime/index.ts';
 import { RuntimeEventBus, configureRuntimeEventBusDefaults, runtimeEventBusOptionsFrom } from '@/runtime/index.ts';
 import type { SessionEvent } from '@/runtime/index.ts';
-import { emitPermissionModeChanged } from '@goodvibes-jev/engine/sdk/platform/runtime/emitters';
 import { createRuntimeStore, createDomainDispatch, type RuntimeStore } from './store/index.ts';
 import { ForensicsCollector, ForensicsRegistry } from '@/runtime/index.ts';
 import {
@@ -252,6 +251,14 @@ export async function initializeBootstrapCore(
   // toolDeps rather than merging, so a partial second call would silently drop
   // everything set here.
   const agentOrchestratorToolDeps = {
+    agentManager: services.agentManager,
+    contractRunner: services.contractRunner,
+    contractHooks: services.contractRunner.hooks(),
+    permissionManager: services.permissionManager,
+    execPromptAnswerHandler: services.execPromptAnswerHandler,
+    sandboxEscalationHandler: services.sandboxEscalationHandler,
+    contextAccountingHolder: services.contextAccountingHolder,
+    secretsManager: services.secretsManager,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
     // Same instances services.ts wired at construction, setDependencies()
     // fully replaces, so the localhost fetch ask and the announce-once
@@ -559,25 +566,7 @@ export async function initializeBootstrapCore(
     uiServices.events.turns.on('TURN_COMPLETED', () => services.sessionSpineClient.heartbeat(runtimeSessionIdRef.value)),
   );
 
-  // Producer half of the live mode-metadata refresh. permissions.mode can change
-  // mid-session (the Permission mode setting cycles it via configManager), and
-  // the SDK models that as a PERMISSION_MODE_CHANGED wire event, but nothing
-  // emitted it, so the runtime store's permission domain (and any surface built
-  // off it) stayed frozen at the boot-time value until restart. Bridging the
-  // config-key subscription onto the runtime bus makes every mode mutation, from
-  // any path that goes through configManager.set, publish the event; the
-  // consumer half in agent-runtime-events.ts folds it into the store and shows a
-  // system message. Guarded on an actual change so a no-op re-set stays silent.
-  runtimeUnsubs.push(
-    configManager.subscribe('permissions.mode', (newValue, oldValue) => {
-      if (newValue === oldValue) return;
-      emitPermissionModeChanged(
-        runtimeBus,
-        { sessionId: runtimeSessionIdRef.value, source: 'goodvibes-agent', traceId: `perm-mode-${generateUserSessionId()}` },
-        { mode: String(newValue), previousMode: String(oldValue) },
-      );
-    }),
-  );
+  // The public client runtime already publishes PRESET_CHANGED for live settings.
 
   domainDispatch.syncSessionState({
     id: userSessionId,

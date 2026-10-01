@@ -15,7 +15,7 @@ export function getMemoryApi(context: CommandContext): MemoryApi | null {
   return memoryApi;
 }
 
-export function handleRecallSearch(args: string[], context: CommandContext): void {
+export async function handleRecallSearch(args: string[], context: CommandContext): Promise<void> {
   const memory = getMemoryApi(context);
   if (!memory) {
     return;
@@ -57,8 +57,8 @@ export function handleRecallSearch(args: string[], context: CommandContext): voi
   if (queryTokens.length) filter.query = queryTokens.join(' ');
   if (semantic) filter.semantic = true;
 
-  const semanticResults = semantic ? memory.searchSemantic(filter) : [];
-  const results = semantic ? semanticResults.map((entry) => entry.record) : memory.search(filter);
+  const semanticResults = semantic ? await memory.searchSemantic(filter) : [];
+  const results = semantic ? semanticResults.map((entry) => entry.record) : await memory.search(filter);
   if (!results.length) {
     context.print('[memory] No records found.');
     return;
@@ -209,7 +209,7 @@ export function handleRecallRemove(args: string[], context: CommandContext): voi
   ].join('\n'));
 }
 
-export function handleRecallList(args: string[], context: CommandContext): void {
+export async function handleRecallList(args: string[], context: CommandContext): Promise<void> {
   const memory = getMemoryApi(context);
   if (!memory) {
     return;
@@ -227,7 +227,7 @@ export function handleRecallList(args: string[], context: CommandContext): void 
     filter.scope = scope;
   }
 
-  const records = memory.search(filter);
+  const records = await memory.search(filter);
   if (!records.length) {
     context.print('[memory] No records.');
     return;

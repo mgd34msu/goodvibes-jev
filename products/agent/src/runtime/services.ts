@@ -120,8 +120,9 @@ import { MediaProviderRegistry, ensureBuiltinMediaProviders } from '@goodvibes-j
 import { MultimodalService } from '@goodvibes-jev/engine/sdk/platform/multimodal';
 import { AgentManager, cancelAllAgentRuns } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { AgentMessageBus } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { WrfcController } from '@goodvibes-jev/engine/sdk/platform/agents';
-import { continuationChainOptions } from '@goodvibes-jev/engine/sdk/platform/agents';
+import { createContractOperatorService, createContractIntake, type ContractIntake } from '@goodvibes-jev/engine/sdk/platform/contract';
+import { createApprovalDerivedHandlers, type ApprovalDerivedHandlers } from '@goodvibes-jev/engine/sdk/platform/runtime/bootstrap';
+import { continuationContractOptions } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { AgentOrchestrator } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { ArchetypeLoader } from '@goodvibes-jev/engine/sdk/platform/agents';
 import { CodeIndexStore, resolveMemoryVectorDbPath } from '@goodvibes-jev/engine/sdk/platform/state';
@@ -138,9 +139,7 @@ import type { SessionLiveTurnControlsHolder } from '@goodvibes-jev/engine/sdk/pl
 // (wireRuntimePower binds runtimeBus work signals and starts the manager).
 import { createUnavailablePowerSeam, wireRuntimePower } from '@goodvibes-jev/engine/sdk/platform/power';
 import { forwardKeepAwakeToAdoptedDaemon } from '@goodvibes-jev/engine/sdk/platform/power';
-import { createFixWorkstreamRunner, createOrchestrationEngine, createProviderBackedAttemptJudge } from '@goodvibes-jev/engine/sdk/platform/orchestration';
 import { StoreSnapshotScheduler } from '@goodvibes-jev/engine/sdk/platform/state/store-snapshots';
-import { buildExecPromptAnswerHandler } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/exec-prompt-wiring';
 import { AgentDaemonReceiptFeed } from './daemon-receipts.ts';
 import { WorkspaceCheckpointManager, type CheckpointSessionResolver } from '@goodvibes-jev/engine/sdk/platform/workspace';
 import { ProcessManager } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -208,11 +207,9 @@ import type { FeatureFlagManager } from '@/runtime/index.ts';
 import { createFeatureFlagManager, deriveFeatureStates, bindFeatureSettingsBridge } from '@/runtime/index.ts';
 import {
   FeatureAnnouncementStore,
-  createSandboxContainmentAnnouncer,
   featureAnnouncementsPath,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/feature-announcements';
 import {
-  buildLocalhostFetchApproval,
   type LocalhostFetchApproval,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/permissions/localhost-fetch-approval';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
@@ -275,34 +272,6 @@ function createDisabledAgentWorktreeRegistry(workingDirectory: string): Worktree
   return new DisabledAgentWorktreeRegistry(workingDirectory, {
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
   });
-}
-
-type AgentWrfcWorktreeFactory = NonNullable<ConstructorParameters<typeof WrfcController>[2]['createWorktree']>;
-type AgentWrfcWorktreeOps = ReturnType<AgentWrfcWorktreeFactory>;
-
-function agentWrfcWorktreeError(operation: string): Error {
-  return new Error(`GoodVibes Agent does not own local review worktree ${operation}. Delegate build, fix, and review work to GoodVibes TUI.`);
-}
-
-function createDisabledAgentWrfcWorktreeOps(): AgentWrfcWorktreeOps {
-  return {
-    async merge(_agentId: string): Promise<boolean> {
-      throw agentWrfcWorktreeError('merge');
-    },
-    async cleanup(_agentId: string): Promise<void> {
-      throw agentWrfcWorktreeError('cleanup');
-    },
-    // No explicit return-type annotation: this always throws before returning,
-    // so it structurally satisfies whatever CommitWorkingTreeResult shape the
-    // SDK's WrfcController#createWorktree option currently declares (derived
-    // via AgentWrfcWorktreeOps above) without importing that SDK-internal type.
-    async commitWorkingTree(_message: string) {
-      throw agentWrfcWorktreeError('commit');
-    },
-    async currentHead(): Promise<string | null> {
-      return null;
-    },
-  };
 }
 
 /**
@@ -743,7 +712,9 @@ export interface RuntimeServices extends Omit<SdkRuntimeServices, 'sessionBroker
   readonly agentManager: AgentManager;
   readonly agentMessageBus: AgentMessageBus;
   readonly agentOrchestrator: AgentOrchestrator;
-  readonly wrfcController: WrfcController;
+  readonly contractIntake: ContractIntake;
+  readonly execPromptAnswerHandler: ApprovalDerivedHandlers['execPromptAnswerHandler'];
+  readonly sandboxEscalationHandler: ApprovalDerivedHandlers['sandboxEscalationHandler'];
   readonly processManager: ProcessManager;
   readonly modeManager: ModeManager;
   readonly fileUndoManager: FileUndoManager;
@@ -969,6 +940,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     agentManager,
     agentMessageBus,
     agentOrchestrator,
+    contractRunner,
     sessionManager,
     sessionOrchestration,
     workflow,
@@ -1070,21 +1042,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     runtimeStore: options.runtimeStore,
     runtimeBus: options.runtimeBus,
   });
-  const wrfcController = Reflect.construct(WrfcController, [options.runtimeBus, agentMessageBus, {
-    agentManager,
-    configManager,
-    projectRoot: workingDirectory,
-    surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
-    // In a git repository every chain works in its own worktree and lands
-    // through the SDK (wrfc-chain-workspace); these legacy in-place commit and
-    // merge ops are never reached there, and refuse if anything ever tries.
-    createWorktree: createDisabledAgentWrfcWorktreeOps,
-    // A chain's fix phase: review findings become a dependency-graph
-    // workstream on the one orchestration engine, composed further down
-    // (createOrchestrationEngine); the runner reads it when a fix cycle starts.
-    fixWorkstreamRunner: createFixWorkstreamRunner({ engine: () => orchestrationEngine }),
-  }]) as WrfcController;
-  agentManager.setWrfcController(wrfcController);
+  const contractOperator = createContractOperatorService({ runner: contractRunner, workingDirectory });
+  const contractIntake = createContractIntake({ runner: contractRunner, projectRoot: workingDirectory });
   // Close the late-bound seam declared above `createWireSessionDispatch`: the
   // dispatch can now read the outcome of a run it started.
   dispatchAgentStatus = (agentId) => agentManager.getStatus(agentId);
@@ -1328,7 +1287,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
       // carries the `conversationGate` schema domain, so `getCategory` reads
       // the configured surface list instead of falling back to the SDK's
       // shipped defaults.
-      ...continuationChainOptions(input, {
+      ...continuationContractOptions(input, {
         configReader: {
           get: (key: string) => configManager.get(key as never),
           getCategory: (name: string) => configManager.getCategory(name as never),
@@ -1637,20 +1596,17 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // Both ride the CLIENT raiser now, not this process's own broker: an exec
   // prompt or a localhost fetch ask is a permission ask, and a permission ask
   // leaves this process.
-  const execPromptAnswerHandler = buildExecPromptAnswerHandler({
-    requestApproval,
-  });
-  const localhostFetchApproval = buildLocalhostFetchApproval({
-    requestApproval,
-    configManager,
-  });
-  // Announce-once receipts for default-on features: the first contained exec
-  // run yields the one-time containment line (persisted, once per install).
   const announcementStore = new FeatureAnnouncementStore(featureAnnouncementsPath(configManager));
-  const onSandboxedRun = createSandboxContainmentAnnouncer(announcementStore, (announcement) => {
-    logger.info(announcement.text, { announcement: announcement.id });
-  });
+  const approvalHandlers = createApprovalDerivedHandlers({ requestApproval, configManager, featureFlags, announcementStore });
+  const { execPromptAnswerHandler, localhostFetchApproval, onSandboxedRun, sandboxEscalationHandler } = approvalHandlers;
   agentOrchestrator.setDependencies({
+    ...approvalHandlers,
+    permissionManager,
+    agentManager,
+    contractRunner,
+    contractHooks: contractRunner.hooks(),
+    contextAccountingHolder,
+    secretsManager,
     surfaceRoot: GOODVIBES_AGENT_SURFACE_ROOT,
     execPromptAnswerHandler,
     localhostFetchApproval,
@@ -1680,21 +1636,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     workflowServices: workflow,
   });
 
-  // ── One-Platform: RuntimeServices members required by SDK 0.38 ──────
-  // The Agent is delegation-only: it does not own local build/worktree work.
-  // These are constructed as real-but-inert SDK services purely to satisfy the
-  // RuntimeServices contract, none auto-start:
-  //   • orchestrationEngine , never .start()ed here for build work (delegation
-  //                            goes through /delegate to the TUI). It does run
-  //                            the fix steps of a WRFC chain this Agent starts:
-  //                            the daemon has no verb that accepts a chain or
-  //                            its fix workstream (POST /task only spawns a
-  //                            plain agent in the daemon's own directory), so
-  //                            the chain runs locally in its own isolated git
-  //                            worktree and its fix workstream is rooted there
-  //                            in `worktree` isolation mode. Nothing is written
-  //                            to the shared directory until the chain passes,
-  //                            and nothing waits on a person to start it.
+  // The public client runtime owns the contract runner and each contract engine.
+  // The remaining Agent-local services retain their existing lifetime:
   //   • codeIndexStore      , constructed but neither schema-initialized nor
   //                            auto-built; the Agent runs no repo source-tree
   //                            code index (inert unless explicitly invoked).
@@ -1703,7 +1646,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   //                            reindex scheduling (Stage B, TUI-only feature)
   //                            never fires for the Agent.
   //   • processRegistry     , fleet observability over the managers the Agent
-  //                            already owns (agents, wrfc, processes, watchers).
+  //                            already owns (agents, contracts, processes, watchers).
   //   • workspaceCheckpointManager, a runtimeBus (hence automatic turn/agent-
   //                            lifecycle snapshots) is only passed when
   //                            `workingDirectory` is a registered workspace (or
@@ -1719,14 +1662,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // double-count, mirrors the SDK composition root.
   const priceUsage = (model: string | undefined, usage: { inputTokens: number; outputTokens: number }): number | null => (model ? computeUsageCostUsd(providerRegistry.resolveModelPricing(model), usage) : null);
 
-  const orchestrationEngine = createOrchestrationEngine({
-    agentManager,
-    configManager,
-    runtimeBus: options.runtimeBus,
-    projectRoot: workingDirectory,
-    priceUsage,
-    judgeAttempts: createProviderBackedAttemptJudge(providerRegistry),
-  });
   const codeIndexStore = new CodeIndexStore(
     workingDirectory,
     join(workingDirectory, '.goodvibes', GOODVIBES_AGENT_SURFACE_ROOT, 'code-index.sqlite'),
@@ -1848,8 +1783,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
 
   const processRegistry = createArchivableFleetRegistry({
     agentManager,
-    wrfcController,
-    orchestrationEngine,
+    contractRunner,
     codeIndexService: codeIndexStore,
     processManager,
     watcherRegistry,
@@ -2207,7 +2141,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     // KnowledgeService.dispose() clears its schedule-timer map, disposing it
     // twice is a no-op, not a double-free.
     knowledgeService: agentKnowledgeService, agentKnowledgeService,
-    wrfcController, orchestrationEngine, processRegistry, memoryGovernor, triggerManager,
+    contractRunner, processRegistry, memoryGovernor, triggerManager,
     // Named here rather than registered separately below: RuntimePollerOwners
     // is all-required precisely so a poller cannot be forgotten, and this fork
     // had been registering the home-graph service by hand where the contract
@@ -2271,7 +2205,6 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     configManager,
     featureFlags,
     contextAccountingHolder,
-    orchestrationEngine,
     codeIndexStore,
     codeIndexReindexScheduler,
     storeSnapshotScheduler,
@@ -2297,6 +2230,8 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     localhostFetchApproval,
     featureAnnouncementStore: announcementStore,
     onSandboxedRun,
+    execPromptAnswerHandler,
+    sandboxEscalationHandler,
     // The client shape's dispatch seam. The register automation still needs
     // rides beside it under its own name, so nothing reads one and gets the
     // other.
@@ -2392,7 +2327,11 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     agentManager,
     agentMessageBus,
     agentOrchestrator,
-    wrfcController,
+    contractRunner,
+    contractOperator,
+    contractIntake,
+    judgment: clientFloor.judgment,
+    sessionSnapshot: (sessionId, conversation) => ({ ...conversation, contracts: contractRunner.list({ sessionId, includeTerminal: true }) }),
     processManager,
     modeManager,
     fileUndoManager,

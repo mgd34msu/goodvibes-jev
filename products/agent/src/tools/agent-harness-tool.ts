@@ -146,7 +146,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
       sideEffects: ['state'],
       concurrency: 'serial',
     },
-    execute: async (rawArgs) => {
+    execute: async (rawArgs, options) => {
+      const signal = options?.signal;
       const args = rawArgs as AgentHarnessToolArgs;
       if (!isMode(args.mode)) {
         const requested = String(args.mode).toLowerCase();
@@ -171,7 +172,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
             error: formatHarnessError(err),
           }));
           const projectContext = projectContextCatalogStatus(deps.commandContext);
-          const promptContext = promptContextCatalogStatus(deps.commandContext);
+          const promptContext = await promptContextCatalogStatus(deps.commandContext, signal);
           const agentOrchestration = agentOrchestrationCatalogStatus(deps.commandContext, deps.toolRegistry);
           const modelRouting = await modelRoutingCatalogStatus(deps.commandContext).catch((err) => ({
             modes: ['model_routing', 'model_route'],
@@ -397,7 +398,7 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           if (resolved.status === 'ambiguous') return error(`Ambiguous project context file ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
           return error(resolved.usage);
         }
-        if (args.mode === 'prompt_context') return output(promptContextSummary(deps.commandContext, args));
+        if (args.mode === 'prompt_context') return output(await promptContextSummary(deps.commandContext, args, signal));
         if (args.mode === 'agent_orchestration') return output(agentOrchestrationSummary(deps.commandContext, deps.toolRegistry, args));
         if (args.mode === 'agent_orchestration_agent') {
           const resolved = describeAgentOrchestrationAgent(deps.commandContext, args);

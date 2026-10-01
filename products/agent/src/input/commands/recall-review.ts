@@ -5,13 +5,13 @@ import { VALID_REVIEW_STATES, VALID_SCOPES, isValidReviewState, isValidScope } f
 import { getMemoryApi } from './recall-query.ts';
 import { requireYesFlag, stripYesFlag } from './confirmation.ts';
 
-export function handleRecallQueue(args: string[], context: CommandContext): void {
+export async function handleRecallQueue(args: string[], context: CommandContext): Promise<void> {
   const memory = getMemoryApi(context);
   if (!memory) {
     return;
   }
   const limit = Math.max(1, parseInt(args[0] ?? '10', 10) || 10);
-  const queue = memory.reviewQueue(limit);
+  const queue = await memory.reviewQueue(limit);
   const proposals = context.clients?.memoryConsolidation?.listPendingProposals() ?? [];
   if (!queue.length && !proposals.length) {
     context.print('[memory] Review queue is empty.');
@@ -71,7 +71,7 @@ export function handleRecallReview(args: string[], context: CommandContext): voi
   context.print(`[memory] Reviewed ${record.id}: ${record.reviewState} ${record.confidence}%`);
 }
 
-export function handleRecallExplain(args: string[], context: CommandContext): void {
+export async function handleRecallExplain(args: string[], context: CommandContext): Promise<void> {
   const memory = getMemoryApi(context);
   if (!memory) {
     return;
@@ -88,7 +88,7 @@ export function handleRecallExplain(args: string[], context: CommandContext): vo
     context.print('[memory] Usage: /memory explain <task description...> [--scope <write-scope> ...]');
     return;
   }
-  const explanation = memory.explain(task, scopeValues);
+  const explanation = await memory.explain(task, scopeValues);
   if (explanation.injections.length === 0) {
     context.print('[memory] No reviewed project knowledge was selected for that task.');
     return;

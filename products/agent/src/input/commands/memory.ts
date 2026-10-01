@@ -38,7 +38,7 @@ export const recallCommand: SlashCommand = {
 
       case 'search':
       case 'find':
-        handleRecallSearch(rest, context);
+        await handleRecallSearch(rest, context);
         break;
 
       case 'vector':
@@ -56,7 +56,7 @@ export const recallCommand: SlashCommand = {
         break;
 
       case 'queue':
-        handleRecallQueue(rest, context);
+        await handleRecallQueue(rest, context);
         break;
 
       case 'review':
@@ -73,7 +73,7 @@ export const recallCommand: SlashCommand = {
         break;
 
       case 'explain':
-        handleRecallExplain(rest, context);
+        await handleRecallExplain(rest, context);
         break;
 
       case 'promote':
@@ -86,7 +86,7 @@ export const recallCommand: SlashCommand = {
 
       case 'list':
       case 'ls':
-        handleRecallList(rest, context);
+        await handleRecallList(rest, context);
         break;
 
       case 'remove':

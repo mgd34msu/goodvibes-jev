@@ -40,7 +40,7 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
 
   test('renders an honest budget line with the applied limit and its source, distinct from a generic failure', async () => {
     const { configManager, agentManager } = makeHarness();
-    const record = agentManager.spawn({ mode: 'spawn', task: 'summarize the quarterly report', template: 'engineer' });
+    const record = agentManager.spawn({ mode: 'spawn', outsideContract: true, task: 'summarize the quarterly report', template: 'engineer' });
     await flushMicrotasks();
     expect(record.status).toBe('failed');
 
@@ -87,7 +87,7 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
 
   test('names the config default and the policy cap distinctly from a spawn override', async () => {
     const { configManager, agentManager } = makeHarness();
-    const record = agentManager.spawn({ mode: 'spawn', task: 'draft release notes', template: 'engineer' });
+    const record = agentManager.spawn({ mode: 'spawn', outsideContract: true, task: 'draft release notes', template: 'engineer' });
     await flushMicrotasks();
     record.failureReason = 'max_turns';
     record.turnBudget = { limit: 40, source: 'default' };
@@ -122,7 +122,7 @@ describe('registerAgentRuntimeEvents: AGENT_FAILED typed turn-budget outcome (SD
 
   test('a non-max_turns failure still uses the generic child-failure envelope path', async () => {
     const { configManager, agentManager } = makeHarness();
-    const record = agentManager.spawn({ mode: 'spawn', task: 'reconcile the ledger', template: 'engineer' });
+    const record = agentManager.spawn({ mode: 'spawn', outsideContract: true, task: 'reconcile the ledger', template: 'engineer' });
     await flushMicrotasks();
     expect(record.status).toBe('failed');
     expect(record.failureReason).not.toBe('max_turns');

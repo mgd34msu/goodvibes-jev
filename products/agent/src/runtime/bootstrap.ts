@@ -1,3 +1,5 @@
+import { readTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { factsFor } from '@goodvibes-jev/engine/sdk/platform/routing';
 /**
  * Bootstrap composition root for GoodVibes Agent.
  *
@@ -325,22 +327,25 @@ export async function bootstrapRuntime(
     requestRender: (): void => { requestRender(); },
   };
 
+  const systemPromptBySignal = new WeakMap<AbortSignal, Promise<string>>();
   const orchestrator = new Orchestrator({
     conversation,
     getViewportHeight: () => orchestratorRefs.getViewportHeight(),
     scrollToEnd: (vHeight: number) => orchestratorRefs.scrollToEnd(vHeight),
     toolRegistry,
     permissionManager,
-    getSystemPrompt: () => {
+    getSystemPrompt: (signal) => {
+      const existing = signal ? systemPromptBySignal.get(signal) : undefined;
+      if (existing) return existing;
       const currentModel = providerRegistry.getCurrentModel();
-      const contextWindow = providerRegistry.getKnownContextWindowForModel(currentModel); // null: unknown window, standard tier
-      const composed = composeRuntimePromptWithReceipt({
+      const turnId = activePromptTurnId;
+      const captured = {
         sessionId: runtime.sessionId,
-        turnId: activePromptTurnId,
-        source: activePromptTurnId ? 'turn' : 'follow_up',
+        turnId,
+        source: turnId ? 'turn' as const : 'follow_up' as const,
         provider: runtime.provider,
         model: currentModel,
-        contextWindow,
+        contextWindow: providerRegistry.getKnownContextWindowForModel(currentModel),
         runtimePrompt: runtime.systemPrompt,
         operatorPolicy: GOODVIBES_AGENT_OPERATOR_POLICY,
         shellPaths: services.shellPaths,
@@ -348,10 +353,22 @@ export async function bootstrapRuntime(
         turnText: activePromptTurnText,
         memoryRecallSnapshot: services.memorySpineClient.recallSnapshot(),
         capabilityIndex: capabilitySnapshot(),
-      });
-      promptContextReceipts.record(composed.receipt);
-      memoryUsageTracker.onComposed(activePromptTurnId, composed.receipt);
-      return composed.prompt;
+      };
+      const composedPrompt = (async () => {
+        signal?.throwIfAborted();
+        const tierPrompt = await readTierPromptSupplement(
+          factsFor({ catalog: providerRegistry }, currentModel), providerRegistry.modelTiers,
+          'agent.conversation-system-prompt', { audience: 'conversation', signal },
+        );
+        signal?.throwIfAborted();
+        const composed = composeRuntimePromptWithReceipt({ ...captured, tierPrompt });
+        signal?.throwIfAborted();
+        promptContextReceipts.record(composed.receipt);
+        memoryUsageTracker.onComposed(turnId, composed.receipt);
+        return composed.prompt;
+      })();
+      if (signal) systemPromptBySignal.set(signal, composedPrompt);
+      return composedPrompt;
     },
     hookDispatcher,
     flagManager: services.featureFlags,
@@ -360,7 +377,8 @@ export async function bootstrapRuntime(
     sessionId: runtime.sessionId,
     services: {
       agentManager: services.agentManager,
-      wrfcController: services.wrfcController,
+      contractRunner: services.contractRunner,
+      contractIntake: services.contractIntake,
     },
   });
   conversationFollowUpRef.value = (item) => orchestrator.enqueueConversationFollowUp(item);

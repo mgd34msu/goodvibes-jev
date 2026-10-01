@@ -419,7 +419,7 @@ async function handleList(runtime: CliCommandRuntime, context: MemoryContext, ar
   const positionalClass = options.positionals[0];
   const filter = filterFromOptions(options, 50);
   if (positionalClass !== undefined) filter.cls = requireClass(positionalClass);
-  const records = context.registry.search(filter);
+  const records = await context.registry.search(filter);
   const data: MemoryListData = { path: context.path, records, filter };
   return success(runtime, 'agent.memory.list', data, renderRecordList('Agent memory', context.path, records));
 }
@@ -432,8 +432,8 @@ async function handleSearch(runtime: CliCommandRuntime, context: MemoryContext, 
   filter.query = query;
   const semantic = hasFlag(options, 'semantic') || hasFlag(options, 'vector');
   if (semantic) filter.semantic = true;
-  const semanticResults = semantic ? context.registry.searchSemantic(filter) : [];
-  const records = semantic ? semanticResults.map((entry) => entry.record) : context.registry.search(filter);
+  const semanticResults = semantic ? await context.registry.searchSemantic(filter) : [];
+  const records = semantic ? semanticResults.map((entry) => entry.record) : await context.registry.search(filter);
   const data: MemorySearchData = { path: context.path, records, filter, semantic, semanticResults };
   return success(runtime, 'agent.memory.search', data, renderRecordList(`Agent memory matching "${query}"`, context.path, records, semanticResults));
 }
@@ -480,7 +480,7 @@ async function handleShow(runtime: CliCommandRuntime, context: MemoryContext, ar
 
 async function handleQueue(runtime: CliCommandRuntime, context: MemoryContext, args: readonly string[]): Promise<CliCommandOutput> {
   const limit = parseLimit(args[0], 10);
-  const records = context.registry.reviewQueue(limit);
+  const records = await context.registry.reviewQueue(limit);
   return success(runtime, 'agent.memory.queue', { path: context.path, records, limit }, renderRecordList('Agent memory review queue', context.path, records));
 }
 

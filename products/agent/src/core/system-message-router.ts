@@ -124,8 +124,8 @@ export class SystemMessageRouter {
    * Automatically classify the message priority by content and route.
    * Drop-in replacement for conversation.addSystemMessage().
    */
-  routeAuto(message: string): void {
-    const priority: SystemMessagePriority = classifySystemMessagePriority(message);
+  async routeAuto(message: string): Promise<void> {
+    const priority: SystemMessagePriority = await classifySystemMessagePriority(message);
     this.routeTypedSystemMessage(message, priority, classifySystemMessageKind(message));
   }
 
@@ -139,8 +139,8 @@ export class SystemMessageRouter {
     this.routeSystemMessage(message, 'low');
   }
 
-  wrfc(message: string, priority: SystemMessagePriority = 'high'): void {
-    this.routeTypedSystemMessage(message, priority, 'wrfc');
+  contract(message: string, priority: SystemMessagePriority = 'high'): void {
+    this.routeTypedSystemMessage(message, priority, 'contract');
   }
 
   /** Returns the current activity feed reference. */

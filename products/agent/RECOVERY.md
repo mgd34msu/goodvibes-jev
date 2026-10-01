@@ -29,3 +29,26 @@ interactive startup, binary packaging and end-to-end acceptance have not passed.
 No captured-input authority proposal or unpublished shared engine overlay is
 part of this source recovery. The engine base is published main
 `9363f44d186e152f5c829aa106d5645ce3ed02a0`.
+
+## Published service graph checkpoint
+
+The Agent now consumes the client runtime's actual contract runner, operator and
+intake services, judgment and session snapshot. Both orchestrator dependency
+rewires retain the manager, contract hooks, foreground permission manager and
+all approval-derived handlers. The obsolete WRFC engine construction is gone.
+The client runtime owns live preset events; the Agent consumes those canonical
+store events and preserves its typed turn-budget and compaction notices.
+
+The actual Agent graph constructs and disposes offline, and a live preset change
+updates its store and produces one UI notice. A services-only bundle succeeds.
+The combined ordinary suite passes 281 tests and 2,723 assertions across 23 files.
+The latest source diagnostic has 89 errors, before the subsequent asynchronous
+memory command caller fixes. It reports no errors in the changed service graph.
+
+Interactive/main bundling remains blocked by notification exports absent from
+published main (buildApprovalNotification, describeToolTarget, resolveTurnName).
+No held notification implementation is copied. The canonical Agent-specific
+contract-event presentation helper is also not published yet. Full prompt memory
+ranking, wider command/view migration, product types, binary and end-to-end
+acceptance remain incomplete. The registered tier reader is now awaited with
+operation-signal caching; that change alone is not complete prompt parity.

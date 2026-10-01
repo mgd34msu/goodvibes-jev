@@ -1,5 +1,6 @@
+import { factsFor } from '@goodvibes-jev/engine/sdk/platform/routing';
 import type { MemoryApi } from '@goodvibes-jev/engine/sdk/platform/knowledge';
-import { getTierForContextWindow, getTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { readTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 import { describeMemoryPromptEligibility, isPromptActiveMemory, MIN_PROMPT_MEMORY_CONFIDENCE } from '../agent/memory-prompt.ts';
 import { AgentPersonaRegistry, buildActivePersonaPrompt } from '../agent/persona-registry.ts';
@@ -377,12 +378,16 @@ function promptContextReceiptSummary(context: CommandContext, args: PromptContex
   };
 }
 
-function promptContextSegments(context: CommandContext, includeParameters: boolean): readonly PromptContextSegment[] {
+async function promptContextSegments(context: CommandContext, includeParameters: boolean, signal?: AbortSignal): Promise<readonly PromptContextSegment[]> {
   const shellPaths = context.workspace.shellPaths;
   const runtimePrompt = context.session.runtime.systemPrompt ?? '';
   const { label: currentModel, contextWindow } = promptModelInfo(context);
-  const tier = getTierForContextWindow(contextWindow);
-  const tierPrompt = getTierPromptSupplement(tier, { audience: 'conversation' });
+  const registry = context.provider.providerRegistry;
+  const tierPrompt = await readTierPromptSupplement(
+    factsFor({ catalog: registry }, registry.getCurrentModel()), registry.modelTiers,
+    'agent.prompt-context-inspection', { audience: 'conversation', signal },
+  );
+  signal?.throwIfAborted();
   if (!shellPaths) {
     return [
       segment({
@@ -567,15 +572,15 @@ function promptContextSegments(context: CommandContext, includeParameters: boole
       promptChars: tierPrompt.length,
       promptText: tierPrompt,
       note: contextWindow === null
-        ? `Model ${currentModel} has an unknown context window; tier ${tier}.`
-        : `Model ${currentModel} has context window ${contextWindow}; tier ${tier}.`,
+        ? `Model ${currentModel} has an unknown context window; guidance comes from the registered model-tier reading.`
+        : `Model ${currentModel} has context window ${contextWindow}; guidance comes from the registered model-tier reading.`,
     }, includeParameters),
   ];
 }
 
-export function promptContextSummary(context: CommandContext, args: PromptContextArgs): Record<string, unknown> {
+export async function promptContextSummary(context: CommandContext, args: PromptContextArgs, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const includeParameters = args.includeParameters === true;
-  const segments = [...promptContextSegments(context, includeParameters)].sort((left, right) => left.order - right.order);
+  const segments = [...await promptContextSegments(context, includeParameters, signal)].sort((left, right) => left.order - right.order);
   const activeRecords = segments.reduce((total, entry) => total + entry.activeCount, 0);
   const suppressedRecords = segments.reduce((total, entry) => total + entry.suppressedCount, 0);
   const promptChars = segments.reduce((total, entry) => total + entry.promptChars, 0);
@@ -617,8 +622,8 @@ export function promptContextSummary(context: CommandContext, args: PromptContex
   };
 }
 
-export function promptContextCatalogStatus(context: CommandContext): Record<string, unknown> {
-  const summary = promptContextSummary(context, {});
+export async function promptContextCatalogStatus(context: CommandContext, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const summary = await promptContextSummary(context, {}, signal);
   const receipts = context.clients?.promptContextReceipts;
   const latestReceipt = receipts?.latest() ?? null;
   return {

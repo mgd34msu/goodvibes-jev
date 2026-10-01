@@ -5,7 +5,6 @@ import { writeStoreFile } from '@/utils/store-file.ts';
 import { logger, summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { MemoryRecord, MemoryRegistry } from '@goodvibes-jev/engine/sdk/platform/state';
 import type { MemoryRecallSnapshot } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
-import { getTierForContextWindow, getTierPromptSupplement } from '@goodvibes-jev/engine/sdk/platform/providers';
 import type { ShellPathService } from '@/runtime/index.ts';
 import type { CapabilityIndexReport } from '../capabilities/capability-types.ts';
 import { buildCapabilitySummaryPrompt } from './capability-summary-prompt.ts';
@@ -82,6 +81,8 @@ export interface RuntimePromptCompositionInput {
   readonly model: unknown;
   /** The window a source states, or null when unknown (a guess, or disproven by a larger accepted request). */
   readonly contextWindow: number | null;
+  /** Exact guidance already read for this prompt operation. */
+  readonly tierPrompt: string;
   readonly runtimePrompt: string;
   readonly operatorPolicy: string;
   readonly shellPaths: ShellPathService;
@@ -276,8 +277,7 @@ function buildRuntimePromptReceiptSegments(input: RuntimePromptCompositionInput)
   const personaSnapshot = AgentPersonaRegistry.fromShellPaths(input.shellPaths).snapshot();
   const activePersona = personaSnapshot.activePersona;
   const personaPrompt = buildActivePersonaPrompt(input.shellPaths) ?? '';
-  const tier = getTierForContextWindow(input.contextWindow);
-  const tierPrompt = getTierPromptSupplement(tier, { audience: 'conversation' });
+  const tierPrompt = input.tierPrompt;
   const capabilitySummaryText = buildCapabilitySummaryPrompt(input.capabilityIndex ?? null) ?? '';
 
   return [
@@ -455,16 +455,15 @@ function buildRuntimePromptReceiptSegments(input: RuntimePromptCompositionInput)
       promptChars: tierPrompt.length,
       promptText: tierPrompt,
       note: input.contextWindow === null
-        ? `Model ${modelLabel(input.model)} has an unknown context window; tier ${tier}.`
-        : `Model ${modelLabel(input.model)} has context window ${input.contextWindow}; tier ${tier}.`,
+        ? `Model ${modelLabel(input.model)} has an unknown context window; guidance comes from the registered model-tier reading.`
+        : `Model ${modelLabel(input.model)} has context window ${input.contextWindow}; guidance comes from the registered model-tier reading.`,
     }),
   ];
 }
 
 export function composeRuntimePromptWithReceipt(input: RuntimePromptCompositionInput): { readonly prompt: string; readonly receipt: PromptContextReceiptDraft } {
   const currentModel = modelLabel(input.model);
-  const tier = getTierForContextWindow(input.contextWindow);
-  const supplement = getTierPromptSupplement(tier, { audience: 'conversation' });
+  const supplement = input.tierPrompt;
   const capabilitySummary = buildCapabilitySummaryPrompt(input.capabilityIndex ?? null);
   const prompt = joinPromptParts(
     input.runtimePrompt,
