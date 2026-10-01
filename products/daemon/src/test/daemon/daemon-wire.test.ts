@@ -13,6 +13,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { connect } from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ProviderRegistry } from '@goodvibes-jev/engine/sdk/platform/providers';
@@ -152,7 +153,8 @@ function rawUpgradeStatusLine(authorization: string | null): Promise<string> {
         'Upgrade: websocket',
         'Connection: Upgrade',
         'Sec-WebSocket-Version: 13',
-        'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+        // Each upgrade uses a fresh 16-byte public protocol nonce.
+        `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
         ...(authorization ? [`Authorization: ${authorization}`] : []),
         '',
         '',
