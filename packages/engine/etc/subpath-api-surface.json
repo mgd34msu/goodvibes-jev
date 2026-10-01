@@ -150,7 +150,7 @@
     {
       "name": "BrowserGoodVibesSdkOptions",
       "kind": "interface",
-      "text": "export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; }"
+      "text": "export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; }"
     },
     {
       "name": "BrowserTokenStoreOptions",
@@ -930,6 +930,11 @@
       "text": "export interface FailureTransience { readonly failureClass: FailureClass; readonly basis: TransienceBasis; readonly detail: string; }"
     },
     {
+      "name": "FetchLike",
+      "kind": "type",
+      "text": "export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; } ;; URL = interface URL { hash: string; host: string; hostname: string; href: string; toString(): string; readonly origin: string; password: string; pathname: string; port: string; protocol: string; search: string; readonly searchParams: URLSearchParams; username: string; toJSON(): string; }"
+    },
+    {
       "name": "FieldKind",
       "kind": "type",
       "text": "export type FieldKind = 'string' | 'number' | 'boolean' | 'string[]' | 'enum' | 'enum[]' | 'object' | 'object[]' | 'string|null';"
@@ -1179,7 +1184,7 @@
       "required": [
         "baseUrl"
       ],
-      "text": "export interface GoodVibesSdkOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly realtime?: GoodVibesRealtimeOptions | undefined; readonly observer?: SDKObserver | undefined; readonly middleware?: TransportMiddleware[] | undefined; readonly autoRefresh?: AutoRefreshOptions | undefined; } ;; via HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers;"
+      "text": "export interface GoodVibesSdkOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly realtime?: GoodVibesRealtimeOptions | undefined; readonly observer?: SDKObserver | undefined; readonly middleware?: TransportMiddleware[] | undefined; readonly autoRefresh?: AutoRefreshOptions | undefined; } ;; via HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers;"
     },
     {
       "name": "GoodVibesTokenStore",
@@ -1229,7 +1234,7 @@
         "resolveContractRequest",
         "use"
       ],
-      "text": "export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: typeof fetch; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: FetchLike; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "HttpJsonTransportOptions",
@@ -1237,7 +1242,7 @@
       "required": [
         "baseUrl"
       ],
-      "text": "export interface HttpJsonTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly fetch?: typeof fetch | undefined; readonly fetchImpl?: typeof fetch | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly observer?: TransportObserver | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly onRetryScheduled?: ((info: { attempt: number; maxAttempts: number; backoffMs: number; reason: string; }) => void) | undefined; readonly onRetryExecuted?: ((info: { attempt: number; maxAttempts: number; }) => void) | undefined; } ;; via HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers;"
+      "text": "export interface HttpJsonTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly fetch?: FetchLike | undefined; readonly fetchImpl?: FetchLike | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly observer?: TransportObserver | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly onRetryScheduled?: ((info: { attempt: number; maxAttempts: number; backoffMs: number; reason: string; }) => void) | undefined; readonly onRetryExecuted?: ((info: { attempt: number; maxAttempts: number; }) => void) | undefined; } ;; via HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers;"
     },
     {
       "name": "HttpRetryPolicy",
@@ -2082,7 +2087,7 @@
         "fetch",
         "ready"
       ],
-      "text": "export interface RelayClient { readonly fetch: typeof fetch; connect(): Promise<void>; close(): void; readonly ready: boolean; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface RelayClient { readonly fetch: FetchLike; connect(): Promise<void>; close(): void; readonly ready: boolean; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "RelayClientOptions",
@@ -2847,7 +2852,7 @@
     {
       "name": "createEventSourceConnector",
       "kind": "function",
-      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: typeof fetch, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>;"
+      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: FetchLike, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>;"
     },
     {
       "name": "createExpoGoodVibesSdk",
@@ -2857,7 +2862,7 @@
     {
       "name": "createFetch",
       "kind": "function",
-      "text": "export declare function createFetch(fetchImpl?: typeof fetch, fallbackFetch?: typeof fetch): typeof fetch;"
+      "text": "export declare function createFetch(fetchImpl?: FetchLike, fallbackFetch?: FetchLike): FetchLike;"
     },
     {
       "name": "createGoodVibesAuthClient",
@@ -3217,7 +3222,7 @@
     {
       "name": "openRawServerSentEventStream",
       "kind": "function",
-      "text": "export declare function openRawServerSentEventStream(fetchImpl: typeof fetch, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function openRawServerSentEventStream(fetchImpl: FetchLike, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "openServerSentEventStream",
@@ -3252,7 +3257,7 @@
     {
       "name": "requestJsonRaw",
       "kind": "function",
-      "text": "export declare function requestJsonRaw<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
+      "text": "export declare function requestJsonRaw<T>(fetchImpl: FetchLike, url: string, init?: RequestInit): Promise<T>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
     },
     {
       "name": "requireContractRoute",
@@ -3499,7 +3504,7 @@
     {
       "name": "BrowserGoodVibesSdkOptions",
       "kind": "interface",
-      "text": "export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; } ;; via GoodVibesSdkOptions = export interface GoodVibesSdkOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly realtime?: GoodVibesRealtimeOptions | undefined; readonly observer?: SDKObserver | undefined; readonly middleware?: TransportMiddleware[] | undefined; readonly autoRefresh?: AutoRefreshOptions | undefined; }"
+      "text": "export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; } ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; GoodVibesSdkOptions = export interface GoodVibesSdkOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly realtime?: GoodVibesRealtimeOptions | undefined; readonly observer?: SDKObserver | undefined; readonly middleware?: TransportMiddleware[] | undefined; readonly autoRefresh?: AutoRefreshOptions | undefined; }"
     },
     {
       "name": "createBrowserGoodVibesSdk",
@@ -3521,7 +3526,7 @@
     {
       "name": "createBrowserAgentSdk",
       "kind": "function",
-      "text": "export declare function createBrowserAgentSdk(options?: ScopedBrowserSdkOptions): BrowserAgentSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
+      "text": "export declare function createBrowserAgentSdk(options?: ScopedBrowserSdkOptions): BrowserAgentSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
     },
     {
       "name": "forSession",
@@ -3551,7 +3556,7 @@
     {
       "name": "createBrowserHomeAssistantSdk",
       "kind": "function",
-      "text": "export declare function createBrowserHomeAssistantSdk(options?: ScopedBrowserSdkOptions): BrowserHomeAssistantSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
+      "text": "export declare function createBrowserHomeAssistantSdk(options?: ScopedBrowserSdkOptions): BrowserHomeAssistantSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
     },
     {
       "name": "forSession",
@@ -3594,12 +3599,12 @@
     {
       "name": "createBrowserKnowledgeSdk",
       "kind": "function",
-      "text": "export declare function createBrowserKnowledgeSdk(options?: ScopedBrowserSdkOptions): BrowserKnowledgeSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
+      "text": "export declare function createBrowserKnowledgeSdk(options?: ScopedBrowserSdkOptions): BrowserKnowledgeSdk; ;; via ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
     },
     {
       "name": "createBrowserKnowledgeSdkFromRoutes",
       "kind": "function",
-      "text": "export declare function createBrowserKnowledgeSdkFromRoutes(knowledgeRoutes: Partial<Record<BrowserKnowledgeMethodId, BrowserScopedRouteDefinition>>, options?: ScopedBrowserSdkOptions): BrowserKnowledgeSdk; ;; via BrowserScopedRouteDefinition = export type BrowserScopedRouteDefinition = { readonly method: string; readonly path: string; }; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
+      "text": "export declare function createBrowserKnowledgeSdkFromRoutes(knowledgeRoutes: Partial<Record<BrowserKnowledgeMethodId, BrowserScopedRouteDefinition>>, options?: ScopedBrowserSdkOptions): BrowserKnowledgeSdk; ;; via BrowserScopedRouteDefinition = export type BrowserScopedRouteDefinition = { readonly method: string; readonly path: string; }; ;; Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; }; ;; ScopedBrowserSdkOptions = export interface ScopedBrowserSdkOptions { readonly baseUrl?: string | undefined; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly tokenStore?: GoodVibesTokenStore | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly realtime?: { readonly sseReconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; } | undefined; readonly observer?: SDKObserver | undefined; }"
     },
     {
       "name": "forSession",
@@ -3755,7 +3760,7 @@
     {
       "name": "createAutoRefreshMiddleware",
       "kind": "function",
-      "text": "export declare function createAutoRefreshMiddleware(coordinator: AutoRefreshCoordinator, transport: Pick<HttpJsonTransport, 'requestJson'>, tokenStore: GoodVibesTokenStore): TransportMiddleware; ;; via HttpJsonTransport = export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: typeof fetch; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; TransportMiddleware = export type TransportMiddleware = (ctx: TransportContext, next: () => Promise<void>) => Promise<void>;"
+      "text": "export declare function createAutoRefreshMiddleware(coordinator: AutoRefreshCoordinator, transport: Pick<HttpJsonTransport, 'requestJson'>, tokenStore: GoodVibesTokenStore): TransportMiddleware; ;; via HttpJsonTransport = export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: FetchLike; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; TransportMiddleware = export type TransportMiddleware = (ctx: TransportContext, next: () => Promise<void>) => Promise<void>;"
     }
   ],
   "./contracts": [
@@ -62470,7 +62475,7 @@
       "required": [
         "baseUrl"
       ],
-      "text": "export interface HttpTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl?: typeof fetch | undefined; }"
+      "text": "export interface HttpTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl?: FetchLike | undefined; } ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;"
     },
     {
       "name": "HttpTransportSnapshot",
@@ -62754,12 +62759,12 @@
     {
       "name": "createEventSourceConnector",
       "kind": "function",
-      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: typeof fetch, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>; ;; via AuthTokenSource = export type AuthTokenSource = string | null | undefined | AuthTokenResolver; ;; RuntimeEventConnectorOptions = export interface RuntimeEventConnectorOptions { readonly reconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; readonly onOpen?: (() => void) | undefined; readonly onReconnect?: ((attempt: number, delayMs: number) => void) | undefined; readonly onReconnectAttempt?: ((info: ReconnectAttemptInfo) => void) | undefined; readonly onConnectionStateChange?: ((state: ConnectionState) => void) | undefined; readonly onBackpressure?: ((info: BackpressureInfo) => void) | undefined; readonly onTransportEvent?: ((event: ConnectorTransportEvent) => void) | undefined; readonly observer?: TransportObserver | undefined; readonly onEmitter?: ((emitLocal: (data: string) => void) => void) | undefined; readonly turnScope?: RuntimeEventTurnScope | undefined; } ;; RuntimeEventDomain = export type RuntimeEventDomain = typeof RUNTIME_EVENT_DOMAINS[number]; ;; RuntimeEventRecord = export type RuntimeEventRecord = { readonly type: string; };"
+      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: FetchLike, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>; ;; via AuthTokenSource = export type AuthTokenSource = string | null | undefined | AuthTokenResolver; ;; FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; RuntimeEventConnectorOptions = export interface RuntimeEventConnectorOptions { readonly reconnect?: StreamReconnectPolicy | undefined; readonly onError?: ((error: unknown) => void) | undefined; readonly onOpen?: (() => void) | undefined; readonly onReconnect?: ((attempt: number, delayMs: number) => void) | undefined; readonly onReconnectAttempt?: ((info: ReconnectAttemptInfo) => void) | undefined; readonly onConnectionStateChange?: ((state: ConnectionState) => void) | undefined; readonly onBackpressure?: ((info: BackpressureInfo) => void) | undefined; readonly onTransportEvent?: ((event: ConnectorTransportEvent) => void) | undefined; readonly observer?: TransportObserver | undefined; readonly onEmitter?: ((emitLocal: (data: string) => void) => void) | undefined; readonly turnScope?: RuntimeEventTurnScope | undefined; } ;; RuntimeEventDomain = export type RuntimeEventDomain = typeof RUNTIME_EVENT_DOMAINS[number]; ;; RuntimeEventRecord = export type RuntimeEventRecord = { readonly type: string; };"
     },
     {
       "name": "createFetch",
       "kind": "function",
-      "text": "export declare function createFetch(fetchImpl?: typeof fetch, fallbackFetch?: typeof fetch): typeof fetch;"
+      "text": "export declare function createFetch(fetchImpl?: FetchLike, fallbackFetch?: FetchLike): FetchLike; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;"
     },
     {
       "name": "createHttpJsonTransport",
@@ -62894,7 +62899,7 @@
     {
       "name": "openServerSentEventStream",
       "kind": "function",
-      "text": "export declare function openRawServerSentEventStream(fetchImpl: typeof fetch, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ServerSentEventStreamHandle = export interface ServerSentEventStreamHandle { (): void; readonly lastEventId: string | null; }"
+      "text": "export declare function openRawServerSentEventStream(fetchImpl: FetchLike, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; ServerSentEventStreamHandle = export interface ServerSentEventStreamHandle { (): void; readonly lastEventId: string | null; }"
     },
     {
       "name": "readJsonBody",
@@ -62909,7 +62914,7 @@
     {
       "name": "requestJsonRaw",
       "kind": "function",
-      "text": "export declare function requestJsonRaw<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
+      "text": "export declare function requestJsonRaw<T>(fetchImpl: FetchLike, url: string, init?: RequestInit): Promise<T>; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
     },
     {
       "name": "requireContractRoute",
@@ -74142,6 +74147,11 @@
       "text": "export type EventLike = { readonly type: string; };"
     },
     {
+      "name": "FetchLike",
+      "kind": "type",
+      "text": "export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Request = interface Request extends Body { readonly cache: RequestCache; readonly credentials: RequestCredentials; readonly destination: RequestDestination; readonly headers: Headers; readonly integrity: string; readonly keepalive: boolean; readonly method: string; readonly mode: RequestMode; readonly redirect: RequestRedirect; readonly referrer: string; readonly referrerPolicy: ReferrerPolicy; readonly signal: AbortSignal; readonly url: string; clone(): Request; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; } ;; Response = interface Response extends Body { readonly headers: Headers; readonly ok: boolean; readonly redirected: boolean; readonly status: number; readonly statusText: string; readonly type: ResponseType; readonly url: string; clone(): Response; } ;; URL = interface URL { hash: string; host: string; hostname: string; href: string; toString(): string; readonly origin: string; password: string; pathname: string; port: string; protocol: string; search: string; readonly searchParams: URLSearchParams; username: string; toJSON(): string; }"
+    },
+    {
       "name": "RuntimeEventFeed",
       "kind": "interface",
       "required": [
@@ -74343,7 +74353,7 @@
         "resolveContractRequest",
         "use"
       ],
-      "text": "export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: typeof fetch; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
+      "text": "export interface HttpJsonTransport { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly fetchImpl: FetchLike; readonly paths: TransportPaths; buildUrl(path: string): string; getAuthToken(): Promise<string | null>; requestJson<T>(pathOrUrl: string, options?: HttpJsonRequestOptions): Promise<T>; resolveContractRequest(method: string, path: string, input?: Record<string, unknown>): ResolvedContractRequest; use(middleware: TransportMiddleware): void; } ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; Record = type Record<K extends keyof any, T> = { [P in K]: T; };"
     },
     {
       "name": "HttpJsonTransportOptions",
@@ -74351,7 +74361,7 @@
       "required": [
         "baseUrl"
       ],
-      "text": "export interface HttpJsonTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly fetch?: typeof fetch | undefined; readonly fetchImpl?: typeof fetch | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly observer?: TransportObserver | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly onRetryScheduled?: ((info: { attempt: number; maxAttempts: number; backoffMs: number; reason: string; }) => void) | undefined; readonly onRetryExecuted?: ((info: { attempt: number; maxAttempts: number; }) => void) | undefined; } ;; via HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers; ;; TransportObserver = export interface TransportObserver { onObserverError?(err: Error): void; onError?(err: Error): void; onTransportActivity?(activity: TransportActivityInfo): void; }"
+      "text": "export interface HttpJsonTransportOptions { readonly baseUrl: string; readonly authToken?: string | null | undefined; readonly getAuthToken?: AuthTokenResolver | undefined; readonly fetch?: FetchLike | undefined; readonly fetchImpl?: FetchLike | undefined; readonly headers?: HeadersInit | undefined; readonly getHeaders?: HeaderResolver | undefined; readonly retry?: HttpRetryPolicy | undefined; readonly observer?: TransportObserver | undefined; readonly middleware?: readonly TransportMiddleware[] | undefined; readonly onRetryScheduled?: ((info: { attempt: number; maxAttempts: number; backoffMs: number; reason: string; }) => void) | undefined; readonly onRetryExecuted?: ((info: { attempt: number; maxAttempts: number; }) => void) | undefined; } ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; HeadersInit = type HeadersInit = [string, string][] | Record<string, string> | Headers; ;; TransportObserver = export interface TransportObserver { onObserverError?(err: Error): void; onError?(err: Error): void; onTransportActivity?(activity: TransportActivityInfo): void; }"
     },
     {
       "name": "HttpRetryPolicy",
@@ -74570,7 +74580,7 @@
     {
       "name": "createFetch",
       "kind": "function",
-      "text": "export declare function createFetch(fetchImpl?: typeof fetch, fallbackFetch?: typeof fetch): typeof fetch;"
+      "text": "export declare function createFetch(fetchImpl?: FetchLike, fallbackFetch?: FetchLike): FetchLike; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;"
     },
     {
       "name": "createHttpTransport",
@@ -74685,7 +74695,7 @@
     {
       "name": "openRawServerSentEventStream",
       "kind": "function",
-      "text": "export declare function openRawServerSentEventStream(fetchImpl: typeof fetch, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function openRawServerSentEventStream(fetchImpl: FetchLike, url: string, handlers: ServerSentEventHandlers, options?: ServerSentEventOptions): Promise<ServerSentEventStreamHandle>; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "openServerSentEventStream",
@@ -74700,7 +74710,7 @@
     {
       "name": "requestJsonRaw",
       "kind": "function",
-      "text": "export declare function requestJsonRaw<T>(fetchImpl: typeof fetch, url: string, init?: RequestInit): Promise<T>; ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
+      "text": "export declare function requestJsonRaw<T>(fetchImpl: FetchLike, url: string, init?: RequestInit): Promise<T>; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; } ;; RequestInit = interface RequestInit { body?: BodyInit | null; cache?: RequestCache; credentials?: RequestCredentials; headers?: HeadersInit; integrity?: string; keepalive?: boolean; method?: string; mode?: RequestMode; priority?: RequestPriority; redirect?: RequestRedirect; referrer?: string; referrerPolicy?: ReferrerPolicy; signal?: AbortSignal | null; window?: null; }"
     },
     {
       "name": "requireContractRoute",
@@ -74795,7 +74805,7 @@
         "fetch",
         "ready"
       ],
-      "text": "export interface RelayClient { readonly fetch: typeof fetch; connect(): Promise<void>; close(): void; readonly ready: boolean; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export interface RelayClient { readonly fetch: FetchLike; connect(): Promise<void>; close(): void; readonly ready: boolean; } ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "RelayClientOptions",
@@ -74910,7 +74920,7 @@
     {
       "name": "createEventSourceConnector",
       "kind": "function",
-      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: typeof fetch, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>; ;; via RuntimeEventDomain = export type RuntimeEventDomain = typeof RUNTIME_EVENT_DOMAINS[number]; ;; RuntimeEventRecord = export type RuntimeEventRecord = { readonly type: string; };"
+      "text": "export declare function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(baseUrl: string, token: AuthTokenSource, fetchImpl: FetchLike, options?: RuntimeEventConnectorOptions): DomainEventConnector<RuntimeEventDomain, TEvent>; ;; via FetchLike = export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>; ;; RuntimeEventDomain = export type RuntimeEventDomain = typeof RUNTIME_EVENT_DOMAINS[number]; ;; RuntimeEventRecord = export type RuntimeEventRecord = { readonly type: string; };"
     },
     {
       "name": "createRelayClient",
@@ -74962,7 +74972,7 @@
     {
       "name": "WebGoodVibesSdkOptions",
       "kind": "type",
-      "text": "export type WebGoodVibesSdkOptions = BrowserGoodVibesSdkOptions; ;; via BrowserGoodVibesSdkOptions = export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: typeof fetch | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; }"
+      "text": "export type WebGoodVibesSdkOptions = BrowserGoodVibesSdkOptions; ;; via BrowserGoodVibesSdkOptions = export interface BrowserGoodVibesSdkOptions extends Omit<GoodVibesSdkOptions, 'baseUrl' | 'fetch' | 'WebSocketImpl'> { readonly baseUrl?: string | undefined; readonly fetch?: FetchLike | undefined; readonly WebSocketImpl?: typeof WebSocket | undefined; }"
     },
     {
       "name": "createWebGoodVibesSdk",

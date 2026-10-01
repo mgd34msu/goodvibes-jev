@@ -1,3 +1,4 @@
+import type { FetchLike } from '@goodvibes-jev/engine/transport-core';
 import { ConfigurationError, GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import {
   createOperatorSdk,
@@ -120,7 +121,7 @@ export interface GoodVibesSdkOptions {
    * Custom `fetch` implementation. Falls back to `globalThis.fetch`.
    * Required in environments without a native fetch (e.g. older Node.js).
    */
-  readonly fetch?: typeof fetch | undefined;
+  readonly fetch?: FetchLike | undefined;
 
   /**
    * Static extra headers sent on every request, e.g.
@@ -331,7 +332,7 @@ function requireBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
-function requireFetchImplementation(fetchImpl?: typeof fetch): typeof fetch {
+function requireFetchImplementation(fetchImpl?: FetchLike): FetchLike {
   const resolved = fetchImpl ?? globalThis.fetch;
   if (typeof resolved !== 'function') {
     throw new ConfigurationError(

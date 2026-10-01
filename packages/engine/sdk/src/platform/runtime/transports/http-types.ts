@@ -1,3 +1,4 @@
+import type { FetchLike } from '@goodvibes-jev/engine/transport-core';
 import type {
   ControlPlaneRecentEvent,
   ControlPlaneAuthSnapshot,
@@ -35,7 +36,7 @@ import type { TransportPaths } from './shared.js';
 export interface HttpTransportOptions {
   readonly baseUrl: string;
   readonly authToken?: string | null | undefined;
-  readonly fetchImpl?: typeof fetch | undefined;
+  readonly fetchImpl?: FetchLike | undefined;
 }
 
 export interface HttpProvidersSnapshot {

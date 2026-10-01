@@ -1,3 +1,4 @@
+import type { FetchLike } from '@goodvibes-jev/engine/transport-core';
 import { ConfigurationError, ContractError } from '@goodvibes-jev/engine/errors';
 import type {
   OperatorMethodInput,
@@ -40,7 +41,7 @@ export interface ScopedBrowserSdkOptions {
   readonly authToken?: string | null | undefined;
   readonly getAuthToken?: AuthTokenResolver | undefined;
   readonly tokenStore?: GoodVibesTokenStore | undefined;
-  readonly fetch?: typeof fetch | undefined;
+  readonly fetch?: FetchLike | undefined;
   readonly WebSocketImpl?: typeof WebSocket | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly getHeaders?: (() => HeadersInit | undefined | Promise<HeadersInit | undefined>) | undefined;
@@ -157,7 +158,7 @@ export function resolveBrowserBaseUrl(baseUrl?: string): string {
   );
 }
 
-function resolveFetch(fetchImpl?: typeof fetch): typeof fetch {
+function resolveFetch(fetchImpl?: FetchLike): FetchLike {
   const resolved = fetchImpl ?? globalThis.fetch;
   if (typeof resolved !== 'function') {
     throw new ConfigurationError(

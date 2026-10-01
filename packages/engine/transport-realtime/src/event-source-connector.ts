@@ -33,6 +33,7 @@ import {
   openRawServerSentEventStream as openServerSentEventStream,
 } from '@goodvibes-jev/engine/transport-http';
 import {
+  type FetchLike,
   injectTraceparentAsync,
   invokeTransportObserver,
   transportErrorFromUnknown,
@@ -67,7 +68,7 @@ export function buildEventSourceUrl(
 export function createEventSourceConnector<TEvent extends RuntimeEventRecord = RuntimeEventRecord>(
   baseUrl: string,
   token: AuthTokenSource,
-  fetchImpl: typeof fetch,
+  fetchImpl: FetchLike,
   options: RuntimeEventConnectorOptions = {},
 ): DomainEventConnector<RuntimeEventDomain, TEvent> {
   const { observer } = options;

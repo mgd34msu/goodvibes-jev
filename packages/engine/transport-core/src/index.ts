@@ -1,3 +1,4 @@
+export type { FetchLike } from './fetch.js';
 export type { EventEnvelope, EventEnvelopeContext } from './event-envelope.js';
 export { createEventEnvelope } from './event-envelope.js';
 export type { EventForType, EventLike, RuntimeEventFeed, RuntimeEventFeeds, EnvelopeSubscriber } from './event-feeds.js';
