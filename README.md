@@ -32,12 +32,16 @@ A product holds its rendering, input capture, composition root and packaging. Pl
 
 ## Status
 
-The work is tracked task by task in a vibecheck-jev ledger (project `goodvibes-jev`).
+The work is tracked in the Finish GoodVibes Jev Linear project. The current
+upstream targets and implementation sequence are recorded in
+[`docs/design/upstream-reconciliation.md`](docs/design/upstream-reconciliation.md).
 
 - **`packages/judgment`:** built.
 - **`packages/engine`:** in progress. It holds the whole sdk tree, and its subsystems are being converted one at a time.
 - **The contract runner:** in progress.
-- **The four products:** not started, so `products/` does not exist yet.
+- **The products:** the daemon has a working partial composition and command
+  adapters in `products/daemon`. TUI, agent and WebUI remain to be ported.
+  Ordinary CI checks the implemented work; it does not establish full product parity.
 
 ## How each old module is handled
 
