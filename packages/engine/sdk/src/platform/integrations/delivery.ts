@@ -1,3 +1,4 @@
+import { deliveryHttpStatus, describeStructuralDeliveryError, structuralDeliveryEvidence } from './delivery-diagnostics.js';
 import { logger } from '../utils/logger.js';
 import { randomInt, randomUUID } from 'node:crypto';
 import {
@@ -99,15 +100,15 @@ export class DeliveryError extends GoodVibesSdkError {
  * A single entry in the dead-letter queue.
  * Immutable snapshot of a delivery that exhausted all retry attempts.
  */
-export interface DeadLetterEntry {
+export interface DeadLetterEntry<TPayload = string> {
   /** Unique entry identifier. */
   readonly id: string;
   /** Integration channel (e.g. "slack", "discord", "webhook"). */
   readonly channel: string;
   /** Event name that triggered the delivery. */
   readonly event: string;
-  /** Message payload that failed to deliver. */
-  readonly payload: string;
+  /** Owned payload that failed to deliver. Existing queues default to text. */
+  readonly payload: TPayload;
   /** Epoch ms when the entry was created (first attempt). */
   readonly createdAt: number;
   /** Epoch ms when the entry moved to the DLQ. */
@@ -118,6 +119,9 @@ export interface DeadLetterEntry {
   readonly finalError: string;
   /** Failure class of the final error. */
   readonly failureClass: DeliveryFailureClass;
+  /** Validated structural evidence, available on restricted-diagnostic queues. */
+  readonly status?: number | undefined;
+  readonly basis?: TransienceBasis | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +170,8 @@ export interface DeliveryQueueConfig {
 }
 
 export interface DeliveryQueueOptions extends Partial<DeliveryQueueConfig> {
+  /** Structural mode retains/logs no response or transport wording; decisions still read the original failure. */
+  readonly diagnosticMode?: 'detailed' | 'structural' | undefined;
   readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
   /**
    * Optional config source. When supplied, retry/backoff/DLQ/SLO defaults are read
@@ -197,11 +203,11 @@ function readDeliveryConfig(
   };
 }
 
-interface PendingEntry {
+interface PendingEntry<TPayload> {
   id: string;
   channel: string;
   event: string;
-  payload: string;
+  payload: TPayload;
   createdAt: number;
   attempts: number;
   nextAttemptAt: number;
@@ -229,12 +235,13 @@ interface PendingEntry {
  * surface dead-letter failures as error-level log entries and expose them in
  * integration diagnostics.
  */
-export class DeliveryQueue {
+export class DeliveryQueue<TPayload = string> {
   private readonly _config: DeliveryQueueConfig;
-  private readonly _dlq: DeadLetterEntry[] = [];
-  private readonly _pending = new Map<string, PendingEntry>();
+  private readonly _structuralDiagnostics: boolean;
+  private readonly _dlq: DeadLetterEntry<TPayload>[] = [];
+  private readonly _pending = new Map<string, PendingEntry<TPayload>>();
   private readonly _timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly _listeners = new Set<(entry: DeadLetterEntry) => void>();
+  private readonly _listeners = new Set<(entry: DeadLetterEntry<TPayload>) => void>();
 
   // Metrics counters
   private _totalAttempts = 0;
@@ -246,7 +253,8 @@ export class DeliveryQueue {
   private readonly _active = new Set<Promise<unknown>>();
 
   constructor(config: DeliveryQueueOptions = {}) {
-    const { featureFlags, configManager, ...queueConfig } = config;
+    const { featureFlags, configManager, diagnosticMode, ...queueConfig } = config;
+    this._structuralDiagnostics = diagnosticMode === 'structural';
     const fromConfig = readDeliveryConfig(configManager);
     this._config = {
       ...DEFAULT_CONFIG,
@@ -268,19 +276,19 @@ export class DeliveryQueue {
    *
    * @param channel - Integration channel identifier (e.g. "slack").
    * @param event   - Event name for tracing.
-   * @param payload - Message text to deliver.
+   * @param payload - Owned delivery payload; string by default for existing callers.
    * @param deliver - Async function that performs the actual delivery.
    * @returns The delivery outcome for the immediate attempt.
    */
   async enqueue(
     channel: string,
     event: string,
-    payload: string,
+    payload: TPayload,
     deliver: () => Promise<void>,
   ): Promise<DeliveryOutcome> {
     this._assertOpen();
     const id = `${channel}:${event}:${Date.now()}:${randomUUID().slice(0, 8)}`;
-    const entry: PendingEntry = {
+    const entry: PendingEntry<TPayload> = {
       id,
       channel,
       event,
@@ -307,13 +315,13 @@ export class DeliveryQueue {
    * @returns Array of per-entry replay results.
    */
   replay(
-    deliver: (entry: DeadLetterEntry) => Promise<void>,
+    deliver: (entry: DeadLetterEntry<TPayload>) => Promise<void>,
   ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
     return this._own(() => this._replay(deliver));
   }
 
   private async _replay(
-    deliver: (entry: DeadLetterEntry) => Promise<void>,
+    deliver: (entry: DeadLetterEntry<TPayload>) => Promise<void>,
   ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
     this._assertOpen();
     const entries = [...this._dlq];
@@ -353,13 +361,13 @@ export class DeliveryQueue {
    * Register a listener invoked whenever an entry moves to the DLQ.
    * Returns an unsubscribe function.
    */
-  onDeadLetter(listener: (entry: DeadLetterEntry) => void): () => void {
+  onDeadLetter(listener: (entry: DeadLetterEntry<TPayload>) => void): () => void {
     this._listeners.add(listener);
     return () => this._listeners.delete(listener);
   }
 
   /** Get current dead-letter queue contents (snapshot). */
-  getDlq(): readonly DeadLetterEntry[] {
+  getDlq(): readonly DeadLetterEntry<TPayload>[] {
     return [...this._dlq];
   }
 
@@ -408,11 +416,15 @@ export class DeliveryQueue {
     return this._closing ??= Promise.allSettled([...this._active]).then(() => {});
   }
 
+  private _describeError(error: unknown): string {
+    return this._structuralDiagnostics ? describeStructuralDeliveryError(error) : summarizeError(error);
+  }
+
   private _assertOpen(): void {
     if (this._closed) throw new DeliveryError('Delivery queue is closed.', 'terminal');
   }
 
-  private _startAttempt(entry: PendingEntry): Promise<DeliveryOutcome> {
+  private _startAttempt(entry: PendingEntry<TPayload>): Promise<DeliveryOutcome> {
     return this._own(() => this._attempt(entry));
   }
 
@@ -429,7 +441,7 @@ export class DeliveryQueue {
     return active;
   }
 
-  private async _attempt(entry: PendingEntry): Promise<DeliveryOutcome> {
+  private async _attempt(entry: PendingEntry<TPayload>): Promise<DeliveryOutcome> {
     entry.attempts += 1;
     this._totalAttempts += 1;
 
@@ -445,23 +457,39 @@ export class DeliveryQueue {
       return 'delivered';
     } catch (err: unknown) {
       this._assertOpen();
-      const errorMsg = summarizeError(err);
+      const errorMsg = this._describeError(err);
+      const status = this._structuralDiagnostics ? deliveryHttpStatus(err) : undefined;
       let transience: FailureTransience;
       try {
         transience = await readFailureTransience(err, 'integrations.delivery.queue');
       } catch (readError: unknown) {
         this._pending.delete(entry.id);
         this._assertOpen();
+        if (this._structuralDiagnostics) {
+          // Keep the shape of an aggregate without retaining either private
+          // source error as a cause or inner error after the decision failed.
+          const failure = new Error(errorMsg);
+          if (status !== undefined) Object.defineProperty(failure, 'status', { value: status, enumerable: true });
+          throw new AggregateError([failure, new Error('Retry decision unavailable')], 'Delivery failed; retry decision unavailable');
+        }
         throw new AggregateError(
           [err, readError],
           `DeliveryQueue: ${entry.channel} delivery failed and whether to retry it could not be read (${summarizeError(readError)})`,
         );
       }
       this._assertOpen();
+      if (this._structuralDiagnostics) {
+        const evidence = structuralDeliveryEvidence(transience);
+        if (!evidence) {
+          this._pending.delete(entry.id);
+          throw new Error('Delivery failure classification unavailable');
+        }
+        transience = { ...evidence, detail: '' };
+      }
       const { failureClass } = transience;
 
       if (failureClass === 'terminal' || entry.attempts > this._config.maxRetries) {
-        return this._moveToDlq(entry, errorMsg, transience);
+        return this._moveToDlq(entry, errorMsg, transience, status);
       }
 
       // Schedule retry
@@ -476,9 +504,10 @@ export class DeliveryQueue {
         maxRetries: this._config.maxRetries,
         delayMs,
         error: errorMsg,
+        ...(status === undefined ? {} : { status }),
         failureClass,
         basis: transience.basis,
-        reason: transience.detail,
+        ...(this._structuralDiagnostics ? {} : { reason: transience.detail }),
       });
 
       const timer = setTimeout(() => {
@@ -489,7 +518,7 @@ export class DeliveryQueue {
           logger.warn('DeliveryQueue: retry attempt could not be settled', {
             channel: entry.channel,
             event: entry.event,
-            error: summarizeError(error),
+            error: this._describeError(error),
           });
         });
       }, delayMs);
@@ -501,12 +530,13 @@ export class DeliveryQueue {
   }
 
   private _moveToDlq(
-    entry: PendingEntry,
+    entry: PendingEntry<TPayload>,
     finalError: string,
     transience: FailureTransience,
+    status?: number,
   ): DeliveryOutcome {
     const { failureClass } = transience;
-    const dlqEntry: DeadLetterEntry = {
+    const dlqEntry: DeadLetterEntry<TPayload> = {
       id: entry.id,
       channel: entry.channel,
       event: entry.event,
@@ -516,6 +546,7 @@ export class DeliveryQueue {
       attempts: entry.attempts,
       finalError,
       failureClass,
+      ...(this._structuralDiagnostics ? { basis: transience.basis, ...(status === undefined ? {} : { status }) } : {}),
     };
 
     this._retainDeadLetter(dlqEntry);
@@ -528,9 +559,10 @@ export class DeliveryQueue {
         event: dlqEntry.event,
         attempts: dlqEntry.attempts,
         finalError: dlqEntry.finalError,
+        ...(dlqEntry.status === undefined ? {} : { status: dlqEntry.status }),
         failureClass: dlqEntry.failureClass,
         basis: transience.basis,
-        reason: transience.detail,
+        ...(this._structuralDiagnostics ? {} : { reason: transience.detail }),
       });
     } else {
       logger.warn('DeliveryQueue: dead-lettered', {
@@ -539,9 +571,10 @@ export class DeliveryQueue {
         event: dlqEntry.event,
         attempts: dlqEntry.attempts,
         finalError: dlqEntry.finalError,
+        ...(dlqEntry.status === undefined ? {} : { status: dlqEntry.status }),
         failureClass: dlqEntry.failureClass,
         basis: transience.basis,
-        reason: transience.detail,
+        ...(this._structuralDiagnostics ? {} : { reason: transience.detail }),
       });
     }
 
@@ -550,7 +583,7 @@ export class DeliveryQueue {
         listener(dlqEntry);
       } catch (err) {
         logger.warn('[delivery] listener error:', {
-          error: summarizeError(err),
+          error: this._describeError(err),
           entryId: dlqEntry.id,
         });
       }
@@ -559,7 +592,7 @@ export class DeliveryQueue {
     return 'dead_letter';
   }
 
-  private _retainDeadLetter(entry: DeadLetterEntry): void {
+  private _retainDeadLetter(entry: DeadLetterEntry<TPayload>): void {
     // Bounded DLQ: evict oldest entry when limit exceeded.
     if (this._dlq.length >= this._config.maxDlqSize) {
       this._dlq.shift();
@@ -603,12 +636,28 @@ export function snapshotQueueStatus(
   channel: string,
   queue: DeliveryQueue,
   sloEnforced: boolean,
+): IntegrationQueueStatus;
+export function snapshotQueueStatus<TPayload>(
+  channel: string,
+  queue: DeliveryQueue<TPayload>,
+  sloEnforced: boolean,
+  describePayload: (payload: TPayload) => string,
+): IntegrationQueueStatus;
+export function snapshotQueueStatus<TPayload>(
+  channel: string,
+  queue: DeliveryQueue<TPayload>,
+  sloEnforced: boolean,
+  describePayload?: (payload: TPayload) => string,
 ): IntegrationQueueStatus {
   const dlq = queue.getDlq();
   return {
     channel,
     metrics: queue.getMetrics(),
-    dlqEntries: [...dlq].reverse().slice(0, 50),
+    dlqEntries: [...dlq].reverse().slice(0, 50).map(({ payload, ...entry }) => ({
+      ...entry,
+      payload: describePayload ? describePayload(payload)
+        : typeof payload === 'string' ? payload : 'Delivery payload unavailable',
+    })),
     sloEnforced,
     capturedAt: Date.now(),
   };

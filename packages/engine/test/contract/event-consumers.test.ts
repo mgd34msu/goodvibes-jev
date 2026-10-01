@@ -36,7 +36,7 @@ describe('the notifier posts contract outcomes', () => {
     resetWorkstreamLabelsForTests();
     const posted: string[] = [];
     const slack = { postWebhook: async (text: string) => { posted.push(text); } };
-    const notifier = new Notifier({ slack: slack as never });
+    const notifier = new Notifier({ slack: slack as never, metadataOnly: () => false });
     const bus = new RuntimeEventBus();
     notifier.attachToRuntimeBus(bus);
     try {

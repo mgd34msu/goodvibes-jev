@@ -354,3 +354,6 @@ export type {
   TrustGateManager,
   WorkspaceTrustDecisionAskDeps,
 } from './workspace-trust-approval.js';
+
+export * from './turn-notification.js';
+export type { NotificationPrivacyReader } from './notification-envelope.js';
