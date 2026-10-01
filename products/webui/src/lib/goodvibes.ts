@@ -5,7 +5,8 @@ import {
 } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import type { BrowserKnowledgeMethodId } from '@goodvibes-jev/engine/sdk/browser/knowledge';
 import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
-import { createBrowserTokenStore } from '@goodvibes-jev/engine/sdk/auth';
+import { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
+export { tokenStore, WEBUI_TOKEN_STORE_KEY } from './client-lifetime';
 import { isRuntimeEventDomain } from '@goodvibes-jev/engine/contracts';
 import { routedFetch } from './relay-connection';
 import { readClientCompatibilityFloor, recordObservedClientCompatibilityFloor } from './client-compatibility';
@@ -160,7 +161,6 @@ export interface DaemonReceipt {
 
 export const WEBUI_SURFACE_KIND = 'webui';
 export const WEBUI_SURFACE_ID = 'goodvibes-webui';
-export const WEBUI_TOKEN_STORE_KEY = 'goodvibes.webui.token';
 // The daemon-served world is one origin: the web UI's own bundle and the API it calls
 // are served by the same control-plane listener, whose default port is 3421. A browser
 // context always has `window.location.origin`; the 3421 fallback below is reached only
@@ -173,7 +173,6 @@ export const GOODVIBES_BASE_URL = import.meta.env.VITE_GOODVIBES_BASE_URL
  * Undefined outside a Vite-built bundle (bun test, a bare module eval). */
 export const WEBUI_VERSION: string | undefined = import.meta.env.VITE_WEBUI_VERSION;
 
-export const tokenStore = createBrowserTokenStore({ key: WEBUI_TOKEN_STORE_KEY });
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 type JsonRecord = Record<string, unknown>;
@@ -188,6 +187,7 @@ interface RequestOptions {
   body?: unknown;
   query?: JsonRecord;
   authenticated?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -298,12 +298,14 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function requestJson<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  options.signal?.throwIfAborted();
   const method = options.method ?? 'GET';
   const headers: HeadersInit = {
     ...(options.authenticated === false ? {} : await authHeaders()),
     ...(method === 'GET' || options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
   };
   const url = buildUrl(path, options.query);
+  options.signal?.throwIfAborted();
   // routedFetch (not the bare global fetch) so REST-routed methods traverse the relay when
   // the active route is relay, otherwise a mutating call (permission respond, session
   // control) would hit an unreachable direct URL over relay and never reach the daemon's
@@ -312,6 +314,7 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
     method,
     credentials: 'include',
     headers,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(method === 'GET' || options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
   // Every response, success or failure, is a chance to learn the daemon's current
@@ -320,6 +323,7 @@ async function requestJson<T = unknown>(path: string, options: RequestOptions = 
   // call passes through.
   recordObservedClientCompatibilityFloor(readClientCompatibilityFloor(response.headers));
   const body = await readJson(response);
+  options.signal?.throwIfAborted();
   if (!response.ok) {
     throw Object.assign(new Error(`${method} ${path} failed: ${response.status} ${response.statusText}`.trim()), {
       status: response.status,
@@ -2657,6 +2661,16 @@ export async function invokeMethod<TMethodId extends OperatorTypedMethodId>(
   input?: OperatorMethodInput<TMethodId>,
 ): Promise<OperatorMethodOutput<TMethodId>> {
   return sdk.operator.invoke(methodId, input);
+}
+
+/** Direct authenticated, cancellable call to the generated judgment route. */
+export async function runBrowserJudgment(
+  input: OperatorMethodInput<'judgment.battery.run'>,
+  signal: AbortSignal,
+): Promise<OperatorMethodOutput<'judgment.battery.run'>> {
+  const route = webuiRouteFor('judgment.battery.run');
+  if (!route || route.method !== 'POST') throw new Error('Command judgment is unavailable.');
+  return requestJson(route.path, { method: route.method, body: input, signal });
 }
 
 export async function getCurrentAuth(): Promise<unknown> {

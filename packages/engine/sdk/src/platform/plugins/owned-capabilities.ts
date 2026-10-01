@@ -169,8 +169,9 @@ function ownChunks<T>(chunks: AsyncIterable<T>, firstRelease: () => void, track:
   };
 }
 
-function ownResponse(value: unknown, release: () => void, requestSignal?: AbortSignal): Response | Promise<Response> {
+function ownResponse(value: unknown, release: () => void, request?: Request): Response | Promise<Response> {
   const original = value as Response;
+  const requestSignal = request?.signal;
   const body = original.body;
   if (!body) { release(); return original; }
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -241,6 +242,17 @@ function ownResponse(value: unknown, release: () => void, requestSignal?: AbortS
     });
     return response;
   };
+  if (request?.method === 'HEAD') {
+    // Native HTTP servers discard a HEAD body without reading or cancelling
+    // it. Retire that unused source before returning a native empty result.
+    // A closed, resource-free stream keeps an unknown representation length
+    // unknown: Bun would infer content-length:0 from a null replacement body.
+    // Explicit representation headers remain unchanged; no source is read to
+    // compute a missing length (RFC 9110 sections 8.6 and 9.3.2).
+    const empty = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+    const head = preserveMetadata(new Response(empty, { status: original.status, statusText: original.statusText, headers: original.headers }));
+    return owned.cancel().then(() => head);
+  }
   const result = preserveMetadata(response);
   if (requestSignal) {
     const onAbort = () => {
@@ -288,7 +300,7 @@ export function createOwnedPluginCapabilities(track: Track) {
     channel: (source: ChannelPlugin): ChannelPlugin => facade(source, channelMethods, track, {
       results: { listAgentTools: (value) => (value as readonly Tool[]).map(ownTool) },
       streams: { handleInbound: (call, args) => holdResult(track, call, (value, release) =>
-        ownResponse(value, release, (args[0] as Request | undefined)?.signal)) },
+        ownResponse(value, release, args[0] as Request | undefined)) },
     }),
     delivery: (source: ChannelDeliveryStrategy): ChannelDeliveryStrategy => facade(source, deliveryMethods, track),
     memory: (source: MemoryEmbeddingProvider): MemoryEmbeddingProvider => facade(source, memoryMethods, track),

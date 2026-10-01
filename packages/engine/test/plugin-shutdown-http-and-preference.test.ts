@@ -47,6 +47,119 @@ test.each([false, true])('actual Bun HTTP delivers the channel Response and drai
   }
 });
 
+test('actual HEAD waits for discarded-body cancellation and preserves response headers', async () => {
+  const channels = new ChannelPluginRegistry();
+  const calls = new PluginInFlightTracker();
+  const cleanup: Array<() => void> = [];
+  const cancelEntered = gate(); const finishCancel = gate(); const returned = gate();
+  let response: Response | null = null;
+  let pulls = 0; let cancels = 0; let didReturn = false;
+  createPluginAPI({ pluginName: 'head-fixture', inFlight: calls, cleanup, channelRegistry: channels } as unknown as PluginAPIContext)
+    .registerChannelPlugin({ id: 'head-fixture', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/webhook/fixture',
+      async handleInbound() {
+        return new Response(new ReadableStream<Uint8Array>({
+          pull(controller) { pulls++; controller.enqueue(new TextEncoder().encode('fixture body')); controller.close(); },
+          cancel() { cancels++; cancelEntered.resolve(); return finishCancel.promise; },
+        }, { highWaterMark: 0 }), { status: 202, statusText: 'Accepted fixture', headers: { 'x-fixture': 'yes', 'content-length': '12' } });
+      },
+    });
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    response = await channels.handleInbound(new URL(request.url).pathname, request);
+    didReturn = true; returned.resolve();
+    return response ?? new Response('missing', { status: 404 });
+  } });
+  const client = fetch(new URL('/webhook/fixture', server.url), { method: 'HEAD' });
+  // Cleanup observes any client failure even when an earlier assertion fails.
+  void client.catch(() => {});
+  try {
+    expect(await Promise.race([cancelEntered.promise.then(() => true), returned.promise.then(() => false)])).toBe(true);
+    let closed = false;
+    const closing = calls.close().then(() => { closed = true; });
+    expect(cancels).toBe(1);
+    expect(pulls).toBe(0);
+    expect(didReturn).toBe(false);
+    expect(closed).toBe(false);
+    expect(calls.inFlight('head-fixture')).toBe(1);
+    finishCancel.resolve();
+    const received = await client;
+    expect(received.status).toBe(202);
+    // Bun normalizes the wire reason phrase; the adapter retains the source
+    // value on the actual Response supplied to the server.
+    expect((response as Response | null)?.statusText).toBe('Accepted fixture');
+    expect(received.headers.get('x-fixture')).toBe('yes');
+    expect(received.headers.get('content-length')).toBe('12');
+    expect(await received.text()).toBe('');
+    await closing;
+    expect(calls.inFlight('head-fixture')).toBe(0);
+    expect(pulls).toBe(0);
+    expect(cancels).toBe(1);
+  } finally {
+    finishCancel.resolve();
+    await server.stop(true);
+    await client.catch(() => undefined);
+    const captured = response as Response | null;
+    if (captured?.body && !captured.bodyUsed) await captured.body.cancel().catch(() => undefined);
+    await calls.close();
+    for (const dispose of cleanup) dispose();
+  }
+});
+
+test.each(['throw', 'reject'] as const)('HEAD cancellation failure is preserved and drains ownership (%s)', async (mode) => {
+  const channels = new ChannelPluginRegistry();
+  const calls = new PluginInFlightTracker();
+  const cleanup: Array<() => void> = [];
+  const failure = new Error('fixture HEAD cancellation failed');
+  let cancels = 0;
+  createPluginAPI({ pluginName: 'head-failure', inFlight: calls, cleanup, channelRegistry: channels } as unknown as PluginAPIContext)
+    .registerChannelPlugin({ id: 'head-failure', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/fixture',
+      async handleInbound() {
+        return new Response(new ReadableStream<Uint8Array>({ cancel() {
+          cancels++;
+          if (mode === 'throw') throw failure;
+          return Promise.reject(failure);
+        } }, { highWaterMark: 0 }));
+      },
+    });
+  try {
+    await expect(channels.handleInbound('/fixture', new Request('http://127.0.0.1/fixture', { method: 'HEAD' }))).rejects.toBe(failure);
+    await calls.close();
+    expect(cancels).toBe(1);
+    expect(calls.inFlight('head-failure')).toBe(0);
+  } finally {
+    await calls.close();
+    for (const dispose of cleanup) dispose();
+  }
+});
+
+test('native HEAD omits unknown representation length instead of reporting an empty representation', async () => {
+  const channels = new ChannelPluginRegistry();
+  const calls = new PluginInFlightTracker();
+  const cleanup: Array<() => void> = [];
+  createPluginAPI({ pluginName: 'head-length', inFlight: calls, cleanup, channelRegistry: channels } as unknown as PluginAPIContext)
+    .registerChannelPlugin({ id: 'head-length', surface: 'webhook', displayName: 'Fixture', capabilities: [], webhookPath: '/fixture',
+      async handleInbound() { return new Response('fixture body', { status: 202, headers: { 'x-fixture': 'yes' } }); },
+    });
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    return (await channels.handleInbound('/fixture', request)) ?? new Response('missing', { status: 404 });
+  } });
+  try {
+    const head = await fetch(new URL('/fixture', server.url), { method: 'HEAD' });
+    expect(head.status).toBe(202);
+    expect(head.headers.get('x-fixture')).toBe('yes');
+    expect(head.headers.get('content-length')).toBeNull();
+    expect(await head.text()).toBe('');
+    const get = await fetch(new URL('/fixture', server.url));
+    expect(get.headers.get('content-length')).toBe('12');
+    expect(await get.text()).toBe('fixture body');
+    await calls.close();
+    expect(calls.inFlight('head-length')).toBe(0);
+  } finally {
+    await server.stop(true);
+    await calls.close();
+    for (const dispose of cleanup) dispose();
+  }
+});
+
 test('actual HTTP disconnect keeps shutdown pending until the source cancellation settles', async () => {
   const channels = new ChannelPluginRegistry();
   const calls = new PluginInFlightTracker();

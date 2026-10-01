@@ -38,6 +38,7 @@ import { createRelayClient, type RelayClient } from '@goodvibes-jev/engine/trans
 import { getStoredRelayPairing, type RelayPairingPayload } from './relay-pairing';
 import { STEP_UP_ASSERTION_HEADER } from './stepup';
 import { resolveStepUp } from './stepup-prompter';
+import { invalidateClientLifetime } from './client-lifetime';
 
 export type ConnectionRoute = 'direct' | 'relay';
 
@@ -59,6 +60,7 @@ export function getActiveRoute(): ConnectionRoute {
 export function setActiveRoute(route: ConnectionRoute): void {
   if (activeRoute === route) return;
   activeRoute = route;
+  invalidateClientLifetime();
   for (const listener of listeners) listener();
 }
 
@@ -97,6 +99,7 @@ export function getRelayClient(): RelayClient | null {
 
 /** Tear down the relay client (e.g. after clearing the stored pairing). */
 export function closeRelayClient(): void {
+  invalidateClientLifetime();
   if (client) client.close();
   client = null;
   clientForPairingKey = null;

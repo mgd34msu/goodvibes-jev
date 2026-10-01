@@ -82,6 +82,7 @@ describe('AccountsPanel: honest states, never a fabricated one', () => {
     expect(el.textContent).toContain('Token refreshes soon');
     expect(el.textContent).toContain('Re-authenticate before it expires');
     expect(el.textContent).toContain('unconfigured');
+    expect([...el.querySelectorAll('[data-classification="structured"]')].map((badge) => badge.getAttribute('data-tone'))).toEqual(['warning', 'neutral']);
     unmount();
   });
 });

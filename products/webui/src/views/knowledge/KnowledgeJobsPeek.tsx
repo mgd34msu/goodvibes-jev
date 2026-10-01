@@ -10,10 +10,9 @@ import { invokeMethod } from '../../lib/goodvibes';
 import { queryKeys } from '../../lib/queries';
 import { countFrom, firstArray, firstString, readPath } from '../../lib/object';
 import { EmptyState, SkeletonRows } from '../../components/data-view/DataView';
-import { Chip } from '../../components/ui/Chip';
+import { StatusBadge } from '../../components/StatusBadge';
 import { Row, RowList } from '../../components/ui/Row';
 import { ErrorState } from '../../components/feedback/ErrorState';
-import { statusTone } from '../library/library-data';
 import { whenLabel } from '../../lib/when-label';
 
 function formatRunTimestamp(value: unknown): string {
@@ -81,7 +80,7 @@ export function KnowledgeJobsPeekBody() {
               className="knowledge-jobs-peek__row"
               title={title}
               meta={[formatRunTimestamp(readPath(run, ['requestedAt'])), error].filter(Boolean).join(' · ')}
-              trailing={<Chip size="sm" tone={statusTone(status)}>{status}</Chip>}
+              trailing={<StatusBadge value={status} catalogId={`knowledge-job.${status}`} vocabulary="library-dot" />}
             />
           );
         })}

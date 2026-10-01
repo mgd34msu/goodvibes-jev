@@ -51,7 +51,9 @@ export interface ASTGuardResult {
 export async function guardExecCommand(
   command: string,
   flagManager?: FlagManagerLike | null,
+  signal?: AbortSignal,
 ): Promise<ASTGuardResult> {
+  signal?.throwIfAborted();
   const astModeActive = isASTNormalizationEnabled(flagManager);
   let verdict: CompoundVerdict | undefined;
   if (astModeActive) {
@@ -61,7 +63,8 @@ export async function guardExecCommand(
       if (!verdict.allowed) return { allowed: false, denialMessage: verdict.denialExplanation, verdict, astModeActive };
     }
   }
-  const { verdict: catastrophic, readByGate } = await readCatastrophic(command);
+  const { verdict: catastrophic, readByGate } = await readCatastrophic(command, 'engine.gate.exec-time', signal);
+  signal?.throwIfAborted();
   if (catastrophic === 'yes' || (catastrophic === 'uncertain' && !readByGate)) {
     return {
       allowed: false,
