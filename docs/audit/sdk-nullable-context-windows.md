@@ -1,6 +1,6 @@
 # Nullable context-window integration
 
-Original source-review base: Jev main `1330442d`. Integrated parent for build/API verification: `57fe441b2e84921727d11bada563dae101f5b428` (includes reviewed THE-76 conversation integrity, portable fetch types and asynchronous account safety). Sources: goodvibes-sdk `445f75cdde22f82b33cefad197ceb2b1c205b06e` and `92ade7903fb78a0330b3007c05c42d6ef8aa0df0` (reviewed source snapshot through `17eae838461a6529135fe2cad41332d2dc46cb27`).
+Original source-review base: Jev main `1330442d`. Integrated parent commit: `57fe441b2e84921727d11bada563dae101f5b428` (includes reviewed THE-76 conversation integrity, portable fetch types and asynchronous account safety). Sources: goodvibes-sdk `445f75cdde22f82b33cefad197ceb2b1c205b06e` and `92ade7903fb78a0330b3007c05c42d6ef8aa0df0` (reviewed source snapshot through `17eae838461a6529135fe2cad41332d2dc46cb27`).
 
 ## Source adaptation and authority
 
