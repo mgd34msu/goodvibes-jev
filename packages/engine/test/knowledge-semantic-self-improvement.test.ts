@@ -13,12 +13,11 @@ import {
   ForegroundRepairLlm,
   GapRepairAnswerLlm,
   OrderedHomeGraphAskLlm,
-  SlowKnowledgeLlm,
   WeakFeatureAnswerLlm,
   createStores,
   waitFor,
 } from './_helpers/knowledge-semantic-fixtures.js';
-import { settleEvents } from './_helpers/test-timeout.js';
+import { settleEvents, withTestTimeout } from './_helpers/test-timeout.js';
 
 describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   test('strict answers keep official sources linked by graph edges even without source discovery metadata', async () => {
@@ -793,8 +792,22 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       }),
     });
     await store.upsertEdge({ fromKind: 'node', fromId: device.id, toKind: 'node', toId: gap.id, relation: 'has_gap' });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const enrichmentEntered = new Promise<void>((resolve) => { entered = resolve; });
+    let enrichmentCompleted = false;
+    const llm = new FakeKnowledgeLlm();
     const semantic = new KnowledgeSemanticService(store, {
-      llm: new SlowKnowledgeLlm(2_000),
+      llm: {
+        completeJson: async (input) => {
+          entered();
+          await held;
+          enrichmentCompleted = true;
+          return llm.completeJson(input);
+        },
+        completeText: async () => null,
+      },
       gapRepairer: async () => ({
         searched: true,
         evidenceSufficient: true,
@@ -804,14 +817,25 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       }),
     });
 
-    const startedAt = Date.now();
-    const result = await semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
-
-    expect(Date.now() - startedAt).toBeLessThan(1_500);
-    expect(result.closedGaps).toBe(1);
-    expect(result.promotedFactCount).toBeGreaterThanOrEqual(3);
-    expect(store.listNodes(100).filter((node) => node.kind === 'fact' && node.metadata.extractor === 'repair-promotion')).toHaveLength(result.promotedFactCount ?? 0);
-  });
+    // Start enrichment and hold its actual LLM call. Promotion must close the
+    // gap using the indexed text while enrichment is still pending.
+    const enrichment = semantic.enrichSource(repairSource.id, { knowledgeSpaceId: 'homeassistant:test' });
+    let improvement: ReturnType<KnowledgeSemanticService['selfImprove']> | undefined;
+    try {
+      await withTestTimeout(enrichmentEntered);
+      improvement = semantic.selfImprove({ knowledgeSpaceId: 'homeassistant:test', gapIds: [gap.id], maxRunMs: 5_000 });
+      const result = await withTestTimeout(improvement);
+      expect(enrichmentCompleted).toBe(false);
+      expect(result.closedGaps).toBe(1);
+      expect(result.promotedFactCount).toBeGreaterThanOrEqual(3);
+      expect(store.listNodes(100).filter((node) => node.kind === 'fact' && node.metadata.extractor === 'repair-promotion')).toHaveLength(result.promotedFactCount ?? 0);
+    } finally {
+      release();
+      await Promise.allSettled([enrichment, improvement]);
+    }
+    await enrichment;
+    expect(enrichmentCompleted).toBe(true);
+  }, 60_000);
 
   test('self-improvement promotes already-indexed source facts by linking them to the repair subject', async () => {
     const { store } = createStores();
@@ -925,12 +949,20 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   test('answer-triggered refinement is queued without blocking the answer', async () => {
     const { store } = createStores();
     const calls: unknown[] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const repairEntered = new Promise<void>((resolve) => { entered = resolve; });
+    let repairCompleted = false;
     const semantic = new KnowledgeSemanticService(store, {
-      backgroundSelfImproveMinDelayMs: 10,
+      // Enter queued work without depending on the host's timer scheduling.
+      scheduleSeam: (callback) => callback(),
       llm: new GapRepairAnswerLlm(),
       gapRepairer: async (request) => {
         calls.push(request);
-        await settleEvents(500);
+        entered();
+        await held;
+        repairCompleted = true;
         return {
           searched: true,
           query: 'lg 86nano90una full specifications',
@@ -958,14 +990,30 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       },
     });
 
-    const startedAt = Date.now();
-    const answer = await semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
-
-    expect(Date.now() - startedAt).toBeLessThan(250);
-    expect(answer.answer.refinementTaskIds).toHaveLength(1);
-    await waitFor(() => calls.length === 1, 250);
-    await waitFor(() => store.listRefinementTasks(10, { state: 'blocked' }).length === 1, 1_000);
-  });
+    // Observe the public entry point so cleanup drains the complete background
+    // run, including writes after the repairer has returned.
+    const runs: ReturnType<KnowledgeSemanticService['selfImprove']>[] = [];
+    const selfImprove = semantic.selfImprove.bind(semantic);
+    semantic.selfImprove = (...args) => {
+      const run = selfImprove(...args);
+      runs.push(run);
+      return run;
+    };
+    const answering = semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
+    try {
+      const [answer] = await withTestTimeout(Promise.all([answering, repairEntered]));
+      expect(answer.answer.refinementTaskIds).toHaveLength(1);
+      expect(calls).toHaveLength(1);
+      expect(repairCompleted).toBe(false);
+      expect(store.listRefinementTasks(10, { state: 'blocked' })).toHaveLength(0);
+    } finally {
+      release();
+      await Promise.allSettled([answering]);
+      await Promise.allSettled(runs);
+    }
+    expect(repairCompleted).toBe(true);
+    expect(store.listRefinementTasks(10, { state: 'blocked' })).toHaveLength(1);
+  }, 60_000);
 
   test('default unanchored no-match answers do not persist repairable semantic gaps', async () => {
     const { store } = createStores();

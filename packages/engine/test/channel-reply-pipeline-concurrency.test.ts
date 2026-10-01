@@ -25,6 +25,7 @@ import { describe, expect, test } from 'bun:test';
 import { ChannelReplyPipeline } from '../sdk/src/platform/channels/reply-pipeline.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted, emitAgentProgress } from '../sdk/src/platform/runtime/emitters/agents.js';
+import { withTestTimeout } from './_helpers/test-timeout.js';
 
 const DISPATCH_MS = 60;
 
@@ -33,7 +34,7 @@ interface Published {
   readonly text: string;
 }
 
-function harness(surfaceKind: string, dispatchMs = DISPATCH_MS) {
+function harness(surfaceKind: string, dispatchMs = DISPATCH_MS, holdDispatch?: () => Promise<void>) {
   const published: Published[] = [];
   let inFlight = 0;
   let maxConcurrentDispatches = 0;
@@ -44,7 +45,8 @@ function harness(surfaceKind: string, dispatchMs = DISPATCH_MS) {
     render: async (_surface: string, request: { phase: string; text: string }) => {
       inFlight += 1;
       if (inFlight > maxConcurrentDispatches) maxConcurrentDispatches = inFlight;
-      await new Promise((resolve) => { setTimeout(resolve, dispatchMs); });
+      if (holdDispatch) await holdDispatch();
+      else await new Promise((resolve) => { setTimeout(resolve, dispatchMs); });
       inFlight -= 1;
       published.push({ phase: request.phase, text: request.text });
       return { delivered: true, metadata: {} };
@@ -202,19 +204,36 @@ describe('concurrent progress deliveries with a slow dispatch', () => {
   });
 
   test('two agents are not serialized against each other', async () => {
-    const h = harness('ntfy');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let bothEntered!: () => void;
+    const dispatchesEntered = new Promise<void>((resolve) => { bothEntered = resolve; });
+    let entered = 0;
+    const h = harness('ntfy', DISPATCH_MS, async () => {
+      entered += 1;
+      if (entered === 2) bothEntered();
+      await held;
+    });
     h.track('agent-a');
     h.track('agent-b');
     // Both runs are old enough to warrant a progress notification at all.
     h.advance(45_000);
-    const started = Date.now();
-    await Promise.all([
+    const deliveries = [
       h.pipeline.deliverProgress('agent-a', 'Turn 1 · Network error, retrying in 5s…', true, 'owner'),
       h.pipeline.deliverProgress('agent-b', 'Turn 1 · Rate limited, retrying in 60s…', true, 'owner'),
-    ]);
-    // Serialized, this would take two dispatch windows. Per-agent scope means
-    // one slow surface cannot stall another agent's updates.
-    expect(Date.now() - started).toBeLessThan(DISPATCH_MS * 2);
+    ];
+    try {
+      // A global lock cannot enter the second dispatch while the first is held.
+      // The timeout is only a deadlock watchdog, not a throughput requirement.
+      await withTestTimeout(dispatchesEntered);
+      expect(entered).toBe(2);
+      expect(h.maxConcurrentDispatches()).toBe(2);
+      expect(h.published).toEqual([]);
+    } finally {
+      release();
+      await Promise.allSettled(deliveries);
+    }
+    await Promise.all(deliveries);
     expect(h.published).toHaveLength(2);
-  });
+  }, 60_000);
 });

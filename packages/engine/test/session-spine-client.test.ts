@@ -195,17 +195,45 @@ for (const makeAdapter of adapters) {
       client.dispose();
     });
 
-    test('register/heartbeat/reopen/close return synchronously (no interactive stall)', () => {
+    test('register/heartbeat/reopen/close return synchronously while transport is pending', async () => {
       const fix = makeAdapter();
-      const client = new SessionSpineClient({ participant: fix.participant, transport: fix.transport, log: silent });
-      const start = Date.now();
-      client.register({ sessionId: 's1', project: '/p', title: 'T' });
-      client.heartbeat('s1');
-      client.reopen({ sessionId: 's2', project: '/p' });
-      client.close('s3');
-      expect(Date.now() - start).toBeLessThan(20);
-      expect(client.status()).toBe('unknown'); // network has not settled, no premature online
-      client.dispose();
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const entered: string[] = [];
+      const completed: string[] = [];
+      const pending: Promise<SpineResult>[] = [];
+      const hold = (kind: string, send: () => Promise<SpineResult>): Promise<SpineResult> => {
+        entered.push(kind);
+        const operation = held.then(send).then((result) => {
+          completed.push(kind);
+          return result;
+        });
+        pending.push(operation);
+        return operation;
+      };
+      const transport: SpineTransport = {
+        register: (input) => hold(`register:${input.sessionId}`, () => fix.transport.register(input)),
+        close: (sessionId) => hold(`close:${sessionId}`, () => fix.transport.close(sessionId)),
+      };
+      const client = new SessionSpineClient({
+        participant: fix.participant, transport, heartbeatMinIntervalMs: 0, log: silent,
+      });
+      try {
+        expect(client.register({ sessionId: 's1', project: '/p', title: 'T' })).toBeUndefined();
+        expect(client.heartbeat('s1')).toBeUndefined();
+        expect(client.reopen({ sessionId: 's2', project: '/p' })).toBeUndefined();
+        expect(client.close('s3')).toBeUndefined();
+        expect(entered).toEqual(['register:s1', 'register:s1', 'register:s2', 'close:s3']);
+        expect(completed).toEqual([]);
+        expect(client.status()).toBe('unknown');
+      } finally {
+        client.dispose();
+        release();
+        await Promise.allSettled(pending);
+      }
+      await Promise.all(pending);
+      expect(completed).toEqual(entered);
+      expect(fix.calls.map(({ kind, sessionId }) => `${kind}:${sessionId}`)).toEqual(entered);
     });
 
     test('offline register queues; recovering the backend flushes it once (idempotent replay)', async () => {

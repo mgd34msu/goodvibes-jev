@@ -119,7 +119,6 @@ Regenerate via `bun scripts/print-test-coverage.ts > COVERAGE.md`
 | T107 | `test/channels-test-send.test.ts` |
 | T108 | `test/chaos-mcp-reconnect.test.ts` |
 | T109 | `test/chaos-provider-failures.test.ts` |
-| T110 | `test/check-line-cap.test.ts` |
 | T111 | `test/checkin.test.ts` |
 | T112 | `test/checkpoint-cross-process-lock.test.ts` |
 | T113 | `test/checkpoint-restore-tokens.test.ts` |
@@ -543,7 +542,6 @@ Regenerate via `bun scripts/print-test-coverage.ts > COVERAGE.md`
 | T531 | `test/launch-tolerant-provider-registry.test.ts` |
 | T532 | `test/layout-engine.test.ts` |
 | T533 | `test/lazy-native-imports.test.ts` |
-| T534 | `test/line-cap-rule.test.ts` |
 | T535 | `test/listener-errors.test.ts` |
 | T536 | `test/live-model-discovery.test.ts` |
 | T537 | `test/live-roundtrip.test.ts` |

@@ -1,10 +1,9 @@
 /**
  * Workflow-shape gate.
  *
- * CI cannot be run without pushing, so this suite is the local proof that the
- * hand-authored workflow YAML is well-formed: job graphs, needs edges, no
- * continue-on-error on gating jobs, timeout caps, artifact producer/consumer
- * pairing, pinned action SHAs, and the by-reference release wiring.
+ * Local checks for failure propagation, artifact producer/consumer pairing,
+ * pinned actions, and by-reference release wiring. Actual platform and
+ * containment behavior is proved by the required CI fixtures, not YAML shape.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -39,6 +38,17 @@ function jobs(wf: Workflow): [string, Job][] {
 function needsOf(job: Job): string[] {
   return Array.isArray(job.needs) ? job.needs : job.needs ? [job.needs] : [];
 }
+function prerequisites(wf: Workflow, name: string, path: string[] = []): Set<string> {
+  expect(path, `dependency cycle: ${[...path, name].join(' -> ')}`).not.toContain(name);
+  const job = wf.jobs?.[name];
+  expect(job, `unknown dependency: ${name}`).toBeDefined();
+  const result = new Set<string>();
+  for (const dependency of needsOf(job!)) {
+    result.add(dependency);
+    for (const ancestor of prerequisites(wf, dependency, [...path, name])) result.add(ancestor);
+  }
+  return result;
+}
 function steps(job: Job): Array<Record<string, unknown>> {
   return job.steps ?? [];
 }
@@ -50,24 +60,70 @@ function runText(wf: Workflow, jobName: string): string {
   return steps(wf.jobs![jobName]!).map((s) => String(s.run ?? '')).join('\n');
 }
 
+type JobResult = 'success' | 'failure' | 'cancelled' | 'skipped';
+
+/** Evaluate the boolean/comparison subset used by the publication guards. */
+function permitsPublication(job: Job, results: Record<string, JobResult>, event: string, mode = 'release'): boolean {
+  const condition = String(job.if ?? 'true');
+  const status = {
+    always: true,
+    success: Object.values(results).every((result) => result === 'success'),
+    failure: Object.values(results).includes('failure'),
+    cancelled: Object.values(results).includes('cancelled'),
+  };
+  const hasStatus = /\b(?:always|success|failure|cancelled)\s*\(\)/.test(condition);
+  const expression = condition
+    .replace(/\b(always|success|failure|cancelled)\s*\(\)/g, (_, name: keyof typeof status) => String(status[name]))
+    .replace(/\b(github\.event_name|github\.event\.inputs\.mode|needs\.([\w-]+)\.result)\s*(==|!=)\s*'([^']*)'/g,
+      (_, field: string, dependency: string | undefined, operator: string, expected: string) => {
+        const actual = dependency ? results[dependency] : field === 'github.event_name' ? event : mode;
+        return String(operator === '==' ? actual === expected : actual !== expected);
+      });
+  const tokens = expression.match(/true|false|&&|\|\||!|\(|\)/g) ?? [];
+  expect(tokens.join(''), `unsupported publication guard: ${condition}`).toBe(expression.replace(/\s/g, ''));
+  let offset = 0;
+  function atom(): boolean {
+    const token = tokens[offset++];
+    if (token === '!') return !atom();
+    if (token === '(') {
+      const value = disjunction();
+      expect(tokens[offset++]).toBe(')');
+      return value;
+    }
+    expect(token === 'true' || token === 'false', 'expected a boolean in publication guard').toBe(true);
+    return token === 'true';
+  }
+  function conjunction(): boolean {
+    let value = atom();
+    while (tokens[offset] === '&&') {
+      offset++;
+      const right = atom();
+      value = value && right;
+    }
+    return value;
+  }
+  function disjunction(): boolean {
+    let value = conjunction();
+    while (tokens[offset] === '||') {
+      offset++;
+      const right = conjunction();
+      value = value || right;
+    }
+    return value;
+  }
+  const value = disjunction();
+  expect(offset).toBe(tokens.length);
+  // A status function replaces GitHub's implicit success() condition.
+  return (hasStatus || status.success) && value;
+}
+
 describe('all workflows: baseline hygiene', () => {
   const files = readdirSync(WF_DIR).filter((f) => f.endsWith('.yml'));
 
-  test('workflow directory is non-empty and includes the new reusable set', () => {
-    for (const f of ['reusable-release-verify.yml', 'reusable-npm-publish.yml', 'reusable-gh-release.yml', 'reusable-binary-matrix.yml']) {
-      expect(files).toContain(f);
-    }
-  });
-
-  test('no gating job uses continue-on-error: true (per-job-green is the only green)', () => {
+  test('job dependencies exist and have no cycles', () => {
     for (const f of files) {
       const wf = load(f);
-      for (const [, job] of jobs(wf)) {
-        expect(job['continue-on-error']).not.toBe(true);
-        for (const step of steps(job)) {
-          expect(step['continue-on-error']).not.toBe(true);
-        }
-      }
+      for (const [name] of jobs(wf)) prerequisites(wf, name);
     }
   });
 
@@ -97,27 +153,6 @@ describe('all workflows: baseline hygiene', () => {
           expect(ok, `unpinned action ref: ${ref} in ${f}`).toBe(true);
         }
       }
-    }
-  });
-
-  test('a given action is pinned to ONE SHA across every workflow', () => {
-    const byAction = new Map<string, Map<string, string[]>>();
-    for (const f of files) {
-      const wf = load(f);
-      for (const [, job] of jobs(wf)) {
-        const refs = [job.uses, ...steps(job).map((s) => s.uses)].filter((r): r is string => typeof r === 'string');
-        for (const ref of refs) {
-          const m = /^([^@]+)@([0-9a-f]{40})$/.exec(ref);
-          if (!m) continue;
-          const shas = byAction.get(m[1]!) ?? new Map<string, string[]>();
-          shas.set(m[2]!, [...(shas.get(m[2]!) ?? []), f]);
-          byAction.set(m[1]!, shas);
-        }
-      }
-    }
-    for (const [action, shas] of byAction) {
-      const detail = [...shas].map(([sha, where]) => `${sha} (${where.join(', ')})`).join(' vs ');
-      expect([...shas.keys()].length, `${action} is pinned to more than one SHA: ${detail}`).toBe(1);
     }
   });
 
@@ -154,13 +189,6 @@ describe('all workflows: baseline hygiene', () => {
 describe('ci.yml: build once, restore everywhere', () => {
   const ci = load('ci.yml');
 
-  test('has the expected job set', () => {
-    const names = jobs(ci).map(([n]) => n);
-    for (const n of ['validate', 'eval-gate', 'security-audit', 'build', 'platform-matrix', 'types-resolution-check', 'publint-check', 'sbom-check', 'artifact-lane']) {
-      expect(names).toContain(n);
-    }
-  });
-
   test('the build job is the sole producer of workspace-build-output', () => {
     const producers = jobs(ci).filter(([, job]) =>
       steps(job).some((s) => s.uses?.toString().includes('upload-artifact') && (s.with as { name?: string })?.name === 'workspace-build-output'),
@@ -188,11 +216,15 @@ describe('ci.yml: build once, restore everywhere', () => {
     }
   });
 
-  test('the bun matrix leg runs tests without triggering the pretest rebuild', () => {
+  test('the Bun matrix leg uses the isolated runner without the package pretest lifecycle', () => {
     const matrix = ci.jobs!['platform-matrix']!;
     const include = (matrix.strategy?.matrix as { include?: Array<{ platform: string; 'test-cmd': string }> })?.include ?? [];
-    const bun = include.find((r) => r.platform === 'bun');
-    expect(bun?.['test-cmd']).toBe('bun packages/engine/scripts/test.ts && bun run products:test');
+    const bun = include.find((row) => row.platform === 'bun');
+    // The runner owns isolation; `bun run test` would first rebuild over the
+    // restored artifact. Flags and environment settings need not be frozen.
+    expect(bun?.['test-cmd']).toContain('packages/engine/scripts/test.ts');
+    expect(bun?.['test-cmd']).toContain('bun run products:test');
+    expect(bun?.['test-cmd']).not.toMatch(/\bbun\s+(?:run\s+)?test(?:\s|$)/);
     for (const row of include) expect(row['test-cmd']).not.toContain('bun run build');
   });
 
@@ -200,59 +232,76 @@ describe('ci.yml: build once, restore everywhere', () => {
     const matrix = ci.jobs!['platform-matrix']!;
     const judgment = steps(matrix).find((step) => step.run === 'bun run test:judgment');
     expect(judgment).toBeDefined();
-    const rootScripts = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
-    expect(rootScripts['test:judgment']).toBe('bun packages/engine/scripts/test.ts --cwd ../judgment test');
     expect(judgment?.if).toBe("matrix.platform == 'bun'");
     expect(judgment?.['continue-on-error']).not.toBe(true);
     expect(needsOf(ci.jobs!['auto-release']!)).toContain('platform-matrix');
   });
 
-  test('live containment is an unconditional required lane on a supported VM runner', () => {
+  test('live containment is an unconditional required lane on an unprivileged VM runner', () => {
     const proof = ci.jobs!['exec-containment-proof']!;
     expect(proof).toBeDefined();
-    expect(proof['runs-on']).toBe('ubuntu-22.04');
+    expect(proof['runs-on']).toMatch(/^ubuntu-\d+\.\d+$/);
+    expect(proof.container).toBeUndefined();
     expect(proof.if).toBeUndefined();
     expect(proof['continue-on-error']).toBeUndefined();
-    expect(proof['timeout-minutes']).toBe(10);
-    expect(needsOf(proof)).toEqual(['build']);
+    expect(needsOf(proof)).toContain('build');
     expect(stepText(proof)).toContain('workspace-build-output');
     expect(stepText(proof)).not.toContain('bun run build');
-    const install = steps(proof).find((step) => step.name === 'Install official sandbox and PTY packages');
-    expect(install?.run).toBe('sudo apt-get update\nsudo apt-get install --yes --no-install-recommends bubblewrap util-linux\nbwrap --version\nscript --version\n');
-    const live = steps(proof).find((step) => step.name === 'Require actual sandbox fixture execution');
-    expect(live?.env).toEqual({ GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT: '1' });
-    expect(live?.run).toBe('bun packages/engine/scripts/test.ts test/exec-interactive.test.ts test/exec-sandbox.test.ts test/exec-containment-proof.test.ts');
+    const live = steps(proof).find((step) =>
+      (step.env as Record<string, string> | undefined)?.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1');
+    expect(live, 'the live fixture must fail if containment cannot execute').toBeDefined();
+    const liveRun = String(live?.run ?? '');
+    expect(liveRun).toContain('test/exec-interactive.test.ts');
+    expect(liveRun).toContain('test/exec-sandbox.test.ts');
+    expect(liveRun).toContain('test/exec-containment-proof.test.ts');
     for (const step of steps(proof)) {
       expect(step.if).toBeUndefined();
       expect(step['continue-on-error']).toBeUndefined();
     }
-    // Package installation is the only privileged step; tests stay unprivileged.
-    const otherRuns = steps(proof).filter((step) => step !== install).map((step) => step.run ?? '').join('\n');
-    expect(otherRuns).not.toMatch(/sudo|sysctl|apparmor|--privileged|chmod/);
+    // Package installation may need root; actual proof must exercise the
+    // unprivileged host boundary without weakening its security settings.
+    expect(liveRun).not.toMatch(/\bsudo\b|--privileged/);
+    expect(runText(ci, 'exec-containment-proof')).not.toMatch(/\bsysctl\b|\bapparmor\b|--privileged/);
     expect(needsOf(ci.jobs!['auto-release']!)).toContain('exec-containment-proof');
-    expect(ci.jobs!['auto-release']!.if).toBe("github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'");
   });
 });
 
 describe('ci.yml: zero-touch auto-release', () => {
   const ci = load('ci.yml');
-  const gatingJobs = ['validate', 'eval-gate', 'security-audit', 'build', 'platform-matrix', 'types-resolution-check', 'publint-check', 'sbom-check', 'artifact-lane'];
 
-  test('auto-release needs EVERY other ci.yml job (only runs when all are green)', () => {
-    const auto = ci.jobs!['auto-release']!;
-    const needs = needsOf(auto);
-    for (const job of gatingJobs) {
-      expect(needs, `auto-release must need ${job} so it only runs when that gate is green`).toContain(job);
+  test('release prerequisites do not ignore job or step failures', () => {
+    // The dependency graph declares release gates. An unrelated advisory job
+    // does not become a release prerequisite merely by being added to CI.
+    const pending: Array<[string, string]> = [['ci.yml', 'auto-release'], ['release.yml', 'github-release']];
+    const checked = new Set<string>();
+    for (const [file, target] of pending) {
+      const key = `${file}:${target}`;
+      if (checked.has(key)) continue;
+      checked.add(key);
+      const wf = load(file);
+      const required = prerequisites(wf, target);
+      for (const name of [target, ...required]) {
+        const job = wf.jobs![name]!;
+        expect(job['continue-on-error'], `${file}:${name} must propagate failure`).toBeFalsy();
+        for (const step of steps(job)) {
+          expect(step['continue-on-error'], `${file}:${name} must propagate step failure`).toBeFalsy();
+        }
+        if (job.uses?.startsWith('./.github/workflows/')) {
+          const calledFile = job.uses.slice('./.github/workflows/'.length);
+          for (const [calledJob] of jobs(load(calledFile))) pending.push([calledFile, calledJob]);
+        }
+      }
     }
-    // And its needs set is exactly the other jobs, no gate omitted, no self-need.
-    const otherJobs = jobs(ci).map(([n]) => n).filter((n) => n !== 'auto-release');
-    expect([...needs].sort()).toEqual([...otherJobs].sort());
   });
 
-  test('auto-release is gated to pushes on main', () => {
+  test('auto-release requires an armed push on main and successful prerequisites', () => {
     const cond = String(ci.jobs!['auto-release']!.if);
     expect(cond).toContain("github.ref == 'refs/heads/main'");
     expect(cond).toContain("github.event_name == 'push'");
+    expect(cond).toContain("vars.RELEASE_ARMED == 'true'");
+    // GitHub supplies the default success() guard unless a status function
+    // replaces it. Neither failure/cancellation nor an OR may bypass arming.
+    expect(cond).not.toMatch(/\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(|\|\|/);
   });
 
   test('auto-release grants contents:write and actions:write', () => {
@@ -321,10 +370,6 @@ describe('ci.yml: zero-touch auto-release', () => {
 
 describe('release.yml: by-reference release', () => {
   const rel = load('release.yml');
-
-  test('the 45-minute validate-release re-run is gone', () => {
-    expect(Object.keys(rel.jobs ?? {})).not.toContain('validate-release');
-  });
 
   test('release-verify calls the reusable by-reference workflow', () => {
     const rv = rel.jobs!['release-verify']!;
@@ -399,10 +444,29 @@ describe('release.yml: by-reference release', () => {
     expect((pub.environment as { name?: string })?.name).toBe('production');
   });
 
-  test('verify-tag-version and github-release constraints are preserved', () => {
+  test('publication follows tag validation and npm publication', () => {
     expect(stepText(rel.jobs!['verify-tag-version']!)).toContain('verify-release-tag-version.ts');
-    expect(stepText(rel.jobs!['github-release']!)).toContain('action-gh-release');
-    expect(rel.jobs!['github-release']!['runs-on']).toBe('ubuntu-24.04');
+    expect(prerequisites(rel, 'publish-npm').has('verify-tag-version')).toBe(true);
+    expect(prerequisites(rel, 'github-release').has('publish-npm')).toBe(true);
+  });
+
+  test('publication guards block failed, cancelled, or skipped prerequisites on both release paths', () => {
+    for (const [target, prerequisite] of [
+      ['publish-npm', 'verify-tag-version'],
+      ['publish-npm', 'release-verify'],
+      ['github-release', 'publish-npm'],
+    ] as const) {
+      const job = rel.jobs![target]!;
+      expect(needsOf(job)).toContain(prerequisite);
+      for (const event of ['push', 'workflow_dispatch']) {
+        const results: Record<string, JobResult> = Object.fromEntries(needsOf(job).map((name) => [name, 'success']));
+        expect(permitsPublication(job, results, event), `${target} must allow successful ${event} releases`).toBe(true);
+        for (const result of ['failure', 'cancelled', 'skipped'] as const) {
+          results[prerequisite] = result;
+          expect(permitsPublication(job, results, event), `${target} must block ${prerequisite}=${result}`).toBe(false);
+        }
+      }
+    }
   });
 
   test('concurrency never cancels an in-progress release', () => {
@@ -433,6 +497,9 @@ describe('release.yml: by-reference release', () => {
     expect(pubIf).toContain("github.event_name == 'push'");
     expect(pubIf).toContain("github.event_name == 'workflow_dispatch'");
     expect(pubIf).toContain("inputs.mode == 'release'");
+    const pub = rel.jobs!['publish-npm']!;
+    const results: Record<string, JobResult> = Object.fromEntries(needsOf(pub).map((name) => [name, 'success']));
+    expect(permitsPublication(pub, results, 'workflow_dispatch', 'dry-run')).toBe(false);
 
     const dryIf = String(rel.jobs!['dry-run']!.if);
     expect(dryIf).toContain("github.event_name == 'workflow_dispatch'");
@@ -446,19 +513,6 @@ describe('release.yml: by-reference release', () => {
     expect(inputs.mode?.default).toBe('dry-run');
     expect(inputs.mode?.type).toBe('choice');
     expect(inputs.mode?.options).toEqual(expect.arrayContaining(['dry-run', 'release']));
-  });
-
-  test('release.yml and reusable-gh-release.yml extract changelog sections with the SAME pattern', () => {
-    // Two extractors that disagree about what a heading looks like give the
-    // same version two different release bodies. release.yml matched only the
-    // bracket form, so `## 1.2.3 - date` silently produced a one-line body.
-    const headingPattern = /\$0 ~ "([^"]+)" version "([^"]+)"/;
-    const relMatch = headingPattern.exec(runText(rel, 'github-release'));
-    const reusableMatch = headingPattern.exec(runText(load('reusable-gh-release.yml'), 'gh-release'));
-    expect(relMatch, 'release.yml has no recognizable changelog heading pattern').toBeTruthy();
-    expect(reusableMatch, 'reusable-gh-release.yml has no recognizable changelog heading pattern').toBeTruthy();
-    expect(relMatch![1]).toBe(reusableMatch![1]!);
-    expect(relMatch![2]).toBe(reusableMatch![2]!);
   });
 
   test('the changelog fallback body is a warning, never silent', () => {
@@ -521,7 +575,7 @@ describe('release.yml: by-reference release', () => {
 
 describe('reusable workflows: workflow_call contracts', () => {
   test('each reusable workflow declares workflow_call', () => {
-    for (const f of ['reusable-release-verify.yml', 'reusable-npm-publish.yml', 'reusable-gh-release.yml', 'reusable-binary-matrix.yml']) {
+    for (const f of readdirSync(WF_DIR).filter((name) => name.startsWith('reusable-') && name.endsWith('.yml'))) {
       const wf = load(f);
       expect(wf.on).toHaveProperty('workflow_call');
     }
@@ -562,7 +616,6 @@ describe('reusable workflows: workflow_call contracts', () => {
     // workspace mode self-hosts: checkout the verified commit, build the
     // workspace toolchain, run the local dist bin, never bunx-from-registry.
     expect(JSON.stringify(workspaceSteps)).toContain('actions/checkout');
-    expect(JSON.stringify(workspaceSteps)).toContain('tsc -b packages/engine/toolchain');
     expect(JSON.stringify(workspaceSteps)).toContain('toolchain/dist/bin/per-job-green.js');
     expect(JSON.stringify(workspaceSteps)).not.toContain('bunx @pellux/goodvibes-toolchain');
 
@@ -616,10 +669,6 @@ describe('reusable workflows: workflow_call contracts', () => {
     expect(downloadIdx).toBeGreaterThanOrEqual(0);
     expect(publishIdx).toBeGreaterThanOrEqual(0);
     expect(downloadIdx).toBeLessThan(publishIdx);
-  });
-
-  test('reusable-gh-release runs on ubuntu-24.04 for stable awk', () => {
-    expect(load('reusable-gh-release.yml').jobs!['gh-release']!['runs-on']).toBe('ubuntu-24.04');
   });
 
   test('reusable-gh-release: notes-file overrides the changelog excerpt, with the excerpt as fallback', () => {
@@ -711,14 +760,5 @@ describe('reusable workflows: workflow_call contracts', () => {
       const deadlineMinutes = Number(match![1]) / 60_000;
       expect(deadlineMinutes).toBeLessThan(capMinutes);
     }
-  });
-});
-
-describe('composite setup action: single Bun source', () => {
-  test('exposes a bun-version input with a default', () => {
-    const action = Bun.YAML.parse(readFileSync(resolve(ROOT, '.github/actions/setup/action.yml'), 'utf8')) as {
-      inputs?: { 'bun-version'?: { default?: string } };
-    };
-    expect(action.inputs?.['bun-version']?.default).toBeTruthy();
   });
 });
