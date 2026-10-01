@@ -188,6 +188,7 @@ export async function probeTcp(host: string, port: number, timeoutMs = 750): Pro
 export async function withRuntimeServices<T>(
   runtime: CliCommandRuntime,
   fn: (services: RuntimeServices) => Promise<T> | T,
+  options: { readonly modelData?: 'background' | 'skip' } = {},
 ): Promise<T> {
   // Point the bus listener cap at runtime.eventBus.maxListeners before the
   // first bus exists, so every bus this process builds later uses it.
@@ -195,15 +196,20 @@ export async function withRuntimeServices<T>(
   const runtimeBus = new RuntimeEventBus();
   const runtimeStore = createRuntimeStore();
   const services = createRuntimeServices({
+    // One-shot commands consume the stored catalog; a background refresh would
+    // outlive this graph. Interactive startup retains its normal refresh.
+    modelDiscovery: 'skip',
     configManager: runtime.configManager,
     runtimeBus,
     runtimeStore,
     workingDir: runtime.workingDirectory,
     homeDirectory: runtime.homeDirectory,
   });
-  services.providerRegistry.initModelLimits();
-  services.benchmarkStore.initBenchmarks();
-  services.providerRegistry.initCatalog();
+  if (options.modelData !== 'skip') {
+    services.providerRegistry.initModelLimits();
+    services.benchmarkStore.initBenchmarks();
+    services.providerRegistry.initCatalog();
+  }
   try {
     await services.providerRegistry.ready();
     return await fn(services);

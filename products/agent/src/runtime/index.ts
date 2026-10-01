@@ -61,8 +61,8 @@ export type {
   McpEvent,
   OpsEvent,
   OpsInterventionReason,
-  OrchestrationEvent,
-  PermissionEvent,
+  ContractEvent,
+  GateEvent,
   PlannerEvent,
   PluginEvent,
   ProviderEvent,
@@ -72,7 +72,6 @@ export type {
   ToolEvent,
   TransportEvent,
   TurnEvent,
-  WorkflowEvent,
 } from '@goodvibes-jev/engine/sdk/events';
 
 // Bootstrap compatibility aliases, grouped live re-exports (see the import

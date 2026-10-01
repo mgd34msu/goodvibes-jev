@@ -13,23 +13,8 @@ import { withRuntimeServices } from './management.ts';
 import type { CliCommandOutput } from './types.ts';
 import type { CliCommandRuntime } from './management.ts';
 
-/**
- * `goodvibes-agent fleet`, the best-of-N attempts admin surface (SDK 1.6.1
- * orchestration engine held-merge groups). Unlike ci/principals/channel-
- * profiles (which reach a REMOTE connected host over HTTP), fleet.attempts.*
- * is ws-only on the wire (no HTTP binding, see method-catalog-fleet.ts) and
- * reads THIS agent's own orchestration engine, which persists workstream
- * state to disk (.goodvibes/orchestration/<workstreamId>.json). So this
- * command goes through withRuntimeServices (the same in-process
- * RuntimeServices construction `tasks`/`sessions` already use, see
- * management.ts), not the operator-gateway-call HTTP path ci-command.ts
- * uses: calling sdk.operator.invoke on a method with no `http` binding always
- * throws (methodHttpRoute in @pellux/goodvibes-operator-sdk), so the HTTP
- * path can never reach these three verbs regardless of connection health.
- * services.orchestrationEngine is the exact same FleetAttemptsController
- * instance the fleet.attempts.* gateway verb handlers are wired to in
- * runtime/services.ts, so this CLI and the gateway verbs read/write
- * identical state.
+/** Fleet attempt controls use the published contract runner's composed engines.
+ * The in-process CLI and gateway verbs address the same runner-owned groups.
  */
 
 const FLEET_ATTEMPTS_PICK_USAGE = 'Usage: goodvibes-agent fleet attempts pick <groupId> <winnerItemId> --yes';
@@ -106,7 +91,7 @@ async function handleFleetAttemptsList(runtime: CliCommandRuntime, args: readonl
   const parsed = parseOperatorCommandArgs(args, ['workstream']);
   const workstreamId = operatorFlagValue(parsed, 'workstream');
   try {
-    const groups = await withRuntimeServices(runtime, (services) => services.orchestrationEngine.listHeldMergeGroups(workstreamId));
+    const groups = await withRuntimeServices(runtime, (services) => services.contractRunner.fleetControls().listHeldMergeGroups(workstreamId), { modelData: 'skip' });
     return { output: jsonOrText(runtime, { ok: true, groups }, renderGroupList(groups)), exitCode: 0 };
   } catch (error) {
     return errorFailure(runtime, error);
@@ -122,7 +107,7 @@ async function handleFleetAttemptsPick(runtime: CliCommandRuntime, args: readonl
     return { output: `Refusing to pick a winner for group ${groupId} without --yes. Losing siblings' worktrees are cleaned on pick.`, exitCode: 2 };
   }
   try {
-    const result: AttemptPickResult = await withRuntimeServices(runtime, (services) => services.orchestrationEngine.pickAttemptWinner(groupId, winnerItemId));
+    const result: AttemptPickResult = await withRuntimeServices(runtime, (services) => services.contractRunner.fleetControls().pickAttemptWinner(groupId, winnerItemId), { modelData: 'skip' });
     const text = [
       `Picked winner ${result.winnerItemId} for group ${result.groupId}`,
       `  losers cleaned: ${result.loserItemIds.length === 0 ? 'none' : result.loserItemIds.join(', ')}`,
@@ -139,7 +124,7 @@ async function handleFleetAttemptsJudge(runtime: CliCommandRuntime, args: readon
   const groupId = parsed.positionals[0];
   if (!groupId) return usageFailure(runtime, FLEET_ATTEMPTS_JUDGE_USAGE);
   try {
-    const judgment: AttemptJudgment = await withRuntimeServices(runtime, (services) => services.orchestrationEngine.proposeAttemptWinner(groupId));
+    const judgment: AttemptJudgment = await withRuntimeServices(runtime, (services) => services.contractRunner.fleetControls().proposeAttemptWinner(groupId), { modelData: 'skip' });
     const text = [
       `Judge proposal for group ${groupId}`,
       ...renderJudgment(judgment),

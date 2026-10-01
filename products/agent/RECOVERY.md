@@ -52,3 +52,18 @@ contract-event presentation helper is also not published yet. Full prompt memory
 ranking, wider command/view migration, product types, binary and end-to-end
 acceptance remain incomplete. The registered tier reader is now awaited with
 operation-signal caching; that change alone is not complete prompt parity.
+
+## Contract view and fleet checkpoint
+
+The lane graph reads public contract views and recorded tool outcomes. It renders
+owner questions/replies, attempt/check details and commit notes, keeps legacy
+outcomes unknown, and marks failed application as a display warning while the
+contract lifecycle remains passed. Restored owners remain visible without a
+live Agent record. Agent-specific fold restoration and header calls are retained.
+The fleet CLI uses the runner's real attempt controls and qualified IDs.
+Its one-shot calls explicitly skip background model-data refreshes.
+
+The combined ordinary suite passes 311 tests and 2,830 assertions across 26 files.
+This includes real offline fleet CLI calls, the actual service graph, and the
+contract view behavior. A prior run's external-I/O guard failure is preserved;
+that run was not a pass. Current source/type rechecking is queued separately.

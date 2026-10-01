@@ -32,7 +32,7 @@ export function cellText(text: string): string {
  * cancel  ○ cancelled (the row's text is struck through)
  * bg      ▶ a process it started keeps running in the background
  */
-export type BeadStatus = 'ok' | 'warn' | 'err' | 'run' | 'wait' | 'cancel' | 'bg';
+export type BeadStatus = 'unknown' | 'ok' | 'warn' | 'err' | 'run' | 'wait' | 'cancel' | 'bg';
 
 /** How a settled call's result reads (conversation-render-context.ts outcomeOfToolContent). */
 export type CallOutcome = 'ok' | 'error' | 'cancelled';
@@ -58,6 +58,7 @@ export interface BeadStatusInput {
  */
 export function beadStatus(input: BeadStatusInput): BeadStatus {
   if (input.outcome === undefined) {
+    if (input.content !== undefined) return 'unknown';
     if (input.waiting) return 'wait';
     return input.ownerActive ? 'run' : 'cancel';
   }
@@ -357,6 +358,7 @@ export function beadSummary(call: ToolCall, status: BeadStatus, content: string 
 }
 
 function rawSummary(call: ToolCall, status: BeadStatus, content: string | undefined): BeadSummary | null {
+  if (status === 'unknown') return { text: 'outcome unknown', tone: 'faint' };
   if (status === 'run') return null;
   if (status === 'wait') return { text: 'waiting for you', tone: 'warn' };
   if (status === 'cancel') return { text: 'cancelled', tone: 'faint' };

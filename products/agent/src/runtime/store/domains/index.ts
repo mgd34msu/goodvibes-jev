@@ -59,22 +59,17 @@ export { createInitialTasksState } from '@/runtime/index.ts';
 export type {
   AgentLifecycleState,
   AgentRole,
-  AgentWrfcRef,
+  AgentContractRef,
   RuntimeAgent,
   AgentDomainState,
 } from '@/runtime/index.ts';
 export { createInitialAgentsState } from '@/runtime/index.ts';
 
 export type {
-  OrchestrationMode,
-  OrchestrationNodeRole,
-  OrchestrationNodeState,
-  OrchestrationGraphState,
-  OrchestrationNodeRecord,
-  OrchestrationGraphRecord,
-  OrchestrationDomainState,
-} from '@/runtime/index.ts';
-export { createInitialOrchestrationState } from '@/runtime/index.ts';
+  ContractCriterionRecord, ContractUnitRecord, ContractGroupRecord,
+  ContractEscalationRecord, ContractRecord, ContractDomainState,
+} from '@goodvibes-jev/engine/sdk/platform/runtime/state';
+export { createInitialContractsState } from '@goodvibes-jev/engine/sdk/platform/runtime/state';
 
 export type {
   RuntimeCommunicationRecord,

@@ -83,9 +83,9 @@ describe('fleet CLI command', () => {
   });
 
   test('attempts pick surfaces an honest error for an unknown group', async () => {
-    const result = await handleFleetCommand(runtime(['attempts', 'pick', 'group-1', 'item-1', '--yes']));
+    const result = await handleFleetCommand(runtime(['attempts', 'pick', 'missing-contract:group-1', 'missing-contract:item-1', '--yes']));
     expect(result.exitCode).toBe(1);
-    expect(result.output).toContain('unknown or already-resolved best-of-N group');
+    expect(result.output).toContain('contract missing-contract is not running work');
   }, 15000);
 
   test('attempts judge requires a groupId', async () => {
@@ -98,8 +98,8 @@ describe('fleet CLI command', () => {
   // (mirroring the SDK's runtime services), so "no judge is configured" can
   // no longer occur, the honest refusal for this call is the unknown group.
   test('attempts judge refuses an unknown group honestly', async () => {
-    const result = await handleFleetCommand(runtime(['attempts', 'judge', 'group-1']));
+    const result = await handleFleetCommand(runtime(['attempts', 'judge', 'missing-contract:group-1']));
     expect(result.exitCode).toBe(1);
-    expect(result.output).toContain('unknown or already-resolved best-of-N group: group-1');
+    expect(result.output).toContain('contract missing-contract is not running work');
   }, 15000);
 });

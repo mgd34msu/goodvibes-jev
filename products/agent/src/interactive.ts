@@ -220,7 +220,7 @@ async function main() {
         busy: orchestrator.isThinking,
         label: remoteConversation.hostedToolPreview() ?? sessionSnapshot.streamToolPreview?.trim() ?? undefined,
         agents: buildActivityAgentRows(activeAgents, ctx.services.fleetUnion.nodes()),
-        processes: processManager.list().filter((p) => !p.done).length,
+        processes: processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length,
       },
       needsYou: pendingPermission ? ['Approval needed, answer the prompt on screen.'] : [],
       comingUp: [...autonomy.comingUpItems()],
@@ -237,7 +237,7 @@ async function main() {
   let voiceCaptureStatus: () => import('./core/voice-capture-status.ts').VoiceCaptureIndicatorState | null = () => null;
 
   // Agents and background processes opened full screen: Enter on a lane or ▶ bead, the Activity modal, the process monitor (shell/session-views.ts).
-  const sessionViews = new SessionViews({ conversation, agentManager, processManager, fleetNodes: () => ctx.services.processRegistry.query().nodes, steer: (id, text) => ctx.services.processRegistry.steer(id, text), killAgent: (id) => ctx.services.processRegistry.kill(id, { cascade: true }), mainBusy: () => orchestrator.isThinking, mainModel: () => providerRegistry.getCurrentModel().id, promptText: () => input.prompt, requestRender: () => render() });
+  const sessionViews = new SessionViews({ conversation, agentManager, processManager, contractRunner: ctx.services.contractRunner, fleetNodes: () => ctx.services.processRegistry.query().nodes, steer: (id, text) => ctx.services.processRegistry.steer(id, text), killAgent: (id) => ctx.services.processRegistry.kill(id, { cascade: true }), mainBusy: () => orchestrator.isThinking, mainModel: () => providerRegistry.getCurrentModel().id, promptText: () => input.prompt, requestRender: () => render() });
   commandContext.openSessionView = (target) => sessionViews.open(target);
   const getViewportHeight = (): number => // less the header row (+ chips) and, on the main screen, the empty row under them (a view's body brings its own)
     getTerminalSize(stdout).height - sessionViews.headerRows() - (sessionViews.active ? 0 : HEADER_GAP_ROWS) - estimateShellFooterHeight(input.getVisiblePromptLineCount(getPromptContentWidth()));
@@ -252,7 +252,7 @@ async function main() {
 
   const unsubs: Array<() => void> = [];
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
-  const workTreeWiring = wireWorkTree({ conversation, events: uiServices.events, agentManager, listChains: () => ctx.services.wrfcController.listChains(), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() });
+  const workTreeWiring = wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true }), onContractsChanged: (listener) => ctx.services.runtimeBus.onDomain('contracts', listener), fleetNodes: () => ctx.services.processRegistry.query().nodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() });
   unsubs.push(...workTreeWiring.unsubs, () => sessionViews.dispose());
   const throbberSource = createThrobberSource(uiServices.events.tools, () => ctx.services.contextAccountingHolder.getSource()?.getCompactionState().isCompacting === true); unsubs.push(...throbberSource.unsubs); // the throbber's running call and compaction clock
   let recoveryInterval: ReturnType<typeof setInterval> | null = null;
@@ -551,7 +551,7 @@ async function main() {
     };
     const throbber = throbberSource.state({ ...thinkingDeps, width, pendingApproval: mainPermissionAsk(pendingPermission) }); // what main is doing: the row above the input area
     const runningAgentCount = activeAgents.length;
-    const runningProcessCount = processManager.list().filter((p) => !p.done).length;
+    const runningProcessCount = processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length;
     const cw = getPromptContentWidth();
     const promptInfo = input.getWrappedPromptInfo(cw);
     const commandArgsHint = buildCommandArgsHint(input.prompt, commandRegistry);
