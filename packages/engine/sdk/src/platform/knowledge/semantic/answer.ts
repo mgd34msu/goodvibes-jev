@@ -1,3 +1,4 @@
+import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { KnowledgeAnswerExcerptHeldError } from './answer-excerpts/reader.js';
 import { projectAnswerFactClaim } from './answer-claim-projection.js';
 import type {
@@ -47,10 +48,8 @@ import {
   withAnswerSourceAliases,
 } from './answer-evidence.js';
 import {
-  isRepairedAnswerGap,
-  persistAnswerGap,
-  answerGapRecordIds,
-  shouldPersistNoMatchGap,
+  prepareAnswerGapUniverse, type PreparedAnswerGapUniverse,
+  isActionableAnswerGap, KnowledgeAnswerGapHeldError,
 } from './answer-gaps.js';
 import { synthesizeAnswer } from './answer-llm.js';
 
@@ -64,6 +63,7 @@ export async function answerKnowledgeQuery(
     return await withAnswerVerificationBudget((signal, deadlineAt) => answerWithinBudget(context, input, signal, deadlineAt), input.timeoutMs, input.signal);
   } catch (error) {
     if (error instanceof KnowledgeAnswerQualityHeldError || error instanceof JudgmentInputError) throw error;
+    if (error instanceof KnowledgeAnswerGapHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason);
     if (error instanceof KnowledgeSourceRankingHeldError || error instanceof KnowledgeFactSelectionHeldError) throw new KnowledgeAnswerQualityHeldError('uncertain');
     if (error instanceof KnowledgeSourceQualityHeldError) throw new KnowledgeAnswerQualityHeldError(error.reason === 'aborted' ? 'aborted' : 'stale');
     if (error instanceof KnowledgeAnswerObjectAlignmentHeldError) throw new KnowledgeAnswerQualityHeldError(
@@ -77,7 +77,9 @@ export async function answerKnowledgeQuery(
 async function answerWithinBudget(context: KnowledgeAnswerContext, input: KnowledgeSemanticAnswerInput,
   signal: AbortSignal, deadlineAt: number,
 ): Promise<KnowledgeSemanticAnswerResult> {
+  const originalQuery = input.query;
   const check = () => {
+    if (input.query !== originalQuery) throw new KnowledgeAnswerQualityHeldError('stale');
     if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
     if (Date.now() >= deadlineAt) throw new KnowledgeAnswerQualityHeldError('budget');
   };
@@ -85,12 +87,14 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const mode = input.mode ?? 'standard';
   const limit = Math.max(1, input.limit ?? 8);
   const objectProfiles = context.objectProfiles ?? [];
+  const checkPorts = captureAnswerReadingPorts();
+  const gapUniverse = prepareAnswerGapUniverse(context.store, spaceId, input.query, { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
   // Protect the full structural candidate universe before the first evidence reading.
   const objects = input.includeLinkedObjects === false ? undefined
     : prepareAnswerLinkedObjects(context.store, spaceId, input, objectProfiles, signal);
   let evidenceReadSet: readonly EvidenceItem[] = [];
-  const checkReadSet = () => { check(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet); };
-  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, objects);
+  const checkReadSet = () => { check(); checkPorts(); gapUniverse.assertCurrent(); objects?.assertCurrent(); assertAnswerEvidenceCurrent(evidenceReadSet); };
+  const evidenceResolution = await resolveAnswerEvidence(context, input, spaceId, mode, limit, objectProfiles, signal, checkReadSet, gapUniverse, objects);
   check();
   if (evidenceResolution.kind === 'no-match') return evidenceResolution.result;
 
@@ -128,9 +132,9 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
     .filter((node) => getKnowledgeSpaceId(node) === spaceId || (spaceId === 'homeassistant' && isHomeAssistantKnowledgeSpace(getKnowledgeSpaceId(node))));
   checkReadSet();
   const prepared = prepareAnswerEvidence({ store: context.store, spaceId, query: input.query, sources: rankedSources.slice(0, limit), facts: rawFacts, subjects: claimSubjects, signal });
-  const gapIds = answerGapRecordIds(gapSpaceId, input.query, linkedObjects[0]?.title, linkedObjects[0]?.id);
-  prepared.guard.node(gapIds.nodeId);
-  prepared.guard.watch(`answer-gap-issue:${gapIds.issueId}`, () => context.store.getIssue(gapIds.issueId));
+  const gapPlan = gapUniverse.prepare({ spaceId: gapSpaceId, sources: rankedSources.slice(0, limit), linkedObjects,
+    assertCurrent: () => { checkReadSet(); prepared.assertCurrent(); } });
+  const checkGap = () => { checkReadSet(); prepared.assertCurrent(); gapPlan.assertCurrent(); };
   for (const fact of facts) {
     // Returned associations must resolve locally; an unknown/foreign/stale
     // reference cannot disappear from the claim while remaining in metadata.
@@ -140,10 +144,10 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   const candidateClaims = facts.map((fact) => projectAnswerFactClaim(fact, claimSubjects));
   assertJudgmentInput({ query: input.query, facts: candidateClaims });
   const candidateFacts = candidateClaims.map((claim) => JSON.stringify(claim));
-  checkReadSet(); prepared.assertCurrent();
+  checkGap();
   const generated = prepared.evidence.length ? await synthesizeAnswer(context.llm ?? null, input.query, mode, prepared.evidence,
     { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) }) : null;
-  checkReadSet(); prepared.assertCurrent();
+  checkGap();
   const rendered = renderFallbackAnswer(input.query, mode, prepared.evidence.map((row) => ({ title: row.title ?? row.reference, excerpt: row.text })), facts);
   const candidates: AnswerCandidate[] = [
     ...(generated ? [{ id: 'generated' as const, text: generated, facts: candidateFacts }] : []),
@@ -151,12 +155,12 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
   ];
   const selection = await verifyKnowledgeAnswer({ query: input.query, evidence: prepared.evidence, candidates },
     { signal, timeoutMs: Math.max(1, deadlineAt - Date.now()) });
-  checkReadSet(); prepared.assertCurrent();
+  checkGap();
   const missingExtraction = selection.quality.status === 'no-evidence';
   const evidenceGap = answerNeedsEvidenceGap(selection.quality) || missingExtraction
-    ? await persistAnswerGap(context.store, gapSpaceId, input.query, missingExtraction
+    ? await (await gapPlan.read()).persist(missingExtraction
       ? 'Matching sources have no extracted evidence available for verification.'
-      : 'Verified evidence does not establish every requested detail consistently.', { sources, linkedObjects, signal, assertCurrent: () => { checkReadSet(); prepared.assertCurrent(); } })
+      : 'Verified evidence does not establish every requested detail consistently.')
     : null;
   check();
   const text = selection.candidate?.text ?? (selection.quality.status === 'no-evidence'
@@ -175,7 +179,7 @@ async function answerWithinBudget(context: KnowledgeAnswerContext, input: Knowle
       sources: input.includeSources === false ? [] : sources,
       linkedObjects,
       facts: selection.candidate ? facts : [],
-      gaps: evidenceGap && !isRepairedAnswerGap(evidenceGap) ? [evidenceGap] : [],
+      gaps: evidenceGap && isActionableAnswerGap(context.store, evidenceGap) ? [evidenceGap] : [],
       synthesized: Boolean(selection.candidate),
     },
     results: evidence.slice(0, limit).map(toSearchResult),
@@ -197,6 +201,7 @@ async function resolveAnswerEvidence(
   objectProfiles: ObjectProfiles,
   signal: AbortSignal,
   check: () => void,
+  gapUniverse: PreparedAnswerGapUniverse,
   objects?: PreparedAnswerLinkedObjects,
 ): Promise<AnswerEvidenceResolution> {
   // Snapshot absence as well as selected records: a late indexing/operator change
@@ -220,11 +225,11 @@ async function resolveAnswerEvidence(
   if (linkedEvidence.length > 0) return { kind: 'matched', evidence: linkedEvidence };
 
   if (signal.aborted) throw new KnowledgeAnswerQualityHeldError('aborted');
-  const gap = shouldPersistNoMatchGap(spaceId, input.query, linkedObjects)
-    ? await persistAnswerGap(context.store, concreteAnswerGapSpaceId(spaceId, [], [], linkedObjects), input.query, 'No indexed evidence matched the question.', {
-      linkedObjects, signal, assertCurrent: () => { check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(linkedEvidence); },
-    })
-    : null;
+  const gapPlan = gapUniverse.prepare({ spaceId: concreteAnswerGapSpaceId(spaceId, [], [], linkedObjects), linkedObjects, noMatch: true,
+    assertCurrent: () => { check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(linkedEvidence); } });
+  const selectedGap = await gapPlan.read();
+  check(); guard.assertCurrent(); assertAnswerEvidenceCurrent(linkedEvidence);
+  const gap = await selectedGap.persist('No indexed evidence matched the question.');
   return {
     kind: 'no-match',
     result: {
@@ -239,7 +244,7 @@ async function resolveAnswerEvidence(
         sources: [],
         linkedObjects,
         facts: [],
-        gaps: gap ? [gap] : [],
+        gaps: gap && isActionableAnswerGap(context.store, gap) ? [gap] : [],
         synthesized: false,
       },
       results: [],
@@ -364,4 +369,14 @@ function answerTargetHints(nodes: readonly KnowledgeNodeRecord[]): readonly Reco
     title: node.title,
     ...(node.summary ? { summary: node.summary } : {}),
   }));
+}
+
+/** Preserve earlier answer configuration through the later gap judgment awaits. */
+function captureAnswerReadingPorts(): () => void {
+  const sites = ['engine.knowledge.answer-evidence-relevance', 'engine.knowledge.answer-excerpt-selection',
+    'engine.knowledge.answer-fact-rank', 'engine.knowledge.answer-query-intent', 'engine.knowledge.answer-integration-intent',
+    'engine.knowledge.answer-object-alignment', 'engine.knowledge.answer-source-rank', 'engine.knowledge.answer-quality'];
+  const current = (site: string) => { try { return judgmentPort(site); } catch { return undefined; } };
+  const configured = sites.map((site) => { const port = current(site); return { site, port, model: port?.model }; });
+  return () => { for (const { site, port, model } of configured) if (current(site) !== port || port?.model !== model) throw new KnowledgeAnswerQualityHeldError('stale'); };
 }

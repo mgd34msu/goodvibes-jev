@@ -44,6 +44,7 @@ function readings(options: { enough?: number; complete?: number; generated?: 'su
     if (name === 'preferred') return choiceAnswer(question, 'generated', 0.97);
     if (name === 'enough') return noulAnswer(options.enough ?? 0.97);
     if (name === 'complete') return noulAnswer(options.complete ?? 0.97);
+    if (name === 'sameQuestion') return noulAnswer(0.99); // Repeated exact question fixtures.
     if (name === 'serve') return noulAnswer(0.99); // Faithful synthetic fixture content; not an answer-quality verdict.
     if (name === 'useful' && ['AC-7 manual', 'AC-7 HDMI ports', 'AC-7'].includes((state as { candidate?: { title?: string } }).candidate?.title ?? '')) return noulAnswer(0.99);
     if (name === 'excerptUseful') return noulAnswer(0.01); // Full-extraction fidelity is tested independently.
