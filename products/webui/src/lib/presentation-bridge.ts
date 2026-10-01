@@ -12,7 +12,7 @@
  * contract's own colors: the contract defines four severity buckets
  * (good / warn / bad / info, STATE_GLYPHS) plus a richer 16-key status
  * glyph vocabulary (GLYPHS.status). The web UI's own status vocabularies
- * (StatusBadge's free-text tone classification, the daemon-health axes in
+ * (StatusBadge's structural tone catalog, the daemon-health axes in
  * daemon-health.ts) are HONEST, more specific labels than those four
  * buckets afford, "expiring" is genuinely more precise than "warn",
  * "Reachable" is deliberately not "Connected" (see daemon-health.ts). This
@@ -61,43 +61,6 @@ const BADGE_TONE_TO_CONTRACT_STATE: Record<BadgeTone, ContractStatusState> = {
   // contract's own "not a fault" state, the correct analogue.
   neutral: 'info',
 };
-
-/** Classify an arbitrary status string into a BadgeTone. Hoisted verbatim
- * from StatusBadge.tsx's inline heuristic (moved here so the classification
- * is independently testable and shared with any future consumer). Provider
- * auth-freshness labels (src/lib/provider-status.ts) are part of this
- * vocabulary: 'expired' is a bad state (credentials no longer work),
- * 'expiring' a warning (still working, needs attention). 'unconfigured' and
- * 'status unavailable' intentionally fall through to neutral, neither is a
- * fault, they are honest absent/not-set-up states. */
-export function classifyBadgeTone(value: string): BadgeTone {
-  const normalized = value.toLowerCase();
-  if (
-    normalized.includes('error') ||
-    normalized.includes('fail') ||
-    normalized.includes('denied') ||
-    normalized.includes('expired')
-  ) {
-    return 'bad';
-  }
-  if (
-    normalized.includes('warn') ||
-    normalized.includes('pending') ||
-    normalized.includes('blocked') ||
-    normalized.includes('expiring')
-  ) {
-    return 'warning';
-  }
-  if (
-    normalized.includes('healthy') ||
-    normalized.includes('ok') ||
-    normalized.includes('ready') ||
-    normalized.includes('active')
-  ) {
-    return 'ok';
-  }
-  return 'neutral';
-}
 
 /** The contract's 4-bucket glyph for a StatusBadge tone. */
 export function contractGlyphForBadgeTone(tone: BadgeTone): string {

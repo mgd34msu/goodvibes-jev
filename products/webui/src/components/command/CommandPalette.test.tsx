@@ -4,16 +4,39 @@
  * order equal to screen order, Enter runs, Escape closes the palette only, the
  * scrim closes it, and focus returns to the opener.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { CommandPalette, formatShortcut } from './CommandPalette';
 import { getCommands, registerCommand, unregisterCommand, type CommandDef } from '../../lib/commands';
+import type { BrowserJudgmentRequest } from '@goodvibes-jev/engine/daemon-sdk';
+import { clearStoredAuthToken, sdk, tokenStore } from '../../lib/goodvibes';
+import { setActiveRoute } from '../../lib/relay-connection';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let closes = 0;
 let opener: HTMLButtonElement;
+const originalFetch = globalThis.fetch;
+type RankRequest = BrowserJudgmentRequest<'webui.palette.command-rank'>;
+function answer(request: RankRequest, outcome: 'act' | 'confirm' | 'escalate' = 'act', selected = 0): Response {
+  const count = request.input.candidates.length;
+  return new Response(JSON.stringify({ protocolVersion: 1, battery: request.battery, batteryVersion: 1, requestId: request.requestId,
+    ...(outcome === 'act' ? { status: 'settled', value: { registryVersion: request.input.registryVersion,
+      accepted: [{ candidateIndex: selected, probability: 0.93 }], rejected: Array.from({ length: count }, (_, i) => i).filter((i) => i !== selected) } }
+      : { status: 'held', reason: 'uncertain' }), outcome,
+    readings: Object.fromEntries(Array.from({ length: count }, (_, i) => [`candidate_${i}`, { kind: 'yes-no',
+      probability: i === selected ? 0.93 : 0.03, verdict: i === selected ? 'yes' : 'no', outcome: i === selected ? outcome : 'act' }])),
+    evidence: Array.from({ length: count }, (_, i) => ({ decisionId: `fixture-${i}`, model: 'fixture-v1', requestedModel: 'fixture', usage: { inputTokens: 1, outputTokens: 1 }, latencyMs: 1 })),
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+async function until(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('Expected palette state did not appear');
+}
 
 function renderPalette(open: boolean): void {
   flushSync(() => {
@@ -46,6 +69,7 @@ function cmd(id: string, overrides: Partial<CommandDef> = {}): CommandDef {
 }
 
 beforeEach(() => {
+  globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ status: 'held', error: { code: 'JUDGMENT_UNAVAILABLE' } }), { status: 503 })) as typeof fetch;
   for (const c of getCommands()) unregisterCommand(c.id);
   closes = 0;
   opener = document.createElement('button');
@@ -56,14 +80,43 @@ beforeEach(() => {
   root = createRoot(container);
 });
 
-afterEach(() => {
+afterEach(async () => {
   flushSync(() => root.unmount());
   container.remove();
   opener.remove();
   for (const c of getCommands()) unregisterCommand(c.id);
+  globalThis.fetch = originalFetch;
+  await tokenStore.clearToken();
 });
 
 describe('CommandPalette: rendering', () => {
+  for (const storage of ['missing', 'throwing'] as const) {
+    test(`${storage} storage preserves manual browse and holds semantic search before HTTP`, async () => {
+      const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+      let runs = 0;
+      let calls = 0;
+      globalThis.fetch = Object.assign(async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        calls++; throw new Error('No unauthenticated fixture request expected');
+      }, { preconnect: originalFetch.preconnect });
+      registerCommand(cmd('chat.new', { run: () => { runs++; } }));
+      try {
+        Object.defineProperty(globalThis, 'localStorage', storage === 'missing'
+          ? { configurable: true, value: undefined }
+          : { configurable: true, get() { throw new Error('Storage unavailable'); } });
+        renderPalette(true); key('Enter');
+        expect(runs).toBe(1);
+        type('start over');
+        await until(() => document.querySelector('[data-search-status="unavailable"]') !== null);
+        key('Enter');
+        expect(runs).toBe(1);
+        expect(calls).toBe(0);
+      } finally {
+        if (original) Object.defineProperty(globalThis, 'localStorage', original);
+        else Reflect.deleteProperty(globalThis, 'localStorage');
+      }
+    });
+  }
+
   test('renders nothing when closed', () => {
     renderPalette(false);
     expect(document.querySelector('[aria-label="Command palette"]')).toBeNull();
@@ -148,11 +201,11 @@ describe('CommandPalette: keyboard', () => {
     expect(input.getAttribute('aria-activedescendant')).toBe(active.id);
   });
 
-  test('Enter runs the active command and closes', () => {
+  test('Enter runs an explicitly browsed command and closes', () => {
+    for (const c of getCommands()) unregisterCommand(c.id);
     let ran = '';
     registerCommand(cmd('run', { title: 'Run me', group: 'navigation', run: () => { ran = 'run'; } }));
     renderPalette(true);
-    type('run me');
     key('Enter');
     expect(ran).toBe('run');
     expect(closes).toBe(1);
@@ -183,14 +236,15 @@ describe('CommandPalette: pointer, filter, registry, focus', () => {
     expect(closes).toBe(2);
   });
 
-  test('typing narrows the results; clearing restores them', () => {
+  test('typing clears unranked rows while reading; clearing restores manual browse', () => {
     registerCommand(cmd('a', { title: 'Alpha command' }));
     registerCommand(cmd('b', { title: 'Beta command' }));
     registerCommand(cmd('c', { title: 'Gamma place', group: 'navigation' }));
     renderPalette(true);
     expect(options().length).toBe(3);
     type('command');
-    expect(options().map((o) => o.querySelector('.cmd-item-title')?.textContent).sort()).toEqual(['Alpha command', 'Beta command']);
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector('[data-search-status="loading"]')).not.toBeNull();
     type('');
     expect(options().length).toBe(3);
   });
@@ -208,5 +262,199 @@ describe('CommandPalette: pointer, filter, registry, focus', () => {
     renderPalette(true);
     renderPalette(false);
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+describe('CommandPalette: admitted semantic search', () => {
+  let ran: string[];
+  beforeEach(() => {
+    for (const c of getCommands()) unregisterCommand(c.id);
+    ran = [];
+    registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('chat.new') }));
+    registerCommand(cmd('nav.chat', { title: 'Go to Chat', group: 'navigation', run: () => ran.push('nav.chat') }));
+  });
+
+  for (const pending of [true, false]) test(`${pending ? 'pending' : 'settled'} query is never replayed under another account after command re-registration`, async () => {
+    await tokenStore.setToken('offline-account-a');
+    const requests: { input: RankRequest; authorization: string | null }[] = [];
+    let finish!: (value: Response) => void;
+    globalThis.fetch = ((_url, init) => {
+      const input = JSON.parse(String(init?.body)) as RankRequest;
+      requests.push({ input, authorization: new Headers(init?.headers).get('Authorization') });
+      if (pending && requests.length === 1) return new Promise<Response>((resolve) => { finish = resolve; });
+      return Promise.resolve(answer(input));
+    }) as typeof fetch;
+    renderPalette(true); type('account A private query');
+    await until(() => requests.length === 1);
+    if (!pending) await until(() => options().length === 1);
+    await tokenStore.setToken('offline-account-b');
+    flushSync(() => registerCommand(cmd('chat.new', { title: 'New Chat', group: 'chat', run: () => ran.push('new-account') })));
+    if (pending) finish(answer(requests[0]!.input));
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    expect(requests).toHaveLength(1);
+    key('Enter'); expect(ran).toEqual([]);
+    type('account B explicit query');
+    await until(() => requests.length === 2 && options().length === 1);
+    expect(requests[1]!.authorization).toBe('Bearer offline-account-b');
+    expect(requests[1]!.input.input.query).toEqual({ kind: 'inline', text: 'account B explicit query' });
+    key('Enter'); expect(ran).toEqual(['new-account']);
+  });
+
+  test('a settled row cannot click or Enter after expiry advances without a storage write', async () => {
+    let now = Date.now();
+    const clock = spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await tokenStore.setTokenEntry('offline-account-a', now + 60_000);
+      globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest)) as typeof fetch;
+      renderPalette(true); type('begin afresh');
+      await until(() => options().length === 1);
+      const row = options()[0]!;
+      now += 60_000;
+      row.click(); key('Enter');
+      expect(ran).toEqual([]);
+      await until(() => options().length === 0);
+    } finally { clock.mockRestore(); }
+  });
+
+  for (const [name, change] of [
+    ['sign-out', () => clearStoredAuthToken()],
+    ['account replacement', () => tokenStore.setToken('offline-account-b')],
+  ] as const) test(`${name} while the real authenticated request is pending cannot adopt or execute its answer`, async () => {
+    await tokenStore.setToken('offline-account-a');
+    let pending!: { request: RankRequest; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer offline-account-a');
+      pending = { request: JSON.parse(String(init?.body)) as RankRequest, finish };
+    })) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => Boolean(pending));
+    await change();
+    pending.finish(answer(pending.request));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    key('Enter');
+    expect(ran).toEqual([]);
+    expect(options()).toHaveLength(0);
+  });
+
+  for (const [name, change] of [
+    ['sign-out', () => clearStoredAuthToken()],
+    ['account switch', () => tokenStore.setToken('offline-account-b')],
+    ['account A to B to A', async () => { await tokenStore.setToken('offline-account-b'); await tokenStore.setToken('offline-account-a'); }],
+    ['route away and back', () => { setActiveRoute('relay'); setActiveRoute('direct'); }],
+  ] as const) {
+    test(`settled rows and even an already-bound click cannot execute after ${name}`, async () => {
+      await tokenStore.setToken('offline-account-a');
+      let calls = 0;
+      globalThis.fetch = (async (_url, init) => { calls++; return answer(JSON.parse(String(init?.body)) as RankRequest); }) as typeof fetch;
+      renderPalette(true); type('begin afresh');
+      await until(() => options().length === 1);
+      const oldRow = options()[0]!;
+      await change();
+      // Exercise the existing handler before relying on a React repaint.
+      oldRow.click(); key('Enter');
+      expect(ran).toEqual([]);
+      await until(() => options().length === 0);
+      expect(document.querySelector('[data-search-status="unavailable"]')).not.toBeNull();
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      expect(calls).toBe(1); // Never replay the old account's query under a new identity.
+      type(''); key('Enter');
+      expect(ran).toEqual(['nav.chat']); // Explicit manual browse still works.
+    });
+  }
+
+  test('an account switch permits a new explicit query while the old result stays unusable', async () => {
+    await tokenStore.setToken('offline-account-a');
+    const headers: (string | null)[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      headers.push(new Headers(init?.headers).get('Authorization'));
+      return answer(JSON.parse(String(init?.body)) as RankRequest);
+    }) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => options().length === 1);
+    await sdk.auth.setToken('offline-account-b');
+    key('Enter'); expect(ran).toEqual([]);
+    type('new account request');
+    await until(() => options().length === 1);
+    key('Enter'); expect(ran).toEqual(['chat.new']);
+    expect(headers).toEqual(['Bearer offline-account-a', 'Bearer offline-account-b']);
+  });
+
+  test('a nonlexical answer selects only the real indexed command and keeps Enter behavior', async () => {
+    globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest)) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    key('Enter'); expect(ran).toEqual([]);
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']); expect(closes).toBe(1);
+  });
+
+  test('ArrowDown during a deferred reading preserves the first actionable result', async () => {
+    let pending!: { request: RankRequest; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => {
+      pending = { request: JSON.parse(String(init?.body)) as RankRequest, finish };
+    })) as typeof fetch;
+    renderPalette(true); type('begin afresh');
+    await until(() => Boolean(pending));
+    key('ArrowDown'); key('ArrowDown'); key('Enter');
+    expect(ran).toEqual([]);
+    pending.finish(answer(pending.request));
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']); expect(closes).toBe(1);
+  });
+
+  test.each(['confirm', 'escalate'] as const)('%s holds have no inferred executable rows', async (outcome) => {
+    globalThis.fetch = (async (_url, init) => answer(JSON.parse(String(init?.body)) as RankRequest, outcome)) as typeof fetch;
+    renderPalette(true); type('New Chat');
+    await until(() => document.querySelector('[data-search-status="held"]') !== null);
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(outcome === 'confirm' ? 'need review' : 'could not resolve');
+    key('Enter'); expect(ran).toEqual([]); expect(closes).toBe(0);
+  });
+
+  test('an unavailable service offers explicit manual browse without invented matches', async () => {
+    renderPalette(true); type('New Chat');
+    await until(() => document.querySelector('[data-search-status="unavailable"]') !== null);
+    key('Enter'); expect(ran).toEqual([]); expect(options()).toHaveLength(0);
+    const browse = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Browse all commands');
+    browse!.focus();
+    flushSync(() => browse!.click());
+    expect(document.activeElement).toBe(document.querySelector('input[aria-label="Search commands"]'));
+    expect(document.querySelector('[role="listbox"]')?.getAttribute('aria-label')).toBe('Browse all commands');
+    expect(options()).toHaveLength(2);
+    key('ArrowDown'); expect(activeTitle()).toBe('New Chat');
+    key('Enter'); expect(ran).toEqual(['chat.new']);
+  });
+
+  test('editing the query aborts the old request and a late answer cannot replace newer matches', async () => {
+    let first!: { request: RankRequest; signal: AbortSignal; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => {
+      const request = JSON.parse(String(init?.body)) as RankRequest;
+      if (request.input.query.kind === 'inline' && request.input.query.text === 'first') {
+        return new Promise<Response>((finish) => { first = { request, signal: init!.signal!, finish }; });
+      }
+      return Promise.resolve(answer(request, 'act', 1));
+    }) as typeof fetch;
+    renderPalette(true); type('first');
+    await until(() => Boolean(first));
+    type('second'); expect(first.signal.aborted).toBe(true);
+    await until(() => options().length === 1);
+    expect(activeTitle()).toBe('Go to Chat');
+    first.finish(answer(first.request, 'act', 0));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(activeTitle()).toBe('Go to Chat');
+    key('Enter'); expect(ran).toEqual(['nav.chat']);
+  });
+
+  test('closing aborts a pending request and reopening starts from manual browse', async () => {
+    let pending!: { request: RankRequest; signal: AbortSignal; finish: (response: Response) => void };
+    globalThis.fetch = ((_url, init) => new Promise<Response>((finish) => { pending = { request: JSON.parse(String(init?.body)) as RankRequest, signal: init!.signal!, finish }; })) as typeof fetch;
+    renderPalette(true); type('New Chat');
+    await until(() => Boolean(pending));
+    renderPalette(false); expect(pending.signal.aborted).toBe(true);
+    pending.finish(answer(pending.request));
+    renderPalette(true);
+    expect((document.querySelector('input[aria-label="Search commands"]') as HTMLInputElement).value).toBe('');
+    expect(options()).toHaveLength(2); expect(ran).toEqual([]);
   });
 });

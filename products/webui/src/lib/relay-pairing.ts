@@ -28,6 +28,8 @@ import {
   encodeRelayPairingString,
   type RelayPairingPayload,
 } from '@goodvibes-jev/engine/transport-core/relay';
+import { invalidateClientLifetime, RELAY_PAIRING_STORAGE_KEY } from './client-lifetime';
+export { RELAY_PAIRING_STORAGE_KEY } from './client-lifetime';
 
 export type { RelayPairingPayload };
 
@@ -35,7 +37,6 @@ export type { RelayPairingPayload };
 export const RELAY_PAIRING_FRAGMENT_KEY = 'relay';
 
 /** localStorage key the pairing payload is persisted under (JSON of RelayPairingPayload). */
-export const RELAY_PAIRING_STORAGE_KEY = 'goodvibes.webui.relayPairing';
 
 /**
  * Extract a relay pairing code from a URL hash string (`window.location.hash`), or
@@ -149,10 +150,12 @@ export function getStoredRelayPairing(): RelayPairingPayload | null {
 export function storeRelayPairing(payload: RelayPairingPayload): void {
   if (!hasStorage()) return;
   window.localStorage.setItem(RELAY_PAIRING_STORAGE_KEY, JSON.stringify(payload));
+  invalidateClientLifetime();
 }
 
 /** Clear the stored relay pairing, this device no longer has a relay route to any daemon. */
 export function clearStoredRelayPairing(): void {
   if (!hasStorage()) return;
   window.localStorage.removeItem(RELAY_PAIRING_STORAGE_KEY);
+  invalidateClientLifetime();
 }

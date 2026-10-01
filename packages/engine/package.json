@@ -824,6 +824,11 @@
       "types": "./sdk/dist/platform/pairing/index.d.ts",
       "import": "./sdk/dist/platform/pairing/index.js"
     },
+    "./sdk/platform/judgment-browser/catalogs": {
+      "bun": "./sdk/src/platform/judgment-browser/batteries/catalogs.ts",
+      "types": "./sdk/dist/platform/judgment-browser/batteries/catalogs.d.ts",
+      "import": "./sdk/dist/platform/judgment-browser/batteries/catalogs.js"
+    },
     "./sdk/platform/judgment-browser": {
       "bun": "./sdk/src/platform/judgment-browser/index.ts",
       "types": "./sdk/dist/platform/judgment-browser/index.d.ts",

@@ -19,6 +19,7 @@ import { test, expect } from '@playwright/test';
 import { installMockDaemon } from './support/mock-daemon';
 import { openSettings } from './support/app';
 import { installChatMockDaemon } from './support/chat-mock';
+import { installPaletteReading } from './support/judgment-fixture';
 
 test.beforeEach(async ({ baseURL }, testInfo) => {
   const isRealLanOrigin = testInfo.project.name === 'lan-origin'
@@ -32,6 +33,23 @@ test('the app loads at a real private-network http origin: no "needs HTTPS" wall
   await installMockDaemon(page);
   await openSettings(page, 'account');
   await expect(page.locator('.app-shell')).toBeVisible();
+});
+
+test('command search settles and executes on plain HTTP without crypto.randomUUID', async ({ page }) => {
+  await installMockDaemon(page);
+  await installPaletteReading(page, 'nav.library');
+  await page.goto('/?view=work');
+  await expect(page.locator('.app-shell')).toBeVisible();
+  expect(await page.evaluate(() => ({ secure: window.isSecureContext, uuid: typeof crypto.randomUUID })))
+    .toEqual({ secure: false, uuid: 'undefined' });
+  await page.keyboard.press('Control+k');
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await expect(palette).toBeVisible();
+  await page.keyboard.type('show saved material');
+  await expect(palette.getByRole('option', { name: /Go to Library/, selected: true })).toHaveCount(1);
+  await page.keyboard.press('Enter');
+  await expect(palette).toHaveCount(0);
+  await expect(page).toHaveURL(/view=library/);
 });
 
 test('MicButton: tapping the unavailable mic toggles its explanation', async ({ page }) => {
