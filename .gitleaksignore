@@ -18,3 +18,7 @@ bc7b1a33f8f3ead6757a434886d1e0eb990c12fb:products/daemon/src/test/daemon/daemon-
 # The current fixture uses a short test reference; retain only this exact
 # published historical finding, leaving other fixture values scanned.
 2a344fcfebdc8ade7e0579564f57574c8c34df67:packages/engine/test/fixtures/async-account-registry-fifo-child.ts:generic-api-key:13
+
+# Public parent commit hash quoted in the nullable-window audit, not a credential.
+# Exact historical finding only; current wording avoids the misleading label.
+e054c80100249341c6eebc02d21ff64ebc94abc3:docs/audit/sdk-nullable-context-windows.md:generic-api-key:3

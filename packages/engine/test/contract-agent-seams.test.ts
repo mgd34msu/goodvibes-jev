@@ -113,11 +113,12 @@ function makeContext(opts: {
   taps?: LoopTaps;
   emitLifecycle?: boolean;
 }): AgentOrchestratorRunContext {
-  const providerRegistry: Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'recordContextWindowRejection'> = {
+  const providerRegistry: Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'getKnownContextWindowForModel' | 'recordContextWindowRejection'> = {
     getCurrentModel: () => FAKE_MODEL,
     getForModel: () => opts.provider,
     listModels: () => [FAKE_MODEL],
     getContextWindowForModel: () => 0,
+    getKnownContextWindowForModel: () => 0,
     recordContextWindowRejection: () => {},
   };
   return {

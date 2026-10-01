@@ -102,6 +102,7 @@ describe('providers/provider-api.ts: bare model id resolution', () => {
         require: () => ({ name: models[0]!.provider }) as LLMProvider,
         tryGet: () => undefined,
         getContextWindowForModel: () => 8192,
+        getKnownContextWindowForModel: () => 8192,
         getRegistered: () => ({ name: models[0]!.provider }) as LLMProvider,
         getSelectableModels: () => models,
         listProviders: () => [],

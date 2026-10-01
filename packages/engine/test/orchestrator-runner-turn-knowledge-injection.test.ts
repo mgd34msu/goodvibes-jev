@@ -35,6 +35,7 @@ import { estimateConversationTokens, estimateTokens } from '../sdk/src/platform/
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../sdk/src/platform/tools/goodvibes-runtime/index.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
 import type { LLMProvider, ChatResponse, ProviderMessage } from '../sdk/src/platform/providers/interface.js';
+import { ModelLimitsService } from '../sdk/src/platform/providers/model-limits.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import type { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
 import type { MemoryRecord } from '../sdk/src/platform/state/memory-store.js';
@@ -148,12 +149,13 @@ const FAKE_MODEL: ModelDefinition = {
 function makeProviderRegistry(
   provider: LLMProvider,
   contextWindow = 0,
-): Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'recordContextWindowRejection'> {
+): Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'getKnownContextWindowForModel' | 'recordContextWindowRejection'> {
   return {
     getCurrentModel: () => FAKE_MODEL,
     getForModel: () => provider,
     listModels: () => [FAKE_MODEL],
     getContextWindowForModel: () => contextWindow,
+    getKnownContextWindowForModel: () => contextWindow,
     recordContextWindowRejection: () => {},
   };
 }
@@ -527,4 +529,42 @@ describe('orchestrator-runner: per-turn passive knowledge injection', () => {
 
     processRegistry.dispose();
   });
+  test.each(['fallback', 'accepted_floor', 'consensus'] as const)('real runner never trims history against a %s estimate', async (source) => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'runner-unknown-window-'));
+    const messageBus = new AgentMessageBus();
+    const runtimeBus = new RuntimeEventBus();
+    const record = makeRecord({ id: `unknown-window-${source}`, task: 'Keep the original task and every earlier message: ' + 'context '.repeat(100) });
+    const processRegistry = createProcessRegistry(makeRegistryDeps(record, messageBus));
+    for (let i = 0; i < 14; i++) processRegistry.steer(record.id, `earlier-steer-${i}: retain this fact`);
+    const requests: ProviderMessage[][] = [];
+    const provider: LLMProvider = {
+      name: 'fake', models: ['fake-model'],
+      async chat(request) {
+        requests.push(structuredClone(request.messages));
+        return { content: 'done', toolCalls: [], usage: { inputTokens: 1000, outputTokens: 1 }, stopReason: 'completed' };
+      },
+    };
+    const model: ModelDefinition = { ...FAKE_MODEL, contextWindow: 64,
+      contextWindowProvenance: source === 'consensus' ? 'catalog' : source,
+      ...(source === 'consensus' ? { contextWindowOrigin: { kind: 'consensus' as const, providers: 3, agreeing: 3 } } : {}),
+    };
+    const limits = new ModelLimitsService({ cachePath: join(tmpDir, 'no-limits.json') });
+    const context = makeContext({ workingDirectory: tmpDir, runtimeBus, messageBus, provider, contextWindow: 64 });
+    const realKnowledgeContext: AgentOrchestratorRunContext = { ...context, providerRegistry: {
+      ...context.providerRegistry,
+      getCurrentModel: () => model,
+      listModels: () => [model],
+      getContextWindowForModel: () => limits.getContextWindowForModel(model),
+      getKnownContextWindowForModel: () => limits.getKnownContextWindowForModel(model),
+    } };
+    try {
+      await runAgentTask(realKnowledgeContext, record);
+      expect(record.status).toBe('completed');
+      expect(requests).toHaveLength(1);
+      const userMessages = requests[0]!.filter((message) => message.role === 'user').map((message) => message.content);
+      expect(userMessages).toContain(record.task);
+      for (let i = 0; i < 14; i++) expect(userMessages).toContain(`earlier-steer-${i}: retain this fact`);
+    } finally { processRegistry.dispose(); }
+  });
+
 });

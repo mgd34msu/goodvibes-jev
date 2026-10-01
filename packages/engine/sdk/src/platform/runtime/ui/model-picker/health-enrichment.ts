@@ -148,7 +148,7 @@ export function enrichModelEntries(
   modelState: ModelDomainState,
   pinnedIds: ReadonlySet<string>,
   benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>,
-  providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>,
+  providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel' | 'getKnownContextWindowForModel'>,
   familyOf: (model: ModelDefinition) => ModelFamily | undefined = (model) => modelFamilyReadings.known(model),
 ): ModelPickerEntry[] {
   const fallbackPositions = buildFallbackPositionMap(modelState);
@@ -166,16 +166,18 @@ export function enrichModelEntries(
 
     // Resolve effective context window and determine display source label.
     const effectiveContextWindow = providerRegistry.getContextWindowForModel(model);
-    // Determine source: custom/local providers carry provenance on ModelDefinition;
-    // for catalog models, if getContextWindowForModel returned more than the
-    // static contextWindow it came from OpenRouter, else it's the registry value.
+    const knownContextWindow = providerRegistry.getKnownContextWindowForModel(model);
+    // A different numeric budget can also be a fallback. Only a known
+    // resolved window may be attributed to OpenRouter; preserve the detailed
+    // origin when the registry's own value is what we are displaying.
     let contextWindowSource: ModelPickerEntry['contextWindowSource'];
-    if (effectiveContextWindow !== model.contextWindow) {
+    if (knownContextWindow !== null && (effectiveContextWindow !== model.contextWindow ||
+        model.contextWindowProvenance === 'fallback' || model.contextWindowProvenance === 'accepted_floor')) {
       contextWindowSource = 'openrouter';
-    } else if (model.contextWindowProvenance) {
-      contextWindowSource = model.contextWindowProvenance;
+    } else if (effectiveContextWindow !== model.contextWindow) {
+      contextWindowSource = 'fallback';
     } else {
-      contextWindowSource = 'registry';
+      contextWindowSource = model.contextWindowProvenance ?? 'registry';
     }
 
     return {
@@ -189,7 +191,11 @@ export function enrichModelEntries(
       capabilities: buildCapabilityFlags(model),
       health,
       contextWindow: effectiveContextWindow,
+      knownContextWindow,
+      ...(model.contextWindowAcceptedFloor !== undefined ? { contextWindowAcceptedFloor: model.contextWindowAcceptedFloor } : {}),
       contextWindowSource,
+      ...(contextWindowSource !== 'openrouter' && effectiveContextWindow === model.contextWindow && model.contextWindowOrigin
+        ? { contextWindowOrigin: model.contextWindowOrigin } : {}),
       isPinned: pinnedIds.has(model.registryKey),
       isActive: model.registryKey === modelState.registryKey,
       isProviderDegraded,

@@ -55,9 +55,14 @@ for (const scenario of [
     const tool = createExecTool(manager, { overflowHandler: new OverflowHandler({ baseDir: root }), defaultWorkingDirectory: root, ownerTerminal: AGENT_OWNER_TERMINAL_GUARD });
     let settled = false;
     let cancelled = false;
+    let serializedCancelled = false;
     const options = { signal: controller.signal };
     const pending = Promise.resolve(tool.execute({ commands: [{ cmd: command, background: true }] }, options))
-      .then((result) => { settled = true; cancelled = result.cancelled === true; }, () => { settled = true; });
+      .then((result) => {
+        settled = true;
+        cancelled = result.cancelled === true;
+        serializedCancelled = JSON.parse(result.output ?? '{}').cancelled === true;
+      }, () => { settled = true; });
     try {
       await Promise.race([started, Bun.sleep(500).then(() => { throw new Error('Policy reading did not start'); })]);
       controller.abort(new Error('fixture cancelled'));
@@ -66,7 +71,8 @@ for (const scenario of [
       const observed = { settled, forwarded: readingSignal === controller.signal };
       release();
       await pending;
-      expect({ ...observed, cancelled, launches: launches.mock.calls.length }).toEqual({ settled: true, forwarded: true, cancelled: true, launches: 0 });
+      expect({ ...observed, cancelled, serializedCancelled, launches: launches.mock.calls.length })
+        .toEqual({ settled: true, forwarded: true, cancelled: true, serializedCancelled: true, launches: 0 });
     } finally {
       release();
       await pending;
@@ -165,6 +171,7 @@ test('pre-aborted exec never performs its file operations or reads policy', asyn
   try {
     const result = await tool.execute({ file_ops: [{ op: 'copy', source, destination }], commands: [{ cmd: 'synthetic command' }] }, { signal: controller.signal });
     expect(result).toMatchObject({ success: false, cancelled: true });
+    expect(JSON.parse(result.output ?? '{}')).toEqual({ cancelled: true });
     expect(existsSync(destination)).toBe(false);
     expect(manager.list()).toEqual([]);
   } finally { await manager.close(); rmSync(root, { recursive: true, force: true }); }
@@ -186,7 +193,9 @@ test('replacing execution options during the first await cannot discard the orig
     const pending = tool.execute({ commands: [{ cmd: 'synthetic command' }] }, options);
     controller.abort(new Error('cancelled during initial await'));
     options.signal = new AbortController().signal;
-    expect(await pending).toMatchObject({ success: false, cancelled: true });
+    const result = await pending;
+    expect(result).toMatchObject({ success: false, cancelled: true });
+    expect(JSON.parse(result.output ?? '{}')).toEqual({ cancelled: true });
     expect(requests).toBe(0);
     expect(manager.list()).toEqual([]);
   } finally { await manager.close(); rmSync(root, { recursive: true, force: true }); }

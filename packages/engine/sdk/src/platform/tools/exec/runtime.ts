@@ -991,7 +991,12 @@ export function createExecTool(
           ...(fileOpWarnings && fileOpWarnings.length > 0 ? { warnings: fileOpWarnings } : {}),
         };
       } catch (err) {
-        if (signal?.aborted) return { success: false, cancelled: true, error: 'cancelled by user' };
+        if (signal?.aborted) {
+          // Older exec consumers read cancellation from the serialized output.
+          // Admission may stop before arguments are read or a command starts,
+          // so retain that marker without inventing command or retry facts.
+          return { success: false, cancelled: true, output: JSON.stringify({ cancelled: true }), error: 'cancelled by user' };
+        }
         const message = summarizeError(err);
         return { success: false, error: message };
       }

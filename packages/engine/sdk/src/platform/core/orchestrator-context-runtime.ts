@@ -3,7 +3,7 @@ import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ModelDefinition, ProviderRegistry } from '../providers/registry.js';
 import { logger } from '../utils/logger.js';
-import { estimateConversationTokens, COMPACTION_BUFFER_TOKENS, SMALL_WINDOW_THRESHOLD, compactSmallWindow, getAutoCompactDecision } from './context-compaction.js';
+import { estimateConversationTokens, COMPACTION_BUFFER_TOKENS, SMALL_WINDOW_THRESHOLD, SMALL_WINDOW_KEEP_RECENT, compactSmallWindow, getAutoCompactDecision } from './context-compaction.js';
 import type { CompactionContext } from './context-compaction.js';
 import type { SessionMemoryStore } from './session-memory.js';
 import type { SessionLineageTracker } from './session-lineage.js';
@@ -58,7 +58,7 @@ function normalizeCatalogTier(tier: ModelDefinition['tier']): CatalogTier | unde
 }
 
 function findLargerContextModels(
-  providerRegistry: Pick<ProviderRegistry, 'listModels' | 'getContextWindowForModel'>,
+  providerRegistry: Pick<ProviderRegistry, 'listModels' | 'getKnownContextWindowForModel'>,
   minContext: number,
   tier?: CatalogTier,
   limit = 3,
@@ -69,7 +69,7 @@ function findLargerContextModels(
       .map((model) => ({
         id: model.id,
         displayName: model.displayName,
-        context: providerRegistry.getContextWindowForModel(model),
+        context: providerRegistry.getKnownContextWindowForModel(model) ?? 0,
         tier: normalizeCatalogTier(model.tier),
       }))
     .filter((model) => model.context > minContext && (tier === undefined || model.tier === tier))
@@ -196,10 +196,16 @@ export async function checkContextWindowPreflight(
   model: ModelDefinition,
 ): Promise<'ok' | 'compacted' | 'error'> {
   deps.signal?.throwIfAborted();
-  const contextWindow = deps.providerRegistry.getContextWindowForModel(model);
+  // Guesses and accepted floors are not ceilings. Only a provider's actual
+  // context warning may force compaction without a known window.
+  const knownWindow = deps.providerRegistry.getKnownContextWindowForModel(model);
+  const modelWarning = deps.modelContextWarning ?? null;
+  const forcedByModelWarning = modelWarning !== null && !deps.isCompacting;
+  if (knownWindow === null && !forcedByModelWarning) return 'ok';
+  const contextWindow = knownWindow ?? 0;
   const tier = normalizeCatalogTier(model.tier);
 
-  if (contextWindow <= 0) return 'ok';
+  if (knownWindow !== null && contextWindow <= 0) return 'ok';
 
   const messages = deps.conversation.getMessagesForLLM();
   const estimatedTokens = estimateConversationTokens(messages);
@@ -211,8 +217,6 @@ export async function checkContextWindowPreflight(
     isCompacting: deps.isCompacting,
     thresholdPercent: threshold,
   });
-  const modelWarning = deps.modelContextWarning ?? null;
-  const forcedByModelWarning = modelWarning !== null && !deps.isCompacting;
   if (!forcedByModelWarning && !preflightDecision.shouldCompact && estimatedTokens <= contextWindow) return 'ok';
 
   if (forcedByModelWarning || (autoCompactEnabled && !deps.isCompacting && preflightDecision.shouldCompact)) {
@@ -233,7 +237,7 @@ export async function checkContextWindowPreflight(
     deps.setIsCompacting(true);
     deps.conversation.addSystemMessage(
       forcedByModelWarning && modelWarning
-        ? `${describeModelContextWarning(modelWarning)}. Auto-compacting before the next request, regardless of the ~${Math.round(preflightDecision.usagePct)}% estimated usage...`
+        ? `${describeModelContextWarning(modelWarning)}. Auto-compacting before the next request, regardless of ${knownWindow === null ? 'the unknown context window' : `the ~${Math.round(preflightDecision.usagePct)}% estimated usage`}...`
         : `Context pre-check: request is at ${Math.round(preflightDecision.usagePct)}% (${estimatedTokens}/${contextWindow} tokens), ${formatAutoCompactTrigger(preflightDecision)}. Auto-compacting...`
     );
     deps.requestRender();
@@ -349,7 +353,7 @@ export async function checkContextWindowPreflight(
     }
 
     const tokensAfter = estimateConversationTokens(deps.conversation.getMessagesForLLM());
-    if (tokensAfter <= contextWindow) {
+    if (knownWindow === null || tokensAfter <= contextWindow) {
       return 'compacted';
     }
 
@@ -386,7 +390,7 @@ export function emitContextOverflowError(
   estimatedTokens: number,
   contextWindow: number,
   modelDisplayName: string,
-  providerRegistry: Pick<ProviderRegistry, 'listModels' | 'getContextWindowForModel'>,
+  providerRegistry: Pick<ProviderRegistry, 'listModels' | 'getKnownContextWindowForModel'>,
   tier?: CatalogTier,
 ): void {
   const requestK = Math.round(estimatedTokens / 1000);
@@ -447,8 +451,9 @@ export async function handlePostTurnContextMaintenance(
 ): Promise<void> {
   deps.signal?.throwIfAborted();
   const currentModel = deps.providerRegistry.getCurrentModel();
-  const maxTokens = deps.providerRegistry.getContextWindowForModel(currentModel);
-  if (maxTokens <= 0) return;
+  const knownWindow = deps.providerRegistry.getKnownContextWindowForModel(currentModel);
+  const maxTokens = knownWindow ?? 0;
+  if (knownWindow !== null && maxTokens <= 0) return;
 
   const configuredThreshold = readAutoCompactThreshold(deps.configManager);
   const warningsEnabled = deps.configManager.get('behavior.staleContextWarnings') as boolean;
@@ -463,6 +468,14 @@ export async function handlePostTurnContextMaintenance(
   const bracket = Math.floor(usagePct / 10) * 10;
   const modelWarning = deps.modelContextWarning ?? null;
   const forcedByModelWarning = modelWarning !== null && !deps.isCompacting;
+  if (knownWindow === null && !forcedByModelWarning) return;
+
+  // Keep-last-N cannot shrink a conversation already within N; do not emit
+  // a no-op compaction every turn for system-prompt/tool-schema overhead.
+  // A provider warning requests real recovery even with a short history:
+  // use structured compaction rather than the keep-last-N no-op path.
+  const useSmallWindow = !forcedByModelWarning && knownWindow !== null && maxTokens < SMALL_WINDOW_THRESHOLD;
+  if (useSmallWindow && deps.conversation.getMessagesForLLM().length <= SMALL_WINDOW_KEEP_RECENT) return;
 
   if (
     forcedByModelWarning ||
@@ -473,7 +486,7 @@ export async function handlePostTurnContextMaintenance(
     deps.setIsCompacting(true);
     deps.conversation.addSystemMessage(
       forcedByModelWarning && modelWarning
-        ? `${describeModelContextWarning(modelWarning)}. Auto-compacting now, regardless of the ~${usagePct}% estimated usage (${totalTokens}/${maxTokens} tokens)...`
+        ? `${describeModelContextWarning(modelWarning)}. Auto-compacting now, regardless of ${knownWindow === null ? `the unknown context window (${totalTokens} tokens in use)` : `the ~${usagePct}% estimated usage (${totalTokens}/${maxTokens} tokens)`}...`
         : `Context usage at ${usagePct}% (${totalTokens}/${maxTokens} tokens), ${formatAutoCompactTrigger(autoDecision)}. Auto-compacting conversation...`
     );
     if (deps.runtimeBus) {
@@ -524,7 +537,6 @@ export async function handlePostTurnContextMaintenance(
     try {
       deps.signal?.throwIfAborted();
       const currentMsgs = deps.conversation.getMessagesForLLM();
-      const useSmallWindow = maxTokens < SMALL_WINDOW_THRESHOLD;
       const lifecycleRun = {
         trigger: lifecycleTriggerFor(forcedByModelWarning),
         strategy: lifecycleStrategyFor(forcedByModelWarning, useSmallWindow),
@@ -544,7 +556,7 @@ export async function handlePostTurnContextMaintenance(
             deps.conversation,
             async (): Promise<CompactionReceipt> => {
               deps.signal?.throwIfAborted();
-              const compactedMsgs = compactSmallWindow(currentMsgs, 10);
+              const compactedMsgs = compactSmallWindow(currentMsgs, SMALL_WINDOW_KEEP_RECENT);
               deps.conversation.replaceMessagesForLLM(compactedMsgs);
               return {
                 trigger: 'auto', strategy: 'small-window',
@@ -553,14 +565,14 @@ export async function handlePostTurnContextMaintenance(
                 messagesBefore: currentMsgs.length, messagesAfter: compactedMsgs.length,
                 qualityScore: 1, qualityGrade: 'A', lowQuality: false,
                 instructionsReinjected: false, validationPassed: true,
-                sectionsIncluded: [], outcome: 'applied', detail: 'small window: kept last 10 messages',
+                sectionsIncluded: [], outcome: 'applied', detail: `small window: kept last ${SMALL_WINDOW_KEEP_RECENT} messages`,
               };
             },
           );
           deps.setIsCompacting(false);
           deps.setLastWarningBracket(0);
           if (smallWindowReceipt) emitReceipt(deps, turnId, smallWindowReceipt);
-          deps.conversation.addSystemMessage('Context auto-compacted (small window mode). Kept last 10 messages.');
+          deps.conversation.addSystemMessage(`Context auto-compacted (small window mode). Kept last ${SMALL_WINDOW_KEEP_RECENT} messages.`);
           deps.requestRender();
         } catch (err: unknown) {
           deps.setIsCompacting(false);

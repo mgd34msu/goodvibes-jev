@@ -43,7 +43,7 @@ export function createModelPickerData(
   healthState: ProviderHealthDomainState,
   modelState: ModelDomainState,
   benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>,
-  providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>,
+  providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel' | 'getKnownContextWindowForModel'>,
   pinnedIds: ReadonlySet<string> = new Set(),
 ): ModelPickerData {
   // Delegate to the data provider for consistent derivation logic,

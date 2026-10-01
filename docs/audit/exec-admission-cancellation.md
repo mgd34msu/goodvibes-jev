@@ -31,6 +31,16 @@ post-spawn lifetime. Existing process close, process-group cleanup, timeout and
 retry tests are retained and pass. All judgment responses are explicit offline
 fixtures; the four incident reproductions intercept launch.
 
+PR48's full engine CI exposed three existing callers that read cancellation
+from `JSON.parse(result.output).cancelled`. The new early-abort catch initially
+returned only the top-level field. All three unchanged compatibility tests
+reproduced the failure. The catch now retains the serialized cancellation marker
+as well as the typed field, without reading aborted arguments or inventing a
+command, exit status, timeout or retry count before those facts exist. Pending
+policy, pre-file-operation and mutated-options tests assert both representations.
+The combined compatibility and admission proof passes 29 tests / 75 assertions;
+the existing no-retry and detached-lifetime assertions remain unchanged.
+
 This is a bounded admission repair. It does not claim to implement every other
 remaining exec cancellation seam: the existing `until` path explicitly defers
 external signals, and foreground sandbox/credential/interactive prelaunch waits
