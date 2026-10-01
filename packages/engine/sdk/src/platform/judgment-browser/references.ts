@@ -22,11 +22,13 @@ export class BrowserJudgmentReferences {
       || entry.expiresAt <= this.now() || entry.expiresAt > this.now() + 300_000 || this.#entries.size >= 64
       || typeof entry.mayRead !== 'function' || typeof entry.assertCurrent !== 'function') return held();
     let snapshot: unknown;
-    try { requireSynchronousAssertion(entry.assertCurrent, 'JUDGMENT_REFERENCE_HELD'); snapshot = snapshotJudgmentInput(entry.snapshot); }
+    try { requireSynchronousAssertion(() => entry.assertCurrent(), 'JUDGMENT_REFERENCE_HELD'); snapshot = snapshotJudgmentInput(entry.snapshot); }
     catch { return held(); }
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > BROWSER_JUDGMENT_LIMITS.bodyBytes) return held();
     const id = crypto.randomUUID();
-    this.#entries.set(id, { ...entry, snapshot });
+    this.#entries.set(id, { ...entry, snapshot,
+      assertCurrent: entry.assertCurrent.bind(entry), mayRead: entry.mayRead.bind(entry),
+    });
     return id;
   }
 
@@ -39,7 +41,7 @@ export class BrowserJudgmentReferences {
         const principal = currentPrincipal();
         if (!principal || 'then' in principal || entry.principalId !== principal.principalId) { consumeRejectedHook(principal); return held(); }
         if (!granted(entry.mayRead(principal))) return held();
-        requireSynchronousAssertion(entry.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+        requireSynchronousAssertion(() => entry.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
       }
       catch { return held(); }
     };

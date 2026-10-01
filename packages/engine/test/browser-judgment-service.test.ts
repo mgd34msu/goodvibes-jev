@@ -27,7 +27,7 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
     resolve: async () => {
       await options.resolveBarrier?.();
       return { state: options.state ?? { message: 'Fixture error', status: 404 }, sourceBinding: 'fixture-only', assertCurrent() {
-        if (!current) throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); return options.assertCurrent?.();
+        if (!current || this.sourceBinding !== 'fixture-only') throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); return options.assertCurrent?.();
       } };
     },
     run: async (active, state, { signal }) => {
@@ -44,7 +44,7 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
   });
   const service = new BrowserJudgmentService({ registry, references,
     currentRoute: () => ({ revision: 'fixture-route-1', kind: 'local', port, assertCurrent() {
-      if (!current) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'); return options.routeAssertion?.();
+      if (!current || this.revision !== 'fixture-route-1') throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD'); return options.routeAssertion?.();
     } }),
     authorize: options.authorize ?? (() => options.authorized !== false),
   });
@@ -180,6 +180,19 @@ describe('browser judgment service (synthetic port only)', () => {
 });
 
 describe('owned browser references', () => {
+  test('preserves this-dependent source assertions and permission methods', () => {
+    class Source {
+      readonly principalId = owner.principalId; readonly battery = ID; readonly revision = 'r1'; readonly expiresAt = 200;
+      readonly snapshot = { message: 'fixture' }; #current = true;
+      assertCurrent(): void { if (!this.#current || this.revision !== 'r1') throw new Error('source changed'); }
+      mayRead(principal: AuthenticatedPrincipal): boolean { return this.#current && principal.principalId === this.principalId; }
+      invalidate(): void { this.#current = false; }
+    }
+    const refs = new BrowserJudgmentReferences(() => 100); const source = new Source(); const id = refs.issue(source);
+    const resolved = refs.resolve(id, () => owner, ID, (value) => value);
+    expect(resolved.state).toEqual(source.snapshot); expect(resolved.assertCurrent).not.toThrow();
+    source.invalidate(); expect(resolved.assertCurrent).toThrow(BrowserJudgmentError); refs.close();
+  });
   test('async read grants/assertions fail closed and rejected promises are consumed', () => {
     const refs = new BrowserJudgmentReferences(() => 100);
     const base = { principalId: owner.principalId, battery: ID, revision: 'r1', expiresAt: 200,

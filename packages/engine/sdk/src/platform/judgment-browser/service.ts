@@ -83,7 +83,7 @@ export class BrowserJudgmentService {
       return actor;
     };
     const resolved = await battery.resolve(request.input, { principal: authenticate(), currentPrincipal: authenticate, signal, references: this.options.references });
-    authenticate(); requireSynchronousAssertion(resolved.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+    authenticate(); requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
     let state: unknown;
     try { state = captureBrowserJudgmentJson(snapshotJudgmentInput(resolved.state)); }
     catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
@@ -91,8 +91,8 @@ export class BrowserJudgmentService {
     if (!route || 'then' in route) { consumeRejectedHook(route); throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE'); }
     const authorized = () => {
       const actor = authenticate();
-      requireSynchronousAssertion(resolved.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
-      requireSynchronousAssertion(route.assertCurrent, 'JUDGMENT_PERMISSION_HELD');
+      requireSynchronousAssertion(() => resolved.assertCurrent(), 'JUDGMENT_REFERENCE_HELD');
+      requireSynchronousAssertion(() => route.assertCurrent(), 'JUDGMENT_PERMISSION_HELD');
       if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
         route: { revision: route.revision, kind: route.kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
     };
