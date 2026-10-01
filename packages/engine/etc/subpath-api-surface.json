@@ -27233,6 +27233,11 @@
       "text": "AUTH_CLIENTS_URL = \"https://console.cloud.google.com/auth/clients\""
     },
     {
+      "name": "AccountRegistryOperationOptions",
+      "kind": "interface",
+      "text": "export interface AccountRegistryOperationOptions { readonly signal?: AbortSignal; } ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }"
+    },
+    {
       "name": "AgentAccountCreateInput",
       "kind": "interface",
       "required": [
@@ -27270,7 +27275,7 @@
         "snapshot",
         "sweep"
       ],
-      "text": "export declare class AgentAccountRegistry { private readonly storePath; private readonly containsSecretLikeText; constructor(options: AgentAccountRegistryOptions); snapshot(): AgentAccountSnapshot; list(): readonly AgentAccountRecord[]; get(id: string): AgentAccountRecord | null; record(input: AgentAccountCreateInput): AgentAccountRecord; forget(id: string): AgentAccountRecord; sweep(input?: AgentAccountSweepInput): AgentAccountSweepResult; private nextId; private readStore; private writeStore; }"
+      "text": "export declare class AgentAccountRegistry { private readonly storePath; private readonly containsSecretLikeText; constructor(options: AgentAccountRegistryOptions); snapshot(): AgentAccountSnapshot; list(): readonly AgentAccountRecord[]; get(id: string): AgentAccountRecord | null; record(input: AgentAccountCreateInput): AgentAccountRecord; forget(id: string): AgentAccountRecord; sweep(input?: AgentAccountSweepInput): AgentAccountSweepResult; private readStore; private writeStore; }"
     },
     {
       "name": "AgentAccountRegistryOptions",
@@ -27341,6 +27346,34 @@
       "name": "AppPasswordReason",
       "kind": "type",
       "text": "export type AppPasswordReason = 'sign-in-required' | 'two-step-required' | 'label-already-exists' | 'create-form-not-found' | 'result-dialog-not-found';"
+    },
+    {
+      "name": "AsyncAgentAccountRegistry",
+      "kind": "class",
+      "publicMembers": [
+        "constructor",
+        "forget",
+        "get",
+        "list",
+        "record",
+        "snapshot",
+        "sweep"
+      ],
+      "text": "export declare class AsyncAgentAccountRegistry { private readonly storePath; private readonly reader; constructor(options: AsyncAgentAccountRegistryOptions); snapshot(options?: AccountRegistryOperationOptions): Promise<AgentAccountSnapshot>; list(options?: AccountRegistryOperationOptions): Promise<readonly AgentAccountRecord[]>; get(id: string, options?: AccountRegistryOperationOptions): Promise<AgentAccountRecord | null>; record(input: AgentAccountCreateInput, options?: AccountRegistryOperationOptions): Promise<AgentAccountRecord>; forget(id: string, options?: AccountRegistryOperationOptions): Promise<AgentAccountRecord>; sweep(input?: AgentAccountSweepInput, options?: AccountRegistryOperationOptions): Promise<AgentAccountSweepResult>; private withStore; private writeStore; } ;; via Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+    },
+    {
+      "name": "AsyncAgentAccountRegistryOptions",
+      "kind": "interface",
+      "required": [
+        "readSecretLikeText",
+        "storePath"
+      ],
+      "text": "export interface AsyncAgentAccountRegistryOptions { readonly storePath: string; readonly readSecretLikeText: AsyncSecretLikeTextReader; }"
+    },
+    {
+      "name": "AsyncSecretLikeTextReader",
+      "kind": "type",
+      "text": "export type AsyncSecretLikeTextReader = (text: string, signal?: AbortSignal) => SecretLikeTextReading | Promise<SecretLikeTextReading>; ;; via AbortSignal = interface AbortSignal extends EventTarget { readonly aborted: boolean; onabort: ((this: AbortSignal, ev: Event) => any) | null; readonly reason: any; throwIfAborted(): void; addEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; removeEventListener<K extends keyof AbortSignalEventMap>(type: K, listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any, options?: boolean | EventListenerOptions): void; removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; } ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "AuthAccount",
@@ -28798,6 +28831,11 @@
       "name": "SecretLikeTextPredicate",
       "kind": "type",
       "text": "export type SecretLikeTextPredicate = (text: string) => boolean;"
+    },
+    {
+      "name": "SecretLikeTextReading",
+      "kind": "type",
+      "text": "export type SecretLikeTextReading = boolean | { readonly outcome: 'clear' | 'secret' | 'held' | 'unavailable'; };"
     },
     {
       "name": "SelectOrCreateOptions",

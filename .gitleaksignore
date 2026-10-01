@@ -14,3 +14,7 @@ bc7b1a33f8f3ead6757a434886d1e0eb990c12fb:products/daemon/src/test/daemon/daemon-
 92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/src/components/pairing/PairingQrScanner.test.tsx:generic-api-key:24
 92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/src/lib/pairing-qr.test.ts:generic-api-key:25
 92f209c346b23c791e54af6b002e4e72f5b0bfe3:products/webui/e2e/support/mock-daemon.ts:generic-api-key:1254
+# Synthetic FIFO fixture secret-store entry name, never a credential value.
+# The current fixture uses a short test reference; retain only this exact
+# published historical finding, leaving other fixture values scanned.
+2a344fcfebdc8ade7e0579564f57574c8c34df67:packages/engine/test/fixtures/async-account-registry-fifo-child.ts:generic-api-key:13

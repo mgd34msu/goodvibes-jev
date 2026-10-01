@@ -79,12 +79,12 @@ export interface AgentAccountSnapshot {
   readonly droppedOnRead: number;
 }
 
-interface AccountStoreFile {
+export interface AccountStoreFile {
   readonly version: 1;
   readonly accounts: readonly AgentAccountRecord[];
 }
 
-interface ParsedStore {
+export interface ParsedStore {
   readonly store: AccountStoreFile;
   readonly dropped: number;
 }
@@ -134,10 +134,10 @@ function isHttpUrl(value: string): boolean {
 export type SecretLikeTextPredicate = (text: string) => boolean;
 
 /**
- * Validate a record by content. Anything that fails is dropped on read rather than
- * throwing, a single hand-edited entry must not make the whole registry unreadable.
+ * Validate the format's structural fields. Content safety is deliberately
+ * separate so both synchronous and asynchronous readers use these same rules.
  */
-function parseAccount(value: unknown, containsSecretLikeText: SecretLikeTextPredicate): AgentAccountRecord | null {
+export function parseAccountFields(value: unknown): AgentAccountRecord | null {
   if (!isRecord(value)) return null;
   const id = readString(value.id).trim().toLowerCase();
   const serviceDomain = normalizeDomain(readString(value.serviceDomain));
@@ -154,13 +154,18 @@ function parseAccount(value: unknown, containsSecretLikeText: SecretLikeTextPred
   if (!purpose) return null;
   if (!SECRET_KEY_NAME_PATTERN.test(credentialSecretKey)) return null;
   if (!isValidTimestamp(createdAt)) return null;
-  // Belt and braces: if a credential ever got written here by a future caller, the
-  // record is dropped on read rather than served back out.
-  if ([serviceUrl, purpose, credentialSecretKey, aliasAddress].some((text) => containsSecretLikeText(text))) {
-    return null;
-  }
-
   return { id, serviceDomain, serviceUrl, aliasAddress, createdAt, purpose, credentialSecretKey };
+}
+
+/** The four free-text fields the account content policy screens. */
+export function accountSafetyFields(account: Pick<AgentAccountRecord, 'serviceUrl' | 'purpose' | 'credentialSecretKey' | 'aliasAddress'>): readonly string[] {
+  return [account.serviceUrl, account.purpose, account.credentialSecretKey, account.aliasAddress];
+}
+
+function parseAccount(value: unknown, containsSecretLikeText: SecretLikeTextPredicate): AgentAccountRecord | null {
+  const account = parseAccountFields(value);
+  if (account === null || accountSafetyFields(account).some((text) => containsSecretLikeText(text))) return null;
+  return account;
 }
 
 function parseStore(raw: string, containsSecretLikeText: SecretLikeTextPredicate): ParsedStore {
@@ -177,6 +182,11 @@ function parseStore(raw: string, containsSecretLikeText: SecretLikeTextPredicate
   const accounts = entries
     .map((entry) => parseAccount(entry, containsSecretLikeText))
     .filter((entry): entry is AgentAccountRecord => entry !== null);
+  return boundAccountRecords(accounts, entries.length);
+}
+
+/** Shape, id deduplication and the format's own count cap, shared by both readers. */
+export function boundAccountRecords(accounts: readonly AgentAccountRecord[], entryCount: number): ParsedStore {
   const deduped: AgentAccountRecord[] = [];
   const seen = new Set<string>();
   for (const account of accounts) {
@@ -189,11 +199,11 @@ function parseStore(raw: string, containsSecretLikeText: SecretLikeTextPredicate
   const bounded = sorted.slice(Math.max(0, sorted.length - MAX_ACCOUNT_RECORDS));
   return {
     store: { version: STORE_VERSION, accounts: bounded },
-    dropped: entries.length - bounded.length,
+    dropped: entryCount - bounded.length,
   };
 }
 
-function formatStore(store: AccountStoreFile): string {
+export function formatStore(store: AccountStoreFile): string {
   return `${JSON.stringify(store, null, 2)}\n`;
 }
 
@@ -259,6 +269,71 @@ export interface AgentAccountRegistryOptions {
   readonly containsSecretLikeText: SecretLikeTextPredicate;
 }
 
+type AccountFields = Omit<AgentAccountRecord, 'id' | 'createdAt'>;
+
+export function validateAccountCreateFields(input: AgentAccountCreateInput): AccountFields {
+  const serviceDomain = normalizeDomain(input.serviceDomain);
+  const serviceUrl = input.serviceUrl.trim();
+  const aliasAddress = normalizeEmailAddress(input.aliasAddress);
+  const purpose = input.purpose.trim();
+  const credentialSecretKey = input.credentialSecretKey.trim();
+
+  if (!serviceDomain.includes('.')) throw new Error('An account record requires the service domain the account was created at.');
+  if (!isHttpUrl(serviceUrl)) throw new Error('An account record requires the http(s) URL the account was created at.');
+  if (!aliasAddress.includes('@')) throw new Error('An account record requires the per-signup alias address.');
+  if (!purpose) throw new Error('An account record requires a stated purpose.');
+  if (!SECRET_KEY_NAME_PATTERN.test(credentialSecretKey)) {
+    throw new Error('credentialSecretKey must be a secret-store key NAME (letters, digits, . _ : / -), never the credential itself.');
+  }
+  return { serviceDomain, serviceUrl, aliasAddress, purpose, credentialSecretKey };
+}
+
+export function buildAccountRecord(fields: AccountFields, input: AgentAccountCreateInput, accounts: readonly AgentAccountRecord[]): AgentAccountRecord {
+  const { serviceDomain, serviceUrl, aliasAddress, purpose, credentialSecretKey } = fields;
+  if (accounts.length >= MAX_ACCOUNT_RECORDS) {
+    throw new Error(
+      `The account registry is at its ${MAX_ACCOUNT_RECORDS}-record limit. Sweep or forget stale accounts before creating another; records are never silently discarded.`,
+    );
+  }
+  const account: AgentAccountRecord = {
+    id: nextAccountId(serviceDomain, accounts),
+    serviceDomain,
+    serviceUrl,
+    aliasAddress,
+    createdAt: (input.now ?? new Date()).toISOString(),
+    purpose,
+    credentialSecretKey,
+  };
+  return account;
+}
+
+export function sweepAccountRecords(accounts: readonly AgentAccountRecord[], input: AgentAccountSweepInput): { kept: readonly AgentAccountRecord[]; removed: readonly AgentAccountRecord[] } {
+  const now = input.now ?? new Date();
+  const knownKeys = input.knownSecretKeys ? new Set(input.knownSecretKeys) : null;
+  const cutoff = input.maxAgeDays === undefined ? null : now.getTime() - input.maxAgeDays * 86_400_000;
+
+  const kept: AgentAccountRecord[] = [];
+  const removed: AgentAccountRecord[] = [];
+  for (const account of accounts) {
+    const orphaned = knownKeys !== null && !knownKeys.has(account.credentialSecretKey);
+    const expired = cutoff !== null && Date.parse(account.createdAt) < cutoff;
+    if (orphaned || expired) removed.push(account);
+    else kept.push(account);
+  }
+  return { kept, removed };
+}
+
+function nextAccountId(serviceDomain: string, accounts: readonly AgentAccountRecord[]): string {
+  const base = slugify(serviceDomain);
+  const ids = new Set(accounts.map((account) => account.id));
+  if (!ids.has(base)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!ids.has(candidate)) return candidate;
+  }
+  throw new Error(`Could not allocate an account id for ${serviceDomain}.`);
+}
+
 // ──────────────────────────────────────────────────────────────────
 // Registry
 // ──────────────────────────────────────────────────────────────────
@@ -291,38 +366,11 @@ export class AgentAccountRegistry {
   /** Record an account the agent just created. Call this before storing the credential. */
   public record(input: AgentAccountCreateInput): AgentAccountRecord {
     const parsed = this.readStore();
-    const serviceDomain = normalizeDomain(input.serviceDomain);
-    const serviceUrl = input.serviceUrl.trim();
-    const aliasAddress = normalizeEmailAddress(input.aliasAddress);
-    const purpose = input.purpose.trim();
-    const credentialSecretKey = input.credentialSecretKey.trim();
-
-    if (!serviceDomain.includes('.')) throw new Error('An account record requires the service domain the account was created at.');
-    if (!isHttpUrl(serviceUrl)) throw new Error('An account record requires the http(s) URL the account was created at.');
-    if (!aliasAddress.includes('@')) throw new Error('An account record requires the per-signup alias address.');
-    if (!purpose) throw new Error('An account record requires a stated purpose.');
-    if (!SECRET_KEY_NAME_PATTERN.test(credentialSecretKey)) {
-      throw new Error('credentialSecretKey must be a secret-store key NAME (letters, digits, . _ : / -), never the credential itself.');
-    }
-    if ([serviceUrl, purpose, credentialSecretKey, aliasAddress].some((text) => this.containsSecretLikeText(text))) {
+    const fields = validateAccountCreateFields(input);
+    if (accountSafetyFields(fields).some((text) => this.containsSecretLikeText(text))) {
       throw new Error('The account registry cannot store secret-looking values. Store the secret in the secret store and record only its key name.');
     }
-    if (parsed.store.accounts.length >= MAX_ACCOUNT_RECORDS) {
-      throw new Error(
-        `The account registry is at its ${MAX_ACCOUNT_RECORDS}-record limit. Sweep or forget stale accounts before creating another; records are never silently discarded.`,
-      );
-    }
-
-    const createdAt = (input.now ?? new Date()).toISOString();
-    const account: AgentAccountRecord = {
-      id: this.nextId(serviceDomain, parsed.store.accounts),
-      serviceDomain,
-      serviceUrl,
-      aliasAddress,
-      createdAt,
-      purpose,
-      credentialSecretKey,
-    };
+    const account = buildAccountRecord(fields, input, parsed.store.accounts);
     this.writeStore({ ...parsed.store, accounts: [...parsed.store.accounts, account] });
     return account;
   }
@@ -344,33 +392,10 @@ export class AgentAccountRegistry {
    */
   public sweep(input: AgentAccountSweepInput = {}): AgentAccountSweepResult {
     const parsed = this.readStore();
-    const now = input.now ?? new Date();
-    const knownKeys = input.knownSecretKeys ? new Set(input.knownSecretKeys) : null;
-    const cutoff = input.maxAgeDays === undefined ? null : now.getTime() - input.maxAgeDays * 86_400_000;
-
-    const kept: AgentAccountRecord[] = [];
-    const removed: AgentAccountRecord[] = [];
-    for (const account of parsed.store.accounts) {
-      const orphaned = knownKeys !== null && !knownKeys.has(account.credentialSecretKey);
-      const expired = cutoff !== null && Date.parse(account.createdAt) < cutoff;
-      if (orphaned || expired) removed.push(account);
-      else kept.push(account);
-    }
+    const { kept, removed } = sweepAccountRecords(parsed.store.accounts, input);
     this.writeStore({ ...parsed.store, accounts: kept });
     return { removed, remaining: kept.length };
   }
-
-  private nextId(serviceDomain: string, accounts: readonly AgentAccountRecord[]): string {
-    const base = slugify(serviceDomain);
-    const ids = new Set(accounts.map((account) => account.id));
-    if (!ids.has(base)) return base;
-    for (let index = 2; index < 1000; index += 1) {
-      const candidate = `${base}-${index}`;
-      if (!ids.has(candidate)) return candidate;
-    }
-    throw new Error(`Could not allocate an account id for ${serviceDomain}.`);
-  }
-
   /**
    * Divergence from `calendar-registry.ts`: that registry throws when the store cannot be
    * read. This one must not. A corrupt accounts file would otherwise take down every
