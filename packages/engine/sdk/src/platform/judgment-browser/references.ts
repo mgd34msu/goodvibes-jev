@@ -19,15 +19,24 @@ export class BrowserJudgmentReferences {
   constructor(private readonly now: () => number = Date.now) {}
 
   issue(entry: BrowserJudgmentReferenceSource): string {
+    if (this.#closed) return held();
     this.sweep();
     const now = this.now();
-    const { principalId, battery, revision, expiresAt, snapshot: input, assertCurrent, mayRead } = entry;
-    if (this.#closed || !principalId || !revision || !Number.isFinite(now) || !Number.isFinite(expiresAt)
-      || expiresAt <= now || expiresAt > now + 300_000 || this.#entries.size >= 64
-      || typeof mayRead !== 'function' || typeof assertCurrent !== 'function') return held();
+    let captured: Omit<BrowserJudgmentReferenceSource, 'snapshot'>;
     let snapshot: unknown;
-    try { requireSynchronousAssertion(() => assertCurrent.call(entry), 'JUDGMENT_REFERENCE_HELD'); snapshot = snapshotJudgmentInput(input); }
-    catch { return held(); }
+    try {
+      const { principalId, battery, revision, expiresAt, assertCurrent, mayRead } = entry;
+      if (this.#closed || !principalId || !revision || !Number.isFinite(now) || !Number.isFinite(expiresAt)
+        || expiresAt <= now || expiresAt > now + 300_000 || this.#entries.size >= 64
+        || typeof mayRead !== 'function' || typeof assertCurrent !== 'function') return held();
+      captured = { principalId, battery, revision, expiresAt, assertCurrent, mayRead };
+      requireSynchronousAssertion(() => assertCurrent.call(entry), 'JUDGMENT_REFERENCE_HELD');
+      if (this.#closed || this.#entries.size >= 64) return held();
+      // Read the supplied snapshot exactly once, only after admission and the
+      // source assertion, within the same value-free failure boundary.
+      snapshot = snapshotJudgmentInput(entry.snapshot);
+    } catch { return held(); }
+    const { principalId, battery, revision, expiresAt, assertCurrent, mayRead } = captured;
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > BROWSER_JUDGMENT_LIMITS.bodyBytes) return held();
     const id = crypto.randomUUID();
     const admittedAt = this.now();

@@ -27,6 +27,37 @@ function timers() {
 }
 
 describe('owned browser reference retention', () => {
+  test('a throwing snapshot getter is normalized without retaining private exception text', () => {
+    const refs = new BrowserJudgmentReferences(() => 100); let reads = 0;
+    try {
+      const entry = { ...source(), get snapshot(): unknown { reads++; throw new Error('synthetic-private-source-detail'); } };
+      let failure: unknown;
+      try { refs.issue(entry); } catch (error) { failure = error; }
+      expect(reads).toBe(1); expect(failure).toBeInstanceOf(BrowserJudgmentError);
+      expect(failure).toMatchObject({ code: 'JUDGMENT_REFERENCE_HELD' });
+      expect(String(failure)).not.toContain('synthetic-private-source-detail');
+    } finally { refs.close(); }
+  });
+
+  test.each(['already closed', 'assertion closes'] as const)('%s refuses before reading the supplied snapshot', (stage) => {
+    const refs = new BrowserJudgmentReferences(() => 100); let reads = 0;
+    try {
+      const entry = { ...source(), assertCurrent() { if (stage === 'assertion closes') refs.close(); },
+        get snapshot(): unknown { reads++; throw new Error('synthetic-private-source-detail'); } };
+      if (stage === 'already closed') refs.close();
+      expect(() => refs.issue(entry)).toThrow(BrowserJudgmentError); expect(reads).toBe(0);
+    } finally { refs.close(); }
+  });
+
+  test('a successful snapshot getter is captured exactly once', () => {
+    const refs = new BrowserJudgmentReferences(() => 100); let reads = 0;
+    try {
+      const id = refs.issue({ ...source(), get snapshot() { reads++; return { message: 'synthetic captured source' }; } });
+      expect(reads).toBe(1); expect(resolve(refs, id).state).toEqual({ message: 'synthetic captured source' });
+      expect(reads).toBe(1);
+    } finally { refs.close(); }
+  });
+
   test('an issue assertion cannot admit storage or a timer after reentrant close', () => {
     const clock = timers(); const refs = new BrowserJudgmentReferences(() => 100);
     try {
