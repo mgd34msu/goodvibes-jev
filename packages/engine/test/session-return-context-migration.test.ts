@@ -50,11 +50,12 @@ describe('retired pane state in return context', () => {
       futureField: ['preserved'], openPanels: ['retired'],
       lines: ['Open panels: remove', 'open panels: keep', ' Open panels: keep', 'Open panels:keep', 'Quoted Open panels: keep', 12],
     };
-    expect(loadedReturnContext(partial)).toEqual({
+    // These assertions intentionally compare raw partial legacy values, not newly authored summaries.
+    expect<unknown>(loadedReturnContext(partial)).toEqual({
       futureField: ['preserved'],
       lines: ['open panels: keep', ' Open panels: keep', 'Open panels:keep', 'Quoted Open panels: keep', 12],
     });
-    expect(loadedReturnContext({ futureField: true })).toEqual({ futureField: true, lines: undefined });
+    expect<unknown>(loadedReturnContext({ futureField: true })).toEqual({ futureField: true, lines: undefined });
   });
 
   test('new summaries ignore legacy pane hints while keeping explicit pending-approval facts', async () => {
@@ -100,16 +101,16 @@ describe('retired pane state in return context', () => {
     expect(manager.getMeta('original')?.returnContext).toEqual(expectedContext());
     expect(manager.list()[0]?.returnContext).toEqual(expectedContext());
     expect(readFileSync(path, 'utf8')).toBe(original);
-    expect(loaded.contracts).toEqual([contract]);
+    expect<unknown>(loaded.contracts).toEqual([contract]);
     expect(loaded.messages).toEqual([message]);
 
     manager.save('original', loaded.messages, { ...loaded.meta, saveSource: 'auto', returnContext: legacyContext() }, loaded.agentRecords, loaded.contracts);
     expect(firstRecord(path).returnContext).toEqual(expectedContext());
     expect(firstRecord(path).saveSource).toBe('user');
-    expect(manager.load('original').contracts).toEqual([contract]);
+    expect<unknown>(manager.load('original').contracts).toEqual([contract]);
     manager.save('fork', loaded.messages, { ...loaded.meta, title: 'Fork' }, loaded.agentRecords, loaded.contracts);
     expect(manager.load('fork').meta.returnContext).toEqual(expectedContext());
-    expect(manager.load('fork').contracts).toEqual([contract]);
+    expect<unknown>(manager.load('fork').contracts).toEqual([contract]);
     expect(manager.load('fork').messages).toEqual([message]);
 
     writeFileSync(path, original);
