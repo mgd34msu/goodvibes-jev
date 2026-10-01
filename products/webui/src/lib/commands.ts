@@ -32,8 +32,11 @@ export interface CommandDef {
   shortcut?: string;
   /** Execute the command */
   run: () => void;
+  /** Explicit server identity for a recent chat; never send its browser title. */
+  judgmentSource?: { readonly kind: 'chat'; readonly sessionId: string };
+  /** Local session snapshot revision. It is never sent as an authorization claim. */
+  sourceRevision?: number;
 }
-
 type Listener = () => void;
 
 interface CommandRegistry {
@@ -45,17 +48,25 @@ const registry: CommandRegistry = {
   commands: new Map(),
   listeners: new Set(),
 };
+let registryRevision = 0;
 
 function notify(): void {
+  registryRevision++;
   registry.listeners.forEach((fn) => fn());
 }
+
+/** Invalidates pending semantic results when registration or session data changes. */
+export function getCommandRegistryRevision(): number { return registryRevision; }
 
 /**
  * Register a command. If a command with the same id already exists,
  * it is replaced (allows hot-reload / re-registration).
  */
 export function registerCommand(def: CommandDef): void {
-  registry.commands.set(def.id, def);
+  registry.commands.set(def.id, Object.freeze({ ...def,
+    ...(def.keywords === undefined ? {} : { keywords: Object.freeze([...def.keywords]) }),
+    ...(def.judgmentSource === undefined ? {} : { judgmentSource: Object.freeze({ ...def.judgmentSource }) }),
+  }));
   notify();
 }
 
@@ -91,52 +102,4 @@ export function subscribeCommands(listener: Listener): () => void {
   return () => {
     registry.listeners.delete(listener);
   };
-}
-
-/**
- * Fuzzy-match a list of commands against a query string.
- * Returns matching commands with a score (lower = better).
- */
-export function filterCommands(commands: CommandDef[], query: string): CommandDef[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return commands;
-
-  return commands
-    .map((cmd) => ({ cmd, score: scoreCommand(cmd, q) }))
-    .filter(({ score }) => score < Infinity)
-    .sort((a, b) => a.score - b.score)
-    .map(({ cmd }) => cmd);
-}
-
-function scoreCommand(cmd: CommandDef, q: string): number {
-  const title = cmd.title.toLowerCase();
-  const group = cmd.group.toLowerCase();
-  const keywords = (cmd.keywords ?? []).map((k) => k.toLowerCase()).join(' ');
-
-  // Exact prefix on title, best score
-  if (title.startsWith(q)) return 0;
-  // Prefix on any keyword
-  if (keywords.split(' ').some((k) => k.startsWith(q))) return 1;
-  // Substring in title
-  if (title.includes(q)) return 2;
-  // Substring in group
-  if (group.includes(q)) return 3;
-  // Substring in keywords
-  if (keywords.includes(q)) return 4;
-  // Fuzzy: all chars of q appear in title in order
-  if (fuzzyMatch(title, q)) return 5;
-  // Fuzzy in keywords
-  if (fuzzyMatch(keywords, q)) return 6;
-
-  return Infinity;
-}
-
-function fuzzyMatch(haystack: string, needle: string): boolean {
-  let hi = 0;
-  for (const ch of needle) {
-    while (hi < haystack.length && haystack[hi] !== ch) hi++;
-    if (hi >= haystack.length) return false;
-    hi++;
-  }
-  return true;
 }

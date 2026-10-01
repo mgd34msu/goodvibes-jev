@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  classifyBadgeTone,
   contractGlyphForBadgeTone,
   contractGlyphForConnection,
   contractGlyphForMemoryTier,
@@ -12,31 +11,6 @@ import {
   contractStateForWorking,
 } from './presentation-bridge';
 import { CONTRACT_STATE_GLYPHS } from './generated/presentation-tokens';
-
-describe('classifyBadgeTone', () => {
-  test('maps healthy/ok/ready/active vocabulary to ok', () => {
-    expect(classifyBadgeTone('healthy')).toBe('ok');
-    expect(classifyBadgeTone('ready')).toBe('ok');
-    expect(classifyBadgeTone('active')).toBe('ok');
-  });
-
-  test('maps error/fail/denied/expired vocabulary to bad', () => {
-    expect(classifyBadgeTone('task failed')).toBe('bad');
-    expect(classifyBadgeTone('access denied')).toBe('bad');
-    expect(classifyBadgeTone('expired')).toBe('bad');
-  });
-
-  test('maps warn/pending/blocked/expiring vocabulary to warning', () => {
-    expect(classifyBadgeTone('pending approval')).toBe('warning');
-    expect(classifyBadgeTone('expiring')).toBe('warning');
-    expect(classifyBadgeTone('blocked')).toBe('warning');
-  });
-
-  test('maps unrecognized / honestly-absent vocabulary to neutral', () => {
-    expect(classifyBadgeTone('unconfigured')).toBe('neutral');
-    expect(classifyBadgeTone('status unavailable')).toBe('neutral');
-  });
-});
 
 describe('badge tone to contract severity bucket', () => {
   test('contractStateForBadgeTone resolves each BadgeTone to its contract bucket', () => {

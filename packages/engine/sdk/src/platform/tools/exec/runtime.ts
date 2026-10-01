@@ -38,6 +38,7 @@ import {
   type ExecRunPolicy,
 } from './policy.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { execFailureView, execRetry, type ExecFailureCategory } from '../batteries/exec-retry.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -233,8 +234,9 @@ async function spawnBackground(
   cwd: string | undefined,
   env: Record<string, string> | undefined,
   scrub: ResolvedCredentialEnvScrub,
+  signal?: AbortSignal,
 ): Promise<ExecCommandResult> {
-  return processManager.spawn(cmd, cwd, env, { credentialEnvScrub: scrub });
+  return processManager.spawn(cmd, cwd, env, { credentialEnvScrub: scrub, ...(signal === undefined ? {} : { signal }) });
 }
 
 function handleBgSpecialCommand(processManager: ProcessManager, cmd: string): ExecCommandResult | null {
@@ -663,17 +665,20 @@ const DEFAULT_RETRY_ON: readonly ExecRetryCategory[] = ['network', 'lock', 'busy
 export async function isRetryableExecResult(
   result: ExecCommandResult,
   allowed?: ReadonlyArray<ExecRetryCategory>,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   if (result.timed_out) return false;
   // Cancelled commands must never be retried, retrying
   // after an operator/engine kill would defeat the cancellation entirely.
   if (result.cancelled) return false;
 
-  const run = await execRetry.run(
+  const run = await executePolicyCheck(() => execRetry.run(
     judgmentPort(EXEC_RETRY_SITE),
     execFailureView(result.cmd, result.exit_code, result.stdout, result.stderr),
-    { site: EXEC_RETRY_SITE },
-  );
+    { site: EXEC_RETRY_SITE, ...(signal === undefined ? {} : { signal }) },
+  ), signal);
+  signal?.throwIfAborted();
   const reading = run.readings.category;
   const retryOn = allowed ?? DEFAULT_RETRY_ON;
   const retry = reading.outcome === 'act' && reading.choice !== 'lasting' && retryOn.includes(reading.choice);
@@ -705,19 +710,21 @@ async function runWithRetry(
   let lastResult: ExecCommandResult | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    signal?.throwIfAborted();
     lastResult = await runCommand(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
     if (lastResult.success) {
       return { ...lastResult, retries: attempt };
     }
     if (attempt < maxRetries) {
       // Classify error: if we can determine it's terminal, stop immediately
-      if (!(await isRetryableExecResult(lastResult, retryOn))) {
+      if (!(await isRetryableExecResult(lastResult, retryOn, signal))) {
         logger.debug('exec: terminal error, not retrying', { cmd: cmdStr, attempt, stderr: lastResult.stderr.slice(0, 200) });
         return { ...lastResult, retries: attempt };
       }
       const delay = computeRetryDelay(attempt, delayMs, backoff, maxDelayMs);
       logger.debug('exec: retrying after jittered delay', { cmd: cmdStr, attempt, delay: Math.round(delay) });
-      await sleep(delay);
+      await sleep(delay, signal === undefined ? {} : { signal });
+      signal?.throwIfAborted();
     }
   }
 
@@ -753,7 +760,8 @@ async function executeResolvedCommand(
   // guard here makes that sentence true. The guard repeats the gate's
   // catastrophic reading (ast-guard.ts); every other risk was decided by the
   // gate's stakes reading and preset before this runtime runs.
-  const guardResult = await guardExecCommand(cmdStr, featureFlags);
+  signal?.throwIfAborted();
+  const guardResult = await guardExecCommand(cmdStr, featureFlags, signal);
   if (!guardResult.allowed) {
     const denial = formatDenialResponse(guardResult, cmdStr);
     return {
@@ -767,14 +775,17 @@ async function executeResolvedCommand(
     };
   }
 
-  const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr);
+  const terminalRefusal = await ownerTerminalRefusal(policy, cmdStr, signal);
+  signal?.throwIfAborted();
   if (terminalRefusal) return terminalRefusal;
   const bgSpecial = handleBgSpecialCommand(processManager, cmdStr);
   if (bgSpecial) return bgSpecial;
   if (cmdInput.background) {
     // Background processes intentionally outlive this tool call, cancelling
     // the caller's item/agent must not kill a process the user asked to
-    // detach, so `signal` is deliberately not threaded here. They are also NOT
+    // detach. The signal controls admission only, including the pending
+    // credential scrub; ProcessManager stops observing it once spawned.
+    // They are also NOT
     // sandboxed, a bwrap boundary is --die-with-parent, so wrapping one would
     // kill the very process the caller asked to detach. That exemption is real
     // and stays; what does NOT stay is it being silent. The frozen catastrophic
@@ -783,7 +794,7 @@ async function executeResolvedCommand(
     // refused here rather than handed the exemption (see policy.ts).
     const uncontainable = backgroundContainmentRefusal(policy, cmdStr);
     if (uncontainable) return uncontainable;
-    return spawnBackground(processManager, cmdStr, resolveCwd(cmdInput.cwd, workingDirectory), cmdInput.env, scrub);
+    return spawnBackground(processManager, cmdStr, resolveCwd(cmdInput.cwd, workingDirectory), cmdInput.env, scrub, signal);
   }
   return runWithRetry(processManager, overflowHandler, featureFlags, cmdStr, cmdInput, workingDirectory, globalTimeout, scrub, policy, signal);
 }
@@ -906,7 +917,10 @@ export function createExecTool(
     },
 
     async execute(args: Record<string, unknown>, opts?: { readonly signal?: AbortSignal | undefined }) {
+      let signal: AbortSignal | undefined;
       try {
+        signal = opts?.signal;
+        signal?.throwIfAborted();
         if (!Array.isArray(args['commands']) || (args['commands'] as unknown[]).length === 0) {
           return { success: false, error: 'commands must be a non-empty array' };
         }
@@ -921,6 +935,7 @@ export function createExecTool(
         const projectRoot = resolve(workingDirectory);
 
         const { fileOpResults, fileOpError, fileOpWarnings } = await executeFileOperations(input.file_ops, projectRoot);
+        signal?.throwIfAborted();
         if (fileOpError) {
           return {
             success: false,
@@ -952,7 +967,7 @@ export function createExecTool(
           failFast,
           credentialEnvScrub,
           policy,
-          opts?.signal,
+          signal,
         );
         const formatted = results.map((r) => formatResult(r, verbosity));
         const allSuccess = results.every((r) => r.success);
@@ -976,6 +991,12 @@ export function createExecTool(
           ...(fileOpWarnings && fileOpWarnings.length > 0 ? { warnings: fileOpWarnings } : {}),
         };
       } catch (err) {
+        if (signal?.aborted) {
+          // Older exec consumers read cancellation from the serialized output.
+          // Admission may stop before arguments are read or a command starts,
+          // so retain that marker without inventing command or retry facts.
+          return { success: false, cancelled: true, output: JSON.stringify({ cancelled: true }), error: 'cancelled by user' };
+        }
         const message = summarizeError(err);
         return { success: false, error: message };
       }

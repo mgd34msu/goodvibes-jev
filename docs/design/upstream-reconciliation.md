@@ -76,9 +76,11 @@ helpers. Work and approval views must render the Jev contract/gate state.
 
 The real workspace, browser-safe theme/payment imports, nullable-context
 rendering and pairing-lifetime repair have landed. Synthetic browser and LAN
-proof cover the implemented flows. Authenticated judgment caller work, complete
-contract/gate actions and connected-daemon/live-provider parity remain separate
-completion work. Unknown/null context windows must stay honest, without
+proof cover the implemented flows. The authenticated palette caller and fixed
+status catalogs now include reviewed auth-lifetime guards, while production
+authority/reference installation and the dynamic-error caller remain open.
+Complete contract/gate actions and connected-daemon/live-provider parity remain
+separate completion work. Unknown/null context windows must stay honest, without
 invented percentages or model-name-based window guesses.
 
 ### TUI

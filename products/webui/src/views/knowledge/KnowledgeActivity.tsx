@@ -8,10 +8,10 @@ import { invokeMethod, sdk } from '../../lib/goodvibes';
 import { queryKeys } from '../../lib/queries';
 import { asRecord, bestId, bestStatus, bestTitle, compactJson, firstArray } from '../../lib/object';
 import { CodeFrame, DetailSection, Disclosure, Facts, SkeletonRows } from '../../components/data-view/DataView';
-import { Chip } from '../../components/ui/Chip';
+import { StatusBadge } from '../../components/StatusBadge';
 import { Row, RowList } from '../../components/ui/Row';
 import { ErrorState } from '../../components/feedback/ErrorState';
-import { sentence, statusTone } from '../library/library-data';
+import { sentence } from '../library/library-data';
 import { KnowledgeJobsPeekBody } from './KnowledgeJobsPeek';
 
 /** Scalar fields of a record as label / value facts (nested objects are left to the raw view). */
@@ -57,7 +57,7 @@ export function KnowledgeActivity() {
                   key={bestId(task) || index}
                   title={bestTitle(task, `Task ${index + 1}`)}
                   meta={bestId(task)}
-                  trailing={<Chip size="sm" tone={statusTone(state)}>{state}</Chip>}
+                  trailing={<StatusBadge value={state} catalogId={`knowledge-refinement.${state}`} vocabulary="library-dot" />}
                 />
               );
             })}

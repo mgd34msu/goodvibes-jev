@@ -65,6 +65,9 @@ const COMPLETED_PROCESS_TTL_MS = 30 * 60 * 1000;
 // ─── SpawnOptions ─────────────────────────────────────────────────────────────
 
 export interface SpawnOptions {
+  /** Cancel admission, including pending credential resolution. Once spawned,
+   * the process keeps its declared lifetime; this signal never kills it. */
+  signal?: AbortSignal | undefined;
   /** Abort the process if it hasn't completed within this many ms. Default: 60000. */
   timeout_ms?: number | undefined;
   /** Grace period (ms) between SIGTERM and SIGKILL during termination. Default: 5000. */
@@ -184,9 +187,32 @@ export class ProcessManager {
     env: Record<string, string> | undefined, opts?: SpawnOptions,
   ): Promise<BgCommandResult> {
     if (this._closed) return Promise.reject(new Error('ProcessManager is closed'));
-    const launch = this.launchProcess(argv, cmd, cwd, env, opts);
-    this._launches.add(launch);
-    return launch.finally(() => { this._launches.delete(launch); });
+    const signal = opts?.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    return new Promise<BgCommandResult>((resolve, reject) => {
+      let spawned = false;
+      let settled = false;
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', onAbort);
+        action();
+      };
+      const onAbort = (): void => { if (!spawned) finish(() => reject(signal?.reason)); };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) { onAbort(); return; }
+      const launch = this.launchProcess(argv, cmd, cwd, env, opts, signal, () => {
+        spawned = true;
+        signal?.removeEventListener('abort', onAbort);
+      });
+      // Retain the underlying admission until shared credential reads settle,
+      // even if its caller cancelled. close() still drains this work.
+      this._launches.add(launch);
+      void launch.then(
+        (result) => { this._launches.delete(launch); finish(() => resolve(result)); },
+        (error: unknown) => { this._launches.delete(launch); finish(() => reject(error)); },
+      );
+    });
   }
 
   /**
@@ -221,7 +247,10 @@ export class ProcessManager {
     cwd: string | undefined,
     env: Record<string, string> | undefined,
     opts?: SpawnOptions,
+    admissionSignal?: AbortSignal,
+    onSpawned?: () => void,
   ): Promise<BgCommandResult> {
+    admissionSignal?.throwIfAborted();
     const timeoutMs = opts?.timeout_ms ?? 60_000;
     const sigtermGraceMs = opts?.sigterm_grace_ms ?? 5_000;
     assertTimerRange('timeout_ms', timeoutMs);
@@ -239,8 +268,11 @@ export class ProcessManager {
     // the caller-supplied env (an explicit opt-in) on top. Without this, the
     // background spawn would re-introduce every secret from process.env that the
     // foreground scrub already removed.
-    const scrubbedBase = (await scrubCredentialEnv(cleanEnv, opts?.credentialEnvScrub ?? resolveCredentialEnvScrub())).env;
+    const scrub = opts?.credentialEnvScrub ?? resolveCredentialEnvScrub();
+    admissionSignal?.throwIfAborted();
+    const scrubbedBase = (await scrubCredentialEnv(cleanEnv, scrub)).env;
     if (this._closed) throw new Error('ProcessManager is closed');
+    admissionSignal?.throwIfAborted();
     const mergedEnv = { ...scrubbedBase, ...env };
 
     const id = this.newId();
@@ -260,7 +292,8 @@ export class ProcessManager {
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn([...argv], {
+      const spawnArgv = [...argv];
+      const spawnOptions = {
         ...(cwd !== undefined ? { cwd } : {}),
         env: mergedEnv,
         detached: ownsGroup,
@@ -269,7 +302,13 @@ export class ProcessManager {
         stdin: opts?.stdin ?? 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',
-      } as Parameters<typeof Bun.spawn>[1]);
+      } as Parameters<typeof Bun.spawn>[1];
+      // Caller-owned env/options can have accessors. Recheck after reading
+      // them, at the final boundary before an actual process is created.
+      if (this._closed) throw new Error('ProcessManager is closed');
+      admissionSignal?.throwIfAborted();
+      proc = Bun.spawn(spawnArgv, spawnOptions);
+      onSpawned?.();
     } catch (spawnErr: unknown) {
       // Surface ENOENT / EACCES immediately, callers should not retry these
       this._processes.delete(id);
