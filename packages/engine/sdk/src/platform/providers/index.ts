@@ -67,6 +67,7 @@ export type {
   ProviderApiSyntheticRouting,
 } from './provider-api.js';
 export type {
+  ContextWindowOrigin,
   ContextWindowProvenance,
   ModelDefinition,
   ModelTier,
@@ -107,6 +108,17 @@ export {
   knownFallbackContextWindow,
   readFallbackContextWindow,
 } from './context-window-fallback.js';
+export {
+  LEGACY_GUESSED_CONTEXT_WINDOW,
+  applyCatalogContextWindow,
+  buildCatalogContextWindowIndex,
+  describeContextWindowSource,
+  isLocalBaseUrl,
+  matchCatalogProviderId,
+  needsCatalogContextWindow,
+  resolveCatalogContextWindow,
+} from './context-window-catalog.js';
+export type { CatalogContextWindowIndex, CatalogContextWindowResolution } from './context-window-catalog.js';
 // The one pre-catalog fallback-model builder + routability guard, unifying
 // what the TUI and the agent each maintained as a near-identical copy.
 export {

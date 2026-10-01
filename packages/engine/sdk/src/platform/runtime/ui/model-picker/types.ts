@@ -4,6 +4,7 @@
  * Purely data-oriented, no rendering logic. These types are produced by
  * ModelPickerDataProvider and consumed by renderers/components.
  */
+import type { ContextWindowOrigin } from '../../../providers/registry-types.js';
 import type { ProviderStatus } from '../../store/domains/provider-health.js';
 
 // Re-export for convenience
@@ -102,15 +103,25 @@ export interface ModelPickerEntry {
 
   // ── Context window ─────────────────────────────────────────────────────
   /**
-   * Effective context window in tokens.
-   * Use this for display and budgeting, it is the authoritative value.
+   * Numeric budget/display value. It may be an estimate or accepted lower
+   * bound; do not use it as a known ceiling or percentage denominator.
    */
   readonly contextWindow: number;
+  /** A stated ceiling/configured cap, or null for guesses and accepted floors. */
+  readonly knownContextWindow: number | null;
+  /** Detailed origin, including cross-provider consensus estimates. */
+  readonly contextWindowOrigin?: ContextWindowOrigin | undefined;
+  /** An accepted lower bound, retained separately from any larger display estimate. */
+  readonly contextWindowAcceptedFloor?: number | undefined;
   /**
    * How `contextWindow` was determined.
    * - `provider_api`  , reported by the provider's /v1/models endpoint
    * - `configured_cap`, set explicitly by the user (config file or /context window)
    * - `observed_limit`, learned from a provider rejecting a longer request
+   * - `accepted_floor`, the stated window was disproven by a larger accepted
+   *                     request; the real window is unknown
+   * - `catalog`       , models.dev figure for a remote model whose own source
+   *                     stated none (its catalog provider, or the consensus)
    * - `fallback`      , default constant (no config or API source)
    * - `openrouter`    , sourced from OpenRouter model data (built-in catalog models)
    * - `registry`      , static value in the built-in model registry
@@ -119,6 +130,8 @@ export interface ModelPickerEntry {
     | 'provider_api'
     | 'configured_cap'
     | 'observed_limit'
+    | 'accepted_floor'
+    | 'catalog'
     | 'fallback'
     | 'openrouter'
     | 'registry';

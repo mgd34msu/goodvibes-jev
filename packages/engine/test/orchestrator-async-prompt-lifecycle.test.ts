@@ -39,6 +39,7 @@ function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemProm
   const providerRegistry = {
     getCurrentModel: () => model, getForModel: () => provider,
     getContextWindowForModel: () => 0,
+    getKnownContextWindowForModel: () => 0,
     getTokenLimitsForModel: () => ({ maxOutputTokens: 200 }),
     reconcileObservedContextWindow: () => {}, resolveModelPricing: () => UNKNOWN_MODEL_PRICING,
   } as unknown as ProviderRegistry;

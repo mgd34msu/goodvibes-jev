@@ -27,7 +27,7 @@ export interface ModelPickerDataProviderOptions {
    */
   readonly pinnedIds?: ReadonlySet<string> | undefined;
   readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>;
-  readonly providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>;
+  readonly providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel' | 'getKnownContextWindowForModel'>;
 }
 
 /**
@@ -55,7 +55,7 @@ export class ModelPickerDataProvider {
   private _pinnedIds: ReadonlySet<string>;
   private _snapshot: ModelPickerData;
   private readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks'>;
-  private readonly providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel'>;
+  private readonly providerRegistry: Pick<ProviderRegistry, 'getSyntheticModelInfoFromCatalog' | 'getContextWindowForModel' | 'getKnownContextWindowForModel'>;
   private readonly _subscribers = new Set<() => void>();
   private _disposed = false;
 
