@@ -1,7 +1,7 @@
 // foundation-io-coverage-baseline.ts
 //
 // The baseline for the typed-IO coverage ratchet enforced by
-// check-foundation-io-coverage.ts (mirrors line-cap-grandfather.ts).
+// check-foundation-io-coverage.ts.
 //
 // contracts/src/generated/foundation-client-types.ts holds the
 // OperatorMethodInputMap / OperatorMethodOutputMap entries. A method id absent
@@ -12,8 +12,7 @@
 // THE RATCHET: growth is forbidden. New operator methods must ship with typed
 // IO entries so this count never rises. When typed coverage IMPROVES, lower this
 // number to lock the gain in (check-foundation-io-coverage.ts fails on a stale,
-// too-high baseline for the same reason line-cap fails on a stale grandfather
-// entry).
+// too-high baseline).
 //
 // THE DEBT IS NOW ZERO. The grandfathered 97 were never a per-verb backlog: the
 // entries are rendered from method-catalog descriptors, so

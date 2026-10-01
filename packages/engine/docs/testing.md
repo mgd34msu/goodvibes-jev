@@ -14,24 +14,22 @@ Key expectations:
 - generated pages update from promoted graph facts and source links
 - route harnesses avoid overlapping long Home Graph runs
 
-## Nothing is allowed to skip
+## Honest platform coverage
 
-`bun run test-skip:check` (`scripts/no-skipped-tests.ts`) scans every test
-file for `describe.skip`, `test.skip`, `it.skip`, `.skipIf`, `.skip.if`,
-`.runIf`, and `.todo`, in any combination, and fails the build if it finds
-one. This is not limited to plain `.skip`. `skipIf` is caught by the same
-pattern and is banned exactly like the others. There is no environment- or
-platform-conditional exemption.
+Optional host tests use conditional skips when their declared prerequisites are
+unavailable. The test report must distinguish unexecuted checks from passes;
+returning early from a test body must not pretend the fixture ran.
 
-Tests that only make sense when an optional local dependency is present (for
-example, the live PTY and sandbox tests in `test/exec-interactive.test.ts`,
-which need the `script(1)` binary) do not skip. They call a small guard
-function at the top of the test body that checks availability, logs an
-honest one-line reason to the console, and returns early when the dependency
-is absent. The test still reports as passed, its log output says plainly
-that the real assertion did not run, and the gate that forbids `.skip` has
-nothing to catch. On hosts where the dependency is present (the project's own
-dev machines and CI), the guard is a no-op and the test runs for real.
+Supported-platform CI lanes must execute their fixtures. In particular,
+`GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT=1` makes missing PTY or sandbox support
+fail and requires both real exec-containment fixtures to complete. Conditional
+skips cannot satisfy that proof. Keep network isolation, credential isolation,
+fixture ownership, and cleanup active in every lane that runs.
+
+Tests should assert observable outcomes rather than exact source spelling or
+numeric performance quotas. Use controlled promises or barriers for ordering,
+and release/drain them even when an assertion fails. Real production deadlines
+remain tested as deadlines.
 
 ## Release validation
 

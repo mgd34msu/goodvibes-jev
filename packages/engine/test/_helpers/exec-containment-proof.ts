@@ -19,6 +19,12 @@ export function execContainmentRequired(value: string | undefined): boolean {
   throw new Error(`${EXEC_CONTAINMENT_REQUIRED_ENV} must be unset or exactly 1`);
 }
 
+/** Optional local runs may skip unavailable capabilities; required CI never skips. */
+export function skipExecContainment(required: boolean, host: Host): boolean {
+  return !required && (!host.pty.available || !host.sandbox.available
+    || !host.sandbox.bwrapPath || !host.sandbox.networkIsolationGuaranteed);
+}
+
 export function createExecContainmentProof(required: boolean, host: Host) {
   const completed = new Set<Fixture>();
   const assertHost = (): void => {

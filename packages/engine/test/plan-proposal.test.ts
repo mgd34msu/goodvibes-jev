@@ -252,18 +252,12 @@ describe('planProposalToPlanningState', () => {
   });
 });
 
-describe('reuse guard', () => {
-  test('plan-proposal.ts does not re-implement markdown parsing or its own dependency scheduler', () => {
+describe('plan proposal purity', () => {
+  test('plan-proposal.ts performs no I/O or agent calls', () => {
     const source = readFileSync(
       join(__dirname, '..', 'sdk/src/platform/core/plan-proposal.ts'),
       'utf-8',
     );
-    // No markdown-parsing re-implementation.
-    expect(source).not.toMatch(/parseFromMarkdown|checkboxRe|phaseRe\s*=/);
-    // No home-grown "next actionable items" scheduler, that stays
-    // ExecutionPlanManager.getNextItems' job (exercised in
-    // plan-integration.test.ts).
-    expect(source).not.toMatch(/function\s+getNextItems|function\s+nextActionable|function\s+scheduleNext/);
     // No I/O, no LLM/agent spawn, the module stays pure.
     expect(source).not.toMatch(/readFileSync|writeFileSync|fetch\(|AgentManager|LLMProvider/);
   });

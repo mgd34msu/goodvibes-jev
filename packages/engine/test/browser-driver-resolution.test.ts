@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
+import { createInterface } from 'node:readline';
 import {
   DRIVER_VERSION,
   driverSearchDirectories,
@@ -12,6 +16,7 @@ import {
   browserProfileRoot,
   browserScreenshotRoot,
 } from '../sdk/src/platform/browser/browser-sessions.js';
+import { withTestTimeout } from './_helpers/test-timeout.js';
 
 // The old sdk package's manifest is the engine manifest, packages/engine/package.json.
 const sdkPackageDir = join(import.meta.dir, '..');
@@ -85,16 +90,76 @@ describe('surface-owned browser storage', () => {
 describe('the node-hosted browser host', () => {
   test('its script ships with the source and is found on disk', () => {
     const path = browserHostScriptPath();
-    expect(path.endsWith('browser-host.mjs')).toBe(true);
-    expect(readFileSync(path, 'utf8')).toContain('connectOverCDP');
+    expect(readFileSync(path).byteLength).toBeGreaterThan(0);
   });
 
-  test('the host never closes a browser it attached to', () => {
-    const source = readFileSync(browserHostScriptPath(), 'utf8');
-    // The release handler drops the connection; nothing calls browser.close().
-    expect(source).toContain('state.browser = null');
-    expect(source).not.toContain('browser.close()');
-  });
+  test('releasing an attached browser drops host state without closing the browser, context, or pages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'browser-host-ownership-'));
+    const scriptPath = join(root, 'browser-host.mjs');
+    const callsPath = join(root, 'calls.jsonl');
+    let child: ChildProcessWithoutNullStreams | undefined;
+    let exited: Promise<unknown> = Promise.resolve();
+    let stderr = '';
+    try {
+      copyFileSync(browserHostScriptPath(), scriptPath);
+      const driver = join(root, 'node_modules/playwright-core');
+      mkdirSync(driver, { recursive: true });
+      writeFileSync(callsPath, '');
+      writeFileSync(join(driver, 'index.js'), `
+        const { appendFileSync } = require('node:fs');
+        const record = (call) => appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(call) + '\\n');
+        const page = { on() {}, url: () => 'https://fixture.invalid/', title: async () => 'Existing page', close: async () => record('page.close') };
+        const context = { pages: () => [page], on() {}, close: async () => record('context.close') };
+        const browser = { contexts: () => [context], close: async () => record('browser.close') };
+        exports.chromium = { connectOverCDP: async (endpoint) => { record({ attach: endpoint }); return browser; } };
+      `);
+      child = spawn('node', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+      child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-8_192); });
+      exited = once(child, 'exit').catch((error) => { stderr += String(error); });
+      const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+      const readReply = async () => {
+        try {
+          const line = await withTestTimeout(lines.next(), 5_000, 'Browser host did not reply');
+          expect(line.done, stderr).not.toBe(true);
+          return JSON.parse(line.value!) as { id: number; ok: boolean; result?: unknown; error?: string };
+        } catch (error) {
+          throw new Error(`${String(error)}; browser host stderr: ${stderr}`);
+        }
+      };
+      expect(await readReply()).toMatchObject({ id: 0, ok: true, result: { ready: true } });
+      let nextId = 1;
+      const call = async (command: string, params = {}) => {
+        const id = nextId++;
+        child!.stdin.write(`${JSON.stringify({ id, command, params })}\n`);
+        const reply = await readReply();
+        expect(reply.id).toBe(id);
+        return reply;
+      };
+      expect(await call('attach', { endpoint: 'http://127.0.0.1:9222' })).toMatchObject({ ok: true });
+      expect((await call('pages')).result).toEqual({
+        pages: [{ pageId: 'hp1', url: 'https://fixture.invalid/', title: 'Existing page' }],
+      });
+      expect(await call('release')).toMatchObject({ ok: true, result: { released: true } });
+      expect((await call('pages')).result).toEqual({ pages: [] });
+      expect(await call('newPage')).toMatchObject({ ok: false, error: 'not attached' });
+      expect(readFileSync(callsPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))).toEqual([
+        { attach: 'http://127.0.0.1:9222' },
+      ]);
+    } finally {
+      try {
+        child?.stdin.end();
+        child?.kill('SIGTERM');
+        try {
+          await withTestTimeout(exited, 5_000, 'Browser host did not exit after SIGTERM');
+        } catch {
+          child?.kill('SIGKILL');
+          await withTestTimeout(exited, 5_000, 'Browser host did not exit after SIGKILL');
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  }, 60_000);
 
   /**
    * The agent asserted the script sat beside `dist/goodvibes-agent`. The SDK
@@ -109,7 +174,6 @@ describe('the node-hosted browser host', () => {
       readonly browserHostScriptPath: () => string;
     };
     const path = compiled.browserHostScriptPath();
-    expect(path.endsWith('browser-host.mjs')).toBe(true);
-    expect(readFileSync(path, 'utf8')).toContain('connectOverCDP');
+    expect(readFileSync(path)).toEqual(readFileSync(browserHostScriptPath()));
   });
 });

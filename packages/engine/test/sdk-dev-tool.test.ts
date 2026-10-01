@@ -295,11 +295,7 @@ describe('full link/restore round-trip (real build, gated: slow)', () => {
   // package + precise restore against a REAL scratch consumer checkout. It is
   // gated behind an env var (not run by default in the fast test loop or CI)
   // because it costs a full `tsc -b` build of the workspace.
-  test('link overlays the engine and the judgment package; restore removes them and matches the pin', () => {
-    // Env-gated slow round-trip: a runtime early-return keeps this compliant
-    // with the repo's no-skipped-tests policy while staying a no-op in the fast
-    // loop/CI unless GOODVIBES_SDK_DEV_ROUNDTRIP_TEST is set.
-    if (!process.env.GOODVIBES_SDK_DEV_ROUNDTRIP_TEST) return;
+  test.skipIf(!process.env.GOODVIBES_SDK_DEV_ROUNDTRIP_TEST)('link overlays the engine and the judgment package; restore removes them and matches the pin', () => {
     const consumerRoot = mkTemp('gv-sdk-roundtrip-consumer-');
     writeFileSync(join(consumerRoot, 'package.json'), JSON.stringify({
       name: 'roundtrip-consumer',

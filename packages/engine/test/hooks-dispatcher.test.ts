@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { HookDispatcher } from '@goodvibes-jev/engine/sdk/platform/hooks';
+import { HookActivityTracker, HookDispatcher } from '@goodvibes-jev/engine/sdk/platform/hooks';
 import type { HookDefinition, HookEvent, HookResult } from '@goodvibes-jev/engine/sdk/platform/hooks';
+
+import { waitFor, withTestTimeout } from './_helpers/test-timeout.js';
 
 /** Helper to create a minimal HookEvent */
 function makeEvent(overrides: Partial<HookEvent> = {}): HookEvent {
@@ -183,20 +185,44 @@ describe('HookDispatcher', () => {
   });
 
   describe('async hooks', () => {
-    test('async hook does not block and returns ok immediately', async () => {
+    test('async hook returns while its runner is pending and records completion after release', async () => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let entered!: () => void;
+      const runnerEntered = new Promise<void>((resolve) => { entered = resolve; });
+      let completed = false;
+      const activity = new HookActivityTracker();
+      dispatcher = new HookDispatcher({
+        toolLLM: {
+          chat: async () => {
+            entered();
+            await held;
+            completed = true;
+            return '{"ok":true}';
+          },
+        },
+      }, activity);
       dispatcher.register('Pre:tool:*', {
         match: 'Pre:tool:*',
-        type: 'command',
-        command: 'sleep 10',  // would block if awaited
+        type: 'prompt',
+        prompt: 'Observe $ARGUMENTS',
         async: true,
       });
-      const start = Date.now();
-      const result = await dispatcher.fire(makeEvent());
-      const elapsed = Date.now() - start;
-      // Should complete almost instantly (< 500ms)
-      expect(elapsed).toBeLessThan(500);
-      expect(result.ok).toBe(true);
-    });
+      const firing = dispatcher.fire(makeEvent());
+      try {
+        await withTestTimeout(runnerEntered);
+        const result = await withTestTimeout(firing);
+        expect(result.ok).toBe(true);
+        expect(completed).toBe(false);
+        expect(activity.listRecent()).toEqual([]);
+      } finally {
+        release();
+        await Promise.allSettled([firing]);
+        await waitFor(() => activity.listRecent().length === 1);
+      }
+      expect(completed).toBe(true);
+      expect(activity.listRecent()[0]).toMatchObject({ ok: true, async: true, hookType: 'prompt' });
+    }, 60_000);
   });
 
   describe('matcher filtering', () => {

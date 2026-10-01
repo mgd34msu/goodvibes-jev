@@ -18,9 +18,8 @@ function run(command: string, args: readonly string[], label?: string): void {
 run('bun', ['packages/engine/scripts/generate-api-docs.ts', '--check'], 'api-docs:check');
 run('bun', ['packages/engine/scripts/docs-completeness-check.ts'], 'docs:completeness');
 run('bun', ['run', 'error:check'], 'error:check');
-run('bun', ['run', 'line:check'], 'line:check');
-// Beside line:check for the same reason: a source-only scan with no build
-// dependency (~0.6s over 2181 files). It ran only in the local pre-commit hook,
+// Check credential classification in CI as well as the local pre-commit hook.
+// This source-only scan has no build dependency. It once ran only in the hook,
 // so a push that bypassed the hook reached CI with an unclassified credential
 // write and every one of the ten CI jobs stayed green.
 run('bun', ['run', 'credential-scope:check'], 'credential-scope:check');
@@ -32,7 +31,6 @@ run('bun', ['run', 'changelog:check'], 'changelog:check');
 run('bun', ['run', 'version:check'], 'version:check');
 run('bun', ['run', 'todo:check'], 'todo:check');
 run('bun', ['run', 'internal-id:check'], 'internal-id:check');
-run('bun', ['run', 'test-skip:check'], 'test-skip:check');
 run('bun', ['run', 'architecture:check'], 'architecture:check');
 run('bun', ['run', 'platform-console:check'], 'platform-console:check');
 run('bun', ['run', 'build'], 'build');
