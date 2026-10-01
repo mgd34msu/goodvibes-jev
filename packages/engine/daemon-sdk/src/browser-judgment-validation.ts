@@ -14,7 +14,7 @@ export function judgmentRecord(value: unknown, keys: readonly string[]): Record<
   if (Object.values(descriptors).some((d) => !('value' in d))) return invalid();
   return value as Record<string, unknown>;
 }
-export function judgmentText(value: unknown, max = LIMIT.referenceChars): string {
+export function judgmentText(value: unknown, max: number = LIMIT.referenceChars): string {
   if (typeof value !== 'string' || !value.length) return invalid();
   if (value.length > max) return large();
   return value;

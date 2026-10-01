@@ -73,6 +73,12 @@ export class BrowserJudgmentError extends Error {
   }
 }
 export function browserJudgmentRefusal(error: unknown): { readonly status: number; readonly body: object } {
-  const safe = error instanceof BrowserJudgmentError ? error : new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
-  return { status: safe.status, body: { protocolVersion: 1, status: 'held', error: { code: safe.code, message: safe.message } } };
+  let code: BrowserJudgmentErrorCode = 'JUDGMENT_UNAVAILABLE';
+  if (error instanceof BrowserJudgmentError) {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    const candidate: unknown = descriptor?.value;
+    if (typeof candidate === 'string' && Object.hasOwn(REFUSALS, candidate)) code = candidate as BrowserJudgmentErrorCode;
+  }
+  // Even a real Error instance can have its message/status replaced by another layer.
+  return { status: REFUSALS[code][0], body: { protocolVersion: 1, status: 'held', error: { code, message: REFUSALS[code][1] } } };
 }

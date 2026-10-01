@@ -417,4 +417,12 @@ describe('closed-schema primitives and safe refusals', () => {
       expect(JSON.stringify(refusal)).not.toContain('stack');
     }
   });
+  test('reconstructs fixed refusals when another layer alters an actual error instance', () => {
+    const error = new BrowserJudgmentError('JUDGMENT_INVALID_INPUT');
+    const expected = browserJudgmentRefusal(error);
+    Object.defineProperties(error, { message: { get() { throw new Error('synthetic-private-detail'); } }, status: { value: 200 } });
+    expect(browserJudgmentRefusal(error)).toEqual(expected);
+    Object.defineProperty(error, 'code', { get() { throw new Error('synthetic-private-detail'); } });
+    expect(browserJudgmentRefusal(error)).toEqual(browserJudgmentRefusal(null));
+  });
 });
