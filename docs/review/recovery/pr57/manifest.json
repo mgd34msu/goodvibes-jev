@@ -1,0 +1,318 @@
+{
+  "repository": "https://github.com/mgd34msu/goodvibes-jev",
+  "publicBase": "c70f79ecccca21a8a08400626c4f8f748fa2bd29",
+  "publicBaseTree": "2969dc3571e741d1061f88cf620ff1f1dfe1b85f",
+  "localCandidate": "82458f6262384ef4b204b8543ed76bb266aa473c",
+  "candidateTree": "a0248dc7cf0c66ef9638e93bf740c9da2e4ed8aa",
+  "branch": "recovery/planning-strict-candidate-20261001",
+  "clean": true,
+  "files": [
+    {
+      "path": "docs/audit/planning-revision-guards.md",
+      "status": "M",
+      "bytes": 10952,
+      "sha256": "3db5e18dc5898fe2c9d2ed45376b4a179b6ea3de3223df84c85f608d408033fb",
+      "gitBlob": "84d78aebc35f03761c969a79b7a85c4e425e5c29",
+      "baseSha256": "127474803a0747f840c3c5e58c6ba53f34c1214aa6e1d8efbb4ad83b180d162c",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "status": "M",
+      "bytes": 8562576,
+      "sha256": "aad03260c395f29703f2747e65c1d96f7065058b32018a5bf82351f09e9cea21",
+      "gitBlob": "d49d2dd142adbd055478d161e92b342e7f35a759",
+      "baseSha256": "a5df7c786c550b8bd7f17e7200ecf8e0bea2854359e92093af643ff7bd85f6ec",
+      "generated": true
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts",
+      "status": "M",
+      "bytes": 8355,
+      "sha256": "17a2fbb465eb0e26e89e08c68510a0ecae8d9e43ceed7f78c6729a597ac25920",
+      "gitBlob": "66952ac65ce6baa6c922d7da9d83d8fe8630f09f",
+      "baseSha256": "ec41d3fcdeef8e356bdf0390a3953731e208184b81ddc68bb77d6d4f7b5fd657",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/project-planning/service.ts",
+      "status": "M",
+      "bytes": 45163,
+      "sha256": "cccbe594b6c13132c5e36dcb2dc55db50f2c9499fd95357f4ccd170616881d8f",
+      "gitBlob": "c2147e8b328b53f5d692719df669037d3e8b6779",
+      "baseSha256": "0014dc20bc8b82fa28d0189190971349d723cde7840b175672bc677dc05a088b",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/project-planning/types.ts",
+      "status": "M",
+      "bytes": 17420,
+      "sha256": "010c56059b09e840d1c0bf2363048b029c0c2c4d3962b02fe562f2a4da57553d",
+      "gitBlob": "da878ee58903602a3d1baeaaa3b689f0557fd5c2",
+      "baseSha256": "bf0c93af421843af623b58699e28a3f9392ba5ae50eea04ed202a90751acc2fc",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts",
+      "status": "M",
+      "bytes": 7602,
+      "sha256": "6bff9b270a6c89a127a2a331de94fd34e515491a445cf3de7a64e240d6509d44",
+      "gitBlob": "46ae231c5ddf2e07896b7b660c12dcc6918f4f4d",
+      "baseSha256": "8c31982effe66b9b27c542b705a66fd0739f5137dba96bec4a72671abf2fd28c",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store-source-generation.ts",
+      "status": "M",
+      "bytes": 1826,
+      "sha256": "fb496af8740bee76df2bfd39623a93dd06d5a8199ee0067739d1b313b1d2212d",
+      "gitBlob": "abf84464913c09abff8e10736a85bfb065cdba02",
+      "baseSha256": "ee8f8ccd3fe196ee2d31ca8860db44c4331e72aa34101389c5c58ebb52275525",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store.ts",
+      "status": "M",
+      "bytes": 47084,
+      "sha256": "e896cbe56bb253fc8266bf043b86c7d65a3236fd476df1f58711265697e7b603",
+      "gitBlob": "40d82e1f03713c2c2383e6386847a7e38fac32e2",
+      "baseSha256": "619d2391d11983e002f43ebda58d27b3a0d592747cf8e636ef6a7d9ce3e5cbaf",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/state/sqlite-store-persistence.ts",
+      "status": "A",
+      "bytes": 3790,
+      "sha256": "a81783c4a7a17c1ac91b29c4b6e915ab919285e6d37465f463b974c066963bfc",
+      "gitBlob": "745c3a2dea696b82f52f9e4fce578aba1d4fc239",
+      "baseSha256": null,
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/state/sqlite-store.ts",
+      "status": "M",
+      "bytes": 11727,
+      "sha256": "44d18da8dc577b846aa10fe1f1b3defa39a9c4357bec11743e71898cff81a6aa",
+      "gitBlob": "41016c1346b8bf13068ef9f877996ab9caf7f62f",
+      "baseSha256": "49905389bd3e7e7cca1699eb9cdfd8a0e881788249f0da2ca04b7925fe2ee0a0",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts",
+      "status": "M",
+      "bytes": 28214,
+      "sha256": "50e9d492eec2f1c54e53b9d69bdc3d549bd50dda4b3b0013971b370e70e13f56",
+      "gitBlob": "3613217bac8103c6b4fbdcc6649c0355f5e5a023",
+      "baseSha256": "c8b382f077ca8780a20e26bab087021a0b56c783d751a49907d9ecaa2aa8d871",
+      "generated": false
+    },
+    {
+      "path": "packages/engine/test/knowledge-coordinated-persistence.test.ts",
+      "status": "A",
+      "bytes": 19594,
+      "sha256": "5783f97bf46252372efa273dbfed8e17628db8f51dac1ca9cca77c70556e7f47",
+      "gitBlob": "907b4c98a74343f9c95229d7299ec2e3cb2d5f14",
+      "baseSha256": null,
+      "generated": false
+    },
+    {
+      "path": "packages/engine/test/knowledge-strict-lock.test.ts",
+      "status": "A",
+      "bytes": 4474,
+      "sha256": "733c0ed696683e3a60c6cc7b18407896818237b0e8516e44b32bbce7e24be132",
+      "gitBlob": "a14b594240db22812db45d46bf29a3241dad9e6a",
+      "baseSha256": null,
+      "generated": false
+    },
+    {
+      "path": "packages/engine/test/planning-persisted-generation.test.ts",
+      "status": "A",
+      "bytes": 6853,
+      "sha256": "add3faf71d12cdc3ebe96d28f0fab4909e8808ede10ddad1dc52579e8edc0133",
+      "gitBlob": "ed08c23695b3da7ae1a341311e7a618c9ac99d7e",
+      "baseSha256": null,
+      "generated": false
+    },
+    {
+      "path": "packages/engine/test/pr57-independent-persisted-races.test.ts",
+      "status": "A",
+      "bytes": 4193,
+      "sha256": "a7cdd4e877a236648f5d92a0da3073d25f829e3cf0f9db4875ffb9493446053b",
+      "gitBlob": "c453dfa07db8696c52ae904ee023d82acac540c2",
+      "baseSha256": null,
+      "generated": false
+    },
+    {
+      "path": "packages/engine/test/types/planning-persisted-guard-public.ts",
+      "status": "A",
+      "bytes": 2038,
+      "sha256": "3e8857c0696584195c0dfbf9e825810cd9860da191137c12582962c516809565",
+      "gitBlob": "40125d23e008e1187e45ab985f33b959d9150826",
+      "baseSha256": null,
+      "generated": false
+    }
+  ],
+  "patches": {
+    "source.patch": {
+      "bytes": 80628,
+      "sha256": "a9c180c5c81bc318415b6046a6aba9db155c3425f1d107c1e84122f2cae2e8b5"
+    },
+    "generated-api.patch": {
+      "bytes": 47931,
+      "sha256": "35a42c9df9bf5617da304f8a6782323e395e454768a095418abc54fb2c1fb071"
+    },
+    "complete.patch": {
+      "bytes": 128559,
+      "sha256": "aa2d96d5e2ad627f06de49ae80481c118bb3e22e30bb8858b08dbf6f6d323810",
+      "included": false,
+      "note": "Redundant combined patch retained locally. Both separate published patches reconstruct the full exact candidate tree."
+    }
+  },
+  "reconstruction": {
+    "method": "separate temporary Git index, public base + source.patch + generated-api.patch",
+    "verifiedTree": "a0248dc7cf0c66ef9638e93bf740c9da2e4ed8aa"
+  },
+  "validation": {
+    "focusedTests": {
+      "tests": 114,
+      "assertions": 1111,
+      "files": 13,
+      "result": "passed"
+    },
+    "types": {
+      "result": "passed",
+      "projects": [
+        "packages/engine/sdk",
+        "packages/engine/tsconfig.tests.json",
+        "packages/engine/tsconfig.type-tests.json"
+      ],
+      "command": "NODE_OPTIONS=--max-old-space-size-percentage=45 node node_modules/typescript/bin/tsc -b packages/engine/sdk packages/engine/tsconfig.tests.json packages/engine/tsconfig.type-tests.json"
+    },
+    "aggregateApi": {
+      "result": "passed",
+      "command": "NODE_OPTIONS=--max-old-space-size-percentage=45 bun run api:check",
+      "sdkSubpaths": 164,
+      "sdkExports": 10037,
+      "terminalSubpaths": 3,
+      "terminalExports": 199,
+      "warnings": [
+        "API Extractor bundled TypeScript older than project compiler",
+        "existing Gaxios fetch/preconnect typing warning",
+        "existing duplicate ambient sql-js declaration warning"
+      ]
+    },
+    "normalCommitHook": {
+      "result": "passed",
+      "scope": "credential-scope only",
+      "sourceFilesChecked": 2633
+    },
+    "toolchain": {
+      "bun": "1.3.14",
+      "node": "24.19.0",
+      "typescript": "6.0.3"
+    }
+  },
+  "logs": {
+    "isolated-strict-candidate-final-all-tests.log": {
+      "bytes": 14347,
+      "sha256": "73aedb3a3f90e214533ab6f968c59bc4ff1f926a43b675145f96256fe9c946da"
+    },
+    "isolated-strict-candidate-final-types.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "isolated-strict-candidate-final-api-check.log": {
+      "bytes": 3833,
+      "sha256": "a81d90cc4058f601d6929097c69fcb758a77e2f3a8b94df7aabb931211856775"
+    },
+    "isolated-strict-candidate-commit.log": {
+      "bytes": 914,
+      "sha256": "a8d5523f780a453e4f7a0e7663bd14992b907e82831aa5ee9f84967a2e74cece"
+    },
+    "persisted-races-restored-red.log": {
+      "bytes": 12997,
+      "sha256": "fb203be76a0c9272b1987db63e30ea022f4e0e3bdca05f4a6e46c2e994f53f71"
+    },
+    "strict-lock-before.log": {
+      "bytes": 8009,
+      "sha256": "e5e7c391d829de9a2ee693091c2cfb9d7146bf49cb2558584e7adb969990a4fa"
+    },
+    "initial-retention-red.log": {
+      "bytes": 2141,
+      "sha256": "2f45fa5a08de6ffec094dabd845fe7af8c86ea09a06478fbc658e74b3867252e"
+    },
+    "superseded-image-without-epoch-red.log": {
+      "bytes": 1996,
+      "sha256": "c06d4d349c7227814ebe6d0d752720f6514e5d11711ea90d19c155ff3d881727"
+    },
+    "isolated-dangling-alias-red.log": {
+      "bytes": 1927,
+      "sha256": "6e5b3f79a7b2f6d715a31da63a76c2dd53dae55d21251e3c99aeb8ba618acefa"
+    },
+    "isolated-strict-candidate-types.log": {
+      "bytes": 953,
+      "sha256": "f678b17a069ba4e9937e92eb7d562face61138772dba7e87dfaee28e4ffd9cac"
+    },
+    "isolated-strict-candidate-api-extract.log": {
+      "bytes": 402,
+      "sha256": "6a9d0aff498ba347fe44a0954152a2939e4ecb5dcb3c515e85541f8938a38680"
+    },
+    "isolated-strict-candidate-subpath-generate.log": {
+      "bytes": 300,
+      "sha256": "622760903460b41963785ee173176af8dfc76b2b723d277d1af0e32d6c162385"
+    }
+  },
+  "outstanding": [
+    "Independent source review and shared-lock ownership reconciliation",
+    "Current-main integration and resulting composition checks",
+    "Full repository/product CI on an authorized published implementation head",
+    "Actual TUI caller/product composition acceptance"
+  ],
+  "limits": [
+    "Evidence backup is data only and must not be merged as an implementation branch",
+    "The separate generated API hunk is required to reconstruct the exact candidate tree",
+    "A successful primary planning source write and later derived work-plan synchronization remain multi-step",
+    "Initialization may persist required schema migration or retention before readiness; stale source guards after initialization produce no source/task/work-plan writes",
+    "Strict advisory ownership covers participating local processes, not unrelated writers or distributed process namespaces",
+    "Original/shared recovery branch and remote PR57 head were not changed"
+  ],
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "authorManifestSha256": "de7445fce3c64e10538e28de0be3d240ddbf7e269ed39369fae2b6f781b40427",
+  "evidencePublication": {
+    "parent": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+    "parentTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+    "branch": "dot/evidence-pr57-cas-recovery",
+    "paths": [
+      "docs/review/recovery/pr57/README.md",
+      "docs/review/recovery/pr57/manifest.json",
+      "docs/review/recovery/pr57/source.patch",
+      "docs/review/recovery/pr57/generated-api.patch"
+    ],
+    "runtimePathsUnchanged": true,
+    "publicBaseVerifiedThroughGitHub": true
+  },
+  "credentialPreflight": {
+    "trackedChangedBlobSecretPatternScan": "passed",
+    "matchedPotentialSecrets": 0,
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "excludedPrivateFilesAndInstalledDependencies": true,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "sourceTree": "a0248dc7cf0c66ef9638e93bf740c9da2e4ed8aa",
+      "command": "bun packages/engine/scripts/check-credential-scope.ts",
+      "runner": "Bun 1.3.14",
+      "sdkFilesChecked": 2633,
+      "logSha256": "bc8db2d3104738cdb5c65f4647e9044b1be5f650ccc66215785ac6c0a477f98c",
+      "scope": "Fresh check of isolated exact tracked candidate SDK source; snapshot and dependencies excluded from evidence artifacts."
+    }
+  }
+}

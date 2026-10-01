@@ -1,0 +1,1337 @@
+diff --git a/docs/audit/planning-revision-guards.md b/docs/audit/planning-revision-guards.md
+index 844641274c4480fea2f0ca5baa8c7161453c3cc2..84d78aebc35f03761c969a79b7a85c4e425e5c29 100644
+--- a/docs/audit/planning-revision-guards.md
++++ b/docs/audit/planning-revision-guards.md
+@@ -1,5 +1,91 @@
+ # THE-95 source-generation API
+ 
++## Persisted-image correction after independent review
++
++The original c70f79e implementation below passed its same-handle tests but was
++**not safe across independently loaded sql.js handles**. Each handle retained a
++private database image. Reading that handle and then saving it could overwrite a
++newer owner's complete file, including unrelated tables. The unchanged public
++peer probe reproduced both stale approval and duplicate absent-row creation. In
++the recovered checkout, it and five additional cases produced 1 pass / 7 failures
++/ 16 assertions before the correction, including two actual processes released
++from a shared input barrier. The original proof is retained as historical evidence,
++not acceptance of the multi-writer boundary.
++
++KnowledgeStore now opts into coordinated SQLiteStore persistence unconditionally.
++Caller configuration cannot disable it; unrelated SQLiteStore consumers retain
++their existing default behavior. Every ordinary save and batch flush uses the
++same canonical file ownership as a guarded source write. An ordinary save captures
++its image at admission and refuses a changed persisted baseline rather than
++overwriting another owner's work. Failed saves retain pending local data. This is
++conflict detection, not an automatic SQL merge or retry policy.
++
++The conditional operation reads a fresh persisted database image while holding
++ownership. The complete source-generation check, row mutation and atomic file
++replacement have no intervening await. Success adopts that image and refreshes all
++KnowledgeStore mirrors before releasing ownership. After initialization, a source mismatch does not
++publish any database bytes or run downstream task synchronization. Active batches
++or other pending local changes produce `pending-local-changes` when the selected
++source still matches; an already changed source retains `source-changed` priority.
++Snapshot reads inspect current persisted bytes without replacing a dirty local
++image. Refreshing mirrors does not rerun initialization retention.
++
++When initialization itself prunes an over-cap history, it persists that change
++through the coordinated baseline check before admitting caller mutations. A
++conflict fails initialization and closes only its not-yet-ready internal image;
++an explicit retry reloads the winning owner's file. The 501-settled-run regression
++reproduced the previous indefinite first-action hold, and a controlled ordinary
++writer during initialization verifies refusal, byte preservation and retry.
++Ordinary saves also capture the local image epoch: a save queued behind a guarded
++fresh-image adoption cannot republish the superseded image. Removing that check
++reproduces the earlier persisted value in a real reopened database.
++
++File publication writes and flushes a sibling temporary file before rename.
++Directory and database symlinks, including relative/chained links to a not-yet-
++created database, resolve to one canonical lock identity without replacing the
++links. Cycles and missing target directories fail without file or lock creation.
++Multiply
++hardlinked databases are refused because independently replaceable aliases cannot
++be coordinated by one pathname lock. This boundary coordinates participating
++KnowledgeStore writers. It does not claim protection from an unrelated program
++that ignores ownership and edits the database file directly, or distributed
++ownership across hosts or OS process namespaces sharing a network filesystem.
++
++Strict ownership must never evict a live holder by age, infer ownership from
++malformed metadata, or fall back to publishing an empty lock. Its dedicated probes
++reproduced 1 pass / 8 failures against the existing default lock, preserving the
++existing successful real-dead-owner recovery case. The separate isolated candidate
++now passes 114 tests / 1,111 assertions across strict ownership, the unchanged
++default lock suite, persisted source races, ordinary and guarded process writers,
++retention, symlink boundaries and planning compatibility. The final SDK, complete
++engine test and public-consumer type projects pass with zero diagnostics. The
++unchanged aggregate API check passes for 164 SDK subpaths / 10,037 exports and
++3 terminal subpaths / 199 exports. Shared integration and publication remain held
++for reconciliation; this isolated candidate has no full CI result.
++
++The first type pass retained one fixture-only Buffer generic mismatch; the
++annotation was corrected and the same projects rerun. The first API invocation
++used a tools path without its bunx launcher, and the first subpath generation
++preceded standard SDK asset preparation. Those failed setup logs remain separate
++from the successful final aggregate command using the verified pinned launchers
++and prepared SDK. Existing API Extractor warnings about its older bundled compiler,
++Gaxios fetch and duplicate sql-js declarations remain visible. No gate was changed.
++
++An accepted planning source write and its later derived task/work-plan writes
++remain a multi-step operation. A stale rejection has no downstream effects; an
++accepted source may persist before a later task-sync conflict or error. This
++change does not claim whole-action all-or-none atomicity, and does not widen
++operator authority or the trusted-admin compatibility described below.
++
++The recovered source is based on public c70f79e. The ownerReply annotation is
++restored from an exact hash-verified patch; its API entry will be regenerated from
++this checkout. The former local 064935 commit and proof logs were unavailable
++after the executor replacement. The public peer test is unchanged; the additional
++five-case fixture was transcribed from retained tool evidence and rerun, rather
++than represented as a recovered byte-identical file.
++
++## Original generation contract and historical proof
++
+ Implementation workspace: goodvibes-quality-passport, branch dot/planning-revision-guards, initial base 1e78adcd859dbe37ff875a814f3cc533c252573f, normally updated to actual main cef1a3d529797d63ddb8e95f48904ec76c638dca before final proof. The PR51 planning-answer reader branch remains unchanged.
+ 
+ KnowledgeStore exposes getSourceSnapshot({id}|{canonicalUri}) and getSourceGeneration(id), synchronous after init. The snapshot is detached and reconstructed from the actual SQLite row. The SHA-256 generation covers sorted column names and every raw persisted value, including metadata JSON bytes. It is a full entity fingerprint, not a timestamp, mutable-cache identity, or write authority. Same-millisecond changes to any persisted field change this precondition; identical persisted entities have the same fingerprint.
+@@ -20,4 +106,4 @@ Store and existing service/answer/route compatibility proof: 27 tests / 119 asse
+ 
+ The trusted-admin compatibility finding is visible in sdk/src/platform/control-plane/method-catalog-knowledge.ts (projectPlanning.state.upsert, admin and write:knowledge), sdk/src/platform/daemon/http/project-planning-routes.ts (the admin POST handler), and test/project-planning-routes.test.ts (top-level executionApproved:true persists through the real route). No new HTTP route or permission grant is added.
+ 
+-The generated API delta adds the seven declared knowledge types, three store methods, the service action and the optional result revision. One adjacent ownerReply union has the same four members in a different compiler-emitted order; no contract source or behavior changed. The exact generated report passes its check.
++The original generated API delta added the seven declared knowledge types, three store methods, the service action and the optional result revision. A later ownerReply annotation fixes an unrelated clean/incremental inferred-union ordering difference without changing behavior. The correction requires freshly generated API evidence.
+diff --git a/packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts b/packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts
+index 4b7bcbf4353f4495d056b1756cfcd3466ad81c58..66952ac65ce6baa6c922d7da9d83d8fe8630f09f 100644
+--- a/packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts
++++ b/packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts
+@@ -11,7 +11,7 @@
+  * Band: approve triggers effects (work is accepted, a plan runs), so it is
+  * read at high stakes; the other readings at medium.
+  */
+-import { defineReplyReader, STAKES_BANDS } from '@goodvibes-jev/judgment';
++import { defineReplyReader, STAKES_BANDS, type ReplyReader, type ReplyReadingName } from '@goodvibes-jev/judgment';
+ import type { EscalationReason } from '../types.js';
+ 
+ /** An escalation as a reading sees it: its reason code and the question it put. */
+@@ -105,7 +105,7 @@ export const SAMPLE_ESCALATIONS: Readonly<Record<EscalationReason, SampleEscalat
+   'fix-rounds-exhausted': DELIVERABLE,
+ };
+ 
+-export const ownerReply = defineReplyReader({
++export const ownerReply: ReplyReader<ReplyReadingName> = defineReplyReader({
+   name: 'contract.owner-reply',
+   version: 1,
+   description: "What the owner's reply to a contract escalation says: approve, change what is required, stop, or unclear.",
+diff --git a/packages/engine/sdk/src/platform/knowledge/project-planning/service.ts b/packages/engine/sdk/src/platform/knowledge/project-planning/service.ts
+index c2fefdc0ff71517416c9f6b10c1d32b7512ea187..c2147e8b328b53f5d692719df669037d3e8b6779 100644
+--- a/packages/engine/sdk/src/platform/knowledge/project-planning/service.ts
++++ b/packages/engine/sdk/src/platform/knowledge/project-planning/service.ts
+@@ -199,7 +199,7 @@ export class ProjectPlanningService {
+     const written = await this.store.upsertSourceIfCurrent({ ...sourceInput, id: revision.sourceId }, revision.generation);
+     if (written.kind === 'held') {
+       const heldRevision = written.current && written.generation ? { sourceId: written.current.id, generation: written.generation } : undefined;
+-      return { ok: true, applied: false, reason: 'state-changed', state: written.current ? readState(written.current) : null,
++      return { ok: true, applied: false, reason: written.reason === 'pending-local-changes' ? 'pending-local-changes' : 'state-changed', state: written.current ? readState(written.current) : null,
+         ...(heldRevision ? { revision: Object.freeze(heldRevision) } : {}) };
+     }
+     // Stale actions returned above before any task or work-plan mutation.
+diff --git a/packages/engine/sdk/src/platform/knowledge/project-planning/types.ts b/packages/engine/sdk/src/platform/knowledge/project-planning/types.ts
+index 86cd32d34302fb14827359f8d95dbab496dd3327..da878ee58903602a3d1baeaaa3b689f0557fd5c2 100644
+--- a/packages/engine/sdk/src/platform/knowledge/project-planning/types.ts
++++ b/packages/engine/sdk/src/platform/knowledge/project-planning/types.ts
+@@ -368,7 +368,7 @@ export interface ProjectPlanningStateActionInput extends ProjectPlanningSpaceInp
+ 
+ export type ProjectPlanningStateActionResult =
+   | { readonly ok: true; readonly applied: true; readonly state: ProjectPlanningState; readonly revision: ProjectPlanningRevision; readonly evaluation: ProjectPlanningEvaluation; readonly question?: ProjectPlanningQuestion | undefined }
+-  | { readonly ok: true; readonly applied: false; readonly reason: 'state-changed' | ProjectPlanningAnswerFailureReason; readonly state: ProjectPlanningState | null; readonly revision?: ProjectPlanningRevision | undefined };
++  | { readonly ok: true; readonly applied: false; readonly reason: 'state-changed' | 'pending-local-changes' | ProjectPlanningAnswerFailureReason; readonly state: ProjectPlanningState | null; readonly revision?: ProjectPlanningRevision | undefined };
+ 
+ export interface ProjectPlanningStateResult {
+   /** Absent on legacy readers; view-selected mutations must require it. */
+diff --git a/packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts b/packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts
+index 985938b107bdc1b950e604823e1bf913df21cc18..46ae231c5ddf2e07896b7b660c12dcc6918f4f4d 100644
+--- a/packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts
++++ b/packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts
+@@ -55,7 +55,7 @@ export function prepareKnowledgeSourceRecord(input: KnowledgeSourceUpsertInput,
+     return record;
+ }
+ 
+-export function writeKnowledgeSourceRow(sqlite: SQLiteStore, record: KnowledgeSourceRecord): void {
++export function writeKnowledgeSourceRow(sqlite: Pick<SQLiteStore, 'run'>, record: KnowledgeSourceRecord): void {
+     sqlite.run(`
+       INSERT OR REPLACE INTO knowledge_sources (
+         id, connector_id, source_type, title, source_uri, canonical_uri, summary, description,
+diff --git a/packages/engine/sdk/src/platform/knowledge/store-source-generation.ts b/packages/engine/sdk/src/platform/knowledge/store-source-generation.ts
+index b2deaf6869b3ca76c95d6a81879b127fe0271cbb..abf84464913c09abff8e10736a85bfb065cdba02 100644
+--- a/packages/engine/sdk/src/platform/knowledge/store-source-generation.ts
++++ b/packages/engine/sdk/src/platform/knowledge/store-source-generation.ts
+@@ -11,7 +11,7 @@ export interface KnowledgeSourceSnapshot {
+ 
+ export type KnowledgeSourceWriteResult =
+   | { readonly kind: 'written'; readonly source: KnowledgeSourceRecord; readonly generation: string }
+-  | { readonly kind: 'held'; readonly reason: 'source-changed'; readonly current: KnowledgeSourceRecord | null; readonly generation: string | null };
++  | { readonly kind: 'held'; readonly reason: 'source-changed' | 'pending-local-changes'; readonly current: KnowledgeSourceRecord | null; readonly generation: string | null };
+ 
+ /** Read SQLite directly: cached records are mutable and cannot grant a write. */
+ export function readKnowledgeSourceSnapshot(
+diff --git a/packages/engine/sdk/src/platform/knowledge/store.ts b/packages/engine/sdk/src/platform/knowledge/store.ts
+index 27d29009ab4d62a391f2a8506870f8670e2a58a8..40d82e1f03713c2c2383e6386847a7e38fac32e2 100644
+--- a/packages/engine/sdk/src/platform/knowledge/store.ts
++++ b/packages/engine/sdk/src/platform/knowledge/store.ts
+@@ -161,7 +161,9 @@ export class KnowledgeStore {
+       throw new RangeError('nodeAutoAcceptConfidence must be a finite 0-100 owner restriction.');
+     }
+     this.nodeActivationConfidenceFloor = config.nodeAutoAcceptConfidence;
+-    this.sqlite = new SQLiteStore(this.dbPath);
++    // Every writer, including ordinary saves and batches, shares this boundary.
++    // Configuration supplied by a caller cannot turn coordination off.
++    this.sqlite = new SQLiteStore(this.dbPath, { coordinated: true });
+     void this.init().catch((error: unknown) => {
+       logger.error('[knowledge-store] initialization failed', {
+         path: this.dbPath,
+@@ -372,7 +374,7 @@ export class KnowledgeStore {
+ 
+   /** Call init() before reading a detached snapshot of the actual stored row. */
+   getSourceSnapshot(selector: { readonly id: string } | { readonly canonicalUri: string }): KnowledgeSourceSnapshot {
+-    return readKnowledgeSourceSnapshot(this.sqlite, selector);
++    return this.sqlite.readPersisted((db) => readKnowledgeSourceSnapshot(db, selector));
+   }
+ 
+   /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */
+@@ -388,21 +390,22 @@ export class KnowledgeStore {
+     let capturedInput: KnowledgeSourceUpsertInput;
+     try { capturedInput = structuredClone(input); } catch { throw new TypeError('Source mutation input must be structured data'); }
+     await this.init();
+-    const snapshot = capturedInput.id
+-      ? this.getSourceSnapshot({ id: capturedInput.id })
+-      : capturedInput.canonicalUri
+-        ? this.getSourceSnapshot({ canonicalUri: capturedInput.canonicalUri })
+-        : { source: null, generation: null };
+-    if (snapshot.generation !== expectedGeneration) {
+-      return { kind: 'held', reason: 'source-changed', current: snapshot.source, generation: snapshot.generation };
+-    }
+-    const record = prepareKnowledgeSourceRecord(capturedInput, snapshot.source);
+-    // No await between the comparison and this source-row mutation.
+-    writeKnowledgeSourceRow(this.sqlite, record);
+-    this.sources.set(record.id, record);
+-    const written = this.getSourceSnapshot({ id: record.id });
+-    await this.sqlite.save();
+-    return { kind: 'written', source: written.source!, generation: written.generation! };
++    const selector = capturedInput.id ? { id: capturedInput.id }
++      : capturedInput.canonicalUri ? { canonicalUri: capturedInput.canonicalUri } : null;
++    const result = await this.sqlite.transactPersisted<KnowledgeSourceWriteResult>((db) => {
++      const snapshot = selector ? readKnowledgeSourceSnapshot(db, selector) : { source: null, generation: null };
++      if (snapshot.generation !== expectedGeneration) {
++        return { changed: false, value: { kind: 'held', reason: 'source-changed', current: snapshot.source, generation: snapshot.generation } };
++      }
++      const record = prepareKnowledgeSourceRecord(capturedInput, snapshot.source);
++      // No await between the persisted comparison, mutation, and publication.
++      writeKnowledgeSourceRow(db, record);
++      const written = readKnowledgeSourceSnapshot(db, { id: record.id });
++      return { changed: true, value: { kind: 'written', source: written.source!, generation: written.generation! } };
++    }, () => this.refreshSnapshot());
++    if (result.kind === 'completed') return result.value;
++    const current = selector ? this.getSourceSnapshot(selector) : { source: null, generation: null };
++    return { kind: 'held', reason: current.generation === expectedGeneration ? 'pending-local-changes' : 'source-changed', current: current.source, generation: current.generation };
+   }
+ 
+   async upsertSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
+@@ -1017,6 +1020,22 @@ export class KnowledgeStore {
+ 
+   private async initialize(): Promise<void> {
+     await this.sqlite.init(createSchema);
++    try {
++      this.refreshSnapshot();
++      // Retention is an initialization mutation, never a side effect of adopting
++      // another writer's current image during a guarded source action. Publish
++      // it through the same baseline check before admitting caller mutations.
++      if (this.pruneJobRuns(MAX_RETAINED_JOB_RUNS) > 0) await this.sqlite.save();
++      this.ready = true;
++    } catch (error) {
++      // No caller mutation can pass init yet. A failed initialization must not
++      // leave its internal retention edits looking ready on the next attempt.
++      this.sqlite.close();
++      throw error;
++    }
++  }
++
++  private refreshSnapshot(): void {
+     const snapshot = loadKnowledgeStoreSnapshot(this.sqlite);
+     this.sources.clear();
+     for (const record of snapshot.sources) this.sources.set(record.id, record);
+@@ -1030,10 +1049,6 @@ export class KnowledgeStore {
+     for (const record of snapshot.extractions) this.extractions.set(record.id, record);
+     this.jobRuns.clear();
+     for (const record of snapshot.jobRuns) this.jobRuns.set(record.id, record);
+-    // Retention at load: an unbounded run history otherwise accretes across
+-    // daemon restarts (one record per job run, forever, the incident's
+-    // zero-result self-improvement objects were exactly this class).
+-    this.pruneJobRuns(MAX_RETAINED_JOB_RUNS);
+     this.refinementTasks.clear();
+     for (const record of snapshot.refinementTasks) this.refinementTasks.set(record.id, record);
+     this.usageRecords.clear();
+@@ -1052,6 +1067,5 @@ export class KnowledgeStore {
+     }
+     this.semanticEnrichmentStates.clear();
+     for (const record of snapshot.semanticEnrichmentStates) this.semanticEnrichmentStates.set(record.sourceId, record);
+-    this.ready = true;
+   }
+ }
+diff --git a/packages/engine/sdk/src/platform/state/sqlite-store-persistence.ts b/packages/engine/sdk/src/platform/state/sqlite-store-persistence.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..745c3a2dea696b82f52f9e4fce578aba1d4fc239
+--- /dev/null
++++ b/packages/engine/sdk/src/platform/state/sqlite-store-persistence.ts
+@@ -0,0 +1,95 @@
++import { createHash, randomUUID } from 'node:crypto';
++import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
++import { basename, dirname, join, resolve } from 'node:path';
++import { acquireCrossProcessLock } from '../workspace/checkpoint/cross-process-lock.js';
++
++function canonicalDatabasePath(path: string): string {
++  try { return realpathSync(path); } catch (error) {
++    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
++  }
++  // realpath alone cannot distinguish an absent file from a dangling symlink.
++  // Follow the latter before choosing the stable first-write lock and rename
++  // destination; replacing the symlink would fork two independent stores.
++  let linkTarget: string | undefined;
++  try {
++    if (lstatSync(path).isSymbolicLink()) {
++      linkTarget = readlinkSync(path);
++    }
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
++  }
++  // Do not swallow a failure resolving the target and fall back to replacing
++  // the original link. A missing target directory is a failed initialization.
++  if (linkTarget !== undefined) return canonicalDatabasePath(resolve(dirname(path), linkTarget));
++  return join(realpathSync(dirname(path)), basename(path));
++}
++
++/** Internal whole-image coordination; never merges or replays stale SQL. */
++export class SQLiteStorePersistence {
++  readonly path: string;
++  private baseline: string | null = null;
++
++  constructor(path: string) {
++    const absolute = resolve(path);
++    mkdirSync(dirname(absolute), { recursive: true });
++    this.path = canonicalDatabasePath(absolute);
++  }
++
++  read(): Buffer | null {
++    try {
++      const info = statSync(this.path);
++      // A hardlinked database has several independently replaceable names.
++      // Refuse it instead of claiming one pathname lock coordinates them all.
++      if (!info.isFile() || info.nlink > 1) throw new Error('SQLiteStore: unsupported coordinated file identity');
++      return readFileSync(this.path);
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
++      throw error;
++    }
++  }
++
++  acceptBaseline(data: Uint8Array | null): void {
++    this.baseline = data === null ? null : imageDigest(data);
++  }
++
++  async lock(): Promise<() => void> {
++    return acquireCrossProcessLock(`${this.path}.knowledge-lock`, { strictOwnership: true });
++  }
++
++  /** Caller owns the lock. A stale ordinary save leaves both images intact. */
++  writeIfCurrent(data: Uint8Array): void {
++    const current = this.read();
++    if ((current === null ? null : imageDigest(current)) !== this.baseline) {
++      throw new Error('SQLiteStore: persisted state changed; pending local changes were not saved');
++    }
++    this.write(data);
++  }
++
++  /** Caller owns the lock and has constructed this image from the current file. */
++  write(data: Uint8Array): void {
++    const temporary = `${this.path}.pending-${process.pid}-${randomUUID()}`;
++    let fd: number | undefined;
++    try {
++      let mode = 0o600;
++      try { mode = statSync(this.path).mode & 0o777; } catch (error) {
++        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
++      }
++      fd = openSync(temporary, 'wx', mode);
++      writeFileSync(fd, data);
++      fsyncSync(fd);
++      closeSync(fd);
++      fd = undefined;
++      renameSync(temporary, this.path);
++      this.acceptBaseline(data);
++    } finally {
++      if (fd !== undefined) closeSync(fd);
++      try { unlinkSync(temporary); } catch (error) {
++        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
++      }
++    }
++  }
++}
++
++export function imageDigest(data: Uint8Array): string {
++  return createHash('sha256').update(data).digest('hex');
++}
+diff --git a/packages/engine/sdk/src/platform/state/sqlite-store.ts b/packages/engine/sdk/src/platform/state/sqlite-store.ts
+index 990ac83f3efa9937463dc2d698302eaed6a5a25a..41016c1346b8bf13068ef9f877996ab9caf7f62f 100644
+--- a/packages/engine/sdk/src/platform/state/sqlite-store.ts
++++ b/packages/engine/sdk/src/platform/state/sqlite-store.ts
+@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
+ import { summarizeError } from '../utils/error-display.js';
+ import { openVersionedSchema, sqlJsVersionHandle } from './store-versioning.js';
+ import { restoreStoreSnapshot, snapshotStoreFile } from './store-snapshots.js';
++import { imageDigest, SQLiteStorePersistence } from './sqlite-store-persistence.js';
+ 
+ // The sql.js engine loads exactly once per process, however many stores open.
+ // Its WASM loader is not re-entrant: two concurrent initSqlJs() calls race the
+@@ -64,9 +65,17 @@ export class SQLiteStore {
+   private initPromise: Promise<void> | null = null;
+   private saveBatchDepth = 0;
+   private saveDirty = false;
++  private readonly coordinated: boolean;
++  private persistence: SQLiteStorePersistence | null = null;
++  private cleanImage: string | null = null;
++  private sqlEngine: SqlJsStatic | null = null;
++  private schema: ((db: SqlDatabase) => void) | null = null;
++  private schemaVersion = 1;
++  private imageEpoch = 0;
+ 
+-  constructor(dbPath?: string) {
++  constructor(dbPath?: string, options: { readonly coordinated?: boolean } = {}) {
+     this.dbPath = dbPath ?? null;
++    this.coordinated = options.coordinated === true;
+   }
+ 
+   get isReady(): boolean {
+@@ -98,6 +107,50 @@ export class SQLiteStore {
+     return this.getDb().exec(sql, params);
+   }
+ 
++  /** Read one current persisted image without replacing pending local state. */
++  readPersisted<T>(read: (db: SqlDatabase) => T): T {
++    if (!this.coordinated) throw new Error('SQLiteStore: persisted reads require coordinated storage');
++    if (!this.persistence) return read(this.getDb());
++    const current = this.openCurrentImage();
++    try { return read(current); } finally { current.close(); }
++  }
++
++  /**
++   * Compare and mutate one fresh image synchronously under file ownership.
++   * Local/batched changes are never discarded to make a guarded write fit.
++   * The commit callback refreshes mirrors before another operation can enter.
++   */
++  async transactPersisted<T>(
++    operation: (db: SqlDatabase) => { readonly changed: boolean; readonly value: T },
++    onCommit: () => void,
++  ): Promise<{ readonly kind: 'local-changes' } | { readonly kind: 'completed'; readonly value: T }> {
++    if (!this.coordinated) throw new Error('SQLiteStore: guarded persistence requires coordinated storage');
++    const release = this.persistence ? await this.persistence.lock() : () => {};
++    let current: SqlDatabase | null = null;
++    try {
++      if (this.saveBatchDepth > 0 || imageDigest(this.getDb().export()) !== this.cleanImage) {
++        return { kind: 'local-changes' };
++      }
++      current = this.openCurrentImage();
++      const result = operation(current);
++      if (result.changed) {
++        const data = current.export();
++        this.persistence?.write(data);
++        const previous = this.db;
++        this.db = current;
++        current = null;
++        this.imageEpoch += 1;
++        this.cleanImage = imageDigest(data);
++        previous?.close();
++        onCommit();
++      }
++      return { kind: 'completed', value: result.value };
++    } finally {
++      current?.close();
++      release();
++    }
++  }
++
+   async batch<T>(operation: () => Promise<T>): Promise<T> {
+     this.saveBatchDepth += 1;
+     try {
+@@ -113,11 +166,33 @@ export class SQLiteStore {
+ 
+   async save(): Promise<boolean> {
+     const dbPath = this.dbPath;
+-    if (isEphemeralDbPath(dbPath) || !this.db || !dbPath) return false;
++    if (!this.db) return false;
++    if (!this.coordinated && (isEphemeralDbPath(dbPath) || !dbPath)) return false;
+     if (this.saveBatchDepth > 0) {
+       this.saveDirty = true;
+       return false;
+     }
++    if (isEphemeralDbPath(dbPath) || !dbPath) {
++      if (this.coordinated) this.cleanImage = imageDigest(this.db.export());
++      return false;
++    }
++
++    if (this.persistence) {
++      // Capture at admission. Later same-handle writes may already be queued;
++      // they must not change which image this particular save publishes.
++      const data = this.db.export();
++      const epoch = this.imageEpoch;
++      const release = await this.persistence.lock();
++      try {
++        this.getDb(); // Closing a handle also cancels its pending saves.
++        if (this.imageEpoch !== epoch) {
++          throw new Error('SQLiteStore: persisted state changed; captured image was superseded');
++        }
++        this.persistence.writeIfCurrent(data);
++        this.cleanImage = imageDigest(data);
++        return true;
++      } finally { release(); }
++    }
+ 
+     try {
+       mkdirSync(dirname(dbPath), { recursive: true });
+@@ -135,19 +210,31 @@ export class SQLiteStore {
+ 
+   close(): void {
+     if (!this.db) return;
++    this.imageEpoch += 1;
+     this.db.close();
+     this.db = null;
+   }
+ 
+   private async initialize(schema: (db: SqlDatabase) => void, options: SqliteStoreInitOptions): Promise<void> {
++    let release: (() => void) | undefined;
+     try {
+       const SQL = await loadSqlJsEngine();
+-      const dbPath = this.dbPath;
++      this.imageEpoch += 1;
++      this.sqlEngine = SQL;
++      this.schema = schema;
++      this.schemaVersion = options.schemaVersion ?? 1;
++      if (this.coordinated && this.dbPath && !isEphemeralDbPath(this.dbPath)) {
++        this.persistence = new SQLiteStorePersistence(this.dbPath);
++        release = await this.persistence.lock();
++      }
++      const dbPath = this.persistence?.path ?? this.dbPath;
+       const persistent = Boolean(dbPath && !isEphemeralDbPath(dbPath));
+       const existedOnDisk = persistent && existsSync(dbPath!);
++      const original = this.persistence?.read() ?? (existedOnDisk ? readFileSync(dbPath!) : null);
++      this.persistence?.acceptBaseline(original);
+ 
+       if (existedOnDisk) {
+-        this.db = new SQL.Database(readFileSync(dbPath!));
++        this.db = new SQL.Database(original!);
+         logger.info('SQLiteStore: loaded from disk', { path: dbPath });
+       } else {
+         this.db = new SQL.Database();
+@@ -170,6 +257,7 @@ export class SQLiteStore {
+         restore: persistent
+           ? (snapshotPath) => {
+               restoreStoreSnapshot(dbPath!, snapshotPath);
++              if (this.coordinated) this.db?.close();
+               this.db = new SQL.Database(readFileSync(dbPath!));
+             }
+           : undefined,
+@@ -181,17 +269,38 @@ export class SQLiteStore {
+       // but only for a store that already lived on disk: a brand-new store
+       // keeps the long-standing contract of touching disk on first save().
+       if (result.applied.length > 0 && existedOnDisk) {
+-        await this.save();
++        if (this.persistence) this.persistence.writeIfCurrent(this.getDb().export());
++        else await this.save();
+       }
++      if (this.coordinated) this.cleanImage = imageDigest(this.getDb().export());
+     } catch (err) {
++      if (this.coordinated) this.db?.close();
+       this.db = null;
+       logger.error('SQLiteStore: failed to initialize', {
+         error: summarizeError(err),
+       });
+       throw err;
++    } finally {
++      release?.();
+     }
+   }
+ 
++  private openCurrentImage(): SqlDatabase {
++    this.getDb();
++    const data = this.persistence ? this.persistence.read() : this.getDb().export();
++    const current = new this.sqlEngine!.Database(data ?? undefined);
++    try {
++      if (data === null) {
++        this.schema!(current);
++        sqlJsVersionHandle(current).setUserVersion(this.schemaVersion);
++      } else if (sqlJsVersionHandle(current).getUserVersion() !== this.schemaVersion) {
++        throw new Error('SQLiteStore: persisted schema changed; reopen the store before writing');
++      }
++      this.schema!(current);
++      return current;
++    } catch (error) { current.close(); throw error; }
++  }
++
+   private getDb(): SqlDatabase {
+     if (!this.db) {
+       throw new Error('SQLiteStore: not initialized, call init() first');
+diff --git a/packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts b/packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts
+index 2c4ab8903553fae392ccac25a12c962c4972289f..3613217bac8103c6b4fbdcc6649c0355f5e5a023 100644
+--- a/packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts
++++ b/packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts
+@@ -90,6 +90,8 @@ import { logger } from '../../utils/logger.js';
+ import { summarizeError } from '../../utils/error-display.js';
+ 
+ export interface CrossProcessLockOptions {
++  /** Fail closed unless ownership is atomically published or its recorded process is provably dead. No age/corrupt-payload takeover or direct-create fallback. */
++  readonly strictOwnership?: boolean | undefined;
+   /**
+    * A lock whose mtime has not moved for this long is treated as abandoned and
+    * taken over. Default 30s. A live holder refreshes its mtime roughly every
+@@ -159,16 +161,20 @@ function isPidAlive(pid: number): boolean {
+  * understood rather than being misjudged as corrupt. Returns null on any
+  * read/parse failure (the caller treats that as stale).
+  */
+-function readLockHolder(lockPath: string): { pid: number; token: string } | null {
++function readLockHolder(lockPath: string, strictOwnership = false): { pid: number; token: string } | null {
+   try {
+     const raw = readFileSync(lockPath, 'utf-8').trim();
+     if (!raw) return null;
+     if (raw.startsWith('{')) {
+-      const parsed = JSON.parse(raw) as { pid?: unknown; token?: unknown };
++      const parsed = JSON.parse(raw) as { pid?: unknown; token?: unknown; acquiredAt?: unknown };
++      if (strictOwnership && (typeof parsed.pid !== 'number' || !Number.isSafeInteger(parsed.pid) || parsed.pid <= 0
++        || typeof parsed.token !== 'string' || !/^[a-f0-9]{16}$/.test(parsed.token)
++        || typeof parsed.acquiredAt !== 'number' || !Number.isFinite(parsed.acquiredAt) || parsed.acquiredAt <= 0)) return null;
+       const pid = Number(parsed.pid);
+       if (!Number.isFinite(pid)) return null;
+       return { pid, token: typeof parsed.token === 'string' ? parsed.token : '' };
+     }
++    if (strictOwnership) return null;
+     const [pidStr] = raw.split(/\s+/);
+     const pid = Number(pidStr);
+     if (!Number.isFinite(pid)) return null;
+@@ -191,15 +197,26 @@ interface LockVerdict {
+  * null when the lock vanished between the failed create and this check,
+  * there is nothing to take over, so the caller just retries the create.
+  */
+-function inspectLock(lockPath: string, staleMs: number): LockVerdict | null {
++function inspectLock(lockPath: string, staleMs: number, strictOwnership = false): LockVerdict | null {
+   let stat: ReturnType<typeof statSync>;
+   try {
+     stat = statSync(lockPath);
+   } catch {
+     return null;
+   }
+-  const holder = readLockHolder(lockPath);
+-  const stale = !holder || !isPidAlive(holder.pid) || Date.now() - stat.mtimeMs > staleMs;
++  const holder = readLockHolder(lockPath, strictOwnership);
++  let stale = false;
++  if (strictOwnership) {
++    // Unknown, malformed, reused-PID and inaccessible owners never grant a
++    // write. Only ESRCH for a validated local process identity proves death.
++    if (holder) {
++      try { process.kill(holder.pid, 0); } catch (error) {
++        stale = (error as NodeJS.ErrnoException).code === 'ESRCH';
++      }
++    }
++  } else {
++    stale = !holder || !isPidAlive(holder.pid) || Date.now() - stat.mtimeMs > staleMs;
++  }
+   return { stale, ino: Number(stat.ino), dev: Number(stat.dev) };
+ }
+ 
+@@ -303,7 +320,7 @@ function reclaimAbandonedStagingFiles(lockPath: string, staleMs: number): void {
+  * turned out to be live after all, or the lock vanished and a plain create
+  * should be retried instead). Never throws.
+  */
+-function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string): number | null {
++function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string, strictOwnership = false): number | null {
+   const ticketPath = `${lockPath}.takeover`;
+   let ticketFd: number;
+   try {
+@@ -324,7 +341,7 @@ function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string):
+     // Re-judge under the ticket. A lock that is gone is NOT taken over: the
+     // path is free, so another waiter's plain create may land at any moment
+     // and replacing it would hand out a second holder. Retry the plain create.
+-    const verdict = inspectLock(lockPath, staleMs);
++    const verdict = inspectLock(lockPath, staleMs, strictOwnership);
+     if (!verdict || !verdict.stale) return null;
+ 
+     stagingPath = newStagingPath(lockPath);
+@@ -345,8 +362,8 @@ function tryTakeOverStaleLock(lockPath: string, staleMs: number, token: string):
+       // inspectLock already returns the inode identity for this purpose. The
+       // check simply was not made, so the window spanned a staging create and a
+       // payload write; it is now a stat immediately followed by the rename.
+-      const current = inspectLock(lockPath, staleMs);
+-      if (!current || current.ino !== verdict.ino || current.dev !== verdict.dev) {
++      const current = inspectLock(lockPath, staleMs, strictOwnership);
++      if (!current || current.ino !== verdict.ino || current.dev !== verdict.dev || (strictOwnership && !current.stale)) {
+         // Someone replaced it. Not ours to take: retry the ordinary path.
+         try {
+           closeSync(fd);
+@@ -403,8 +420,8 @@ let hardlinkUnsupported = false;
+  * Returns the open descriptor of the lock file this process now owns, or null
+  * when someone else holds the lock (EEXIST, ordinary contention).
+  */
+-function createLockAtomically(lockPath: string, token: string): number | null {
+-  if (hardlinkUnsupported) return createLockDirectly(lockPath, token);
++function createLockAtomically(lockPath: string, token: string, strictOwnership = false): number | null {
++  if (hardlinkUnsupported && !strictOwnership) return createLockDirectly(lockPath, token);
+ 
+   const stagingPath = newStagingPath(lockPath);
+   let fd: number;
+@@ -426,6 +443,7 @@ function createLockAtomically(lockPath: string, token: string): number | null {
+     const code = (error as NodeJS.ErrnoException).code;
+     if (code === 'EEXIST') return null; // someone else holds it
+     if (code === 'EPERM' || code === 'ENOSYS' || code === 'EOPNOTSUPP' || code === 'EXDEV') {
++      if (strictOwnership) throw new Error('cross-process-lock: strict ownership requires atomic populated lock creation');
+       // A filesystem without hardlinks (exFAT and friends). Fall back to the
+       // plain create, it reintroduces the tiny zero-byte window described
+       // above, which is the best an FS with no atomic populated-create offers.
+@@ -573,7 +591,10 @@ async function acquireFileLock(
+   lockPath: string,
+   options: CrossProcessLockOptions = {},
+ ): Promise<() => void> {
+-  const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
++  const strictOwnership = options.strictOwnership === true;
++  // Strict ownership also disables age-only staging/ticket reclamation: a
++  // frozen live process may still resume. Ambiguous leftovers time out.
++  const staleMs = strictOwnership ? Infinity : options.staleMs ?? DEFAULT_STALE_MS;
+   const maxBackoffMs = options.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+   const totalTimeoutMs = options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
+   let backoffMs = options.initialBackoffMs ?? DEFAULT_INITIAL_BACKOFF_MS;
+@@ -593,7 +614,7 @@ async function acquireFileLock(
+     // create, or from a takeover's atomic replace. It stays open for the
+     // lock's lifetime: it is both the refresh handle (futimes) and the
+     // ownership proof (inode).
+-    let fd = createLockAtomically(lockPath, token);
++    let fd = createLockAtomically(lockPath, token, strictOwnership);
+     if (fd === null) {
+       if (Date.now() - start >= totalTimeoutMs) {
+         throw new Error(
+@@ -601,9 +622,9 @@ async function acquireFileLock(
+         );
+       }
+ 
+-      const verdict = inspectLock(lockPath, staleMs);
++      const verdict = inspectLock(lockPath, staleMs, strictOwnership);
+       if (!verdict) continue; // vanished, retry the create immediately
+-      if (verdict.stale) fd = tryTakeOverStaleLock(lockPath, staleMs, token);
++      if (verdict.stale) fd = tryTakeOverStaleLock(lockPath, staleMs, token, strictOwnership);
+       if (fd === null) {
+         await sleep(backoffMs);
+         backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+diff --git a/packages/engine/test/knowledge-coordinated-persistence.test.ts b/packages/engine/test/knowledge-coordinated-persistence.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..907b4c98a74343f9c95229d7299ec2e3cb2d5f14
+--- /dev/null
++++ b/packages/engine/test/knowledge-coordinated-persistence.test.ts
+@@ -0,0 +1,310 @@
++import { afterEach, expect, test } from 'bun:test';
++import { existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { tmpdir } from 'node:os';
++import { KnowledgeStore } from '@goodvibes-jev/engine/sdk/platform/knowledge';
++import { SQLiteStore } from '@goodvibes-jev/engine/sdk/platform/state';
++import { createSchema } from '../sdk/src/platform/knowledge/store-schema.js';
++import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoint/cross-process-lock.js';
++
++const roots: string[] = [];
++afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
++function path() { const root = mkdtempSync(join(tmpdir(), 'knowledge-coordinated-')); roots.push(root); return join(root, 'knowledge.sqlite'); }
++const source = (id: string) => ({ id, connectorId: 'fixture', sourceType: 'manual' as const, status: 'indexed' as const });
++const job = (id: string) => ({ id, jobId: 'fixture-job', status: 'completed' as const, mode: 'inline' as const });
++async function open(file: string) { const store = new KnowledgeStore({ dbPath: file }); await store.init(); return store; }
++
++test('ordinary stale source and other-table saves refuse to replace a newer whole image', async () => {
++  const file = path();
++  const first = await open(file); await first.upsertSource(source('original'));
++  const second = await open(file);
++  await second.upsertJobRun(job('other-owner'));
++  const bytes = readFileSync(file);
++  await expect(first.upsertSource(source('stale-write'))).rejects.toThrow('persisted state changed');
++  expect(readFileSync(file)).toEqual(bytes);
++  // The failed save is retained locally, not silently dropped by a guarded refresh.
++  expect(first.getSource('stale-write')).not.toBeNull();
++  expect(await first.upsertSourceIfCurrent(source('conditional'), null)).toMatchObject({ kind: 'held', reason: 'pending-local-changes' });
++  expect(readFileSync(file)).toEqual(bytes);
++  const third = await open(file);
++  expect(third.getJobRun('other-owner')).not.toBeNull();
++  expect(third.getSource('stale-write')).toBeNull();
++});
++
++test('overlapping saves on one handle publish in admission order without dropping later rows', async () => {
++  const file = path(); const store = await open(file);
++  const results = await Promise.all([store.upsertSource(source('first')), store.upsertJobRun(job('middle')), store.upsertSource(source('last'))]);
++  expect(results.map(record => record.id)).toEqual(['first', 'middle', 'last']);
++  const reopened = await open(file);
++  expect(reopened.listSources().map(record => record.id).sort()).toEqual(['first', 'last']);
++  expect(reopened.getJobRun('middle')).not.toBeNull();
++  expect(await store.upsertSourceIfCurrent(source('after-queue'), null)).toMatchObject({ kind: 'written' });
++});
++
++test('an unchanged save queued behind fresh-image adoption cannot restore the earlier image', async () => {
++  const file = path();
++  const store = new SQLiteStore(file, { coordinated: true });
++  const schema = (db: { run(sql: string): void }) => db.run('CREATE TABLE IF NOT EXISTS fixture (value TEXT)');
++  await store.init(schema); store.run("INSERT INTO fixture VALUES ('original')"); await store.save();
++  const release = await acquireCrossProcessLock(`${file}.knowledge-lock`);
++  const guarded = store.transactPersisted(db => { db.run("UPDATE fixture SET value = 'guarded'"); return { changed: true, value: 'written' }; }, () => {});
++  const queuedSave = store.save();
++  // Attach rejection handling before releasing either queued operation.
++  const settledSave = queuedSave.then(() => ({ kind: 'written' }), (error: unknown) => ({ kind: 'error', error }));
++  release();
++  expect(await guarded).toEqual({ kind: 'completed', value: 'written' });
++  const saveOutcome = await settledSave;
++  const reopened = new SQLiteStore(file); await reopened.init(schema);
++  expect(reopened.exec('SELECT value FROM fixture')[0]?.values).toEqual([['guarded']]);
++  expect(saveOutcome).toMatchObject({ kind: 'error', error: { message: 'SQLiteStore: persisted state changed; captured image was superseded' } });
++  store.close(); reopened.close();
++});
++
++test('a stale batch preserves current disk and keeps its pending local records on failure', async () => {
++  const file = path(); const first = await open(file); await first.upsertSource(source('original'));
++  const second = await open(file);
++  let bytes: Buffer<ArrayBuffer> | undefined;
++  await expect(first.batch(async () => {
++    await first.upsertJobRun(job('pending-local'));
++    await second.upsertSource(source('other-owner'));
++    bytes = readFileSync(file);
++  })).rejects.toThrow('persisted state changed');
++  expect(readFileSync(file)).toEqual(bytes!);
++  expect(first.getJobRun('pending-local')).not.toBeNull();
++  const reopened = await open(file);
++  expect(reopened.getSource('other-owner')).not.toBeNull();
++  expect(reopened.getJobRun('pending-local')).toBeNull();
++});
++
++test('persisted snapshot reads observe a new owner without replacing a pending local image', async () => {
++  const file = path(); const first = await open(file); await first.upsertSource(source('original'));
++  const second = await open(file);
++  const oldGeneration = first.getSourceGeneration('original');
++  await second.upsertSource({ ...source('original'), title: 'new owner' });
++  expect(first.getSourceSnapshot({ id: 'original' }).source?.title).toBe('new owner');
++  expect(first.getSourceGeneration('original')).not.toBe(oldGeneration);
++  expect(first.getSource('original')?.title).toBeUndefined();
++});
++
++test('directory and database symlink aliases coordinate the same persisted file', async () => {
++  const file = path(); const first = await open(file); await first.upsertSource(source('original'));
++  const alias = `${file}.alias`; symlinkSync(file, alias);
++  const second = await open(alias);
++  const directoryAlias = join(dirname(file), 'directory-alias'); symlinkSync(dirname(file), directoryAlias, 'dir');
++  const third = await open(join(directoryAlias, 'knowledge.sqlite'));
++  const outcomes = await Promise.all([first.upsertSourceIfCurrent(source('contended'), null), second.upsertSourceIfCurrent(source('contended'), null), third.upsertSourceIfCurrent(source('contended'), null)]);
++  expect(outcomes.map(result => result.kind).sort()).toEqual(['held', 'held', 'written']);
++  expect((await open(file)).getSource('contended')).not.toBeNull();
++  expect(readFileSync(alias)).toEqual(readFileSync(file));
++});
++
++test('a dangling database symlink and its missing target share one first-write identity', async () => {
++  const file = path(); const alias = `${file}.alias`; symlinkSync(file, alias);
++  const linked = await open(alias); const direct = await open(file);
++  const results = await Promise.all([
++    linked.upsertSourceIfCurrent({ ...source('first-write'), metadata: { owner: 'alias' } }, null),
++    direct.upsertSourceIfCurrent({ ...source('first-write'), metadata: { owner: 'direct' } }, null),
++  ]);
++  expect(lstatSync(alias).isSymbolicLink()).toBe(true);
++  expect(results.map(result => result.kind).sort()).toEqual(['held', 'written']);
++  expect(readFileSync(alias)).toEqual(readFileSync(file));
++  expect((await open(file)).getSource('first-write')?.metadata.owner).toBe('alias');
++});
++
++test('relative chained aliases preserve both links and share the missing target on first write', async () => {
++  const file = path(); const firstAlias = join(dirname(file), 'first-alias'); const secondAlias = join(dirname(file), 'second-alias');
++  symlinkSync('second-alias', firstAlias); symlinkSync('knowledge.sqlite', secondAlias);
++  const first = await open(firstAlias); const second = await open(secondAlias); const direct = await open(file);
++  const results = await Promise.all([
++    first.upsertSourceIfCurrent({ ...source('chain-first-write'), metadata: { owner: 'chain' } }, null),
++    second.upsertSourceIfCurrent(source('chain-first-write'), null),
++    direct.upsertSourceIfCurrent(source('chain-first-write'), null),
++  ]);
++  expect(results.map(result => result.kind).sort()).toEqual(['held', 'held', 'written']);
++  expect(readlinkSync(firstAlias)).toBe('second-alias');
++  expect(readlinkSync(secondAlias)).toBe('knowledge.sqlite');
++  expect(readFileSync(firstAlias)).toEqual(readFileSync(file));
++  expect(readFileSync(secondAlias)).toEqual(readFileSync(file));
++  expect(first.getSourceSnapshot({ id: 'chain-first-write' }).source?.metadata.owner).toBe('chain');
++  expect(direct.getSourceSnapshot({ id: 'chain-first-write' }).source?.metadata.owner).toBe('chain');
++});
++
++test('a symlink cycle is refused without replacing links or creating lock/database files', async () => {
++  const file = path(); const firstAlias = join(dirname(file), 'first-alias'); const secondAlias = join(dirname(file), 'second-alias');
++  symlinkSync('second-alias', firstAlias); symlinkSync('first-alias', secondAlias);
++  const before = readdirSync(dirname(file)).sort();
++  const store = new KnowledgeStore({ dbPath: firstAlias });
++  const result = await store.init().then(() => null, (error: unknown) => error);
++  expect(result).toMatchObject({ code: 'ELOOP' });
++  expect(store.isReady).toBe(false);
++  expect(readdirSync(dirname(file)).sort()).toEqual(before);
++  expect(readlinkSync(firstAlias)).toBe('second-alias');
++  expect(readlinkSync(secondAlias)).toBe('first-alias');
++});
++
++test('an unresolved target directory fails without falling back to replacing its alias', async () => {
++  const file = path(); const alias = join(dirname(file), 'unresolved-alias');
++  symlinkSync('missing-directory/knowledge.sqlite', alias);
++  const before = readdirSync(dirname(file)).sort();
++  const store = new KnowledgeStore({ dbPath: alias });
++  const result = await store.init().then(() => null, (error: unknown) => error);
++  expect(result).toMatchObject({ code: 'ENOENT' });
++  expect(store.isReady).toBe(false);
++  expect(readdirSync(dirname(file)).sort()).toEqual(before);
++  expect(readlinkSync(alias)).toBe('missing-directory/knowledge.sqlite');
++  expect(existsSync(join(dirname(file), 'missing-directory'))).toBe(false);
++});
++
++test('hardlinked aliases are refused before a coordinated store can replace one name', async () => {
++  const file = path(); const first = await open(file); await first.upsertSource(source('original'));
++  linkSync(file, `${file}.hardlink`);
++  const bytes = readFileSync(file);
++  await expect(first.upsertSource(source('replacement'))).rejects.toThrow('unsupported coordinated file identity');
++  expect(readFileSync(file)).toEqual(bytes);
++});
++
++test('initialization and a held creation do not create a database or publish schema bytes', async () => {
++  const file = path(); const store = await open(file);
++  expect(existsSync(file)).toBe(false);
++  expect(await store.upsertSourceIfCurrent(source('missing'), 'a'.repeat(64))).toMatchObject({ kind: 'held', reason: 'source-changed' });
++  expect(existsSync(file)).toBe(false);
++});
++
++test('concurrent KnowledgeStore initialization coordinates an existing schema migration', async () => {
++  const file = path(); const legacy = new SQLiteStore(file);
++  await legacy.init(createSchema, { schemaVersion: 0 }); await legacy.save(); legacy.close();
++  const [first, second] = await Promise.all([open(file), open(file)]);
++  expect(first.isReady && second.isReady).toBe(true);
++  const results = await Promise.all([first.upsertSourceIfCurrent(source('after-migration'), null), second.upsertSourceIfCurrent(source('after-migration'), null)]);
++  expect(results.map(result => result.kind).sort()).toEqual(['held', 'written']);
++  expect((await open(file)).getSource('after-migration')).not.toBeNull();
++});
++
++test('initialization persists settled-run retention before the first guarded source action', async () => {
++  const file = path(); const seed = await open(file);
++  await seed.batch(async () => {
++    for (let index = 0; index < 501; index++) await seed.upsertJobRun({ ...job(`retained-${index}`), status: 'running' });
++  });
++  // Model an older file containing an over-cap settled history; current normal
++  // upserts already prune their own completed records.
++  const legacy = new SQLiteStore(file); await legacy.init(createSchema);
++  legacy.run("UPDATE knowledge_job_runs SET status = 'completed'"); await legacy.save(); legacy.close();
++  const reopened = await open(file);
++  expect(reopened.listJobRuns(1000)).toHaveLength(500);
++  expect(await reopened.upsertSourceIfCurrent(source('first-guarded'), null)).toMatchObject({ kind: 'written' });
++  const disk = new SQLiteStore(file); await disk.init(createSchema);
++  expect(disk.exec('SELECT COUNT(*) FROM knowledge_job_runs')[0]?.values).toEqual([[500]]);
++  disk.close();
++  expect((await open(file)).getSource('first-guarded')).not.toBeNull();
++});
++
++test('an initialization retention conflict refuses stale persistence and a retry reloads the winning owner', async () => {
++  const file = path(); const seed = await open(file);
++  await seed.batch(async () => {
++    for (let index = 0; index < 501; index++) await seed.upsertJobRun({ ...job(`retained-${index}`), status: 'running' });
++  });
++  const writer = new SQLiteStore(file, { coordinated: true }); await writer.init(createSchema);
++  writer.run("UPDATE knowledge_job_runs SET status = 'completed'"); await writer.save();
++  const release = await acquireCrossProcessLock(`${file}.knowledge-lock`);
++  const target = new KnowledgeStore({ dbPath: file });
++  const initialization = target.init().then(() => ({ kind: 'ready' }), (error: unknown) => ({ kind: 'error', error }));
++  // Drain initialization's already-loaded WASM promise. The held file lock
++  // keeps it queued before the ordinary writer and its later retention save.
++  await new Promise<void>(resolve => setImmediate(resolve));
++  writer.run('UPDATE knowledge_job_runs SET result = ? WHERE id = ?', [JSON.stringify({ owner: 'winner' }), 'retained-500']);
++  const saved = writer.save();
++  release();
++  await saved;
++  const winningBytes = readFileSync(file);
++  expect(await initialization).toMatchObject({ kind: 'error', error: { message: 'SQLiteStore: persisted state changed; pending local changes were not saved' } });
++  expect(target.isReady).toBe(false);
++  expect(readFileSync(file)).toEqual(winningBytes);
++  await target.init();
++  expect(target.getJobRun('retained-500')?.result).toEqual({ owner: 'winner' });
++  expect(await target.upsertSourceIfCurrent(source('after-retry'), null)).toMatchObject({ kind: 'written' });
++  const reopened = await open(file);
++  expect(reopened.getJobRun('retained-500')?.result).toEqual({ owner: 'winner' });
++  expect(reopened.getSource('after-retry')).not.toBeNull();
++  writer.close();
++});
++
++test('a failed coordinated migration restores the original bytes while it owns the file', async () => {
++  const file = path(); const legacy = new SQLiteStore(file);
++  await legacy.init(createSchema, { schemaVersion: 0 }); await legacy.save(); legacy.close();
++  const original = readFileSync(file);
++  const failing = new SQLiteStore(file, { coordinated: true });
++  await expect(failing.init(createSchema, { schemaVersion: 1, migrations: [{ toVersion: 1, migrate(db) { db.run('DROP TABLE knowledge_sources'); throw new Error('fixture migration refused'); } }] })).rejects.toThrow('fixture migration refused');
++  expect(readFileSync(file)).toEqual(original);
++  const reopened = await open(file);
++  expect(await reopened.upsertSourceIfCurrent(source('after-failure'), null)).toMatchObject({ kind: 'written' });
++});
++
++test('unrelated SQLiteStore callers keep the existing default save behavior', async () => {
++  const file = path(); const schema = (db: { run(sql: string): void }) => db.run('CREATE TABLE IF NOT EXISTS fixture (value TEXT)');
++  const first = new SQLiteStore(file); await first.init(schema); await first.save();
++  const second = new SQLiteStore(file); await second.init(schema);
++  first.run("INSERT INTO fixture VALUES ('first')"); await first.save();
++  second.run("INSERT INTO fixture VALUES ('second')"); await second.save();
++  const third = new SQLiteStore(file); await third.init(schema);
++  expect(third.exec('SELECT value FROM fixture')[0]?.values).toEqual([['second']]);
++  first.close(); second.close(); third.close();
++});
++
++test('default in-memory subclasses retain their existing batch save lifecycle', async () => {
++  class RecordingStore extends SQLiteStore {
++    calls = 0;
++    override save() { this.calls += 1; return super.save(); }
++  }
++  const store = new RecordingStore(':memory:');
++  await store.init(db => db.run('CREATE TABLE IF NOT EXISTS fixture (value TEXT)'));
++  await store.batch(async () => { await store.save(); });
++  expect(store.calls).toBe(1);
++  store.close();
++});
++
++test('a concurrent ordinary process writer cannot undo a successful guarded process write', async () => {
++  const file = path(); const seed = await open(file); await seed.upsertSource(source('original'));
++  const script = `
++    import { KnowledgeStore } from '@goodvibes-jev/engine/sdk/platform/knowledge';
++    const store = new KnowledgeStore({ dbPath: process.argv[1] }); await store.init();
++    console.log('ready'); await Bun.stdin.text();
++    let result;
++    if (process.argv[2] === 'ordinary') {
++      try { await store.upsertJobRun({ id: 'ordinary-job', jobId: 'fixture', status: 'completed', mode: 'inline' }); result = 'written'; }
++      catch (error) { if (!String(error.message).startsWith('SQLiteStore: persisted state changed;')) throw error; result = 'conflict'; }
++    } else {
++      result = (await store.upsertSourceIfCurrent({ id: 'guarded-source', connectorId: 'fixture', sourceType: 'manual', status: 'indexed' }, null)).kind;
++    }
++    console.log(result);
++  `;
++  const children = ['ordinary', 'guarded'].map(mode => Bun.spawn([
++    process.execPath, '--no-env-file', '--preload', new URL('../scripts/test-network-preload.ts', import.meta.url).pathname, '-e', script, file, mode,
++  ], { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }));
++  const readers = children.map(child => child.stdout.getReader());
++  const deadline = setTimeout(() => { for (const child of children) if (child.exitCode === null) child.kill(); }, 12000);
++  try {
++    await Promise.all(readers.map(async reader => {
++      let line = '';
++      while (!line.includes('\n')) { const chunk = await reader.read(); if (chunk.done) break; line += new TextDecoder().decode(chunk.value); }
++      expect(line.trim()).toBe('ready');
++    }));
++    for (const child of children) { child.stdin.write('go'); child.stdin.end(); }
++    const outcomes = await Promise.all(children.map(async (child, index) => {
++      const output = async () => { let text = ''; for (;;) { const chunk = await readers[index]!.read(); if (chunk.done) return text.trim(); text += new TextDecoder().decode(chunk.value); } };
++      const [exit, result, error] = await Promise.all([child.exited, output(), new Response(child.stderr).text()]);
++      expect({ exit, error }).toEqual({ exit: 0, error: '' });
++      return result;
++    }));
++    expect(['written', 'conflict']).toContain(outcomes[0]!);
++    expect(outcomes[1]).toBe('written');
++    const reopened = await open(file);
++    expect(reopened.getSource('guarded-source')).not.toBeNull();
++    expect(reopened.getSource('original')).not.toBeNull();
++    expect(reopened.getJobRun('ordinary-job') !== null).toBe(outcomes[0] === 'written');
++  } finally {
++    clearTimeout(deadline);
++    for (const child of children) if (child.exitCode === null) child.kill();
++    await Promise.allSettled(children.map(child => child.exited));
++    for (const reader of readers) reader.releaseLock();
++  }
++}, 20000);
+diff --git a/packages/engine/test/knowledge-strict-lock.test.ts b/packages/engine/test/knowledge-strict-lock.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..a14b594240db22812db45d46bf29a3241dad9e6a
+--- /dev/null
++++ b/packages/engine/test/knowledge-strict-lock.test.ts
+@@ -0,0 +1,66 @@
++import { afterEach, expect, test } from 'bun:test';
++import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoint/cross-process-lock.js';
++
++const roots: string[] = [];
++afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
++function lockPath() { const root = mkdtempSync(join(tmpdir(), 'knowledge-strict-lock-')); roots.push(root); return join(root, '.lock'); }
++const options = { strictOwnership: true, totalTimeoutMs: 40, initialBackoffMs: 5, maxBackoffMs: 10 } as const;
++
++test('strict ownership never evicts a live process because its heartbeat is old', async () => {
++  const file = lockPath();
++  const bytes = JSON.stringify({ pid: process.pid, token: '1234567890abcdef', acquiredAt: Date.now() - 120000 });
++  writeFileSync(file, bytes);
++  utimesSync(file, new Date(0), new Date(0));
++  await expect(acquireCrossProcessLock(file, { ...options, staleMs: 1 }).then(release => { release(); return 'acquired'; })).rejects.toThrow('timed out');
++  expect(readFileSync(file, 'utf8')).toBe(bytes);
++});
++
++test.each(['', 'not-json', '{"pid":0}', '{"pid":-7}', '{"pid":99999999,"token":""}', '{"pid":99999999,"token":"1234567890abcdef","acquiredAt":"bad"}'])(
++  'strict ownership does not turn corrupt metadata into write authority: %j', async bytes => {
++    const file = lockPath(); writeFileSync(file, bytes);
++    await expect(acquireCrossProcessLock(file, options).then(release => { release(); return 'acquired'; })).rejects.toThrow('timed out');
++    expect(readFileSync(file, 'utf8')).toBe(bytes);
++  },
++);
++
++test('strict ownership recovers a real exited owner and releases only its own inode', async () => {
++  const file = lockPath();
++  const modulePath = new URL('../sdk/src/platform/workspace/checkpoint/cross-process-lock.ts', import.meta.url).pathname;
++  const child = Bun.spawn([process.execPath, '--no-env-file', '--preload', new URL('../scripts/test-network-preload.ts', import.meta.url).pathname, '-e',
++    `const { acquireCrossProcessLock } = await import(process.argv[1]); await acquireCrossProcessLock(process.argv[2], { strictOwnership: true }); console.log(process.pid); process.exit(0);`, modulePath, file,
++  ], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } });
++  const [exit, output, errors] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
++  expect({ exit, errors }).toEqual({ exit: 0, errors: '' });
++  const deadPid = Number(output.trim());
++  expect(() => process.kill(deadPid, 0)).toThrow();
++  const oldInode = statSync(file).ino;
++  const release = await acquireCrossProcessLock(file, { ...options, totalTimeoutMs: 1000 });
++  expect(statSync(file).ino).not.toBe(oldInode);
++  expect(JSON.parse(readFileSync(file, 'utf8')).pid).toBe(process.pid);
++  release(); release();
++  expect(existsSync(file)).toBe(false);
++});
++
++test('unsupported atomic publication fails closed, including after another caller enabled fallback', async () => {
++  const file = lockPath();
++  const modulePath = new URL('../sdk/src/platform/workspace/checkpoint/cross-process-lock.ts', import.meta.url).pathname;
++  const script = `
++    import { mock } from 'bun:test';
++    const fs = await import('node:fs');
++    const original = { ...fs };
++    mock.module('node:fs', () => ({ ...original, linkSync() { throw Object.assign(new Error('fixture unsupported'), { code: 'EOPNOTSUPP' }); } }));
++    const { acquireCrossProcessLock } = await import(process.argv[1]);
++    const release = await acquireCrossProcessLock(process.argv[2] + '.legacy'); release();
++    try { await acquireCrossProcessLock(process.argv[2], { strictOwnership: true }); console.log('wrongly acquired'); }
++    catch (error) { console.log(error.message); }
++  `;
++  const child = Bun.spawn([process.execPath, '--no-env-file', '--preload', new URL('../scripts/test-network-preload.ts', import.meta.url).pathname, '-e', script, modulePath, file],
++    { stdout: 'pipe', stderr: 'pipe', env: { ...process.env } });
++  const [exit, output] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
++  expect(exit).toBe(0);
++  expect(output.trim()).toBe('cross-process-lock: strict ownership requires atomic populated lock creation');
++  expect(existsSync(file)).toBe(false);
++});
+diff --git a/packages/engine/test/planning-persisted-generation.test.ts b/packages/engine/test/planning-persisted-generation.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed08c23695b3da7ae1a341311e7a618c9ac99d7e
+--- /dev/null
++++ b/packages/engine/test/planning-persisted-generation.test.ts
+@@ -0,0 +1,106 @@
++import { afterEach, expect, test } from 'bun:test';
++import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
++
++const roots: string[] = [];
++afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
++async function fixture() {
++  const root = mkdtempSync(join(tmpdir(), 'planning-persisted-generation-')); roots.push(root);
++  const path = join(root, 'knowledge.sqlite');
++  const first = new KnowledgeStore({ dbPath: path });
++  const firstService = new ProjectPlanningService(first);
++  await firstService.upsertState({ projectId: 'fixture', state: { goal: 'Original goal', executionApproved: false, tasks: [{ id: 'original', title: 'Original work' }] } });
++  const selected = await firstService.getState({ projectId: 'fixture' });
++  const second = new KnowledgeStore({ dbPath: path }); await second.init();
++  const secondService = new ProjectPlanningService(second);
++  return { path, first, second, firstService, secondService, selected };
++}
++async function reopen(path: string) {
++  const store = new KnowledgeStore({ dbPath: path }); await store.init();
++  return { store, state: await new ProjectPlanningService(store).getState({ projectId: 'fixture' }) };
++}
++
++test('a stale planning handle cannot approve over another handle’s persisted replacement', async () => {
++  const f = await fixture();
++  await f.secondService.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Second owner replacement', tasks: [{ id: 'second', title: 'Second owner work' }] } });
++  const before = readFileSync(f.path);
++  const result = await f.firstService.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } });
++  const third = await reopen(f.path);
++  expect({ applied: result.applied, goal: third.state.state!.goal, approved: third.state.state!.executionApproved }).toEqual({ applied: false, goal: 'Second owner replacement', approved: false });
++  expect(readFileSync(f.path)).toEqual(before);
++});
++
++test('two independently loaded handles cannot both create an absent conditional source', async () => {
++  const f = await fixture();
++  const source = { id: 'conditional', connectorId: 'fixture', sourceType: 'manual' as const, status: 'indexed' as const };
++  const results = await Promise.all([
++    f.first.upsertSourceIfCurrent({ ...source, metadata: { owner: 'first' } }, null),
++    f.second.upsertSourceIfCurrent({ ...source, metadata: { owner: 'second' } }, null),
++  ]);
++  const third = await reopen(f.path);
++  expect({ kinds: results.map(result => result.kind).sort(), owner: third.store.getSource(source.id)?.metadata.owner }).toEqual({ kinds: ['held', 'written'], owner: 'first' });
++});
++
++test('a guarded source update preserves another handle’s writes to other tables', async () => {
++  const f = await fixture();
++  await f.second.upsertJobRun({ id: 'other-owner-job', jobId: 'fixture-job', status: 'completed', mode: 'inline', result: { retained: true } });
++  const result = await f.firstService.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } });
++  const third = await reopen(f.path);
++  expect(result.applied).toBe(true);
++  expect(third.store.getJobRun('other-owner-job')).toMatchObject({ status: 'completed', result: { retained: true } });
++  expect(f.first.getJobRun('other-owner-job')).toMatchObject({ status: 'completed' });
++});
++
++test('a conditional action holds rather than reloading over pending local batch writes', async () => {
++  const f = await fixture();
++  await f.first.batch(async () => {
++    await f.first.upsertJobRun({ id: 'local-pending-job', jobId: 'fixture-job', status: 'completed', mode: 'inline' });
++    const result = await f.firstService.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } });
++    expect(result.applied).toBe(false);
++  });
++  const third = await reopen(f.path);
++  expect(third.store.getJobRun('local-pending-job')).toMatchObject({ status: 'completed' });
++  expect(third.state.state!.executionApproved).toBe(false);
++});
++
++test('separate processes released from one barrier cannot both win an expected-null creation', async () => {
++  const f = await fixture();
++  const script = `
++    import { KnowledgeStore } from '@goodvibes-jev/engine/sdk/platform/knowledge';
++    const store = new KnowledgeStore({ dbPath: process.argv[1] });
++    await store.init();
++    console.log('ready');
++    await Bun.stdin.text();
++    const result = await store.upsertSourceIfCurrent({ id: 'process-conditional', connectorId: 'fixture', sourceType: 'manual', status: 'indexed', metadata: { owner: process.argv[2] } }, null);
++    console.log(JSON.stringify({ owner: process.argv[2], kind: result.kind }));
++  `;
++  const children = ['first', 'second'].map(owner => Bun.spawn([
++    process.execPath, '--no-env-file', '--preload', new URL('../scripts/test-network-preload.ts', import.meta.url).pathname,
++    '-e', script, f.path, owner,
++  ], { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' }));
++  const readers = children.map(child => child.stdout.getReader());
++  const deadline = setTimeout(() => { for (const child of children) if (child.exitCode === null) child.kill(); }, 12000);
++  try {
++    await Promise.all(readers.map(async reader => {
++      const first = await reader.read();
++      expect(new TextDecoder().decode(first.value)).toContain('ready');
++    }));
++    for (const child of children) { child.stdin.write('go'); child.stdin.end(); }
++    const results = await Promise.all(children.map(async (child, index) => {
++      const output = async () => { let text = ''; for (;;) { const chunk = await readers[index]!.read(); if (chunk.done) return text; text += new TextDecoder().decode(chunk.value); } };
++      const [exit, text, error] = await Promise.all([child.exited, output(), new Response(child.stderr).text()]);
++      expect({ exit, error }).toEqual({ exit: 0, error: '' });
++      return JSON.parse(text.trim()) as { owner: string; kind: 'written' | 'held' };
++    }));
++    const third = await reopen(f.path);
++    expect(results.map(result => result.kind).sort()).toEqual(['held', 'written']);
++    expect(third.store.getSource('process-conditional')?.metadata.owner).toBe(results.find(result => result.kind === 'written')!.owner);
++  } finally {
++    clearTimeout(deadline);
++    for (const child of children) if (child.exitCode === null) child.kill();
++    await Promise.allSettled(children.map(child => child.exited));
++    for (const reader of readers) reader.releaseLock();
++  }
++}, 20000);
+diff --git a/packages/engine/test/pr57-independent-persisted-races.test.ts b/packages/engine/test/pr57-independent-persisted-races.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..c453dfa07db8696c52ae904ee023d82acac540c2
+--- /dev/null
++++ b/packages/engine/test/pr57-independent-persisted-races.test.ts
+@@ -0,0 +1,62 @@
++import { afterEach, expect, test } from 'bun:test';
++import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
++import { join } from 'node:path';
++import { tmpdir } from 'node:os';
++import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
++
++const roots: string[] = [];
++afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
++function path() { const root = mkdtempSync(join(tmpdir(), 'pr57-independent-')); roots.push(root); return join(root, 'knowledge.sqlite'); }
++async function seeded() {
++  const file = path();
++  const store = new KnowledgeStore({ dbPath: file });
++  const service = new ProjectPlanningService(store);
++  await service.upsertState({ projectId: 'fixture', state: { goal: 'Original selected plan', executionApproved: false,
++    openQuestions: [{ id: 'q1', prompt: 'Which tests?', status: 'open' }],
++    tasks: [{ id: 'original', title: 'Original task' }],
++  } });
++  const selected = await service.getState({ projectId: 'fixture' });
++  if (!selected.revision || !selected.state) throw new Error('missing seeded revision');
++  return { file, store, service, selected };
++}
++
++test('a writer through another real handle invalidates a selected approval without overwriting its rows', async () => {
++  const first = await seeded();
++  const otherStore = new KnowledgeStore({ dbPath: first.file });
++  const otherService = new ProjectPlanningService(otherStore);
++  await otherService.upsertState({ projectId: 'fixture', state: { ...first.selected.state!, goal: 'Replacement from second handle',
++    tasks: [{ id: 'replacement', title: 'Replacement task' }], executionApproved: false,
++  } });
++  const before = readFileSync(first.file);
++  const result = await first.service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: first.selected.revision! }, action: { kind: 'approve' } });
++  const reopened = new ProjectPlanningService(new KnowledgeStore({ dbPath: first.file }));
++  const after = await reopened.getState({ projectId: 'fixture' });
++  console.log(JSON.stringify({ scenario: 'two-handles-approval', applied: result.applied, persistedGoal: after.state?.goal, persistedApproval: after.state?.executionApproved, diskUnchanged: readFileSync(first.file).equals(before) }));
++  expect(result).toMatchObject({ applied: false, reason: 'state-changed' });
++  expect(readFileSync(first.file)).toEqual(before);
++  expect(after.state?.goal).toBe('Replacement from second handle');
++  expect(after.state?.executionApproved).toBe(false);
++});
++
++test('an absent-row condition observes a creation through another initialized real handle', async () => {
++  const file = path();
++  const first = new KnowledgeStore({ dbPath: file }); const second = new KnowledgeStore({ dbPath: file });
++  await first.init(); await second.init();
++  const input = { id: 'shared-row', connectorId: 'fixture', sourceType: 'dataset' as const, status: 'indexed' as const, metadata: { value: 'first' } };
++  expect((await first.upsertSourceIfCurrent(input, null)).kind).toBe('written');
++  const before = readFileSync(file);
++  const result = await second.upsertSourceIfCurrent({ ...input, metadata: { value: 'second' } }, null);
++  const reopened = new KnowledgeStore({ dbPath: file }); await reopened.init();
++  console.log(JSON.stringify({ scenario: 'two-handles-absent', kind: result.kind, persisted: reopened.getSource('shared-row')?.metadata.value }));
++  expect(result.kind).toBe('held');
++  expect(readFileSync(file)).toEqual(before);
++});
++
++test('same-handle deletion and changed recreation invalidate the captured revision', async () => {
++  const f = await seeded();
++  expect(await f.store.deleteSource(f.selected.revision!.sourceId)).toBe(true);
++  await f.service.upsertState({ projectId: 'fixture', state: { ...f.selected.state!, goal: 'Recreated replacement', executionApproved: false } });
++  const before = readFileSync(f.file);
++  expect(await f.service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: f.selected.revision! }, action: { kind: 'approve' } })).toMatchObject({ applied: false, reason: 'state-changed' });
++  expect(readFileSync(f.file)).toEqual(before);
++});
+diff --git a/packages/engine/test/types/planning-persisted-guard-public.ts b/packages/engine/test/types/planning-persisted-guard-public.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..40125d23e008e1187e45ab985f33b959d9150826
+--- /dev/null
++++ b/packages/engine/test/types/planning-persisted-guard-public.ts
+@@ -0,0 +1,37 @@
++import {
++  KnowledgeStore,
++  ProjectPlanningService,
++  type ProjectPlanningRevision,
++  type ProjectPlanningStateActionInput,
++  type ProjectPlanningStateActionResult,
++  type KnowledgeSourceWriteResult,
++} from '@goodvibes-jev/engine/sdk/platform/knowledge';
++import { SQLiteStore } from '@goodvibes-jev/engine/sdk/platform/state';
++
++declare const store: KnowledgeStore;
++declare const service: ProjectPlanningService;
++declare const revision: ProjectPlanningRevision;
++const selected: ProjectPlanningStateActionInput = {
++  projectId: 'fixture', expected: { kind: 'revision', revision }, action: { kind: 'approve' },
++};
++const result: Promise<ProjectPlanningStateActionResult> = service.applyStateAction(selected);
++const manual: Promise<ProjectPlanningStateActionResult> = service.applyStateAction({
++  projectId: 'fixture', expected: { kind: 'current' }, action: { kind: 'answer', questionId: 'question', answer: 'Operator answer' },
++});
++const sourceHold: Extract<KnowledgeSourceWriteResult, { kind: 'held' }>['reason'] = 'pending-local-changes';
++const planningHold: Extract<ProjectPlanningStateActionResult, { applied: false }>['reason'] = 'pending-local-changes';
++const currentGeneration: string | null = store.getSourceGeneration('fixture');
++// @ts-expect-error A selected producer cannot omit the captured precondition.
++service.applyStateAction({ projectId: 'fixture', action: { kind: 'approve' } });
++// @ts-expect-error A revision binding is readonly to its consumer.
++revision.generation = 'different';
++
++const legacyStore = new SQLiteStore(':memory:');
++const coordinatedStore = new SQLiteStore(':memory:', { coordinated: true });
++const transaction = coordinatedStore.transactPersisted(db => {
++  const values = db.exec('SELECT 1');
++  return { changed: false, value: values.length };
++}, () => {});
++const transactionResult: Promise<{ readonly kind: 'local-changes' } | { readonly kind: 'completed'; readonly value: number }> = transaction;
++
++export { result, manual, sourceHold, planningHold, currentGeneration, legacyStore, transactionResult };
