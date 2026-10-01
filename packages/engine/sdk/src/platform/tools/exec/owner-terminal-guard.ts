@@ -40,6 +40,7 @@
  */
 
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { executePolicyCheck } from '../../gate/execute-policy-check.js';
 import { ownerTerminal, ownerTerminalState } from '../batteries/owner-terminal.js';
 
 const OWNER_TERMINAL_SITE = 'tools.exec.owner-terminal';
@@ -108,10 +109,15 @@ function refuse(detail: string): OwnerTerminalDecision {
 export async function decideOwnerTerminalAccess(
   command: string,
   guard: OwnerTerminalGuard | null | undefined,
+  signal?: AbortSignal,
 ): Promise<OwnerTerminalDecision> {
+  signal?.throwIfAborted();
   if (!guard || guard.posture !== 'enforced') return ALLOWED;
   const state = ownerTerminalState(command, PLATFORM_TMUX_SESSION_PREFIX, guard.ownedSessionNames ?? []);
-  const run = await ownerTerminal.run(judgmentPort(OWNER_TERMINAL_SITE), state, { site: OWNER_TERMINAL_SITE });
+  const run = await executePolicyCheck(() => ownerTerminal.run(judgmentPort(OWNER_TERMINAL_SITE), state, {
+    site: OWNER_TERMINAL_SITE, ...(signal === undefined ? {} : { signal }),
+  }), signal);
+  signal?.throwIfAborted();
   const { acts_on_session: acts, owned_targets: owned } = run.readings;
   const leavesSessionsAlone = acts.verdict === 'no' && acts.outcome === 'act';
   const actsOnlyOnOwned = owned.verdict === 'yes' && owned.outcome === 'act';
