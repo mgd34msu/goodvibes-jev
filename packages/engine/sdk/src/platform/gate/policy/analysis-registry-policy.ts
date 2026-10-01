@@ -60,20 +60,24 @@ export const AGENT_REGISTRY_CONTENT_DENIAL_MESSAGE = REGISTRY_CONTENT_DENIAL;
 export function wrapAnalyzeToolForAgentPolicy(tool: Tool): void {
   narrowAnalyzeToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateAnalyzeToolInvocationForAgentPolicy(args as AnalyzeToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
 export function wrapRegistryToolForAgentPolicy(tool: Tool): void {
   narrowRegistryToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateRegistryToolInvocationForAgentPolicy(args as RegistryToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 

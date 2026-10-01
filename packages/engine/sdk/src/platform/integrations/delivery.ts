@@ -241,6 +241,9 @@ export class DeliveryQueue {
   private _delivered = 0;
   private _retrying = 0;
   private _deadLettered = 0;
+  private _closed = false;
+  private _closing: Promise<void> | undefined;
+  private readonly _active = new Set<Promise<unknown>>();
 
   constructor(config: DeliveryQueueOptions = {}) {
     const { featureFlags, configManager, ...queueConfig } = config;
@@ -275,6 +278,7 @@ export class DeliveryQueue {
     payload: string,
     deliver: () => Promise<void>,
   ): Promise<DeliveryOutcome> {
+    this._assertOpen();
     const id = `${channel}:${event}:${Date.now()}:${randomUUID().slice(0, 8)}`;
     const entry: PendingEntry = {
       id,
@@ -287,7 +291,7 @@ export class DeliveryQueue {
       deliver,
     };
     this._pending.set(id, entry);
-    return this._attempt(entry);
+    return this._startAttempt(entry);
   }
 
   /**
@@ -302,25 +306,44 @@ export class DeliveryQueue {
    *
    * @returns Array of per-entry replay results.
    */
-  async replay(
+  replay(
     deliver: (entry: DeadLetterEntry) => Promise<void>,
   ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
+    return this._own(() => this._replay(deliver));
+  }
+
+  private async _replay(
+    deliver: (entry: DeadLetterEntry) => Promise<void>,
+  ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
+    this._assertOpen();
     const entries = [...this._dlq];
     const results: Array<{ id: string; outcome: DeliveryOutcome }> = [];
 
     for (const dlqEntry of entries) {
+      this._assertOpen();
       // Remove from DLQ before replaying
       const idx = this._dlq.findIndex((e) => e.id === dlqEntry.id);
-      if (idx !== -1) this._dlq.splice(idx, 1);
+      // Another replay or an explicit clear may have already consumed this row.
+      if (idx === -1) continue;
+      this._dlq.splice(idx, 1);
       this._deadLettered = Math.max(0, this._deadLettered - 1);
 
-      const outcome = await this.enqueue(
-        dlqEntry.channel,
-        dlqEntry.event,
-        dlqEntry.payload,
-        () => deliver(dlqEntry),
-      );
-      results.push({ id: dlqEntry.id, outcome });
+      try {
+        const outcome = await this.enqueue(
+          dlqEntry.channel,
+          dlqEntry.event,
+          dlqEntry.payload,
+          () => deliver(dlqEntry),
+        );
+        results.push({ id: dlqEntry.id, outcome });
+      } catch (error) {
+        // Keep retained recovery data when no replay outcome can be settled.
+        // Restoration uses the same bounded FIFO without a new send or DLQ event.
+        if (!this._dlq.some((entry) => entry.id === dlqEntry.id)) {
+          this._retainDeadLetter(dlqEntry);
+        }
+        throw error;
+      }
     }
 
     return results;
@@ -362,15 +385,48 @@ export class DeliveryQueue {
   }
 
   /**
-   * Cancel all pending retry timers and clear internal state.
-   * Call on shutdown to prevent timer leaks.
+   * Permanently close admission and cancel pending retries. Admitted deliveries
+   * may finish, but cannot start another attempt. Use close() to drain them.
    */
   dispose(): void {
+    this._closed = true;
     for (const timer of this._timers.values()) {
       clearTimeout(timer);
     }
     this._timers.clear();
     this._pending.clear();
+    this._retrying = 0;
+  }
+
+  /**
+   * Stop admission/retries immediately, then await already admitted attempts.
+   * A delivery callback must settle itself; this does not cancel its transport.
+   * Delivery failures remain observable through their original promises.
+   */
+  close(): Promise<void> {
+    this.dispose();
+    return this._closing ??= Promise.allSettled([...this._active]).then(() => {});
+  }
+
+  private _assertOpen(): void {
+    if (this._closed) throw new DeliveryError('Delivery queue is closed.', 'terminal');
+  }
+
+  private _startAttempt(entry: PendingEntry): Promise<DeliveryOutcome> {
+    return this._own(() => this._attempt(entry));
+  }
+
+  private _own<T>(run: () => Promise<T>): Promise<T> {
+    if (this._closed) return Promise.reject(new DeliveryError('Delivery queue is closed.', 'terminal'));
+    // Register before invocation, including complete replay/restoration work.
+    let resolve!: (outcome: T) => void;
+    let reject!: (error: unknown) => void;
+    const active = new Promise<T>((ok, no) => { resolve = ok; reject = no; });
+    this._active.add(active);
+    void active.then(() => this._active.delete(active), () => this._active.delete(active));
+    try { void run().then(resolve, reject); }
+    catch (error) { reject(error); }
+    return active;
   }
 
   private async _attempt(entry: PendingEntry): Promise<DeliveryOutcome> {
@@ -388,17 +444,20 @@ export class DeliveryQueue {
       });
       return 'delivered';
     } catch (err: unknown) {
+      this._assertOpen();
       const errorMsg = summarizeError(err);
       let transience: FailureTransience;
       try {
         transience = await readFailureTransience(err, 'integrations.delivery.queue');
       } catch (readError: unknown) {
         this._pending.delete(entry.id);
+        this._assertOpen();
         throw new AggregateError(
           [err, readError],
           `DeliveryQueue: ${entry.channel} delivery failed and whether to retry it could not be read (${summarizeError(readError)})`,
         );
       }
+      this._assertOpen();
       const { failureClass } = transience;
 
       if (failureClass === 'terminal' || entry.attempts > this._config.maxRetries) {
@@ -425,7 +484,8 @@ export class DeliveryQueue {
       const timer = setTimeout(() => {
         this._timers.delete(entry.id);
         this._retrying = Math.max(0, this._retrying - 1);
-        void this._attempt(entry).catch((error: unknown) => {
+        if (this._closed) return;
+        void this._startAttempt(entry).catch((error: unknown) => {
           logger.warn('DeliveryQueue: retry attempt could not be settled', {
             channel: entry.channel,
             event: entry.event,
@@ -458,14 +518,7 @@ export class DeliveryQueue {
       failureClass,
     };
 
-    // Bounded DLQ: evict oldest entry when limit exceeded
-    if (this._dlq.length >= this._config.maxDlqSize) {
-      this._dlq.shift();
-      this._deadLettered = Math.max(0, this._deadLettered - 1);
-    }
-
-    this._dlq.push(dlqEntry);
-    this._deadLettered += 1;
+    this._retainDeadLetter(dlqEntry);
     this._pending.delete(entry.id);
 
     if (this._config.sloEnforced) {
@@ -504,6 +557,16 @@ export class DeliveryQueue {
     }
 
     return 'dead_letter';
+  }
+
+  private _retainDeadLetter(entry: DeadLetterEntry): void {
+    // Bounded DLQ: evict oldest entry when limit exceeded.
+    if (this._dlq.length >= this._config.maxDlqSize) {
+      this._dlq.shift();
+      this._deadLettered = Math.max(0, this._deadLettered - 1);
+    }
+    this._dlq.push(entry);
+    this._deadLettered += 1;
   }
 
   private _computeDelay(attempt: number): number {

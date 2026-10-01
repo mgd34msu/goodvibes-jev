@@ -1,3 +1,4 @@
+import type { BrowserJudgmentRouteHandlers } from './browser-judgment-routes.js';
 /** The return type for all daemon route handler methods, either a synchronous or async `Response`. */
 export type MaybeResponse = Response | Promise<Response>;
 
@@ -456,7 +457,8 @@ export interface DaemonGatewayRestRouteHandlers {
 }
 
 export interface DaemonApiRouteHandlers
-  extends DaemonRemoteDispatchRouteHandlers,
+  extends BrowserJudgmentRouteHandlers,
+    DaemonRemoteDispatchRouteHandlers,
     DaemonOperatorRouteHandlers,
     DaemonAutomationRouteHandlers,
     DaemonSessionRouteHandlers,

@@ -126,6 +126,8 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       pairingTokenPath: controlPlaneStorePath(shellPaths, GOODVIBES_DAEMON_SURFACE_ROOT, 'pairing-tokens.json'),
     });
     const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT), disposal: disposalScope.registry });
+    const browserJudgment = options.createBrowserJudgment?.(judgment);
+    if (browserJudgment) disposalScope.registry.add('browser judgment transport', () => browserJudgment.close());
     const subscriptionManager = new SubscriptionManager(sharedSubscriptionsPath(shellPaths), { legacyPath: shellPaths.resolveUserPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'subscriptions.json') });
     const serviceRegistry = new ServiceRegistry(shellPaths.resolveProjectPath(GOODVIBES_DAEMON_SURFACE_ROOT, 'services.json'), {
       secretsManager,
@@ -754,7 +756,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
       agentMessageBus,
       agentOrchestrator,
       contextAccountingHolder,
-      contractRunner, contractOperator, judgment,
+      contractRunner, contractOperator, judgment, browserJudgment,
       sessionSnapshot: (sessionId, conversation) => ({ ...conversation, contracts: contractRunner.list({ sessionId, includeTerminal: true }) }),
       processManager,
       codeIndexStore,

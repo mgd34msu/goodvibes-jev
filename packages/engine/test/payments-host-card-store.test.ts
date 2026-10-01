@@ -81,7 +81,15 @@ beforeEach(() => {
 
 describe('DaemonCardStore: what lands where', () => {
   test('the metadata file holds no part of the card material', async () => {
-    const store = makeStore();
+    // Public IDs/timestamps can coincidentally contain the short CVV sentinel.
+    // Fix those independent fields while retaining the scan of the entire file.
+    const store = new DaemonCardStore({
+      filePath,
+      secrets,
+      cvvHandling: () => cvvHandling,
+      generateId: () => 'card-aaaaaaaaaaaa',
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
+    });
     await store.create(cardInput());
     const onDisk = readFileSync(filePath, 'utf-8');
     expect(onDisk).not.toContain(SENTINEL_NUMBER);

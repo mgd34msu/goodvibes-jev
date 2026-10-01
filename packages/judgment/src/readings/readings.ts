@@ -1,4 +1,5 @@
 import type { ChoiceCriteria, ChoiceResponse, NoulResponse, ScoreCriteria, ScoreResponse } from '../port/types.ts';
+import { captureChoiceAnswer } from '../port/answers.ts';
 import {
   assertBand,
   outcomeForConfidence,
@@ -76,11 +77,13 @@ export function readChoice<T extends ChoiceCriteria>(
   band: ChoiceBand<keyof T & string>,
 ): ChoiceReading<keyof T & string> {
   assertBand(band);
+  const captured = captureChoiceAnswer(answer);
+  const choice = captured.choice as keyof T & string;
   return {
     kind: 'choice',
-    choice: answer.choice,
-    probabilities: answer.probabilities as Readonly<Record<keyof T & string, number>>,
-    ...confident(answer.confidence, band.perOption?.[answer.choice] ?? band),
+    choice,
+    probabilities: captured.probabilities as Readonly<Record<keyof T & string, number>>,
+    ...confident(captured.confidence, band.perOption?.[choice] ?? band),
   };
 }
 

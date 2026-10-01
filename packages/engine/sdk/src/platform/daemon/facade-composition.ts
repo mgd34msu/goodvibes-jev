@@ -626,6 +626,7 @@ export function createDaemonFacadeCollaborators(
   });
   batchManager.start();
   const httpRouter = new DaemonHttpRouter({
+    browserJudgment: runtime.runtimeServices.browserJudgment,
     configManager: runtime.configManager,
     serviceRegistry: runtime.serviceRegistry,
     userAuth: runtime.userAuth,

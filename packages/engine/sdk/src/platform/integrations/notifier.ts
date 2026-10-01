@@ -5,7 +5,7 @@ import type { ContractEvent } from '../../events/contract.js';
 import { workstreamLabel } from '../channels/workstream-labels.js';
 import { SlackIntegration } from './slack.js';
 import { DiscordIntegration } from './discord.js';
-import { DeliveryQueue } from './delivery.js';
+import { DeliveryError, DeliveryQueue } from './delivery.js';
 import type { DeliveryQueueConfig, IntegrationQueueStatus } from './delivery.js';
 import { snapshotQueueStatus } from './delivery.js';
 import { ServiceRegistry } from '../config/service-registry.js';
@@ -29,6 +29,9 @@ export class Notifier {
   private discord?: DiscordIntegration | undefined;
   private unsubscribers: Array<() => void> = [];
   private readonly _queue: DeliveryQueue;
+  private _closed = false;
+  private _closing: Promise<void> | undefined;
+  private readonly _active = new Set<Promise<void>>();
 
   constructor(options?: {
     slack?: SlackIntegration | undefined;
@@ -91,7 +94,18 @@ export class Notifier {
    * @param event  - Human-readable event name (used as message text)
    * @param data   - Arbitrary key/value payload for formatting
    */
-  async notify(event: string, data: Record<string, unknown>): Promise<void> {
+  notify(event: string, data: Record<string, unknown>): Promise<void> {
+    if (this._closed) return Promise.reject(new DeliveryError('Notifier is closed.', 'terminal'));
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const active = new Promise<void>((ok, no) => { resolve = ok; reject = no; });
+    this._active.add(active);
+    void active.then(() => this._active.delete(active), () => this._active.delete(active));
+    void this.sendNotification(event, data).then(resolve, reject);
+    return active;
+  }
+
+  private async sendNotification(event: string, data: Record<string, unknown>): Promise<void> {
     const text = this.formatText(event, data);
 
     if (this.slack) {
@@ -138,12 +152,23 @@ export class Notifier {
     });
   }
 
-  /** Dispose the delivery queue (cancel pending timers). Call on shutdown. */
+  /** Stop subscriptions and admission immediately; use close() to drain deliveries. */
   dispose(): void {
+    this._closed = true;
+    this.detach();
     this._queue.dispose();
   }
 
+  /** Await every admitted notification and its in-flight delivery before releasing dependencies. */
+  close(): Promise<void> {
+    this.dispose();
+    return this._closing ??= Promise.allSettled([
+      this._queue.close(), ...this._active,
+    ]).then(() => {});
+  }
+
   attachToRuntimeBus(bus: RuntimeEventBus): void {
+    if (this._closed) throw new DeliveryError('Notifier is closed.', 'terminal');
     this.detach();
 
     this.unsubscribers.push(

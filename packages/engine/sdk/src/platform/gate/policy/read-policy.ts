@@ -11,6 +11,7 @@
  * file-count, image-mode and image-size limits stay code: they bound how much
  * one call reads and interpret nothing about the files.
  */
+import { executePolicyCheck } from '../execute-policy-check.js';
 import type { Tool } from '../../types/tools.js';
 import { readTouchesSecrets } from '../../permissions/credential-read-defaults.js';
 
@@ -46,15 +47,18 @@ export const AGENT_READ_POLICY_DENIAL_MESSAGE = READ_POLICY_DENIAL;
 export function wrapReadToolForAgentPolicy(tool: Tool): void {
   narrowReadToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const readArgs = args as ReadToolArgs;
-    const denial = await validateReadToolInvocationForAgentPolicy(readArgs);
+    const denial = await executePolicyCheck(() => validateReadToolInvocationForAgentPolicy(readArgs, options?.signal), options?.signal);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
-export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs): Promise<string | null> {
+export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArgs, signal?: AbortSignal): Promise<string | null> {
+  signal?.throwIfAborted();
   if (Array.isArray(args.files) && args.files.length > MAX_READ_FILES) return READ_POLICY_DENIAL;
   if (args.image_mode === 'unoptimized') return READ_POLICY_DENIAL;
   if (typeof args.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(args.image_mode)) return READ_POLICY_DENIAL;
@@ -70,15 +74,15 @@ export async function validateReadToolInvocationForAgentPolicy(args: ReadToolArg
     if (typeof fileArgs.image_mode === 'string' && !READ_IMAGE_MODE_SET.has(fileArgs.image_mode)) {
       return READ_POLICY_DENIAL;
     }
-    if (typeof fileArgs.path === 'string' && (await isBlockedReadPath(fileArgs.path))) return READ_POLICY_DENIAL;
+    if (typeof fileArgs.path === 'string' && (await isBlockedReadPath(fileArgs.path, signal))) return READ_POLICY_DENIAL;
   }
 
   return null;
 }
 
 /** Whether a read of `path` touches secret or credential material, read by Jev (uncertain counts as yes). */
-export function isBlockedReadPath(path: string): Promise<boolean> {
-  return readTouchesSecrets('read', { path });
+export function isBlockedReadPath(path: string, signal?: AbortSignal): Promise<boolean> {
+  return readTouchesSecrets('read', { path }, undefined, signal);
 }
 
 function narrowReadToolDefinitionForAgentPolicy(tool: Tool): void {

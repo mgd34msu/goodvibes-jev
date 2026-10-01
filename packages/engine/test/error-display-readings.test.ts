@@ -37,6 +37,10 @@ function readingsPort(answers: Answers) {
     }
     if (name === 'category') return choiceAnswer(question, 'unknown', 0.95);
     if (name === 'connection_failure') return choiceAnswer(question, answers.connection ?? 'none', 0.95);
+    // Numbers in payloads also ask the retry-wait battery. These fixtures name
+    // no wait: answer its two Choice items rather than falling through to Noul.
+    if (name === 'pick') return choiceAnswer(question, 'none', 0.95);
+    if (name === 'unit') return choiceAnswer(question, 's', 0.95);
     return noulAnswer(0.03);
   });
   const actions: string[] = [];

@@ -114,6 +114,10 @@ export function runnerPort(override: (context: AnswerContext) => unknown = () =>
     if (context.name === 'severity') return choiceAnswer(context.question, 'major', 0.9);
     // The failure reading (errors package): scripted by the error text.
     const message = JSON.stringify(context.state);
+    // The recording boundary validates the complete battery. These two choice
+    // questions must not fall through to the planning port's default noul.
+    if (context.name === 'category') return choiceAnswer(context.question, message.includes('ECONNRESET') ? 'network' : 'unknown', 0.97);
+    if (context.name === 'connection_failure') return choiceAnswer(context.question, 'none', 0.97);
     if (context.name === 'transient_network' || context.name === 'before_response') return noulAnswer(message.includes('ECONNRESET') ? 0.97 : MET);
     return undefined;
   });
