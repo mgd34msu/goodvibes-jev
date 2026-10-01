@@ -14,12 +14,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
-import { emitAgentCompleted, emitAgentFailed } from '../sdk/src/platform/runtime/emitters/agents.js';
+import { emitAgentCancelled, emitAgentCompleted, emitAgentFailed } from '../sdk/src/platform/runtime/emitters/agents.js';
 import { createOrchestrationEngine, type OrchestrationEngineDeps } from '../sdk/src/platform/orchestration/engine.js';
 import { snapshotDirtyTree } from '../sdk/src/platform/orchestration/dirty-guard.js';
 import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestration/phase-runner.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
-import type { OrchestrationEvent, PhaseSpec, WorkItemSpec } from '../sdk/src/platform/orchestration/types.js';
+import type { OrchestrationEvent, PhaseSpec, WorkItemSpec, Workstream } from '../sdk/src/platform/orchestration/types.js';
 import { engineerReportOutput, makeFakeConfigManager, makeRecord } from './_helpers/orchestration-harness.js';
 
 const ctx = { sessionId: 'test', traceId: 'test', source: 'test' } as const;
@@ -72,7 +72,7 @@ const WAIT_TEST_TIMEOUT_MS = 90_000;
  */
 async function waitUntil(
   predicate: () => boolean,
-  opts: { label?: string; ceilingMs?: number; intervalMs?: number } = {},
+  opts: { label?: string; ceilingMs?: number; intervalMs?: number; diagnostic?: () => string } = {},
 ): Promise<void> {
   const ceilingMs = Math.max(opts.ceilingMs ?? WAIT_CEILING_MS, WAIT_CEILING_MS);
   const intervalMs = opts.intervalMs ?? WAIT_INTERVAL_MS;
@@ -83,7 +83,8 @@ async function waitUntil(
     if (elapsedMs > ceilingMs) {
       throw new Error(
         `waitUntil: condition never became true, ${opts.label ?? 'unlabelled predicate'}; ` +
-          `waited ${elapsedMs}ms (ceiling ${ceilingMs}ms), worst poll lag ${worstLagMs}ms`,
+          `waited ${elapsedMs}ms (ceiling ${ceilingMs}ms), worst poll lag ${worstLagMs}ms` +
+          (opts.diagnostic ? `; ${opts.diagnostic()}` : ''),
       );
     }
     const sleptAt = Date.now();
@@ -117,6 +118,28 @@ interface WtHarness {
   failAgent(agentId: string, error: string): void;
 }
 
+async function waitForAgents(ws: Workstream, h: WtHarness, count: number): Promise<void> {
+  const diagnostic = (): string => JSON.stringify({
+    spawnedIds: h.spawnedIds,
+    items: ws.items.map((item) => ({
+      id: item.id,
+      state: item.state,
+      agentId: item.agentId,
+      worktreePath: item.worktreePath,
+      failureReason: item.failureReason,
+      blockedReason: item.blockedReason,
+    })),
+  });
+  await waitUntil(() => {
+    // Preparation failures are terminal: waiting longer can never spawn the
+    // missing agent. Surface the real Git/setup error instead of a timeout.
+    if (ws.items.some((item) => item.state === 'failed')) {
+      throw new Error(`agent preparation failed: ${diagnostic()}`);
+    }
+    return h.spawnedIds.length === count;
+  }, { label: `${count} agents spawned`, diagnostic });
+}
+
 function makeWtHarness(): WtHarness {
   const bus = new RuntimeEventBus();
   const agentStore = new Map<string, AgentRecord>();
@@ -138,7 +161,9 @@ function makeWtHarness(): WtHarness {
     getStatus: (id) => agentStore.get(id) ?? null,
     cancel: (id) => {
       const record = agentStore.get(id);
-      if (record) record.status = 'cancelled';
+      if (!record || record.status !== 'running') return false;
+      record.status = 'cancelled';
+      emitAgentCancelled(bus, ctx, { agentId: id, reason: 'test cancel' });
       return true;
     },
     registerCancellationSignal: () => undefined,
@@ -208,7 +233,7 @@ describe('WorktreeIsolationManager: claim-time creation + concurrent non-conflic
     });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 2, { label: 'two agents spawned' });
+    await waitForAgents(ws, h, 2);
     const top = ws.items.find((i) => i.id === 'item-top')!;
     const bottom = ws.items.find((i) => i.id === 'item-bottom')!;
     expect(top.worktreePath).toBeDefined();
@@ -285,7 +310,7 @@ describe('WorktreeIsolationManager: claim-time creation + concurrent non-conflic
     });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 2, { label: 'two agents spawned' });
+    await waitForAgents(ws, h, 2);
     const first = ws.items.find((i) => i.id === 'item-first')!;
     const second = ws.items.find((i) => i.id === 'item-second')!;
 
@@ -372,7 +397,7 @@ describe('WorktreeIsolationManager: shared isolation (default) stays fully untou
     expect(ws.isolation).toBeUndefined();
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 2, { label: 'two agents spawned' });
+    await waitForAgents(ws, h, 2);
     expect(h.workingDirByAgent.get(h.spawnedIds[0]!)).toBeUndefined();
     expect(h.workingDirByAgent.get(h.spawnedIds[1]!)).toBeUndefined();
     expect(ws.items[0]!.worktreePath).toBeUndefined();
@@ -390,6 +415,34 @@ describe('WorktreeIsolationManager: shared isolation (default) stays fully untou
 });
 
 describe('WorktreeIsolationManager: fail/kill cleanup rules', () => {
+  test('a failed worktree preparation reports the item error instead of waiting for an impossible spawn', async () => {
+    root = freshRoot();
+    // A file at the worktree directory's ancestor makes the real Git creation
+    // fail before an agent can start. No timer or process mock is involved.
+    writeFileSync(join(root, '.goodvibes'), 'fixture-owned path obstruction\n');
+    const h = makeWtHarness();
+    const events: OrchestrationEvent[] = [];
+    const engine = makeEngine(root, h);
+    engine.on((event) => events.push(event));
+    const ws = engine.createWorkstream({
+      id: 'ws-blocked', title: 'blocked', phases: [enginePhase(1)],
+      items: [{ id: 'item-blocked', title: 'blocked', task: 't' }], isolation: 'worktree',
+    });
+    try {
+      engine.start(ws.id);
+      await expect(waitForAgents(ws, h, 1)).rejects.toThrow('worktree isolation setup failed:');
+      expect(h.spawnedIds).toHaveLength(0);
+      expect(ws.items[0]!.state).toBe('failed');
+      // Wait for the already-started cleanup before deleting the fixture repo.
+      await waitUntil(() => events.some((event) => event.type === 'item-worktree-removed'), {
+        label: 'failed preparation cleanup finished',
+      });
+    } finally {
+      engine.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, WAIT_TEST_TIMEOUT_MS);
+
   test('kill on a DIRTY worktree keeps it; kill on a CLEAN worktree removes it', async () => {
     root = freshRoot();
     const h = makeWtHarness();
@@ -401,7 +454,7 @@ describe('WorktreeIsolationManager: fail/kill cleanup rules', () => {
     const ws = engine.createWorkstream({ id: 'ws-kill', title: 'kill', phases: [enginePhase(2)], items, isolation: 'worktree' });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 2, { label: 'two agents spawned' });
+    await waitForAgents(ws, h, 2);
     const dirty = ws.items.find((i) => i.id === 'item-dirty')!;
     const clean = ws.items.find((i) => i.id === 'item-clean')!;
     expect(existsSync(dirty.worktreePath!)).toBe(true);
@@ -443,7 +496,7 @@ describe('WorktreeIsolationManager: fail/kill cleanup rules', () => {
     const ws = engine.createWorkstream({ id: 'ws-agentfail', title: 'agentfail', phases: [enginePhase(1)], items, isolation: 'worktree' });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 1, { label: 'one agent spawned' });
+    await waitForAgents(ws, h, 1);
     const item = ws.items[0]!;
     expect(existsSync(item.worktreePath!)).toBe(true);
 
@@ -530,7 +583,7 @@ describe('WorktreeIsolationManager: empty integration (no commits beyond base)',
     const ws = engine.createWorkstream({ id: 'ws-empty', title: 'empty', phases: [offPhase], items, isolation: 'worktree' });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 1, { label: 'one agent spawned' });
+    await waitForAgents(ws, h, 1);
     const item = ws.items[0]!;
     h.completeAgent(h.spawnedIds[0]!, engineerReportOutput({}));
 
@@ -556,7 +609,7 @@ describe('WorktreeIsolationManager: per-worktree dirty-guard', () => {
     const ws = engine.createWorkstream({ id: 'ws-fresh', title: 'fresh', phases: [enginePhase(1)], items, isolation: 'worktree' });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 1, { label: 'one agent spawned' });
+    await waitForAgents(ws, h, 1);
     const item = ws.items[0]!;
     expect(existsSync(item.worktreePath!)).toBe(true);
 
@@ -568,73 +621,82 @@ describe('WorktreeIsolationManager: per-worktree dirty-guard', () => {
 });
 
 describe('WorktreeIsolationManager: bounded kept-worktree cap, oldest-first eviction', () => {
-  test('a third dirty kill evicts the OLDEST kept worktree once the cap (1) is exceeded', async () => {
+  test('a third dirty kill evicts only the OLDEST kept worktree once the cap (2) is exceeded', async () => {
     root = freshRoot();
     const h = makeWtHarness();
     const events: OrchestrationEvent[] = [];
-    const engine = makeEngine(root, h, { keptWorktreeCap: 1 });
-    engine.on((e) => events.push(e));
+    const engine = makeEngine(root, h, { keptWorktreeCap: 2 });
+    engine.on((event) => events.push(event));
 
-    const items: WorkItemSpec[] = [
-      { id: 'item-one', title: 'one', task: 't' },
-      { id: 'item-two', title: 'two', task: 't' },
-    ];
-    const ws = engine.createWorkstream({ id: 'ws-cap', title: 'cap', phases: [enginePhase(2)], items, isolation: 'worktree' });
-    engine.start(ws.id);
+    // Retention belongs to the engine, across its workstreams. Build its kept
+    // set in explicit order, starting the next workstream only once the prior
+    // kill has settled. Concurrent setup is exercised by the parallel-isolation
+    // cases above; it is not a prerequisite for testing oldest-first eviction.
+    async function keepDirtyItem(name: string) {
+      const ws = engine.createWorkstream({
+        id: `ws-cap-${name}`, title: name, phases: [enginePhase(1)],
+        items: [{ id: `item-${name}`, title: name, task: 't' }], isolation: 'worktree',
+      });
+      const expectedSpawns = h.spawnedIds.length + 1;
+      engine.start(ws.id);
+      await waitForAgents(ws, h, expectedSpawns);
+      const item = ws.items[0]!;
+      const path = item.worktreePath!;
+      expect(existsSync(path)).toBe(true);
+      writeFileSync(join(path, 'wip.txt'), `wip-${name}\n`);
+      expect(engine.kill(item.id)).toBe(true);
+      await waitUntil(
+        () => events.some((event) => event.type === 'item-worktree-kept' && event.itemId === item.id)
+          && engine.getPhaseResults(ws.id).length === 1,
+        { label: `${item.id} kept and cancelled phase settled` },
+      );
+      return { item, path };
+    }
 
-    await waitUntil(() => h.spawnedIds.length === 2, { label: 'two agents spawned' });
-    const one = ws.items.find((i) => i.id === 'item-one')!;
-    const two = ws.items.find((i) => i.id === 'item-two')!;
+    try {
+      const one = await keepDirtyItem('one');
+      const two = await keepDirtyItem('two');
+      expect(events.filter((event) => event.type === 'item-worktree-evicted')).toHaveLength(0);
+      expect(existsSync(one.path)).toBe(true);
+      expect(existsSync(two.path)).toBe(true);
 
-    // Leave BOTH dirty so both kills produce a KEPT worktree.
-    writeFileSync(join(one.worktreePath!, 'wip.txt'), 'wip-one\n');
-    writeFileSync(join(two.worktreePath!, 'wip.txt'), 'wip-two\n');
-    const onePath = one.worktreePath!;
-    const twoPath = two.worktreePath!;
+      const three = await keepDirtyItem('three');
+      await waitUntil(
+        () => events.some((event) => event.type === 'item-worktree-evicted'),
+        { label: 'overflow eviction completed' },
+      );
+      const evictions = events.filter(
+        (event): event is Extract<OrchestrationEvent, { type: 'item-worktree-evicted' }> =>
+          event.type === 'item-worktree-evicted',
+      );
+      expect(evictions.map((event) => event.itemId)).toEqual([one.item.id]);
+      expect(existsSync(one.path)).toBe(false);
+      expect(one.item.worktreePath).toBeUndefined();
+      expect(one.item.worktreeKept).toBeFalsy();
 
-    // Kill 'one' first (it becomes the OLDEST kept entry), then 'two', the
-    // cap of 1 means adding the second KEPT worktree must evict the first.
-    engine.kill('item-one');
-    await waitUntil(() => events.some((e) => e.type === 'item-worktree-kept' && e.itemId === 'item-one'), { label: 'item-one worktree kept' });
+      // Eviction bounds directories, never work: the branch and preservation
+      // commit survive, and a fresh checkout recovers the exact dirty bytes.
+      const evictedEvent = evictions[0]!;
+      expect(evictedEvent.branch).toBe(one.item.worktreeBranch!);
+      expect(evictedEvent.preservedCommit).toBeTruthy();
+      expect(runGit(root, ['branch', '--list', evictedEvent.branch]).trim()).not.toBe('');
+      expect(runGit(root, ['rev-parse', evictedEvent.branch]).trim()).toBe(evictedEvent.preservedCommit!);
+      expect(runGit(root, ['show', `${evictedEvent.branch}:wip.txt`])).toBe('wip-one\n');
+      const recovered = join(root, 'recovered-after-eviction');
+      runGit(root, ['worktree', 'add', recovered, evictedEvent.branch]);
+      expect(readFileSync(join(recovered, 'wip.txt'), 'utf8')).toBe('wip-one\n');
 
-    engine.kill('item-two');
-    await waitUntil(
-      () => events.some((e) => e.type === 'item-worktree-evicted' && e.itemId === 'item-one')
-        && events.some((e) => e.type === 'item-worktree-kept' && e.itemId === 'item-two'),
-      { label: 'item-one evicted and item-two kept' },
-    );
-
-    // 'one' was evicted, its worktree DIRECTORY is gone and bookkeeping cleared.
-    expect(existsSync(onePath)).toBe(false);
-    expect(one.worktreePath).toBeUndefined();
-    expect(one.worktreeKept).toBeFalsy();
-
-    // ZERO DATA LOSS: eviction bounds disk usage, never work. The dirty state
-    // was committed onto the item branch BEFORE the directory was removed, the
-    // branch was KEPT (no `branch -D` on the eviction path), and the event
-    // names the branch + preservation commit so the work is discoverable.
-    const evictedEvent = events.find(
-      (e): e is Extract<OrchestrationEvent, { type: 'item-worktree-evicted' }> =>
-        e.type === 'item-worktree-evicted' && e.itemId === 'item-one',
-    )!;
-    expect(evictedEvent.branch).toBe(one.worktreeBranch!);
-    expect(evictedEvent.preservedCommit).toBeTruthy();
-    // The branch survives eviction …
-    expect(runGit(root, ['branch', '--list', evictedEvent.branch]).trim()).not.toBe('');
-    // … its tip is the preservation commit …
-    expect(runGit(root, ['rev-parse', evictedEvent.branch]).trim()).toBe(evictedEvent.preservedCommit!);
-    // … and the uncommitted work is byte-for-byte recoverable from it.
-    expect(runGit(root, ['show', `${evictedEvent.branch}:wip.txt`])).toBe('wip-one\n');
-    const recovered = join(root, 'recovered-after-eviction');
-    runGit(root, ['worktree', 'add', recovered, evictedEvent.branch]);
-    expect(readFileSync(join(recovered, 'wip.txt'), 'utf8')).toBe('wip-one\n');
-
-    // 'two' is still kept, under the cap now that 'one' was evicted.
-    expect(existsSync(twoPath)).toBe(true);
-    expect(two.worktreeKept).toBe(true);
-    expect(two.worktreePath).toBe(twoPath);
-
-    rmSync(root, { recursive: true, force: true });
+      // The other two kept worktrees remain intact, including uncommitted work.
+      for (const [kept, contents] of [[two, 'wip-two\n'], [three, 'wip-three\n']] as const) {
+        expect(existsSync(kept.path)).toBe(true);
+        expect(kept.item.worktreeKept).toBe(true);
+        expect(kept.item.worktreePath).toBe(kept.path);
+        expect(readFileSync(join(kept.path, 'wip.txt'), 'utf8')).toBe(contents);
+      }
+    } finally {
+      engine.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
   }, WAIT_TEST_TIMEOUT_MS);
 
   test('evicting a CONFLICTED kept worktree preserves both its commits and its dirty state on the kept branch', async () => {
@@ -702,7 +764,7 @@ describe('WorktreeIsolationManager: cold-start setup hook', () => {
     });
     engine.start(ws.id);
 
-    await waitUntil(() => h.spawnedIds.length === 1, { label: 'one agent spawned' });
+    await waitForAgents(ws, h, 1);
     const solo = ws.items.find((i) => i.id === 'item-solo')!;
     expect(solo.worktreePath).toBeDefined();
     await waitUntil(() => setupPaths.length === 1, { label: 'worktree setup ran once' });
