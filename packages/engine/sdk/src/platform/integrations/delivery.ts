@@ -243,7 +243,7 @@ export class DeliveryQueue {
   private _deadLettered = 0;
   private _closed = false;
   private _closing: Promise<void> | undefined;
-  private readonly _active = new Set<Promise<DeliveryOutcome>>();
+  private readonly _active = new Set<Promise<unknown>>();
 
   constructor(config: DeliveryQueueOptions = {}) {
     const { featureFlags, configManager, ...queueConfig } = config;
@@ -306,7 +306,13 @@ export class DeliveryQueue {
    *
    * @returns Array of per-entry replay results.
    */
-  async replay(
+  replay(
+    deliver: (entry: DeadLetterEntry) => Promise<void>,
+  ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
+    return this._own(() => this._replay(deliver));
+  }
+
+  private async _replay(
     deliver: (entry: DeadLetterEntry) => Promise<void>,
   ): Promise<Array<{ id: string; outcome: DeliveryOutcome }>> {
     this._assertOpen();
@@ -317,16 +323,27 @@ export class DeliveryQueue {
       this._assertOpen();
       // Remove from DLQ before replaying
       const idx = this._dlq.findIndex((e) => e.id === dlqEntry.id);
-      if (idx !== -1) this._dlq.splice(idx, 1);
+      // Another replay or an explicit clear may have already consumed this row.
+      if (idx === -1) continue;
+      this._dlq.splice(idx, 1);
       this._deadLettered = Math.max(0, this._deadLettered - 1);
 
-      const outcome = await this.enqueue(
-        dlqEntry.channel,
-        dlqEntry.event,
-        dlqEntry.payload,
-        () => deliver(dlqEntry),
-      );
-      results.push({ id: dlqEntry.id, outcome });
+      try {
+        const outcome = await this.enqueue(
+          dlqEntry.channel,
+          dlqEntry.event,
+          dlqEntry.payload,
+          () => deliver(dlqEntry),
+        );
+        results.push({ id: dlqEntry.id, outcome });
+      } catch (error) {
+        // Keep retained recovery data when no replay outcome can be settled.
+        // Restoration uses the same bounded FIFO without a new send or DLQ event.
+        if (!this._dlq.some((entry) => entry.id === dlqEntry.id)) {
+          this._retainDeadLetter(dlqEntry);
+        }
+        throw error;
+      }
     }
 
     return results;
@@ -396,14 +413,19 @@ export class DeliveryQueue {
   }
 
   private _startAttempt(entry: PendingEntry): Promise<DeliveryOutcome> {
+    return this._own(() => this._attempt(entry));
+  }
+
+  private _own<T>(run: () => Promise<T>): Promise<T> {
     if (this._closed) return Promise.reject(new DeliveryError('Delivery queue is closed.', 'terminal'));
-    // Register before invoking the transport: it can synchronously request close.
-    let resolve!: (outcome: DeliveryOutcome) => void;
+    // Register before invocation, including complete replay/restoration work.
+    let resolve!: (outcome: T) => void;
     let reject!: (error: unknown) => void;
-    const active = new Promise<DeliveryOutcome>((ok, no) => { resolve = ok; reject = no; });
+    const active = new Promise<T>((ok, no) => { resolve = ok; reject = no; });
     this._active.add(active);
     void active.then(() => this._active.delete(active), () => this._active.delete(active));
-    void this._attempt(entry).then(resolve, reject);
+    try { void run().then(resolve, reject); }
+    catch (error) { reject(error); }
     return active;
   }
 
@@ -496,14 +518,7 @@ export class DeliveryQueue {
       failureClass,
     };
 
-    // Bounded DLQ: evict oldest entry when limit exceeded
-    if (this._dlq.length >= this._config.maxDlqSize) {
-      this._dlq.shift();
-      this._deadLettered = Math.max(0, this._deadLettered - 1);
-    }
-
-    this._dlq.push(dlqEntry);
-    this._deadLettered += 1;
+    this._retainDeadLetter(dlqEntry);
     this._pending.delete(entry.id);
 
     if (this._config.sloEnforced) {
@@ -542,6 +557,16 @@ export class DeliveryQueue {
     }
 
     return 'dead_letter';
+  }
+
+  private _retainDeadLetter(entry: DeadLetterEntry): void {
+    // Bounded DLQ: evict oldest entry when limit exceeded.
+    if (this._dlq.length >= this._config.maxDlqSize) {
+      this._dlq.shift();
+      this._deadLettered = Math.max(0, this._deadLettered - 1);
+    }
+    this._dlq.push(entry);
+    this._deadLettered += 1;
   }
 
   private _computeDelay(attempt: number): number {

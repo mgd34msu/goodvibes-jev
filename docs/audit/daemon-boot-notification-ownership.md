@@ -14,6 +14,14 @@ transports still report their actual success. A failure settling after shutdown
 rejects with a value-free DeliveryError instead of scheduling a retry or creating
 a misleading dead letter. Refused replay retains existing dead letters.
 
+An admitted replay temporarily removes its prior row while it owns the attempt.
+If that replay rejects without a settled outcome, including shutdown or an
+unavailable failure reading, it restores the exact prior record once through
+the same bounded FIFO policy. Successful replay and ordinary
+terminal replacement keep their existing receipts and metrics. The entire replay,
+including restoration, is registered before callbacks run and is drained by
+close(). Concurrent batches skip rows another batch has already consumed.
+
 The additive close() method performs that immediate shutdown and awaits admitted
 attempts. Admission is registered before invoking the callback, including callbacks
 that request close synchronously. The callback still owns its transport timeout
