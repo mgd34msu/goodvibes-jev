@@ -27,7 +27,7 @@ export interface UiShellServices {
 export interface UiAgentServices {
   readonly agentManager: RuntimeServices['agentManager'];
   readonly agentMessageBus: RuntimeServices['agentMessageBus'];
-  readonly wrfcController: RuntimeServices['wrfcController'];
+  readonly contractRunner: RuntimeServices['contractRunner'];
 }
 
 export interface UiProviderServices {
@@ -143,7 +143,7 @@ export function createUiRuntimeServices(
     agents: {
       agentManager: runtimeServices.agentManager,
       agentMessageBus: runtimeServices.agentMessageBus,
-      wrfcController: runtimeServices.wrfcController,
+      contractRunner: runtimeServices.contractRunner,
     },
     providers: {
       providerRegistry: runtimeServices.providerRegistry,

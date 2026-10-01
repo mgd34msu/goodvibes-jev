@@ -1,3 +1,4 @@
+import { reachabilityAtLaunch } from '../../runtime/path-shadow-startup.ts';
 import { startPeriodicSelfUpdate } from '../../runtime/periodic-update.ts';
 import { describe, expect, test } from 'bun:test';
 import { selfUpdateAtLaunch } from '../../cli/launch-auto-update.ts';
@@ -35,4 +36,10 @@ test('a private Agent does not start an hourly release probe or inspect live inp
   const stop = startPeriodicSelfUpdate(params as Parameters<typeof startPeriodicSelfUpdate>[0]);
   expect(stop).toBeFunction();
   expect(() => stop()).not.toThrow();
+});
+
+
+test('private compiled launches do not probe an upstream release or recommend its package', async () => {
+  const params = new Proxy({}, { get() { throw new Error('reachability must not inspect host inputs'); } });
+  expect(await reachabilityAtLaunch(params as Parameters<typeof reachabilityAtLaunch>[0])).toEqual([]);
 });

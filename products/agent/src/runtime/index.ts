@@ -6,18 +6,8 @@
  * while preserving the local import surface used by the shell.
  */
 
-// `security` is the ONLY namespace object imported as a value: its members are
-// read inside function bodies (evaluateSegmentNode / evaluateCommandAST below),
-// which run after the module graph settles. Everything else re-exports from the
-// SDK's registered runtime subpaths as grouped live re-exports, an eager
-// `export const X = ns.X` is a module-scope read off a lazy namespace object,
-// and Bun's single-file compiler orders module bodies nondeterministically, so
-// on some builds the read landed before the defining module and the compiled
-// binary died at load with a ReferenceError (this repo's 2.0.11 CI smoke
-// failure; the operations block below documents the first bite of this class).
-// The toolchain post-build-smoke now scans compiled artifacts for the eager
-// pattern and fails the build if one returns.
-import { security } from '@goodvibes-jev/engine/sdk/platform/runtime';
+// Public runtime values use live re-exports so source and compiled consumers
+// share the same engine implementation without eager namespace copies.
 import { existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type {
@@ -450,6 +440,8 @@ export {
   runPolicySimulationScenarios,
   buildDenialExplanation,
   canonicalize,
+  evaluateCommandAST,
+  evaluateSegmentNode,
   collectCommandNodes,
   parseAST,
   parseCommandAST,
@@ -462,133 +454,6 @@ export {
   MAX_INPUT_LENGTH,
   MAX_TOKEN_COUNT,
 } from '@goodvibes-jev/engine/sdk/platform/runtime/security';
-
-type RuntimeSegmentVerdict = ReturnType<typeof security.evaluateSegmentNode>;
-type RuntimeCompoundVerdict = ReturnType<typeof security.evaluateCommandAST>;
-type RuntimeShellNode = Parameters<typeof security.evaluateCommandAST>[1];
-
-const AGENT_OBFUSCATION_CHECKS: Array<{ description: string; test: (raw: string) => boolean }> = [
-  {
-    description: 'base64-encoded argument (possible command injection)',
-    test: (raw) =>
-      extractInspectableShellWords(raw).some((word) =>
-        /^[A-Za-z0-9+/]+={0,2}$/.test(word) && word.length >= 12 && word.length % 4 === 0,
-      ),
-  },
-  {
-    description: 'URL-encoded content in argument',
-    test: (raw) => hasPercentEncodedContent(raw),
-  },
-];
-
-/**
- * A `%` followed by two hex-ish characters is grammatically identical in a
- * printf/strftime specifier (`%4d`, `%02d`, `%2f`, `date +%ad`) and in a URL
- * escape (`%2F`, `%20`). Testing the whole raw command against
- * `/%[0-9a-fA-F]{2}/` therefore denied ordinary formatting commands as
- * "obfuscation". Two independent narrowings replace that test:
- *
- *  1. Shape, percent-encoding only counts when the word carries it the way a
- *     URI does: an explicit `scheme://`, or an encoded path separator / NUL
- *     (`%2F`, `%5C`, `%00`), which is the evasion this check exists to catch.
- *     `%02d:%02d` and `+%ad` carry neither and are left alone.
- *  2. Consumer, the printf family legitimately emits `%2f` (float, width 2),
- *     so its own arguments are exempt from the shape rule.
- *
- * This only narrows an existing detector. No new denial class is introduced:
- * the exec-guard catastrophic list stays frozen.
- */
-const PERCENT_ESCAPE = /%[0-9a-fA-F]{2}/;
-const URI_SCHEME = /[A-Za-z][A-Za-z0-9+.-]*:\/\//;
-/** Encoded `/`, `\` and NUL, separators that change path or argument meaning once decoded. */
-const ENCODED_SEPARATOR = /%(?:2[fF]|5[cC]|00)/;
-const FORMAT_SPECIFIER_COMMANDS = new Set(['printf', 'awk', 'gawk', 'mawk', 'nawk', 'seq']);
-const ENV_ASSIGNMENT_PREFIX = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-function extractInspectableShellWords(raw: string): string[] {
-  return (raw.match(/"[^"]*"|'[^']*'|`[^`]*`|\S+/g) ?? []).map((word) =>
-    word.replace(/^["'`]+|["'`;|&]+$/g, ''),
-  );
-}
-
-/** First word that is not a leading `NAME=value` assignment, reduced to its basename. */
-function segmentCommandName(words: readonly string[]): string {
-  for (const word of words) {
-    if (word.length === 0 || ENV_ASSIGNMENT_PREFIX.test(word)) continue;
-    return (word.split('/').pop() ?? word).toLowerCase();
-  }
-  return '';
-}
-
-function hasPercentEncodedContent(raw: string): boolean {
-  const words = extractInspectableShellWords(raw);
-  if (FORMAT_SPECIFIER_COMMANDS.has(segmentCommandName(words))) return false;
-  return words.some(
-    (word) =>
-      PERCENT_ESCAPE.test(word) && (URI_SCHEME.test(word) || ENCODED_SEPARATOR.test(word)),
-  );
-}
-
-function agentObfuscationPatterns(raw: string, existing: readonly string[]): string[] {
-  const patterns = new Set(existing);
-  for (const check of AGENT_OBFUSCATION_CHECKS) {
-    if (check.test(raw)) {
-      patterns.add(check.description);
-    }
-  }
-  return [...patterns];
-}
-
-function enforceAgentObfuscationVerdict(verdict: RuntimeSegmentVerdict): RuntimeSegmentVerdict {
-  const obfuscationPatterns = agentObfuscationPatterns(verdict.raw, verdict.obfuscationPatterns);
-  if (obfuscationPatterns.length === verdict.obfuscationPatterns.length) {
-    return verdict;
-  }
-
-  return {
-    ...verdict,
-    allowed: false,
-    reason: `obfuscation detected: ${obfuscationPatterns.join('; ')}`,
-    hasObfuscation: true,
-    obfuscationPatterns,
-  };
-}
-
-export function evaluateSegmentNode(
-  node: Security.CommandNode,
-  allowedClasses?: ReadonlySet<Security.CommandClassification>,
-): RuntimeSegmentVerdict {
-  const verdict = allowedClasses === undefined
-    ? security.evaluateSegmentNode(node)
-    : security.evaluateSegmentNode(node, allowedClasses);
-  return enforceAgentObfuscationVerdict(verdict);
-}
-
-export function evaluateCommandAST(
-  original: string,
-  ast: RuntimeShellNode,
-  allowedClasses?: ReadonlySet<Security.CommandClassification>,
-): RuntimeCompoundVerdict {
-  const compound = allowedClasses === undefined
-    ? security.evaluateCommandAST(original, ast)
-    : security.evaluateCommandAST(original, ast, allowedClasses);
-  const segments = compound.segments.map(enforceAgentObfuscationVerdict);
-  const allowed = segments.every((segment) => segment.allowed);
-  const hasObfuscation = segments.some((segment) => segment.hasObfuscation);
-
-  const next: RuntimeCompoundVerdict = {
-    ...compound,
-    allowed,
-    segments,
-    hasObfuscation,
-  };
-  if (allowed) {
-    delete next.denialExplanation;
-  } else {
-    next.denialExplanation = security.buildDenialExplanation(original, segments);
-  }
-  return next;
-}
 
 export type AuthInspectionSnapshot = Security.AuthInspectionSnapshot;
 export type ProviderAuthInspection = Security.ProviderAuthInspection;

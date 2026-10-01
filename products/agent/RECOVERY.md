@@ -80,3 +80,28 @@ The metadata CLI/private-update set passes 12 tests and 51 assertions. An expand
 mechanical run passed 33 tests and failed one existing channel-delivery case at
 the inherited synchronous card-reading caller; that failure is retained and is
 not attributed to the update guard. Full interactive acceptance remains open.
+
+## Local executable acceptance
+
+The isolated acceptance branch composes the reviewed local notification candidate
+`3770f00807c56524c3eaa7632f9aae1a8a032ab2` with the ordinary Agent source. This
+candidate is not merged main and is not a product release. The ordinary source
+now bundles, starts interactively and compiles through the existing native Bun
+command. Contract tool registration uses the runner and project root, the UI
+adapters use current contract kinds, and the unused obsolete local command
+judgment shim delegates to the existing public engine functions.
+
+The source and compiled executable both displayed the first frame, declined the
+initial checkpoint-registration question with Escape, opened `/help`, and exited
+normally. The first receipts preserve blocked auxiliary metadata requests.
+The later executable proof supplied explicit empty synthetic responses for the
+three exact metadata endpoints after the unchanged network guard. It completed
+in 2.07 seconds with zero guard violations. Private compiled launches also skip
+upstream release reachability probing. These are bounded local terminal proofs,
+not live-provider, cross-platform packaging or the original tmux E2E acceptance.
+
+The latest source diagnostic has 20 errors in asynchronous memory/card/outward
+reader callers. The focused startup/update adapter set passes 10 tests and 41
+assertions. The shared toolchain's flat native-addon path still misses the valid
+workspace dependency-owner installation; declared CLI generation and complete
+asset packaging remain pending.

@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION } from './workspace-update-policy.ts';
 /**
  * path-shadow-startup.ts, the Agent's launch-time answer to "is this the
  * build you are actually reaching, and is it the current one".
@@ -26,7 +27,7 @@ import type { UpdateFetchLike } from './update-check.ts';
 import { VERSION } from '../version.ts';
 
 /** The package a package-managed Agent install is upgraded through. */
-export const AGENT_PACKAGE_NAME = '@pellux/goodvibes-agent';
+export const AGENT_PACKAGE_NAME = '@goodvibes-jev/agent';
 
 /** The same release lookup /update uses, one source of truth for "latest". */
 function resolveLatestRelease(): Promise<string | undefined> {
@@ -56,5 +57,7 @@ export function agentReachabilityInput(): ReachabilityCheckInput {
 export async function reachabilityAtLaunch(params: {
   readonly stdout: { write(chunk: string): unknown };
 }): Promise<readonly string[]> {
+  // The private checkout has no upstream release or package upgrade channel.
+  if (IS_WORKSPACE_DISTRIBUTION) return [];
   return announceReachability(agentReachabilityInput(), (line: string) => { params.stdout.write(`${line}\n`); });
 }

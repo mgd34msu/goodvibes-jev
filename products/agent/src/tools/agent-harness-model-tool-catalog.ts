@@ -206,7 +206,7 @@ export function describeHarnessModelTool(toolRegistry: ToolRegistry, args: Agent
         return null;
       })();
   if (!found) return null;
-  if ('candidates' in found) return { status: 'ambiguous', input: lookup.input, candidates: describeModelToolCandidates(found.candidates) };
+  if (found.candidates !== undefined) return { status: 'ambiguous', input: lookup.input, candidates: describeModelToolCandidates(found.candidates) };
   return {
     status: 'found',
     tool: {

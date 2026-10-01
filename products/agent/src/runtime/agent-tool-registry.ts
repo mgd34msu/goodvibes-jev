@@ -69,6 +69,8 @@ export function composeAgentToolRegistry(deps: AgentToolRegistryDeps): AgentTool
   const { services, configManager, homeDirectory, resolveSessionId, getLastUserMessage } = deps;
   const toolRegistry = new ToolRegistry();
   const { fileCache, projectIndex } = registerAllTools(toolRegistry, {
+    contractRunner: services.contractRunner,
+    projectRoot: services.workingDirectory,
     // Task refs are owned by the REAL runtime session, read fresh on every call:
     // accepting a recovery snapshot reassigns runtime.sessionId in place, and a
     // value captured here would keep writing refs under the session the user

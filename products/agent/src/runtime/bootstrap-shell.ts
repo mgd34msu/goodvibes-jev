@@ -130,7 +130,7 @@ export function createBootstrapShell(options: BootstrapShellOptions): BootstrapS
     activityFeed,
     (kind) => {
       const ui = getConfigSnapshot(configManager).ui;
-      if (kind === 'wrfc') return ui.wrfcMessages;
+      if (kind === 'contract') return ui.contractMessages;
       if (kind === 'operational') return ui.operationalMessages;
       return ui.systemMessages;
     },
