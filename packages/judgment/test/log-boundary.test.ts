@@ -174,6 +174,107 @@ describe('recording port trust boundary', () => {
     expect(JSON.stringify(log.query())).not.toContain(SECRET);
   });
 
+  test.each(['status', 'requestId', 'lineage'] as const)('preserves aborted and remaining evidence when the optional %s getter throws', async (field) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const lineage = { logicalRequestId: 'logical-1', attempts: [{ ...attempt, endpointKind: 'hosted' as const, outcome: 'aborted' as const }] };
+    const upstream = new JudgmentError('aborted', SECRET, { status: 499, requestId: 'req-aborted', lineage });
+    Object.defineProperty(upstream, field, { get() { throw new Error(SECRET); } });
+    const error = exposedError(await withDecisionLog(rejecting(upstream), log).ask(request).catch((e: unknown) => e));
+    expect(error.kind).toBe('aborted');
+    expect(error.status).toBe(field === 'status' ? undefined : 499);
+    expect(error.requestId).toBe(field === 'requestId' ? undefined : 'req-aborted');
+    expect(error.lineage).toEqual(field === 'lineage' ? undefined : lineage);
+    const [entry] = log.query();
+    if (entry?.status !== 'failed') throw new Error('expected a failed entry');
+    expect(entry.error.kind).toBe('aborted');
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  test('records pre-existing cancellation without invoking the provider', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const controller = new AbortController();
+    controller.abort(new Error(SECRET));
+    let calls = 0;
+    const port: JudgmentPort = { model: 'jev-1.13.0', async ask() { calls += 1; return result() as never; } };
+    const error = exposedError(await withDecisionLog(port, log).ask({ ...request, signal: controller.signal }).catch((e: unknown) => e));
+    expect(error.kind).toBe('aborted');
+    expect(calls).toBe(0);
+    expect(log.query({ status: 'failed' })).toHaveLength(1);
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(JSON.stringify(log.query())).not.toContain(SECRET);
+  });
+
+  test('classifies a borrowed rejection with signal.reason as aborted', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const controller = new AbortController();
+    const port: JudgmentPort = { model: 'jev-1.13.0', async ask(incoming) {
+      controller.abort(new Error(SECRET));
+      throw incoming.signal!.reason;
+    } };
+    const error = exposedError(await withDecisionLog(port, log).ask({ ...request, signal: controller.signal }).catch((e: unknown) => e));
+    expect(error.kind).toBe('aborted');
+    const [entry] = log.query();
+    if (entry?.status !== 'failed') throw new Error('expected a failed entry');
+    expect(entry.error.kind).toBe('aborted');
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  test.each(['before-resolution', 'during-projection'])('never records or returns a valid answer after cancellation %s', async (stage) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const controller = new AbortController();
+    const port: JudgmentPort = { model: 'jev-1.13.0', async ask() {
+      if (stage === 'before-resolution') controller.abort(new Error(SECRET));
+      return { ...result(), usage: {
+        get inputTokens() { if (stage === 'during-projection') controller.abort(new Error(SECRET)); return 120; }, outputTokens: 9,
+      } } as never;
+    } };
+    const error = exposedError(await withDecisionLog(port, log).ask({ ...request, signal: controller.signal }).catch((e: unknown) => e));
+    expect(error.kind).toBe('aborted');
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+    expect(log.query({ status: 'failed' })).toHaveLength(1);
+    expect(JSON.stringify(log.query())).not.toContain(SECRET);
+  });
+
+  test.each([new JudgmentError('unavailable', SECRET), new DOMException(SECRET, 'TimeoutError')])('preserves explicitly typed timeout cancellation as unavailable', async (reason) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const controller = new AbortController();
+    const port: JudgmentPort = { model: 'jev-1.13.0', async ask() { controller.abort(reason); throw reason; } };
+    const error = exposedError(await withDecisionLog(port, log).ask({ ...request, signal: controller.signal }).catch((e: unknown) => e));
+    expect(error.kind).toBe('unavailable');
+    const [entry] = log.query();
+    if (entry?.status !== 'failed') throw new Error('expected a failed entry');
+    expect(entry.error.kind).toBe('unavailable');
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  test.each([undefined, 'jev-1.14.0'])('rejects borrowed requestedModel inconsistent with the captured requested model %s', async (model) => {
+    using log = new SqliteDecisionLog(':memory:');
+    const raw = { ...result(), requestedModel: 'jev-0.0.0' };
+    const input = { ...request, ...(model === undefined ? {} : { model }) };
+    const error = exposedError(await withDecisionLog(borrowed(raw), log).ask(input).catch((e: unknown) => e));
+    expect(error.kind).toBe('invalid-response');
+    const [entry] = log.query();
+    if (entry?.status !== 'failed') throw new Error('expected a failed entry');
+    expect(entry.requestedModel).toBe(model ?? 'jev-1.13.0');
+    expect(log.query({ status: 'answered' })).toHaveLength(0);
+  });
+
+  test('uses the captured requested model while preserving a distinct answering model', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    let model = 'jev-1.13.0';
+    const port: JudgmentPort = { get model() { return model; }, async ask() {
+      model = 'jev-1.14.0';
+      return { ...result(), model: 'local/jev-1.13.0+build.1' } as never;
+    } };
+    const answer = await withDecisionLog(port, log).ask(request);
+    expect(answer.requestedModel).toBe('jev-1.13.0');
+    expect(answer.model).toBe('local/jev-1.13.0+build.1');
+    const [entry] = log.query();
+    if (entry?.status !== 'answered') throw new Error('expected an answered entry');
+    expect(entry.requestedModel).toBe('jev-1.13.0');
+    expect(entry.model).toBe('local/jev-1.13.0+build.1');
+  });
+
   test('rejects a malformed lineage without exposing its content', async () => {
     using log = new SqliteDecisionLog(':memory:');
     const error = exposedError(await withDecisionLog(borrowed({ ...result(), lineage: {

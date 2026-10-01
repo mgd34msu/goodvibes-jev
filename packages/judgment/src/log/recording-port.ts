@@ -62,26 +62,40 @@ function projectLineage(value: unknown): JudgmentLineage | undefined {
   return { logicalRequestId, attempts };
 }
 
+/** A broken optional provider field must not erase other independently valid evidence. */
+function optional<T>(read: () => T): T | undefined {
+  try { return read(); }
+  catch { return undefined; }
+}
+
 /** Never retain upstream exception text, stack, cause, arbitrary properties or malformed metadata. */
-function asFailure(error: unknown): JudgmentError {
-  let kind: JudgmentErrorKind = 'unavailable';
-  let status: number | undefined;
-  let requestId: string | undefined;
-  let lineage: JudgmentLineage | undefined;
-  try {
-    if (error instanceof JudgmentError) {
-      const { kind: rawKind, status: rawStatus, requestId: rawRequestId, lineage: rawLineage } = error;
-      if (failureKind(rawKind)) kind = rawKind;
-      if (statusCode(rawStatus)) status = rawStatus;
-      requestId = identifier(rawRequestId);
-      lineage = projectLineage(rawLineage);
-    }
-  } catch { /* Borrowed ports may supply malformed metadata or throwing getters. */ }
+function asFailure(error: unknown, overrideKind?: JudgmentErrorKind): JudgmentError {
+  const source = optional(() => error instanceof JudgmentError ? error : undefined);
+  const rawKind = optional(() => source?.kind);
+  const kind = overrideKind ?? (failureKind(rawKind) ? rawKind : 'unavailable');
+  const rawStatus = optional(() => source?.status);
+  const status = statusCode(rawStatus) ? rawStatus : undefined;
+  const requestId = optional(() => identifier(source?.requestId));
+  const lineage = optional(() => projectLineage(source?.lineage));
   return new JudgmentError(kind, FAILURE_MESSAGES[kind], {
     ...(status === undefined ? {} : { status }),
     ...(requestId === undefined ? {} : { requestId }),
     ...(lineage === undefined ? {} : { lineage }),
   });
+}
+
+/** Abort reasons are not text; only explicitly typed timeouts preserve unavailable. */
+function cancellationKind(signal: AbortSignal | undefined): 'aborted' | 'unavailable' | undefined {
+  if (!signal?.aborted) return undefined;
+  const reason: unknown = signal.reason;
+  const timedOut = optional(() => (reason instanceof JudgmentError && reason.kind === 'unavailable')
+    || (reason instanceof DOMException && reason.name === 'TimeoutError'));
+  return timedOut ? 'unavailable' : 'aborted';
+}
+
+function checkCancellation(signal: AbortSignal | undefined): void {
+  const kind = cancellationKind(signal);
+  if (kind !== undefined) throw asFailure(signal?.reason, kind);
 }
 
 /** Runs a log write; a failure becomes a value-free `unrecorded` judgment error. */
@@ -91,7 +105,7 @@ function recorded<T>(write: () => T): T {
 }
 
 /** A borrowed port is as untrusted as a wire response; normalize before writing or returning it. */
-function projectResult<Q extends Questions>(questions: Q, result: JudgmentResult<Q>): JudgmentResult<Q> {
+function projectResult<Q extends Questions>(questions: Q, expectedModel: string, result: JudgmentResult<Q>): JudgmentResult<Q> {
   let requestId: string | undefined;
   let lineage: JudgmentLineage | undefined;
   try {
@@ -101,7 +115,7 @@ function projectResult<Q extends Questions>(questions: Q, result: JudgmentResult
     const { inputTokens, outputTokens } = usage;
     const requestedModel = identifier(rawRequestedModel, true);
     const model = identifier(rawModel, true);
-    if (requestedModel === undefined || model === undefined
+    if (requestedModel !== expectedModel || model === undefined
       || !nonnegative(inputTokens) || !nonnegative(outputTokens) || !nonnegative(latencyMs)) throw invalidResponse();
     checkAnswers(questions, answers);
     const normalizedAnswers = projectAnswers(questions, answers);
@@ -137,6 +151,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();
       let requestedModel: string | undefined;
+      const signal = request.signal;
       // Snapshot caller-owned inputs before a borrowed port can mutate them.
       const questions = toJson(request.questions);
       const call = {
@@ -149,9 +164,13 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
       try {
         requestedModel = identifier(request.model ?? inner.model, true);
         if (requestedModel === undefined) throw new JudgmentError('invalid-request', FAILURE_MESSAGES['invalid-request']);
-        result = projectResult(questions as Q, await inner.ask(request));
+        checkCancellation(signal);
+        const response = await inner.ask(request);
+        checkCancellation(signal);
+        result = projectResult(questions as Q, requestedModel, response);
+        checkCancellation(signal);
       } catch (error) {
-        const failure = asFailure(error);
+        const failure = asFailure(error, cancellationKind(signal));
         const entry: NewDecisionEntry = {
           ...call,
           status: 'failed',
