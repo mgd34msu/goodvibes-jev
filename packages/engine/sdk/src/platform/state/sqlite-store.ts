@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import { openVersionedSchema, sqlJsVersionHandle } from './store-versioning.js';
 import { restoreStoreSnapshot, snapshotStoreFile } from './store-snapshots.js';
+import { imageDigest, SQLiteStorePersistence } from './sqlite-store-persistence.js';
 
 // The sql.js engine loads exactly once per process, however many stores open.
 // Its WASM loader is not re-entrant: two concurrent initSqlJs() calls race the
@@ -64,9 +65,17 @@ export class SQLiteStore {
   private initPromise: Promise<void> | null = null;
   private saveBatchDepth = 0;
   private saveDirty = false;
+  private readonly coordinated: boolean;
+  private persistence: SQLiteStorePersistence | null = null;
+  private cleanImage: string | null = null;
+  private sqlEngine: SqlJsStatic | null = null;
+  private schema: ((db: SqlDatabase) => void) | null = null;
+  private schemaVersion = 1;
+  private imageEpoch = 0;
 
-  constructor(dbPath?: string) {
+  constructor(dbPath?: string, options: { readonly coordinated?: boolean } = {}) {
     this.dbPath = dbPath ?? null;
+    this.coordinated = options.coordinated === true;
   }
 
   get isReady(): boolean {
@@ -98,6 +107,50 @@ export class SQLiteStore {
     return this.getDb().exec(sql, params);
   }
 
+  /** Read one current persisted image without replacing pending local state. */
+  readPersisted<T>(read: (db: SqlDatabase) => T): T {
+    if (!this.coordinated) throw new Error('SQLiteStore: persisted reads require coordinated storage');
+    if (!this.persistence) return read(this.getDb());
+    const current = this.openCurrentImage();
+    try { return read(current); } finally { current.close(); }
+  }
+
+  /**
+   * Compare and mutate one fresh image synchronously under file ownership.
+   * Local/batched changes are never discarded to make a guarded write fit.
+   * The commit callback refreshes mirrors before another operation can enter.
+   */
+  async transactPersisted<T>(
+    operation: (db: SqlDatabase) => { readonly changed: boolean; readonly value: T },
+    onCommit: () => void,
+  ): Promise<{ readonly kind: 'local-changes' } | { readonly kind: 'completed'; readonly value: T }> {
+    if (!this.coordinated) throw new Error('SQLiteStore: guarded persistence requires coordinated storage');
+    const release = this.persistence ? await this.persistence.lock() : () => {};
+    let current: SqlDatabase | null = null;
+    try {
+      if (this.saveBatchDepth > 0 || imageDigest(this.getDb().export()) !== this.cleanImage) {
+        return { kind: 'local-changes' };
+      }
+      current = this.openCurrentImage();
+      const result = operation(current);
+      if (result.changed) {
+        const data = current.export();
+        this.persistence?.write(data);
+        const previous = this.db;
+        this.db = current;
+        current = null;
+        this.imageEpoch += 1;
+        this.cleanImage = imageDigest(data);
+        previous?.close();
+        onCommit();
+      }
+      return { kind: 'completed', value: result.value };
+    } finally {
+      current?.close();
+      release();
+    }
+  }
+
   async batch<T>(operation: () => Promise<T>): Promise<T> {
     this.saveBatchDepth += 1;
     try {
@@ -113,10 +166,32 @@ export class SQLiteStore {
 
   async save(): Promise<boolean> {
     const dbPath = this.dbPath;
-    if (isEphemeralDbPath(dbPath) || !this.db || !dbPath) return false;
+    if (!this.db) return false;
+    if (!this.coordinated && (isEphemeralDbPath(dbPath) || !dbPath)) return false;
     if (this.saveBatchDepth > 0) {
       this.saveDirty = true;
       return false;
+    }
+    if (isEphemeralDbPath(dbPath) || !dbPath) {
+      if (this.coordinated) this.cleanImage = imageDigest(this.db.export());
+      return false;
+    }
+
+    if (this.persistence) {
+      // Capture at admission. Later same-handle writes may already be queued;
+      // they must not change which image this particular save publishes.
+      const data = this.db.export();
+      const epoch = this.imageEpoch;
+      const release = await this.persistence.lock();
+      try {
+        this.getDb(); // Closing a handle also cancels its pending saves.
+        if (this.imageEpoch !== epoch) {
+          throw new Error('SQLiteStore: persisted state changed; captured image was superseded');
+        }
+        this.persistence.writeIfCurrent(data);
+        this.cleanImage = imageDigest(data);
+        return true;
+      } finally { release(); }
     }
 
     try {
@@ -135,19 +210,31 @@ export class SQLiteStore {
 
   close(): void {
     if (!this.db) return;
+    this.imageEpoch += 1;
     this.db.close();
     this.db = null;
   }
 
   private async initialize(schema: (db: SqlDatabase) => void, options: SqliteStoreInitOptions): Promise<void> {
+    let release: (() => void) | undefined;
     try {
       const SQL = await loadSqlJsEngine();
-      const dbPath = this.dbPath;
+      this.imageEpoch += 1;
+      this.sqlEngine = SQL;
+      this.schema = schema;
+      this.schemaVersion = options.schemaVersion ?? 1;
+      if (this.coordinated && this.dbPath && !isEphemeralDbPath(this.dbPath)) {
+        this.persistence = new SQLiteStorePersistence(this.dbPath);
+        release = await this.persistence.lock();
+      }
+      const dbPath = this.persistence?.path ?? this.dbPath;
       const persistent = Boolean(dbPath && !isEphemeralDbPath(dbPath));
       const existedOnDisk = persistent && existsSync(dbPath!);
+      const original = this.persistence?.read() ?? (existedOnDisk ? readFileSync(dbPath!) : null);
+      this.persistence?.acceptBaseline(original);
 
       if (existedOnDisk) {
-        this.db = new SQL.Database(readFileSync(dbPath!));
+        this.db = new SQL.Database(original!);
         logger.info('SQLiteStore: loaded from disk', { path: dbPath });
       } else {
         this.db = new SQL.Database();
@@ -170,6 +257,7 @@ export class SQLiteStore {
         restore: persistent
           ? (snapshotPath) => {
               restoreStoreSnapshot(dbPath!, snapshotPath);
+              if (this.coordinated) this.db?.close();
               this.db = new SQL.Database(readFileSync(dbPath!));
             }
           : undefined,
@@ -181,15 +269,36 @@ export class SQLiteStore {
       // but only for a store that already lived on disk: a brand-new store
       // keeps the long-standing contract of touching disk on first save().
       if (result.applied.length > 0 && existedOnDisk) {
-        await this.save();
+        if (this.persistence) this.persistence.writeIfCurrent(this.getDb().export());
+        else await this.save();
       }
+      if (this.coordinated) this.cleanImage = imageDigest(this.getDb().export());
     } catch (err) {
+      if (this.coordinated) this.db?.close();
       this.db = null;
       logger.error('SQLiteStore: failed to initialize', {
         error: summarizeError(err),
       });
       throw err;
+    } finally {
+      release?.();
     }
+  }
+
+  private openCurrentImage(): SqlDatabase {
+    this.getDb();
+    const data = this.persistence ? this.persistence.read() : this.getDb().export();
+    const current = new this.sqlEngine!.Database(data ?? undefined);
+    try {
+      if (data === null) {
+        this.schema!(current);
+        sqlJsVersionHandle(current).setUserVersion(this.schemaVersion);
+      } else if (sqlJsVersionHandle(current).getUserVersion() !== this.schemaVersion) {
+        throw new Error('SQLiteStore: persisted schema changed; reopen the store before writing');
+      }
+      this.schema!(current);
+      return current;
+    } catch (error) { current.close(); throw error; }
   }
 
   private getDb(): SqlDatabase {

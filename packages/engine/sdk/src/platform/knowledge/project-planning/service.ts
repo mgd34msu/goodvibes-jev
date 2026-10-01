@@ -199,7 +199,7 @@ export class ProjectPlanningService {
     const written = await this.store.upsertSourceIfCurrent({ ...sourceInput, id: revision.sourceId }, revision.generation);
     if (written.kind === 'held') {
       const heldRevision = written.current && written.generation ? { sourceId: written.current.id, generation: written.generation } : undefined;
-      return { ok: true, applied: false, reason: 'state-changed', state: written.current ? readState(written.current) : null,
+      return { ok: true, applied: false, reason: written.reason === 'pending-local-changes' ? 'pending-local-changes' : 'state-changed', state: written.current ? readState(written.current) : null,
         ...(heldRevision ? { revision: Object.freeze(heldRevision) } : {}) };
     }
     // Stale actions returned above before any task or work-plan mutation.

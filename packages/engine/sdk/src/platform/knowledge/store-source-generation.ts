@@ -11,7 +11,7 @@ export interface KnowledgeSourceSnapshot {
 
 export type KnowledgeSourceWriteResult =
   | { readonly kind: 'written'; readonly source: KnowledgeSourceRecord; readonly generation: string }
-  | { readonly kind: 'held'; readonly reason: 'source-changed'; readonly current: KnowledgeSourceRecord | null; readonly generation: string | null };
+  | { readonly kind: 'held'; readonly reason: 'source-changed' | 'pending-local-changes'; readonly current: KnowledgeSourceRecord | null; readonly generation: string | null };
 
 /** Read SQLite directly: cached records are mutable and cannot grant a write. */
 export function readKnowledgeSourceSnapshot(

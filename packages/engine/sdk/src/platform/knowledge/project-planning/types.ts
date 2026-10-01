@@ -368,7 +368,7 @@ export interface ProjectPlanningStateActionInput extends ProjectPlanningSpaceInp
 
 export type ProjectPlanningStateActionResult =
   | { readonly ok: true; readonly applied: true; readonly state: ProjectPlanningState; readonly revision: ProjectPlanningRevision; readonly evaluation: ProjectPlanningEvaluation; readonly question?: ProjectPlanningQuestion | undefined }
-  | { readonly ok: true; readonly applied: false; readonly reason: 'state-changed' | ProjectPlanningAnswerFailureReason; readonly state: ProjectPlanningState | null; readonly revision?: ProjectPlanningRevision | undefined };
+  | { readonly ok: true; readonly applied: false; readonly reason: 'state-changed' | 'pending-local-changes' | ProjectPlanningAnswerFailureReason; readonly state: ProjectPlanningState | null; readonly revision?: ProjectPlanningRevision | undefined };
 
 export interface ProjectPlanningStateResult {
   /** Absent on legacy readers; view-selected mutations must require it. */
