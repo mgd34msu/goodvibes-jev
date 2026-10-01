@@ -1,7 +1,7 @@
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { JudgmentPort, JudgmentResult, Questions } from '@goodvibes-jev/judgment/decisions';
 import {
-  BrowserJudgmentError, BROWSER_JUDGMENT_LIMITS as LIMIT, parseBrowserJudgmentRequest, captureBrowserJudgmentJson,
+  BrowserJudgmentError, BROWSER_JUDGMENT_LIMITS as LIMIT, parseBrowserJudgmentRequest, captureBrowserJudgmentJson, missingScopes,
   type AuthenticatedPrincipal, type BrowserJudgmentRequest,
 } from '@goodvibes-jev/engine/daemon-sdk';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
@@ -10,6 +10,7 @@ import { BrowserJudgmentRegistry, type RegisteredBrowserJudgmentBattery } from '
 import { validateBrowserJudgmentProjection } from './projection.js';
 import type { BrowserJudgmentAuthorization, BrowserJudgmentRoute, BrowserJudgmentProjection } from './types.js';
 import { BrowserJudgmentCallLimit } from './call-limit.js';
+import { consumeRejectedHook, granted, requireSynchronousAssertion } from './guards.js';
 
 export interface BrowserJudgmentServiceOptions {
   readonly registry: BrowserJudgmentRegistry;
@@ -41,7 +42,7 @@ export class BrowserJudgmentService {
   readonly #providerCalls = new BrowserJudgmentCallLimit(8, LIMIT.totalRuns * 4);
   constructor(private readonly options: BrowserJudgmentServiceOptions) {}
 
-  async execute(raw: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal): Promise<object> {
+  async execute(raw: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
     if (this.#closing) throw new BrowserJudgmentError('JUDGMENT_SHUTTING_DOWN');
     const request = parseBrowserJudgmentRequest(raw);
     const battery = this.options.registry.get(request.battery);
@@ -54,7 +55,7 @@ export class BrowserJudgmentService {
     if (signal.aborted) cancelled(); else signal.addEventListener('abort', cancelled, { once: true });
     const timer = setTimeout(() => abort.abort(new BrowserJudgmentError('JUDGMENT_DEADLINE')), LIMIT.runMs);
     // Defer the resolver until after the run is owned, including synchronous throws.
-    const work = Promise.resolve().then(() => this.run(request, battery, principal, abort));
+    const work = Promise.resolve().then(() => this.run(request, battery, principal, abort, currentPrincipal));
     this.#active.set(work, { principal: principal.principalId, abort });
     const release = () => { clearTimeout(timer); signal.removeEventListener('abort', cancelled); this.#active.delete(work); };
     void work.then(release, release);
@@ -69,21 +70,31 @@ export class BrowserJudgmentService {
     finally { abort.signal.removeEventListener('abort', stop); }
   }
 
-  private async run(request: BrowserJudgmentRequest, battery: RegisteredBrowserJudgmentBattery, principal: AuthenticatedPrincipal, abort: AbortController): Promise<object> {
+  private async run(request: BrowserJudgmentRequest, battery: RegisteredBrowserJudgmentBattery, principal: AuthenticatedPrincipal, abort: AbortController, currentPrincipal: () => AuthenticatedPrincipal): Promise<object> {
     const signal = abort.signal;
     const checkAbort = () => { if (signal.aborted) throw signal.reason; };
-    checkAbort();
-    const resolved = await battery.resolve(request.input, { principal, signal, references: this.options.references });
-    checkAbort(); resolved.assertCurrent();
+    const authenticate = (): AuthenticatedPrincipal => {
+      checkAbort();
+      const actor = currentPrincipal();
+      if (!actor || 'then' in actor || actor.principalId !== principal.principalId
+        || (actor.admin !== true && (!Array.isArray(actor.scopes) || missingScopes(actor.scopes, ['write:judgment']).length > 0))) {
+        consumeRejectedHook(actor); throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
+      }
+      return actor;
+    };
+    const resolved = await battery.resolve(request.input, { principal: authenticate(), currentPrincipal: authenticate, signal, references: this.options.references });
+    authenticate(); requireSynchronousAssertion(resolved.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
     let state: unknown;
     try { state = captureBrowserJudgmentJson(snapshotJudgmentInput(resolved.state)); }
     catch { throw new BrowserJudgmentError('JUDGMENT_INPUT_HELD'); }
     const route = this.options.currentRoute();
-    if (!route) throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
+    if (!route || 'then' in route) { consumeRejectedHook(route); throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE'); }
     const authorized = () => {
-      checkAbort(); resolved.assertCurrent(); route.assertCurrent();
-      if (!this.options.authorize({ principal, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
-        route: { revision: route.revision, kind: route.kind } })) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
+      const actor = authenticate();
+      requireSynchronousAssertion(resolved.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      requireSynchronousAssertion(route.assertCurrent, 'JUDGMENT_PERMISSION_HELD');
+      if (!granted(this.options.authorize({ principal: actor, battery: request.battery, batteryVersion: 1, sourceBinding: resolved.sourceBinding,
+        route: { revision: route.revision, kind: route.kind } }))) throw new BrowserJudgmentError('JUDGMENT_PERMISSION_HELD');
     };
     authorized();
     if (!route.port.recorder) throw new BrowserJudgmentError('JUDGMENT_UNRECORDED');
@@ -132,7 +143,7 @@ export class BrowserJudgmentService {
     let projected: BrowserJudgmentProjection<unknown>;
     try { projected = captureBrowserJudgmentJson(battery.project(result)) as BrowserJudgmentProjection<unknown>; }
     catch { throw new BrowserJudgmentError('JUDGMENT_INVALID_RESPONSE'); }
-    validateBrowserJudgmentProjection(request, projected);
+    validateBrowserJudgmentProjection(request, projected, state);
     const outcomes = Object.values(projected.readings).map((reading) => reading.outcome);
     const outcome = outcomes.includes('escalate') ? 'escalate' : outcomes.includes('confirm') ? 'confirm' : 'act';
     const response = { protocolVersion: 1, requestId: request.requestId, battery: request.battery, batteryVersion: 1, ...projected, outcome, evidence };

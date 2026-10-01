@@ -7,7 +7,7 @@ import {
 import { parseBrowserJudgmentRequest } from './browser-judgment-validation.js';
 
 export interface BrowserJudgmentCapability {
-  execute(input: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal): Promise<object>;
+  execute(input: unknown, principal: AuthenticatedPrincipal, signal: AbortSignal, currentPrincipal: () => AuthenticatedPrincipal): Promise<object>;
 }
 export interface BrowserJudgmentHttpContext {
   readonly authenticate: (req: Request) => AuthenticatedPrincipal | null;
@@ -75,6 +75,12 @@ export function createBrowserJudgmentHttpHandler(context: BrowserJudgmentHttpCon
       const principal = context.authenticate(req);
       if (!principal) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
       if (!principal.admin && missingScopes(principal.scopes, ['write:judgment']).length) throw new BrowserJudgmentError('JUDGMENT_ACCESS_DENIED');
+      const currentPrincipal = (): AuthenticatedPrincipal => {
+        const current = context.authenticate(req);
+        if (!current || current.principalId !== principal.principalId
+          || (!current.admin && missingScopes(current.scopes, ['write:judgment']).length)) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
+        return current;
+      };
       const origin = req.headers.get('origin');
       const cors = context.cors();
       if (origin === null) {
@@ -86,11 +92,10 @@ export function createBrowserJudgmentHttpHandler(context: BrowserJudgmentHttpCon
       if (req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json'
         || !['', 'identity'].includes(req.headers.get('content-encoding') ?? '')) throw new BrowserJudgmentError('JUDGMENT_CONTENT_TYPE_UNSUPPORTED');
       const input = parseBrowserJudgmentRequest(await readBody(req));
+      const admittedPrincipal = currentPrincipal();
       if (!context.service) throw new BrowserJudgmentError('JUDGMENT_UNAVAILABLE');
-      const result = await context.service.execute(input, principal, req.signal);
-      const current = context.authenticate(req);
-      if (!current || current.principalId !== principal.principalId
-        || (!current.admin && missingScopes(current.scopes, ['write:judgment']).length)) throw new BrowserJudgmentError('JUDGMENT_AUTH_REQUIRED');
+      const result = await context.service.execute(input, admittedPrincipal, req.signal, currentPrincipal);
+      currentPrincipal();
       if (req.signal.aborted) throw new BrowserJudgmentError('JUDGMENT_ABORTED');
       return response(result);
     } catch (error) { return refusal(error); }

@@ -1,6 +1,7 @@
 import { BrowserJudgmentError, BROWSER_JUDGMENT_LIMITS, type AuthenticatedPrincipal, type BrowserJudgmentBatteryId } from '@goodvibes-jev/engine/daemon-sdk';
 import { snapshotJudgmentInput } from '../gate/judgment-input.js';
 import type { BrowserJudgmentResolvedInput } from './types.js';
+import { consumeRejectedHook, granted, requireSynchronousAssertion } from './guards.js';
 
 export interface BrowserJudgmentReferenceSource {
   readonly principalId: string; readonly battery: BrowserJudgmentBatteryId; readonly revision: string;
@@ -21,7 +22,7 @@ export class BrowserJudgmentReferences {
       || entry.expiresAt <= this.now() || entry.expiresAt > this.now() + 300_000 || this.#entries.size >= 64
       || typeof entry.mayRead !== 'function' || typeof entry.assertCurrent !== 'function') return held();
     let snapshot: unknown;
-    try { entry.assertCurrent(); snapshot = snapshotJudgmentInput(entry.snapshot); }
+    try { requireSynchronousAssertion(entry.assertCurrent, 'JUDGMENT_REFERENCE_HELD'); snapshot = snapshotJudgmentInput(entry.snapshot); }
     catch { return held(); }
     if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength > BROWSER_JUDGMENT_LIMITS.bodyBytes) return held();
     const id = crypto.randomUUID();
@@ -29,13 +30,17 @@ export class BrowserJudgmentReferences {
     return id;
   }
 
-  resolve<S>(id: string, principal: AuthenticatedPrincipal, battery: BrowserJudgmentBatteryId, parse: (value: unknown) => S): BrowserJudgmentResolvedInput<S> {
+  resolve<S>(id: string, currentPrincipal: () => AuthenticatedPrincipal, battery: BrowserJudgmentBatteryId, parse: (value: unknown) => S): BrowserJudgmentResolvedInput<S> {
     this.sweep();
     const entry = this.#entries.get(id);
     const assertCurrent = (): void => {
-      if (this.#closed || !entry || this.#entries.get(id) !== entry || entry.expiresAt <= this.now()
-        || entry.principalId !== principal.principalId || entry.battery !== battery) return held();
-      try { if (!entry.mayRead(principal)) return held(); entry.assertCurrent(); }
+      if (this.#closed || !entry || this.#entries.get(id) !== entry || entry.expiresAt <= this.now() || entry.battery !== battery) return held();
+      try {
+        const principal = currentPrincipal();
+        if (!principal || 'then' in principal || entry.principalId !== principal.principalId) { consumeRejectedHook(principal); return held(); }
+        if (!granted(entry.mayRead(principal))) return held();
+        requireSynchronousAssertion(entry.assertCurrent, 'JUDGMENT_REFERENCE_HELD');
+      }
       catch { return held(); }
     };
     assertCurrent();

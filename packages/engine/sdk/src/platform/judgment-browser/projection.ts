@@ -19,21 +19,42 @@ function validateReading(reading: Reading): void {
 }
 
 /** Reject malformed values and refuse executable values backed by unsettled readings. */
-export function validateBrowserJudgmentProjection(request: BrowserJudgmentRequest, result: BrowserJudgmentProjection<unknown>): void {
+export function validateBrowserJudgmentProjection(request: BrowserJudgmentRequest, result: BrowserJudgmentProjection<unknown>, state?: unknown): void {
   try {
     judgmentRecord(result, result.status === 'settled' ? ['status', 'value', 'readings'] : ['status', 'reason', 'readings']);
     if (!result.readings || typeof result.readings !== 'object' || Array.isArray(result.readings)) return invalid();
     const readings = Object.values(result.readings);
     if (!readings.length || readings.length > 128) return invalid();
     readings.forEach(validateReading);
+    const errorNames = ['session_not_found', 'session_closed', 'session_active', 'session_not_local', 'method_unknown'];
+    if (request.battery === 'webui.errors.daemon-refusal') {
+      judgmentRecord(result.readings, errorNames);
+      if (readings.some((reading) => reading.kind !== 'yes-no')) return invalid();
+    } else if (request.battery === 'webui.status.badge-tone') {
+      const name = request.input.vocabulary === 'badge' ? 'badge' : 'library_dot';
+      judgmentRecord(result.readings, [name]);
+      const reading = result.readings[name];
+      const tones = request.input.vocabulary === 'badge' ? ['ok', 'warning', 'bad', 'neutral'] : ['ok', 'warn', 'bad', 'info', 'idle'];
+      if (reading?.kind !== 'choice' || !tones.includes(reading.choice)) return invalid();
+      judgmentRecord(reading.probabilities, tones);
+    } else {
+      judgmentRecord(result.readings, request.input.candidates.map((_, index) => `candidate_${index}`));
+      if (readings.some((reading) => reading.kind !== 'yes-no')) return invalid();
+    }
     if (result.status === 'held') { if (result.reason !== 'uncertain') return invalid(); return; }
     if (result.status !== 'settled' || readings.some((r) => r.outcome !== 'act' || (r.kind === 'yes-no' && r.verdict === 'uncertain'))) return invalid();
     if (request.battery === 'webui.errors.daemon-refusal') {
-      const names = ['session_not_found', 'session_closed', 'session_active', 'session_not_local', 'method_unknown'];
-      const value = judgmentRecord(result.value, names);
-      judgmentRecord(result.readings, names);
-      if (names.some((key) => typeof value[key] !== 'boolean' || result.readings[key]?.kind !== 'yes-no'
-        || value[key] !== (result.readings[key]?.kind === 'yes-no' && result.readings[key].verdict === 'yes'))) return invalid();
+      const value = judgmentRecord(result.value, errorNames);
+      if (errorNames.some((key) => {
+        const reading = result.readings[key];
+        return typeof value[key] !== 'boolean' || reading?.kind !== 'yes-no'
+          || (key !== 'method_unknown' && value[key] !== (reading.verdict === 'yes'));
+      })) return invalid();
+      const method = result.readings.method_unknown;
+      // This is an HTTP fact, not a confidence heuristic. The reader may suppress
+      // a yes outside 404, but cannot manufacture a yes from a no/uncertain reading.
+      if (value.method_unknown && (method?.kind !== 'yes-no' || method.verdict !== 'yes'
+        || !state || typeof state !== 'object' || !('status' in state) || state.status !== 404)) return invalid();
     } else if (request.battery === 'webui.status.badge-tone') {
       const value = judgmentRecord(result.value, ['vocabulary', 'tone']);
       if (value.vocabulary !== request.input.vocabulary) return invalid();
@@ -54,6 +75,8 @@ export function validateBrowserJudgmentProjection(request: BrowserJudgmentReques
         const accepted = judgmentRecord(item, ['candidateIndex', 'probability']);
         const index = add(accepted.candidateIndex); const p = accepted.probability;
         if (!probability(p) || p > previous || (p === previous && index < previousIndex)) return invalid();
+        const reading = result.readings[`candidate_${index}`];
+        if (reading?.kind !== 'yes-no' || reading.probability !== p) return invalid();
         previous = p; previousIndex = index;
       }
       value.rejected.forEach(add);

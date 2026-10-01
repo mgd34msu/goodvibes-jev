@@ -17,6 +17,8 @@ export interface BrowserJudgmentResolvedInput<S> {
 }
 export interface BrowserJudgmentResolveContext {
   readonly principal: AuthenticatedPrincipal;
+  /** Fresh transport identity/scopes; reference assertions must use this rather than a cached grant. */
+  readonly currentPrincipal: () => AuthenticatedPrincipal;
   readonly signal: AbortSignal;
   readonly references: BrowserJudgmentReferences;
 }

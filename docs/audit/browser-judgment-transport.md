@@ -31,6 +31,9 @@ server configuration, never Host/forwarded headers. Credentials, query-string
 input, arbitrary prompts/questions/models/routes, and unknown JSON fields are not
 part of this protocol. Responses are non-cacheable. Clients must not enable POST
 retries or persist results; a UUID is correlation, not an idempotency guarantee.
+The HTTP transport supplies a fresh `currentPrincipal()` guard, rechecked after
+body admission, source resolution, provider-queue waiting and completion. Reference
+resolution receives this function rather than a cached principal/scopes snapshot.
 
 Admission bounds: 64 KiB UTF-8 body, five-second body deadline, JSON depth 16,
 4096 nodes, 32768 aggregate text characters, 128 array items, 64 palette candidates,
@@ -51,6 +54,9 @@ provider transmission: the separately injected server authorization policy must
 approve the source binding and current route. A route's assertion is checked
 before every provider call and before delivery. Composition must make this
 assertion truthful when live endpoint/model/credential configuration changes.
+Assertion hooks are synchronous: any non-undefined result is refused. Grants
+require literal `true`; Promises and other truthy values cannot grant access.
+Rejected thenables are consumed without exposing their rejection text.
 
 Each installed adapter declares its fixed questions and maximum call count. The
 scoped port refuses new/different questions and provides server-owned log context.
@@ -58,6 +64,11 @@ Input text is state, never question text. Error readings remain five independent
 yes/no readings; status selects the requested closed vocabulary; palette values
 contain complete unique candidate indices and finite probabilities with stable
 ties. Held/uncertain results contain readings and aggregate outcome but no value.
+Held readings use the same closed names and vocabularies as settled readings:
+the five error names, `badge` or `library_dot`, and `candidate_0` through the
+last requested candidate. Known machine error codes are handled structurally by
+callers before this semantic endpoint. They do not become synthetic model readings
+or metadata-only success; an endpoint answer requires a genuine recorded call.
 
 ## Evidence and verification
 
@@ -72,3 +83,6 @@ and byte admission, authentication/CSRF, cancellation, reference ownership,
 full-input privacy holds, uncertainty, unavailable installation, bounded fan-out,
 route/source changes and asynchronous drain. Synthetic success is not live
 provider calibration. No live provider key or fabricated reading is installed.
+The product composition test boots the actual `createRuntimeServices` graph and
+proves exact recorded-port injection, accepted-call drain before SQLite disposal,
+factory/inbox acquisition rollback and clean rebuilding with the same config.

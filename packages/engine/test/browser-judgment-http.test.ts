@@ -298,7 +298,7 @@ describe('browser judgment HTTP borrowed execution and cancellation', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(await response.json()).toEqual(SERVICE_RESULT);
-    expect(authentications).toBe(2);
+    expect(authentications).toBe(3);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.input).toEqual(REQUEST);
     expect(Object.isFrozen(calls[0]!.input)).toBe(true);
@@ -324,14 +324,25 @@ describe('browser judgment HTTP borrowed execution and cancellation', () => {
       { ...PRINCIPAL, scopes: [] }, { ...PRINCIPAL, scopes: ['read:judgment'] }]) {
       let authentications = 0;
       let executions = 0;
+      let active = true;
       const { handler } = fixture({
-        authenticate: () => ++authentications === 1 ? PRINCIPAL : current,
-        service: { async execute() { executions++; return SERVICE_RESULT; } },
+        authenticate: () => { authentications++; return active ? PRINCIPAL : current; },
+        service: { async execute() { executions++; active = false; return SERVICE_RESULT; } },
       });
       await expectHeld(await handler(request()), 'JUDGMENT_AUTH_REQUIRED');
-      expect(authentications).toBe(2);
+      expect(authentications).toBe(3);
       expect(executions).toBe(1);
     }
+  });
+
+  test('revocation during body streaming prevents any service admission', async () => {
+    let active = true;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) {
+      active = false; controller.enqueue(new TextEncoder().encode(JSON.stringify(REQUEST))); controller.close();
+    } }, { highWaterMark: 0 });
+    const { handler, calls } = fixture({ authenticate: () => active ? PRINCIPAL : null });
+    await expectHeld(await handler(request({ body })), 'JUDGMENT_AUTH_REQUIRED');
+    expect(calls).toHaveLength(0);
   });
 
   test('rechecks an administrator who loses judgment access while a run is in flight', async () => {
