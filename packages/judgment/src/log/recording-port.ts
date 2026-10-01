@@ -167,7 +167,7 @@ export function withDecisionLog(inner: JudgmentPort, log: DecisionLog, now: () =
         checkCancellation(signal);
         const response = await inner.ask(request);
         checkCancellation(signal);
-        result = projectResult(questions as Q, requestedModel, response);
+        result = projectResult(questions as unknown as Q, requestedModel, response);
         checkCancellation(signal);
       } catch (error) {
         const failure = asFailure(error, cancellationKind(signal));
