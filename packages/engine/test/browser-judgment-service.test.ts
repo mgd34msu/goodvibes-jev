@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { SqliteDecisionLog, withDecisionLog, noul, readYesNo, STAKES_BANDS, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { BrowserJudgmentError, type AuthenticatedPrincipal } from '../daemon-sdk/src/index.ts';
-import { BrowserJudgmentRegistry, BrowserJudgmentReferences, BrowserJudgmentService } from '../sdk/src/platform/judgment-browser/index.ts';
+import { BrowserJudgmentRegistry, BrowserJudgmentReferences, BrowserJudgmentService, type BrowserJudgmentResolvedInput } from '../sdk/src/platform/judgment-browser/index.ts';
 
 const ID = 'webui.errors.daemon-refusal' as const;
 const names = ['session_not_found', 'session_closed', 'session_active', 'session_not_local', 'method_unknown'] as const;
@@ -26,9 +26,10 @@ function fixture(options: { probability?: number; authorized?: boolean; state?: 
   registry.register({ id: ID, version: 1, questions, maxCalls: options.fanOut ?? 1,
     resolve: async () => {
       await options.resolveBarrier?.();
-      return { state: options.state ?? { message: 'Fixture error', status: 404 }, sourceBinding: 'fixture-only', assertCurrent() {
+      const resolved: BrowserJudgmentResolvedInput<unknown> = { state: options.state ?? { message: 'Fixture error', status: 404 }, sourceBinding: 'fixture-only', assertCurrent() {
         if (!current || this.sourceBinding !== 'fixture-only') throw new BrowserJudgmentError('JUDGMENT_REFERENCE_HELD'); return options.assertCurrent?.();
       } };
+      return resolved;
     },
     run: async (active, state, { signal }) => {
       const [result] = await Promise.all(Array.from({ length: options.fanOut ?? 1 }, () => active.ask({ state: state as never, questions, signal })));

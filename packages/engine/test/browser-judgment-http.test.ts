@@ -76,7 +76,7 @@ function streamedBody(chunks: readonly Uint8Array[], onCancel?: () => void | Pro
       for (const chunk of chunks) controller.enqueue(chunk);
       if (!onCancel) controller.close();
     },
-    cancel: onCancel,
+    ...(onCancel === undefined ? {} : { cancel: onCancel }),
   });
 }
 

@@ -58,7 +58,7 @@ describe('browser judgment closed envelope', () => {
   });
 
   test('accepts a complete request and rejects each missing envelope field', () => {
-    expect(parseBrowserJudgmentRequest(envelope())).toEqual(envelope());
+    expect<unknown>(parseBrowserJudgmentRequest(envelope())).toEqual(envelope());
     for (const key of Object.keys(envelope())) {
       const value: Record<string, unknown> = { ...envelope() };
       delete value[key];
@@ -139,7 +139,7 @@ describe('browser judgment battery input variants', () => {
     for (const vocabulary of ['badge', 'library-dot']) {
       for (const source of [{ kind: 'catalog', labelId: 'fixture-label' }, { kind: 'daemon', statusRef: 'fixture-status' }]) {
         const request = envelope(STATUS_BATTERY, { vocabulary, source });
-        expect(parseBrowserJudgmentRequest(request)).toEqual(request);
+        expect<unknown>(parseBrowserJudgmentRequest(request)).toEqual(request);
       }
     }
   });
@@ -176,7 +176,7 @@ describe('browser judgment battery input variants', () => {
         { kind: 'builtin', commandId: 'fixture-same-id' },
         { kind: 'chat', sessionId: 'fixture-same-id' },
       ] }));
-      expect(parseBrowserJudgmentRequest(request)).toEqual(request);
+      expect<unknown>(parseBrowserJudgmentRequest(request)).toEqual(request);
     }
   });
 

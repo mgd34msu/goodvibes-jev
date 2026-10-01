@@ -3,13 +3,13 @@ import { JudgmentError, SqliteDecisionLog, withDecisionLog, type DecisionLog, ty
 
 const SECRET = 'Bearer sk-secret-provider-body';
 const request = { state: 'private state', questions: { q: { type: 'noul', instructions: 'Q?' } } } as const;
-const attempt = { attempt: 1, endpointIndex: 0, endpointKind: 'hosted', requestedModel: 'jev-1.13.0', latencyMs: 12, outcome: 'answered', requestId: 'req-ok' };
+const attempt = { attempt: 1, endpointIndex: 0, endpointKind: 'hosted', requestedModel: 'jev-1.13.0', latencyMs: 12, outcome: 'answered', requestId: 'req-ok' } as const;
 const result = () => ({
   answers: { q: { type: 'noul', noul: 0.9 } },
   requestedModel: 'jev-1.13.0', model: 'jev-1.13.0',
   usage: { inputTokens: 120, outputTokens: 9 }, latencyMs: 42, requestId: 'req-ok',
   lineage: { logicalRequestId: 'logical-1', attempts: [{ ...attempt }] },
-});
+} as const);
 const borrowed = (answer: unknown): JudgmentPort => ({ model: 'jev-1.13.0', async ask() { return answer as never; } });
 const rejecting = (error: unknown): JudgmentPort => ({ model: 'jev-1.13.0', async ask() { throw error; } });
 const exposedError = (error: unknown) => {
@@ -30,7 +30,7 @@ describe('recording port trust boundary', () => {
       lineage: { logicalRequestId: 'logical-1', rawBody: SECRET, attempts: [{ ...attempt, headers: SECRET }] },
     };
     const answer = await withDecisionLog(borrowed(raw), log).ask(request);
-    expect(answer).toEqual({ ...result(), decisionId: answer.decisionId });
+    expect(answer).toEqual({ ...result(), decisionId: answer.decisionId! });
     expect(answer.decisionId).toBeString();
     const entry = log.get(answer.decisionId!)!;
     expect(entry.status).toBe('answered');
@@ -98,7 +98,8 @@ describe('recording port trust boundary', () => {
     const error = exposedError(await withDecisionLog(rejecting(upstream), log).ask(request).catch((e: unknown) => e));
     expect(error.requestId).toBeUndefined();
     expect(error.status).toBe(529);
-    expect(error.lineage).toEqual({ logicalRequestId: 'logical-1', attempts: [{ ...attempt, outcome: 'unavailable', requestId: undefined, status: 529 }] });
+    const { requestId: _requestId, ...withoutRequestId } = attempt;
+    expect(error.lineage).toEqual({ logicalRequestId: 'logical-1', attempts: [{ ...withoutRequestId, outcome: 'unavailable', status: 529 }] });
     expect(JSON.stringify(log.query())).not.toContain(SECRET);
     expect(log.query()[0]?.lineage).toEqual(error.lineage);
   });
