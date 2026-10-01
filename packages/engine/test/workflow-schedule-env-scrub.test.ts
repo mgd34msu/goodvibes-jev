@@ -1,7 +1,7 @@
 // A scheduled workflow command gets the environment the exec path gives a
 // command: variables read as credential-bearing are withheld, the rest and
 // GV_SCHEDULE_NAME are passed.
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,38 +36,83 @@ afterEach(() => {
 
 describe('scheduled workflow command environment', () => {
   test('credential-bearing variables are withheld; the rest and GV_SCHEDULE_NAME are passed', async () => {
-    const out = join(dir, 'env.txt');
-    const script = join(dir, 'dump.sh');
-    writeFileSync(script, `env > ${out}\n`);
-    const manager = new ScheduleManager();
-    try {
-      manager.add('nightly', '0.05s', `sh ${script}`);
-      const deadline = Date.now() + 5_000;
-      while (!existsSync(out) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    } finally {
-      manager.remove('nightly');
-    }
-    const env = readFileSync(out, 'utf-8');
+    const env = await runOnce(new ScheduleManager());
     expect(env).toContain('GV_SCHEDULE_NAME=nightly');
     expect(env).toContain('GV_SCHEDULE_TEST_PLAIN=plain-visible');
     expect(env).not.toContain('tok-should-not-leak');
   });
 
-  async function runOnce(manager: ScheduleManager): Promise<string> {
-    const out = join(dir, `env-${Math.random().toString(36).slice(2)}.txt`);
+  async function runOnce(manager: ScheduleManager, body = 'env > "$1"\n'): Promise<string> {
+    const out = join(dir, 'env.txt');
     const script = join(dir, 'dump.sh');
-    writeFileSync(script, 'env > "$1"\n');
+    writeFileSync(script, body);
+    const spawn = Bun.spawn;
+    const interval = globalThis.setInterval;
+    let child: ReturnType<typeof Bun.spawn> | undefined;
+    let complete!: (child: ReturnType<typeof Bun.spawn>) => void;
+    const started = new Promise<ReturnType<typeof Bun.spawn>>((resolve) => { complete = resolve; });
+    // Observe the real process without replacing its arguments or scrubbed env.
+    const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(((...args: unknown[]) => {
+      const proc = Reflect.apply(spawn, Bun, args) as ReturnType<typeof Bun.spawn>;
+      if (Array.isArray(args[0]) && args[0].includes(script)) {
+        child = proc;
+        complete(proc);
+      }
+      return proc;
+    }) as typeof Bun.spawn);
+    // These tests exercise env propagation. Admit one actual timer tick, then
+    // stop repetition before a later command can truncate the output again.
+    const timerSpy = spyOn(globalThis, 'setInterval').mockImplementation(((callback: () => void, delay: number) =>
+      interval(() => {
+        try { callback(); } finally { manager.remove('nightly'); }
+      }, delay)) as typeof setInterval);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new Error('scheduled fixture did not finish')), 5_000);
+    });
     try {
-      manager.add('nightly', '0.05s', `sh ${script} ${out}`);
-      const deadline = Date.now() + 5_000;
-      while (!existsSync(out) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      try { manager.add('nightly', '0.05s', `sh ${script} ${out}`); }
+      finally { timerSpy.mockRestore(); }
+      const proc = await Promise.race([started, timedOut]);
+      expect(await Promise.race([proc.exited, timedOut])).toBe(0);
+      return readFileSync(out, 'utf-8');
     } finally {
+      clearTimeout(deadline);
       manager.remove('nightly');
+      try {
+        if (child && child.exitCode === null) child.kill();
+        if (child) await child.exited;
+      } finally { spawnSpy.mockRestore(); }
     }
-    return readFileSync(out, 'utf-8');
   }
+
+  test('the output file can exist empty before the real child has completed', async () => {
+    const ready = join(dir, 'ready');
+    const release = join(dir, 'release');
+    let settled = false;
+    const result = runOnce(new ScheduleManager(), [
+      'exec 3>"$1"',
+      `: > "${ready}"`,
+      `while [ ! -e "${release}" ]; do sleep 0.01; done`,
+      'env >&3',
+      '',
+    ].join('\n')).then((env) => { settled = true; return env; });
+    let env = '';
+    try {
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(ready) && Date.now() < deadline) await Bun.sleep(10);
+      expect(existsSync(ready)).toBe(true);
+      // The original existence-based read sees this empty, truncated file.
+      expect(readFileSync(join(dir, 'env.txt'), 'utf-8')).toBe('');
+      expect(settled).toBe(false);
+    } finally {
+      writeFileSync(release, '');
+      env = await result;
+    }
+    expect(env).toContain('GV_SCHEDULE_NAME=nightly');
+    expect(env).toContain('GV_SCHEDULE_TEST_PLAIN=plain-visible');
+    expect(env).not.toContain('tok-should-not-leak');
+  });
 
   test('a name on the configured allowlist is kept, as the exec path keeps it', async () => {
     const manager = new ScheduleManager();
