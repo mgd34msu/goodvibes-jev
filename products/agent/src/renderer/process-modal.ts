@@ -75,8 +75,9 @@ export class ProcessModal {
     const result: ProcessEntry[] = [];
 
     for (const process of this.deps.processManager.list()) {
-      if (process.done) continue;
-      const startTime = this.deps.processManager.getStatus(process.id)?.startTime ?? now;
+      const current = this.deps.processManager.getStatus(process.id);
+      if (!current || current.done) continue;
+      const startTime = current.startTime;
       result.push({
         id: process.id,
         label: truncateCmd(process.cmd),

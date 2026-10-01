@@ -19,7 +19,7 @@ export function copyToClipboard(text: string) {
   }
 }
 
-export { pasteFromClipboard, pasteImageFromClipboard, MIN_IMAGE_BYTES } from '@goodvibes-jev/engine/sdk/platform/utils';
+export { pasteFromClipboard, pasteImageFromClipboard } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 // The detector lives beside the clipboard readers in the SDK; the agent's
 // pinned platform runtime now carries it, so this file only re-exports.

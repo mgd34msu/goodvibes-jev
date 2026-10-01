@@ -1,8 +1,8 @@
 /**
  * Tests for ProfilePickerModal state class.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { rmSync, existsSync } from 'fs';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { rmSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { ProfilePickerModal } from '../../input/profile-picker-modal.ts';
 import { ProfileManager } from '@goodvibes-jev/engine/sdk/platform/profiles';
@@ -45,6 +45,39 @@ describe('ProfilePickerModal', () => {
 
   afterEach(() => {
     if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test.each([false, true, null, 'false'])('holds unsupported profile setting (%j) before mutation', (notificationsMetadataOnly) => {
+    const path = pm.save('privacy-profile', {
+      display: { stream: false },
+      provider: { model: 'fixture-profile-model', reasoningEffort: 'low' },
+      behavior: { autoApprove: true, ...{ notificationsMetadataOnly } },
+    });
+    const profileBefore = readFileSync(path, 'utf8');
+    const settingsBefore = structuredClone(cm.getRaw());
+    const set = spyOn(cm, 'set');
+    const dynamic = spyOn(cm, 'setDynamic');
+    const save = spyOn(cm, 'save');
+    try {
+      modal.open();
+      expect(modal.loadSelected(cm)).toBe(false);
+      expect(modal.statusMessage).toContain('cannot apply');
+      expect(modal.statusMessage).toContain('No settings were changed');
+      expect(set).not.toHaveBeenCalled();
+      expect(dynamic).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+      expect(cm.getRaw()).toEqual(settingsBefore);
+      expect(readFileSync(path, 'utf8')).toBe(profileBefore);
+    } finally { set.mockRestore(); dynamic.mockRestore(); save.mockRestore(); }
+  });
+
+  test('loads supported profile settings without an unsupported privacy field', () => {
+    pm.save('display-profile', { display: { stream: false }, behavior: { notifyOnComplete: false } });
+    modal.open();
+    expect(modal.loadSelected(cm)).toBe(true);
+    expect(cm.get('display.stream')).toBe(false);
+    expect(cm.get('behavior.notifyOnComplete')).toBe(false);
+    expect(modal.statusMessage).toBe('Loaded profile display-profile');
   });
 
   test('starts inactive', () => {

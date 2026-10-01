@@ -159,3 +159,21 @@ describe('renderProcessModal', () => {
     expect(text).not.toContain('[agent]');
   });
 });
+
+
+test('process summaries use current typed records and omit entries removed during refresh', () => {
+  const active = seedProcess('synthetic active command');
+  const completed = seedProcess('synthetic completed command', 'timed out');
+  const listed = [...processes.values()].map(({ id, cmd, status }) => ({ id, pid: 0, cmd, status }));
+  listed.push({ id: 'already-pruned', pid: 0, cmd: 'missing record', status: 'running' });
+  const modal = new ProcessModal({ processManager: {
+    list: () => listed,
+    getStatus: id => processes.get(id),
+    stop: () => false,
+  } });
+  expect(listed.every(row => !Object.hasOwn(row, 'done'))).toBe(true);
+  expect(processes.get(completed)?.done).toBe(true);
+  modal.refresh();
+  expect(modal.entries.map(row => row.id)).toEqual([active]);
+  expect(modal.entries[0]!.elapsedMs).toBeGreaterThanOrEqual(1200);
+});

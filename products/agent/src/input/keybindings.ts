@@ -27,7 +27,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
-import { resolveSurfaceDirectory } from '@/runtime/index.ts';
+import { resolveSurfaceDirectory } from '@goodvibes-jev/engine/sdk/platform/runtime/shell';
 import { summarizeError } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { GOODVIBES_AGENT_SURFACE_ROOT } from '../config/surface.ts';
 

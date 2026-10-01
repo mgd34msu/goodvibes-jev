@@ -15,12 +15,15 @@ The source and package launchers support help, version, completion and parser
 errors through the original parser and help renderer before loading the
 interactive graph. The interactive implementation remains in `src/interactive.ts`.
 This early command boundary does not establish interactive runtime compatibility.
-The first direct full-graph startup stopped on the removed `MIN_IMAGE_BYTES`
-export. Further shared runtime and semantic migration remains unfinished.
+The obsolete unused clipboard export is removed, and the store now uses the
+public engine factories. Full bundling stops at the retired WRFC construction in
+`src/runtime/services.ts`. Further runtime and semantic migration remains unfinished.
 
-Fresh local evidence for this checkpoint: 58 CLI and ordinary renderer tests,
-461 assertions. This includes source/package launcher subprocesses and theme,
-diff, markdown-width and terminal-size behavior. Full product compilation,
+Fresh local evidence for the ordinary adapter checkpoint: 269 CLI, renderer,
+profile and store tests, with 2,659 assertions. This includes source/package launcher subprocesses and theme,
+diff, markdown-width and terminal-size behavior. The corrected source diagnostic has 108 errors, down from 146 at initial
+materialization. The ordinary rendering/configuration fixes remove their own
+diagnostics and consume the SDK source declarations. Full product compilation,
 interactive startup, binary packaging and end-to-end acceptance have not passed.
 
 No captured-input authority proposal or unpublished shared engine overlay is

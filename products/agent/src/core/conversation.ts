@@ -1,3 +1,4 @@
+import { readTreeGlyphSet, TREE_GLYPHS_CONFIG_KEY } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 import { InfiniteBuffer } from '@goodvibes-jev/engine/terminal-shell';
 import { createEmptyLine, type Line, type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { SplashOptions } from '../utils/splash-lines.ts';
@@ -22,7 +23,7 @@ import type { WorkTreeSources } from './work-tree-sources.ts';
 import { renderStreamingContinuation } from './work-tree-render.ts';
 import { WorkTreeController } from './work-tree-focus.ts';
 import { isWorkTreeFoldKey } from './work-tree-fold-store.ts';
-import { probeUnicodeSupport, resolveTreeGlyphSet, type TreeGlyphSetName } from '../renderer/lane-graph/glyphs.ts';
+import { probeUnicodeSupport, type TreeGlyphSetName } from '../renderer/lane-graph/glyphs.ts';
 
 /**
  * ConversationManager - TUI subclass of the SDK's ConversationManager.
@@ -465,7 +466,12 @@ export class ConversationManager extends SdkConversationManager {
 
   /** The work tree's glyph set: display.treeGlyphs, ascii on a terminal without unicode. */
   private treeGlyphSet(): TreeGlyphSetName {
-    return resolveTreeGlyphSet(this._configManager?.get('display.treeGlyphs'), this.unicodeCapable);
+    return readTreeGlyphSet(
+      key => key === TREE_GLYPHS_CONFIG_KEY
+        ? Reflect.get(this._configManager?.getRaw().display ?? {}, 'treeGlyphs')
+        : undefined,
+      this.unicodeCapable,
+    );
   }
 
   /** Streaming text: under the spine of the turn it belongs to when there is one, else full width. */

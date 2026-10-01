@@ -21,7 +21,7 @@ const DISPLAY_KEYS: ConfigKey[] = [
 /** Known behavior setting keys (subset of ConfigKey that maps to behavior.*). */
 const BEHAVIOR_KEYS: ConfigKey[] = [
   'behavior.autoApprove', 'behavior.autoCompactThreshold',
-  'behavior.saveHistory', 'behavior.notifyOnComplete', 'behavior.notificationsMetadataOnly',
+  'behavior.saveHistory', 'behavior.notifyOnComplete',
 ] as const;
 
 function configProfileDeletionDisabledMessage(name: string): string {
@@ -151,6 +151,12 @@ export class ProfilePickerModal {
 
     try {
       const { data } = this.profileManager.load(profile.name);
+      // This upstream profile field has no classified writable Jev ConfigKey.
+      // Hold the complete load before even unrelated mutations (THE-17/THE-35).
+      if (data.behavior && Object.hasOwn(data.behavior, 'notificationsMetadataOnly')) {
+        this.statusMessage = 'This profile includes notification privacy settings that this Agent build cannot apply. No settings were changed.';
+        return false;
+      }
 
       // Apply display settings using validated key list
       if (data.display) {
