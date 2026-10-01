@@ -64,6 +64,7 @@ Client-safe surfaces:
 - `@goodvibes-jev/engine/sdk/browser/homeassistant`
 - `@goodvibes-jev/engine/sdk/browser/agent`
 - `@goodvibes-jev/engine/sdk/client-auth`
+- `@goodvibes-jev/engine/sdk/platform/payments/browser` (the four payment UI policy helpers only)
 - `@goodvibes-jev/engine/sdk/events`
 - `@goodvibes-jev/engine/sdk/events/<domain>` for the explicit public event domains documented in [Public Surface](./public-surface.md)
 - `@goodvibes-jev/engine/sdk/observer`

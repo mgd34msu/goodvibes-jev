@@ -654,6 +654,11 @@
       "types": "./sdk/dist/platform/payments/index.d.ts",
       "import": "./sdk/dist/platform/payments/index.js"
     },
+    "./sdk/platform/payments/browser": {
+      "bun": "./sdk/src/platform/payments/browser.ts",
+      "types": "./sdk/dist/platform/payments/browser.d.ts",
+      "import": "./sdk/dist/platform/payments/browser.js"
+    },
     "./sdk/platform/contract": {
       "bun": "./sdk/src/platform/contract/index.ts",
       "types": "./sdk/dist/platform/contract/index.d.ts",
