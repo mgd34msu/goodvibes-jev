@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readKnowledgeSourceSnapshot, type KnowledgeSourceSnapshot, type KnowledgeSourceWriteResult } from './store-source-generation.js';
 import { applyKnowledgeImport, type KnowledgeImportInput, type PrepareKnowledgeImportGraph } from './store-import.js';
 import { prepareKnowledgeEdgeRecord, writeKnowledgeEdgeRow, findKnowledgeEdge } from './store-edge-writes.js';
 import { snapshotNodeInput } from './activation/projection.js';
@@ -367,6 +368,41 @@ export class KnowledgeStore {
 
   getItem(id: string): KnowledgeItemView | null {
     return getKnowledgeItem(this.asReadView(), id);
+  }
+
+  /** Call init() before reading a detached snapshot of the actual stored row. */
+  getSourceSnapshot(selector: { readonly id: string } | { readonly canonicalUri: string }): KnowledgeSourceSnapshot {
+    return readKnowledgeSourceSnapshot(this.sqlite, selector);
+  }
+
+  /** Opaque full-row entity fingerprint. Possessing it does not grant authority. */
+  getSourceGeneration(id: string): string | null {
+    return this.getSourceSnapshot({ id }).generation;
+  }
+
+  /** Compare and write synchronously after init; a hold has no durable effects. */
+  async upsertSourceIfCurrent(input: KnowledgeSourceUpsertInput, expectedGeneration: string | null): Promise<KnowledgeSourceWriteResult> {
+    if (expectedGeneration !== null && (typeof expectedGeneration !== 'string' || !/^[a-f0-9]{64}$/.test(expectedGeneration))) {
+      throw new TypeError('Invalid source generation precondition');
+    }
+    let capturedInput: KnowledgeSourceUpsertInput;
+    try { capturedInput = structuredClone(input); } catch { throw new TypeError('Source mutation input must be structured data'); }
+    await this.init();
+    const snapshot = capturedInput.id
+      ? this.getSourceSnapshot({ id: capturedInput.id })
+      : capturedInput.canonicalUri
+        ? this.getSourceSnapshot({ canonicalUri: capturedInput.canonicalUri })
+        : { source: null, generation: null };
+    if (snapshot.generation !== expectedGeneration) {
+      return { kind: 'held', reason: 'source-changed', current: snapshot.source, generation: snapshot.generation };
+    }
+    const record = prepareKnowledgeSourceRecord(capturedInput, snapshot.source);
+    // No await between the comparison and this source-row mutation.
+    writeKnowledgeSourceRow(this.sqlite, record);
+    this.sources.set(record.id, record);
+    const written = this.getSourceSnapshot({ id: record.id });
+    await this.sqlite.save();
+    return { kind: 'written', source: written.source!, generation: written.generation! };
   }
 
   async upsertSource(input: KnowledgeSourceUpsertInput): Promise<KnowledgeSourceRecord> {
