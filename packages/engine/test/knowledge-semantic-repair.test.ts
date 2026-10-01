@@ -4,6 +4,8 @@ import { seedKnowledgeResearchTask, useSemanticActivationFixtures } from './_hel
 import { describe, expect, test } from 'bun:test';
 import { useKnowledgeAnswerReadings } from './_helpers/knowledge-answer-readings.js';
 import { semanticRepairProfileValues, semanticRepairUsefulValues } from './_helpers/repair-profile-fixture-readings.js';
+import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.js';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -329,6 +331,8 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     const device = await seedHomeAssistantObservation(store, {
       kind: 'ha_device',
       slug: 'lg-tv-promote',
+      // This identity deterministically generates a fact hash with a PAN-shaped digit run.
+      id: 'node-00000b25',
       title: 'LG webOS Smart TV',
       aliases: ['LG TV'],
       confidence: 90,
@@ -376,7 +380,14 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     });
 
     const result = await semantic.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
+    expect(result.errors).toEqual([]);
+    expect(result.promotedFactCount).toBe(4);
     const facts = store.listNodes(100).filter((node) => node.kind === 'fact' && node.metadata.extractor === 'repair-promotion');
+    expect(facts).toHaveLength(4);
+    const display = facts.find((fact) => fact.title === 'Display and picture specifications')!;
+    expect(display.id).toBe('sem-fact-4998499605872f68');
+    expect(judgmentInputProblem({ id: display.id })).toBe('card-material');
+    expect(JSON.stringify(answerReadings.requests)).not.toContain(display.id);
     const answer = await semantic.answer({
       knowledgeSpaceId: spaceId,
       query: 'what features does the LG 86NANO90UNA have?',
@@ -402,6 +413,11 @@ describe('semantic knowledge/wiki enrichment: web repair and subject links', () 
     expect(answer.answer.facts.some((fact) => fact.metadata.extractor === 'repair-promotion')).toBe(true);
     expect(answer.answer.facts.some((fact) => fact.title === 'Display and picture specifications')).toBe(true);
     expect(answer.answer.facts.some((fact) => fact.title === 'Smart TV platform and integrations')).toBe(true);
+    const reopened = new KnowledgeStore({ dbPath: store.storagePath });
+    await reopened.init();
+    for (const fact of facts) expect(reopened.getNode(fact.id)).toEqual(store.getNode(fact.id));
+    expect(reopened.getRefinementTask(result.taskIds[0]!)?.state).toBe('closed');
+    expect(reopened.listEdges().filter((edge) => edge.relation === 'describes' && edge.toId === device.id)).toHaveLength(4);
   });
 
   test('strict Home Graph answers admit repaired sources linked to the subject', async () => {

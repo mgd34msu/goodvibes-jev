@@ -28,6 +28,13 @@ Returned refinement metadata can include status, repair status, task ids,
 accepted source ids, promoted fact count, waited time, defer reason, next repair
 attempt, and page refresh state.
 
+`promotedFactCount` counts useful subject-linked facts established by successfully
+completed repair candidates, including existing facts; it is not a count of
+database writes. A held candidate contributes zero and reports its per-gap error
+without closing the gap. Independently settled promotion or linking passes from
+earlier in that candidate remain durable, while the held pass writes nothing. Inspect
+the task's failure reason and persisted facts when a repair returns an error.
+
 ## Operator surface
 
 Refinement is part of the base knowledge operator contract, not a separate
