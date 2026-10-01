@@ -56,6 +56,7 @@
  * exists.
  */
 
+import { executePolicyCheck } from '../execute-policy-check.js';
 import type { Tool } from '../../types/tools.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { settingsHazard, type SettingsHazard } from '../batteries/settings-hazard.js';
@@ -98,7 +99,8 @@ export type SettingsToolArgs = {
  * hazard reading counts as a hazard; an uncertain request reading counts as no
  * request.
  */
-export async function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs): Promise<string | null> {
+export async function validateSettingsToolInvocationForAgentPolicy(args: SettingsToolArgs, signal?: AbortSignal): Promise<string | null> {
+  signal?.throwIfAborted();
   const key = typeof args.key === 'string' ? args.key.trim() : '';
   if (!key) return null;
   const request = args[AGENT_SETTINGS_CONFIRMATION_PROPERTY];
@@ -106,8 +108,9 @@ export async function validateSettingsToolInvocationForAgentPolicy(args: Setting
   const run = await settingsHazard.run(
     judgmentPort(SETTINGS_HAZARD_SITE),
     { key, value: JSON.stringify(args['value'] ?? null), ...(hasRequest ? { request: (request as string).trim() } : {}) },
-    { site: SETTINGS_HAZARD_SITE, only: hasRequest ? ['hazard', 'requested'] : ['hazard'] },
+    { site: SETTINGS_HAZARD_SITE, ...(signal === undefined ? {} : { signal }), only: hasRequest ? ['hazard', 'requested'] : ['hazard'] },
   );
+  signal?.throwIfAborted();
   const reading = run.readings.hazard;
   if (reading.choice === 'none' && reading.outcome === 'act') {
     run.recordAction('no-hazard');
@@ -157,9 +160,11 @@ export function wrapSettingsToolForAgentPolicy(tool: Tool): void {
   }
 
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
-    const denial = await validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs);
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
+    const denial = await executePolicyCheck(() => validateSettingsToolInvocationForAgentPolicy(args as SettingsToolArgs, options?.signal), options?.signal);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }

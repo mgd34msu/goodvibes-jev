@@ -50,10 +50,12 @@ export const AGENT_WEB_SEARCH_POLICY_DENIAL_MESSAGE = WEB_SEARCH_POLICY_DENIAL;
 export function wrapWebSearchToolForAgentPolicy(tool: Tool): void {
   narrowWebSearchToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateWebSearchToolInvocationForAgentPolicy(args as WebSearchToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(normalizeWebSearchToolInvocationForAgentPolicy(args as WebSearchToolArgs) as Parameters<Tool['execute']>[0]);
+    options?.signal?.throwIfAborted();
+    return originalExecute(normalizeWebSearchToolInvocationForAgentPolicy(args as WebSearchToolArgs) as Parameters<Tool['execute']>[0], options);
   };
 }
 

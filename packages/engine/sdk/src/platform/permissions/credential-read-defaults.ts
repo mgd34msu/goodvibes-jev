@@ -17,6 +17,7 @@
  * reading, where touching secrets is at least high stakes. Readings are kept
  * per call for the life of the process, so a path read twice is asked once.
  */
+import { executePolicyCheck } from '../gate/execute-policy-check.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { sideEffect } from '../gate/batteries/side-effect.js';
 import { readingState } from '../gate/reading.js';
@@ -31,12 +32,17 @@ export const READ_SECRETS_SITE = 'engine.gate.read-secrets';
  * Whether a read-only tool call touches secret or credential material, read
  * by Jev (`engine.gate.side-effect`, `secrets`). Uncertain counts as yes.
  */
-export async function readTouchesSecrets(toolName: string, args: Record<string, unknown>, workingDirectory?: string): Promise<boolean> {
+export async function readTouchesSecrets(toolName: string, args: Record<string, unknown>, workingDirectory?: string, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted();
   const state = readingState(toolName, args, workingDirectory);
   const key = JSON.stringify(state);
   const seen = SEEN.get(key);
   if (seen !== undefined) return seen;
-  const run = await sideEffect.run(judgmentPort(READ_SECRETS_SITE), state, { site: READ_SECRETS_SITE, only: ['secrets'] });
+  const run = await executePolicyCheck(
+    () => sideEffect.run(judgmentPort(READ_SECRETS_SITE), state, { site: READ_SECRETS_SITE, only: ['secrets'], ...(signal === undefined ? {} : { signal }) }),
+    signal,
+  );
+  signal?.throwIfAborted();
   const touches = run.readings.secrets.verdict !== 'no';
   run.recordAction(touches ? 'secrets' : 'no-secrets');
   SEEN.set(key, touches);
