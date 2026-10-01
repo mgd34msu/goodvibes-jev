@@ -5,8 +5,9 @@
  * not just the primary knowledgeService: the agent-alias KnowledgeService and
  * HomeGraphService refuse runJob/ingest with the honest reason when the
  * governor refuses; the home-graph 0ms ingest-enrichment tail defers on pause
- * and refusal instead of running an unconditional LLM call; and the sync pump
- * passes stopWhenPaused (making the caller-allowlist justification true).
+ * and refusal instead of running an unconditional LLM call. Sync-pump pause
+ * behavior is covered by knowledge-jobruns-retention.test.ts and
+ * homegraph-self-improvement-abort.test.ts.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -94,12 +95,5 @@ describe('composition + pump shape pins', () => {
     expect(agentBlock).toContain('admitExpensiveWork');
     const hgBlock = src.slice(src.indexOf('const homeGraphService = new HomeGraphService('), src.indexOf('const projectPlanningService'));
     expect(hgBlock).toContain('admitExpensiveWork');
-  });
-
-  test('the sync pump selfImprove loop passes stopWhenPaused (the allowlist justification is true)', () => {
-    const src = readFileSync('sdk/src/platform/knowledge/home-graph/sync-self-improvement.ts', 'utf-8');
-    // The pump's per-round call carries the runOptions, not just the reindex helper's.
-    const pumpCall = src.slice(src.indexOf("reason: 'homegraph-sync'"), src.indexOf("reason: 'homegraph-sync'") + 500);
-    expect(pumpCall).toContain('{ stopWhenPaused: true }');
   });
 });

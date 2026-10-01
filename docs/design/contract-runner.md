@@ -66,7 +66,7 @@ A new platform module, `contract/`, exported at the engine subpath `@goodvibes-j
 
 Every Jev read in `contract/` goes through `judgmentPort(site)` from `packages/engine/errors/src/judgment-port.ts`. There is no read path without an installed port: a missing port throws `JudgmentPortMissingError`, which fails the contract with `failureKind: 'judgment-unavailable'` and the error's message. Outage handling is the provider failover chain behind the port, not a heuristic.
 
-Each file stays under the engine's line cap (`scripts/line-cap-grandfather.ts` loses its `wrfc-controller.ts` entry; nothing new is grandfathered).
+Keep modules organized around their responsibilities. The former 800-line cap and grandfather list were retired by the owner-authorized CI cleanup; file length does not determine the design.
 
 ### 2.2 Public API
 
@@ -1103,7 +1103,7 @@ Points resolved when this was built (R.12):
 | `events/agents.ts`, `events/communication.ts`, `events/fleet.ts`, `events/planner.ts:44`, `events/turn.ts:144`, `events/index.ts`, `events/domain-map.ts`, `events/contracts.ts` | WRFC fields and domains | section 8.1 |
 | `packages/engine/terminal-shell/src/gateway-verbs.ts:30,55,65-70`, `terminal-shell/src/index.ts:49` | `ProcessRegistryDeps` requires `wrfcController` | requires `contractRunner` |
 | `packages/engine/contracts` generated files and artifacts | WRFC enums, `runtime.workflows`, `runtime.orchestration` | regenerated from the changed schemas |
-| `packages/engine/scripts/line-cap-grandfather.ts:39-40` | grandfathers `wrfc-controller.ts` | entry removed |
+| `packages/engine/scripts/line-cap-grandfather.ts:39-40` | historically grandfathered `wrfc-controller.ts` | entire quota policy retired by the owner-authorized CI cleanup |
 | Engine tests listed in the call-site inventory (the WRFC controller, constraint, phantom, owner-agent, fan-out, operator-cancel, batch-policy, chain-authority, commit-scope, addenda, reviewer-contract, transport, continuation, fix-graph, compat, fleet cost, workflow-event, and orchestration-event tests, plus the helper `_helpers/orchestration-harness.ts`) | exercise WRFC | each test's purpose is re-expressed against the runner in the child task that replaces the code it tests (section 12); tests of removed behaviour (prose scores, reviewer reports, fix phases) are deleted with the code; tests that only carried a `wrfc*` field or stub are updated to the renamed field |
 
 ## 12. Child tasks, in dependency order

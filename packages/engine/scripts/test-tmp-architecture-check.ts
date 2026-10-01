@@ -29,7 +29,7 @@
  *      loud instead of silent.
  *
  * Run as `bun scripts/test-tmp-architecture-check.ts`, wired into
- * `bun run architecture:check` alongside `test-skip:check` in
+ * `bun run architecture:check` in
  * scripts/validate.ts.
  */
 import { readdirSync, readFileSync } from 'node:fs';

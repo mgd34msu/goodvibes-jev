@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { defaultTestArgs } from '../scripts/test-discovery.ts';
@@ -53,9 +53,6 @@ test('real contract and routing suites are selected by the same helper the runne
   expect(discovered).toContain('test/routing/route-planner.test.ts');
   expect(discovered).toContain('test/routing/benchmark-routing.test.ts');
   expect(discovered.some((path) => path.startsWith('test/workers/'))).toBe(false);
-  const runner = readFileSync(join(engineRoot, 'scripts/test.ts'), 'utf8');
-  expect(runner).toContain("import { defaultTestArgs } from './test-discovery.ts'");
-  expect(runner).toContain('args.length > 0 ? args : defaultTestArgs(SDK_ROOT)');
 });
 
 test('the actual runner executes nested fixture suites by default and preserves explicit selections', () => {

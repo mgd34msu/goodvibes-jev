@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createExecContainmentProof, execContainmentRequired, EXEC_CONTAINMENT_FIXTURES } from './_helpers/exec-containment-proof.ts';
+import { createExecContainmentProof, execContainmentRequired, skipExecContainment, EXEC_CONTAINMENT_FIXTURES } from './_helpers/exec-containment-proof.ts';
 
 const supported = {
   pty: { available: true, reason: 'PTY available' },
@@ -31,6 +31,20 @@ describe('required exec containment proof', () => {
     }
     const noPath = createExecContainmentProof(true, { ...supported, sandbox: { ...supported.sandbox, bwrapPath: undefined } });
     expect(() => noPath.assertHost()).toThrow();
+  });
+
+  test('optional fixture selection needs PTY, filesystem and network support; required mode never skips', () => {
+    expect(skipExecContainment(false, supported)).toBe(false);
+    expect(skipExecContainment(true, supported)).toBe(false);
+    for (const host of [
+      { ...supported, pty: { available: false, reason: 'no PTY' } },
+      { ...supported, sandbox: { ...supported.sandbox, available: false } },
+      { ...supported, sandbox: { ...supported.sandbox, bwrapPath: undefined } },
+      { ...supported, sandbox: { ...supported.sandbox, networkIsolationGuaranteed: false } },
+    ]) {
+      expect(skipExecContainment(false, host)).toBe(true);
+      expect(skipExecContainment(true, host)).toBe(false);
+    }
   });
 
   test('working filesystem sandbox without proven network isolation still fails', () => {

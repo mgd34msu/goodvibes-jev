@@ -7,7 +7,6 @@ coverage/
 # Carried from goodvibes-sdk (paths re-rooted at packages/engine where they point into it).
 *.log
 .DS_Store
-sbom.cdx.json*
 # Script scratch: the release stage at the repo root, everything else in the engine.
 /.tmp/
 packages/engine/.tmp/

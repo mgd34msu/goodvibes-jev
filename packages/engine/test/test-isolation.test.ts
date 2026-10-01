@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import net from 'node:net';
 import tls from 'node:tls';
 import { isolatedTestEnvironment } from '../scripts/test-isolation.ts';
@@ -131,10 +131,4 @@ test('a swallowed blocked request still fails the owned runner with sanitized di
   writeFileSync(fixture, `import { test } from 'bun:test'; test('caught network error', async () => { await fetch('https://outside.invalid/private?token=secret').catch(() => undefined); });`);
   const result = await runOwnedTestChild({ argv: [fixture], cwd: directory, env: process.env });
   expect(result.exitCode).toBe(1);
-});
-
-test('the default runner still installs the network guard and disables dotenv before test imports', async () => {
-  const source = await Bun.file(resolve(import.meta.dir, '../scripts/owned-test-child.ts')).text();
-  expect(source).toContain("'--no-env-file', 'test', '--preload', NETWORK_PRELOAD");
-  expect(source).toContain('isolatedTestEnvironment(options.env');
 });

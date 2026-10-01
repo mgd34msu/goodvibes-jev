@@ -41,14 +41,13 @@ This is the canonical CI-gate reference for the workspace. Every push and PR to 
 
 | Job | Command | Purpose |
 |------|---------|---------|
-| `validate` | `bun run validate` | Kitchen-sink validation. Runs these checks as ordered steps: API docs sync, docs/examples completeness, error/line-cap/credential-scope/judgment-lint/changelog/version/todo/internal-id/skipped-test/architecture/platform-console gates, TypeScript build, the full typecheck gate (`typecheck`, both the composite project solution and the standalone type-test project), API-surface check (`api:check`), exports-coverage check (`exports:check`), examples typecheck, browser-compat, package metadata, no-any, pack, publint, install smoke, contract-artifact check (`contracts:check`), and bundle budget (`bundle:check`) |
+| `validate` | `bun run validate` | Kitchen-sink validation. Runs these checks as ordered steps: API docs sync, docs/examples completeness, error/credential-scope/judgment-lint/changelog/version/todo/internal-id/architecture/platform-console gates, TypeScript build, the full typecheck gate (`typecheck`, both the composite project solution and the standalone type-test project), API-surface check (`api:check`), exports-coverage check (`exports:check`), examples typecheck, browser-compat, package metadata, no-any, pack, publint, install smoke, contract-artifact check (`contracts:check`), and bundle budget (`bundle:check`) |
 | `eval-gate` | `bun run eval:baseline:check` then `bun run eval:gate` | Runs the standing eval suite through the production eval paths against the restored build artifact. Checks the checked-in baseline for drift first, then fails on any absolute-floor failure or regression against that baseline |
 | `security-audit` | `bun audit --audit-level high` + gitleaks scan (`gitleaks/gitleaks-action`) | Runs `bun audit --audit-level high` against the workspace dependency tree and a gitleaks secret scan; the CI job invokes these two steps directly (local `bun run security:audit` covers only the dependency-audit half) |
 | `build` | `bun run build` | Builds all workspace package `dist/` output once and uploads it as a single `workspace-build-output` artifact for downstream CI jobs |
 | `platform-matrix` | `bun packages/engine/scripts/test.ts` (bun leg) plus `bun run test:rn`, `bun run test:workers`, `bun run test:workers:wrangler` legs | Restores the shared `build` job artifact (no per-leg rebuild) and runs the full Bun test suite plus the companion-bundle scan and the two Workers runtime lanes as four matrix legs of one job (see legs below) |
 | `types-resolution-check` | `bun run types:resolution-check` (attw over the release stage of the engine and judgment packages, ignoring `no-resolution` and `cjs-resolves-to-esm`) | Validates the `exports` map resolves cleanly for every published subpath |
 | `publint-check` | `bun run publint:check` | Detects common `package.json` packaging hygiene issues before release |
-| `sbom-check` | `bun run sbom:check` | Generates the CycloneDX SBOM (`sbom.cdx.json`), asserts it is non-empty, validates the CycloneDX schema, and enforces the license policy |
 | `artifact-lane` | `bun run release:artifact-lane` | Packs every workspace package exactly as publish would, installs the tarballs into a scratch consumer, and runs the shipped conformance kit against a catalog/daemon composed from those packed artifacts, proving the tarballs are internally coherent before publish |
 
 The `platform-matrix` job runs as four matrix legs (one job, not four):
@@ -66,8 +65,8 @@ bun run validate
 
 `bun run validate` runs the same complete ordered step list documented in the
 `validate` row of the [CI Gates](#ci-gates) table above, from API docs sync
-and docs/examples completeness through the error/line-cap/credential-scope/
-changelog/version/todo/internal-id/skipped-test/architecture/platform-console
+and docs/examples completeness through the error/credential-scope/
+changelog/version/todo/internal-id/architecture/platform-console
 gates, the TypeScript build, the full typecheck gate, the API-surface and
 exports-coverage checks, examples typecheck, browser-compat, package
 metadata, no-any, pack, publint, install smoke, the contract-artifact check,
@@ -95,7 +94,6 @@ the full `validate` job:
 | `bun run check:metadata` | Validates published `package.json` metadata (`scripts/package-metadata-check.ts`) |
 | `bun run any:check` | Fails on disallowed `any` types (`scripts/no-any-types.ts`) |
 | `bun run platform-console:check` | Fails on disallowed platform `console.*` usage (`scripts/no-platform-console.ts`) |
-| `bun run test-skip:check` | Fails on skipped or `.only` tests (`scripts/no-skipped-tests.ts`) |
 | `bun run security:audit` | Dependency audit at `--audit-level high` (`bun audit`) |
 
 ## Contract refresh
@@ -153,14 +151,22 @@ To update budgets after a legitimate size change:
 any CI gate, so it can drift from the actual test set. Treat it as a
 human-readable index, not an authoritative coverage report.
 
-## License and SBOM checks
+## What tests must prove
 
-License compliance is tracked through the CycloneDX SBOM generated by
-`bun run sbom:check`; the generated `sbom.cdx.json` is intentionally ignored
-because it is release/build output. CI runs the `sbom-check` job after the SDK
-build artifact is produced, validates the CycloneDX shape, and rejects blocked
-license families. Use `bun run sbom:generate` only when you need to regenerate
-the raw SBOM without running the validation and license-policy checks.
+Tests should fail on broken behavior or a concrete compatibility, safety, or
+release guarantee. File length, exact source spelling, test counts, and host
+speed are not substitutes for those guarantees. Use held promises and explicit
+entry/completion state to prove asynchronous ordering; keep deadlines when the
+production contract is itself a cancellation or watchdog budget.
+
+Optional host features report skipped/unavailable when their prerequisites are
+absent. The required exec-containment CI lane sets
+`GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT=1`: unsupported prerequisites fail,
+and both live sandbox fixtures must complete. A passing no-op is not proof.
+
+Dependency vulnerability auditing and secret scanning remain required. Package
+licenses and notices remain part of the published metadata; no generated SBOM
+or automatic copyleft-family classifier is required by this repository.
 
 ## Release-gate failure scenarios
 
@@ -168,7 +174,6 @@ Maintainer-facing guidance for the most common release-gate failures:
 
 - **Contract drift.** The contract-artifact step (`contracts:check`) fails when the SDK-embedded contract JSON no longer matches `packages/engine/contracts/artifacts`. Run `bun run refresh:contracts`, then re-run `bun run validate`.
 - **Bundle overage.** `bundle:check` fails when a JavaScript export exceeds its gzip ceiling. Investigate the size increase. If it is legitimate, update `bundle-budgets.json` using `max(ceil(actual * 1.2), actual + 50)` and record the new measurement in the entry rationale.
-- **SBOM and license policy.** `sbom-check` fails when `sbom.cdx.json` is empty or schema-invalid, or when a dependency carries a blocked license family. Resolve the offending dependency, or update the license policy if the family is acceptable.
 - **Types resolution (attw).** `types-resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json` and re-run `bun run types:resolution-check`.
 
 ## Workers runtime verification

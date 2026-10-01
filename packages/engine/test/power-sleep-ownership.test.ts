@@ -21,6 +21,7 @@ import { bindPowerWorkSignals } from '../sdk/src/platform/power/work-signals.ts'
 import { createLinuxLogindSeam, inhibitChildArgs, reapOrphanedInhibitors } from '../sdk/src/platform/power/linux-logind.ts';
 import type { PowerInhibitClass, PowerPlatformSeam } from '../sdk/src/platform/power/types.ts';
 import type { EventEnvelope } from '@goodvibes-jev/engine/transport-core';
+import { withTestTimeout } from './_helpers/test-timeout.js';
 
 /** A scriptable seam recording every acquire/release, with per-class denials. */
 function fixtureSeam(options: { deny?: readonly PowerInhibitClass[] } = {}) {
@@ -354,47 +355,70 @@ describe('process-exit hygiene (holds never outlive the process)', () => {
   });
 });
 
-describe('live logind proof on this host', () => {
-  test('an unprivileged idle inhibitor is genuinely held and released via logind', async () => {
-    const seam = createLinuxLogindSeam({ who: 'goodvibes-test-proof' });
-    if (!(await seam.isAvailable())) {
-      // Honest fallback: this environment has no logind session bus access;
-      // the fixture-backed policy tests above still prove the full contract.
-      console.warn('[power test] logind unavailable in this environment, live proof skipped honestly');
-      return;
-    }
-    // Staging precondition, verified before any assertion: a reachable bus does
-    // not guarantee this session may actually take and LIST inhibitors (some CI
-    // runner instances answer the bus but scope inhibitor listing away from the
-    // job's session). Stage a plain-CLI probe inhibitor and require it to appear
-    // in --list; if the environment cannot stage the fixture, skip honestly,
-    // the proof must be EXERCISED or SKIPPED, never failed by the host.
-    const probeWho = `gv-logind-probe-${process.pid}`;
-    const probe = spawn('systemd-inhibit', ['--what=idle', `--who=${probeWho}`, '--why=staging probe', '--mode=block', 'sleep', '10'], { stdio: 'ignore' });
-    let probeListed = false;
-    try {
-      for (let i = 0; i < 20 && !probeListed; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        try {
-          probeListed = execFileSync('systemd-inhibit', ['--list', '--no-legend'], { encoding: 'utf-8' }).includes(probeWho);
-        } catch {
-          break;
-        }
+async function canStageLiveInhibitor(): Promise<boolean> {
+  // Independent CLI staging keeps an implementation regression in seam.inhibit
+  // from being mistaken for an unsupported host and silently skipped.
+  const probeWho = `gv-logind-probe-${process.pid}`;
+  const probe = spawn('systemd-inhibit', [
+    '--what=idle', `--who=${probeWho}`, '--why=staging probe', '--mode=block',
+    '--no-ask-password', 'sleep', '10',
+  ], { stdio: 'ignore' });
+  let stopped = false;
+  const exited = new Promise<void>((resolve) => {
+    const finish = () => { stopped = true; resolve(); };
+    probe.once('error', finish);
+    probe.once('exit', finish);
+  });
+  try {
+    for (let i = 0; i < 20 && !stopped; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (stopped) break;
+      try {
+        const listed = execFileSync('systemd-inhibit', ['--list', '--no-legend', '--no-ask-password'], {
+          encoding: 'utf-8', timeout: 5_000,
+        });
+        if (listed.includes(probeWho)) return true;
+      } catch {
+        break;
       }
-    } finally {
-      try { probe.kill('SIGTERM'); } catch { /* already gone */ }
     }
-    if (!probeListed) {
-      console.warn('[power test] logind bus answers but inhibitors are not grantable/listable from this session, live proof skipped honestly');
-      return;
+    return false;
+  } finally {
+    probe.kill('SIGTERM');
+    try {
+      await withTestTimeout(exited, 5_000, 'Logind staging child did not exit after SIGTERM');
+    } catch {
+      probe.kill('SIGKILL');
+      await withTestTimeout(exited, 5_000, 'Logind staging child did not exit after SIGKILL');
     }
+  }
+}
+
+// Probe the real system-bus/logind capability before registering optional
+// proofs. A CLI binary can be installed in a container that denies bus access;
+// starting dbus-monitor there exits immediately and cannot prove ownership.
+const liveLogindAvailable = await createLinuxLogindSeam().isAvailable();
+const liveInhibitorAvailable = liveLogindAvailable && await canStageLiveInhibitor();
+const hasDbusMonitor = spawnSync('sh', ['-c', 'command -v dbus-monitor'], { encoding: 'utf-8' }).status === 0;
+if (!liveLogindAvailable) console.warn('[power test] system-bus/logind unavailable; optional live power proofs skipped');
+else {
+  if (!liveInhibitorAvailable) console.warn('[power test] idle inhibitors are not grantable/listable from this session; optional live inhibitor proof skipped');
+  if (!hasDbusMonitor) console.warn('[power test] dbus-monitor unavailable; optional live sleep-edge watcher proof skipped');
+}
+
+describe('live logind proof on this host', () => {
+  test.skipIf(!liveInhibitorAvailable)('an unprivileged idle inhibitor is genuinely held and released via logind', async () => {
+    const seam = createLinuxLogindSeam({ who: 'goodvibes-test-proof' });
     const handle = await seam.inhibit({ classes: ['idle'], who: 'goodvibes-test-proof', why: 'live test proof' });
-    expect(handle).not.toBeNull();
-    expect(handle!.grantedClasses).toContain('idle');
-    // The OS actually lists our inhibitor (never sudo, plain user).
-    const listed = execFileSync('systemd-inhibit', ['--list', '--no-legend'], { encoding: 'utf-8' });
-    expect(listed).toContain('goodvibes-test-proof');
-    await handle!.release();
+    try {
+      expect(handle).not.toBeNull();
+      expect(handle!.grantedClasses).toContain('idle');
+      // The OS actually lists our inhibitor (never sudo, plain user).
+      const listed = execFileSync('systemd-inhibit', ['--list', '--no-legend'], { encoding: 'utf-8' });
+      expect(listed).toContain('goodvibes-test-proof');
+    } finally {
+      await handle?.release();
+    }
     await new Promise((resolve) => setTimeout(resolve, 300));
     const after = execFileSync('systemd-inhibit', ['--list', '--no-legend'], { encoding: 'utf-8' });
     expect(after).not.toContain('goodvibes-test-proof');
@@ -403,12 +427,7 @@ describe('live logind proof on this host', () => {
 });
 
 describe('live sleep-edge watcher on this host (proves the leak fix)', () => {
-  test('a real dbus-monitor watcher spawns, carries its owner-pid stamp, and the unsubscribe reaps it: no orphan left', async () => {
-    const hasDbusMonitor = spawnSync('sh', ['-c', 'command -v dbus-monitor'], { encoding: 'utf-8' }).status === 0;
-    if (!hasDbusMonitor) {
-      console.warn('[power test] dbus-monitor unavailable in this environment, live sleep-edge watcher proof skipped honestly');
-      return;
-    }
+  test.skipIf(!liveLogindAvailable || !hasDbusMonitor)('a real dbus-monitor watcher spawns, carries its owner-pid stamp, and the unsubscribe reaps it: no orphan left', async () => {
     // Our watcher carries this process's pid in its stamp match rule, so pgrep
     // counts ONLY watchers this test spawned, never the host's own watcher.
     const stamp = `GoodvibesSleepWatchOwner${process.pid}`;

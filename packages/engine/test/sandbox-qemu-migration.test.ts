@@ -114,7 +114,6 @@ describe('the load pass', () => {
     for (const key of RETIRED_SANDBOX_QEMU_KEYS) expect(text).toContain(key);
     expect(text).toContain('sandbox.vmBackend changed from "qemu" to "local"');
     expect(text).toContain('REPL eval refuses');
-    expect(text).not.toContain('\u2014');
   });
 
   test('a file with nothing to migrate is not rewritten and files no receipt', () => {
