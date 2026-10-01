@@ -1,3 +1,4 @@
+import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError } from '../gate/judgment-input.js';
@@ -117,8 +118,8 @@ export interface OrchestratorOptions {
   toolRegistry: ToolRegistry;
   /** Manages tool-use permission grants and denials. */
   permissionManager: PermissionManager;
-  /** Returns the current system prompt text. Defaults to `() => ''`. */
-  getSystemPrompt?: (() => string) | undefined;
+  /** Resolves the current system prompt before each request. Receives the operation's cancellation signal. Defaults to `() => ''`. */
+  getSystemPrompt?: ((signal?: AbortSignal) => string | Promise<string>) | undefined;
   /** Optional hook dispatcher for lifecycle events. */
   hookDispatcher?: HookDispatcherLike | null | undefined;
   /** Optional capability-gate manager. */
@@ -177,6 +178,7 @@ export class Orchestrator {
 
   private animInterval: ReturnType<typeof setInterval> | null = null;
   private abortController: AbortController | null = null;
+  private disposed = false;
   /** Per-tool-call abort registry (per-call cancel; see orchestrator-live-turn.ts). */
   private readonly toolCallAborts = new ToolCallAbortRegistry();
   /** Monotonic id source for queued-message ids. */
@@ -250,7 +252,7 @@ export class Orchestrator {
   private scrollToEnd: (vHeight: number) => void;
   private toolRegistry: ToolRegistry;
   private permissionManager: PermissionManager;
-  private getSystemPrompt: () => string;
+  private getSystemPrompt: (signal?: AbortSignal) => string | Promise<string>;
   private hookDispatcher: HookDispatcherLike | null;
 
   /**
@@ -294,7 +296,9 @@ export class Orchestrator {
     this.toolRegistry = toolRegistry;
     this.permissionManager = permissionManager;
     // Plan-mode standing instruction rides on the system prompt (told every turn + re-injected through compaction).
-    this.getSystemPrompt = () => appendPlanModeInstruction(getSystemPrompt(), this.permissionManager.getMode?.());
+    this.getSystemPrompt = async (signal) => appendPlanModeInstruction(
+      await resolveSystemPrompt(getSystemPrompt, signal), this.permissionManager.getMode?.(),
+    );
     this.hookDispatcher = hookDispatcher;
     this.replayQueue = new EventReplayQueue();
     this.detachReplay = runtimeBus
@@ -308,9 +312,9 @@ export class Orchestrator {
       conversation: this.conversation,
       getViewportHeight: () => this.getViewportHeight(),
       scrollToEnd: (height) => this.scrollToEnd(height),
-      getSystemPrompt: () => this.getSystemPrompt(),
+      getSystemPrompt: (signal) => this.getSystemPrompt(signal),
       requestRender: () => this.requestRender(),
-      getThinkingState: () => ({ isThinking: this.isThinking, isCompacting: this.isCompacting }),
+      getThinkingState: () => ({ isThinking: this.isThinking || this.turnInFlight, isCompacting: this.isCompacting }),
       getQueuedUserMessageCount: () => this.messageQueue.length,
       getProviderRegistry: () => requireProviderRegistry(this.coreServices),
       getCurrentModel: () => requireProviderRegistry(this.coreServices).getCurrentModel(),
@@ -487,6 +491,7 @@ export class Orchestrator {
   /** Abort the current in-flight LLM request, if any. */
   public abort(): void {
     this.abortController?.abort();
+    this.followUpRuntime?.cancel();
     // A whole-turn abort also cancels every in-flight tool call, so cooperative
     // tools (exec children, fetches) stop instead of running to completion.
     // (Optional-chained: bare-prototype test fixtures skip field initializers.)
@@ -514,6 +519,7 @@ export class Orchestrator {
    * construct transient orchestrators against a shared RuntimeEventBus.
    */
   public dispose(): void {
+    this.disposed = true;
     this.coreServices.sessionLiveTurnControls?.unbind(this);
     this.abort();
     if (this.animInterval) {
@@ -528,6 +534,7 @@ export class Orchestrator {
       this.detachReplay();
       this.detachReplay = null;
     }
+    this.followUpRuntime.dispose();
     this.compactionManager?.dispose();
   }
 
@@ -543,6 +550,7 @@ export class Orchestrator {
     content?: ContentPart[],
     options?: OrchestratorUserInputOptions | undefined,
   ): Promise<void> {
+    if (this.disposed) return;
     if (!text.trim() && !content?.length) return;
 
     if (this.turnInFlight || this.isThinking || this.isCompacting) {
@@ -574,7 +582,7 @@ export class Orchestrator {
    * message is lost.
    */
   private async drainMessageQueue(): Promise<void> {
-    while (this.messageQueue.length > 0 && !this.turnInFlight && !this.isThinking && !this.isCompacting) {
+    while (!this.disposed && this.messageQueue.length > 0 && !this.turnInFlight && !this.isThinking && !this.isCompacting) {
       const next = this.messageQueue.shift()!;
       this.emitQueueChange('delivered', next.id);
       await withTurnSurface(next.options?.origin, () => this.runTurn(next.text, next.content, next.options));
@@ -599,6 +607,7 @@ export class Orchestrator {
   private turnInFlight = false;
 
   private startThinking(estimatedInputTokens?: number): void {
+    this.followUpRuntime.cancel(true);
     this.isThinking = true;
     this.thinkingFrame = 0; // Reset each turn so gradient starts clean and frame never grows unbounded
     this.streamingInputTokens = estimatedInputTokens ?? this.lastRequestInputTokens;
@@ -672,6 +681,7 @@ export class Orchestrator {
       this.streamingInputTokens = estimateFreshTurnInputTokens(this.lastInputTokens, estimateConversationTokens(this.conversation.getMessagesForLLM()), text, content);
       await this.runTurnStream(text, content, turnId, preTurnPlan, configManager, providerRegistry, turnClassification);
 
+      signal?.throwIfAborted();
       // --- Phase 3: Post-turn reconciliation ---
       await this.runTurnReconcile(turnId, configManager, providerRegistry);
     } catch (err: unknown) {
@@ -847,6 +857,7 @@ export class Orchestrator {
       modelContextWarning: this.modelContextWarning,
       clearModelContextWarning: () => { this.modelContextWarning = null; },
       getSystemPrompt: this.getSystemPrompt,
+      signal: this.abortController?.signal,
       compactionManager: this.compactionManager,
     };
   }

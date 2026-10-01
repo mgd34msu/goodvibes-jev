@@ -1,3 +1,4 @@
+import { resolveSystemPrompt } from './orchestrator-system-prompt.js';
 import type { ClassificationResult } from './intent-classifier.js';
 import type { ConversationManager } from './conversation.js';
 import type { ExecutionPlan } from './execution-plan.js';
@@ -129,7 +130,7 @@ type EmitterContext = import('../runtime/emitters/index.js').EmitterContext;
 export interface OrchestratorTurnLoopContext {
   readonly conversation: ConversationManager;
   readonly toolRegistry: ToolRegistry;
-  readonly getSystemPrompt: () => string;
+  readonly getSystemPrompt: (signal?: AbortSignal) => string | Promise<string>;
   readonly getAbortSignal: () => AbortSignal | undefined;
   readonly hookDispatcher: HookDispatcherLike | null;
   readonly requestRender: () => void;
@@ -230,6 +231,14 @@ export interface OrchestratorTurnLoopContext {
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
+  const signal = context.getAbortSignal();
+  const assertActiveTurn = (): void => {
+    signal?.throwIfAborted();
+    if (context.getAbortSignal() !== signal) {
+      throw new DOMException('The turn changed while resolving its system prompt', 'AbortError');
+    }
+  };
+  assertActiveTurn();
   const helperModel = context.helperModel;
   const model = context.providerRegistry.getCurrentModel();
   const provider: LLMProvider = context.providerRegistry.getForModel(model.registryKey, model.provider);
@@ -261,7 +270,8 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
 
   // A turn that is a session-mode unit's work is not read again: the runner already owns it.
   if (contractSession === undefined) {
-    const intake = await context.contractIntake.intake({ text: context.text, sessionId: context.sessionId, signal: context.getAbortSignal() });
+    const intake = await context.contractIntake.intake({ text: context.text, sessionId: context.sessionId, signal });
+    assertActiveTurn();
     if (intake.kind !== 'turn') {
       const line = describeIntake(intake);
       context.conversation.addSystemMessage(line);
@@ -278,6 +288,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   }
 
   while (continueLoop) {
+    assertActiveTurn();
     let streamAccumulated = '';
     let reasoningAccumulated = '';
     let streamSessionStarted = false;
@@ -310,6 +321,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     };
 
     const preflightResult = await context.checkContextWindowPreflight(context.turnId, model);
+    assertActiveTurn();
     if (preflightResult === 'error') {
       if (streamEnabled) {
         context.setStreamingActive(false);
@@ -360,6 +372,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         payload: { model: model.id, provider: model.provider, messageCount: context.conversation.getMessagesForLLM().length },
       };
       const preResult = await context.hookDispatcher.fire(preEvent);
+      assertActiveTurn();
       if (preResult.decision === 'deny') {
         context.conversation.addSystemMessage(preResult.reason ?? 'LLM call blocked by hook');
         if (context.runtimeBus) {
@@ -393,7 +406,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     if (passiveKnowledgeInjectionEnabled && context.memoryRegistry) {
       knowledgeContextWindow = context.providerRegistry.getContextWindowForModel(model);
     }
-    const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(context.getSystemPrompt());
+    const resolvedSystemPrompt = await resolveSystemPrompt(context.getSystemPrompt, signal);
+    assertActiveTurn();
+    const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(resolvedSystemPrompt);
     const composedBaseSystemPrompt = baseSystemPromptForCall;
     const contextCompactThreshold = context.configManager.get('agents.contextCompactThreshold')
       ?? DEFAULT_PASSIVE_KNOWLEDGE_INJECTION_CONTEXT_THRESHOLD;
@@ -442,6 +457,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           codeInjectionEnabled,
           codeLimit: context.configManager.get('agents.passiveInjection.codeLimit'),
         });
+        assertActiveTurn();
         turnKnowledgeBlock = block;
         if (turnInjectionRecord.injectedIds.length > 0) {
           context.addInjectedKnowledgeIds(turnInjectionRecord.injectedIds);
@@ -481,6 +497,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       return `${base}\n\n${turnKnowledgeBlock}`;
     };
 
+    assertActiveTurn();
     let response: Awaited<ReturnType<typeof provider.chat>>;
     if (context.runtimeBus) {
       emitLlmRequestStarted(context.runtimeBus, context.emitterContext(context.turnId), {
@@ -504,7 +521,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           context.configManager.get('provider.reasoningEffort'),
           context.sessionId,
         ),
-        signal: context.getAbortSignal(),
+        signal,
         onDelta,
         onRetry: (attempt, maxAttempts, delayMs, error) => {
           chatRetries = attempt;
@@ -520,7 +537,9 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
           }
         },
       });
+      assertActiveTurn();
     } catch (chatErr) {
+      assertActiveTurn();
       if (streamEnabled) {
         context.setStreamingActive(false);
         context.conversation.finalizeStreamingBlock();

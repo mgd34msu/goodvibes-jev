@@ -523,3 +523,11 @@ export {
   type AgentAccountRegistryOptions,
   type SecretLikeTextPredicate,
 } from './account-registry.js';
+
+export {
+  AsyncAgentAccountRegistry,
+  type AsyncAgentAccountRegistryOptions,
+  type AsyncSecretLikeTextReader,
+  type SecretLikeTextReading,
+  type AccountRegistryOperationOptions,
+} from './async-account-registry.js';

@@ -249,6 +249,7 @@ export type { ProviderCapability, RequestProfile, RouteExplanation, RouteRejecti
 export { ProviderOptimizer } from './optimizer.js';
 export type { FallbackTestResult, FallbackTransition } from './optimizer.js';
 export { getTierPromptSupplement, readTierPromptSupplement } from './tier-prompts.js';
+export type { TierPromptAudience, TierPromptSupplementOptions } from './tier-prompts.js';
 export { getProviderRuntimeSnapshot, getProviderUsageSnapshot, listProviderRuntimeSnapshots } from './runtime-snapshot.js';
 
 export {

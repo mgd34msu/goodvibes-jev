@@ -540,3 +540,100 @@ describe('observed context ceilings', () => {
     });
   });
 });
+
+
+describe('compaction awaits system-prompt reads', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((yes) => { resolve = yes; });
+    return { promise, resolve };
+  }
+
+  function fixture(getSystemPrompt: NonNullable<PreflightDeps['getSystemPrompt']>, signal?: AbortSignal) {
+    const stub = makeConversationStub();
+    const model = makeModel();
+    const compacting: boolean[] = [];
+    const deps: PostTurnContextDeps = {
+      ...makeSharedDeps(stub, model, { 'behavior.autoCompactThreshold': 80 }),
+      getSystemPrompt, signal,
+      isCompacting: false, setIsCompacting: (value) => compacting.push(value),
+      lastWarningBracket: 0, setLastWarningBracket: () => {},
+      modelContextWarning: MODEL_WARNING,
+    };
+    return { stub, model, deps, compacting };
+  }
+
+  for (const phase of ['preflight', 'post-turn'] as const) {
+    const run = (test: ReturnType<typeof fixture>) => phase === 'preflight'
+      ? checkContextWindowPreflight(test.deps, 'prompt-turn', test.model)
+      : handlePostTurnContextMaintenance(test.deps, 'prompt-turn', 10_000);
+
+    test(`${phase} uses the awaited instruction chain and operation signal`, async () => {
+      const pending = deferred<string>();
+      const entered = deferred<void>();
+      const controller = new AbortController();
+      const f = fixture((signal) => {
+        expect(signal).toBe(controller.signal);
+        entered.resolve();
+        return pending.promise;
+      }, controller.signal);
+      const operation = run(f);
+      await entered.promise;
+      expect(f.stub.compactCalls).toBe(0);
+      expect(f.compacting).toEqual([true]);
+      pending.resolve('  fresh reviewed instruction chain  ');
+      await operation;
+      expect(f.stub.lastContext?.instructionChain).toBe('fresh reviewed instruction chain');
+      expect(f.stub.compactCalls).toBe(1);
+      expect(f.compacting.at(-1)).toBe(false);
+    });
+
+    test(`${phase} cancellation while reading never invokes compaction`, async () => {
+      const pending = deferred<string>();
+      const entered = deferred<void>();
+      const controller = new AbortController();
+      const f = fixture(() => { entered.resolve(); return pending.promise; }, controller.signal);
+      const operation = run(f);
+      await entered.promise;
+      controller.abort();
+      await expect(operation).rejects.toHaveProperty('name', 'AbortError');
+      pending.resolve('late instructions');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(f.stub.compactCalls).toBe(0);
+      expect(f.compacting.at(-1)).toBe(false);
+      expect(f.stub.systemMessages.some((message) => message.includes('compacted'))).toBe(false);
+    });
+
+    for (const asynchronous of [false, true]) {
+      test(`${phase} reports ${asynchronous ? 'rejected' : 'thrown'} reads without compaction or success`, async () => {
+        const error = new Error('instruction lookup failed');
+        const f = fixture(() => { if (asynchronous) return Promise.reject(error); throw error; });
+        const result = await run(f);
+        if (phase === 'preflight') expect(result).toBe('error');
+        expect(f.stub.compactCalls).toBe(0);
+        expect(f.compacting.at(-1)).toBe(false);
+        expect(f.stub.systemMessages.some((message) => message.includes(error.message))).toBe(true);
+        expect(f.stub.systemMessages.some((message) => message.includes('compacted'))).toBe(false);
+      });
+    }
+  }
+
+  test('post-turn maintenance remains pending until the compaction operation settles', async () => {
+    const pending = deferred<void>();
+    const entered = deferred<void>();
+    const f = fixture(() => 'synchronous instructions');
+    f.deps.conversation = {
+      ...f.stub.conversation,
+      compact: async () => { entered.resolve(); await pending.promise; },
+    } as unknown as ConversationManager;
+    let completed = false;
+    const operation = handlePostTurnContextMaintenance(f.deps, 'prompt-turn', 10_000).then(() => { completed = true; });
+    await entered.promise;
+    expect(completed).toBe(false);
+    expect(f.compacting).toEqual([true]);
+    pending.resolve();
+    await operation;
+    expect(completed).toBe(true);
+    expect(f.compacting.at(-1)).toBe(false);
+  });
+});
