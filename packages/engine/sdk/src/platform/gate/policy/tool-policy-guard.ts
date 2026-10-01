@@ -269,10 +269,12 @@ export function installAgentToolPolicyGuard(registry: ToolRegistry, options: Age
 export function wrapAgentToolForAgentPolicy(tool: Tool, _options: AgentToolPolicyGuardOptions = {}): void {
   narrowAgentToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateAgentToolInvocationForAgentPolicy(args as AgentToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(normalizeAgentToolInvocationForAgentPolicy(args as AgentToolArgs) as Parameters<Tool['execute']>[0]);
+    options?.signal?.throwIfAborted();
+    return originalExecute(normalizeAgentToolInvocationForAgentPolicy(args as AgentToolArgs) as Parameters<Tool['execute']>[0], options);
   };
 }
 
@@ -288,47 +290,58 @@ export function normalizeAgentToolInvocationForAgentPolicy(args: AgentToolArgs):
 export function wrapBlockedMainConversationToolForAgentPolicy(tool: Tool): void {
   tool.definition.description = `Blocked in GoodVibes Agent: ${tool.definition.name}.`;
   tool.definition.sideEffects = [];
-  tool.execute = async () => ({ success: false, error: LOCAL_CODING_TOOL_DENIAL });
+  tool.execute = async (_args, options) => {
+    options?.signal?.throwIfAborted();
+    return { success: false, error: LOCAL_CODING_TOOL_DENIAL };
+  };
 }
 
 export function wrapExecToolForAgentPolicy(tool: Tool): void {
   narrowExecToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateExecToolInvocationForAgentPolicy(args as ExecToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
 export function wrapFetchToolForAgentPolicy(tool: Tool): void {
   narrowFetchToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateFetchToolInvocationForAgentPolicy(args as FetchToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(normalizeFetchToolInvocationForAgentPolicy(args as FetchToolArgs) as Parameters<Tool['execute']>[0]);
+    options?.signal?.throwIfAborted();
+    return originalExecute(normalizeFetchToolInvocationForAgentPolicy(args as FetchToolArgs) as Parameters<Tool['execute']>[0], options);
   };
 }
 
 export function wrapStateToolForAgentPolicy(tool: Tool): void {
   narrowStateToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateStateToolInvocationForAgentPolicy(args as StateToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
 export function wrapInspectToolForAgentPolicy(tool: Tool): void {
   narrowInspectToolDefinitionForAgentPolicy(tool);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const inspectArgs = args as InspectToolArgs;
     const denial = validateInspectToolInvocationForAgentPolicy(inspectArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(normalizeInspectToolInvocationForAgentPolicy(inspectArgs) as Parameters<Tool['execute']>[0]);
+    options?.signal?.throwIfAborted();
+    return originalExecute(normalizeInspectToolInvocationForAgentPolicy(inspectArgs) as Parameters<Tool['execute']>[0], options);
   };
 }
 
@@ -397,10 +410,12 @@ export function wrapModeRestrictedToolForAgentPolicy(tool: Tool, policy: ModeRes
   narrowModeToolDefinitionForAgentPolicy(tool, policy.allowedModes, policy.description);
   if (policy.removedProperties) removeToolDefinitionProperties(tool, policy.removedProperties);
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateModeRestrictedToolInvocationForAgentPolicy(args as ModeToolArgs, policy.modeSet, policy.denial);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
@@ -410,11 +425,13 @@ export function wrapChannelToolForAgentPolicy(tool: Tool): void {
     'Running channel tools/actions, account lifecycle actions, authorization, and target creation are disabled in the main conversation.',
   ].join(' '));
   const originalExecute = tool.execute.bind(tool);
-  tool.execute = async (args) => {
+  tool.execute = async (args, options) => {
+    options?.signal?.throwIfAborted();
     const denial = validateModeRestrictedToolInvocationForAgentPolicy(args as ModeToolArgs, READ_ONLY_CHANNEL_TOOL_MODE_SET, CHANNEL_ACTION_DENIAL)
       ?? validateChannelToolInvocationForAgentPolicy(args as ModeToolArgs);
     if (denial) return { success: false, error: denial };
-    return originalExecute(args);
+    options?.signal?.throwIfAborted();
+    return originalExecute(args, options);
   };
 }
 
