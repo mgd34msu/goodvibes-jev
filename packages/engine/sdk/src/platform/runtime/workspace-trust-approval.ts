@@ -37,6 +37,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { assertPermissionActive, awaitPermission } from '../permissions/cancellation.js';
 import type { PermissionPromptDecision, PermissionPromptRequest } from '../permissions/prompt.js';
 import type { ApprovalBroker } from '../control-plane/approval-broker.js';
 import { trustGatedAsk, type WorkspaceTrustLevel, type WorkspaceTrustManager } from './workspace-trust.js';
@@ -47,6 +48,8 @@ import { trustGatedAsk, type WorkspaceTrustLevel, type WorkspaceTrustManager } f
  * broker. The gate only reads `request.category`, so these ride around it.
  */
 export interface ApprovalRaiseExtras {
+  /** Per-consumer lifetime, never part of the persisted/wire request. */
+  readonly signal?: AbortSignal | undefined;
   readonly routeId?: string | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
   /** Expiry for a raised ask; the trust question sets one, tool asks do not. */
@@ -179,14 +182,26 @@ export function trustGatedApprovalRaiser(
   const extrasByRequest = new WeakMap<PermissionPromptRequest, ApprovalRaiseExtras>();
   const gated = trustGatedAsk(
     manager,
-    (request) => raise({ request, ...(extrasByRequest.get(request) ?? {}) }),
+    (request) => {
+      const extras = extrasByRequest.get(request) ?? {};
+      assertPermissionActive(extras.signal);
+      return raise({ request, ...extras });
+    },
     requestTrustDecision,
   );
   return async (input) => {
-    extrasByRequest.set(input.request, { routeId: input.routeId, metadata: input.metadata });
+    const signal = input.signal;
+    assertPermissionActive(signal);
+    // One private identity per participation, even if callers reuse the same
+    // request object while waiting on the shared workspace trust decision.
+    const request = { ...input.request };
+    extrasByRequest.set(request, { routeId: input.routeId, metadata: input.metadata, signal });
     // Idempotent, and awaited on every ask rather than once at composition:
     // see the module header for why the composition root cannot await it.
-    await manager.load();
-    return gated(input.request);
+    return awaitPermission(async () => {
+      await manager.load();
+      assertPermissionActive(signal);
+      return gated(request);
+    }, signal);
   };
 }

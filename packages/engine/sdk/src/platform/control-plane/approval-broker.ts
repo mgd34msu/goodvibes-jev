@@ -8,7 +8,8 @@ import type { ControlPlaneSurfaceMessage } from './types.js';
 import { logger } from '../utils/logger.js';
 import { isRecord } from '../utils/record-coerce.js';
 import { resolveApprovalHunkSelection } from './approval-hunk-apply.js';
-import { raiseSharedApproval, type RaisedApproval } from './approval-broker-raise.js';
+import { raiseSharedApproval, type PendingApprovalEntry, type RaisedApproval } from './approval-broker-raise.js';
+import { awaitPermission } from '../permissions/cancellation.js';
 import { approvalDispositionMatches, assertExplicitApprovalDisposition, ordinaryApprovalDecision, type ExplicitApprovalDisposition, type SharedApprovalDecision } from './approval-disposition.js';
 
 export type SharedApprovalStatus = 'pending' | 'claimed' | 'approved' | 'denied' | 'cancelled' | 'expired';
@@ -73,6 +74,8 @@ interface SharedApprovalStoreSnapshot extends Record<string, unknown> {
 
 export interface RequestSharedApprovalInput {
   readonly request: PermissionPromptRequest;
+  /** In-process consumer lifetime only; never persisted in request or metadata. */
+  readonly signal?: AbortSignal | undefined;
   readonly sessionId?: string | undefined;
   readonly routeId?: string | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
@@ -266,10 +269,7 @@ function approvalCoalesceKey(sessionId: string | undefined, tool: string, args: 
 export class ApprovalBroker {
   private readonly store: PersistentStore<SharedApprovalStoreSnapshot>;
   private readonly approvals = new Map<string, SharedApprovalRecord>();
-  private readonly pendingResolvers = new Map<string, {
-    resolvers: Array<(decision: PermissionPromptDecision) => void>;
-    timer?: ReturnType<typeof setTimeout> | undefined;
-  }>();
+  private readonly pendingResolvers = new Map<string, PendingApprovalEntry>();
   private readonly listeners = new Set<ApprovalListener>();
   /** Whole-store writes run one at a time, in call order. See StoreWriteQueue. */
   private readonly writes = new StoreWriteQueue();
@@ -334,8 +334,11 @@ export class ApprovalBroker {
     const now = Date.now();
     for (const approval of this.approvals.values()) {
       if (approval.status !== 'pending' && approval.status !== 'claimed') continue;
-      if (approval.expiresAt === undefined) continue;
       if (this.pendingResolvers.has(approval.id)) continue;
+      if (approval.expiresAt === undefined) {
+        this.pendingResolvers.set(approval.id, { resolvers: [], externallyOwned: true });
+        continue;
+      }
 
       const remaining = approval.expiresAt - now;
       if (remaining <= 0) {
@@ -359,7 +362,7 @@ export class ApprovalBroker {
           });
       }, remaining);
       timer.unref?.();
-      this.pendingResolvers.set(approval.id, { resolvers: [], timer });
+      this.pendingResolvers.set(approval.id, { resolvers: [], timer, externallyOwned: true });
     }
   }
 
@@ -396,11 +399,14 @@ export class ApprovalBroker {
       persist: () => this.persist(),
       publish: (approval) => this.publish(approval),
       expire: (approvalId, note) => this.expireApproval(approvalId, note),
+      cancel: async (approvalId) => { await this.cancelApproval(approvalId, 'approval-broker', 'service', 'all requesting consumers cancelled'); },
       buildAudit,
       coalesceKey: approvalCoalesceKey,
     });
-    if (input.localPrompt && !raised.coalesced) {
-      void input.localPrompt(input.request)
+    const pending = this.pendingResolvers.get(raised.approval.id);
+    if (input.localPrompt && !raised.coalesced && !pending?.retired
+      && (raised.approval.status === 'pending' || raised.approval.status === 'claimed')) {
+      void input.localPrompt(input.request, { signal: pending?.promptController?.signal })
         .then((decision) => this.resolveApproval(raised.approval.id, {
           approved: decision.approved,
           remember: decision.remember,
@@ -420,7 +426,9 @@ export class ApprovalBroker {
 
   /** Raise an ask and wait for the answer, the in-process permission path. */
   async requestApproval(input: RequestSharedApprovalInput): Promise<PermissionPromptDecision> {
-    return (await this.raiseApproval(input)).decision;
+    const signal = input.signal;
+    const ownedInput = { ...input, signal };
+    return awaitPermission(async () => (await this.raiseApproval(ownedInput)).decision, signal);
   }
 
   async claimApproval(approvalId: string, actor: string, actorSurface = 'web', note?: string): Promise<SharedApprovalRecord | null> {
@@ -519,6 +527,9 @@ export class ApprovalBroker {
       throw Object.assign(new Error('An amendment cannot create a remembered approval rule.'), { code: 'INVALID_ARGUMENT', status: 400 });
     }
     await this.start();
+    if (this.pendingResolvers.get(approvalId)?.retired) {
+      return this.cancelApproval(approvalId, 'approval-broker', 'service', 'all requesting consumers cancelled');
+    }
     const approval = this.approvals.get(approvalId);
     if (!approval) return null;
     if (approval.status === 'approved' || approval.status === 'denied' || approval.status === 'cancelled' || approval.status === 'expired') {
@@ -557,6 +568,9 @@ export class ApprovalBroker {
         buildAudit(approved ? 'approved' : 'denied', input.actor, input.actorSurface, input.note),
       ],
     };
+    if (this.pendingResolvers.get(approvalId)?.retired) {
+      return this.cancelApproval(approvalId, 'approval-broker', 'service', 'all requesting consumers cancelled');
+    }
     this.approvals.set(approvalId, updated);
     await this.persist();
     this.publish(updated);
@@ -578,6 +592,7 @@ export class ApprovalBroker {
         for (const candidate of [...this.approvals.values()]) {
           if (candidate.id === approvalId) continue;
           if (candidate.status !== 'pending' && candidate.status !== 'claimed') continue;
+          if (this.pendingResolvers.get(candidate.id)?.retired) continue;
           const covered = matchDurableRules([rule], candidate.request.tool, candidate.request.args, {
             projectRoot: candidate.request.workingDirectory,
           });
@@ -599,6 +614,7 @@ export class ApprovalBroker {
                 `covered by remembered ${input.rememberTier} decision on ${approvalId}`),
             ],
           };
+          if (this.pendingResolvers.get(candidate.id)?.retired) continue;
           this.approvals.set(candidate.id, swept);
           this.publish(swept);
           this.resolvePending(candidate.id, swept.decision ?? { approved });
@@ -615,6 +631,7 @@ export class ApprovalBroker {
     if (!pending) return;
     const decision = ordinaryApprovalDecision(recorded);
     if (pending.timer) clearTimeout(pending.timer);
+    if (recorded.disposition === 'cancelled' || recorded.disposition === 'expired') pending.promptController?.abort();
     for (const resolve of pending.resolvers) resolve(decision);
     this.pendingResolvers.delete(approvalId);
   }

@@ -44,16 +44,20 @@
  * remote record exists. The refusal reason is logged once per process so a
  * misconfigured control plane is visible without a line per ask.
  *
- * ── The local prompt is not cancelled ──────────────────────────────────────
+ * ── Consumer lifetime ─────────────────────────────────────────────────────
  *
  * A remote decision resolves the ask; the prompt this surface already drew stays
  * on screen until the user dismisses it, and its answer is ignored (the decision
  * has been taken). This mirrors what the in-process broker did with a
  * `localPrompt` racing a wire decision, there is no cancel channel into a drawn
- * prompt, and inventing one is a renderer change, not a client-seam change.
+ * prompt. A consumer abort is forwarded as optional execution options to the
+ * local renderer, ends this caller's wait and closes its observations. Late
+ * prompt answers are ignored. The daemon's wire-owned record is not cancelled:
+ * retiring one remote consumer safely needs a separate ownership protocol.
  */
 import { logger, summarizeError } from '../../utils/index.js';
-import type { PermissionPromptDecision, PermissionPromptRequest } from '../../permissions/prompt.js';
+import { assertPermissionActive, awaitPermission } from '../../permissions/cancellation.js';
+import type { PermissionExecutionOptions, PermissionPromptDecision, PermissionPromptRequest } from '../../permissions/prompt.js';
 import type { ApprovalRaiser } from '../permissions/permission-composition.js';
 import type { DaemonVerbCaller } from './daemon-verbs.js';
 import type { ApprovalUpdateNotice, ApprovalUpdateSubscription } from './approval-updates.js';
@@ -72,7 +76,7 @@ export type ApprovalUpdateSubscriber = (
 ) => Promise<ApprovalUpdateSubscription | null>;
 
 /** The local ask: draw a prompt on this surface and resolve with what the user chose. */
-export type LocalPermissionPrompt = (request: PermissionPromptRequest) => Promise<PermissionPromptDecision>;
+export type LocalPermissionPrompt = (request: PermissionPromptRequest, options?: PermissionExecutionOptions) => Promise<PermissionPromptDecision>;
 
 /** How often the raised id is re-read while the local prompt is open. */
 const DEFAULT_POLL_INTERVAL_MS = 750;
@@ -123,12 +127,29 @@ function readRemoteDecision(record: RaisedRecord | null | undefined): Permission
 
 let unreachableLogged = false;
 
+/** Own the decision fields before checking whether a borrowed callback cancelled. */
+function localDecisionSnapshot(decision: PermissionPromptDecision): PermissionPromptDecision {
+  const { approved, remember, rememberTier, reason, modifiedArgs } = decision;
+  return {
+    approved,
+    ...(remember === undefined ? {} : { remember }),
+    ...(rememberTier === undefined ? {} : { rememberTier }),
+    ...(reason === undefined ? {} : { reason }),
+    ...(modifiedArgs === undefined ? {} : { modifiedArgs }),
+  };
+}
+
 export function createClientApprovalRaiser(options: ClientApprovalRaiserOptions): ApprovalRaiser {
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  }));
+  const sleep = async (ms: number, signal: AbortSignal): Promise<void> => {
+    if (options.sleep) return awaitPermission(() => options.sleep!(ms), signal);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await awaitPermission(() => new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms); timer.unref?.();
+      }), signal);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  };
 
   const raiseOnDaemon = async (input: {
     request: PermissionPromptRequest;
@@ -158,25 +179,26 @@ export function createClientApprovalRaiser(options: ClientApprovalRaiserOptions)
     }
   };
 
-  const readRaised = async (approvalId: string): Promise<RaisedRecord | null> => {
+  const readRaised = async (approvalId: string, signal: AbortSignal): Promise<RaisedRecord | null> => {
     try {
-      const listed = await options.verbs.invoke<unknown>('approvals.list', { includeResolved: true });
+      const listed = await awaitPermission(() => options.verbs.invoke<unknown>('approvals.list', { includeResolved: true }), signal);
       const records: readonly RaisedRecord[] = Array.isArray(listed)
         ? listed as readonly RaisedRecord[]
         : ((listed as { approvals?: readonly RaisedRecord[] } | null)?.approvals ?? []);
       return records.find((entry) => entry.id === approvalId) ?? null;
     } catch (error) {
+      assertPermissionActive(signal);
       logger.debug('[approvals] reading the raised ask back failed', { error: summarizeError(error) });
       return null;
     }
   };
 
   /** The fallback: read the record back on an interval until it is answered. */
-  const pollRemote = async (approvalId: string, done: () => boolean): Promise<PermissionPromptDecision | null> => {
+  const pollRemote = async (approvalId: string, done: () => boolean, signal: AbortSignal): Promise<PermissionPromptDecision | null> => {
     while (!done()) {
-      await sleep(pollIntervalMs);
+      await sleep(pollIntervalMs, signal);
       if (done()) return null;
-      const decision = readRemoteDecision(await readRaised(approvalId));
+      const decision = readRemoteDecision(await readRaised(approvalId, signal));
       if (decision) return decision;
     }
     return null;
@@ -193,57 +215,84 @@ export function createClientApprovalRaiser(options: ClientApprovalRaiserOptions)
     subscribe: ApprovalUpdateSubscriber,
     approvalId: string,
     done: () => boolean,
+    signal: AbortSignal,
   ): Promise<{ readonly subscribed: boolean; readonly decision: PermissionPromptDecision | null }> => {
     let settle: ((decision: PermissionPromptDecision | null) => void) | null = null;
     const decided = new Promise<PermissionPromptDecision | null>((resolve) => { settle = resolve; });
     let subscription: ApprovalUpdateSubscription | null = null;
+    let closed = false;
+    const closeFailed = (): void => {
+      // Cleanup diagnostics must not create another unhandled cleanup failure.
+      try { logger.warn('[approvals] closing this approval observation failed'); } catch { /* best effort */ }
+    };
+    const close = (): void => {
+      if (subscription && !closed) {
+        closed = true;
+        // A void callback may have an async implementation. Own both forms of
+        // failure without waiting on or retrying borrowed disposal.
+        try { void Promise.resolve(subscription.close()).then(undefined, closeFailed); }
+        catch { closeFailed(); }
+      }
+    };
+    signal.addEventListener('abort', close, { once: true });
     try {
-      subscription = await subscribe((notice) => {
-        if (notice.approval.id !== approvalId) return;
-        if (done()) { settle?.(null); return; }
-        const decision = readRemoteDecision(notice.approval);
-        if (decision) settle?.(decision);
+      const opening = Promise.resolve().then(() => {
+        assertPermissionActive(signal);
+        return subscribe((notice) => {
+          if (notice.approval.id !== approvalId) return;
+          if (signal.aborted || done()) { settle?.(null); return; }
+          const decision = readRemoteDecision(notice.approval);
+          if (decision) settle?.(decision);
+        });
       });
-    } catch (error) {
-      logger.debug('[approvals] opening the approval-update stream failed; reading the record instead', {
-        error: summarizeError(error),
-      });
-      return { subscribed: false, decision: null };
-    }
-    if (!subscription) return { subscribed: false, decision: null };
-    try {
-      // The gap read. A decision taken before the stream opened would otherwise
-      // never arrive on it, and this seam would wait for an event that is
-      // already in the past.
-      const alreadyDecided = readRemoteDecision(await readRaised(approvalId));
+      // Keep ownership even if cancellation wins before acquisition completes.
+      // The same close function covers the narrow handoff between promise jobs.
+      void opening.then((acquired) => {
+        subscription = acquired;
+        if (signal.aborted) close();
+      }, () => {});
+      try {
+        await awaitPermission(() => opening, signal);
+      } catch (error) {
+        assertPermissionActive(signal);
+        logger.debug('[approvals] opening the approval-update stream failed; reading the record instead', { error: summarizeError(error) });
+        return { subscribed: false, decision: null };
+      }
+      if (!subscription) return { subscribed: false, decision: null };
+      const alreadyDecided = readRemoteDecision(await readRaised(approvalId, signal));
       if (alreadyDecided) return { subscribed: true, decision: alreadyDecided };
       if (done()) return { subscribed: true, decision: null };
-      return { subscribed: true, decision: await decided };
+      return { subscribed: true, decision: await awaitPermission(() => decided, signal) };
     } finally {
-      subscription.close();
+      signal.removeEventListener('abort', close);
+      close();
     }
   };
 
   /** Resolve when the daemon's record for this id is answered. Never rejects. */
-  const watchRemote = async (approvalId: string, done: () => boolean): Promise<PermissionPromptDecision | null> => {
+  const watchRemote = async (approvalId: string, done: () => boolean, signal: AbortSignal): Promise<PermissionPromptDecision | null> => {
     const subscribe = options.subscribeApprovalUpdates;
     if (subscribe) {
-      const pushed = await watchRemoteOverStream(subscribe, approvalId, done);
+      const pushed = await watchRemoteOverStream(subscribe, approvalId, done, signal);
       if (pushed.subscribed) return pushed.decision;
     }
-    return await pollRemote(approvalId, done);
+    return await pollRemote(approvalId, done, signal);
   };
 
   /** Tell the daemon what this surface decided, so its record is the truth. */
-  const reportLocalDecision = async (approvalId: string, decision: PermissionPromptDecision): Promise<void> => {
+  const reportLocalDecision = async (approvalId: string, decision: PermissionPromptDecision, signal?: AbortSignal): Promise<void> => {
     try {
-      await options.verbs.invoke(decision.approved ? 'approvals.approve' : 'approvals.deny', {
+      const method = decision.approved ? 'approvals.approve' : 'approvals.deny';
+      const input = {
         approvalId,
         actor: options.actor,
         actorSurface: options.actor,
         ...(decision.remember ? { remember: true } : {}),
-      });
+      };
+      assertPermissionActive(signal);
+      await options.verbs.invoke(method, input);
     } catch (error) {
+      if (signal?.aborted) return;
       // The user has already been served; a failed write-back is a
       // record-consistency problem, not a reason to re-ask them.
       logger.warn('[approvals] recording this surface\'s decision on the daemon failed', {
@@ -254,25 +303,43 @@ export function createClientApprovalRaiser(options: ClientApprovalRaiserOptions)
   };
 
   return async (input) => {
-    const approvalId = await raiseOnDaemon(input);
-    const prompt = options.localPrompt();
-    if (approvalId === null) return await prompt(input.request);
-
+    const signal = input.signal;
+    assertPermissionActive(signal);
+    const observations = new AbortController();
+    const abort = (): void => observations.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     let settled = false;
-    const local = prompt(input.request).then((decision) => {
-      settled = true;
-      return { source: 'local' as const, decision };
-    });
-    const remote = watchRemote(approvalId, () => settled).then((decision) => {
-      if (decision) settled = true;
-      return decision ? { source: 'remote' as const, decision } : null;
-    });
+    try {
+      const approvalId = await awaitPermission(() => raiseOnDaemon(input), signal);
+      assertPermissionActive(signal);
+      const prompt = options.localPrompt();
+      const askLocal = (): Promise<PermissionPromptDecision> => awaitPermission(async () => {
+        const decision = await prompt(input.request, { signal });
+        assertPermissionActive(signal);
+        return localDecisionSnapshot(decision);
+      }, signal);
+      if (approvalId === null) return await askLocal();
 
-    const winner = await Promise.race([
-      local,
-      remote.then(async (result) => result ?? await local),
-    ]);
-    if (winner.source === 'local') void reportLocalDecision(approvalId, winner.decision);
-    return winner.decision;
+      const local = askLocal().then((decision) => {
+        settled = true;
+        return { source: 'local' as const, decision };
+      });
+      const remote = watchRemote(approvalId, () => settled, observations.signal).then((decision) => {
+        if (decision) settled = true;
+        return decision ? { source: 'remote' as const, decision } : null;
+      });
+      const winner = await awaitPermission(() => Promise.race([
+        local,
+        remote.then(async (result) => result ?? await local),
+      ]), signal);
+      assertPermissionActive(signal);
+      if (winner.source === 'local') void reportLocalDecision(approvalId, winner.decision, signal);
+      return winner.decision;
+    } finally {
+      settled = true;
+      observations.abort();
+      signal?.removeEventListener('abort', abort);
+    }
   };
 }

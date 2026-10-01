@@ -32,6 +32,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { resolveScopedDirectory } from '../runtime/surface-root.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
 import { gateBackgroundToolCall } from './background-permission-gate.js';
+import { assertPermissionActive } from '../permissions/cancellation.js';
 import { resolveTurnBudget, formatTurnLimitError, TURN_BUDGET_EXHAUSTED, type ResolvedTurnBudget } from './turn-budget.js';
 import { toolFormatTelemetry } from '../runtime/telemetry/tool-format-telemetry.js';
 import {
@@ -76,6 +77,9 @@ async function executeToolCalls(
   callHistoryWindow: number,
   context: AgentOrchestratorRunContext,
 ): Promise<ToolResult[]> {
+  // Capture before any asynchronous admission work; a later lookup can belong
+  // to a replacement run rather than the owner of this batch.
+  const signal = context.getCancellationSignal?.(record.id);
   const results: ToolResult[] = [];
 
   for (const originalCall of toolCalls) {
@@ -117,7 +121,9 @@ async function executeToolCalls(
     try {
       // Background permission gate: consult the session permission mode exactly
       // like the foreground turn loop (denials return a structured ToolDenial).
-      const permissionOutcome = await gateBackgroundToolCall(context, record, call.name, call.arguments as Record<string, unknown>);
+      assertPermissionActive(signal);
+      const permissionOutcome = await gateBackgroundToolCall(context, record, call.name, call.arguments as Record<string, unknown>, signal);
+      assertPermissionActive(signal);
       if (!permissionOutcome.approved) {
         recordResult(
           { callId: call.id, success: false, error: permissionOutcome.error, denial: permissionOutcome.denial },
@@ -125,7 +131,6 @@ async function executeToolCalls(
         );
       } else {
         const effectiveArgs = permissionOutcome.modifiedArgs ?? (call.arguments as Record<string, unknown>);
-        const signal = context.getCancellationSignal?.(record.id);
         const result = await toolRegistry.execute(call.id, call.name, effectiveArgs, signal ? { signal } : undefined);
         // Stage B: schedule a debounced reindex of any touched file(s). Never awaited.
         try {
@@ -136,8 +141,8 @@ async function executeToolCalls(
         recordResult({ ...result, callId: call.id }, JSON.stringify(effectiveArgs));
       }
     } catch (err) {
-      const toolErr = summarizeError(err);
-      recordResult({ callId: call.id, success: false, error: toolErr }, JSON.stringify(call.arguments));
+      const toolErr = signal?.aborted ? 'cancelled by user' : summarizeError(err);
+      recordResult({ callId: call.id, success: false, error: toolErr, ...(signal?.aborted ? { cancelled: true } : {}) }, JSON.stringify(call.arguments));
     }
 
     callHistory.push(callSig);
