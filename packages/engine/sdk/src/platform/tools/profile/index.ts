@@ -141,10 +141,13 @@ function createInstance(
       // Acknowledging sits ABOVE the capture gate on purpose. It writes to the
       // machine's own occasions state and never to the owner's profile document, and
       // "stop reminding me about this" is the one instruction that must never
-      // be refused because profile capture happens to be off. A person telling
+      // be refused because profile capture happens to be off. Bound owner
+      // authority is still required: an unrelated channel cannot silence the
+      // owner's reminders. A person telling
       // the thing to be quiet and being told it cannot comply is the whole
       // complaint in miniature.
       if (action === 'acknowledge_occasion') {
+        if (!authority.canCapture) return refused(authority.reason);
         const occasionId = text(input.occasionId);
         if (occasionId.length === 0) {
           return refused(

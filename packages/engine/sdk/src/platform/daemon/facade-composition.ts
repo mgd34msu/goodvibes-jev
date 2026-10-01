@@ -5,6 +5,7 @@ import { createFacadeWorkProposalStore } from './facade-work-proposal-store.js';
 import type { ConversationGateConfigReader } from '../agents/conversation-gate.js';
 import { continuationContractOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import { gateSurfaceSpawn, type SurfaceIngressOrigin } from './surface-conversation-gate.js';
+import { conversationalTurnConfigReaderFrom, conversationalTurnSpawnOptions } from '../personal-capture/spawn-contract.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
 import type { ConfigManager } from '../config/manager.js';
@@ -756,7 +757,7 @@ export function configureDaemonSessionContinuation(options: {
           surface: input.surfaceKind,
           text: input.body,
           ...(input.userId ? { userId: input.userId } : {}),
-          ...(input.externalId ?? input.threadId ? { channelId: input.externalId ?? input.threadId } : {}),
+          ...(routeBinding?.channelId ?? input.externalId ? { channelId: routeBinding?.channelId ?? input.externalId } : {}),
           ...(input.threadId ? { threadId: input.threadId } : {}),
         }
       : null;
@@ -769,11 +770,25 @@ export function configureDaemonSessionContinuation(options: {
     });
     const label = 'DaemonServer.sharedSessionFollowUp';
     const gateDeps = options.surfaceActionHelper?.conversationGateDeps();
+    // Confirmed/local work keeps its original tools and task. Only conversation
+    // receives the restricted list, conversational instruction and bound capture.
+    const conversationalInput = escalation.startsContract ? spawnInput : {
+      ...spawnInput,
+      ...conversationalTurnSpawnOptions({ ...input, sessionId }, {
+        configReader: conversationalTurnConfigReaderFrom(options.configReader),
+        tools: input.routing?.tools,
+        channel: {
+          routed: true,
+          ...(input.surfaceKind ? { surfaceKind: input.surfaceKind } : {}),
+          ...(routeBinding?.channelId ?? input.externalId ? { address: routeBinding?.channelId ?? input.externalId } : {}),
+        },
+      }),
+    };
     const spawned = escalation.startsContract
       ? options.trySpawnAgent(spawnInput, label, sessionId)
       : gateDeps
-        ? gateSurfaceSpawn(gateDeps, origin, spawnInput, label, sessionId)
-        : options.trySpawnAgent({ ...spawnInput, ...continuationContractOptions(input) }, label, sessionId);
+        ? gateSurfaceSpawn(gateDeps, origin, conversationalInput, label, sessionId)
+        : options.trySpawnAgent({ ...conversationalInput, ...continuationContractOptions(input) }, label, sessionId);
     if (spawned instanceof Response) {
       return null;
     }

@@ -40972,7 +40972,7 @@
     {
       "name": "conversationalTurnSpawnOptions",
       "kind": "function",
-      "text": "export declare function conversationalTurnSpawnOptions(input: ConversationalTurnInputLike, options?: { readonly configReader?: ConversationalTurnConfigReader | undefined; }): { readonly tools: string[]; readonly restrictTools: true; readonly context: string; readonly captureAuthority: CaptureAuthorityDecision; };"
+      "text": "export declare function conversationalTurnSpawnOptions(input: ConversationalTurnInputLike, options?: { readonly configReader?: ConversationalTurnConfigReader | undefined; readonly channel?: CaptureChannelIdentity | undefined; readonly tools?: readonly string[] | undefined; }): { readonly tools: string[]; readonly restrictTools: true; readonly context: string; readonly captureAuthority: CaptureAuthorityDecision; };"
     },
     {
       "name": "parseOwnerChannelList",

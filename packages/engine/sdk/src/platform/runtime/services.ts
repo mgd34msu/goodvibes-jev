@@ -39,7 +39,7 @@ import { cancelAllAgentRuns, type AgentManager } from '../tools/agent/index.js';
 import type { AgentMessageBus } from '../agents/message-bus.js';
 import type { AgentOrchestrator } from '../agents/orchestrator.js';
 import type { ArchetypeLoader } from '../agents/archetypes.js';
-import { continuationContractOptions } from '../agents/conversation-continuation.js';
+import { continuationContractOptions, decideContinuationEscalation } from '../agents/conversation-continuation.js';
 import { PersonalCaptureHolder, conversationalTurnSpawnOptions } from '../personal-capture/index.js';
 import { ProcessManager } from '../tools/shared/process-manager.js';
 import { ModeManager } from '../state/mode-manager.js';
@@ -479,22 +479,27 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
   // filled by registerGatewayVerbGroups further down, which is where the owner
   // profile store and occasions service are actually built.
   const personalCapture = new PersonalCaptureHolder();
-  sessionBroker.setContinuationRunner(async ({ task, input }) => {
+  sessionBroker.setContinuationRunner(async ({ task, input, routeBinding }) => {
+    const escalation = decideContinuationEscalation(input, { configReader: configManager });
+    const routing = buildSharedSessionAgentSpawnRoutingInput(input.routing, { modelCandidates: providerRegistry.listModels() });
     const record = agentManager.spawn({
       mode: 'spawn',
       task,
-      // Conversation first: a follow-up gets an answer, not a contract; only
-      // the authorization marker or a local surface starts one.
-      ...continuationContractOptions(input, { configReader: configManager }),
-      // The tools, the instruction and the bound write authority for a
-      // conversational turn. The routing builder sets `restrictTools: true` and
-      //, unless the routing intent named tools, no tool list at all, which
-      // AgentManager reads as "only these" over an empty set. The turn then ran
-      // with an empty registry and could record nothing the owner told it about
-      // himself. Spread FIRST so a routing intent that DID name tools still
-      // wins: that builder only emits a `tools` key when it has one.
-      ...conversationalTurnSpawnOptions(input, { configReader: configManager }),
-      ...buildSharedSessionAgentSpawnRoutingInput(input.routing, { restrictTools: true, modelCandidates: providerRegistry.listModels() }),
+      ...routing,
+      // Authorization and local-surface policy select the capability boundary;
+      // a confirmed contract must not inherit conversational restrictions.
+      ...(escalation.startsContract ? {} : {
+        ...continuationContractOptions(input, { configReader: configManager }),
+        ...conversationalTurnSpawnOptions(input, {
+          configReader: configManager,
+          tools: input.routing?.tools,
+          channel: {
+            routed: true,
+            ...(input.surfaceKind ? { surfaceKind: input.surfaceKind } : {}),
+            ...(routeBinding?.channelId ?? input.externalId ? { address: routeBinding?.channelId ?? input.externalId } : {}),
+          },
+        }),
+      }),
     });
     return { agentId: record.id };
   });
