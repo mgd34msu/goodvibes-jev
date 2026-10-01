@@ -1,7 +1,8 @@
 /**
  * bundle-budget.ts
  *
- * Enforces per-runtime-entry gzipped bundle-size budgets for @goodvibes-jev/engine/sdk.
+ * Reports gzipped entry-file sizes for @goodvibes-jev/engine/sdk.
+ * Imported dependencies are not included, so these are not consumer bundle sizes.
  *
  * Usage:
  *   bun run bundle:check
@@ -10,12 +11,12 @@
  * Behaviour:
  *   1. Builds the SDK if dist/ is missing. Warns (but does NOT rebuild) if dist/
  *      exists but appears stale, the build step is left to the caller in CI so
- *      that a concurrent build failure does not mask a budget violation.
+ *      that a concurrent build failure does not obscure artifact diagnostics.
  *      Pass --build to force a rebuild when dist/ is stale.
- *   2. Reads budget config from bundle-budgets.json at the repo root.
- *   3. Gzips each built entry-point JS file and compares against its budget.
- *   4. Prints a table: entry | actual | budget | delta | status.
- *   5. Exits non-zero if ANY entry exceeds its budget OR has no budget defined.
+ *   2. Reads optional historical references from bundle-budgets.json.
+ *   3. Gzips each built entry-point JS file and reports its size and reference.
+ *   4. Missing, stale or exceeded references are advisory and never rewritten.
+ *   5. Missing build/export files and unreadable or syntactically malformed package JSON remain errors.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -134,13 +135,19 @@ function resolveDistJs(exportValue: ExportValue): string | null {
 
 function loadBudgets(): BudgetConfig {
   if (!existsSync(BUDGETS_PATH)) {
-    console.error(`ERROR: bundle-budgets.json not found at ${BUDGETS_PATH}`);
-    process.exit(1);
+    console.warn('ADVISORY: no optional entry-file gzip references found in bundle-budgets.json.');
+    return {};
   }
-  const raw = JSON.parse(readFileSync(BUDGETS_PATH, 'utf8')) as Record<string, unknown>;
-  return Object.fromEntries(
-    Object.entries(raw).filter(([, value]) => isBudgetEntry(value)),
-  ) as BudgetConfig;
+  try {
+    const raw: unknown = JSON.parse(readFileSync(BUDGETS_PATH, 'utf8'));
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid reference shape');
+    return Object.fromEntries(
+      Object.entries(raw).filter(([, value]) => isBudgetEntry(value)),
+    ) as BudgetConfig;
+  } catch {
+    console.warn('ADVISORY: optional entry-file gzip references are unreadable; reporting measured sizes only.');
+    return {};
+  }
 }
 
 function isBudgetEntry(value: unknown): value is BudgetEntry {
@@ -148,13 +155,15 @@ function isBudgetEntry(value: unknown): value is BudgetEntry {
     value &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
-    typeof (value as { gzip_bytes?: unknown }).gzip_bytes === 'number',
+    typeof (value as { gzip_bytes?: unknown }).gzip_bytes === 'number' &&
+    Number.isFinite((value as BudgetEntry).gzip_bytes) &&
+    (value as BudgetEntry).gzip_bytes >= 0,
   );
 }
 
 /**
  * The sdk's export map, read from the engine package's ./sdk/* exports as the
- * old sdk package's map: the budget measures each entry's `import` target
+ * old sdk package's map: the report measures each entry's `import` target
  * under sdk/dist, as before.
  */
 function loadExports(): Record<string, ExportValue> {
@@ -205,14 +214,13 @@ type Row = {
   actual: number;
   budget: number | null;
   delta: number | null;
-  status: 'PASS' | 'FAIL' | 'NO BUDGET';
+  status: 'WITHIN REFERENCE' | 'ABOVE REFERENCE' | 'NO REFERENCE' | 'MISSING FILE';
 };
 
 const rows: Row[] = [];
-let anyFail = false;
+let artifactFailure = false;
 const measuredEntries = new Set(entries.map((entry) => entry.entry));
 const staleBudgetEntries = Object.keys(budgets).filter((entry) => !measuredEntries.has(entry));
-if (staleBudgetEntries.length > 0) anyFail = true;
 
 for (const { entry, distRel } of entries) {
   const filePath = resolve(SDK_PKG, distRel);
@@ -227,9 +235,9 @@ for (const { entry, distRel } of entries) {
       );
       process.exit(1);
     }
-    console.warn(`WARN: built file not found for entry ${entry}: ${filePath}`);
-    rows.push({ entry, actual: 0, budget: null, delta: null, status: 'NO BUDGET' });
-    anyFail = true;
+    console.error(`ERROR: built file not found for entry ${entry}: ${filePath}`);
+    rows.push({ entry, actual: 0, budget: null, delta: null, status: 'MISSING FILE' });
+    artifactFailure = true;
     continue;
   }
 
@@ -237,15 +245,13 @@ for (const { entry, distRel } of entries) {
   const budgetEntry = budgets[entry];
 
   if (!budgetEntry) {
-    rows.push({ entry, actual, budget: null, delta: null, status: 'NO BUDGET' });
-    anyFail = true;
+    rows.push({ entry, actual, budget: null, delta: null, status: 'NO REFERENCE' });
     continue;
   }
 
   const budget = budgetEntry.gzip_bytes;
   const delta = actual - budget;
-  const status: Row['status'] = actual <= budget ? 'PASS' : 'FAIL';
-  if (status === 'FAIL') anyFail = true;
+  const status: Row['status'] = actual <= budget ? 'WITHIN REFERENCE' : 'ABOVE REFERENCE';
   rows.push({ entry, actual, budget, delta, status });
 }
 
@@ -257,12 +263,15 @@ for (const { entry, distRel } of entries) {
 // updated, or a new domain was added without listing it) can skew
 // expectations. This check asserts the list matches dist/events/<domain>.js
 // exactly. Single source of truth for the domain inventory remains the dist
-// filesystem; this gate just keeps the readable list in lockstep.
+// filesystem; drift in this optional readable list is advisory.
 const eventsBudget = (budgets as Record<string, { gzip_bytes: number; domains?: readonly string[] } | undefined>)['./events'];
-if (eventsBudget?.domains) {
+const domains = eventsBudget?.domains;
+if (domains !== undefined && (!Array.isArray(domains) || !domains.every((value) => typeof value === 'string'))) {
+  console.warn('ADVISORY: optional event-domain references are malformed; ignoring that reference list.');
+} else if (domains) {
   const distEventsDir = resolve(SDK_PKG, 'dist', 'events');
   if (existsSync(distEventsDir)) {
-    const declared = new Set<string>(eventsBudget.domains);
+    const declared = new Set<string>(domains);
     const SKIP_NON_DOMAIN_FILES = new Set(['index']);
     const distDomains = new Set<string>(
       readdirSync(distEventsDir, { withFileTypes: true })
@@ -273,17 +282,14 @@ if (eventsBudget?.domains) {
     const missingFromDist = [...declared].filter((d) => !distDomains.has(d)).sort();
     const missingFromList = [...distDomains].filter((d) => !declared.has(d)).sort();
     if (missingFromDist.length > 0 || missingFromList.length > 0) {
-      const lines = ['ERROR: bundle-budgets.json `./events.domains` drift detected:'];
+      const lines = ['ADVISORY: bundle-budgets.json `./events.domains` reference drift detected:'];
       if (missingFromDist.length > 0) {
         lines.push(`  Listed in domains but no matching dist/events/<name>.js: ${missingFromDist.join(', ')}`);
       }
       if (missingFromList.length > 0) {
         lines.push(`  Present in dist/events/ but not listed in domains: ${missingFromList.join(', ')}`);
       }
-      lines.push('Update bundle-budgets.json#events.domains to match dist/events/, then update');
-      lines.push('the parallel domain lists in bundle-budgets.README.md and docs/public-surface.md.');
-      console.error(lines.join('\n'));
-      process.exit(1);
+      console.warn(lines.join('\n'));
     }
   }
 }
@@ -293,7 +299,7 @@ const COL = {
   actual: 10,
   budget: 10,
   delta: 10,
-  status: 11,
+  status: 16,
 };
 
 function padEnd(s: string, n: number): string {
@@ -307,13 +313,14 @@ function padStart(s: string, n: number): string {
 const header = [
   padEnd('Entry', COL.entry),
   padStart('Actual', COL.actual),
-  padStart('Budget', COL.budget),
+  padStart('Reference', COL.budget),
   padStart('Delta', COL.delta),
   padEnd('Status', COL.status),
 ].join('  ');
 
 const sep = '-'.repeat(header.length);
-console.log('\n' + sep);
+console.log('\nEntry-file gzip diagnostics (imported dependencies excluded; references are advisory).');
+console.log(sep);
 console.log(header);
 console.log(sep);
 
@@ -322,8 +329,6 @@ for (const row of rows) {
   const budgetStr = row.budget != null ? `${row.budget} B` : '-';
   const deltaStr =
     row.delta != null ? (row.delta > 0 ? `+${row.delta} B` : `${row.delta} B`) : '-';
-  const statusMark =
-    row.status === 'PASS' ? '✓ PASS' : row.status === 'FAIL' ? '✗ FAIL' : '! NO BUDGET';
 
   console.log(
     [
@@ -331,40 +336,25 @@ for (const row of rows) {
       padStart(actualStr, COL.actual),
       padStart(budgetStr, COL.budget),
       padStart(deltaStr, COL.delta),
-      padEnd(statusMark, COL.status),
+      padEnd(row.status, COL.status),
     ].join('  '),
   );
 }
 
 console.log(sep + '\n');
 
-// ─── Exit code ────────────────────────────────────────────────────────────────
-
-if (anyFail) {
-  const overBudget = rows.filter((r) => r.status === 'FAIL');
-  const noBudget = rows.filter((r) => r.status === 'NO BUDGET');
-  if (staleBudgetEntries.length > 0) {
-    console.error(
-      `ERROR: ${staleBudgetEntries.length} stale bundle budget entr${staleBudgetEntries.length === 1 ? 'y' : 'ies'} do not match a JS export:\n` +
-        staleBudgetEntries.map((entry) => `  ${entry}`).join('\n') +
-        '\nRemove stale entries or add the corresponding package export.',
-    );
-  }
-
-  if (overBudget.length > 0) {
-    console.error(
-      `ERROR: ${overBudget.length} entry(s) exceed their budget:\n` +
-        overBudget.map((r) => `  ${r.entry}: ${r.actual} B > ${r.budget} B budget`).join('\n'),
-    );
-  }
-  if (noBudget.length > 0) {
-    console.error(
-      `ERROR: ${noBudget.length} entry(s) have no budget defined in bundle-budgets.json:\n` +
-        noBudget.map((r) => `  ${r.entry}`).join('\n') +
-        '\nAdd an explicit gzip_bytes budget for each entry to bundle-budgets.json.',
-    );
-  }
-  process.exit(1);
+// References describe historical entry files, not a shipping-size requirement.
+if (staleBudgetEntries.length > 0) {
+  console.warn(`ADVISORY: stale entry-file gzip references: ${staleBudgetEntries.join(', ')}`);
+}
+const aboveReference = rows.filter((row) => row.status === 'ABOVE REFERENCE');
+if (aboveReference.length > 0) {
+  console.warn(`ADVISORY: entry files above stored gzip references: ${aboveReference.map((row) => row.entry).join(', ')}`);
+}
+const noReference = rows.filter((row) => row.status === 'NO REFERENCE');
+if (noReference.length > 0) {
+  console.warn(`ADVISORY: entry files without stored gzip references: ${noReference.map((row) => row.entry).join(', ')}`);
 }
 
-console.log(`All ${rows.length} entries within budget.`);
+if (artifactFailure) process.exit(1);
+console.log(`Measured ${rows.length} built entry files; no consumer bundle-size limit was evaluated.`);

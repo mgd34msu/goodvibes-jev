@@ -41,7 +41,7 @@ This is the canonical CI-gate reference for the workspace. Every push and PR to 
 
 | Job | Command | Purpose |
 |------|---------|---------|
-| `validate` | `bun run validate` | Kitchen-sink validation. Runs these checks as ordered steps: API docs sync, docs/examples completeness, error/credential-scope/judgment-lint/changelog/version/todo/internal-id/architecture/platform-console gates, TypeScript build, the full typecheck gate (`typecheck`, both the composite project solution and the standalone type-test project), API-surface check (`api:check`), exports-coverage check (`exports:check`), examples typecheck, browser-compat, package metadata, no-any, pack, publint, install smoke, contract-artifact check (`contracts:check`), and bundle budget (`bundle:check`) |
+| `validate` | `bun run validate` | Kitchen-sink validation. Runs these checks as ordered steps: API docs sync, docs/examples completeness, error/credential-scope/judgment-lint/changelog/version/todo/internal-id/architecture/platform-console gates, TypeScript build, the full typecheck gate (`typecheck`, both the composite project solution and the standalone type-test project), API-surface check (`api:check`), exports-coverage check (`exports:check`), examples typecheck, browser-compat, package metadata, no-any, pack, publint, install smoke, contract-artifact check (`contracts:check`), and entry-file gzip diagnostics (`bundle:check`) |
 | `eval-gate` | `bun run eval:baseline:check` then `bun run eval:gate` | Runs the standing eval suite through the production eval paths against the restored build artifact. Checks the checked-in baseline for drift first, then fails on any absolute-floor failure or regression against that baseline |
 | `security-audit` | `bun audit --audit-level high` + gitleaks scan (`gitleaks/gitleaks-action`) | Runs `bun audit --audit-level high` against the workspace dependency tree and a gitleaks secret scan; the CI job invokes these two steps directly (local `bun run security:audit` covers only the dependency-audit half) |
 | `build` | `bun run build` | Builds all workspace package `dist/` output once and uploads it as a single `workspace-build-output` artifact for downstream CI jobs |
@@ -121,27 +121,18 @@ const result = await sdk.operator.invoke('namespace.method', input, {
 
 This is opt-in per call. There is no global schema enforcement. Schema mismatch throws a `ContractError` (a `GoodVibesSdkError` subclass with `kind: 'contract'`).
 
-## Bundle budget enforcement
+## Entry-file gzip diagnostics
 
-`bundle-budgets.json` at the repo root defines per-entry gzip size ceilings using
-`max(ceil(actual * 1.2), actual + 50)` over the last measured gzip size, a 20%
-growth multiplier with a `+50 B` floor so tiny facade entries are not failed by a
-handful of bytes. `bun run bundle:check` is both the local budget check and the
-bundle-budget step inside the `validate` job. See
-[`bundle-budgets.README.md`](../bundle-budgets.README.md) for the full
-methodology, exclusions, and per-entry rationale rules.
+`bun run bundle:check` reports individual built SDK JavaScript entry-file
+sizes during `validate`. It excludes imported dependencies and is not a
+consumer bundle-size guarantee. Historical values in
+`packages/engine/bundle-budgets.json` are optional references: missing, stale,
+malformed or exceeded records are advisory, and new exports require no
+arbitrary threshold. The command never rewrites those references.
 
-To see current actual sizes:
-
-```bash
-bun run bundle:check
-```
-
-To update budgets after a legitimate size change:
-1. Run `bun run bundle:check` to get the new actual sizes.
-2. Set `gzip_bytes` to `max(ceil(actual * 1.2), actual + 50)` for each changed entry in `bundle-budgets.json` (the `+50 B` floor dominates for tiny entries below ~250 B).
-3. Keep the file's top-level budget note generic; do not leave stale wave/date
-   rationale in the budget baseline.
+Missing built export files and unreadable or syntactically malformed package JSON remain fatal.
+The `bundle:check:strict` alias prevents an automatic build; it does not make
+size references blocking. See [the reporter documentation](../bundle-budgets.README.md).
 
 ## Test coverage snapshot
 
@@ -173,7 +164,7 @@ or automatic copyleft-family classifier is required by this repository.
 Maintainer-facing guidance for the most common release-gate failures:
 
 - **Contract drift.** The contract-artifact step (`contracts:check`) fails when the SDK-embedded contract JSON no longer matches `packages/engine/contracts/artifacts`. Run `bun run refresh:contracts`, then re-run `bun run validate`.
-- **Bundle overage.** `bundle:check` fails when a JavaScript export exceeds its gzip ceiling. Investigate the size increase. If it is legitimate, update `bundle-budgets.json` using `max(ceil(actual * 1.2), actual + 50)` and record the new measurement in the entry rationale.
+- **Missing built export.** `bundle:check` still fails when a declared JavaScript entry file is absent. Fix or rebuild the package output. Size-reference advisories do not fail validation or require threshold changes.
 - **Types resolution (attw).** `types-resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json` and re-run `bun run types:resolution-check`.
 
 ## Workers runtime verification
@@ -198,8 +189,7 @@ The `./workers` entry is a small Worker bridge for daemon batch routes, Cloudfla
 - **error-contract-check.** The public `SDKErrorKind` taxonomy, retryable status list, and consumer-facing error-kind docs must stay aligned. Run it locally with `bun run error:check`. Internal implementation throws are allowed when they are caught and normalized at public transport/daemon boundaries.
 - **Stored Jev readings.** Whether an error doc still presents 'server' as an error kind is a question of meaning read through Jev, so `error:check` stays offline by comparing each checked file with a reading stored for its exact content (etc/stale-server-kind-readings.json). After changing a checked file, run `bun run error-kinds:read` with `TYPESAFE_API_KEY` set and commit the updated readings; only a settled no passes, so a yes or an unsettled reading is fixed by rewording the text.
 - **rn-bundle.** Static bundle scan. Companion surface (React Native, Expo, browser, web, workers) must be safe for Metro, Vite, webpack, and esbuild. Any `Bun.*` identifier or `node:*` import breaks mobile and browser bundlers. (Runtime verification of `./web` under workerd lives in the separate `workers` and `workers-wrangler` lanes above.)
-- **bundle:check.** Prevents accidental bundle size growth. Runs as a step in the
-  `validate` job. Each export has a gzip ceiling computed as
-  `max(ceil(actual * 1.2), actual + 50)`; the 20% multiplier plus `+50 B` floor
-  prevents transient-spike failures on tiny entries.
+- **bundle:check.** Reports entry-file gzip sizes and optional historical references.
+  Missing built files remain fatal; numeric references are advisory and exclude
+  imported dependencies. Actual package/API/export/browser compatibility checks remain required.
 - **types-check.** TypeScript type inference is non-trivial for discriminated union returns. Type tests validate at compile time without runtime overhead.

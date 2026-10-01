@@ -165,7 +165,7 @@ Before opening a PR, run the focused check that matches the change rather than t
 | Generated reference docs | `bun run refresh:docs` (or `bun run docs:check`) |
 | Error taxonomy (`SDKErrorKind`) | `bun run error:check` |
 | Changelog / version bump | `bun run changelog:check` and `bun run version:check` |
-| Bundle size | `bun run bundle:check` |
+| Entry-file gzip diagnostics | `bun run bundle:check` (references are advisory; imported dependencies are excluded) |
 | Dependencies | `bun run security:audit`; preserve package license and notice metadata |
 | Packaging / `exports` map | `bun run publint:check` and `bun run types:resolution-check` |
 
@@ -284,5 +284,5 @@ If a release gate fails:
 Common release-gate failures and their fixes:
 
 - **Contract drift.** `contracts:check` fails when SDK-embedded contract JSON diverges from `packages/engine/contracts/artifacts`. Run `bun run refresh:contracts`, then re-validate.
-- **Bundle overage.** `bundle:check` fails when a JavaScript export exceeds its gzip ceiling. If the growth is legitimate, update `bundle-budgets.json` using `max(ceil(actual * 1.2), actual + 50)` and record the new measurement.
+- **Missing built export.** `bundle:check` fails when a declared JavaScript entry file is absent. Fix the package output. Historical size-reference advisories do not block release validation or require an invented threshold.
 - **Types resolution (attw).** `types:resolution-check` fails when the `exports` map does not resolve cleanly for a published subpath. Fix the `exports`/types wiring in `packages/engine/package.json`.

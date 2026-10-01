@@ -285,17 +285,14 @@ const estimate = estimateConversationTokens(messages); // number
 
 ### Performance budgets
 
-The SDK defines two categories of performance budgets, **bundle size budgets** and **runtime SLO gates**.
+Entry-file gzip diagnostics and runtime SLO gates measure different things.
 
-**Bundle size budgets** are defined per entry point via `bundle-budgets.json` at
-the repo root. Each entry has a gzip ceiling of `max(ceil(actual × 1.2), actual + 50 B)` (the `+50 B` floor dominates for tiny entries below ~250 B).
-The CI `bundle-budget-check` job runs the same command used locally:
+`bun run bundle:check` reports the gzip size of each built SDK entry file,
+excluding imported dependencies. Historical references are advisory; this
+report does not enforce a consumer bundle-size limit. Actual package and
+browser/RN compatibility checks remain separate required checks.
 
-```bash
-bun run bundle:check  # prints actual vs. budget for every entry point
-```
-
-To update after a legitimate size increase, see [Testing and Validation](./testing-and-validation.md#bundle-budget-enforcement).
+See [Testing and Validation](./testing-and-validation.md#entry-file-gzip-diagnostics).
 
 **Runtime SLO gates** use consecutive-violation counting. A budget fails only when the threshold is exceeded on `tolerance` consecutive samples, which prevents transient spikes from failing the gate.
 
