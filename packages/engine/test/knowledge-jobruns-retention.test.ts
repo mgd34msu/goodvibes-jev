@@ -12,6 +12,14 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
+import { reviewKnowledgeNodeRecord } from '../sdk/src/platform/knowledge/service-node-admin.js';
+import { seedKnowledgeResearchTask } from './_helpers/knowledge-semantic-activation-fixtures.js';
+import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
+import {
+  enrichAndImproveHomeGraphSource,
+  enrichHomeGraphSpaceSources,
+  runHomeGraphSyncSelfImprovementPump,
+} from '../sdk/src/platform/knowledge/home-graph/sync-self-improvement.js';
 import { createStores } from './_helpers/knowledge-semantic-fixtures.js';
 
 describe('job-run history retention (bounded memory + disk)', () => {
@@ -96,31 +104,106 @@ describe('no self-improve scheduler bypasses (gate)', () => {
       '(floor + coalescing + zero-gap backoff + governor pause), never a direct scheduleBackground self-improve.',
     ).toEqual([]);
   });
+});
 
-  test('the sync pump is genuinely pause-governed: stopWhenPaused on BOTH selfImprove calls plus a between-rounds gate', () => {
-    const text = readFileSync('sdk/src/platform/knowledge/home-graph/sync-self-improvement.ts', 'utf-8');
-    // The whole-space reindex call carries stopWhenPaused.
-    expect(text).toMatch(/selfImprove\([^)]*\{ knowledgeSpaceId: spaceId, reason: 'reindex' \}, \{ stopWhenPaused: true \}\)/);
-    // The PUMP's per-round call carries stopWhenPaused too (this was the
-    // regression: only the reindex shape was pinned, so the pump call could
-    // silently drop it).
-    expect(text).toMatch(/reason: 'homegraph-sync'[\s\S]{0,400}\}, \{ stopWhenPaused: true \}\)/);
-    // And the pump loop itself gates between rounds on the pause probe,
-    // stopWhenPaused alone only stops a round already in flight.
-    expect(text).toMatch(/isBackgroundWorkPaused\(\)/);
-    // The per-ingest path routes through the governed scheduler.
-    expect(text).toMatch(/queueBackgroundSelfImprove\(/);
+describe('governor pause at background entrypoints', () => {
+  async function pauseFixture() {
+    const { store, artifactStore } = createStores();
+    const spaceId = 'homeassistant:pause-fixture';
+    const source = await store.upsertSource({
+      connectorId: 'semantic-gap-repair', sourceType: 'url', title: 'Device specifications',
+      canonicalUri: 'https://fixture.invalid/device', tags: [], status: 'indexed',
+      metadata: { knowledgeSpaceId: spaceId },
+    });
+    for (const slug of ['pause-gap-1', 'pause-gap-2', 'pause-gap-3']) {
+      await seedKnowledgeResearchTask(store, {
+        kind: 'knowledge_gap', slug, title: `What does ${slug} need?`, aliases: [],
+        confidence: 75, sourceId: source.id,
+        metadata: { knowledgeSpaceId: spaceId, semanticKind: 'gap', gapKind: 'answer', sourceIds: [source.id] },
+      });
+    }
+    let paused = false;
+    let repairCalls = 0;
+    const semanticService = new KnowledgeSemanticService(store, {
+      isBackgroundPaused: () => paused,
+      gapRepairer: async () => {
+        repairCalls += 1;
+        paused = true;
+        return { searched: true, evidenceSufficient: false, acceptedSourceIds: [], ingestedSourceIds: [], skippedUrls: [] };
+      },
+    });
+    return {
+      spaceId, source, repairCalls: () => repairCalls,
+      runtime: { store, artifactStore, semanticService, reportBackgroundError: () => {} },
+    };
+  }
+
+  test('a whole-store sweep stops inside its first space after a governor pause', async () => {
+    const fixture = await pauseFixture();
+    const result = await fixture.runtime.semanticService.selfImprove({ force: true }, { stopWhenPaused: true });
+    expect(fixture.repairCalls()).toBe(1);
+    expect(result.processedGaps).toBe(1);
+    expect(result.truncated).toBe(true);
+    expect(result.budgetExhausted).toBe(true);
   });
 
-  test('the space-scoped runner path threads the pause stop into per-gap yield points (stopWhenPaused is not inert)', () => {
-    const service = readFileSync('sdk/src/platform/knowledge/semantic/service.ts', 'utf-8');
-    // BOTH runKnowledgeSemanticSelfImprovement call sites pass shouldStop
-    // (the whole-store per-space call AND the space-scoped call every pump
-    // round takes).
-    const shouldStopCount = (service.match(/shouldStop: \(\) => this\.backgroundStopRequested\(runOptions\)/g) ?? []).length;
-    expect(shouldStopCount).toBe(2);
-    // The runner consults it at its per-gap loop boundary, same as abort.
-    const runner = readFileSync('sdk/src/platform/knowledge/semantic/self-improvement.ts', 'utf-8');
-    expect(runner).toMatch(/input\.signal\?\.aborted \|\| context\.shouldStop\?\.\(\)/);
+  test('whole-space enrichment stops repairing gaps when the governor pauses', async () => {
+    const fixture = await pauseFixture();
+    await enrichHomeGraphSpaceSources(fixture.runtime, fixture.spaceId);
+    expect(fixture.repairCalls()).toBe(1);
+  });
+
+  test('a sync-pump round stops repairing gaps when the governor pauses', async () => {
+    const fixture = await pauseFixture();
+    const controller = new AbortController();
+    const service = fixture.runtime.semanticService;
+    const selfImprove = service.selfImprove.bind(service);
+    const results: Awaited<ReturnType<typeof selfImprove>>[] = [];
+    service.selfImprove = async (...args) => {
+      const result = await selfImprove(...args);
+      results.push(result);
+      // Stop only AFTER the real round finishes; cancellation must not be
+      // what prevents that round from repairing its remaining gaps.
+      controller.abort();
+      return result;
+    };
+    await runHomeGraphSyncSelfImprovementPump(fixture.runtime, fixture.spaceId, 'pause-fixture', controller.signal);
+    expect(fixture.repairCalls()).toBe(1);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ processedGaps: 1, truncated: true, budgetExhausted: true });
+  });
+
+  test('useful per-source enrichment queues governed work instead of starting a repair directly', async () => {
+    const { store, artifactStore } = createStores();
+    const spaceId = 'source-fixture';
+    const source = await store.upsertSource({
+      connectorId: 'fixture', sourceType: 'document', title: 'Device specifications',
+      canonicalUri: 'fixture://device', tags: [], status: 'indexed', metadata: { knowledgeSpaceId: spaceId },
+    });
+    const fact = await store.upsertNode({
+      kind: 'fact', slug: 'hdmi-inputs', title: 'Four HDMI inputs', aliases: [], confidence: 95,
+      sourceId: source.id, metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'specification' },
+    });
+    // This scheduling fixture starts with a fact already accepted by the operator.
+    // A raw proposed fact cannot acquire serving authority from its confidence.
+    await reviewKnowledgeNodeRecord(store, { id: fact.id, decision: 'accept', reviewer: 'fixture operator' });
+    await store.upsertEdge({
+      fromKind: 'source', fromId: source.id, toKind: 'node', toId: fact.id,
+      relation: 'supports_fact', metadata: { knowledgeSpaceId: spaceId },
+    });
+    const queued: unknown[] = [];
+    let enrichCalls = 0;
+    await enrichAndImproveHomeGraphSource({
+      store, artifactStore, reportBackgroundError: () => {},
+      semanticService: {
+        isBackgroundWorkPaused: () => false,
+        admitBackgroundWork: () => ({ allowed: true }),
+        enrichSource: async () => { enrichCalls += 1; },
+        queueBackgroundSelfImprove: (input: unknown) => { queued.push(input); },
+        selfImprove: () => { throw new Error('ingestion bypassed the background scheduler'); },
+      } as unknown as KnowledgeSemanticService,
+    }, source.id, spaceId);
+    expect(enrichCalls).toBe(1);
+    expect(queued).toEqual([expect.objectContaining({ knowledgeSpaceId: spaceId, sourceIds: [source.id], reason: 'ingest' })]);
   });
 });

@@ -8,10 +8,9 @@
 //
 // Scanned: packages/*/src, scripts/, docs/, test/, eval/, examples/, and
 // root-level markdown, .ts/.tsx/.md files, excluding dist/, node_modules/,
-// generated/, and vendor/ (the same exclusions the line-cap check uses;
-// generated and vendored text is not hand-authored here).
+// generated/, and vendor/ (generated and vendored text is not hand-authored here).
 //
-// Test-harness overrides (mirrors check-line-cap.ts):
+// Test-harness overrides:
 //   INTERNAL_ID_ROOT      , override the repo root directory
 //   INTERNAL_ID_DIRS_JSON , JSON array of dirs/files to scan, relative to
 //                            INTERNAL_ID_ROOT (default: the standard set)

@@ -1333,7 +1333,6 @@
     "test:rn": "bun scripts/test.ts test/rn-bundle-node-imports.test.ts",
     "test:workers": "bun scripts/test.ts test/workers/workers.test.ts",
     "test:workers:wrangler": "bun scripts/test.ts test/workers-wrangler/wrangler.test.ts",
-    "test-skip:check": "bun scripts/no-skipped-tests.ts",
     "contract-proof": "bun scripts/contract-proof.ts",
     "delivery:proof": "bun scripts/delivery-proof.ts",
     "gate:proof": "bun scripts/gate-proof.ts",

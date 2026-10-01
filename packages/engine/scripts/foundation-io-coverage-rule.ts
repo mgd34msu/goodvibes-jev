@@ -2,7 +2,7 @@
 //
 // Pure logic for the typed-IO coverage ratchet enforced by
 // check-foundation-io-coverage.ts. Kept separate from the file-reading driver
-// (mirrors line-cap-rule.ts vs check-line-cap.ts) so the counting and
+// so the counting and
 // ratchet-comparison rules can be unit-tested without touching disk.
 //
 // "Typed IO" for an operator method means the method id appears as a key in
@@ -59,8 +59,7 @@ export interface RatchetResult {
  * Compare the current untyped count to the frozen baseline:
  *   - increased  -> FAIL: new untyped methods landed; add their typed IO entries.
  *   - decreased  -> FAIL: coverage improved; lower the checked-in baseline to lock it in
- *                   (a ratchet must never outlive the count it recorded, mirrors the
- *                   line-cap stale-entry rule).
+ *                   (a baseline must not outlive the count it recorded).
  *   - ok (equal) -> pass.
  */
 export function evaluateRatchet(current: number, baseline: number): RatchetResult {

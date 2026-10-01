@@ -39,7 +39,7 @@
  * which is how a gate gets bypassed instead of fixed. So they are listed
  * explicitly, visible, attributable, and shrinking, and the check fails on
  * anything NEW. Same shape as `KNOWN_PRE_EXISTING_ROUTE_DEBT` in
- * capability-route-reconcile and the line-cap grandfather list.
+ * capability-route-reconcile.
  *
  * Shrink this list. Do not grow it.
  */

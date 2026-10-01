@@ -42,7 +42,7 @@ import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.ts';
 import { ProcessManager } from '../sdk/src/platform/tools/shared/process-manager.ts';
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.ts';
 import { useToolReadings } from './_helpers/tool-readings.ts';
-import { createExecContainmentProof, execContainmentRequired, EXEC_CONTAINMENT_REQUIRED_ENV } from './_helpers/exec-containment-proof.ts';
+import { createExecContainmentProof, execContainmentRequired, skipExecContainment, EXEC_CONTAINMENT_REQUIRED_ENV } from './_helpers/exec-containment-proof.ts';
 
 // Jev reads whether a command will prompt and whether a quiet last line is a
 // question; these fakes stand in for it. Anything unlisted reads as no.
@@ -58,7 +58,9 @@ const readings = useToolReadings([
 const LIVE_PTY = detectPtyAvailability(probePtyHost());
 const LIVE_SANDBOX = detectSandboxAvailability(probeSandboxHost());
 const REQUIRE_CONTAINMENT = execContainmentRequired(process.env[EXEC_CONTAINMENT_REQUIRED_ENV]);
-const containmentProof = createExecContainmentProof(REQUIRE_CONTAINMENT, { pty: LIVE_PTY, sandbox: LIVE_SANDBOX });
+const containmentHost = { pty: LIVE_PTY, sandbox: LIVE_SANDBOX };
+const SKIP_CONTAINMENT = skipExecContainment(REQUIRE_CONTAINMENT, containmentHost);
+const containmentProof = createExecContainmentProof(REQUIRE_CONTAINMENT, containmentHost);
 
 function tempRoot(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -260,21 +262,13 @@ describe('buildExecPromptAnswerHandler', () => {
 // Optional local hosts report missing support. The dedicated containment CI
 // lane requires support and completion of both real fixtures below, so an
 // early return can never satisfy that gate.
-function ptyUnavailable(): boolean {
-  if (LIVE_PTY.available) return false;
-  console.log(`[exec-interactive.test] live PTY tests not run: ${LIVE_PTY.reason}`);
-  return true;
+if (!LIVE_PTY.available) console.log(`[exec-interactive.test] live PTY unavailable: ${LIVE_PTY.reason}`);
+if (!LIVE_SANDBOX.available || !LIVE_SANDBOX.networkIsolationGuaranteed) {
+  console.log(`[exec-interactive.test] live isolated sandbox unavailable: ${LIVE_SANDBOX.reason}`);
 }
 
-function sandboxUnavailable(): boolean {
-  if (LIVE_SANDBOX.available) return false;
-  console.log(`[exec-interactive.test] live sandbox tests not run: ${LIVE_SANDBOX.reason}`);
-  return true;
-}
-
-describe('runInteractiveCommand (live PTY)', () => {
+describe.skipIf(!LIVE_PTY.available)('runInteractiveCommand (live PTY)', () => {
   test('a /dev/tty prompt completes through the brokered answer path', async () => {
-    if (ptyUnavailable()) return;
     const asks: ExecPromptAsk[] = [];
     const result = await runInteractiveCommand({
       cmdStr: TTY_PROMPT_SCRIPT,
@@ -305,7 +299,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 20_000);
 
   test('a never-answered prompt times out with the prompt text on the honest result', async () => {
-    if (ptyUnavailable()) return;
     const result = await runInteractiveCommand({
       cmdStr: TTY_PROMPT_SCRIPT,
       cwd: undefined,
@@ -326,7 +319,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 20_000);
 
   test('a detected prompt with NO wired answer seam still times out with the prompt text', async () => {
-    if (ptyUnavailable()) return;
     const result = await runInteractiveCommand({
       cmdStr: TTY_PROMPT_SCRIPT,
       cwd: undefined,
@@ -343,7 +335,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 20_000);
 
   test('a declined prompt stops the run honestly instead of burning the timeout', async () => {
-    if (ptyUnavailable()) return;
     const start = Date.now();
     const result = await runInteractiveCommand({
       cmdStr: TTY_PROMPT_SCRIPT,
@@ -365,7 +356,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 30_000);
 
   test('multiple sequential prompts are each answered on the same continuing run', async () => {
-    if (ptyUnavailable()) return;
     const script =
       'printf "First name: " > /dev/tty; read a < /dev/tty; ' +
       'printf "Last name: " > /dev/tty; read b < /dev/tty; ' +
@@ -389,7 +379,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 20_000);
 
   test('end-to-end through createExecTool: interactive command answers and completes', async () => {
-    if (ptyUnavailable()) return;
     const root = tempRoot('gv-exec-interactive-');
     const tool = createExecTool(new ProcessManager(), {
       overflowHandler: new OverflowHandler({ baseDir: root }),
@@ -414,7 +403,6 @@ describe('runInteractiveCommand (live PTY)', () => {
   }, 20_000);
 
   test('a non-interactive command through a tool WITH interaction wired takes the unchanged pipe path', async () => {
-    if (ptyUnavailable()) return;
     const root = tempRoot('gv-exec-noninteractive-');
     const tool = createExecTool(new ProcessManager(), {
       overflowHandler: new OverflowHandler({ baseDir: root }),
@@ -441,8 +429,7 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
       if (REQUIRE_CONTAINMENT) console.log('exec-containment-proof: PASS (2/2 real fixtures completed)');
     });
 
-    test('the bwrap boundary holds under the PTY: workspace writable, outside read-only', async () => {
-      if (ptyUnavailable() || sandboxUnavailable()) return;
+    test.skipIf(SKIP_CONTAINMENT)('the bwrap boundary holds under the PTY: workspace writable, outside read-only', async () => {
       const workspace = tempRoot('gv-pty-sandbox-ws-');
       const outside = tempRoot('gv-pty-sandbox-outside-');
       const sandboxArgv = buildBwrapArgv({
@@ -469,7 +456,7 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
       });
 
       expect(result.pty).toBe(true);
-      expect(result.success).toBe(true);
+      expect(result.success, JSON.stringify({ exit_code: result.exit_code, stdout: result.stdout, stderr: result.stderr })).toBe(true);
       expect(result.stdout).toContain('inside-ok');
       expect(result.stdout).toContain('outside-blocked');
       expect(result.stdout).not.toContain('outside-ok');
@@ -478,8 +465,7 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
       containmentProof.completed('filesystem-boundary');
     }, 30_000);
 
-    test('the answer path works INSIDE the boundary too', async () => {
-      if (ptyUnavailable() || sandboxUnavailable()) return;
+    test.skipIf(SKIP_CONTAINMENT)('the answer path works INSIDE the boundary too', async () => {
       const workspace = tempRoot('gv-pty-sandbox-answer-');
       const sandboxArgv = buildBwrapArgv({
         bwrapPath: LIVE_SANDBOX.bwrapPath!,
@@ -501,7 +487,7 @@ describe('sandbox boundary under the PTY (live bwrap)', () => {
         }),
       });
 
-      expect(result.success).toBe(true);
+      expect(result.success, JSON.stringify({ exit_code: result.exit_code, stdout: result.stdout, stderr: result.stderr })).toBe(true);
       expect(result.prompts_answered).toBe(1);
       expect(result.stdout).toContain('accepted');
       containmentProof.completed('sandboxed-answer');
