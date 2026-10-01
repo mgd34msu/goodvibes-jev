@@ -312,8 +312,8 @@
       "change": "M",
       "oldBlob": "191730ab530a08b112383afdaf9d4f42aa9cf1b1",
       "newBlob": "80230faf1cb2af0024371c15cda6105774d3345a",
-      "ruling": "deferred",
-      "reason": "Removed source-scraping assertions must not return. Functional first/continuation tool authority is owned by the separate SDK conversational-turn reconciliation."
+      "ruling": "reconciled",
+      "reason": "The source-scraping assertions are retired. Merged PR30 / THE65 (ef9baadd) replaces their intended authority guarantee with real first/queued-turn provider probes: only explicit ownerChannels grants permit profile reads or acknowledgments. See docs/audit/sdk-channel-capabilities.md. Full daemon executable coverage remains separate."
     },
     {
       "path": "src/test/runtime/trust-gated-approvals.test.ts",

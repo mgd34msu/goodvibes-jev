@@ -13,6 +13,7 @@
  * An amendment gives the target a fresh fix-round budget: the owner changed
  * what is required, so the rounds spent on the old requirement do not count.
  */
+import { assertContractInputView, contractInputPath } from './input-snapshot.js';
 import { readContractConfig } from './config.js';
 import { lastFencedBlock } from './plan-schema.js';
 import { readPlannerBounds } from './planner.js';
@@ -186,15 +187,21 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
   const { contract } = run;
   const target = targetOf(run, escalation);
   if (target === undefined) return { kind: 'problems', problems: [`${escalation.scope} ${escalation.targetId} has no criteria to change`] };
+  run.abort.signal.throwIfAborted();
+  const snapshot = contract.inputSnapshot;
+  if (snapshot !== undefined) await assertContractInputView(snapshot, run.abort.signal);
+  const workingDirectory = snapshot === undefined ? contract.projectRoot : contractInputPath(snapshot);
   const config = readContractConfig(context.configManager);
   const route = await context.routeSelector({ purpose: 'planner', contract: run.view() });
   const servable = servableCriteria(run, escalation);
   const servableIds = new Set(servable.map((criterion) => criterion.id));
   let problems: string[] = [];
   for (let attempt = 0; attempt <= config.planRepairLimit; attempt += 1) {
+    run.abort.signal.throwIfAborted();
+    if (snapshot !== undefined) await assertContractInputView(snapshot, run.abort.signal);
     const result = await context.decompositionRunner.run({
       goal: contract.ask,
-      workingDir: contract.projectRoot,
+      workingDir: workingDirectory,
       systemPrompt: buildAmendmentPrompt(),
       userPrompt: buildAmendmentRequest(escalation, target, servable, instruction, problems),
       bounds: readPlannerBounds(context.configManager),
@@ -202,6 +209,8 @@ export async function amendTarget(run: ContractRun, escalation: Escalation, inst
       route,
       signal: run.abort.signal,
     });
+    run.abort.signal.throwIfAborted();
+    if (snapshot !== undefined) await assertContractInputView(snapshot, run.abort.signal);
     if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
     if (result.status !== 'completed') return { kind: 'problems', problems: [`the planner did not finish (${result.status}${result.detail === undefined ? '' : `: ${result.detail}`})`] };
     const parsed = parseAmendment(result.output, target, servableIds);
