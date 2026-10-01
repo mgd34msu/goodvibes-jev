@@ -255,10 +255,10 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
     description: 'Verify registered tool contracts',
     usage: 'verify <name> | verify-all | contract show <name>',
     argsHint: 'verify <name> | verify-all | contract show <name>',
-    handler(args, ctx) {
+    async handler(args, ctx) {
       const sub = args[0];
       if (sub === 'verify' && args[1]) {
-        const result = ctx.extensions.toolRegistry.verifyContract(args[1]);
+        const result = await ctx.extensions.toolRegistry.verifyContract(args[1]);
         if (!result) {
           ctx.print(`[tool verify] Tool '${args[1]}' is not registered.`);
           return;
@@ -267,12 +267,12 @@ export function registerOperatorRuntimeCommands(registry: CommandRegistry): void
         return;
       }
       if (sub === 'verify-all') {
-        ctx.print(ToolContractVerifier.formatAllResults(ctx.extensions.toolRegistry.verifyAllContracts()));
+        ctx.print(ToolContractVerifier.formatAllResults(await ctx.extensions.toolRegistry.verifyAllContracts()));
         return;
       }
       if (sub === 'contract' && args[1] === 'show' && args[2]) {
         const toolName = args[2];
-        const result = ctx.extensions.toolRegistry.verifyContract(toolName);
+        const result = await ctx.extensions.toolRegistry.verifyContract(toolName);
         if (!result) {
           ctx.print(`[tool contract show] Tool '${toolName}' is not registered.`);
           return;

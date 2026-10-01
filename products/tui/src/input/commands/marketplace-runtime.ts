@@ -29,7 +29,7 @@ function resolveMarketplaceEntry(
   return loadEcosystemCatalog(kind, options).find((candidate) => candidate.id === entryId) ?? null;
 }
 
-function formatCompatibility(review: ReturnType<typeof reviewEcosystemCatalogEntry>): string {
+function formatCompatibility(review: Awaited<ReturnType<typeof reviewEcosystemCatalogEntry>>): string {
   if (review.compatibility.reasons.length === 0) return 'compatible with current runtime';
   return review.compatibility.reasons.join('; ');
 }
@@ -40,7 +40,7 @@ export function registerMarketplaceRuntimeCommands(registry: CommandRegistry): v
     aliases: ['catalog'],
     description: 'Browse the unified plugin and skill marketplace',
     usage: '[open|overview|recommend|browse [query]|review <plugin|skill|hook-pack|policy-pack> <id>|provenance <plugin|skill|hook-pack|policy-pack> <id>|install-hint <plugin|skill|hook-pack|policy-pack> <id>|install <plugin|skill|hook-pack|policy-pack> <id> [project|user]|update <plugin|skill|hook-pack|policy-pack> <id> [project|user]|rollback <plugin|skill|hook-pack|policy-pack> <id> [project|user] [backupId]|history <plugin|skill|hook-pack|policy-pack> <id> [project|user]|uninstall <plugin|skill|hook-pack|policy-pack> <id> [project|user]|receipt <plugin|skill|hook-pack|policy-pack> <id> [project|user]|bundle export <path> [project|user]|bundle inspect <path>|bundle import <path> [project|user]|installed]',
-    handler(args, ctx) {
+    async handler(args, ctx) {
       const shellPaths = requireShellPaths(ctx);
       const ecosystemPaths = requireEcosystemCatalogPaths(ctx);
       const sub = args[0] ?? 'open';
@@ -72,10 +72,12 @@ export function registerMarketplaceRuntimeCommands(registry: CommandRegistry): v
       }
       if (sub === 'browse') {
         const query = args.slice(1).join(' ');
-        const pluginEntries = query ? searchEcosystemCatalog('plugin', query, ecosystemPaths) : loadEcosystemCatalog('plugin', ecosystemPaths);
-        const skillEntries = query ? searchEcosystemCatalog('skill', query, ecosystemPaths) : loadEcosystemCatalog('skill', ecosystemPaths);
-        const hookPackEntries = query ? searchEcosystemCatalog('hook-pack', query, ecosystemPaths) : loadEcosystemCatalog('hook-pack', ecosystemPaths);
-        const policyPackEntries = query ? searchEcosystemCatalog('policy-pack', query, ecosystemPaths) : loadEcosystemCatalog('policy-pack', ecosystemPaths);
+        const [pluginEntries, skillEntries, hookPackEntries, policyPackEntries] = await Promise.all([
+          query ? searchEcosystemCatalog('plugin', query, ecosystemPaths) : loadEcosystemCatalog('plugin', ecosystemPaths),
+          query ? searchEcosystemCatalog('skill', query, ecosystemPaths) : loadEcosystemCatalog('skill', ecosystemPaths),
+          query ? searchEcosystemCatalog('hook-pack', query, ecosystemPaths) : loadEcosystemCatalog('hook-pack', ecosystemPaths),
+          query ? searchEcosystemCatalog('policy-pack', query, ecosystemPaths) : loadEcosystemCatalog('policy-pack', ecosystemPaths),
+        ]);
         ctx.print([
           `Marketplace Browse${query ? ` (${query})` : ''}`,
           `  plugins: ${pluginEntries.length}`,
@@ -166,7 +168,7 @@ export function registerMarketplaceRuntimeCommands(registry: CommandRegistry): v
           ctx.print(`Unknown curated ${kind} entry: ${entryId}`);
           return;
         }
-        const review = reviewEcosystemCatalogEntry(entry, ecosystemPaths);
+        const review = await reviewEcosystemCatalogEntry(entry, ecosystemPaths);
         ctx.print([
           `Marketplace Review: ${entry.name}`,
           `  kind: ${kind}`,
@@ -187,7 +189,7 @@ export function registerMarketplaceRuntimeCommands(registry: CommandRegistry): v
           ctx.print(`Unknown curated ${kind} entry: ${entryId}`);
           return;
         }
-        const review = reviewEcosystemCatalogEntry(entry, ecosystemPaths);
+        const review = await reviewEcosystemCatalogEntry(entry, ecosystemPaths);
         ctx.print([
           `Marketplace Provenance: ${entry.name}`,
           `  source: ${entry.source}`,

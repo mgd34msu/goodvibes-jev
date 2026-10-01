@@ -83,3 +83,35 @@ adapter privacy repair held. The missing notification builders/typed delivery an
 factory option are not copied or substituted here. PR57 planning generation
 integration remains separately held; its archived callers do not establish
 current-base acceptance.
+
+## Async readers and private workspace distribution
+
+Five catalog/hook/tool-verification command families now await the declared SDK
+readers. Managed settings await staging before applying or printing success;
+support bundle generation awaits both redaction reads. The marketplace modal
+keeps review work outside rendering, disables actions while loading, forwards
+cancellation, and ignores superseded responses. The memory modal reads
+`MemoryAccess.reviewQueue(24)` in server order rather than duplicating local
+ranking, and clears failed current refreshes while rejecting late generations.
+
+The private workspace manifest gates `/update` and launch self-update before any
+host/configuration reads. The launcher only executes an owned local build and
+prints workspace build guidance when missing. Build/smoke scripts invoke the CLI
+actually declared by the installed engine package, including scripts-disabled
+installs; they do not download a binary or invent a replacement toolchain.
+Actual binary building still requires the engine build and remaining source
+prerequisites. Mechanical update/checksum/swap tests remain synthetic and intact.
+
+The final guarded changed-component batch passes **160 tests / 617 assertions
+across 15 files**. It includes delayed/rejected SDK reads, modal refresh/close
+races, real configured managed settings, actual launcher subprocesses, and the
+corrected contract-control fixtures. Removing the five command families' awaits
+made 12 selected behavioral cases fail; restoration passed. No golden changes.
+
+Bounded no-emit source and test programs remain failed evidence, not acceptance:
+the source pass reported 109 diagnostic lines; the corrected test configuration
+reported 260 lines after including the SDK's declared ambient source types and
+fixing four new fixture errors. The new async/distribution/modal adapters and
+focused fixtures have no remaining diagnostics in those checks. Remaining errors
+include held PR52/PR57 dependencies and older caller/fixture cleanup. Main launch,
+compiled PTY/first-turn proof and the remaining JEV/HOIST obligations stay open.

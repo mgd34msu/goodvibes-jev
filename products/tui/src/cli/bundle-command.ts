@@ -160,15 +160,15 @@ export async function handleBundleCommand(runtime: CliCommandRuntime): Promise<C
       configManager: runtime.configManager,
     });
     const rawConfig = runtime.configManager.getRaw();
-    const sensitiveValues = collectSensitiveConfigValues(rawConfig);
-    const redactedConfig = redactConfig(rawConfig);
+    const sensitiveValues = await collectSensitiveConfigValues(rawConfig);
+    const redactedConfig = await redactConfig(rawConfig);
     const service = await buildCliServicePosture(runtime, { logTailBytes: 8192 });
     const bundle = {
       version: 2,
       type: 'goodvibes.support',
       capturedAt: Date.now(),
       package: {
-        name: '@pellux/goodvibes-tui',
+        name: '@goodvibes-jev/tui',
         version: getPackageVersion(),
       },
       roots: {

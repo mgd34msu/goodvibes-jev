@@ -83,7 +83,7 @@ const ENUM_VALUE_DESCRIPTIONS: Record<string, Record<string, string>> = {
     conversation: 'Show operational messages inline in the transcript.',
     both: 'Shows operational messages inline in the transcript, same as conversation.',
   },
-  'ui.wrfcMessages': {
+  'ui.contractMessages': {
     panel: 'Kept for older settings files: shows WRFC messages inline in the transcript, same as conversation.',
     conversation: 'Show WRFC messages inline in the transcript.',
     both: 'Shows WRFC messages inline in the transcript, same as conversation.',
@@ -146,7 +146,7 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   if (
     entry.setting.key === 'ui.systemMessages'
     || entry.setting.key === 'ui.operationalMessages'
-    || entry.setting.key === 'ui.wrfcMessages'
+    || entry.setting.key === 'ui.contractMessages'
   ) {
     lines.push(`Routing meaning: ${describeUiRouting(String(entry.currentValue))}.`);
   }

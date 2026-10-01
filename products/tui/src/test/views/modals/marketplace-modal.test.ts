@@ -1,4 +1,7 @@
-import { describe, test, expect } from 'bun:test';
+import { afterEach, beforeEach, describe, test, expect } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { ConfigModalSurface } from '../../../input/config-modal-types.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createMarketplaceModalSurface } from '../../../views/modals/marketplace-modal.ts';
@@ -6,6 +9,14 @@ import type { UiMarketplaceSnapshot, UiReadModel } from '../../../runtime/ui-rea
 import type { EcosystemCatalogEntry, EcosystemCatalogPathOptions, EcosystemEntryKind } from '@/runtime/index.ts';
 import { actionCtx, captureCommands, findAction, open, tabRows, tabText } from './modal-surface-test-helpers.ts';
 import { makeProjectTempDir } from '../../helpers/project-temp.ts';
+
+let previousPort: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => { previousPort = installJudgmentPort(fakePort(() => noulAnswer(0.95)).port); });
+afterEach(() => { installJudgmentPort(previousPort); });
+async function openReviewed(surface: ConfigModalSurface) {
+  await new Promise<void>(resolve => { surface.onOpen?.(resolve); });
+  return surface.buildView();
+}
 
 function fixedReadModel(snapshot: UiMarketplaceSnapshot): UiReadModel<UiMarketplaceSnapshot> {
   return { getSnapshot: () => snapshot, subscribe: () => () => {} };
@@ -53,10 +64,10 @@ describe('marketplace modal surface', () => {
     expect(tabRows(view, 'catalog').every((r) => r.selectable === false)).toBe(true);
   });
 
-  test('populated catalog lists entries with install posture and folded compat/risk detail', () => {
+  test('populated catalog lists entries with install posture and folded compat/risk detail', async () => {
     const { paths, cleanup } = seedCatalog({ plugin: [makeEntry('plugin', 'formatter', 'Formatter', '/tmp/x')] });
     try {
-      const view = open(createMarketplaceModalSurface({ ecosystemPaths: paths }));
+      const view = await openReviewed(createMarketplaceModalSurface({ ecosystemPaths: paths }));
       const text = tabText(view, 'catalog');
       expect(text).toContain('Formatter');
       expect(text).toContain('local');
@@ -66,11 +77,11 @@ describe('marketplace modal surface', () => {
     } finally { cleanup(); }
   });
 
-  test('install routes to the /marketplace command path; uninstall on an un-installed entry is a no-op', () => {
+  test('install routes to the /marketplace command path; uninstall on an un-installed entry is a no-op', async () => {
     const { paths, cleanup } = seedCatalog({ plugin: [makeEntry('plugin', 'formatter', 'Formatter', '/tmp/x')] });
     try {
       const surface = createMarketplaceModalSurface({ ecosystemPaths: paths });
-      open(surface);
+      await openReviewed(surface);
       const row = { id: 'plugin:formatter', label: '' };
       const install = captureCommands();
       surface.onAction?.('install', actionCtx(row, install.extra));
@@ -83,17 +94,86 @@ describe('marketplace modal surface', () => {
     } finally { cleanup(); }
   });
 
-  test('read-model recommendations and startup issues surface in the view', () => {
+  test('read-model recommendations and startup issues surface in the view', async () => {
     const { paths, cleanup } = seedCatalog({ plugin: [makeEntry('plugin', 'formatter', 'Formatter', '/tmp/x')] });
     try {
       const snapshot: UiMarketplaceSnapshot = {
         startupIssues: ['plugin foo failed to load'],
         recommendations: [{ id: 'rec1', title: 'Install bar', reason: 'used often', kind: 'plugin', entry: makeEntry('plugin', 'bar', 'Bar', '/tmp/bar'), command: '/marketplace install plugin bar' }],
       };
-      const text = tabText(open(createMarketplaceModalSurface({ ecosystemPaths: paths, readModel: fixedReadModel(snapshot) })), 'catalog');
+      const text = tabText(await openReviewed(createMarketplaceModalSurface({ ecosystemPaths: paths, readModel: fixedReadModel(snapshot) })), 'catalog');
       expect(text).toContain('plugin foo failed to load');
       expect(text).toContain('Install bar');
       expect(text).toContain('/marketplace install plugin bar');
+    } finally { cleanup(); }
+  });
+});
+
+function deferredReviewPort() {
+  let release!: () => void;
+  let reject!: (error: Error) => void;
+  const held = new Promise<void>((resolve, fail) => { release = resolve; reject = fail; });
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  let signal: AbortSignal | undefined;
+  const base = fakePort(() => noulAnswer(0.95)).port;
+  installJudgmentPort({ ...base, ask: async request => { signal = request.signal; began(); await held; return base.ask(request); } });
+  return { started, release, reject, signal: () => signal };
+}
+const nextEventLoop = () => new Promise<void>(resolve => setImmediate(resolve));
+
+describe('marketplace review lifecycle', () => {
+  test('pending review cannot install, and close cancels the actual read without a late repaint', async () => {
+    const entry = { ...makeEntry('plugin', 'one', 'One', '/synthetic/plugin'), trustNotes: 'Review this synthetic note.' };
+    const { paths, cleanup } = seedCatalog({ plugin: [entry] });
+    try {
+      const held = deferredReviewPort();
+      const surface = createMarketplaceModalSurface({ ecosystemPaths: paths });
+      let renders = 0;
+      surface.onOpen?.(() => { renders++; });
+      await held.started;
+      expect(tabText(surface.buildView(), 'catalog')).toContain('Reading local catalog');
+      const command = captureCommands();
+      surface.onAction?.('install', actionCtx({ id: 'plugin:one', label: '' }, command.extra));
+      expect(command.calls).toEqual([]);
+      surface.onClose?.();
+      expect(held.signal()?.aborted).toBe(true);
+      held.release(); await nextEventLoop();
+      expect(renders).toBe(0);
+    } finally { cleanup(); }
+  });
+
+  test('a refresh supersedes an old rejected review and keeps only the new catalog', async () => {
+    const old = { ...makeEntry('plugin', 'one', 'Old entry', '/synthetic/plugin'), trustNotes: 'Old synthetic note.' };
+    const { paths, cleanup } = seedCatalog({ plugin: [old] });
+    try {
+      const held = deferredReviewPort();
+      const surface = createMarketplaceModalSurface({ ecosystemPaths: paths });
+      let painted!: () => void;
+      let nextPaint = new Promise<void>(resolve => { painted = resolve; });
+      surface.onOpen?.(() => painted()); await held.started;
+      writeFileSync(join(paths.projectCatalogRoot!, 'plugins.json'), JSON.stringify({ version: 1, entries: [makeEntry('plugin', 'two', 'Current entry', '/synthetic/plugin-two')] }));
+      surface.onAction?.('refresh', actionCtx(null)); await nextPaint;
+      expect(held.signal()?.aborted).toBe(true);
+      expect(tabText(surface.buildView(), 'catalog')).toContain('Current entry');
+      held.reject(new Error('old review failed')); await nextEventLoop();
+      expect(surface.buildView().degraded).toBeUndefined();
+      expect(tabText(surface.buildView(), 'catalog')).not.toContain('Old entry');
+    } finally { cleanup(); }
+  });
+
+  test('current review failure clears former rows and exposes unavailable state', async () => {
+    const { paths, cleanup } = seedCatalog({ plugin: [makeEntry('plugin', 'one', 'Former entry', '/synthetic/plugin')] });
+    try {
+      const surface = createMarketplaceModalSurface({ ecosystemPaths: paths });
+      await openReviewed(surface);
+      expect(tabText(surface.buildView(), 'catalog')).toContain('Former entry');
+      writeFileSync(join(paths.projectCatalogRoot!, 'plugins.json'), JSON.stringify({ version: 1, entries: [{ ...makeEntry('plugin', 'one', 'Former entry', '/synthetic/plugin'), trustNotes: 'Read the current synthetic note.' }] }));
+      installJudgmentPort(fakePort(() => { throw new Error('current review unavailable'); }).port);
+      surface.onAction?.('refresh', actionCtx(null)); await nextEventLoop();
+      expect(surface.buildView().degraded).toContain('current review unavailable');
+      expect(tabRows(surface.buildView(), 'catalog')).toHaveLength(0);
+      expect(findAction(surface, 'install')?.enabledFor?.({ id: 'plugin:one', label: '' }, 'catalog')).toBe(false);
     } finally { cleanup(); }
   });
 });

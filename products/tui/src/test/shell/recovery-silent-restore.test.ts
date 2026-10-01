@@ -77,7 +77,7 @@ describe('bare launch never restores state', () => {
       surface,
       sessionManager: { load: () => { throw new Error('sess-A was never fully saved'); } },
       checkpointManager: undefined,
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: () => {} },
     });
@@ -98,7 +98,7 @@ describe('bare launch never restores state', () => {
       surface,
       sessionManager: { load: () => { throw new Error('not saved'); } },
       checkpointManager: undefined,
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => receipts.push(m) },
     });
@@ -121,7 +121,7 @@ describe('bare launch never restores state', () => {
         },
       },
       checkpointManager: undefined,
-      chainHistory: [],
+      contractHistory: [],
       memoryAvailable: false,
       router: { high: (m) => receipts.push(m) },
     });

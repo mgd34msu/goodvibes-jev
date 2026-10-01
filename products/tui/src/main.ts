@@ -22,7 +22,7 @@ import { wireWorkTree } from './core/work-tree-wiring.ts';
 import { registerBuiltinCommands } from './input/commands.ts';
 import { ScheduleManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { InputHistory } from './input/input-history.ts';
-import { describeContextWindowSource, getTierPromptSupplement, getTierForContextWindow } from '@goodvibes-jev/engine/sdk/platform/providers';
+import { describeContextWindowSource } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { GitStatusProvider } from './renderer/git-status.ts';
 import type { GitHeaderInfo } from './renderer/git-status.ts';
 import { createShellLayout } from './renderer/layout-engine.ts';

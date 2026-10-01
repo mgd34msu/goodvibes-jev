@@ -40,7 +40,7 @@ export function registerManagedRuntimeCommands(registry: CommandRegistry): void 
     name: 'managed',
     description: 'Export, inspect, and apply managed settings bundles',
     usage: '[review|staged|rollback-history|export <profile> <path>|inspect <path>|stage <path>|apply <path> [key ...]|apply-staged [key ...]|rollback <token>|lock <key> <source> <reason...>|unlock <key>]',
-    handler(args, ctx) {
+    async handler(args, ctx) {
       const shellPaths = requireShellPaths(ctx);
       const controlPlaneConfigDir = ctx.platform.configManager.getControlPlaneConfigDir();
       const sub = args[0] ?? 'review';
@@ -136,7 +136,7 @@ export function registerManagedRuntimeCommands(registry: CommandRegistry): void 
           return;
         }
         try {
-          const result = applyStagedManagedBundle(ctx.platform.configManager, requestedKeys);
+          const result = await applyStagedManagedBundle(ctx.platform.configManager, requestedKeys);
           ctx.session.runtime.model = String(ctx.platform.configManager.get('provider.model'));
           ctx.session.runtime.provider = getProviderIdFromModel(ctx.platform.configManager.get('provider.model'));
           ctx.session.runtime.reasoningEffort = ctx.platform.configManager.get('provider.reasoningEffort') as string;
@@ -176,12 +176,12 @@ export function registerManagedRuntimeCommands(registry: CommandRegistry): void 
       const bundle = JSON.parse(readFileSync(sourcePath, 'utf-8')) as ManagedSettingsBundle;
 
       if (sub === 'inspect') {
-        ctx.print(inspectManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath));
+        ctx.print(await inspectManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath));
         return;
       }
 
       if (sub === 'stage') {
-        const stage = stageManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath);
+        const stage = await stageManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath);
         ctx.print(`Managed settings bundle staged from ${sourcePath} (${stage.changeCount} changes, risk=${stage.risk}).`);
         return;
       }
@@ -193,8 +193,8 @@ export function registerManagedRuntimeCommands(registry: CommandRegistry): void 
           ctx.print(`Unknown config key(s): ${invalidKeys.join(', ')}`);
           return;
         }
-        stageManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath);
-        const result = applyStagedManagedBundle(ctx.platform.configManager, requestedKeys);
+        await stageManagedSettingsBundle(ctx.platform.configManager, bundle, sourcePath);
+        const result = await applyStagedManagedBundle(ctx.platform.configManager, requestedKeys);
         ctx.session.runtime.model = String(ctx.platform.configManager.get('provider.model'));
         ctx.session.runtime.provider = getProviderIdFromModel(ctx.platform.configManager.get('provider.model'));
         ctx.session.runtime.reasoningEffort = ctx.platform.configManager.get('provider.reasoningEffort') as string;

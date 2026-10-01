@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { GoodVibesSdkError } from '@goodvibes-jev/engine/sdk';
+import type { HonestMemorySearchResult, MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 import { createMemoryModalSurface, type MemoryModalDeps } from '../../../views/modals/memory-modal.ts';
 import type { MemoryConsolidationGatewayResolution, MemoryConsolidationProposal } from '../../../views/memory-consolidation-gateway.ts';
 import { actionCtx, captureCommands, findAction, open, tabText } from './modal-surface-test-helpers.ts';
@@ -10,14 +11,23 @@ import { frameFromLayer } from '../../helpers/surface-frame.ts';
 
 const FIXED = 1735689600000;
 
-/** The fixed record set every honestSearch-backed test in this file shares. */
-const RECORDS = [
-  { id: 'mem-aaa1', scope: 'project', cls: 'decision', summary: 'Ship in batched waves.', detail: 'No per-change release tags.', tags: ['release'], reviewState: 'reviewed', confidence: 90, createdAt: FIXED, provenance: [{ kind: 'session', ref: 'sess-1' }] },
-  { id: 'mem-bbb2', scope: 'session', cls: 'risk', summary: 'Modal mutations must route to commands.', tags: ['charter'], reviewState: 'stale', confidence: 35, staleReason: 'needs re-verification', createdAt: FIXED + 1000, provenance: [] },
+/** Deliberately opposite the retired client ranking: reviewed before stale. */
+const RECORDS: MemoryRecord[] = [
+  { id: 'mem-aaa1', scope: 'project', cls: 'decision', summary: 'Ship in batched waves.', detail: 'No per-change release tags.', tags: ['release'], reviewState: 'reviewed', confidence: 90, createdAt: FIXED, updatedAt: FIXED, provenance: [{ kind: 'session', ref: 'sess-1' }] },
+  { id: 'mem-bbb2', scope: 'session', cls: 'risk', summary: 'Modal mutations must route to commands.', tags: ['charter'], reviewState: 'stale', confidence: 35, staleReason: 'needs re-verification', createdAt: FIXED + 1000, updatedAt: FIXED + 1000, provenance: [] },
 ];
 
-function fixedDeps(): MemoryModalDeps {
-  return { memoryRegistry: { honestSearch: async () => ({ records: RECORDS }) } };
+function searchResult(records: readonly MemoryRecord[], indexUnavailableReason: string | null = null): HonestMemorySearchResult {
+  return {
+    records, mode: 'literal', requestedSemantic: false, indexUnavailableReason,
+    caveat: null, recallFiltered: false, excludedFlaggedCount: 0,
+    excludedBelowFloorCount: 0, excludedOutOfWindowCount: 0,
+    totalBeforeRecallFilter: records.length, recallFloor: 60,
+  };
+}
+
+function fixedDeps(records: readonly MemoryRecord[] = RECORDS): MemoryModalDeps {
+  return { memoryRegistry: { honestSearch: async () => searchResult(records), reviewQueue: async () => records } };
 }
 
 /** Flush the microtask queue so an async onOpen refresh (honestSearch) has resolved. */
@@ -30,6 +40,13 @@ async function openAsync(surface: ConfigModalSurface): Promise<ConfigModalView> 
   return surface.buildView();
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}
+
 describe('memory modal surface', () => {
   test('surface identity', () => { expect(createMemoryModalSurface({}).name).toBe('memory-modal'); });
 
@@ -39,23 +56,40 @@ describe('memory modal surface', () => {
     expect(view.degraded).toContain('not wired with a project memory registry at bootstrap');
   });
 
-  test('All Records tab lists both records; Review Queue tab ranks the stale record above the reviewed one', async () => {
+  test('All Records lists the search batch; Review Queue preserves backend order contrary to the retired local ranking', async () => {
     const view = await openAsync(createMemoryModalSurface(fixedDeps()));
     expect(view.tabs.map((t) => t.id)).toEqual(['all', 'review', 'proposals']);
     const all = tabText(view, 'all');
-    // Both are review candidates (the SDK's isReviewCandidate covers all four
-    // review states, not just flagged ones), ranked, not filtered down.
     expect(all).toContain('records 2  review queue 2');
     expect(all).toContain('Ship in batched waves.');
     const review = view.tabs.find((t) => t.id === 'review')!;
     expect(review.rows).toHaveLength(2);
-    expect(review.rows[0]!.id).toBe('mem-bbb2'); // stale, lower confidence: ranks first
-    expect(review.rows[1]!.id).toBe('mem-aaa1'); // reviewed, high confidence: ranks last
+    expect(review.rows.map((row) => row.id)).toEqual(['mem-aaa1', 'mem-bbb2']);
+  });
+
+  test('requests the backend top-24 queue across scopes independently of the search batch', async () => {
+    const queue = Array.from({ length: 24 }, (_, index) => ({ ...RECORDS[index % 2]!, id: `queue-${index}` }));
+    const searches: unknown[] = [];
+    const queues: unknown[] = [];
+    const surface = createMemoryModalSurface({
+      memoryRegistry: {
+        honestSearch: async (...args) => { searches.push(args); return searchResult(RECORDS); },
+        reviewQueue: async (...args) => { queues.push(args); return queue; },
+      },
+    });
+    const view = await openAsync(surface);
+    expect(searches).toEqual([[{ limit: 100 }]]);
+    expect(queues).toEqual([[24]]);
+    expect(view.tabs.find((tab) => tab.id === 'all')!.rows.map((row) => row.id)).toEqual(RECORDS.map((record) => record.id));
+    expect(view.tabs.find((tab) => tab.id === 'review')!.rows.map((row) => row.id)).toEqual(queue.map((record) => record.id));
+    const cap = captureCommands();
+    surface.onAction?.('markReviewed', actionCtx({ id: 'queue-0', label: '' }, cap.extra));
+    expect(cap.calls).toEqual([['recall', ['review', 'queue-0', 'reviewed', '--confidence', '90', '--by', 'operator']]]);
   });
 
   test('a client-mode wire failure surfaces plainly as a degraded state, not a silent empty list', async () => {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => { throw new Error('daemon unreachable'); } },
+      memoryRegistry: { ...fixedDeps().memoryRegistry!, honestSearch: async () => { throw new Error('daemon unreachable'); } },
     });
     const view = await openAsync(surface);
     expect(view.degraded).toContain('Failed to reach memory over the wire');
@@ -64,7 +98,7 @@ describe('memory modal surface', () => {
 
   test('an index-unavailable search fallback is stated in the view, not silently dropped', async () => {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => ({ records: RECORDS, indexUnavailableReason: 'semantic index offline' }) },
+      memoryRegistry: { ...fixedDeps().memoryRegistry!, honestSearch: async () => searchResult(RECORDS, 'semantic index offline') },
     });
     const view = await openAsync(surface);
     expect(view.degraded).toBe('semantic index offline');
@@ -99,16 +133,114 @@ describe('memory modal surface', () => {
   });
 
   test('an expired record is labelled [expired] in both tabs; a window-less record carries no label', async () => {
-    const expiredRecords = [
+    const expiredRecords: MemoryRecord[] = [
       ...RECORDS,
-      { id: 'mem-ccc3', scope: 'project', cls: 'fact', summary: 'Expired fact.', tags: [], reviewState: 'fresh', confidence: 50, createdAt: FIXED + 2000, provenance: [], validUntil: FIXED - 1 },
+      { id: 'mem-ccc3', scope: 'project', cls: 'fact', summary: 'Expired fact.', tags: [], reviewState: 'fresh', confidence: 50, createdAt: FIXED + 2000, updatedAt: FIXED + 2000, provenance: [], validUntil: FIXED - 1 },
     ];
-    const surface = createMemoryModalSurface({ memoryRegistry: { honestSearch: async () => ({ records: expiredRecords }) } });
+    const surface = createMemoryModalSurface(fixedDeps(expiredRecords));
     const view = await openAsync(surface);
     const all = tabText(view, 'all');
     expect(all).toContain('Expired fact. [expired]');
     expect(all).not.toContain('Ship in batched waves. [expired]');
     expect(all).not.toContain('Ship in batched waves. [pending]');
+    expect(tabText(view, 'review')).toContain('Expired fact. [expired]');
+  });
+});
+
+describe('memory modal: async refresh ownership', () => {
+  test.each(['honestSearch', 'reviewQueue'] as const)('a current %s failure clears previously loaded rows and stale action targets', async (failedRead) => {
+    let failing = false;
+    const surface = createMemoryModalSurface({
+      memoryRegistry: {
+        honestSearch: async () => {
+          if (failing && failedRead === 'honestSearch') throw new Error('current search unavailable');
+          return searchResult(RECORDS);
+        },
+        reviewQueue: async () => {
+          if (failing && failedRead === 'reviewQueue') throw new Error('current queue unavailable');
+          return RECORDS;
+        },
+      },
+    });
+    const loaded = await openAsync(surface);
+    expect(loaded.tabs.find((tab) => tab.id === 'review')!.rows).toHaveLength(2);
+    failing = true;
+    surface.onAction?.('refresh', actionCtx(null));
+    await flushMicrotasks();
+    const failed = surface.buildView();
+    expect(failed.degraded).toContain(`current ${failedRead === 'honestSearch' ? 'search' : 'queue'} unavailable`);
+    expect(failed.tabs.find((tab) => tab.id === 'all')!.rows).toEqual([]);
+    expect(failed.tabs.find((tab) => tab.id === 'review')!.rows).toEqual([]);
+    const cap = captureCommands();
+    surface.onAction?.('markReviewed', actionCtx({ id: RECORDS[0]!.id, label: '' }, cap.extra));
+    expect(cap.calls).toEqual([]);
+  });
+
+  for (const reopen of [false, true]) {
+    test.each(['success', 'failure'] as const)(`an obsolete %s cannot overwrite the newer ${reopen ? 'close/reopen' : 'refresh'} records or proposal state`, async (settlement) => {
+      const oldSearch = deferred<HonestMemorySearchResult>();
+      const oldQueue = deferred<readonly MemoryRecord[]>();
+      const oldReceipts = deferred<{ receipts: never[]; pendingProposals: MemoryConsolidationProposal[] }>();
+      const currentRecords = [{ ...RECORDS[0]!, id: 'mem-current' }];
+      const currentProposals: MemoryConsolidationProposal[] = [
+        { kind: 'cross-scope-duplicate', ids: ['mem-current'], route: '/recall review', reason: 'Current held proposal.' },
+      ];
+      let searchCalls = 0;
+      let queueCalls = 0;
+      let receiptCalls = 0;
+      let renders = 0;
+      const surface = createMemoryModalSurface({
+        memoryRegistry: {
+          honestSearch: () => ++searchCalls === 1 ? oldSearch.promise : Promise.resolve(searchResult(currentRecords)),
+          reviewQueue: () => ++queueCalls === 1 ? oldQueue.promise : Promise.resolve(currentRecords),
+        },
+        resolveConsolidationGateway: () => ({
+          available: true,
+          gateway: { fetchReceipts: () => ++receiptCalls === 1 ? oldReceipts.promise : Promise.resolve({ receipts: [], pendingProposals: currentProposals }) },
+        }),
+      });
+      surface.onOpen?.(() => { ++renders; });
+      if (reopen) {
+        surface.onClose?.();
+        surface.onOpen?.(() => { ++renders; });
+      } else {
+        surface.onAction?.('refresh', actionCtx(null));
+      }
+      await flushMicrotasks();
+      const current = surface.buildView();
+      expect(current.degraded).toBeUndefined();
+      expect(current.tabs.find((tab) => tab.id === 'review')!.rows.map((row) => row.id)).toEqual(['mem-current']);
+      expect(proposalsTab(current).rows[0]!.label).toContain('Current held proposal.');
+      const currentRenders = renders;
+      if (settlement === 'success') {
+        oldSearch.resolve(searchResult(RECORDS, 'obsolete degraded note'));
+        oldQueue.resolve(RECORDS);
+        oldReceipts.resolve({ receipts: [], pendingProposals: PROPOSALS });
+      } else {
+        oldSearch.reject(new Error('obsolete search failure'));
+        oldQueue.reject(new Error('obsolete queue failure'));
+        oldReceipts.reject(new Error('obsolete proposal failure'));
+      }
+      await flushMicrotasks();
+      expect(surface.buildView()).toEqual(current);
+      expect(renders).toBe(currentRenders);
+    });
+  }
+
+  test('a read completing after close does not update the dismissed surface or render it', async () => {
+    const queue = deferred<readonly MemoryRecord[]>();
+    let renders = 0;
+    const surface = createMemoryModalSurface({
+      memoryRegistry: { ...fixedDeps().memoryRegistry!, reviewQueue: () => queue.promise },
+    });
+    surface.onOpen?.(() => { ++renders; });
+    surface.onClose?.();
+    const closed = surface.buildView();
+    const closedRenders = renders;
+    queue.resolve(RECORDS);
+    await flushMicrotasks();
+    expect(surface.buildView()).toEqual(closed);
+    expect(renders).toBe(closedRenders);
   });
 });
 
@@ -251,14 +383,14 @@ describe('memory modal: Proposals tab', () => {
 // ---------------------------------------------------------------------------
 
 describe('memory modal: Review Queue reason correlation against pending proposals', () => {
-  const FRESH_DUPLICATE_RECORDS = [
+  const FRESH_DUPLICATE_RECORDS: MemoryRecord[] = [
     ...RECORDS, // mem-bbb2 here already carries its own staleReason
-    { id: 'mem-ccc3', scope: 'project', cls: 'fact', summary: 'Near-duplicate fact record.', tags: [], reviewState: 'fresh', confidence: 50, createdAt: FIXED + 2000, provenance: [] },
+    { id: 'mem-ccc3', scope: 'project', cls: 'fact', summary: 'Near-duplicate fact record.', tags: [], reviewState: 'fresh', confidence: 50, createdAt: FIXED + 2000, updatedAt: FIXED + 2000, provenance: [] },
   ];
 
   test('a bare "fresh" record named by a cross-scope-duplicate proposal shows that proposal\'s reason', async () => {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => ({ records: FRESH_DUPLICATE_RECORDS }) },
+      ...fixedDeps(FRESH_DUPLICATE_RECORDS),
       resolveConsolidationGateway: readyGateway(PROPOSALS), // proposal 2 names mem-bbb2 + mem-ccc3
     });
     const view = await openAsync(surface);
@@ -270,7 +402,7 @@ describe('memory modal: Review Queue reason correlation against pending proposal
 
   test('a record that already carries its own staleReason keeps that reason; the matching proposal\'s reason is not appended on top', async () => {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => ({ records: FRESH_DUPLICATE_RECORDS }) },
+      ...fixedDeps(FRESH_DUPLICATE_RECORDS),
       resolveConsolidationGateway: readyGateway(PROPOSALS), // proposal 2 also names mem-bbb2, which already has a staleReason
     });
     const view = await openAsync(surface);
@@ -282,7 +414,7 @@ describe('memory modal: Review Queue reason correlation against pending proposal
 
   test('a record named by no proposal carries no reason suffix at all', async () => {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => ({ records: FRESH_DUPLICATE_RECORDS }) },
+      ...fixedDeps(FRESH_DUPLICATE_RECORDS),
       resolveConsolidationGateway: readyGateway([]),
     });
     const view = await openAsync(surface);
@@ -310,7 +442,7 @@ describe('memory modal: Proposals tab at compact height (modal sizing rule)', ()
    */
   async function renderProposalsTab(width: number, height: number): Promise<{ content: string; footer: string }> {
     const surface = createMemoryModalSurface({
-      memoryRegistry: { honestSearch: async () => ({ records: RECORDS }) },
+      ...fixedDeps(),
       resolveConsolidationGateway: readyGateway([
         { kind: 'cross-scope-duplicate', ids: ['mem-aaa1', 'mem-bbb2'], route: '/recall review', reason: LONG_REASON },
       ]),

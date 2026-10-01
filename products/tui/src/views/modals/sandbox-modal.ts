@@ -128,7 +128,7 @@ class SandboxModalSurface implements ConfigModalSurface {
         const sessionId = sessionIdOf(ctx.row);
         if (!sessionId) return;
         try {
-          this.sessions.execute(sessionId, process.execPath, ['-e', "console.log('sandbox modal probe ok')"], this.config, { timeoutMs: 5_000 });
+          this.sessions.execute(sessionId, process.execPath, ['-e', "console.log('sandbox modal probe ok')"], { timeoutMs: 5_000 });
         } catch (error) {
           ctx.setStatus(summarizeError(error));
         }

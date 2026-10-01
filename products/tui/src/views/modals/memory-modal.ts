@@ -6,7 +6,8 @@ import type {
   ConfigModalTab,
   ConfigModalView,
 } from '../../input/config-modal-types.ts';
-import { memoryRecordTemporalStatus } from '@goodvibes-jev/engine/sdk/platform/state';
+import { memoryRecordTemporalStatus, type MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
+import type { MemoryAccess } from '@goodvibes-jev/engine/sdk/platform/runtime/memory-spine';
 import type { MemoryConsolidationGatewayResolution, MemoryConsolidationProposal } from '../memory-consolidation-gateway.ts';
 import { classifyConsolidationFetchError } from '../memory-consolidation-gateway.ts';
 
@@ -22,49 +23,23 @@ import { classifyConsolidationFetchError } from '../memory-consolidation-gateway
 // "not configured" copy renders as an honest degraded state.
 //
 // Read path (memory-spine adoption): reads go through the spine client's
-// `honestSearch`, the MemoryAccess shape, not the raw registry, so a session
+// `honestSearch` and `reviewQueue` on MemoryAccess, not the raw registry, so a session
 // that has adopted an external daemon reads the SAME wire-served records a
 // wire failure is deliberately surfaced (never a silently stale local copy).
 // `buildView()` stays synchronous/pure per the ConfigModalSurface contract;
 // `refresh()` is async and calls the `requestRender` callback `onOpen` hands
-// it when the data lands. The Review Queue ranking is recomputed client-side
-// from the same honestSearch batch (see `rankForReview` below) rather than
-// through a second wire call, `reviewQueue` is not part of MemoryAccess.
+// it when the data lands. Review Queue preserves the backend's own ordering
+// and top-24 window independently of the All Records search batch.
 // ---------------------------------------------------------------------------
 
-/** Minimal read shape of a `MemoryRecord` this modal renders. */
-interface MemoryRecordLike {
-  readonly id: string;
-  readonly scope: string;
-  readonly cls: string;
-  readonly summary: string;
-  readonly detail?: string | undefined;
-  readonly tags: readonly string[];
-  readonly reviewState: string;
-  readonly confidence: number;
-  readonly staleReason?: string | undefined;
-  readonly reviewedAt?: number | undefined;
-  readonly reviewedBy?: string | undefined;
-  readonly createdAt: number;
-  readonly updatedAt?: number | undefined;
-  readonly validFrom?: number | undefined;
-  readonly validUntil?: number | undefined;
-  readonly provenance: readonly { readonly kind: string; readonly ref: string }[];
-}
-
 /** Compact `[pending]`/`[expired]` suffix for a record row; empty for 'active' (no window, or currently inside it). */
-function temporalSuffix(record: Pick<MemoryRecordLike, 'validFrom' | 'validUntil'>): string {
+function temporalSuffix(record: Pick<MemoryRecord, 'validFrom' | 'validUntil'>): string {
   const status = memoryRecordTemporalStatus(record);
   return status === 'active' ? '' : ` [${status}]`;
 }
 
 export interface MemoryModalDeps {
-  readonly memoryRegistry?: {
-    honestSearch(filter?: { limit?: number }): Promise<{
-      readonly records: readonly MemoryRecordLike[];
-      readonly indexUnavailableReason?: string | null | undefined;
-    }>;
-  };
+  readonly memoryRegistry?: Pick<MemoryAccess, 'honestSearch' | 'reviewQueue'>;
   /**
    * Resolve the memory-consolidation-receipts gateway (memory-consolidation-gateway.ts),
    * lazily, called fresh each time the Proposals tab (re)fetches, exactly like
@@ -82,29 +57,6 @@ type ProposalsStatus =
   | { readonly kind: 'error'; readonly message: string }
   | { readonly kind: 'ready'; readonly proposals: readonly MemoryConsolidationProposal[] };
 
-/**
- * Client-side port of the SDK's MemoryStore.reviewQueue ranking
- * (memory-store-helpers.ts reviewQueueScore/isReviewCandidate): all four
- * review states are candidates, scored by state + inverse confidence (flagged
- * states penalized), tie-broken by recency. Presentation ordering only, not
- * a wire call, so exact parity with the server's own tie-breaking on ids it
- * has never seen is not load-bearing.
- */
-function rankForReview(records: readonly MemoryRecordLike[], limit: number): MemoryRecordLike[] {
-  const score = (r: MemoryRecordLike): number => {
-    let s = 0;
-    if (r.reviewState === 'fresh') s += 40;
-    if (r.reviewState === 'stale') s += 20;
-    if (r.reviewState === 'contradicted') s += 10;
-    s += Math.max(0, 100 - r.confidence);
-    if (r.reviewState === 'stale' || r.reviewState === 'contradicted') s -= 20;
-    return s;
-  };
-  return [...records]
-    .sort((a, b) => score(b) - score(a) || (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt) || b.createdAt - a.createdAt)
-    .slice(0, limit);
-}
-
 // Mirrors the retired knowledge-view registration's withUnconfiguredFallback copy for the
 // retired memory view verbatim.
 const NOT_CONFIGURED_TITLE = 'Memory registry not configured for this session.';
@@ -117,13 +69,14 @@ function fmtTime(ts: number): string {
 class MemoryModalSurface implements ConfigModalSurface {
   readonly name = 'memory-modal';
   readonly title = 'Memory';
-  private allRecords: MemoryRecordLike[] = [];
-  private reviewRecords: MemoryRecordLike[] = [];
+  private allRecords: readonly MemoryRecord[] = [];
+  private reviewRecords: readonly MemoryRecord[] = [];
   /** Honest note on the last read: a wire failure (client mode) or the index-unavailable fallback reason, never silently dropped. */
   private loadNote: string | null = null;
   /** The Proposals tab's fetch state, starts 'loading' whenever a gateway is wired (see refreshProposals). */
   private proposalsStatus: ProposalsStatus = { kind: 'loading' };
   private requestRender: (() => void) | null = null;
+  private refreshGeneration = 0;
 
   constructor(private readonly deps: MemoryModalDeps) {}
 
@@ -152,22 +105,31 @@ class MemoryModalSurface implements ConfigModalSurface {
   }
 
   onClose(): void {
+    ++this.refreshGeneration;
     this.requestRender = null;
   }
 
   private async refresh(): Promise<void> {
-    await Promise.all([this.refreshRecords(), this.refreshProposals()]);
+    const generation = ++this.refreshGeneration;
+    await Promise.all([this.refreshRecords(generation), this.refreshProposals(generation)]);
   }
 
-  private async refreshRecords(): Promise<void> {
+  private async refreshRecords(generation: number): Promise<void> {
     if (!this.deps.memoryRegistry) { this.allRecords = []; this.reviewRecords = []; this.loadNote = null; return; }
     try {
-      const result = await this.deps.memoryRegistry.honestSearch({ limit: 100 });
+      const [result, reviewRecords] = await Promise.all([
+        this.deps.memoryRegistry.honestSearch({ limit: 100 }),
+        this.deps.memoryRegistry.reviewQueue(24),
+      ]);
+      if (generation !== this.refreshGeneration) return;
       this.allRecords = [...result.records];
-      this.reviewRecords = rankForReview(result.records, 24);
+      this.reviewRecords = [...reviewRecords];
       this.loadNote = result.indexUnavailableReason ?? null;
     } catch (error) {
+      if (generation !== this.refreshGeneration) return;
       // Client-mode wire failure: surfaced plainly, never masked by the last-known list.
+      this.allRecords = [];
+      this.reviewRecords = [];
       this.loadNote = `Failed to reach memory over the wire: ${error instanceof Error ? error.message : String(error)}`;
     }
     this.requestRender?.();
@@ -183,27 +145,31 @@ class MemoryModalSurface implements ConfigModalSurface {
    * causes, one bucket, because from the operator's seat they mean the same
    * thing: nothing to show, and no fault of theirs.
    */
-  private async refreshProposals(): Promise<void> {
+  private async refreshProposals(generation: number): Promise<void> {
     if (!this.deps.resolveConsolidationGateway) {
       this.proposalsStatus = { kind: 'unavailable', reason: 'No consolidation gateway wired for this session.' };
       return;
     }
     this.proposalsStatus = { kind: 'loading' };
     this.requestRender?.();
-    const resolution = this.deps.resolveConsolidationGateway();
-    if (!resolution.available) {
-      this.proposalsStatus = { kind: 'unavailable', reason: resolution.reason };
-      return;
-    }
     try {
+      const resolution = this.deps.resolveConsolidationGateway();
+      if (!resolution.available) {
+        this.proposalsStatus = { kind: 'unavailable', reason: resolution.reason };
+        return;
+      }
       const result = await resolution.gateway.fetchReceipts();
+      if (generation !== this.refreshGeneration) return;
       this.proposalsStatus = { kind: 'ready', proposals: result.pendingProposals };
     } catch (error) {
+      if (generation !== this.refreshGeneration) return;
       this.proposalsStatus = classifyConsolidationFetchError(error);
+    } finally {
+      if (generation === this.refreshGeneration) this.requestRender?.();
     }
   }
 
-  private recordFrom(id: string): MemoryRecordLike | undefined {
+  private recordFrom(id: string): MemoryRecord | undefined {
     return this.allRecords.find((r) => r.id === id) ?? this.reviewRecords.find((r) => r.id === id);
   }
 
@@ -368,13 +334,13 @@ export function createMemoryModalSurface(deps: MemoryModalDeps): ConfigModalSurf
  */
 export async function memoryModalGoldenSurface(): Promise<ConfigModalSurface> {
   const FIXED_CREATED_AT = 1735689600000; // 2025-01-01T00:00:00.000Z
-  const records: readonly MemoryRecordLike[] = [
+  const records: readonly MemoryRecord[] = [
     {
       id: 'mem-0000001a', scope: 'project', cls: 'decision',
       summary: 'Panel retirements are batched behind modal builders.',
       detail: 'Applies to the knowledge, memory, and work-plan modals.',
       tags: ['panels', 'modals'], reviewState: 'reviewed', confidence: 90,
-      reviewedAt: FIXED_CREATED_AT + 3600000, reviewedBy: 'operator', createdAt: FIXED_CREATED_AT,
+      reviewedAt: FIXED_CREATED_AT + 3600000, reviewedBy: 'operator', createdAt: FIXED_CREATED_AT, updatedAt: FIXED_CREATED_AT,
       provenance: [{ kind: 'session', ref: 'session-fixed-1' }],
     },
     {
@@ -382,11 +348,19 @@ export async function memoryModalGoldenSurface(): Promise<ConfigModalSurface> {
       summary: 'Modal review actions must not call mutation APIs directly.',
       tags: ['charter'], reviewState: 'stale', confidence: 35,
       staleReason: 'needs re-verification against the charter doc',
-      createdAt: FIXED_CREATED_AT + 86400000, provenance: [],
+      createdAt: FIXED_CREATED_AT + 86400000, updatedAt: FIXED_CREATED_AT + 86400000, provenance: [],
     },
   ];
   const surface = createMemoryModalSurface({
-    memoryRegistry: { honestSearch: async () => ({ records }) },
+    memoryRegistry: {
+      honestSearch: async () => ({
+        records, mode: 'literal', requestedSemantic: false, indexUnavailableReason: null,
+        caveat: null, recallFiltered: false, excludedFlaggedCount: 0,
+        excludedBelowFloorCount: 0, excludedOutOfWindowCount: 0,
+        totalBeforeRecallFilter: records.length, recallFloor: 60,
+      }),
+      reviewQueue: async () => [records[1]!, records[0]!],
+    },
   });
   surface.onOpen?.(() => {});
   await new Promise((resolve) => setTimeout(resolve, 0));

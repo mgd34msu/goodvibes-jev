@@ -26,7 +26,7 @@ export interface MarketplaceModalDeps {
   readonly ecosystemPaths?: EcosystemCatalogPathOptions;
 }
 
-type MarketplaceReview = ReturnType<typeof reviewEcosystemCatalogEntry>;
+type MarketplaceReview = Awaited<ReturnType<typeof reviewEcosystemCatalogEntry>>;
 
 interface MarketplaceRow {
   readonly kind: EcosystemEntryKind;
@@ -58,6 +58,9 @@ class MarketplaceModalSurface implements ConfigModalSurface {
   readonly title = 'Marketplace';
   private rows: MarketplaceRow[] = [];
   private loadError: string | null = null;
+  private generation = 0;
+  private readController: AbortController | null = null;
+  private loading = false;
   private requestRender: () => void = () => {};
   private unsub: (() => void) | null = null;
 
@@ -71,31 +74,52 @@ class MarketplaceModalSurface implements ConfigModalSurface {
 
   onOpen(requestRender: () => void): void {
     this.requestRender = requestRender;
-    this.refresh();
+    void this.refresh();
     if (this.deps.readModel && !this.unsub) this.unsub = this.deps.readModel.subscribe(() => this.requestRender());
   }
 
   onClose(): void {
+    this.generation++;
+    this.readController?.abort();
+    this.readController = null;
+    this.loading = false;
+    this.requestRender = () => {};
     this.unsub?.();
     this.unsub = null;
   }
 
-  private refresh(): void {
+  private async refresh(): Promise<void> {
+    const generation = ++this.generation;
+    this.readController?.abort();
+    const controller = new AbortController();
+    this.readController = controller;
     const paths = this.deps.ecosystemPaths;
-    if (!paths) { this.rows = []; this.loadError = null; return; }
+    this.rows = [];
+    this.loadError = null;
+    this.loading = Boolean(paths);
+    if (!paths) return;
     try {
       const built: MarketplaceRow[] = [];
       for (const kind of KINDS) {
-        const installed = new Set(listInstalledEcosystemEntries(kind, paths).map((receipt) => receipt.entry.id));
+        const installed = new Set(listInstalledEcosystemEntries(kind, paths).map(receipt => receipt.entry.id));
         for (const entry of loadEcosystemCatalog(kind, paths)) {
-          built.push({ kind, entry, installed: installed.has(entry.id), review: reviewEcosystemCatalogEntry(entry, paths) });
+          const review = await reviewEcosystemCatalogEntry(entry, paths, { signal: controller.signal });
+          if (generation !== this.generation) return;
+          built.push({ kind, entry, installed: installed.has(entry.id), review });
         }
       }
+      if (generation !== this.generation) return;
       this.rows = built.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
-      this.loadError = null;
-    } catch (e) {
+    } catch (error) {
+      if (generation !== this.generation) return;
       this.rows = [];
-      this.loadError = `Catalog load failed: ${summarizeError(e)}`;
+      this.loadError = `Catalog load failed: ${summarizeError(error)}`;
+    } finally {
+      if (generation === this.generation) {
+        this.readController = null;
+        this.loading = false;
+        this.requestRender();
+      }
     }
   }
 
@@ -117,6 +141,8 @@ class MarketplaceModalSurface implements ConfigModalSurface {
   buildView(): ConfigModalView {
     const snapshot = this.deps.readModel?.getSnapshot();
     const rows: ConfigModalRow[] = [];
+
+    if (this.loading) return { title: 'Marketplace', tabs: [{ id: 'catalog', label: 'Catalog', rows: [infoRow('loading', 'Reading local catalog compatibility and risk…')] }] };
 
     // Honest empty / degraded state. loadError → degraded banner.
     if (this.loadError) {
@@ -184,7 +210,7 @@ class MarketplaceModalSurface implements ConfigModalSurface {
   }
 
   onAction(id: string, ctx: ConfigModalActionContext): void {
-    if (id === 'refresh') { this.refresh(); ctx.setStatus('Refreshing catalog…'); return; }
+    if (id === 'refresh') { void this.refresh(); ctx.setStatus('Refreshing catalog…'); return; }
     const entry = this.entryFor(ctx.row);
     if (!entry) return;
     if (id === 'install' && !entry.installed) {

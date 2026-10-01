@@ -30,9 +30,6 @@ export function getNumericAdjustmentMeta(setting: ConfigSetting): {
   max?: number;
   precision: number;
 } {
-  if (setting.key === 'wrfc.scoreThreshold') {
-    return { step: 0.1, min: 0, max: 10, precision: 1 };
-  }
   if (setting.key === 'tts.speed') {
     // Speed multiplier, 0.1 increments across the schema's own supported range
     // (see the key's numRange in the SDK config schema).

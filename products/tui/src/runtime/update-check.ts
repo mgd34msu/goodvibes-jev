@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_REBUILD_COMMAND } from './workspace-update-policy.ts';
 /**
  * Pure logic for `/update`, re-exported from the platform's update-policy
  * modules so there is one mechanism everywhere: version comparison and the
@@ -31,9 +32,10 @@ import {
 } from '@goodvibes-jev/engine/sdk/platform/runtime/operations';
 
 /** The package a package-managed install of this terminal is upgraded through. */
-const TERMINAL_PACKAGE_NAME = '@pellux/goodvibes-tui';
+const TERMINAL_PACKAGE_NAME = '@goodvibes-jev/tui';
 
 /** The exact command to tell the user to run instead of a swap, for each non-binary install kind. */
 export function fallbackUpdateCommand(kind: Exclude<PlatformInstallKind, 'binary'>): string {
+  if (IS_WORKSPACE_DISTRIBUTION) return WORKSPACE_REBUILD_COMMAND;
   return platformFallbackUpdateCommand(kind, TERMINAL_PACKAGE_NAME);
 }

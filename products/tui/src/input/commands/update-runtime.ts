@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_UPDATE_GUIDANCE } from '../../runtime/workspace-update-policy.ts';
 /**
  * `/update`, a real self-update path for binary installs. The
  * download-verify-swap mechanics are the SDK's canonical update policy
@@ -75,10 +76,10 @@ import {
 import { resolveConfiguredServiceName } from '../../runtime/legacy-daemon-migration.ts';
 import { requireShellPaths, requireSubscriptionManager } from './runtime-services.ts';
 
-const REPO_RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-tui/releases/latest';
+const REPO_RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-jev/releases/latest';
 
 function releaseDownloadBaseUrl(tag: string): string {
-  return `https://github.com/mgd34msu/goodvibes-tui/releases/download/${tag}`;
+  return `https://github.com/mgd34msu/goodvibes-jev/releases/download/${tag}`;
 }
 
 async function downloadText(fetchImpl: UpdateFetchLike, url: string): Promise<string> {
@@ -468,6 +469,7 @@ export function registerUpdateCommand(registry: CommandRegistry): void {
     description: 'Check for a newer GoodVibes release and, for binary installs, download/verify/apply it or roll back to the kept previous version',
     usage: '[check|apply|rollback|review|bundle export <path>|bundle inspect <path>]',
     async handler(args, ctx) {
+      if (IS_WORKSPACE_DISTRIBUTION) { ctx.print(WORKSPACE_UPDATE_GUIDANCE); return; }
       const sub = args[0] ?? 'check';
 
       if (sub === 'check') {

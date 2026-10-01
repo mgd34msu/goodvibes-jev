@@ -42,7 +42,7 @@ describe('compareVersions', () => {
 
 describe('parseReleaseTagFromLocation', () => {
   test('extracts the tag from a releases/tag/ redirect URL', () => {
-    expect(parseReleaseTagFromLocation('https://github.com/mgd34msu/goodvibes-tui/releases/tag/v1.13.2')).toBe('v1.13.2');
+    expect(parseReleaseTagFromLocation('https://github.com/mgd34msu/goodvibes-jev/releases/tag/v1.13.2')).toBe('v1.13.2');
   });
 
   test('returns null for a missing location', () => {
@@ -65,14 +65,14 @@ function stubFetch(response: { location?: string | null; url?: string }): Update
 
 describe('resolveLatestReleaseTag', () => {
   test('resolves the tag from a stubbed redirect Location header; no live network call', async () => {
-    const fetchImpl = stubFetch({ location: 'https://github.com/mgd34msu/goodvibes-tui/releases/tag/v9.9.9' });
-    const tag = await resolveLatestReleaseTag(fetchImpl, 'https://github.com/mgd34msu/goodvibes-tui/releases/latest');
+    const fetchImpl = stubFetch({ location: 'https://github.com/mgd34msu/goodvibes-jev/releases/tag/v9.9.9' });
+    const tag = await resolveLatestReleaseTag(fetchImpl, 'https://github.com/mgd34msu/goodvibes-jev/releases/latest');
     expect(tag).toBe('v9.9.9');
   });
 
   test('throws honestly when there is no redirect Location to resolve a tag from', async () => {
-    const fetchImpl = stubFetch({ location: null, url: 'https://github.com/mgd34msu/goodvibes-tui/releases/latest' });
-    await expect(resolveLatestReleaseTag(fetchImpl, 'https://github.com/mgd34msu/goodvibes-tui/releases/latest')).rejects.toThrow(
+    const fetchImpl = stubFetch({ location: null, url: 'https://github.com/mgd34msu/goodvibes-jev/releases/latest' });
+    await expect(resolveLatestReleaseTag(fetchImpl, 'https://github.com/mgd34msu/goodvibes-jev/releases/latest')).rejects.toThrow(
       /could not resolve the latest release tag/,
     );
   });
@@ -96,11 +96,11 @@ describe('detectInstallKind', () => {
 });
 
 describe('fallbackUpdateCommand', () => {
-  test('gives the bun global-add command for a bun-global-package install', () => {
-    expect(fallbackUpdateCommand('bun-global-package')).toBe('bun add -g @pellux/goodvibes-tui');
+  test('gives workspace rebuild guidance for a bun-global-package detection', () => {
+    expect(fallbackUpdateCommand('bun-global-package')).toBe('bun run --filter @goodvibes-jev/tui build');
   });
 
-  test('gives the curl installer one-liner for a source checkout', () => {
-    expect(fallbackUpdateCommand('source')).toBe('curl -fsSL https://goodvibes.sh/install.sh | sh');
+  test('gives workspace rebuild guidance for a source checkout', () => {
+    expect(fallbackUpdateCommand('source')).toBe('bun run --filter @goodvibes-jev/tui build');
   });
 });

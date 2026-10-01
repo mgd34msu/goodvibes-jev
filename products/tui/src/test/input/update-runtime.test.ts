@@ -47,7 +47,7 @@ function fakeResponse(spec: FakeResponseSpec) {
   };
 }
 
-const RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-tui/releases/latest';
+const RELEASES_LATEST_URL = 'https://github.com/mgd34msu/goodvibes-jev/releases/latest';
 
 function buildStubFetch(options: {
   readonly latestTag: string;
@@ -63,7 +63,7 @@ function buildStubFetch(options: {
     if (url === RELEASES_LATEST_URL) {
       return fakeResponse({
         status: 302,
-        location: `https://github.com/mgd34msu/goodvibes-tui/releases/tag/${options.latestTag}`,
+        location: `https://github.com/mgd34msu/goodvibes-jev/releases/tag/${options.latestTag}`,
       });
     }
     if (url.endsWith('SHA256SUMS.txt')) {
@@ -136,7 +136,7 @@ function baseApplyOptions(overrides: Partial<ApplyUpdateOptions>): ApplyUpdateOp
 }
 
 describe('applyUpdate: non-binary install kinds never attempt a swap', () => {
-  test('running from source prints the curl installer one-liner and makes no download calls', async () => {
+  test('running from source prints workspace rebuild guidance and makes no download calls', async () => {
     const printed: string[] = [];
     const calls: string[] = [];
     await applyUpdate(
@@ -147,7 +147,7 @@ describe('applyUpdate: non-binary install kinds never attempt a swap', () => {
       }),
     );
     expect(calls).toEqual([]); // never even checks the network for a non-binary install
-    expect(printed.join('\n')).toContain('curl -fsSL https://goodvibes.sh/install.sh | sh');
+    expect(printed.join('\n')).toContain('bun run --filter @goodvibes-jev/tui build');
     expect(printed.join('\n')).toContain('running from source');
   });
 
@@ -162,7 +162,7 @@ describe('applyUpdate: non-binary install kinds never attempt a swap', () => {
       }),
     );
     expect(calls).toEqual([]);
-    expect(printed.join('\n')).toContain('bun add -g @pellux/goodvibes-tui');
+    expect(printed.join('\n')).toContain('bun run --filter @goodvibes-jev/tui build');
   });
 });
 
@@ -648,6 +648,6 @@ describe('rollbackUpdate: one command back to the version that ran before', () =
       io: fs.io,
     });
     expect(fs.mutations).toEqual([]);
-    expect(printed.join('\n')).toContain('bun add -g @pellux/goodvibes-tui');
+    expect(printed.join('\n')).toContain('bun run --filter @goodvibes-jev/tui build');
   });
 });

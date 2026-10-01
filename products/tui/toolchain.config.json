@@ -1,11 +1,10 @@
 {
-  "//": "TOOLCHAIN-PIN: @pellux/goodvibes-toolchain is published on npm and pinned EXACTLY in package.json devDependencies, so `bun install --frozen-lockfile` puts the same CLI bins (goodvibes-build-binaries, goodvibes-post-build-smoke) on PATH that release-time bunx invocations name by version. The workflow call sites that name a toolchain version, and the SDK reusable-workflow SHAs, are rewritten from package.json by `bun run release:prepare` (scripts/release-prepare.ts), which release-cut runs as its sync command. This file is the repo-specific contract consumed by the toolchain CLIs; behavior lives in the package.",
-  "packageName": "@pellux/goodvibes-tui",
+  "//": "Private workspace build configuration. Build/smoke invoke only the CLI declared by the installed Jev engine package.",
+  "packageName": "@goodvibes-jev/tui",
   "sdkPin": {
-    "sdkPackage": "@goodvibes-jev/engine/sdk",
+    "sdkPackage": "@goodvibes-jev/engine",
     "pinSource": "dependencies",
-    "lockfile": "bun.lock",
-    "overlayMarker": "node_modules/@pellux/goodvibes-sdk/.local-sdk-overlay.json",
+    "lockfile": "../../bun.lock",
     "sourceRoots": [
       "src"
     ],

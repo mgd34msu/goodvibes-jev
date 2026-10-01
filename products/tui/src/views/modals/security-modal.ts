@@ -200,7 +200,7 @@ export function securityModalGoldenSurface(): ConfigModalSurface {
   const FIXED_INCIDENT = {
     id: 'inc-0001', traceId: 'trace-0001', sessionId: 'sess-0001', generatedAt: 1700000000000,
     classification: 'permission_denied' as const, summary: 'blocked write outside sandbox root',
-    phaseTimings: [], phaseLedger: [], causalChain: [], cascadeEvents: [], permissionEvidence: [], budgetBreaches: [], jumpLinks: [],
+    phaseTimings: [], phaseLedger: [], slowPhases: [], causalChain: [], cascadeEvents: [], permissionEvidence: [], budgetBreaches: [], jumpLinks: [],
   };
   const snapshot: UiSecuritySnapshot = {
     audit: {

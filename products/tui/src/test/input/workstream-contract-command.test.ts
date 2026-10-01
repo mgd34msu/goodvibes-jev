@@ -16,7 +16,7 @@ function fixture(records: ContractView[]) {
       return { contract, owner: { id: contract.ownerAgentId, task: input.ask, template: 'engineer', status: 'running', startedAt: 1, tools: [], toolCallCount: 0, orchestrationDepth: 0, executionProtocol: 'direct', reviewMode: 'contract', communicationLane: 'parent-only' } };
     },
     cancel: (id, reason) => { actions.push(['cancel', id, reason]); return true; },
-    reply: async (id, escalationId, text) => { actions.push(['reply', id, escalationId, text]); return { escalationId, reading: 'approve', outcome: 'act', action: 'approve' }; },
+    reply: async (id, escalationId, text) => { actions.push(['reply', id, escalationId, text]); return { escalationId, reading: 'approve', outcome: 'act', action: 'approved' }; },
   };
   const service = createContractOperatorService({ runner, workingDirectory: '/synthetic/project' });
   const registry = new CommandRegistry();

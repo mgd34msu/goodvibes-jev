@@ -26,6 +26,7 @@ import {
 import { frameFromLayer } from '../helpers/surface-frame.ts';
 import { activeTokens } from '../../renderer/theme.ts';
 import type { Line } from '@goodvibes-jev/engine/sdk/platform/types';
+import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 
 /** The kit marks the selected row with the gradient and dark bold text (selectedListItemText). */
 function selectionRow(frame: Line[]): number {
@@ -133,14 +134,24 @@ describe('liveness contract: memory-modal (group-B ported surface, values-only u
   test('a summary value update on a NON-selected record row repaints in place: no reflow, cursor unchanged, one row differs', async () => {
     // Two records; only the first (non-selected) record's summary changes, at
     // the SAME display width, so the id set is stable (values-only tick).
-    const records: Array<{ id: string; scope: string; cls: string; summary: string; tags: readonly string[]; reviewState: string; confidence: number; createdAt: number; provenance: readonly { kind: string; ref: string }[] }> = [
-      { id: 'mem-live-1', scope: 'project', cls: 'decision', summary: 'liveness record row alpha', tags: [], reviewState: 'reviewed', confidence: 90, createdAt: 1735689600000, provenance: [] },
-      { id: 'mem-live-2', scope: 'session', cls: 'risk', summary: 'liveness record row bravo', tags: [], reviewState: 'reviewed', confidence: 80, createdAt: 1735689600000, provenance: [] },
+    const records: MemoryRecord[] = [
+      { id: 'mem-live-1', scope: 'project', cls: 'decision', summary: 'liveness record row alpha', tags: [], reviewState: 'reviewed', confidence: 90, createdAt: 1735689600000, updatedAt: 1735689600000, provenance: [] },
+      { id: 'mem-live-2', scope: 'session', cls: 'risk', summary: 'liveness record row bravo', tags: [], reviewState: 'reviewed', confidence: 80, createdAt: 1735689600000, updatedAt: 1735689600000, provenance: [] },
     ];
     // The surface reads through the MemoryAccess shape (spine client), never the raw
     // registry, `honestSearch` resolves the SAME record array each call so buildView
     // sees live mutations to `records[i]` without a second fetch.
-    const surface = createMemoryModalSurface({ memoryRegistry: { honestSearch: async () => ({ records }) } });
+    const surface = createMemoryModalSurface({
+      memoryRegistry: {
+        honestSearch: async () => ({
+          records, mode: 'literal', requestedSemantic: false, indexUnavailableReason: null,
+          caveat: null, recallFiltered: false, excludedFlaggedCount: 0,
+          excludedBelowFloorCount: 0, excludedOutOfWindowCount: 0,
+          totalBeforeRecallFilter: records.length, recallFloor: 60,
+        }),
+        reviewQueue: async () => records,
+      },
+    });
     const modal = new ConfigModal();
     try {
       modal.open(surface, () => {});

@@ -70,7 +70,7 @@ export function registerSkillsRuntimeCommands(registry: CommandRegistry): void {
       }
       if (sub === 'browse' || sub === 'catalog') {
         const query = args.slice(1).join(' ');
-        const entries = query ? searchEcosystemCatalog('skill', query, ecosystemPaths) : loadEcosystemCatalog('skill', ecosystemPaths);
+        const entries = query ? await searchEcosystemCatalog('skill', query, ecosystemPaths) : loadEcosystemCatalog('skill', ecosystemPaths);
         if (entries.length === 0) {
           ctx.print(query
             ? `No curated skill catalog entries matched "${query}".`
@@ -106,7 +106,7 @@ export function registerSkillsRuntimeCommands(registry: CommandRegistry): void {
           ctx.print(`Unknown curated skill entry: ${entryId}`);
           return;
         }
-        const review = reviewEcosystemCatalogEntry(entry, ecosystemPaths);
+        const review = await reviewEcosystemCatalogEntry(entry, ecosystemPaths);
         ctx.print([
           `Skill Catalog Review: ${entry.name}`,
           `  id: ${entry.id}`,

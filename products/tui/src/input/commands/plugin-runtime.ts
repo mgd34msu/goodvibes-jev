@@ -113,7 +113,7 @@ export function registerPluginRuntimeCommands(registry: CommandRegistry): void {
       if (sub === 'browse' || sub === 'catalog') {
         const query = args.slice(1).join(' ');
         const entries = query
-          ? searchEcosystemCatalog('plugin', query, ecosystemPaths)
+          ? await searchEcosystemCatalog('plugin', query, ecosystemPaths)
           : loadEcosystemCatalog('plugin', ecosystemPaths);
         if (entries.length === 0) {
           ctx.print(query
@@ -150,7 +150,7 @@ export function registerPluginRuntimeCommands(registry: CommandRegistry): void {
           ctx.print(`Unknown curated plugin entry: ${entryId}`);
           return;
         }
-        const review = reviewEcosystemCatalogEntry(entry, ecosystemPaths);
+        const review = await reviewEcosystemCatalogEntry(entry, ecosystemPaths);
         ctx.print([
           `Plugin Catalog Review: ${entry.name}`,
           `  id: ${entry.id}`,

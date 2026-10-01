@@ -124,7 +124,7 @@ export function registerHooksRuntimeCommands(registry: CommandRegistry): void {
       }
 
       const filter = (subcommand === 'contracts' ? args.slice(1) : args).join(' ').trim().toLowerCase();
-      const contracts = hookApi.contracts(filter);
+      const contracts = await hookApi.contracts(filter);
 
       if (contracts.length === 0) {
         ctx.print(filter.length === 0 ? 'No hook contracts registered.' : `No hook contracts matched "${filter}".`);

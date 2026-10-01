@@ -22,7 +22,7 @@ function setup(initial: ContractView, replyResult: Promise<OwnerReplyOutcome> = 
   const views = new SessionViews({
     conversation: { laneColorOf: () => 1, getWorkTreeSources: () => ({}), getTreeGlyphSet: () => 'rounded' },
     agentManager: { list: () => [record], getStatus: () => record, getConversationSnapshot: () => [] },
-    processManager: { list: () => [], getStatus: () => null, stop: () => false }, fleetNodes: () => [], contractRunner: runner,
+    processManager: { list: () => [], getStatus: () => undefined, stop: () => false }, fleetNodes: () => [], contractRunner: runner,
     steer: () => { genericSteers++; return { queued: true, messageId: 'steer1' }; }, killAgent: () => { genericKills++; return ['owner']; },
     mainBusy: () => false, mainModel: () => 'synthetic', promptText: () => '', requestRender: () => { renders++; }, now: () => 3000, pollMs: 0,
   });

@@ -1,3 +1,4 @@
+import { IS_WORKSPACE_DISTRIBUTION, WORKSPACE_UPDATE_GUIDANCE } from '../runtime/workspace-update-policy.ts';
 /**
  * Launch-time self-update, clients land on the newest release at startup so
  * an installed binary never drifts behind. At TUI launch (before any runtime
@@ -218,6 +219,7 @@ export interface SelfUpdateAtLaunchParams {
  * stdout copies written here are wiped by the TUI's alternate screen.
  */
 export async function selfUpdateAtLaunch(params: SelfUpdateAtLaunchParams): Promise<readonly string[]> {
+  if (IS_WORKSPACE_DISTRIBUTION) return [WORKSPACE_UPDATE_GUIDANCE];
   const lines: string[] = [];
   const print = (line: string): void => {
     lines.push(line);

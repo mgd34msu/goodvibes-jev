@@ -28,7 +28,7 @@
  */
 
 import type { RelayRegistrationStatus } from '@goodvibes-jev/engine/daemon-sdk';
-import type { RelayPairingPayload } from '@pellux/goodvibes-transport-core/relay';
+import type { RelayPairingPayload } from '@goodvibes-jev/engine/transport-core/relay';
 
 /**
  * What `/relay` can be told: the daemon-side registration states, plus

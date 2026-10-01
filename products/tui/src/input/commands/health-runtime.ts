@@ -1,3 +1,4 @@
+import { renderSandboxDoctor } from '../../runtime/sandbox-public-gaps.ts';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import { probeTermCaps } from '../../renderer/term-caps.ts';
 import { evaluateSessionMaintenance, formatSessionMaintenanceLines } from '@/runtime/index.ts';
@@ -22,17 +23,7 @@ import { createMemoryDiagnosticsGateway, renderMemoryDiagnostics } from '../../c
 import { requireShellPaths } from './runtime-services.ts';
 
 function renderSandboxHealthSummary(configManager: ConfigManager): string[] {
-  const backend = String(configManager.get('sandbox.vmBackend') ?? 'local');
-  const imagePath = String(configManager.get('sandbox.qemuImagePath') ?? '').trim();
-  const wrapperPath = String(configManager.get('sandbox.qemuExecWrapper') ?? '').trim();
-  const lines = [
-    `  backend: ${backend}`,
-    `  qemu image: ${imagePath || '(not configured)'}`,
-    `  qemu wrapper: ${wrapperPath || '(not configured)'}`,
-  ];
-  if (backend === 'qemu' && !imagePath) lines.push('  issue: qemu backend selected without qemuImagePath');
-  if (backend === 'qemu' && !wrapperPath) lines.push('  issue: qemu backend selected without qemuExecWrapper');
-  return lines;
+  return renderSandboxDoctor(configManager).split('\n').slice(1);
 }
 
 

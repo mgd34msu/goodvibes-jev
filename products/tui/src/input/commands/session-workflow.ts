@@ -25,7 +25,7 @@ function parseTranscriptKind(raw: string | undefined): TranscriptEventKind | 'al
     'remote_status',
     'policy_warning',
     'artifact_preview',
-    'review_state',
+    'contract_state',
     'session_restore',
     'diagnostic_notice',
     'system_notice',
