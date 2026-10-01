@@ -56,7 +56,7 @@ export interface CostTrackerOptions {
   readonly price?: SessionPricer | undefined;
   /** Cost deltas kept for the history; 16 by default, the Cost panel's sparkline width. */
   readonly historyLength?: number | undefined;
-  /** Maximum retained rows (200 by default). Evicts oldest terminal details first; running rows and lifetime totals survive. */
+  /** Maximum retained detail rows (200 by default). Running rows survive; compact per-id accounting survives eviction for same-id wakes. */
   readonly maxAgents?: number | undefined;
 }
 
@@ -68,6 +68,11 @@ const SHORT_ID_LENGTH = 8;
 const EMPTY_USAGE: CostTrackerUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 type MutableAgentCost = { -readonly [K in keyof TrackedAgentCost]: TrackedAgentCost[K] };
+type RetiredAgentCost = {
+  readonly cost: number;
+  readonly unpriced: boolean;
+  readonly status: TrackedAgentCost['status'];
+};
 
 export class CostTracker {
   private usage: CostTrackerUsage = EMPTY_USAGE;
@@ -79,9 +84,11 @@ export class CostTracker {
   private readonly price: (...args: Parameters<SessionPricer>) => SessionCostResult;
   private readonly maxAgents: number;
   private readonly terminalOrder = new Set<string>();
+  /** Accounting checkpoints, without task/model/detail history. Wakes reuse ids and cumulative usage. */
+  private readonly retiredAgents = new Map<string, RetiredAgentCost>();
   /** Cost of retired rows stays in the session total after their detail is evicted. */
   private retiredAgentsCost = 0;
-  private retiredUnpricedUsage = false;
+  private retiredUnpricedAgents = 0;
   private readonly historyLength: number;
   private readonly getAgentStatus: ((agentId: string) => AgentRecord | null) | undefined;
 
@@ -99,14 +106,15 @@ export class CostTracker {
   /**
    * Follows the turn and agent feeds: every completed turn and every LLM
    * response refreshes the session from `getUsage` (a turn can span many
-   * calls, so the meter moves mid-turn), and agent spawn, completion and
-   * failure keep the agent rows. Returns the detach.
+   * calls, so the meter moves mid-turn), and agent lifecycle events keep
+   * the rows current, including same-id wakes. Returns the detach.
    */
   attach(turns: UiEventFeed<TurnEvent>, agents: UiEventFeed<AgentEvent>, getUsage: () => CostTrackerUsage & { readonly model?: string | undefined }): () => void {
     const detach = [
       turns.on('TURN_COMPLETED', () => this.refreshSession(getUsage())),
       turns.on('LLM_RESPONSE_RECEIVED', () => this.refreshSession(getUsage())),
       agents.on('AGENT_SPAWNING', (payload) => this.agentSpawned(payload.agentId, payload.task)),
+      agents.on('AGENT_RUNNING', (payload) => this.agentRunning(payload.agentId)),
       agents.on('AGENT_COMPLETED', (payload) => this.agentCompleted(payload.agentId)),
       agents.on('AGENT_FAILED', (payload) => this.agentFailed(payload.agentId)),
       agents.on('AGENT_CANCELLED', (payload) => this.agentCancelled(payload.agentId)),
@@ -138,7 +146,7 @@ export class CostTracker {
   }
 
   agentSpawned(agentId: string, task: string): void {
-    if (this.agentRows.has(agentId)) return;
+    if (this.agentRows.has(agentId) || this.retiredAgents.has(agentId)) return;
     const record = this.getAgentStatus?.(agentId);
     this.agentRows.set(agentId, {
       agentId,
@@ -152,6 +160,36 @@ export class CostTracker {
       priced: false,
       status: 'running',
     });
+    this.trimAgents();
+    this.notify();
+  }
+
+  /** Reopens a retained or evicted row when the runner wakes the same agent id. */
+  agentRunning(agentId: string): void {
+    let row = this.agentRows.get(agentId);
+    const retired = this.retiredAgents.get(agentId);
+    if (row?.status === 'cancelled' || retired?.status === 'cancelled') return;
+    if (row?.status === 'running') return;
+    const record = this.getAgentStatus?.(agentId);
+    if (!row) {
+      if (!record) return;
+      // Its cumulative counters include the evicted run. Move that contribution
+      // out of the retired total before the live row replaces it.
+      if (retired) {
+        this.retiredAgentsCost -= retired.cost;
+        if (retired.unpriced) this.retiredUnpricedAgents--;
+        this.retiredAgents.delete(agentId);
+      }
+      row = {
+        agentId, shortId: agentId.slice(0, SHORT_ID_LENGTH), task: record.task,
+        model: record.model ?? 'unknown', contractRole: record.contractRole,
+        inputTokens: 0, outputTokens: 0, cost: 0, priced: false, status: 'running',
+      };
+      this.agentRows.set(agentId, row);
+    }
+    row.status = 'running';
+    if (record) this.applyUsage(row, record);
+    this.terminalOrder.delete(agentId);
     this.trimAgents();
     this.notify();
   }
@@ -178,9 +216,12 @@ export class CostTracker {
     for (const agentId of this.terminalOrder) {
       if (this.agentRows.size <= this.maxAgents) break;
       const row = this.agentRows.get(agentId);
-      if (row && row.contractRole !== 'owner') {
-        this.retiredAgentsCost += row.cost;
-        this.retiredUnpricedUsage ||= !row.priced && row.inputTokens + row.outputTokens > 0;
+      if (row) {
+        const cost = row.contractRole === 'owner' ? 0 : row.cost;
+        const unpriced = row.contractRole !== 'owner' && !row.priced && row.inputTokens + row.outputTokens > 0;
+        this.retiredAgents.set(agentId, { cost, unpriced, status: row.status });
+        this.retiredAgentsCost += cost;
+        if (unpriced) this.retiredUnpricedAgents++;
       }
       this.agentRows.delete(agentId);
       this.terminalOrder.delete(agentId);
@@ -236,7 +277,7 @@ export class CostTracker {
   }
   /** Cost added per refresh, oldest first, at most the history length. */
   costHistory(): readonly number[] { return this.history; }
-  /** Agent rows in spawn order. */
+  /** Retained agent rows in insertion order; a revived evicted row is appended. */
   agents(): readonly TrackedAgentCost[] { return [...this.agentRows.values()]; }
   /** Lifetime agent cost, excluding owner rollups and including evicted terminal rows. */
   agentsCost(): number {
@@ -245,7 +286,7 @@ export class CostTracker {
 
   /** Whether any non-owner usage remains unpriced, including evicted terminal rows. */
   hasUnpricedAgentUsage(): boolean {
-    return this.retiredUnpricedUsage || [...this.agentRows.values()].some((row) =>
+    return this.retiredUnpricedAgents > 0 || [...this.agentRows.values()].some((row) =>
       row.contractRole !== 'owner' && !row.priced && row.inputTokens + row.outputTokens > 0);
   }
 

@@ -32,7 +32,9 @@ import { createOrchestrationEngine } from '../sdk/src/platform/orchestration/eng
 import type { PhaseRunnerAgentManagerLike } from '../sdk/src/platform/orchestration/phase-runner.js';
 import type { AgentInput } from '../sdk/src/platform/tools/agent/schema.js';
 import type { ContractUnitBinding } from '../sdk/src/platform/tools/agent/manager.js';
-import { emitAgentCompleted } from '../sdk/src/platform/runtime/emitters/agents.js';
+import { emitAgentCompleted, emitAgentRunning, emitAgentFailed } from '../sdk/src/platform/runtime/emitters/agents.js';
+import { CostTracker } from '../sdk/src/platform/observe/cost-tracker.js';
+import { createUiRuntimeEvents } from '../sdk/src/platform/runtime/ui.js';
 import type { CommunicationEvent } from '../sdk/src/events/communication.js';
 
 type ConsumedEvent = Extract<CommunicationEvent, { type: 'COMMUNICATION_CONSUMED' }>;
@@ -109,6 +111,7 @@ function makeContext(opts: {
   contractHooks?: ContractAgentHooks;
   configManager?: Pick<ConfigManager, 'get'>;
   taps?: LoopTaps;
+  emitLifecycle?: boolean;
 }): AgentOrchestratorRunContext {
   const providerRegistry: Pick<ProviderRegistry, 'getCurrentModel' | 'getForModel' | 'listModels' | 'getContextWindowForModel' | 'recordContextWindowRejection'> = {
     getCurrentModel: () => FAKE_MODEL,
@@ -124,10 +127,18 @@ function makeContext(opts: {
     featureFlagManager: null,
     emitterContext: () => ({ sessionId: 'test-session', traceId: 'test-trace', source: 'test' }),
     emitAgentProgress: () => {},
-    emitAgentStarted: () => {},
+    emitAgentStarted: (agentId) => {
+      if (opts.emitLifecycle) emitAgentRunning(opts.runtimeBus, { sessionId: 'test-session', traceId: 'test-trace', source: 'test' }, { agentId });
+    },
     emitAgentCancelledEvent: (recordId) => { opts.taps?.cancelled.push(recordId); },
-    emitAgentFailedEvent: (recordId) => { opts.taps?.failed.push(recordId); },
-    emitAgentCompletedEvent: (recordId) => { opts.taps?.completed.push(recordId); },
+    emitAgentFailedEvent: (recordId, error, durationMs) => {
+      opts.taps?.failed.push(recordId);
+      if (opts.emitLifecycle) emitAgentFailed(opts.runtimeBus, { sessionId: 'test-session', traceId: 'test-trace', source: 'test' }, { agentId: recordId, error, durationMs });
+    },
+    emitAgentCompletedEvent: (recordId, durationMs) => {
+      opts.taps?.completed.push(recordId);
+      if (opts.emitLifecycle) emitAgentCompleted(opts.runtimeBus, { sessionId: 'test-session', traceId: 'test-trace', source: 'test' }, { agentId: recordId, durationMs });
+    },
     emitStreamDelta: () => {},
     messageBus: opts.messageBus,
     ...(opts.contractHooks ? { contractHooks: opts.contractHooks } : {}),
@@ -336,7 +347,7 @@ describe('mid-run nudge through the bus', () => {
 });
 
 describe('waking a stopped unit agent', () => {
-  function managerRunningLoop(opts: { provider: LLMProvider; hooks: ContractAgentHooks; runtimeBus: RuntimeEventBus; taps: LoopTaps; maxTurns: number; workingDirectory: string }) {
+  function managerRunningLoop(opts: { provider: LLMProvider; hooks: ContractAgentHooks; runtimeBus: RuntimeEventBus; taps: LoopTaps; maxTurns: number; workingDirectory: string; emitLifecycle?: boolean }) {
     const context = makeContext({
       workingDirectory: opts.workingDirectory,
       runtimeBus: opts.runtimeBus,
@@ -345,6 +356,7 @@ describe('waking a stopped unit agent', () => {
       contractHooks: opts.hooks,
       configManager: { get: ((key: string) => (key === 'agents.maxTurns' ? opts.maxTurns : undefined)) as ConfigManager['get'] },
       taps: opts.taps,
+      ...(opts.emitLifecycle ? { emitLifecycle: true } : {}),
     });
     const runs: Array<Promise<void>> = [];
     const manager = new AgentManager({
@@ -353,6 +365,7 @@ describe('waking a stopped unit agent', () => {
       archetypeLoader: { loadArchetype: () => null },
       executor: { runAgent: (record) => { const run = runAgentTask(context, record); runs.push(run); return run; } },
     });
+    if (opts.emitLifecycle) manager.setRuntimeBus(opts.runtimeBus);
     return { manager, runs };
   }
 
@@ -385,6 +398,59 @@ describe('waking a stopped unit agent', () => {
     expect(record.fullOutput).toBe('fixed attempt');
     expect(taps.completed).toEqual([record.id]);
   });
+
+  for (const maxAgents of [0, 1, 2]) {
+    for (const firstOutcome of ['failed', 'completed'] as const) {
+      test(`cost follows real ${firstOutcome} same-id wakes with detail cap ${maxAgents}`, async () => {
+        const runtimeBus = new RuntimeEventBus();
+        const events = createUiRuntimeEvents(runtimeBus);
+        const lifecycle: string[] = [];
+        runtimeBus.onDomain('agents', ({ payload }) => lifecycle.push(payload.type));
+        const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };
+        let tracker: CostTracker;
+        let target: AgentRecord;
+        const liveStates: Array<string | undefined> = [];
+        const observeWake = () => {
+          liveStates.push(tracker.agents().find((row) => row.agentId === target.id)?.status);
+          expect(tracker.agentsCost()).toBe(target.usage!.inputTokens + 10);
+          return reply('corrected attempt');
+        };
+        const provider = scriptedProvider([() => reply('initial attempt'), () => reply('separate job'), observeWake, observeWake]);
+        const hooks = scriptedHooks([
+          () => firstOutcome === 'failed'
+            ? { kind: 'continue', message: 'retry', nudgeId: 'u1.n1' }
+            : { kind: 'release' },
+          () => ({ kind: 'release' }),
+          () => ({ kind: 'release' }),
+        ]);
+        const { manager, runs } = managerRunningLoop({ provider, hooks, runtimeBus, taps, maxTurns: 1, workingDirectory: workDir(), emitLifecycle: true });
+        tracker = new CostTracker({ maxAgents, price: (input) => input, getAgentStatus: (id) => manager.getStatus(id) });
+        const detach = tracker.attach(events.turns, events.agents, () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }));
+        try {
+          target = manager.spawn({ mode: 'spawn', task: 'unit fixture', template: 'engineer', outsideContract: true }, { contractId: 'ctr-wake', contractUnitId: 'u1' });
+          await runs[0];
+          expect(target.status).toBe(firstOutcome);
+          expect(tracker.agentsCost()).toBe(10);
+          manager.spawn({ mode: 'spawn', task: 'separate fixture', template: 'engineer', outsideContract: true });
+          await runs[1];
+          expect(tracker.agentsCost()).toBe(20);
+          expect(tracker.agents().some((row) => row.agentId === target.id)).toBe(maxAgents === 2);
+          expect(manager.wakeWithSteer(target.id, NUDGE_TEXT, { allowCompleted: true }).woke).toBe(true);
+          await runs[2];
+          expect(target.usage?.inputTokens).toBe(20);
+          expect(tracker.agentsCost()).toBe(30);
+          expect(tracker.agents().length).toBeLessThanOrEqual(maxAgents);
+          expect(manager.wakeWithSteer(target.id, NUDGE_TEXT, { allowCompleted: true }).woke).toBe(true);
+          await runs[3];
+          expect(target.usage?.inputTokens).toBe(30);
+          expect(tracker.agentsCost()).toBe(40);
+          expect(liveStates).toEqual(['running', 'running']);
+          expect(lifecycle.filter((type) => type === 'AGENT_SPAWNING')).toHaveLength(2);
+          expect(lifecycle.filter((type) => type === 'AGENT_RUNNING')).toHaveLength(4);
+        } finally { detach(); }
+      });
+    }
+  }
 
   test('a circuit-breaker stop fails the unit agent with the structured reason the runner wakes on, never holding it', async () => {
     const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };

@@ -103,6 +103,71 @@ describe('terminal agent costs', () => {
   test('invalid retention limits fail explicitly', () => {
     for (const maxAgents of [-1, 1.5, NaN, Infinity]) expect(() => new CostTracker({ maxAgents })).toThrow(RangeError);
   });
+
+  test('wake accounting works with fresh record snapshots, duplicate events, and a changed price', () => {
+    let rate = 1;
+    const current = record('woken');
+    const tracker = new CostTracker({ maxAgents: 0, price: (input) => input / 1_000_000 * rate, getAgentStatus: () => ({ ...current }) });
+    tracker.agentSpawned(current.id, current.task);
+    tracker.agentFailed(current.id);
+    expect(tracker.agentsCost()).toBe(1);
+    tracker.agentSpawned(current.id, current.task); // A duplicate spawn cannot count the retired run again.
+    tracker.agentCompleted(current.id); // Neither can a late terminal event.
+    expect(tracker.agents()).toHaveLength(0);
+    expect(tracker.agentsCost()).toBe(1);
+    rate = 2;
+    tracker.agentRunning(current.id);
+    tracker.agentRunning(current.id);
+    expect(tracker.agents()[0]?.status).toBe('running');
+    expect(tracker.agentsCost()).toBe(2); // Same cumulative quote as a retained row at the new rate.
+    current.usage!.inputTokens = 2_000_000;
+    expect(tracker.pollRunningAgents()).toBe(true);
+    expect(tracker.agentsCost()).toBe(4);
+    tracker.agentCompleted(current.id);
+    tracker.agentCompleted(current.id);
+    expect(tracker.agents()).toHaveLength(0);
+    expect(tracker.agentsCost()).toBe(4);
+  });
+
+  test('a retained wake leaves terminal eviction order and polls until its next outcome', () => {
+    const current = record('woken');
+    const tracker = new CostTracker({ maxAgents: 2, price, getAgentStatus: (id) => id === current.id ? current : record(id) });
+    tracker.agentSpawned(current.id, current.task);
+    tracker.agentFailed(current.id);
+    tracker.agentSpawned('other', 'Other');
+    tracker.agentCompleted('other');
+    tracker.agentRunning(current.id);
+    tracker.agentSpawned('active', 'Active');
+    expect(tracker.agents().map((row) => row.agentId)).toEqual([current.id, 'active']);
+    current.usage!.inputTokens = 2_000_000;
+    expect(tracker.pollRunningAgents()).toBe(true);
+    expect(tracker.agents()[0]).toMatchObject({ status: 'running', cost: 2 });
+    tracker.agentCompleted(current.id);
+    tracker.agentSpawned('next', 'Next');
+    expect(tracker.agents().map((row) => row.agentId)).toEqual(['active', 'next']);
+    expect(tracker.agentsCost()).toBe(4);
+  });
+
+  test('an evicted owner wake stays excluded and cancelled rows never reopen', () => {
+    const records = new Map([['owner', record('owner', 5_000_000, 'owner')], ['cancelled', record('cancelled')]]);
+    const tracker = new CostTracker({ maxAgents: 0, price, getAgentStatus: (id) => records.get(id) ?? null });
+    tracker.agentSpawned('owner', 'Owner');
+    tracker.agentCompleted('owner');
+    tracker.agentSpawned('cancelled', 'Cancelled');
+    tracker.agentCancelled('cancelled');
+    tracker.agentRunning('cancelled');
+    expect(tracker.agents()).toHaveLength(0);
+    tracker.agentRunning('owner');
+    records.get('owner')!.usage!.inputTokens = 10_000_000;
+    tracker.agentCompleted('owner');
+    expect(tracker.agentsCost()).toBe(1);
+    expect(tracker.agents()).toHaveLength(0);
+    const retained = new CostTracker({ getAgentStatus: () => record('cancelled') });
+    retained.agentSpawned('cancelled', 'Cancelled');
+    retained.agentCancelled('cancelled');
+    retained.agentRunning('cancelled');
+    expect(retained.agents()[0]?.status).toBe('cancelled');
+  });
 });
 
 describe('cost quote provenance', () => {
@@ -162,5 +227,28 @@ describe('cost quote provenance', () => {
     expect(tracker.agents()[0]).toMatchObject({ cost: 0, priced: true });
     expect(tracker.agents()[0]?.pricingSource).toBeUndefined();
     expect(tracker.agents()[0]?.pricingAsOf).toBeUndefined();
+  });
+
+  test('a priced wake resolves only its own retired unknown usage', () => {
+    let known = false;
+    setModelPricingResolver(() => known
+      ? { status: 'priced', source: 'user', rates: { inputPerMTok: 2, outputPerMTok: 0 } }
+      : { status: 'unknown' });
+    const tracker = new CostTracker({ maxAgents: 0, getAgentStatus: (id) => record(id) });
+    for (const id of ['first', 'second']) {
+      tracker.agentSpawned(id, id);
+      tracker.agentFailed(id);
+    }
+    expect(tracker.hasUnpricedAgentUsage()).toBe(true);
+    known = true;
+    tracker.agentRunning('first');
+    tracker.agentCompleted('first');
+    expect(tracker.hasUnpricedAgentUsage()).toBe(true);
+    expect(tracker.agentsCost()).toBe(2);
+    tracker.agentRunning('second');
+    expect(tracker.agents()[0]).toMatchObject({ priced: true, pricingSource: 'user', cost: 2 });
+    tracker.agentCompleted('second');
+    expect(tracker.hasUnpricedAgentUsage()).toBe(false);
+    expect(tracker.agentsCost()).toBe(4);
   });
 });
