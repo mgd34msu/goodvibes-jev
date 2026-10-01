@@ -8,6 +8,7 @@
  * confident no counts as yes. Doubt raises the stakes; it never lowers them.
  */
 import { snapshotJudgmentInput } from './judgment-input.js';
+import { executePolicyCheck } from './execute-policy-check.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JsonValue, Stakes, YesNoReading } from '@goodvibes-jev/judgment';
 import { riskFamily, type GateRiskFamily } from './batteries/risk-family.js';
@@ -267,11 +268,16 @@ function rememberCatastrophic(args: Record<string, unknown>, verdict: YesNoReadi
 export async function readCatastrophic(
   command: string,
   site = 'engine.gate.exec-time',
+  signal?: AbortSignal,
 ): Promise<{ readonly verdict: YesNoReading['verdict']; readonly readByGate: boolean }> {
+  signal?.throwIfAborted();
   const state = readingState('exec', { command });
   const seen = CATASTROPHIC_SEEN.get(command);
   if (seen !== undefined) return { verdict: seen, readByGate: true };
-  const run = await boundaryReading.run(judgmentPort(site), state, { site, only: ['catastrophic'] });
+  const run = await executePolicyCheck(() => boundaryReading.run(judgmentPort(site), state, {
+    site, only: ['catastrophic'], ...(signal === undefined ? {} : { signal }),
+  }), signal);
+  signal?.throwIfAborted();
   const verdict = run.readings.catastrophic.verdict;
   run.recordAction(`exec-time:${verdict}`);
   return { verdict, readByGate: false };
