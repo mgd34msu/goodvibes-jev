@@ -139,6 +139,10 @@ export {
   shouldFireAlert,
 } from './alert-gating.js';
 export type { ConfigGet } from './alert-gating.js';
+export {
+  NOTIFICATIONS_METADATA_ONLY_KEY,
+  readNotificationsMetadataOnly,
+} from './notification-privacy.js';
 
 export {
   JOURNAL_ORPHAN_MAX_AGE_MS,
