@@ -3,7 +3,8 @@
 // whether each released package's README documents the package and, for a
 // public package, whether it describes the package in stale internal or
 // umbrella terms, and stores the readings by content hash in
-// etc/package-readme-readings.json for the offline package metadata check
+// etc/package-readme-readings.json for offline editorial advisories alongside
+// the deterministic package metadata check
 // (scripts/package-metadata-check.ts). Both questions ride one request per
 // README. Only READMEs with no stored reading are asked; readings of text no
 // longer current are dropped.

@@ -126,6 +126,25 @@ Contributors should run the focused check that matches their change before
 opening a pull request. Maintainers run the full release gate before cutting a
 release.
 
+### README editorial readings
+
+`bun run check:metadata` requires each package README to exist and contain
+non-whitespace text, alongside the manifest, export, generated-type and runtime
+version checks. External README editorial readings are advisory: missing or
+stale evidence, negative answers and unsettled answers are printed with the
+`package-readme editorial advisory` label without failing correctness CI.
+An unreadable editorial cache is reported as unavailable, not as favorable.
+
+Use `bun run package-readmes:read` for an intentional editorial review through
+Jev (requires `TYPESAFE_API_KEY`), or add `--all` to read every README again.
+The reader stores real evidence in
+`packages/engine/etc/package-readme-readings.json`, keyed by the package name,
+description and README content, with the battery version and model recorded.
+Changing any of those inputs invalidates reuse; a green metadata check does
+not imply fresh or favorable editorial evidence. No model request is made by
+the metadata check, and other required documentation and runtime gates remain
+in force.
+
 ## Release commands
 
 Each release step has a dedicated script in the root `package.json`:
