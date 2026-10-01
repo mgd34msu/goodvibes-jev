@@ -375,6 +375,9 @@ export class PluginManager {
           this.plugins.set(name, loaded);
           this.notifySubscribers();
         } else {
+          // The admitted operator preference was already saved. Shutdown can
+          // refuse registrations during init; retain that intent for restart.
+          if (this.closed) return { ok: false, error: 'Plugin manager closed during enable; enabled preference retained' };
           // Revert enable on load failure
           delete this.state.enabled[name];
           this.saveState();

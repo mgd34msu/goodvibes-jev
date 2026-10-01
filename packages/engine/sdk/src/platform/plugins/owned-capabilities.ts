@@ -176,6 +176,7 @@ function ownResponse(value: unknown, release: () => void): Response {
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let finished = false;
   let released = false;
+  let cancelled = false;
   let pending = 0;
   const releaseIfIdle = () => {
     if (!finished || pending !== 0 || released) return;
@@ -192,6 +193,7 @@ function ownResponse(value: unknown, release: () => void): Response {
         reader ??= body.getReader();
         for (;;) {
           const result = await reader.read();
+          if (cancelled) break;
           if (result.done) { controller.close(); controller.byobRequest?.respond(0); finish(); break; }
           // A zero-length default-stream chunk carries no bytes. Continue this
           // read rather than leaving a byte-stream consumer's request pending.
@@ -201,24 +203,29 @@ function ownResponse(value: unknown, release: () => void): Response {
           controller.enqueue(new Uint8Array(result.value));
           break;
         }
-      } catch (error) { controller.error(error); finish(); }
+      } catch (error) { if (!cancelled) controller.error(error); finish(); }
       finally { pending--; releaseIfIdle(); }
     },
     async cancel(reason: unknown) {
+      cancelled = true;
       pending++;
       try { if (reader) await reader.cancel(reason); else await body.cancel(reason); }
       finally { pending--; finish(); }
     },
   }, { highWaterMark: 0 });
   const response = new Response(owned, { status: original.status, statusText: original.statusText, headers: original.headers });
-  const preserveMetadata = (response: Response): Response => new Proxy(response, {
-    get(target, key) {
-      if (key === 'url' || key === 'redirected' || key === 'type') return Reflect.get(original, key, original);
-      if (key === 'clone') return () => preserveMetadata(target.clone());
-      const value: unknown = Reflect.get(target, key, target);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+  const preserveMetadata = (response: Response): Response => {
+    const clone = response.clone.bind(response);
+    // Native HTTP servers require the Response's internal slots. A Proxy can
+    // pass JS method tests while Bun rejects it instead of consuming its body.
+    Object.defineProperties(response, {
+      url: { configurable: true, get: () => original.url },
+      redirected: { configurable: true, get: () => original.redirected },
+      type: { configurable: true, get: () => original.type },
+      clone: { configurable: true, value: () => preserveMetadata(clone()) },
+    });
+    return response;
+  };
   return preserveMetadata(response);
 }
 
