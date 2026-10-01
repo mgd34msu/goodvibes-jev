@@ -2,7 +2,7 @@
 
 Every source file of goodvibes-sdk (`packages/*/src`, tests excluded) with its disposition, grouped by the intent's engine subsystems. The original port retained everything except WRFC- or QEMU-specific files; later owner-authorized removals are recorded below without changing the pinned source observations. Remaining code uses Jev where judgment applies or is ported exactly. Jev is in place of WRFC: WRFC code is JEV in the contract runner, and docs/inventory/wrfc-to-jev.md maps each WRFC function to its Jev form. A JEV file lists each place it decides something by guesswork today and the battery or pattern from `packages/judgment` that replaces it. A PORT file with decision points keeps its code but its guesswork moves to the JEV subsystem the intent names (for providers, the new routing subsystem). HOIST applies to product modules moving into the engine and is recorded in the product inventories.
 
-Files: 2435. PORT 2113, JEV 320, DROP 2. Decision points: 648.
+Files: 2453. PORT 2131, JEV 320, DROP 2. Decision points: 648.
 
 | Subsystem | Files | PORT | JEV | DROP | Decision points |
 |---|---|---|---|---|---|
@@ -41,7 +41,7 @@ Files: 2435. PORT 2113, JEV 320, DROP 2. Decision points: 648.
 | orchestration (workstreams, ported) | 23 | 17 | 6 | 0 | 5 |
 | owner profile, personal capture | 17 | 14 | 3 | 0 | 0 |
 | payments | 52 | 36 | 16 | 0 | 9 |
-| presentation | 5 | 5 | 0 | 0 | 0 |
+| presentation | 23 | 23 | 0 | 0 | 0 |
 | principals | 4 | 4 | 0 | 0 | 0 |
 | profiles, templates | 5 | 5 | 0 | 0 | 0 |
 | providers | 89 | 63 | 26 | 0 | 34 |
@@ -2210,10 +2210,30 @@ Built new for this subsystem in E.12 (new files, not goodvibes-sdk sources, so n
 
 ## presentation
 
+The theme additions below are reconciled through SDK `17eae838461a6529135fe2cad41332d2dc46cb27`; the bounded scope and remaining product-adoption requirements are recorded in [the prerequisite audit](../audit/sdk-theme-prerequisite.md).
+
 | File | Disposition | Note |
 |---|---|---|
 | `sdk/src/platform/presentation/glyphs.ts` | PORT | Fixed table of UI glyphs and the four-state status glyph alias map shared by the TUI and agent renderers. Checks: none (only constant tables; the STATE_GLYPHS lookup at line 93 is indexed by a typed state the caller already chose). |
-| `sdk/src/platform/presentation/index.ts` | PORT | Re-exports ./glyphs.js, ./thinking-phrases.js, ./tones.js, ./waiting-wording.js. Checks: none (only re-exports). |
+| `sdk/src/platform/presentation/index.ts` | PORT | Re-exports ./glyphs.js, ./thinking-phrases.js, ./tones.js, ./waiting-wording.js and the theme/index.js contract. Checks: none (only re-exports). |
+| `sdk/src/platform/presentation/theme/bundled/catppuccin.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/dracula.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/github.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/goodvibes.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/gruvbox.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/neon.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/nord.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/one-dark.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/rosepine.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/solarized.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/bundled/tokyonight.ts` | PORT | Declared palette and mode variants. Checks: none beyond typed palette data; no semantic classification. |
+| `sdk/src/platform/presentation/theme/color.ts` | PORT | Color-format validation and numerical RGB, luminance, contrast, interpolation and ANSI-palette arithmetic. Checks: code, format grammar and numeric bounds. |
+| `sdk/src/platform/presentation/theme/compat.ts` | PORT | Maps resolved theme tokens to the existing tone and diff tables. Checks: code, declared field correspondence. |
+| `sdk/src/platform/presentation/theme/index.ts` | PORT | Exports the shared theme API and types. Checks: none, re-exports only. |
+| `sdk/src/platform/presentation/theme/registry.ts` | PORT | Lists bundled palettes and looks up an exact canonical name. Checks: code, explicit catalog membership; legacy aliases and terminal probing remain host-owned. |
+| `sdk/src/platform/presentation/theme/resolve.ts` | PORT | Resolves declared token/definition references, variants and derived token defaults; rejects cycles and invalid values. Checks: code, reference identity, closed token names, input grammar and arithmetic. |
+| `sdk/src/platform/presentation/theme/system.ts` | PORT | Builds a palette from host-supplied colors and explicit appearance mode, with numerical contrast floors and declared fallback slots. Checks: code, color validity, typed mode equality and arithmetic. |
+| `sdk/src/platform/presentation/theme/types.ts` | PORT | Declares token keys and theme, variant and terminal-palette shapes. Checks: code, fixed token lists and types. |
 | `sdk/src/platform/presentation/thinking-phrases.ts` | PORT | The rotating "thinking" phrase pool, hoisted from `goodvibes-tui` src/renderer/ui-factory.ts (THINKING_PHRASES). Checks: none (only a constant list; nothing is matched against it). |
 | `sdk/src/platform/presentation/tones.ts` | PORT | The canonical UI tone-token table and its light variant, hoisted from `goodvibes-tui` src/renderer/ui-primitives.ts (UI_TONES, DIFF_TONES, SPINNER_FRAMES) and src/renderer/theme.ts (resolveUiTones, UI_TONES_LIGHT). Checks: line 162 resolveTones: which table to return, by `mode === 'light'`: code, compares a typed mode the caller supplies. |
 | `sdk/src/platform/presentation/waiting-wording.ts` | PORT | The waiting-state wording contract extracted from `goodvibes-tui` src/renderer/ui-factory.ts:554-584: the renderer decides which WaitingState it is in and waitingPhrase returns the exact wording. Checks: line 63 switch: which wording to return, by the typed WaitingState: code, switches on a typed discriminant. Line 76: which thinking phrase to show, by frame / 375 modulo the pool size: code, rotation arithmetic over a frame counter. |
