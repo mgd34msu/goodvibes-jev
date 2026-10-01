@@ -28,7 +28,7 @@ export interface HostRuntimeEventBridgeOptions {
 /** The runtime event restated by one of this module's operator-feed lines. */
 export interface RuntimeEventNotice {
   readonly type: string;
-  /** Shared with runtimeEventKey for terminal events that a host also records from the bus. */
+  /** Present only with complete shared occurrence identity; current producer lines do not carry one. */
   readonly key?: string | undefined;
   readonly title: string;
   readonly level: 'info' | 'warning';
@@ -36,31 +36,28 @@ export interface RuntimeEventNotice {
   readonly detail: string;
 }
 
-const agentRef = (agentId: string): string => agentId.slice(-8);
-const contractRef = (contractId: string): string => contractId;
-
 /**
  * Match only the declared formats emitted below, never classify arbitrary
  * prose. Contract ids are kept whole, exactly as the producer prints them.
- * Repeated checks, nudges and owner requests lack a complete event identity
- * in their lines, so they deliberately have no deduplication key.
+ * Entity ids are not event identities: an agent can wake, and an older
+ * contract snapshot can be imported and resumed under the same id. Current
+ * lines therefore stay keyless rather than coalescing distinct outcomes.
  */
 const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
   readonly pattern: RegExp;
   readonly type: string;
   readonly title: string;
   readonly level: 'info' | 'warning';
-  readonly identity?: { readonly field: 'agentId' | 'contractId'; readonly ref: (id: string) => string } | undefined;
 }> = [
-  { pattern: /^\[Agents\] \u2713 \S+ (\S+): ".*" \u2014 completed in \d+s \(\d+ tool calls\)$/s, type: 'AGENT_COMPLETED', title: 'Agent finished', level: 'info', identity: { field: 'agentId', ref: agentRef } },
-  { pattern: /^\[Agents\] \u2717 \S+ (\S+): ".*" \u2014 failed in \d+s: .*/s, type: 'AGENT_FAILED', title: 'Agent failed', level: 'warning', identity: { field: 'agentId', ref: agentRef } },
-  { pattern: /^\[Contract\] \u2713 (\S+) PASSED: \d+ of \d+ criteria met, \d+ corrections$/, type: 'CONTRACT_PASSED', title: 'Workstream passed', level: 'info', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] \u2717 (\S+) FAILED: /s, type: 'CONTRACT_FAILED', title: 'Workstream failed', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] (\S+) cancelled: .* \(\d+ files modified\)$/s, type: 'CONTRACT_CANCELLED', title: 'Workstream cancelled', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] Commit committed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes committed', level: 'info', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] Commit applied for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes applied', level: 'info', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] Commit skipped for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit skipped', level: 'info', identity: { field: 'contractId', ref: contractRef } },
-  { pattern: /^\[Contract\] Commit failed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit failed', level: 'warning', identity: { field: 'contractId', ref: contractRef } },
+  { pattern: /^\[Agents\] \u2713 \S+ (\S+): ".*" \u2014 completed in \d+s \(\d+ tool calls\)$/s, type: 'AGENT_COMPLETED', title: 'Agent finished', level: 'info' },
+  { pattern: /^\[Agents\] \u2717 \S+ (\S+): ".*" \u2014 failed in \d+s: .*/s, type: 'AGENT_FAILED', title: 'Agent failed', level: 'warning' },
+  { pattern: /^\[Contract\] \u2713 (\S+) PASSED: \d+ of \d+ criteria met, \d+ corrections$/, type: 'CONTRACT_PASSED', title: 'Workstream passed', level: 'info' },
+  { pattern: /^\[Contract\] \u2717 (\S+) FAILED: /s, type: 'CONTRACT_FAILED', title: 'Workstream failed', level: 'warning' },
+  { pattern: /^\[Contract\] (\S+) cancelled: .* \(\d+ files modified\)$/s, type: 'CONTRACT_CANCELLED', title: 'Workstream cancelled', level: 'warning' },
+  { pattern: /^\[Contract\] Commit committed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes committed', level: 'info' },
+  { pattern: /^\[Contract\] Commit applied for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Changes applied', level: 'info' },
+  { pattern: /^\[Contract\] Commit skipped for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit skipped', level: 'info' },
+  { pattern: /^\[Contract\] Commit failed for (\S+)(?: \(\S+\))?: /s, type: 'CONTRACT_COMMITTED', title: 'Commit failed', level: 'warning' },
   { pattern: /^\[Contract\] \S+ started: /s, type: 'CONTRACT_CREATED', title: 'Workstream started', level: 'info' },
   { pattern: /^\[Contract\] \S+ (?:queued|shaping|planning|checking-plan|running|judging|fixing|committing|awaiting-owner|passed|failed|cancelled) -> (?:queued|shaping|planning|checking-plan|running|judging|fixing|committing|awaiting-owner|passed|failed|cancelled)$/, type: 'CONTRACT_STATUS_CHANGED', title: 'Workstream status changed', level: 'info' },
   { pattern: /^\[Contract\] \u2713 Check \S+ of (?:unit|group|deliverable) \S+: \d+\/\d+ criteria met, pass$/, type: 'CONTRACT_CHECKED', title: 'Check passed', level: 'info' },
@@ -78,21 +75,27 @@ const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
 export function runtimeEventOfNotice(text: string): RuntimeEventNotice | undefined {
   const line = text.trim();
   for (const entry of RUNTIME_EVENT_NOTICE_LINES) {
-    const match = entry.pattern.exec(line);
-    if (!match) continue;
+    if (!entry.pattern.test(line)) continue;
     const detail = line.replace(/^\[[^\]\n]+\]\s*/, '').replace(/^[\u2713\u2717]\s*/, '');
-    const key = entry.identity ? `${entry.type}:${entry.identity.ref(match[1] ?? '')}` : undefined;
-    return { type: entry.type, ...(key ? { key } : {}), title: entry.title, level: entry.level, detail };
+    return { type: entry.type, title: entry.title, level: entry.level, detail };
   }
   return undefined;
 }
 
-/** The matching notice key from a bus payload; absent if its line has no complete identity. */
+/**
+ * A cross-path deduplication key requires an occurrence identity shared by the
+ * bus payload and its operator line. The current vocabulary carries only
+ * entity ids, which are reused by agent wakes and contract import/resume.
+ * No safe key can be derived, so this API returns undefined for those events.
+ * Hosts must retain keyless notices: both the bus and line may be displayed,
+ * but a genuine later outcome must not be discarded as an earlier replay.
+ */
 export function runtimeEventKey(type: string, payload: unknown): string | undefined {
-  const identity = RUNTIME_EVENT_NOTICE_LINES.find((entry) => entry.type === type && entry.identity)?.identity;
-  if (!identity || !payload || typeof payload !== 'object') return undefined;
-  const id = (payload as Record<string, unknown>)[identity.field];
-  return typeof id === 'string' && id.length > 0 ? `${type}:${identity.ref(id)}` : undefined;
+  // Keep the public signature; neither input contains the missing shared
+  // occurrence identity. Do not substitute an id, timestamp or prose hash.
+  void type;
+  void payload;
+  return undefined;
 }
 
 function withRouter(

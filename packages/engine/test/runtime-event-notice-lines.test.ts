@@ -1,4 +1,4 @@
-/** Drive the real producers: a bus event and its operator line share one history key. */
+/** Drive the real producers: recognize their lines without inventing occurrence identity. */
 import { describe, expect, test } from 'bun:test';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { createEventEnvelope } from '../sdk/src/platform/runtime/event-envelope.js';
@@ -42,7 +42,7 @@ async function contractNotice(event: ContractEvent) {
 
 describe('runtime event notices', () => {
   for (const type of ['AGENT_COMPLETED', 'AGENT_FAILED'] as const) {
-    test(`${type} has the same identity on the bus and in its multiline operator line`, async () => {
+    test(`${type} keeps its multiline operator line without claiming complete occurrence identity`, async () => {
       const h = harness();
       const payload = { type, agentId: 'agent-b6834750', durationMs: 51_000, error: 'quota refused\ntry again' };
       try {
@@ -53,25 +53,23 @@ describe('runtime event notices', () => {
         expect(notice?.type).toBe(type);
         expect(notice?.title).toBe(type === 'AGENT_COMPLETED' ? 'Agent finished' : 'Agent failed');
         expect(notice?.level).toBe(type === 'AGENT_COMPLETED' ? 'info' : 'warning');
-        expect(notice?.key).toBe(`${type}:b6834750`);
-        expect(notice?.key).toBe(runtimeEventKey(type, payload));
-        expect(runtimeEventKey(type, { agentId: 'agent-00000000' })).not.toBe(notice?.key);
+        expect(notice?.key).toBeUndefined();
+        expect(runtimeEventKey(type, payload)).toBeUndefined();
         expect(notice?.detail).toContain('"retry" delay\n');
       } finally { h.stop(); }
     });
   }
 
   for (const type of ['CONTRACT_PASSED', 'CONTRACT_FAILED', 'CONTRACT_CANCELLED', 'CONTRACT_COMMITTED'] as const) {
-    test(`${type} deduplicates the bus and operator feed without shortening the contract id`, async () => {
+    test(`${type} retains the full contract id in detail without claiming occurrence identity`, async () => {
       const event = { ...SAMPLES[type], contractId: 'ctr-1234567890-common-prefix-first' };
       const notice = await contractNotice(event);
-      expect(notice.key).toBe(`${type}:${event.contractId}`);
-      const history = new Map<string, string>();
-      history.set(runtimeEventKey(type, event)!, 'bus');
-      history.set(notice.key!, notice.detail);
-      expect(history.size).toBe(1);
-      history.set(runtimeEventKey(type, { ...event, contractId: 'ctr-1234567890-common-prefix-second' })!, 'another contract');
-      expect(history.size).toBe(2);
+      expect(notice.detail).toContain(event.contractId);
+      expect(notice.key).toBeUndefined();
+      expect(runtimeEventKey(type, event)).toBeUndefined();
+      const other = await contractNotice({ ...event, contractId: 'ctr-1234567890-common-prefix-second' });
+      expect(other.detail).toContain('ctr-1234567890-common-prefix-second');
+      expect(other.detail).not.toBe(notice.detail);
     });
   }
 
@@ -97,7 +95,8 @@ describe('runtime event notices', () => {
       expect(notice.title).toBe(title);
       expect(notice.level).toBe(level);
       expect(notice.detail).toContain(note);
-      expect(notice.key).toBe(runtimeEventKey('CONTRACT_COMMITTED', SAMPLES.CONTRACT_COMMITTED));
+      expect(notice.key).toBeUndefined();
+      expect(runtimeEventKey('CONTRACT_COMMITTED', SAMPLES.CONTRACT_COMMITTED)).toBeUndefined();
     });
   }
 
