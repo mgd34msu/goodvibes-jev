@@ -292,6 +292,19 @@ describe('owner replies (6.3)', () => {
   test('an attempt asked for by position is read and taken', async () => {
     const s = await SETUPS['attempts-undecided']('amend');
     const outcome = await s.reply('Take the second one.');
+    if (outcome.action !== 'amended') {
+      const contract = contractOf(s.h, s.contractId);
+      console.error('owner reply refusal diagnostics', JSON.stringify({
+        outcome,
+        question: contract.escalations.at(-1)?.question,
+        selection: contract.units[0]?.attemptSelection,
+        attempts: contract.units[0]?.attemptUnits?.map(({ id, status, failureReason, checks }) => ({ id, status, failureReason, lastCheck: checks.at(-1) })),
+        agents: s.h.manager.list().filter(({ contractUnitId }) => contractUnitId === 'u1#a1')
+          .map(({ id, status, error, failureReason, fullOutput }) => ({ id, status, error, failureReason, fullOutput })),
+        decisions: contract.decisions.filter(({ targetId }) => targetId === 'u1#a1'),
+        events: s.h.events.filter((event) => 'unitId' in event && (event.unitId === 'u1' || event.unitId === 'u1#a1')),
+      }, null, 2));
+    }
     expect(outcome.action).toBe('amended');
     await waitFor(() => terminal(s.h, s.contractId), 'the contract to end', 15_000);
     const done = contractOf(s.h, s.contractId);
