@@ -1,0 +1,292 @@
+{
+  "schemaVersion": 1,
+  "status": "UNMERGEABLE_EVIDENCE_ONLY",
+  "repository": "mgd34msu/goodvibes-jev",
+  "pullRequest": 57,
+  "runtimeIntegrationAuthorized": false,
+  "mergeAuthorized": false,
+  "evidenceBranch": "dot/evidence-pr57-cas-recovery",
+  "evidenceParent": "f0a28d6850ca0914b9822bce35f7ab35ce83aada",
+  "evidenceParentTree": "fddc022fe4ed839ddf2b3b6ae5788799635a3dc0",
+  "runtimePathsUnchanged": true,
+  "earlierCheckpointArtifactsUnchanged": true,
+  "source": {
+    "commit": "4aeb74ff8e45c69c6d45d4205daf7cd5b1ebd9a3",
+    "tree": "7391b3c7569415ff6c697e6a17918a52f1dca584",
+    "parents": [
+      "82458f6262384ef4b204b8543ed76bb266aa473c",
+      "9363f44d186e152f5c829aa106d5645ce3ed02a0"
+    ],
+    "publicReconstructionBase": "9363f44d186e152f5c829aa106d5645ce3ed02a0",
+    "publicBaseTree": "4e0f24d474b588958ab7ac61037f7910071dc907",
+    "sourceManifestPath": "source-manifest.json",
+    "sourceManifestSha256": "1b8418be05e2a46495c3dc3a870fd45e2f46273ed515900447bf2abca1f5d10b"
+  },
+  "reconstruction": {
+    "method": "Read public main9363 into a new temporary Git index, apply decompressed source.patch followed by generated-api.patch, and compare final tree",
+    "patches": {
+      "source.patch": {
+        "path": "source.patch.gz",
+        "rawBytes": 104738,
+        "rawSha256": "001da9141d31fc820612a48a98c2b75e52dd958200d322598ee3f8e99fee95e8",
+        "gzipBytes": 24998,
+        "gzipSha256": "c4e124a9d698527de1604eb1396f7a1e83add86aa92fda4e8355fd0b33982874"
+      },
+      "generated-api.patch": {
+        "path": "generated-api.patch.gz",
+        "rawBytes": 59172,
+        "rawSha256": "8b8e67e1b06350b66f77332e6d5066709b4d14acf1721791bafbe8c527d90340",
+        "gzipBytes": 6614,
+        "gzipSha256": "a43c5beaa91acbcef7da2adf8592819443cfd6fbc333cdd3f558e3a7d5275bb4"
+      }
+    },
+    "verifiedTree": "7391b3c7569415ff6c697e6a17918a52f1dca584",
+    "exactTemporaryIndexReconstruction": "passed",
+    "localOnlyCommitsRequired": false,
+    "completeGeneratedSnapshotUploaded": false
+  },
+  "postimages": [
+    {
+      "path": "docs/audit/planning-revision-guards.md",
+      "sha256": "3db5e18dc5898fe2c9d2ed45376b4a179b6ea3de3223df84c85f608d408033fb",
+      "bytes": 10952,
+      "generated": false,
+      "gitBlob": "84d78aebc35f03761c969a79b7a85c4e425e5c29"
+    },
+    {
+      "path": "packages/engine/etc/subpath-api-surface.json",
+      "sha256": "586b26073114c22105d22424910f2f88bfefee4ec21cd6a7c4fdb773453de9d0",
+      "bytes": 8565927,
+      "generated": true,
+      "gitBlob": "d29b247349360d12df301041b740174d36764e13"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/contract/batteries/owner-reply.ts",
+      "sha256": "17a2fbb465eb0e26e89e08c68510a0ecae8d9e43ceed7f78c6729a597ac25920",
+      "bytes": 8355,
+      "generated": false,
+      "gitBlob": "66952ac65ce6baa6c922d7da9d83d8fe8630f09f"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/index.ts",
+      "sha256": "da3938f520403979efa464f23e6001ec45e60d44c138e592c8e4bfebbf8942ec",
+      "bytes": 10551,
+      "generated": false,
+      "gitBlob": "a7a620e38f42de9a15130afc81b63feeabd6e8e7"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/project-planning/index.ts",
+      "sha256": "b942bc8c8e50cb8fcc9f7ac8a5e17bc810890ce48b2d95db06c857a5fb511ed8",
+      "bytes": 2264,
+      "generated": false,
+      "gitBlob": "01ca1170272592cbc7284f43918a4a52bc516f80"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/project-planning/service.ts",
+      "sha256": "cccbe594b6c13132c5e36dcb2dc55db50f2c9499fd95357f4ccd170616881d8f",
+      "bytes": 45163,
+      "generated": false,
+      "gitBlob": "c2147e8b328b53f5d692719df669037d3e8b6779"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/project-planning/types.ts",
+      "sha256": "010c56059b09e840d1c0bf2363048b029c0c2c4d3962b02fe562f2a4da57553d",
+      "bytes": 17420,
+      "generated": false,
+      "gitBlob": "da878ee58903602a3d1baeaaa3b689f0557fd5c2"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store-evidence-writes.ts",
+      "sha256": "6bff9b270a6c89a127a2a331de94fd34e515491a445cf3de7a64e240d6509d44",
+      "bytes": 7602,
+      "generated": false,
+      "gitBlob": "46ae231c5ddf2e07896b7b660c12dcc6918f4f4d"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store-source-generation.ts",
+      "sha256": "fb496af8740bee76df2bfd39623a93dd06d5a8199ee0067739d1b313b1d2212d",
+      "bytes": 1826,
+      "generated": false,
+      "gitBlob": "abf84464913c09abff8e10736a85bfb065cdba02"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/knowledge/store.ts",
+      "sha256": "e896cbe56bb253fc8266bf043b86c7d65a3236fd476df1f58711265697e7b603",
+      "bytes": 47084,
+      "generated": false,
+      "gitBlob": "40d82e1f03713c2c2383e6386847a7e38fac32e2"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/state/sqlite-store-persistence.ts",
+      "sha256": "a81783c4a7a17c1ac91b29c4b6e915ab919285e6d37465f463b974c066963bfc",
+      "bytes": 3790,
+      "generated": false,
+      "gitBlob": "745c3a2dea696b82f52f9e4fce578aba1d4fc239"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/state/sqlite-store.ts",
+      "sha256": "44d18da8dc577b846aa10fe1f1b3defa39a9c4357bec11743e71898cff81a6aa",
+      "bytes": 11727,
+      "generated": false,
+      "gitBlob": "41016c1346b8bf13068ef9f877996ab9caf7f62f"
+    },
+    {
+      "path": "packages/engine/sdk/src/platform/workspace/checkpoint/cross-process-lock.ts",
+      "sha256": "50e9d492eec2f1c54e53b9d69bdc3d549bd50dda4b3b0013971b370e70e13f56",
+      "bytes": 28214,
+      "generated": false,
+      "gitBlob": "3613217bac8103c6b4fbdcc6649c0355f5e5a023"
+    },
+    {
+      "path": "packages/engine/test/knowledge-coordinated-persistence.test.ts",
+      "sha256": "5783f97bf46252372efa273dbfed8e17628db8f51dac1ca9cca77c70556e7f47",
+      "bytes": 19594,
+      "generated": false,
+      "gitBlob": "907b4c98a74343f9c95229d7299ec2e3cb2d5f14"
+    },
+    {
+      "path": "packages/engine/test/knowledge-strict-lock.test.ts",
+      "sha256": "733c0ed696683e3a60c6cc7b18407896818237b0e8516e44b32bbce7e24be132",
+      "bytes": 4474,
+      "generated": false,
+      "gitBlob": "a14b594240db22812db45d46bf29a3241dad9e6a"
+    },
+    {
+      "path": "packages/engine/test/planning-persisted-generation.test.ts",
+      "sha256": "add3faf71d12cdc3ebe96d28f0fab4909e8808ede10ddad1dc52579e8edc0133",
+      "bytes": 6853,
+      "generated": false,
+      "gitBlob": "ed08c23695b3da7ae1a341311e7a618c9ac99d7e"
+    },
+    {
+      "path": "packages/engine/test/planning-revision-guards.test.ts",
+      "sha256": "be315a1ceaf965f1975aa34093edfb12745e3b1c1bad0318c5a1831ebf72389c",
+      "bytes": 9875,
+      "generated": false,
+      "gitBlob": "41d95e6d386d87e06a5c04d4f3eac51c80a5e882"
+    },
+    {
+      "path": "packages/engine/test/pr57-independent-persisted-races.test.ts",
+      "sha256": "a7cdd4e877a236648f5d92a0da3073d25f829e3cf0f9db4875ffb9493446053b",
+      "bytes": 4193,
+      "generated": false,
+      "gitBlob": "c453dfa07db8696c52ae904ee023d82acac540c2"
+    },
+    {
+      "path": "packages/engine/test/types/planning-persisted-guard-public.ts",
+      "sha256": "3e8857c0696584195c0dfbf9e825810cd9860da191137c12582962c516809565",
+      "bytes": 2038,
+      "generated": false,
+      "gitBlob": "40125d23e008e1187e45ab985f33b959d9150826"
+    }
+  ],
+  "reviewedSourceEquality": {
+    "priorSourceCommit": "82458f6262384ef4b204b8543ed76bb266aa473c",
+    "sourceTestDocFiles": 15,
+    "allByteIdentical": true,
+    "priorEvidenceCommit": "f0a28d6850ca0914b9822bce35f7ab35ce83aada",
+    "generatedApi": "Tested union incorporating public main"
+  },
+  "proof": {
+    "focusedTests": {
+      "status": "passed",
+      "tests": 114,
+      "assertions": 1111,
+      "files": 13,
+      "appliesTo": "4aeb74ff8e45c69c6d45d4205daf7cd5b1ebd9a3"
+    },
+    "types": {
+      "status": "passed",
+      "projects": [
+        "SDK",
+        "full engine-test",
+        "public consumer"
+      ],
+      "diagnostics": 0
+    },
+    "aggregateApi": {
+      "status": "passed",
+      "sdkSubpaths": 164,
+      "sdkExports": 10045,
+      "terminalSubpaths": 3,
+      "terminalExports": 199,
+      "warningsRetained": [
+        "API Extractor bundled TypeScript version",
+        "Gaxios typing",
+        "sql-js ambient declarations"
+      ]
+    },
+    "normalCommitHook": {
+      "status": "passed",
+      "scope": "Credential-scope only",
+      "engineSdkFilesChecked": 2635
+    },
+    "sourceReviewReportedInAuthorManifest": "root reviewer found no source finding; repeated114/1111 and additional2/22 real-process probes",
+    "logsArchive": {
+      "path": "proof-logs.tar.gz",
+      "gzipBytes": 7130,
+      "gzipSha256": "d7f753241f4cd8dab152e59e99a2c387e0e271869352966207ba530ddbcc25d5",
+      "members": {
+        "pr57-current-main-focused-tests.log": {
+          "bytes": 14345,
+          "sha256": "106f7d99d8b47aa7d9549b35c5ea3f82297a931a73533d11b5335277c67be404"
+        },
+        "pr57-current-main-types.log": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pr57-current-main-api-check.log": {
+          "bytes": 3833,
+          "sha256": "b8b55b803209d06d4d0eec7c9449dc92972413fdd73a10ac7ee0439cada5662f"
+        },
+        "pr57-current-main-prepare-package.log": {
+          "bytes": 21,
+          "sha256": "07019422ad7a4bb514b9284ba0a4edffab6742a792894d0a794be60449bf7dbe"
+        },
+        "pr57-current-main-commit.log": {
+          "bytes": 369,
+          "sha256": "b1647ccef0159e084842e226de8bbe7a4be154707901b3a65454a7e647fd6f16"
+        },
+        "pr57-current-main-postimage-equality.json": {
+          "bytes": 5288,
+          "sha256": "8fb0fe590437f4f423c190f35c81e798eb27ccc1290a2d1ceb129ea29fcbfcd7"
+        }
+      },
+      "deterministicMetadata": true
+    }
+  },
+  "credentialPreflight": {
+    "patchesAndPostimagesAndProofLogsPatternScan": "passed",
+    "patterns": [
+      "private_key",
+      "github_token",
+      "aws_access_key",
+      "slack_token",
+      "openai_key",
+      "credential_url"
+    ],
+    "findings": 0,
+    "repositoryCredentialScopeCheck": {
+      "status": "passed",
+      "engineSdkFilesChecked": 2635,
+      "sourceTree": "7391b3c7569415ff6c697e6a17918a52f1dca584",
+      "logSha256": "7249b2d7e9b78e3fd67ebf129a141cc29afa820dee2a7e3265c8295025532d14",
+      "method": "Fresh isolated tracked materialization of the exact candidate SDK, scanner and config inputs"
+    },
+    "privateFilesAndInstalledDependenciesExcluded": true
+  },
+  "scopeBoundary": "This checkpoint backs up source data only. The designated coordinator owns any later complete Git history publication, runtime branch update and integration. No publication helper is executed here.",
+  "outstandingGates": [
+    "Complete authenticated implementation-history publication and remote receipt, as separately coordinated",
+    "Fresh CI on the actual implementation head",
+    "Actual current TUI caller acceptance",
+    "Authorized final runtime integration"
+  ],
+  "limits": [
+    "KnowledgeStore participating writers coordinate whole-image persistence in one process namespace",
+    "Accepted source action plus derived task/work-plan writes remain multi-step",
+    "Initial schema/retention maintenance is separate from rejected action writes",
+    "Existing API extractor TypeScript/Gaxios/sql-js warnings retained"
+  ],
+  "prohibitedUse": "Do not merge this evidence branch as implementation or apply its patches to main."
+}
