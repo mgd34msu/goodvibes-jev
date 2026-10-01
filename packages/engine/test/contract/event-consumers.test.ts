@@ -64,11 +64,11 @@ describe('the webhook notifier', () => {
   test('a cancelled contract is reported as cancelled, not as a failure', async () => {
     const sent: string[] = [];
     const bus = new RuntimeEventBus();
-    const notifier = new WebhookNotifier(['https://example.com/webhook']);
-    const sendSpy = spyOn(notifier, 'send').mockImplementation(async (text: string) => {
-      sent.push(text);
-      return { attempted: 1, delivered: 1, failed: 0, results: [] };
-    });
+    const notifier = new WebhookNotifier(['https://example.com/webhook'], { force: true, metadataOnly: () => false });
+    const sendSpy = spyOn(globalThis, 'fetch').mockImplementation(Object.assign(async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      sent.push(String(init?.body));
+      return new Response('ok');
+    }, { preconnect() {} }));
     try {
       notifier.attachToRuntimeBus(bus);
       emitContractEvent(bus, 's1', SAMPLES.CONTRACT_CANCELLED);

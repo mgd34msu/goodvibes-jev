@@ -197,34 +197,43 @@ export class WebhookNotifier {
     this.detach();
 
     this.unsubscribers.push(
-      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', ({ payload }) => {
-        this.sendRuntimeNotification(`Agent completed: ${payload.agentId}`);
+      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', (event) => {
+        this.sendRuntimeNotification(() => `Agent completed: ${event.payload.agentId}`);
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<AgentEvent, { type: 'AGENT_FAILED' }>>('AGENT_FAILED', ({ payload }) => {
-        this.sendRuntimeNotification(`Agent failed: ${payload.agentId}, ${payload.error}`);
+      bus.on<Extract<AgentEvent, { type: 'AGENT_FAILED' }>>('AGENT_FAILED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `Agent failed: ${payload.agentId}, ${payload.error}`;
+        });
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', (event) => {
         // Named in plain words: a webhook body is read by whatever the operator
         // pointed it at, which makes it outward-facing text.
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} passed all its checks.`);
+        this.sendRuntimeNotification(() => `${workstreamLabel(event.payload.contractId)} passed all its checks.`);
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason}`);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `${workstreamLabel(payload.contractId)} could not be finished: ${payload.reason}`;
+        });
       }),
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', ({ payload }) => {
-        this.sendRuntimeNotification(`${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason}`);
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', (event) => {
+        this.sendRuntimeNotification(() => {
+          const { payload } = event;
+          return `${workstreamLabel(payload.contractId)} was cancelled: ${payload.reason}`;
+        });
       }),
     );
 
@@ -297,8 +306,10 @@ export class WebhookNotifier {
     }
   }
 
-  private sendRuntimeNotification(text: string): void {
-    void this.send(text).catch((error) => {
+  private sendRuntimeNotification(readText: () => string): void {
+    // The existing envelope admits content and normalizes formatter errors.
+    // Own that synchronous admission in a promise before dispatch can fail.
+    void (async () => this.sendEnvelope(NotificationEnvelope.legacy(readText, this.metadataOnly)))().catch((error) => {
       logger.warn('WebhookNotifier: runtime event notification dispatch failed', {
         error: describeStructuralDeliveryError(error),
       });

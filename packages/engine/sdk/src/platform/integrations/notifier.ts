@@ -204,13 +204,21 @@ export class Notifier {
     if (this._closed) throw new DeliveryError('Notifier is closed.', 'terminal');
     this.detach();
 
+    // Runtime payload access belongs inside the same admission as formatting.
+    const notify = (event: string, readData: () => Record<string, unknown>): Promise<void> =>
+      this.ownNotification(notificationTraceEvent(event), () =>
+        NotificationEnvelope.legacy(() => this.formatText(event, readData()), this.metadataOnly));
+
     this.unsubscribers.push(
-      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', ({ payload }) => {
-        void this.notify('AGENT_COMPLETED', {
-          event: 'AGENT_COMPLETED',
-          agentId: payload.agentId,
-          task: payload.output?.slice(0, 100) ?? payload.agentId,
-          result: payload.output,
+      bus.on<Extract<AgentEvent, { type: 'AGENT_COMPLETED' }>>('AGENT_COMPLETED', (event) => {
+        void notify('AGENT_COMPLETED', () => {
+          const { payload } = event;
+          return {
+            event: 'AGENT_COMPLETED',
+            agentId: payload.agentId,
+            task: payload.output?.slice(0, 100) ?? payload.agentId,
+            result: payload.output,
+          };
         }).catch((error: unknown) => {
           logger.warn('[notifier] AGENT_COMPLETED notification failed', { error: summarizeError(error) });
         });
@@ -218,12 +226,15 @@ export class Notifier {
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', ({ payload }) => {
-        void this.notify('CONTRACT_PASSED', {
-          event: 'CONTRACT_PASSED',
-          contractId: payload.contractId,
-          criteriaMet: payload.criteriaMet,
-          criteriaJudged: payload.criteriaJudged,
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_PASSED' }>>('CONTRACT_PASSED', (event) => {
+        void notify('CONTRACT_PASSED', () => {
+          const { payload } = event;
+          return {
+            event: 'CONTRACT_PASSED',
+            contractId: payload.contractId,
+            criteriaMet: payload.criteriaMet,
+            criteriaJudged: payload.criteriaJudged,
+          };
         }).catch((error: unknown) => {
           logger.warn('[notifier] CONTRACT_PASSED notification failed', { error: summarizeError(error) });
         });
@@ -231,11 +242,14 @@ export class Notifier {
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', ({ payload }) => {
-        void this.notify('CONTRACT_FAILED', {
-          event: 'CONTRACT_FAILED',
-          contractId: payload.contractId,
-          reason: payload.reason,
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_FAILED' }>>('CONTRACT_FAILED', (event) => {
+        void notify('CONTRACT_FAILED', () => {
+          const { payload } = event;
+          return {
+            event: 'CONTRACT_FAILED',
+            contractId: payload.contractId,
+            reason: payload.reason,
+          };
         }).catch((error: unknown) => {
           logger.warn('[notifier] CONTRACT_FAILED notification failed', { error: summarizeError(error) });
         });
@@ -243,11 +257,14 @@ export class Notifier {
     );
 
     this.unsubscribers.push(
-      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', ({ payload }) => {
-        void this.notify('CONTRACT_CANCELLED', {
-          event: 'CONTRACT_CANCELLED',
-          contractId: payload.contractId,
-          reason: payload.reason,
+      bus.on<Extract<ContractEvent, { type: 'CONTRACT_CANCELLED' }>>('CONTRACT_CANCELLED', (event) => {
+        void notify('CONTRACT_CANCELLED', () => {
+          const { payload } = event;
+          return {
+            event: 'CONTRACT_CANCELLED',
+            contractId: payload.contractId,
+            reason: payload.reason,
+          };
         }).catch((error: unknown) => {
           logger.warn('[notifier] CONTRACT_CANCELLED notification failed', { error: summarizeError(error) });
         });
