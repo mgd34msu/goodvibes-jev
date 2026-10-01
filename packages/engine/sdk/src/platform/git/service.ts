@@ -457,10 +457,13 @@ export class GitService {
   // Worktree (for agent isolation)
   // ---------------------------------------------------------------------------
 
-  async worktreeAdd(path: string, branch: string): Promise<void> {
+  async worktreeAdd(path: string, branch: string, startPoint?: string, checkout = true): Promise<void> {
     await this.firePre('worktreeAdd', { path, branch });
     try {
-      await (await this.git()).raw(['worktree', 'add', path, '-b', branch]);
+      // This short-lived client permits only our fixed hook-disabling override, never a caller-provided hook path.
+      const rawCheckoutOptions = { baseDir: this.cwd, unsafe: { allowUnsafeHooksPath: true } };
+      const git = checkout ? await this.git() : await createSimpleGit(rawCheckoutOptions);
+      await git.raw([...(checkout ? [] : ['-c', 'core.hooksPath=/dev/null']), 'worktree', 'add', ...(checkout ? [] : ['--no-checkout']), path, '-b', branch, ...(startPoint === undefined ? [] : [startPoint])]);
       await this.firePost('worktreeAdd', { path, branch });
     } catch (err) {
       await this.fireFail('worktreeAdd', { path, branch, error: summarizeError(err) });

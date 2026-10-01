@@ -10,6 +10,10 @@
  * cannot produce a plan fails the contract with `failureKind: 'planning'`;
  * there is no single-item fallback.
  */
+import { isAbsolute, join, relative } from 'node:path';
+import { assertContractInputView, contractInputPath } from './input-snapshot.js';
+import type { ReadAccessFilter } from '../tools/shared/read-access.js';
+
 import { JudgmentPortMissingError, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { ContractEvent } from '../../events/contract.js';
@@ -64,6 +68,7 @@ export interface ContractPlannerDeps {
   readonly emit: (event: ContractEvent) => void;
   /** The repository summary the planner is shown; defaults to the repo_map tool over the project root. */
   readonly repositoryMap?: ((projectRoot: string) => Promise<string>) | undefined;
+  readonly readAccessFilter?: ReadAccessFilter | undefined;
   readonly now?: (() => number) | undefined;
 }
 
@@ -406,8 +411,8 @@ export function readPlannerBounds(configManager: ContractConfigReader): Decompos
 }
 
 /** The repository summary the planner starts from: the repo_map tool's ranked map. */
-export async function defaultRepositoryMap(projectRoot: string): Promise<string> {
-  const result = await createRepoMapTool({ projectRoot }).execute({ budgetTokens: 2_000 });
+export async function defaultRepositoryMap(projectRoot: string, readAccessFilter?: ReadAccessFilter): Promise<string> {
+  const result = await createRepoMapTool({ projectRoot, ...(readAccessFilter === undefined ? {} : { readAccessFilter }) }).execute({ budgetTokens: 2_000 });
   return result.success ? (result.output ?? '') : `No repository map: ${result.error ?? 'the map could not be built'}. Use your read tools.`;
 }
 
@@ -463,6 +468,9 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   if (contract.shape === undefined) throw new Error(`contract ${contract.id} has no request shape; shape it before planning`);
   const context = new PlanningContext(contract, deps);
   const { signal } = input;
+  if (signal?.aborted) return { kind: 'cancelled' };
+  if (contract.inputSnapshot !== undefined) await assertContractInputView(contract.inputSnapshot, signal);
+  const workingDirectory = contract.inputSnapshot === undefined ? contract.projectRoot : contractInputPath(contract.inputSnapshot);
   context.move('planning');
 
   let route: UnitRoute;
@@ -476,7 +484,16 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     return context.fail('planning', `no route for the planner: ${summarizeError(error)}`);
   }
   context.decide('spawned', `planner route: ${route.reason}`, [], route);
-  const repositoryMap = await (deps.repositoryMap ?? defaultRepositoryMap)(contract.projectRoot);
+  // Both the original path and the unique generation must pass the existing read boundary.
+  // Snapshot membership is only provenance; a source-path denial is not erased by copying.
+  const snapshot = contract.inputSnapshot;
+  const filter = deps.readAccessFilter;
+  const readAccessFilter: ReadAccessFilter | undefined = filter === undefined || snapshot === undefined ? filter : async (path) => {
+    const originalRelativePath = relative(workingDirectory, path);
+    if (isAbsolute(originalRelativePath) || originalRelativePath === '..' || originalRelativePath.startsWith('../')) return false;
+    return await filter(join(snapshot.sourceRoot, originalRelativePath)) && await filter(path);
+  };
+  const repositoryMap = await (deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter) : deps.repositoryMap(workingDirectory));
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();
 
@@ -498,7 +515,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
       });
       const run = await deps.decompositionRunner.run({
         goal: contract.ask,
-        workingDir: contract.projectRoot,
+        workingDir: workingDirectory,
         systemPrompt,
         userPrompt,
         bounds,

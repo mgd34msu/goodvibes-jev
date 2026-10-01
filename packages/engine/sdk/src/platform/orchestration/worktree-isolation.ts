@@ -67,6 +67,8 @@ export interface WorktreeIsolationManagerDeps {
    * creation, a broken setup is surfaced as a visible state, not a lost
    * worktree. Absent → today's behavior (no provisioning).
    */
+  /** Optional exact-tree initializer; contract input must bypass checkout filters and hooks. */
+  readonly initializeWorktree?: ((worktree: IsolatedWorktree) => Promise<void>) | undefined;
   readonly runSetup?: ((worktreePath: string) => Promise<void> | void) | undefined;
 }
 
@@ -162,7 +164,8 @@ export function createWorktreeIsolationManager(deps: WorktreeIsolationManagerDep
     const branch = item.worktreeBranch ?? itemWorktreeBranch(workstream.id, item.id);
     const instance = getOrCreateInstance(workstream, item, path, branch);
     if (!item.worktreePath) {
-      await instance.create();
+      if (deps.initializeWorktree === undefined) await instance.create();
+      else await deps.initializeWorktree(instance);
       item.worktreePath = instance.path;
       item.worktreeBranch = instance.branch;
       deps.emit({ type: 'item-worktree-created', workstreamId: workstream.id, itemId: item.id, path: instance.path, branch: instance.branch });

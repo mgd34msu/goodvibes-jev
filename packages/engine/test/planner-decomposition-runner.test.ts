@@ -127,3 +127,16 @@ describe('AgentManager decomposition runner', () => {
     expect(result.detail).toContain('spawn rejected');
   });
 });
+
+
+test('planner receives the requested frozen working directory and pre-aborted requests spawn nothing', async () => {
+  const fake = makeFake({ poll: () => ({ status: 'completed', fullOutput: 'planned' }) });
+  const inputs: import('../sdk/src/platform/tools/agent/schema.js').AgentInput[] = [];
+  const original = fake.agentManager.spawn;
+  const agentManager = { ...fake.agentManager, spawn(input: import('../sdk/src/platform/tools/agent/schema.js').AgentInput) { inputs.push(input); return original(); } };
+  const runner = createAgentManagerDecompositionRunner({ agentManager, now: fake.now, sleep: fake.sleep });
+  await runner.run({ ...REQ, workingDir: '/recorded/input/generation-one' });
+  expect(inputs.map((input) => input.workingDirectory)).toEqual(['/recorded/input/generation-one']);
+  const result = await runner.run({ ...REQ, signal: AbortSignal.abort() });
+  expect(result.status).toBe('cancelled'); expect(inputs).toHaveLength(1);
+});

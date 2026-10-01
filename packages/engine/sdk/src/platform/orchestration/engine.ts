@@ -93,6 +93,7 @@ export interface OrchestrationEngineDeps {
   /** Kept-worktree retention bound before oldest-first eviction (worktree mode). Default 20. */
   readonly keptWorktreeCap?: number | undefined;
   /** Cold-start worktree setup hook (deps install, .env carry-over); wired by the composition root; a failing setup never fails creation. */
+  readonly initializeWorktree?: import('./worktree-isolation.js').WorktreeIsolationManagerDeps['initializeWorktree'];
   readonly runWorktreeSetup?: ((worktreePath: string) => Promise<void> | void) | undefined;
   /** Optional best-of-N judge (PROPOSES a winner; never auto-picks unless the item opted in). Injectable, provider-agnostic. */
   readonly judgeAttempts?: AttemptJudge | undefined;
@@ -244,6 +245,7 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
     now,
     keptWorktreeCap: deps.keptWorktreeCap,
     runSetup: runWorktreeSetupHook,
+    initializeWorktree: deps.initializeWorktree,
   });
 
   function getWorkstream(id: string): Workstream | null {

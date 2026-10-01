@@ -73,7 +73,7 @@ describe('round trip', () => {
     expect(store.write(contract.id)).toBe(true);
 
     const onDisk = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf-8')) as Record<string, unknown>;
-    expect(onDisk['schemaVersion']).toBe(1);
+    expect(onDisk['schemaVersion']).toBe(2);
     expect(onDisk['writtenAt']).toBe(42_000);
     expect(storeAt(root).load(contract.id)).toEqual(contract);
   });
@@ -147,7 +147,7 @@ describe('atomic write', () => {
 describe('quarantine', () => {
   const cases: ReadonlyArray<readonly [string, (contract: Contract) => string, ContractSnapshotRejection]> = [
     ['corrupt JSON', () => '{"schemaVersion": 1, "contract": {', 'unparseable'],
-    ['a newer schema version', (contract) => envelope(contract, 2), 'future-version'],
+    ['a newer schema version', (contract) => envelope(contract, 3), 'future-version'],
     ['a bare contract with no envelope', (contract) => JSON.stringify(contract), 'invalid-contract'],
     ['an envelope with no schema version', (contract) => JSON.stringify({ writtenAt: 1, contract }), 'not-an-envelope'],
     ['a malformed contract', (contract) => envelope({ ...contract, units: 'none' }), 'invalid-contract'],
@@ -175,7 +175,7 @@ describe('quarantine', () => {
   });
 
   test('deserializeContract refuses a newer schema rather than trusting part of it', () => {
-    expect(deserializeContract(envelope(makeContract(), 2))).toBeNull();
+    expect(deserializeContract(envelope(makeContract(), 3))).toBeNull();
     expect(deserializeContract(envelope(makeContract(), 1))).not.toBeNull();
   });
 });
@@ -258,7 +258,7 @@ describe('reaping', () => {
   test('a refused file is left for load() to quarantine, not deleted by the reap', () => {
     const root = tempRoot();
     const contract = terminalContract(0);
-    const path = writeRaw(root, contract.id, envelope(contract, 2));
+    const path = writeRaw(root, contract.id, envelope(contract, 3));
     expect(storeAt(root, 100 * DAY).reap().total).toBe(0);
     expect(existsSync(path)).toBe(true);
   });
@@ -311,7 +311,7 @@ describe('importContract', () => {
 
   test('refuses a snapshot it cannot trust', () => {
     const store = storeAt(tempRoot());
-    expect(store.importContract(envelope(makeContract(), 2))).toBe(false);
+    expect(store.importContract(envelope(makeContract(), 3))).toBe(false);
     expect(store.importContract('not json')).toBe(false);
     expect(store.list()).toEqual([]);
   });

@@ -183,6 +183,7 @@ export interface HarnessOptions {
   readonly port?: (context: AnswerContext) => unknown;
   /** A planner runner; defaults to one that answers with `plan`. */
   readonly planner?: DecompositionRunner;
+  readonly repositoryMap?: (root: string) => Promise<string>;
   /** The route selector; defaults to one fixed route. */
   readonly routeSelector?: ContractRouteSelector;
   readonly workPlanService?: WorkPlanService;
@@ -300,6 +301,7 @@ export function makeHarness(options: HarnessOptions): Harness {
       configManager: config,
       runtimeBus: bus,
       projectRoot: input.projectRoot,
+      initializeWorktree: input.initializeWorktree,
       stateRoot: input.stateRoot,
       stateNamespace: input.stateNamespace,
       contractUnitSettlement: input.contractUnitSettlement,
@@ -314,7 +316,7 @@ export function makeHarness(options: HarnessOptions): Harness {
     ...(options.steps === undefined ? {} : { steps: options.steps }),
     ...(options.workPlanService === undefined ? {} : { workPlanService: options.workPlanService }),
     ...(options.planManager === undefined ? {} : { planManager: options.planManager }),
-    repositoryMap: async () => 'README.md',
+    repositoryMap: options.repositoryMap ?? (async () => 'README.md'),
   });
   runner.on((event) => events.push(event));
   const fake = runnerPort(options.port);

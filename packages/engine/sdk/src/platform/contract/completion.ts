@@ -26,6 +26,8 @@
  *
  * Verdicts, gates and the commit are code; only the two judges are Jev.
  */
+import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
+
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { hashState, type JsonValue } from '@goodvibes-jev/judgment';
@@ -318,25 +320,32 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
 
   // ── The commit (6.5) ──────────────────────────────────────────────────────────
 
-  async function commitWorktree(contract: Contract, commitOn: boolean): Promise<NonNullable<Contract['commit']>> {
+  async function commitWorktree(run: ContractRun, commitOn: boolean): Promise<NonNullable<Contract['commit']>> {
+    const { contract } = run;
     const root = contract.projectRoot;
     const branch = contract.branch!;
+    if (contract.inputSnapshot === undefined) return { status: 'failed', note: `not applied: legacy contract has no recorded input receipt; the work stays on branch ${branch}` };
+    try {
+      assertContractInputObjects(contract.inputSnapshot, contract.projectRoot);
+      assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, branch);
+      await assertContractInputOwner(contract.inputSnapshot, run.abort.signal);
+    }
+    catch (error) { return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` }; }
+    if (contract.inputSnapshot.dirty) return { status: 'failed', note: `not applied: captured input includes pre-existing owner changes; snapshot-to-result application is not implemented; the work stays on branch ${branch}` };
     const changed = git(root, ['diff', '--name-only', `HEAD...${branch}`]);
     const files = changed.ok ? changed.out.split('\n').filter(Boolean) : [];
     if (changed.ok && files.length === 0) return { status: 'skipped', note: describeCommitOutcome(null, [], true) };
     if (commitOn) {
       const merged = git(root, ['merge', '--no-ff', '-m', buildContractCommitMessage(contract), branch]);
       if (!merged.ok) {
-        git(root, ['merge', '--abort']);
-        return { status: 'failed', note: `commit failed: ${merged.err || 'git merge did not complete'}; the work stays on branch ${branch}` };
+        return { status: 'failed', note: `commit failed: ${merged.err || 'git merge did not complete'}; inspect owner Git state before retrying; the work stays on branch ${branch}` };
       }
       const head = git(root, ['rev-parse', 'HEAD']).out;
       return { status: 'committed', hash: head, note: describeCommitOutcome(head, [], false) };
     }
     const squashed = git(root, ['merge', '--squash', branch]);
     if (!squashed.ok) {
-      git(root, ['reset', '--merge']);
-      return { status: 'failed', note: `apply failed: ${squashed.err || 'git merge --squash did not complete'}; the work stays on branch ${branch}` };
+      return { status: 'failed', note: `apply failed: ${squashed.err || 'git merge --squash did not complete'}; inspect owner Git state before retrying; the work stays on branch ${branch}` };
     }
     // Unstage exactly what the squash staged: the work is left as uncommitted changes.
     git(root, ['reset', '-q', '--', ...files]);
@@ -371,7 +380,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const commitOn = settings.autoCommit && settings.commitScope !== 'off';
     try {
       if (contract.isolation === 'worktree' && contract.branch !== undefined && contract.worktreePath !== undefined) {
-        const outcome = await commitWorktree(contract, commitOn);
+        const outcome = await commitWorktree(run, commitOn);
         if (outcome.status === 'committed' || outcome.status === 'applied' || outcome.status === 'skipped') {
           // The branch's work reached the project's tree: the contract worktree goes; the branch stays as the record of the work.
           await new IsolatedWorktree(contract.projectRoot, contract.worktreePath, contract.branch, contract.baseBranch ?? 'main').evict()
