@@ -1,0 +1,28 @@
+{
+  "purpose": "Temporary reproducible TUI planning caller review evidence; do not merge into main",
+  "archive": "planning-caller-runtime-repro.tar.gz",
+  "bytes": 174322,
+  "sha256": "b6f241478035a4fcf6deb31300d2a0636f837092439c2eea2235d1b1b014cd84",
+  "archiveMembers": 85,
+  "runtimeSources": 44,
+  "sourceConfigResourcePaths": 52,
+  "upstreamTui": "ec057c33979839be84a1d8d2399f9c69f0c2a5aa",
+  "publicMainBase": "cef1a3d529797d63ddb8e95f48904ec76c638dca",
+  "engineCommit": "c70f79ecccca21a8a08400626c4f8f748fa2bd29",
+  "engineTree": "2969dc3571e741d1061f88cf620ff1f1dfe1b85f",
+  "productComposition": "142fc8e620b26177200b256856f6d639996268f5",
+  "proof": {
+    "guardedTests": 50,
+    "assertions": 171,
+    "executedCopiedArchiveSource": true,
+    "postExecutionSourceHashesMatch": true,
+    "fullProductAcceptanceClaimed": false
+  },
+  "inspection": {
+    "pathsContained": true,
+    "allFilesUtf8Text": true,
+    "symlinksOrSpecialFiles": false,
+    "credentialPatternFindings": 0,
+    "sourceAndSyntheticProofScopeReviewed": true
+  }
+}
