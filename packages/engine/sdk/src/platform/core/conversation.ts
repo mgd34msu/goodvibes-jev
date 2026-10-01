@@ -11,7 +11,7 @@ import {
   cloneBranchMap,
   cloneMessages,
   deriveConversationTitle,
-  messagesToInternal,
+  restoreKeptMessages,
   restoreBranchMap,
 } from './conversation-utils.js';
 import { applyDiffContent, parseDiffForApply } from './conversation-diff.js';
@@ -41,7 +41,14 @@ export type ConversationMessageSnapshot =
   | { role: 'user'; content: string | ContentPart[]; cancelled?: boolean }
   | AssistantMessage
   | { role: 'system'; content: string }
-  | { role: 'tool'; callId: string; content: string; toolName?: string };
+  | {
+    role: 'tool';
+    callId: string;
+    content: string;
+    toolName?: string;
+    /** Typed execution state. Absent on legacy/imported results whose outcome is unknown. */
+    outcome?: 'ok' | 'error' | 'cancelled';
+  };
 
 type Message = ConversationMessageSnapshot;
 export type ConversationTitleSource = 'system' | 'user';
@@ -300,6 +307,7 @@ export class ConversationManager {
         role: 'tool',
         callId: result.callId,
         content,
+        outcome: result.cancelled === true ? 'cancelled' : result.success ? 'ok' : 'error',
         ...(toolName ? { toolName } : {}),
       });
     }
@@ -376,7 +384,8 @@ export class ConversationManager {
 
   public replaceMessagesForLLM(newMessages: ProviderMessage[]): void {
     const systemMessages = this.messages.filter((message) => message.role === 'system');
-    this.messages = [...systemMessages, ...messagesToInternal(newMessages)];
+    const kept = restoreKeptMessages(newMessages, this.getMessagesForLLM(), this.messages);
+    this.messages = [...systemMessages, ...kept];
     this.streamingMessageIndex = -1;
     this._messagesRevision++;
   }
